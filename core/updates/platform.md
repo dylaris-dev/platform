@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **Route-only locations no longer bring backup storage.** The included
+  allowance is per purchased NODE now. A route-only location routes traffic to a
+  server the customer runs themselves, so there is nothing of theirs here to
+  back up - and a customer holding one of each was given twice what their node
+  includes. Traffic allowances are unchanged and still count both. `core`
+  `panel`
+- **A customer holding only route-only locations falls through to the allowance
+  under Settings, Backups**, like any owner without a node, instead of getting a
+  node's worth of storage. Unset there still means no limit. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.3
 
 ### Features

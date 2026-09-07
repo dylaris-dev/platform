@@ -36,11 +36,14 @@ func TestR2QuotaScalesWithUnits(t *testing.T) {
 			want:    i64(150),
 		},
 		{
-			// A node and a route-only location are both countable products, and
-			// both bring their share.
-			name:    "a node and a route-only location",
+			// Only the node brings backup storage. A route-only location is a
+			// route to a server the customer runs themselves, so there is
+			// nothing of theirs here to back up - it used to bring a full
+			// node's allowance anyway, so a customer holding one of each was
+			// given twice what their node includes.
+			name:    "a node and a route-only location count as the node alone",
 			billing: &store.UserBilling{MaxNodes: i64(1), MaxLinks: i64(1)},
-			want:    i64(100),
+			want:    i64(50),
 		},
 		{
 			// Consent raises the ceiling; it does not raise the included amount.
@@ -66,6 +69,24 @@ func TestR2QuotaScalesWithUnits(t *testing.T) {
 				t.Errorf("quota = %d, want %d", *got, *tt.want)
 			}
 		})
+	}
+}
+
+// Route-only on its own brings no backup allowance at all, so the resolution
+// carries on to the operator's setting instead of stopping at a node's worth.
+func TestRouteOnlyBringsNoBackupAllowance(t *testing.T) {
+	st := &quotaFakeStore{
+		kv:      map[string]string{SettingBackupDefaultUserQuota: "7"},
+		billing: &store.UserBilling{MaxLinks: i64(2)},
+	}
+	if got := BackupAllowanceGB(st, "owner-1", true); got == nil || *got != 7 {
+		t.Fatalf("quota = %v, want the operator allowance of 7", got)
+	}
+	// And with no operator allowance either: no cap, rather than a quota of
+	// zero. A route-only customer must not be worse off than an unknown one.
+	bare := &quotaFakeStore{kv: map[string]string{}, billing: &store.UserBilling{MaxLinks: i64(2)}}
+	if got := BackupAllowanceGB(bare, "owner-1", true); got != nil {
+		t.Fatalf("quota = %v, want nil", got)
 	}
 }
 

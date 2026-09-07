@@ -290,7 +290,11 @@ func TestBackupAllowanceExceeded(t *testing.T) {
 			wantQuotaGB:  5,
 		},
 		{
-			name: "with a store the same tenant is judged by their entitlement",
+			// The route-only location brings nothing here: it is a route to a
+			// server the customer runs themselves, so there is nothing of
+			// theirs on this platform to back up. One node, one node's
+			// allowance.
+			name: "with a store the same tenant is judged by their node alone",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{MaxNodes: ptr(1), MaxLinks: ptr(1)},
 				settings:    map[string]string{SettingBackupDefaultUserQuota: "5"},
@@ -298,7 +302,21 @@ func TestBackupAllowanceExceeded(t *testing.T) {
 			},
 			wantExceeded: false,
 			wantUsed:     6 * GB,
-			wantQuotaGB:  100, // 50 included x 2 units
+			wantQuotaGB:  50, // 50 included x ONE node; the route-only location adds none
+		},
+		{
+			// Holding ONLY a route-only location is holding no backup-bearing
+			// product at all, so the operator's allowance answers - not a
+			// node's worth of storage for a product that cannot use it.
+			name: "route-only alone falls through to the operator allowance",
+			store: &billingFakeStore{
+				billing:     &store.UserBilling{MaxLinks: ptr(1)},
+				settings:    map[string]string{SettingBackupDefaultUserQuota: "5"},
+				backupBytes: 6 * GB,
+			},
+			wantExceeded: true,
+			wantUsed:     6 * GB,
+			wantQuotaGB:  5,
 		},
 		{
 			// Bytes on a bucket the tenant connected are not ours: they are not

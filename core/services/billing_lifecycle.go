@@ -55,20 +55,21 @@ const (
 )
 
 // R2IncludedGB is the backup storage a tenant's entitlement brings, before
-// anything they have agreed to be charged for. Zero when they hold nothing.
+// anything they have agreed to be charged for. Zero when they hold no NODE -
+// route-only brings none, see backupUnits.
 //
 // "Entitlement", not "purchase": a live administrator grant is worth one unit of
 // its kind, so a comped tenant gets the same allowance a single BYON purchase
-// includes rather than none. See entitledUnits.
+// includes rather than none.
 func R2IncludedGB(st settingReader, b *store.UserBilling) int64 {
-	return settingInt(st, BillingR2IncludedKey, DefaultR2IncludedGB) * entitledUnits(b, time.Now())
+	return settingInt(st, BillingR2IncludedKey, DefaultR2IncludedGB) * backupUnits(b, time.Now())
 }
 
 // R2BookableGB is how much a tenant MAY take beyond the included amount once
 // metered backup billing is on. Also per unit: the cap on what they can spend
 // scales with what they hold, like the allowance it sits on top of.
 func R2BookableGB(st settingReader, b *store.UserBilling) int64 {
-	return R2BookablePerUnit(st) * entitledUnits(b, time.Now())
+	return R2BookablePerUnit(st) * backupUnits(b, time.Now())
 }
 
 // R2BookablePerUnit is the stored setting on its own, before any tenant's units
@@ -78,18 +79,18 @@ func R2BookablePerUnit(st settingReader) int64 {
 	return settingInt(st, BillingR2BookableKey, DefaultR2BookableGB)
 }
 
-// entitledR2QuotaGB is the hard stop for a tenant who holds something, bought or
+// entitledR2QuotaGB is the hard stop for a tenant who holds a node, bought or
 // granted: their included allowance, plus the bookable extra ONLY if they agreed
 // to pay for it.
 //
-// nil when they hold NOTHING, so an account with no entitlement at all falls
-// through to the flat platform setting rather than being handed a quota of zero
-// - which would stop backups on every self-hosted install the moment this
-// shipped. That fallthrough is why a grant has to count as a unit: a comped
-// tenant took this path and landed on the platform setting, which is unset by
-// default and means no cap.
+// nil when they hold no node, so an account with no backup-bearing product -
+// including a route-only-only customer - falls through to the operator's
+// allowance rather than being handed a quota of zero, which would stop backups
+// on every self-hosted install the moment this shipped. That fallthrough is why
+// a grant has to count as a unit: a comped tenant took this path and landed on
+// the platform setting, which is unset by default and means no cap.
 func entitledR2QuotaGB(st settingReader, b *store.UserBilling) *int64 {
-	if entitledUnits(b, time.Now()) == 0 {
+	if backupUnits(b, time.Now()) == 0 {
 		return nil
 	}
 	total := R2IncludedGB(st, b)
@@ -99,17 +100,28 @@ func entitledR2QuotaGB(st settingReader, b *store.UserBilling) *int64 {
 	return &total
 }
 
-// entitledUnits counts the countable products a tenant holds RIGHT NOW, whether
-// they bought them or an administrator granted them. nil and 0 both mean none:
-// the store clears the override rather than writing 0, so a stored zero is not a
-// quantity it ever meant.
+// backupUnits counts the products a tenant holds RIGHT NOW that BRING BACKUP
+// STORAGE, whether they bought them or an administrator granted them. nil and 0
+// both mean none: the store clears the override rather than writing 0, so a
+// stored zero is not a quantity it ever meant.
 //
-// It counts a live grant because this number is what the per-unit allowances are
+// Nodes only. A route-only location is a route: we carry traffic to a server the
+// customer runs themselves, and the one door that entitlement opens is minting a
+// link kit (handlers/warp.go). There is no server of theirs on this platform and
+// therefore nothing of theirs to back up, so counting it handed out storage for
+// a product that cannot use it - a customer holding one node and one route-only
+// location was given twice a node's allowance.
+//
+// This is the one place the two kinds differ, and deliberately so. Traffic
+// allowances stay per unit of EITHER kind, because a route-only location really
+// does carry traffic; see TrafficLimitsTab, which says exactly that.
+//
+// It counts a live grant because this number is what the per-unit allowance is
 // multiplied by, and a grant that conveys access but no allowance produces the
 // wrong answer at both ends. It used to count purchases only, so a granted
 // tenant had ZERO units: their included backup storage worked out to nothing,
-// purchasedR2QuotaGB returned "no answer", and the resolution fell through to
-// the flat platform setting - which is unset by default and means NO CAP. The
+// the entitlement step returned "no answer", and the resolution fell through to
+// the platform allowance - which is unset by default and means NO CAP. The
 // tenant an administrator comped was the one tenant with unlimited backup
 // storage.
 //
@@ -117,19 +129,15 @@ func entitledR2QuotaGB(st settingReader, b *store.UserBilling) *int64 {
 // place: a grant is worth one machine of its kind, and only while it is live, so
 // the allowance lapses on its own with nothing to clean up. An administrator who
 // wants a different number sets the per-user override (b.R2QuotaGB), which
-// r2QuotaGB already reads first.
-func entitledUnits(b *store.UserBilling, now time.Time) int64 {
+// BackupAllowanceGB reads first.
+func backupUnits(b *store.UserBilling, now time.Time) int64 {
 	if b == nil {
 		return 0
 	}
-	var n int64
 	if c := grantedCap(b.MaxNodes, b.ManualByonExpiresAt, now); c != nil && *c > 0 {
-		n += *c
+		return *c
 	}
-	if c := grantedCap(b.MaxLinks, b.ManualRouteExpiresAt, now); c != nil && *c > 0 {
-		n += *c
-	}
-	return n
+	return 0
 }
 
 // settingReader is the whole store surface the backup allowances need. Narrow

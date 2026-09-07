@@ -140,8 +140,8 @@ export default function BillingTab() {
                 </SettingsGroup>
 
                 <SettingsGroup
-                    title="Backup storage per purchased unit"
-                    description="What a purchase includes, and what a customer may book on top once they have agreed to be charged for it. What a customer with NO purchase gets is set under Settings, Backups."
+                    title="Backup storage per purchased node"
+                    description="What a node purchase includes, and what a customer may book on top once they have agreed to be charged for it. Route-only locations carry traffic, not servers, so they bring no backup storage. What a customer with no node gets is set under Settings, Backups."
                 >
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
@@ -155,8 +155,9 @@ export default function BillingTab() {
                                 className="input-field w-32"
                             />
                             <p className="text-xs text-(--base-06)">
-                                Free with every purchased node or route-only location, so a tenant
-                                holding two gets twice this. 0 includes none.
+                                Free with every purchased node, so a tenant holding two nodes gets
+                                twice this. Route-only locations bring none - there is no server of
+                                theirs here to back up. 0 includes none.
                             </p>
                         </div>
                         <div className="flex flex-col gap-[5px]">

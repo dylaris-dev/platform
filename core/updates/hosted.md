@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **Included backup storage now comes with your node, not with your route-only
+  location.** A route-only location carries traffic to a server you run
+  yourself, so it never had anything of yours to back up here. If you hold one
+  of each, the storage included with your subscription is what your node
+  includes rather than twice that. What you already have stored is untouched,
+  and what you can book on top is unchanged.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.3
 
 ### Features

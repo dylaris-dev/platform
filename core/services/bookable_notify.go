@@ -59,7 +59,7 @@ func NotifyBackupBookableChanged(st bookableNotifier, beforePerUnit, afterPerUni
 		if !b.BackupBillingEnabled {
 			continue
 		}
-		units := entitledUnits(b, time.Now())
+		units := backupUnits(b, time.Now())
 		if units == 0 {
 			continue
 		}
@@ -119,7 +119,7 @@ func NotifyTrafficPurchaseChanged(st bookableNotifier, scope, region, kind strin
 				continue
 			}
 		}
-		units := entitledUnits(b, time.Now())
+		units := backupUnits(b, time.Now())
 		if units == 0 {
 			continue
 		}
