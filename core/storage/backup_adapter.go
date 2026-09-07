@@ -118,11 +118,23 @@ func (a *CoreStorageBackupAdapter) DownloadURL(ctx context.Context, key string, 
 	return a.prov.DownloadURL(ctx, key, ttl)
 }
 
-// UploadURL is not supported. StorageProvider has no presigned-PUT seam at
-// all, so a BYON tenant node cannot upload directly to a core-storage backup
-// target: it goes through Core, or through the operator-node path. Both
-// existing callers already gate on Provider()=="s3" first, so returning an
-// error here is unreachable today and fails loudly if a future caller forgets.
-func (a *CoreStorageBackupAdapter) UploadURL(_ context.Context, _ string, _ time.Duration) (string, error) {
-	return "", backup.ErrUploadURLUnsupported
+// UploadURL passes straight through, the mirror of DownloadURL above: a
+// presigned PUT when the underlying storage is s3, ("", nil) when it is a path.
+//
+// It used to return ErrUploadURLUnsupported unconditionally, on the reasoning
+// that "both existing callers already gate on Provider()==s3 first, so this is
+// unreachable today". A third caller arrived and did not: services.PrepareNodeStorage
+// asks any INDIRECTION target (a saved storage connection, or core-storage) for
+// an upload URL, because resolving the indirection is the one thing a node
+// cannot do for itself. So the branch documented as unreachable was the only
+// branch every backup to a storage connection took, and each one failed with a
+// message about a backend that was in fact an R2 bucket.
+//
+// Known ceiling, unchanged by this: the node PUTs a presigned URL in one
+// request, so an archive over 5 GiB is refused (see presignedPutMaxSize in the
+// node). A backup row pointing DIRECTLY at s3 has no such limit because the
+// node uploads multipart with its own credentials. Lifting it needs presigned
+// multipart, not a bigger number.
+func (a *CoreStorageBackupAdapter) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	return a.prov.UploadURL(ctx, key, ttl)
 }

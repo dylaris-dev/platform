@@ -177,17 +177,32 @@ func TestCoreStorageBackupAdapter_DownloadURLPassesThrough(t *testing.T) {
 	}
 }
 
-func TestCoreStorageBackupAdapter_UploadURLIsUnsupported(t *testing.T) {
-	// Returning an error (not ("", nil)) is strictly safer: both existing
-	// callers already gate on Provider()=="s3", so this is unreachable today,
-	// and a future caller that forgets the gate fails loudly instead of
-	// silently receiving an empty URL.
-	a, _ := newAdapterOnTempDir(t)
-	url, err := a.UploadURL(context.Background(), "srv-1/a.tar.gz", time.Minute)
-	if !errors.Is(err, backup.ErrUploadURLUnsupported) {
-		t.Fatalf("UploadURL err = %v, want backup.ErrUploadURLUnsupported", err)
-	}
-	if url != "" {
-		t.Errorf("UploadURL = %q, want \"\"", url)
-	}
+// The whole point of this adapter is that it is a PASS-THROUGH, and UploadURL
+// used to be the one method that was not: it refused unconditionally, on the
+// documented assumption that every caller gated on Provider()=="s3" first.
+// services.PrepareNodeStorage does not - it asks any indirection target for an
+// upload URL, because resolving the indirection is exactly what a node cannot
+// do - so every backup to a saved storage connection failed, R2 included.
+func TestCoreStorageBackupAdapter_UploadURLPassesThrough(t *testing.T) {
+	t.Run("path backend has no address to PUT to", func(t *testing.T) {
+		a, _ := newAdapterOnTempDir(t)
+		url, err := a.UploadURL(context.Background(), "srv-1/a.tar.gz", time.Minute)
+		if err != nil {
+			t.Fatalf("UploadURL err = %v, want nil (the caller turns \"\" into the reason)", err)
+		}
+		if url != "" {
+			t.Errorf("UploadURL = %q, want \"\" for the path backend", url)
+		}
+	})
+
+	t.Run("s3 backend presigns, prefix included", func(t *testing.T) {
+		a := NewCoreStorageBackupAdapter(&S3Provider{os: newFakeObjectStore(), prefix: "server-backups"})
+		url, err := a.UploadURL(context.Background(), "backups/srv-1/a.tar.gz", time.Minute)
+		if err != nil {
+			t.Fatalf("UploadURL err = %v, want nil", err)
+		}
+		if url != "https://signed-put.example/server-backups/backups/srv-1/a.tar.gz" {
+			t.Errorf("UploadURL = %q, want the signed PUT for the prefixed key", url)
+		}
+	})
 }

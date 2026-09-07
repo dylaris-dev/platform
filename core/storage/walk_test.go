@@ -40,6 +40,10 @@ func (f *walkFakeProvider) DownloadURL(context.Context, string, time.Duration) (
 	return "", nil
 }
 
+func (f *walkFakeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 func TestWalkProvider_RecursesEveryLevel(t *testing.T) {
 	// A single ListFiles call returns ONE level only (true of both
 	// LocalProvider and S3Provider), so a non-recursive implementation

@@ -509,6 +509,15 @@ func (p *s3ResilientProvider) DownloadURL(ctx context.Context, key string, ttl t
 	})
 }
 
+// UploadURL is retried like DownloadURL and unlike WriteFile: presigning is a
+// local signature computation over the key, so a second attempt repeats no
+// side effect and consumes no reader.
+func (p *s3ResilientProvider) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	return s3Retry(p.res, ctx, func() (string, error) {
+		return p.inner.UploadURL(ctx, key, ttl)
+	})
+}
+
 // WriteFile waits for a reconnecting backend to come back BEFORE it starts, and
 // is then run exactly once. It is never retried, and that is a correctness
 // requirement rather than a tuning choice.

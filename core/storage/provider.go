@@ -47,6 +47,25 @@ type StorageProvider interface {
 	// Callers must treat an error as "cannot redirect" and fall through to
 	// streaming, never conflate it with "no URL available".
 	DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+	// UploadURL returns a short-lived pre-signed PUT URL when the backend
+	// supports it (S3), and ("", nil) when it does not - the same contract as
+	// DownloadURL, read the same way: no URL means "cannot hand this off",
+	// never "the request failed".
+	//
+	// It exists for one caller, services.PrepareNodeStorage. A backup target
+	// that names a storage connection is an INDIRECTION: only Core can resolve
+	// it, so a node is given a URL to the resolved object instead of the row.
+	// That design was already in place and this seam was not, so every backup
+	// to a saved connection failed with "presigned upload not supported for
+	// this backend" - on operator and tenant nodes alike.
+	//
+	// On the interface rather than an optional one a caller type-asserts for,
+	// because providers here are WRAPPED (S3ResilientProvider, gatedProvider,
+	// the concurrency limiter). An assertion would miss the s3 provider behind
+	// any of them and report "unsupported" for storage that presigns perfectly
+	// well - the same silent-wrapper failure this file's own history is full
+	// of. On the interface, the compiler asks every wrapper the question.
+	UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
 // ErrDeleteRoot is returned by DeletePath when the path addresses the scoped
@@ -341,6 +360,17 @@ func (p *LocalProvider) CopyToLocal(ctx context.Context, srcPath, destPath strin
 }
 
 func (p *LocalProvider) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
+// UploadURL has no meaning on a filesystem: there is no address a node could
+// PUT to. ("", nil) is the contract's "cannot hand this off", and the caller
+// turns that into a real reason - a backup target on a path-backed store is
+// only reachable by a node that shares the filesystem.
+func (p *LocalProvider) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

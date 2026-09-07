@@ -90,6 +90,10 @@ func (b *blockingInner) DownloadURL(context.Context, string, time.Duration) (str
 	return "", b.enter()
 }
 
+func (b *blockingInner) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 // recordingCloser proves a ReadCloser was closed, which for the abandoned path
 // is the difference between a returned fd and a leaked one.
 type recordingCloser struct {

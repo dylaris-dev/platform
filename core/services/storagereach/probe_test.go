@@ -79,6 +79,10 @@ func (p *probeFakeProvider) DownloadURL(ctx context.Context, key string, ttl tim
 	return "", nil
 }
 
+func (p *probeFakeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 var _ storage.StorageProvider = (*probeFakeProvider)(nil)
 
 // sharedRoot gives every Core in a test the SAME LocalProvider base path,

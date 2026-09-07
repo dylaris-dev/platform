@@ -55,6 +55,10 @@ func (f *serveFakeProvider) DownloadURL(context.Context, string, time.Duration) 
 	return f.presignURL, f.presignErr
 }
 
+func (f *serveFakeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 func (f *serveFakeProvider) Put(context.Context, string, []byte) error { return nil }
 func (f *serveFakeProvider) PutStream(context.Context, string, io.Reader, int64) error {
 	return nil

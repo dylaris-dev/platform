@@ -445,3 +445,13 @@ func (p *gatedProvider) DownloadURL(ctx context.Context, key string, ttl time.Du
 	}, nil)
 	return url, p.observe(err)
 }
+
+func (p *gatedProvider) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if err := p.blocked(); err != nil {
+		return "", err
+	}
+	url, err := doValue(p.gate, ctx, func() (string, error) {
+		return p.inner.UploadURL(ctx, key, ttl)
+	}, nil)
+	return url, p.observe(err)
+}

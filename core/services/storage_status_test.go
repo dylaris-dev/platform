@@ -56,6 +56,10 @@ func (f *failingS3Inner) DownloadURL(context.Context, string, time.Duration) (st
 	return "", f.err
 }
 
+func (f *failingS3Inner) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 // storageEvent is the published payload, decoded.
 type storageEvent struct {
 	Backend string  `json:"backend"`

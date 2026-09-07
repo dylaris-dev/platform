@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backups to a saved storage connection work again.** Every one of them failed
+  with "presigned upload not supported for this backend", including
+  S3-compatible targets like R2 that can presign perfectly well. Backup rows
+  pointing straight at S3, a shared path or node-local storage were never
+  affected. `core`
+- Settings, Backups is now called **Server Backups**, and says so: it covers the
+  archives of game servers, not the platform's own database. `panel`
+
 ## 2026.09.07.9
 
 ### Features

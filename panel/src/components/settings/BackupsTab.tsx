@@ -387,9 +387,9 @@ export default function BackupsTab() {
 
     return (
         <SettingsPage
-            title="Backups"
+            title="Server Backups"
             icon={Archive}
-            description="Choose how backup archives are stored, then configure per-instance credentials (S3 keys, NFS paths) below."
+            description="Where the archives of game servers are stored, and how much each user may keep. This page does not cover the platform's own database."
         >
             <StorageModeCard config={config} onChange={setConfig} form={modeForm} />
 

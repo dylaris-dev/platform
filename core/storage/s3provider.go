@@ -26,6 +26,7 @@ type objectStore interface {
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string) ([]backup.Object, error)
 	DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+	UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
 // S3Provider implements StorageProvider against an S3-compatible object store.
@@ -168,6 +169,15 @@ func (p *S3Provider) CreateDir(ctx context.Context, path string) error { return 
 
 func (p *S3Provider) DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	return p.os.DownloadURL(ctx, p.key(key), ttl)
+}
+
+// UploadURL presigns a PUT to the same namespaced key DownloadURL reads from,
+// so a node writes exactly where Core later lists, stats and deletes. p.key is
+// what makes that true: the prefix a storage connection carries lives only on
+// this side, and the URL is the one thing that can transport it - the node's
+// own s3 config has no prefix field at all.
+func (p *S3Provider) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	return p.os.UploadURL(ctx, p.key(key), ttl)
 }
 
 // ListFiles synthesizes one directory level from the flat key space: files are

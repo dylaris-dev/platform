@@ -60,6 +60,10 @@ func (p *memProvider) DownloadURL(context.Context, string, time.Duration) (strin
 	return "", nil
 }
 
+func (p *memProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 func TestBackupProvider_WriteListReadDelete(t *testing.T) {
 	p := newMemProvider()
 	if err := p.WriteFile(context.Background(), "tickets-20260718-101010.json", strings.NewReader(`{"ok":true}`)); err != nil {

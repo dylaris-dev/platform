@@ -69,7 +69,7 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     { page: 'core-storage', label: 'Core file storage', where: 'Storage', keywords: ['core storage', 's3', 'local', 'files', 'backend'] },
     { page: 'storage-connections', label: 'Storage connections', where: 'Storage', keywords: ['s3', 'r2', 'cloudflare', 'hetzner', 'bucket', 'endpoint', 'access key', 'minio', 'credentials'] },
     { page: 'storage-migration', label: 'Storage migration', where: 'Storage', keywords: ['migrate', 'move', 'copy', 'transfer', 'storage'] },
-    { page: 'backups', label: 'Backup storages and retention', where: 'Storage', keywords: ['backup', 'restore', 'retention', 'schedule', 's3'] },
+    { page: 'backups', label: 'Server backup storages and retention', where: 'Storage', keywords: ['backup', 'restore', 'retention', 'schedule', 's3', 'server backup'] },
     { page: 'backups', label: 'Backup allowance per user', where: 'Storage', keywords: ['backup', 'quota', 'allowance', 'limit', 'gb', 'storage per user'] },
 
     // Servers & content

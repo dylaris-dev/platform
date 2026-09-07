@@ -605,6 +605,10 @@ func (f *fakeProbeProvider) CopyToLocal(context.Context, string, string) error {
 func (f *fakeProbeProvider) DownloadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
 }
+
+func (f *fakeProbeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
 func (f *fakeProbeProvider) WriteFile(context.Context, string, io.Reader) error {
 	return f.writeErr
 }

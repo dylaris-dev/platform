@@ -113,6 +113,13 @@ func (f *fakeObjectStore) DownloadURL(_ context.Context, key string, _ time.Dura
 	return "https://signed.example/" + key, nil
 }
 
+func (f *fakeObjectStore) UploadURL(_ context.Context, key string, _ time.Duration) (string, error) {
+	if err := f.enter("UploadURL"); err != nil {
+		return "", err
+	}
+	return "https://signed-put.example/" + key, nil
+}
+
 func TestS3Provider_WriteGetDelete_AppliesPrefix(t *testing.T) {
 	fos := newFakeObjectStore()
 	p := &S3Provider{os: fos, prefix: "library"}
@@ -148,6 +155,22 @@ func TestS3Provider_DownloadURL_ReturnsSignedPrefixedKey(t *testing.T) {
 	}
 	if url != "https://signed.example/library/dir/a.txt" {
 		t.Errorf("DownloadURL = %q, want signed prefixed key", url)
+	}
+}
+
+// The PUT URL must carry the same prefix the read side applies. That prefix is
+// where a storage connection's own namespace lives, and the presigned URL is the
+// ONLY thing that can transport it: the node's s3 config has no prefix field, so
+// a URL signed for the bare key would have the node write next to the prefix
+// while Core lists, stats and prunes inside it.
+func TestS3Provider_UploadURL_ReturnsSignedPrefixedKey(t *testing.T) {
+	p := &S3Provider{os: newFakeObjectStore(), prefix: "server-backups"}
+	url, err := p.UploadURL(context.Background(), "backups/srv-1/a.tar.gz", time.Minute)
+	if err != nil {
+		t.Fatalf("UploadURL: %v", err)
+	}
+	if url != "https://signed-put.example/server-backups/backups/srv-1/a.tar.gz" {
+		t.Errorf("UploadURL = %q, want the signed PUT for the prefixed key", url)
 	}
 }
 

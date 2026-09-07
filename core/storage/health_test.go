@@ -422,8 +422,17 @@ func (f *fakeInner) DownloadURL(context.Context, string, time.Duration) (string,
 	return f.url, f.record("DownloadURL")
 }
 
-// allSevenCalls drives every StorageProvider method through p.
-func allSevenCalls(p StorageProvider) []struct {
+func (f *fakeInner) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return f.url, f.record("UploadURL")
+}
+
+// allProviderCalls drives every StorageProvider method through p.
+//
+// Named for the interface rather than a count, because the count is what went
+// stale: UploadURL joined StorageProvider and this sweep is what makes a new
+// method's wrapper behaviour a compile-and-test question rather than something
+// the next reader has to notice.
+func allProviderCalls(p StorageProvider) []struct {
 	name string
 	run  func() error
 } {
@@ -439,6 +448,7 @@ func allSevenCalls(p StorageProvider) []struct {
 		{"CopyToLocal", func() error { return p.CopyToLocal(ctx, "a", "b") }},
 		{"WriteFile", func() error { return p.WriteFile(ctx, "a", strings.NewReader("x")) }},
 		{"DownloadURL", func() error { _, err := p.DownloadURL(ctx, "a", time.Minute); return err }},
+		{"UploadURL", func() error { _, err := p.UploadURL(ctx, "a", time.Minute); return err }},
 	}
 }
 
@@ -448,7 +458,7 @@ func TestGatedProviderFailsFastWhenUnhealthy(t *testing.T) {
 	g.ReportFailure(syscall.EIO)
 	p := NewGatedProvider(inner, g)
 
-	for _, c := range allSevenCalls(p) {
+	for _, c := range allProviderCalls(p) {
 		t.Run(c.name, func(t *testing.T) {
 			err := c.run()
 			if !errors.Is(err, ErrBackendUnreachable) {
@@ -471,14 +481,18 @@ func TestGatedProviderPassesThroughWhenHealthy(t *testing.T) {
 	g := newGate(time.Hour, time.Hour, func(string) error { return nil })
 	p := NewGatedProvider(inner, g)
 
-	for _, c := range allSevenCalls(p) {
+	for _, c := range allProviderCalls(p) {
 		if err := c.run(); err != nil {
 			t.Fatalf("%s through a healthy gate: %v", c.name, err)
 		}
 	}
+	// Counted against the sweep rather than a literal, so adding a method to
+	// StorageProvider cannot leave a wrapper silently unforwarded: the sweep
+	// grows, this assertion grows with it, and a wrapper that dropped the new
+	// call fails here.
 	got := inner.recorded()
-	if len(got) != 7 {
-		t.Fatalf("inner recorded %v, want all seven methods to reach it", got)
+	if want := len(allProviderCalls(p)); len(got) != want {
+		t.Fatalf("inner recorded %v (%d), want all %d StorageProvider methods to reach it", got, len(got), want)
 	}
 
 	files, err := p.ListFiles(context.Background(), "")

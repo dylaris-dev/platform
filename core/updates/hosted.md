@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backups that failed to upload now go through.** If your server backups were
+  failing with a storage error, the target was reachable all along and the
+  upload was refused before it started. Nothing on your side to change, and no
+  archive was lost - the runs that failed simply never wrote one.
+
 ## 2026.09.07.8
 
 ### Features

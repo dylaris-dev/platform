@@ -42,6 +42,10 @@ func (p *probeFailProvider) DownloadURL(context.Context, string, time.Duration) 
 	return "", p.err
 }
 
+func (p *probeFailProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 // reconnectingS3 returns an S3Resilience already in the reconnecting state,
 // carrying an error that names a host so the leak tests have something to look
 // for.

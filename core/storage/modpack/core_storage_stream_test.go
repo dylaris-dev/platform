@@ -41,6 +41,10 @@ func (c *countingProvider) DownloadURL(context.Context, string, time.Duration) (
 	return "", nil
 }
 
+func (c *countingProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 // TestCoreStorageStreamAcquiresOneSlotOnly is a deadlock guard, not a
 // behaviour test.
 //

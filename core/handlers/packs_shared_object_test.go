@@ -63,6 +63,10 @@ func (p *recordingProvider) DownloadURL(context.Context, string, time.Duration) 
 	return "", errUnexpectedProviderCall
 }
 
+func (p *recordingProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", nil
+}
+
 // A content object is not owned by one modversion row. MigrateBuild's
 // copyUploadedContent creates a NEW row for the SAME storage key on purpose, so
 // that updating one build cannot rewrite the other's row. The delete used to be
