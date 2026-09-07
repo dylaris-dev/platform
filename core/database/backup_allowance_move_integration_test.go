@@ -14,7 +14,7 @@ import (
 // refusal. MEASURED in this deployment before the move - billing.r2_quota_gb
 // held "0" and every backup for an owner without an entitlement was refused.
 // Carrying that across would ship a bug forward as policy.
-func TestBackupAllowanceSettingMove(t *testing.T) {
+func TestIntegrationBackupAllowanceSettingMove(t *testing.T) {
 	db := freshSchemaDB(t) // skips unless DYLARIS_TEST_DB_HOST is set
 
 	const (

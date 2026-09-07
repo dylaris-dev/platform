@@ -11,7 +11,7 @@ import (
 // A selection is written as JSONB and read back on every run. Against a real
 // Postgres because the jsonb cast, the nullable storage reference and the
 // ownership join are all SQL - a fake would prove that the fake round-trips.
-func TestPlatformBackupJobRoundTrip(t *testing.T) {
+func TestIntegrationPlatformBackupJobRoundTrip(t *testing.T) {
 	db := freshSchemaDB(t)
 	st := store.NewPostgresStore(db)
 
@@ -85,7 +85,7 @@ func TestPlatformBackupJobRoundTrip(t *testing.T) {
 // BYON is decided by the NODE's owner, not the server's. Getting this backwards
 // would make "all BYON servers" mean "all servers of customers", which is a
 // different and much larger set on a hosted platform.
-func TestListBackupTargetServersReadsOwnershipFromTheNode(t *testing.T) {
+func TestIntegrationBackupTargetServersReadOwnershipFromTheNode(t *testing.T) {
 	db := freshSchemaDB(t)
 	st := store.NewPostgresStore(db)
 	f := newFixture(t, st)
@@ -144,7 +144,7 @@ func TestListBackupTargetServersReadsOwnershipFromTheNode(t *testing.T) {
 	}
 }
 
-func TestPlatformBackupRunRecordsWhatItSkipped(t *testing.T) {
+func TestIntegrationPlatformBackupRunRecordsWhatItSkipped(t *testing.T) {
 	db := freshSchemaDB(t)
 	st := store.NewPostgresStore(db)
 
@@ -198,7 +198,7 @@ func TestPlatformBackupRunRecordsWhatItSkipped(t *testing.T) {
 
 // Retention counts SUCCESSFUL runs only. Counting every row would delete a good
 // archive to make room for a failed one, which is exactly backwards.
-func TestPlatformBackupRetentionIgnoresFailedRuns(t *testing.T) {
+func TestIntegrationPlatformBackupRetentionIgnoresFailedRuns(t *testing.T) {
 	db := freshSchemaDB(t)
 	st := store.NewPostgresStore(db)
 
@@ -249,7 +249,7 @@ func TestPlatformBackupRetentionIgnoresFailedRuns(t *testing.T) {
 	}
 }
 
-func TestPlatformBackupJobDeleteTakesItsRuns(t *testing.T) {
+func TestIntegrationPlatformBackupJobDeleteTakesItsRuns(t *testing.T) {
 	db := freshSchemaDB(t)
 	st := store.NewPostgresStore(db)
 
@@ -277,7 +277,7 @@ func TestPlatformBackupJobDeleteTakesItsRuns(t *testing.T) {
 // An unreadable selection must select NOTHING. The other direction - reading a
 // broken configuration as "everything" - would archive the whole platform on
 // the strength of a parse failure.
-func TestAnUnreadableSelectionSelectsNothing(t *testing.T) {
+func TestIntegrationAnUnreadableSelectionSelectsNothing(t *testing.T) {
 	db := freshSchemaDB(t)
 	st := store.NewPostgresStore(db)
 

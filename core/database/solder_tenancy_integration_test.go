@@ -9,7 +9,7 @@ import (
 // to want "skyfactory" could not have it - and nothing said so beyond a
 // constraint violation. Uniqueness is per owner now, which is only sound because
 // the read path is addressed per account too.
-func TestSolderSlugsAreUniquePerOwnerNotGlobally(t *testing.T) {
+func TestIntegrationSolderSlugsAreUniquePerOwnerNotGlobally(t *testing.T) {
 	db := freshSchemaDB(t) // skips unless DYLARIS_TEST_DB_HOST is set
 
 	mkUser := func(t *testing.T, name string) string {
@@ -49,7 +49,7 @@ func TestSolderSlugsAreUniquePerOwnerNotGlobally(t *testing.T) {
 // A handle addresses an account, so two accounts must not share one - and the
 // empty handle is what every account starts with, so it cannot be the thing the
 // index collides on.
-func TestSolderHandleIsUniqueButEmptyIsNot(t *testing.T) {
+func TestIntegrationSolderHandleIsUniqueButEmptyIsNot(t *testing.T) {
 	db := freshSchemaDB(t)
 
 	mkUser := func(t *testing.T, handle string) error {

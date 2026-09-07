@@ -16,7 +16,7 @@ import (
 //
 // Against a real Postgres because the upsert, the history trim and the
 // install_id match are all SQL. Skipped without DYLARIS_TEST_DB_HOST.
-func TestTheReplacedVersionSurvivesTheUpsert(t *testing.T) {
+func TestIntegrationTheReplacedVersionSurvivesTheUpsert(t *testing.T) {
 	_, st := integrationDB(t)
 	f := newFixture(t, st)
 
@@ -62,7 +62,7 @@ func TestTheReplacedVersionSurvivesTheUpsert(t *testing.T) {
 
 // Three, and the OLDEST goes. Kept per project rather than per server, so a
 // second mod does not push the first one's history out.
-func TestHistoryKeepsThreePerProject(t *testing.T) {
+func TestIntegrationHistoryKeepsThreePerProject(t *testing.T) {
 	_, st := integrationDB(t)
 	f := newFixture(t, st)
 
@@ -114,7 +114,7 @@ func TestHistoryKeepsThreePerProject(t *testing.T) {
 // A node reporting about an attempt the row has moved past must not overwrite
 // the state of the one that replaced it. Two clicks in a row is all that takes,
 // and the losing report is the one that arrives late.
-func TestALateReportCannotOverwriteANewerAttempt(t *testing.T) {
+func TestIntegrationALateReportCannotOverwriteANewerAttempt(t *testing.T) {
 	_, st := integrationDB(t)
 	f := newFixture(t, st)
 
@@ -156,7 +156,7 @@ func TestALateReportCannotOverwriteANewerAttempt(t *testing.T) {
 }
 
 // Rows that predate the reporting must not read as pending forever.
-func TestRowsWrittenBeforeStatusExistedReadAsInstalled(t *testing.T) {
+func TestIntegrationRowsWrittenBeforeStatusExistedReadAsInstalled(t *testing.T) {
 	db, st := integrationDB(t)
 	f := newFixture(t, st)
 

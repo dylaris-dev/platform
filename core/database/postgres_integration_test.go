@@ -347,7 +347,7 @@ func TestIntegrationSparkProfileRoundTrip(t *testing.T) {
 	}
 }
 
-func TestGatewayBandwidthStatsTable(t *testing.T) {
+func TestIntegrationGatewayBandwidthStatsTable(t *testing.T) {
 	db := freshSchemaDB(t) // full schema on a scratch DB; skips without a test DB
 	if _, err := db.Exec(`INSERT INTO gateway_bandwidth_stats (time, component, id, host, region, rx_bps, tx_bps, cap_mbit)
 		VALUES (NOW(), 'warp', 'eu-1', 'web-eu-1', 'eu-central', 100, 200, 1000)`); err != nil {

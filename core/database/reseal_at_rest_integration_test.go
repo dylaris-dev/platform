@@ -24,7 +24,7 @@ const (
 //
 // On a scratch database rather than the shared one: this rewrites every row in
 // five tables, so it must not run over rows another test is holding.
-func TestResealAtRestMovesEveryBucket(t *testing.T) {
+func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	db := freshSchemaDB(t)
 
 	before := store.NewPostgresStore(db)
@@ -153,7 +153,7 @@ func TestResealAtRestMovesEveryBucket(t *testing.T) {
 // is - failing the whole run on it would make such an instance unable to ever
 // rotate again, and rewriting it would destroy the only ciphertext the lost
 // secret could still have opened.
-func TestResealAtRestLeavesUnreadableValuesUntouched(t *testing.T) {
+func TestIntegrationResealLeavesUnreadableValuesUntouched(t *testing.T) {
 	db := freshSchemaDB(t)
 
 	st := store.NewPostgresStore(db)
@@ -190,7 +190,7 @@ func TestResealAtRestLeavesUnreadableValuesUntouched(t *testing.T) {
 // plaintext. It reads correctly under any key, so a reseal must leave it alone
 // rather than helpfully encrypting it - that would change what a rollback to an
 // older Core can read.
-func TestResealAtRestIgnoresLegacyPlaintextSettings(t *testing.T) {
+func TestIntegrationResealIgnoresLegacyPlaintextSettings(t *testing.T) {
 	db := freshSchemaDB(t)
 
 	// No encryption key installed, which is exactly how a pre-encryption Core
@@ -222,7 +222,7 @@ func TestResealAtRestIgnoresLegacyPlaintextSettings(t *testing.T) {
 	}
 }
 
-func TestResealAtRestRefusesADegenerateRotation(t *testing.T) {
+func TestIntegrationResealRefusesADegenerateRotation(t *testing.T) {
 	db := freshSchemaDB(t)
 	st := store.NewPostgresStore(db)
 
