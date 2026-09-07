@@ -23,7 +23,7 @@ import UploadManagerWidget from '@/components/UploadManagerWidget';
 import BeamDownloadButton from '@/components/BeamDownloadButton';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MonitorSmartphone, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
 
@@ -264,6 +264,31 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 >
                                     <HardDrive size={20} className="mr-3" /> Backup storage
                                 </GuardedLink>
+                                {/* Solder. Both pages EXISTED and neither was reachable:
+                                    /account/solder-keys was linked from nowhere at all and
+                                    /account/solder-clients only from a sentence on one
+                                    modpack page, so the keys needed to link a Solder to the
+                                    Technic Platform could only be reached by typing the URL.
+                                    Gated on the feature flag like the store entry beside it,
+                                    rather than left unconditional like Backup storage: with
+                                    modpacks off the whole Solder subsystem is off, and the
+                                    panel does hold this flag. */}
+                                {featureFlags.modpacks && (
+                                    <>
+                                        <GuardedLink
+                                            href="/account/solder-keys"
+                                            className="dropdown-item"
+                                        >
+                                            <KeyRound size={20} className="mr-3" /> Solder Keys
+                                        </GuardedLink>
+                                        <GuardedLink
+                                            href="/account/solder-clients"
+                                            className="dropdown-item"
+                                        >
+                                            <MonitorSmartphone size={20} className="mr-3" /> Solder Clients
+                                        </GuardedLink>
+                                    </>
+                                )}
                                 {/* Connect-store entry only on the hosted build. */}
                                 {featureFlags.store && (
                                     <GuardedLink

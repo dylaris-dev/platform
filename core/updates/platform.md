@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Solder Keys and Solder Clients are now in the account menu.** Both pages
+  existed and neither was reachable: the keys page was linked from nowhere at
+  all, so the key that links a Solder to the Technic Platform could only be
+  found by typing the URL. `core` `panel`
+
 ## 2026.09.07.6
 
 ### Features

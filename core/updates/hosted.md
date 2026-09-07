@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Solder Keys and Solder Clients are now in the account menu**, under your
+  name at the top right. They were reachable only by typing the address.
+
 ## 2026.09.07.6
 
 ### Features
