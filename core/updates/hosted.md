@@ -11,6 +11,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Your own backup storage could refuse every upload with a checksum error.**
+  If you pointed backups at an S3-compatible bucket, some providers rejected the
+  write with a "BadDigest" message even though the credentials and the bucket
+  were right. Nothing on your side needs changing; try the storage test again.
+- **The folder you set on your own backup storage was ignored.** Archives went
+  to the top of the bucket instead, even though the panel showed the folder you
+  typed. New archives now go where you asked; anything already written stays at
+  the top of the bucket and is no longer listed.
+
 ## 2026.09.06.3
 
 ### Features

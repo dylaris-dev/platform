@@ -48,6 +48,11 @@ func NewS3(endpoint, region, bucket, accessKey, secretKey string) (*S3Provider, 
 		if endpoint != "" {
 			o.BaseEndpoint = aws.String(endpoint)
 		}
+		// Same reason as storage/backup/s3.go: the SDK's default request
+		// checksum is sent in an aws-chunked trailer for a body of unknown
+		// length, and backends that do not implement the trailer reject the
+		// upload with BadDigest / "Actual CRC32 was: 00000000".
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 
 	return &S3Provider{client: client, bucket: bucket}, nil

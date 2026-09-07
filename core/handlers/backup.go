@@ -976,7 +976,20 @@ func deref(s *string) string {
 	return *s
 }
 
-// strReader is a tiny helper used by TestStorage probe.
+// strReader is a tiny helper used by the TestStorage probe.
+//
+// Deliberately NOT strings.NewReader, and not to be "tidied" into one. This
+// returns a bare io.Reader: no Seek, no Len. That is what a real backup body
+// looks like - an archive streams out of an io.Pipe while it is still being
+// written - and it is what makes the probe exercise the same S3 request shape
+// a real upload takes.
+//
+// It has already earned that once. The core-storage probe next door DOES use
+// strings.NewReader, so it stayed green against Cloudflare R2 while every
+// backup write to the same bucket failed with BadDigest, because a seekable
+// body let the SDK put its checksum in a header instead of an aws-chunked
+// trailer. A probe that is easier on the backend than the real path is a probe
+// that reports success for a thing that does not work.
 func strReader(s string) io.Reader {
 	return &stringReader{s: s}
 }

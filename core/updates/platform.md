@@ -8,6 +8,34 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backups to S3-compatible storage failed with a checksum error.** The AWS SDK
+  now attaches a CRC32 to every upload, and for a body whose size is not known
+  in advance it sends that checksum in a trailer some providers do not
+  implement, which answered `BadDigest ... Actual CRC32 was: 00000000`. Seen on
+  Cloudflare R2. Backups and Core file storage share the client, so both are
+  fixed. `core`
+- The self-hosting guide described a separate `panel` container pulling
+  `platform-panel`. That image does not exist: Core builds the panel into its
+  own image and serves it on the API port. The guide now deploys four
+  containers, not five. `core`
+- **A backup target's prefix was collected, shown back, and then ignored.** An
+  account's own S3 backup storage wrote every archive to the bucket root while
+  the panel displayed it as `bucket/prefix`. If one of yours has a prefix set,
+  new archives now land under it - the ones already in the root stay where they
+  are and are no longer listed, so move them if you want them kept. `core`
+
 ## 2026.09.06.3
 
 ### Features
