@@ -177,3 +177,28 @@ func TestInstallFromBackupArchive_IgnoresAnUnparseableManifest(t *testing.T) {
 		t.Errorf("manifest = %q, want nil for unparseable content", manifest)
 	}
 }
+
+// The archive is a file the USER supplies, so it must be writable through every
+// upload path. It is not, if its name lands in the platform-reserved namespace:
+// isPlatformReservedName refuses every write beginning with ".dylaris", which is
+// what the first name for this file did - the Beam client could not upload it at
+// all while the HTTP path, checking the narrower isProtectedFile set, allowed it.
+//
+// Both guards are asked here rather than one, because it was their disagreement
+// that hid the problem.
+func TestImportArchiveNameIsWritable(t *testing.T) {
+	if isPlatformReservedName(backupImportArchiveName) {
+		t.Fatalf("%q is platform-reserved, so no client may upload it", backupImportArchiveName)
+	}
+	if isProtectedFile(backupImportArchiveName) {
+		t.Fatalf("%q is protected, so no client may upload it", backupImportArchiveName)
+	}
+	if reservedComponent("survival/"+backupImportArchiveName) != "" {
+		t.Fatalf("%q is reserved as a path component", backupImportArchiveName)
+	}
+	// It must still be a dotfile: it sits in the sub-server directory and a
+	// visible one would show up in the file browser of every imported server.
+	if backupImportArchiveName[0] != '.' {
+		t.Fatalf("%q is not hidden", backupImportArchiveName)
+	}
+}

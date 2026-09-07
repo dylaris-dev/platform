@@ -9,6 +9,7 @@ import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
 import UploadSection from './UploadSection';
+import BackupImportSection from './BackupImportSection';
 import ModpackPicker from './ModpackPicker';
 import PackPicker from './PackPicker';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
@@ -30,8 +31,8 @@ interface SetupNewWizardProps {
     onFlagsChange: (flags: string) => void;
     ramMB: number;
     // Install tab
-    installTab: 'online' | 'library' | 'upload' | 'modpack' | 'pack';
-    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'modpack' | 'pack') => void;
+    installTab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack';
+    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack') => void;
     modpackSelection?: import('@/views/setup/ModpackPicker').ModpackSelection | null;
     onModpackSelect?: (s: import('@/views/setup/ModpackPicker').ModpackSelection | null) => void;
     packSelection?: import('@/views/setup/PackPicker').PackSelection | null;
@@ -65,6 +66,8 @@ interface SetupNewWizardProps {
     onUploadStatusChange: (s: string) => void;
     serverId: number;
     onFileTooLarge?: (tooLarge: boolean) => void;
+    backupFile: File | null;
+    onBackupFileChange: (f: File | null) => void;
     // Gateway route (optional)
     gatewayRoute?: CreateRouteRequest;
     onGatewayRouteChange?: (next: CreateRouteRequest) => void;
@@ -207,6 +210,10 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'upload' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Upload / SFTP
                         </button>
+                        <button type="button" onClick={() => props.onInstallTabChange('backup')}
+                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'backup' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            Backup
+                        </button>
                         <button type="button" onClick={() => props.onInstallTabChange('modpack')}
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Modrinth modpacks
@@ -255,6 +262,16 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                         uploadStatus={props.uploadStatus}
                         onStatusChange={props.onUploadStatusChange}
                         serverId={props.serverId}
+                        onFileTooLarge={props.onFileTooLarge}
+                    />
+                )}
+
+                {props.installTab === 'backup' && (
+                    <BackupImportSection
+                        file={props.backupFile}
+                        onFileChange={props.onBackupFileChange}
+                        uploadProgress={props.uploadProgress}
+                        uploadStatus={props.uploadStatus}
                         onFileTooLarge={props.onFileTooLarge}
                     />
                 )}

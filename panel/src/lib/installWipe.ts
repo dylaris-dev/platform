@@ -37,8 +37,14 @@ export const WIPE_HINTS: Record<WipeToken, string> = {
 export type InstallChange = 'none' | 'runtime' | 'version' | 'modpack' | 'installer';
 
 export interface NextInstall {
-    /** The install tab in use: online | library | upload | modpack | pack. */
+    /** The install tab in use: online | library | upload | backup | modpack | pack. */
     tab: string;
+    /**
+     * An archive is selected on the backup tab. Unlike every other tab there is
+     * no version to compare, so this is the only signal that the operator is
+     * asking for a fresh import rather than saving unrelated settings.
+     */
+    backupFileSelected?: boolean;
     /** Server software on the online tab. */
     software?: string;
     mcVersion?: string;
@@ -54,6 +60,7 @@ const tabToInstaller = (tab: string, software?: string): string => {
     if (tab === 'pack') return 'pack';
     if (tab === 'library') return 'library';
     if (tab === 'upload') return 'upload';
+    if (tab === 'backup') return 'backup';
     return software || '';
 };
 
@@ -83,6 +90,12 @@ export function classifyInstallChange(prev: SubServerInstall | undefined, next: 
     if (next.tab === 'pack') {
         if (next.packBuildId && next.packBuildId !== prev.packBuildId) return 'modpack';
         return 'runtime';
+    }
+    if (next.tab === 'backup') {
+        // Re-importing over an existing sub-server replaces everything in it, so
+        // a selected archive is always a full install and always gets the wipe
+        // dialog. With no archive picked nothing about the install is changing.
+        return next.backupFileSelected ? 'installer' : 'runtime';
     }
     if (next.tab === 'library' || next.tab === 'upload') {
         // Both are "point at a file"; there is no version to compare, so a save

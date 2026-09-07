@@ -62,6 +62,32 @@ describe('classifyInstallChange', () => {
         // exactly what the operator needs.
         expect(classifyInstallChange(undefined, next())).toBe('installer');
     });
+    /**
+     * A backup import replaces everything in the sub-server, so it must reach the
+     * wipe dialog rather than being read as a settings save. There is no version
+     * to compare on this tab, which is exactly why the file selection has to
+     * carry the signal.
+     */
+    it('reads a selected archive as a full install', () => {
+        expect(classifyInstallChange(
+            installed({ installerType: 'backup' }),
+            next({ tab: 'backup', software: undefined, backupFileSelected: true }),
+        )).toBe('installer');
+    });
+
+    it('reads the backup tab with no archive as a runtime change', () => {
+        expect(classifyInstallChange(
+            installed({ installerType: 'backup' }),
+            next({ tab: 'backup', software: undefined }),
+        )).toBe('runtime');
+    });
+
+    it('reads switching from paper to a backup import as a full install', () => {
+        expect(classifyInstallChange(
+            installed(),
+            next({ tab: 'backup', software: undefined }),
+        )).toBe('installer');
+    });
 });
 
 describe('recommendedWipe', () => {

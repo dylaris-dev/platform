@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.14
+
+### Features
+- **Import a backup archive as a new sub-server.** Setup has a Backup tab: pick
+  a `.tar.gz` you downloaded from Dylaris and its files are restored into a
+  fresh sub-server. An archive written by 2026.09.07 or later also carries its
+  own description, so the loader, versions and mod list are set for you instead
+  of being retyped. `core` `node` `panel`
+- An archive from an older Dylaris, or from somewhere else, still imports its
+  files - you then set the start command and the loader yourself, which is what
+  an archive that describes nothing can honestly offer. `core` `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- An imported description can no longer name anything on the platform that
+  wrote it. The pack reference inside an archive is a row id in the source
+  installation's database, so it is dropped on import rather than pointed at
+  whatever holds that id here. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.13
 
 ### Features

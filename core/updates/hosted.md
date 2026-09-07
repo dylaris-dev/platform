@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.14
+
+### Features
+- **Import a backup into a server.** Under Setup, choose Backup and upload an
+  archive you downloaded from your backups. Archives made from 2026.09.07
+  onwards also bring back your loader, versions and mod list; older ones restore
+  the files and leave those to you. BYON: update your node before using this.
+  `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.11
 
 ### Features

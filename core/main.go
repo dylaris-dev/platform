@@ -763,6 +763,9 @@ func main() {
 	// backup runs use. Leader-gated for the same reason: Pub/Sub reaches every
 	// replica, and each one would apply the same report.
 	services.NewModInstallResultService(pgStore, redisClient, coreLeader).Start(bgCtx)
+	// What an installer FOUND, as opposed to what Core told it to do. Only a
+	// backup import reports anything; see services.SetupResultService.
+	services.NewSetupResultService(pgStore, redisClient, coreLeader).Start(bgCtx)
 
 	// Scheduled-tasks executor — per-server cron jobs (restart, say).
 	// Leader-gated, 30s tick. Publishes scheduled_tasks.changed via the SSE

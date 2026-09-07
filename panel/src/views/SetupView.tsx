@@ -58,7 +58,11 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [subNameError, setSubNameError] = useState('');
     const [javaImage, setJavaImage] = useState(JAVA_21);
     const [extraFlags, setExtraFlags] = useState('');
-    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'modpack' | 'pack'>('online');
+    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack'>('online');
+    // The backup archive to import. Separate from uploadFile: the two tabs mean
+    // different installers, and one field for both would carry a .zip into a
+    // backup import as easily as the other way round.
+    const [backupFile, setBackupFile] = useState<File | null>(null);
     // Selected Modrinth modpack (project + version + .mrpack URL).
     // Cleared on tab change or on submit.
     const [modpackSelection, setModpackSelection] = useState<import('@/views/setup/ModpackPicker').ModpackSelection | null>(null);
@@ -419,6 +423,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         if (wipePaths === undefined && formMode === 'edit') {
             const change = classifyInstallChange(installFor(sanitized), {
                 tab: installTab,
+                backupFileSelected: !!backupFile,
                 software,
                 mcVersion: selectedMajor,
                 buildVersion: selectedBuild,
@@ -484,6 +489,32 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             installer.buildId = packSelection.buildId;
             if (packSelection.loader) installer.loader = packSelection.loader;
             if (packSelection.mcVersion) installer.mcVersion = packSelection.mcVersion;
+        } else if (installTab === 'backup' && backupFile) {
+            installer.type = 'backup';
+            setUploadStatus('Uploading...');
+            try {
+                // The node looks for this exact name in the sub-server directory,
+                // the same way an upload-zip install finds ".upload.zip". It is a
+                // dotfile but NOT under the ".dylaris" prefix: that namespace is
+                // platform-reserved and every write to it is refused, which is
+                // what the first name for this file ran into.
+                const renamed = new File([backupFile], '.upload-backup.tar.gz', { type: 'application/gzip' });
+                const dt = new DataTransfer();
+                dt.items.add(renamed);
+                const uploadRes = await createBeamAdapter().uploadFiles(sanitized, dt.files, (p) => setUploadProgress(p), undefined, undefined, server.uuid);
+                if (!uploadRes.success) {
+                    setError(uploadRes.message || 'Upload failed');
+                    setSubmitting(false);
+                    setUploadStatus('');
+                    return;
+                }
+            } catch {
+                setError('Upload failed');
+                setSubmitting(false);
+                setUploadStatus('');
+                return;
+            }
+            setUploadStatus('Restoring...');
         } else if (installTab === 'upload' && uploadFile) {
             installer.type = 'upload-zip';
             installer.structure = uploadStructure;
@@ -697,6 +728,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         uploadProgress,
         uploadStatus,
         onUploadStatusChange: setUploadStatus,
+        backupFile,
+        onBackupFileChange: (f: File | null) => { setBackupFile(f); if (!f) { setUploadProgress(0); setUploadStatus(''); } },
         modpackSelection,
         onModpackSelect: setModpackSelection,
         packSelection,

@@ -26,7 +26,15 @@ import (
 // elsewhere: the upload path a panel and the Beam client already share writes
 // into the sub-server directory, and giving this its own destination would mean
 // a second upload route to secure.
-const backupImportArchiveName = ".dylaris-import.tar.gz"
+//
+// The name deliberately does NOT begin with ".dylaris". That prefix is the
+// platform-reserved namespace and isPlatformReservedName refuses every WRITE to
+// it, so the first name this had - ".dylaris-import.tar.gz" - could not be
+// uploaded through the Beam client at all, while the HTTP path (which checks
+// the narrower isProtectedFile set) allowed it. Reserved means "the user may
+// not write this"; an archive the user supplies is the opposite of that.
+// TestImportArchiveNameIsWritable holds the two together.
+const backupImportArchiveName = ".upload-backup.tar.gz"
 
 // maxImportManifestBytes bounds the description read out of an untrusted
 // archive. The manifest is a few kilobytes of JSON for a server with hundreds of

@@ -70,6 +70,28 @@ type BackupManifestMod struct {
 	SHA512              string `json:"sha512,omitempty"`
 }
 
+// ManifestModRows turns a manifest's portable mod descriptions into rows.
+//
+// One function rather than one per caller: a restore and an import write the
+// same rows for the same reason, and the fields a row must NOT get from an
+// archive - the server id, the installing user, the in-flight install id - are
+// the ones a second copy of this loop would eventually start setting.
+func ManifestModRows(mods []BackupManifestMod) []models.ServerMod {
+	rows := make([]models.ServerMod, 0, len(mods))
+	for _, mod := range mods {
+		rows = append(rows, models.ServerMod{
+			ModrinthProjectID:   mod.ModrinthProjectID,
+			ModrinthProjectSlug: mod.ModrinthProjectSlug,
+			ModrinthVersionID:   mod.ModrinthVersionID,
+			Title:               mod.Title,
+			FileName:            mod.FileName,
+			TargetDir:           mod.TargetDir,
+			SHA512:              mod.SHA512,
+		})
+	}
+	return rows
+}
+
 // backupManifestStore is the slice of the store the builder reads.
 type backupManifestStore interface {
 	GetSubServerInstall(serverID int, subServer string) (*models.SubServerInstall, error)

@@ -698,18 +698,7 @@ func (b *BackupScheduler) restoreMods(runID, serverID int) {
 		return
 	}
 	for _, entry := range m.Mods {
-		rows := make([]models.ServerMod, 0, len(entry.Mods))
-		for _, mod := range entry.Mods {
-			rows = append(rows, models.ServerMod{
-				ModrinthProjectID:   mod.ModrinthProjectID,
-				ModrinthProjectSlug: mod.ModrinthProjectSlug,
-				ModrinthVersionID:   mod.ModrinthVersionID,
-				Title:               mod.Title,
-				FileName:            mod.FileName,
-				TargetDir:           mod.TargetDir,
-				SHA512:              mod.SHA512,
-			})
-		}
+		rows := ManifestModRows(entry.Mods)
 		// serverID comes from the RESTORE, never from the archive: an archive can
 		// be restored onto a different server, and an id read out of it would
 		// rewrite whatever the backup was taken from. Same rule restoreInstalls
