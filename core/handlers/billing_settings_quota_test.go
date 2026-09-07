@@ -204,3 +204,46 @@ func billingSettingsBody(over map[string]string) []byte {
 	b, _ := json.Marshal(body)
 	return b
 }
+
+// The override modal renders "uses default" from this endpoint, so an unset
+// platform quota must reach it as unset.
+//
+// It used to default to "0" here - the same defect the settings GET above had
+// and had fixed - and the panel then labelled that "default (unlimited)". The
+// two errors cancelled on screen and agreed on nothing: what the guard
+// enforces for a tenant with no entitlement is a cap of NONE.
+func TestUserBillingDefaultsDoNotInventAQuotaOfZero(t *testing.T) {
+	for _, tt := range []struct {
+		name, stored, want string
+	}{
+		{name: "unset stays unset", stored: "", want: ""},
+		{name: "a real zero is reported as zero", stored: "0", want: "0"},
+		{name: "a number is passed through", stored: "250", want: "250"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := map[string]string{}
+			if tt.stored != "" {
+				kv[services.BillingR2QuotaKey] = tt.stored
+			}
+			st := &billingSettingsFakeStore{kv: kv}
+			h := &BillingHandler{state: &AppState{Store: st}}
+
+			rec := httptest.NewRecorder()
+			h.GetUserBilling(rec, httptest.NewRequest(http.MethodGet, "/api/admin/users/u1/billing", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET returned %d: %s", rec.Code, rec.Body.String())
+			}
+			var got struct {
+				Defaults struct {
+					R2QuotaGb string `json:"r2QuotaGb"`
+				} `json:"defaults"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got.Defaults.R2QuotaGb != tt.want {
+				t.Errorf("defaults.r2QuotaGb = %q, want %q", got.Defaults.R2QuotaGb, tt.want)
+			}
+		})
+	}
+}

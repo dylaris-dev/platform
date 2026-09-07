@@ -204,7 +204,9 @@ func (s *PostgresStore) SetUserBillingStatus(userID, status string, graceUntil, 
 // SetUserBillingOverrides upserts the per-user retention overrides, leaving the
 // status/timestamps untouched. An empty spec clears the override (NULL = default).
 // r2QuotaGB is a pointer so the caller can distinguish "use platform default"
-// (nil -> NULL) from an explicit 0 ("unlimited for this user").
+// (nil -> NULL) from an explicit 0, which is a real cap of NONE under the
+// platform limit convention. It read "unlimited for this user" here, which is
+// what the convention inverted.
 func (s *PostgresStore) SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string, r2QuotaGB *int64) error {
 	_, err := s.db.Exec(`
 		INSERT INTO user_billing (user_id, grace_period, r2_retention, node_retention, r2_quota_gb, updated_at)

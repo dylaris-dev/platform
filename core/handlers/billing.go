@@ -467,7 +467,12 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 			"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
 			"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
 			"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
-			"r2QuotaGb":     get(services.BillingR2QuotaKey, "0"),
+			// Raw, like the settings GET above and for the same reason: "" is
+			// "never saved" and means no cap, which is not a cap of 0. It used
+			// to default to "0" here too, which told the panel the platform
+			// hands out no backup storage at all - and the panel rendered that
+			// as "default (unlimited)", the exact opposite.
+			"r2QuotaGb": get(services.BillingR2QuotaKey, ""),
 		},
 	})
 }

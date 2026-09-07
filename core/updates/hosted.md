@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A refused backup now explains itself.** If your backup storage allowance is
+  used up, or set to nothing at all, the message says which of the two it is and
+  what to do about it. It used to read "0 / 0 GB used - delete old backups",
+  which was neither.
+
 ## 2026.09.07
 
 ### Features

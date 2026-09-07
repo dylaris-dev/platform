@@ -54,6 +54,29 @@ func validSubServer(w http.ResponseWriter, sub *string) bool {
 // match on the message, since both messages embed live figures.
 var errBackupQuotaReached = errors.New("backup quota reached")
 
+// backupQuotaRefusal renders one of the two quota refusals.
+//
+// A cap of ZERO is a different situation from a quota that filled up, and the
+// generic wording is unfollowable there: deleting old backups frees nothing
+// when the allowance is none. It is also a state an install reaches without
+// meaning to - the limit convention made 0 a real cap where it used to mean
+// unlimited - and the old message rendered it as "(0 / 0 GB used) - delete old
+// backups", which reads as a fault rather than as a setting somebody can
+// change. MEASURED in production: a stored platform quota of 0 refused every
+// backup for every tenant holding no entitlement, with that message.
+//
+// scope names whose budget it is (the R2 one is the tenant's, the node-local
+// one is this server's); raise says where the number lives.
+func backupQuotaRefusal(usedBytes, quotaBytes int64, scope, raise string) error {
+	const gb = 1024 * 1024 * 1024
+	if quotaBytes == 0 {
+		return fmt.Errorf("%w - the backup storage allowance%s is 0 GB, so no backup can be stored: %s",
+			errBackupQuotaReached, scope, raise)
+	}
+	return fmt.Errorf("%w (%.1f / %.1f GB used%s) - delete old backups or %s",
+		errBackupQuotaReached, float64(usedBytes)/gb, float64(quotaBytes)/gb, scope, raise)
+}
+
 type BackupHandler struct {
 	state *AppState
 }
@@ -903,15 +926,13 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// R2 backup quota: refuse a new backup once the tenant is at/over quota
 	// (0/unset = unlimited, so solo/hoster is unaffected).
 	if exceeded, used, quota := services.R2QuotaExceeded(h.state.Store, srv.OwnerID); exceeded {
-		return 0, fmt.Errorf("%w (%d / %d GB used) — delete old backups or raise the limit",
-			errBackupQuotaReached, used/(1024*1024*1024), quota/(1024*1024*1024))
+		return 0, backupQuotaRefusal(used, quota, "", "raise the limit")
 	}
 	// Per-server node-local cap. Separate budget from the R2 one above: that
 	// counts a tenant's object-storage bytes, this counts the .dylaris-backups/
 	// folder on the MC host, and only one of the two modes is ever active.
 	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.state.Store, h.state.GRPCRegistry, srv); exceeded {
-		return 0, fmt.Errorf("%w (%.1f / %.1f GB used on this server) — delete old backups or raise the per-server limit in Settings → Backups",
-			errBackupQuotaReached, float64(used)/(1024*1024*1024), float64(quota)/(1024*1024*1024))
+		return 0, backupQuotaRefusal(used, quota, " on this server", "raise the per-server limit in Settings, Backups")
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {

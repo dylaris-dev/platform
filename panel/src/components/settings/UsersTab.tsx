@@ -13,6 +13,7 @@ import {
     getUserBilling,
     setUserBillingStatus,
     setUserBillingOverrides,
+    LIMIT_UNLIMITED,
     type BillingStatus,
     type UserBillingAdmin,
 } from '@/lib/api/billing';
@@ -1450,12 +1451,20 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 <OverrideField label="Node connection retention" value={nr} onChange={setNr} placeholder={data.defaults.nodeRetention} valid={specOk(nr)} />
                                 <div className="flex items-center gap-3">
                                     <label className="input-label w-48 shrink-0">R2 quota (GB)</label>
+                                    {/* A platform default of '0' is a cap of NONE, not "off". The
+                                        placeholder called it "default (unlimited)", contradicting the
+                                        help text right below it - which is why a stored 0 sat unnoticed
+                                        while it refused every backup. */}
                                     <input
                                         type="number"
                                         min={0}
                                         value={quota}
                                         onChange={e => setQuota(e.target.value)}
-                                        placeholder={data.defaults.r2QuotaGb === '0' ? 'default (unlimited)' : `default (${data.defaults.r2QuotaGb})`}
+                                        placeholder={
+                                            data.defaults.r2QuotaGb === '' || data.defaults.r2QuotaGb === LIMIT_UNLIMITED
+                                                ? 'default (no limit)'
+                                                : `default (${data.defaults.r2QuotaGb} GB)`
+                                        }
                                         className={`input-field input-mono w-40 ${quotaOk ? '' : 'border-(--error)'}`}
                                     />
                                 </div>

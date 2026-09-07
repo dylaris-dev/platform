@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A backup storage limit of 0 GB refused every backup with an unfollowable
+  message.** The refusal read "0 / 0 GB used - delete old backups", which
+  neither names the cause nor can be acted on. It now says the allowance is
+  zero and where to change it, and usage below a gigabyte is no longer rounded
+  to 0. `core`
+- **The user override screen called a platform quota of 0 GB "unlimited".** The
+  API reported an unset platform limit as `0`, and the panel labelled that as no
+  cap - the opposite of what the platform enforces, which is a cap of NONE.
+  Check Settings, Billing if backups are being refused: a `0` stored there
+  before this caps every tenant who holds no entitlement. `core` `panel`
+
 ## 2026.09.07
 
 ### Features
