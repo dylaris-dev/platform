@@ -1295,11 +1295,17 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		installerCfg.JavaImage = cmd.Config.Docker.Image
 		installerCfg.ServerUUID = cmd.Config.UUID
 
-		if err := InstallServer(serverPath, subName, installerCfg); err != nil {
+		manifest, err := InstallServer(serverPath, subName, installerCfg)
+		if err != nil {
 			log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			return
 		}
+		// What the archive said it was, when the install was an import of one.
+		// Reported BEFORE the container is recreated, because Core turns it into
+		// the sub-server's loader, versions and mod rows - and the start command
+		// built below is derived from files this describes.
+		reportSetup(ctx, rdb, cmd.Config.UUID, subName, manifest)
 
 		// Always write eula.txt automatically.
 		//
@@ -1728,7 +1734,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		installerCfg.JavaImage = cmd.Config.Docker.Image
 		installerCfg.ServerUUID = cmd.Config.UUID
 
-		if err := InstallServer(serverPath, subName, installerCfg); err != nil {
+		if _, err := InstallServer(serverPath, subName, installerCfg); err != nil {
 			log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			return

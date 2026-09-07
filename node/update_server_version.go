@@ -180,7 +180,7 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	installerCfg := cmd.Installer
 	installerCfg.JavaImage = cmd.Config.Docker.Image
 	installerCfg.ServerUUID = pl.UUID
-	if err := InstallServer(serverPath, subName, installerCfg); err != nil {
+	if _, err := InstallServer(serverPath, subName, installerCfg); err != nil {
 		log.Printf("update_server_version: install failed for %s/%s: %v", pl.UUID, subName, err)
 		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 		return

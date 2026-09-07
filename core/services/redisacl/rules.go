@@ -240,7 +240,12 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 		"&"+queue.BackupRestoresChannel(token),
 		// Mod-install results, same per-token scoping and for the same reason:
 		// the report names a server and a project, and Core acts on it.
-		"&"+queue.ModResultsChannel(token))
+		"&"+queue.ModResultsChannel(token),
+		// Setup results. A backup import reports what the archive said it was,
+		// and Core writes that into the sub-server's install record and mod
+		// rows - so a fleet-wide name would let one node restate another
+		// server's contents.
+		"&"+queue.SetupResultsChannel(token))
 	for _, u := range serverUUIDs {
 		rules = append(rules, "&dylaris:server:"+u+":stats:live")
 	}

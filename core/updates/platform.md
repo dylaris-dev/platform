@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.12
+
+### Features
+- Groundwork for importing a backup archive into a new sub-server: the node can
+  now unpack one and read the description it carries. Nothing offers it yet -
+  the panel side follows - but the node has to understand it first, so deploy
+  this node before the release that does. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.11
 
 ### Features

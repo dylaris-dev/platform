@@ -27,7 +27,7 @@ func SetDockerManager(dm *DockerManager) {
 }
 
 type InstallerConfig struct {
-	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import", "modpack"
+	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import", "backup", "modpack"
 	Version   string `json:"version"`   // MC version, e.g. "1.21.1"
 	Loader    string `json:"loader"`    // Optional loader/build version (Fabric loader, Forge build, NeoForge version)
 	URL       string `json:"url"`       // Direct download URL (for "import" / library fallback / modpack .mrpack)
@@ -86,10 +86,16 @@ func CleanServerJars(subServerDir string) error {
 
 // InstallServer installs the server software into <serverDataPath>/<subServerName>/.
 // For "upload" type, files are already in place via HTTP upload — nothing to do.
-func InstallServer(serverDataPath, subServerName string, config InstallerConfig) error {
+//
+// manifest is what the install turned out to DESCRIBE, and only the "backup"
+// type ever produces one: a Dylaris backup archive carries its own description
+// and Core has no copy of it, so the reader that unpacks the archive is the only
+// place it can be read. Every other installer is something Core already
+// described - Core picked the loader, so Core knows the loader - and returns nil.
+func InstallServer(serverDataPath, subServerName string, config InstallerConfig) (manifest []byte, err error) {
 	destDir := filepath.Join(serverDataPath, subServerName)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("failed to create server dir: %v", err)
+		return nil, fmt.Errorf("failed to create server dir: %v", err)
 	}
 
 	log.Printf("Starting Installation: %s (%s) -> %s", config.Type, config.Version, destDir)
@@ -98,37 +104,42 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 	// installer had just written - and on a failed install the operator would be
 	// left with neither the old server nor the new one.
 	if err := WipeBeforeInstall(destDir, config.WipePaths); err != nil {
-		return fmt.Errorf("preparing the directory failed: %w", err)
+		return nil, fmt.Errorf("preparing the directory failed: %w", err)
 	}
 
 	switch config.Type {
 	case "paper":
-		return installPaper(destDir, config.Version)
+		return nil, installPaper(destDir, config.Version)
 	case "vanilla":
-		return installVanilla(destDir, config.Version)
+		return nil, installVanilla(destDir, config.Version)
 	case "fabric":
-		return installFabric(destDir, config.Version, config.Loader)
+		return nil, installFabric(destDir, config.Version, config.Loader)
 	case "forge":
-		return installForge(destDir, config.Version, config.Loader, config.JavaImage, config.ServerUUID)
+		return nil, installForge(destDir, config.Version, config.Loader, config.JavaImage, config.ServerUUID)
 	case "neoforge":
-		return installNeoForge(destDir, config.Loader, config.JavaImage, config.ServerUUID)
+		return nil, installNeoForge(destDir, config.Loader, config.JavaImage, config.ServerUUID)
 	case "library":
-		return installFromLibrary(destDir, config.Path, config.URL)
+		return nil, installFromLibrary(destDir, config.Path, config.URL)
 	case "import":
 		if config.URL == "" {
-			return fmt.Errorf("import type requires a URL")
+			return nil, fmt.Errorf("import type requires a URL")
 		}
-		return installFromURL(destDir, config.URL)
+		return nil, installFromURL(destDir, config.URL)
 	case "upload":
 		// Files pre-uploaded via HTTP to the sub-server directory — nothing to do here.
 		log.Printf("Upload type: files already in %s, skipping installer", destDir)
-		return nil
+		return nil, nil
 	case "upload-zip":
-		return installFromUploadZip(destDir, config.Structure)
+		return nil, installFromUploadZip(destDir, config.Structure)
+	case "backup":
+		// A Dylaris backup archive, uploaded into the sub-server directory the
+		// same way an upload-zip install finds its zip there. The only installer
+		// that reports something back: the archive describes itself.
+		return installFromBackupArchive(destDir)
 	case "modpack":
-		return installModpack(destDir, config)
+		return nil, installModpack(destDir, config)
 	default:
-		return fmt.Errorf("unknown installer type: %s", config.Type)
+		return nil, fmt.Errorf("unknown installer type: %s", config.Type)
 	}
 }
 
