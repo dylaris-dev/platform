@@ -147,6 +147,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := createBackupTables(db); err != nil {
 		return err
 	}
+	if err := createPlatformBackupTables(db); err != nil {
+		return err
+	}
 	if err := createTicketTables(db); err != nil {
 		return err
 	}

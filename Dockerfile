@@ -130,6 +130,23 @@ ENV SERVICE=$SERVICE
 # mkdir the data mount point BEFORE chown so a fresh named volume mounted here
 # inherits uid-1000 ownership (Docker seeds a new volume's ownership from the
 # image dir). Without this, non-root Core (RUN_AS=dylaris) cannot write the volume.
+# pg_dump / pg_restore for platform backups, Core only. Node never touches a
+# database and would carry 16 MB for nothing.
+#
+# TWO clients, and each one is load-bearing in a different direction. The
+# constraint is asymmetric and was MEASURED, not assumed:
+#
+#   pg_dump    refuses a server NEWER than itself.
+#   pg_restore emits SQL the target must understand, so a client newer than the
+#              target fails - 17 and 18 write "SET transaction_timeout = 0",
+#              which PostgreSQL 15 does not know, and the restore stops there.
+#
+# One client therefore cannot serve both a PG15 platform database and a
+# self-hoster on PG18. services.PGClientFor picks the smallest installed client
+# that is at least as new as the server; they live in versioned directories and
+# do not collide.
+RUN if [ "$SERVICE" = "core" ]; then apk add --no-cache postgresql16-client postgresql18-client; fi
+
 RUN adduser -D -u 1000 dylaris && mkdir -p /app/dylaris_data && chown -R dylaris:dylaris /app
 USER ${RUN_AS}
 

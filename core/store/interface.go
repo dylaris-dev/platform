@@ -679,6 +679,38 @@ type Store interface {
 	// the node writes into the archive.
 	SetBackupRunManifest(runID int, manifest string) error
 
+	// --- Platform backups ---
+	// The platform's OWN backups, as opposed to a game server's: a selection of
+	// components (database, library, modpacks, servers) sealed under the
+	// operator's backup passphrase. Separate tables from backup_jobs because a
+	// platform job is keyed on nothing, runs in Core rather than on a node, and
+	// is bounded by no tenant's quota.
+	ListBackupTargetServers() ([]models.BackupTargetServer, error)
+	CreatePlatformBackupJob(j *models.PlatformBackupJob) (int, error)
+	GetPlatformBackupJob(id int) (*models.PlatformBackupJob, error)
+	ListPlatformBackupJobs() ([]models.PlatformBackupJob, error)
+	ListDuePlatformBackupJobs() ([]models.PlatformBackupJob, error)
+	UpdatePlatformBackupJob(j *models.PlatformBackupJob) error
+	DeletePlatformBackupJob(id int) error
+	SetPlatformBackupJobSchedule(id int, next *time.Time) error
+	CreatePlatformBackupRun(jobID int, storageID *int) (int, error)
+	FinishPlatformBackupRun(id int, status string, sizeBytes int64,
+		storageKey, errMessage string, components []models.PlatformBackupComponent) error
+	GetPlatformBackupRun(id int) (*models.PlatformBackupRun, error)
+	ListPlatformBackupRuns(jobID, limit int) ([]models.PlatformBackupRun, error)
+	// ListPlatformBackupRunsOverRetention returns the SUCCESSFUL runs beyond
+	// the newest keep. Successful only: a failed run's archive is partial or
+	// absent, so counting every row would delete a good archive to make room
+	// for a broken one.
+	ListPlatformBackupRunsOverRetention(jobID, keep int) ([]models.PlatformBackupRun, error)
+	DeletePlatformBackupRun(id int) error
+
+	// ResealAtRest moves every at-rest value from a key derived off one secret
+	// to one derived off another, in a single transaction. It is what a
+	// CLUSTER_SECRET rotation needs and what a bundle restored onto a different
+	// instance needs, and it is the same operation either way.
+	ResealAtRest(fromSecret, toSecret string) (*ResealReport, error)
+
 	// --- Sub-server installs ---
 	// How each sub-server was installed, per (server, sub-server): installer,
 	// versions, and the exact modpack or pack it came from. Written on every

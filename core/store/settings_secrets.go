@@ -22,6 +22,18 @@ var settingsSecretKeys = map[string]bool{
 	// a DB dump can send mail as the operator's domain, and that domain is where
 	// the password-reset links come from.
 	"resend.api_key": true,
+	// The platform backup passphrase. It has to be STORED rather than only
+	// verified, because a scheduled bundle is written at 04:00 with nobody
+	// there to type it - a verifier is enough for a restore, which a human
+	// starts, and not for a write. Storing it here rather than under its own
+	// purpose is what puts it inside ResealAtRest for free, so a CLUSTER_SECRET
+	// rotation does not silently stop automatic bundles.
+	//
+	// This costs nothing the passphrase was buying. It exists so a DOWNLOADED
+	// bundle is independent of the secret that wrote it; it was never meant to
+	// defend against somebody who already holds this database AND this cluster
+	// secret, who owns the platform either way.
+	"platform_backup.passphrase": true,
 	// Password for a dedicated metadata-cache Redis. It is only a cache, but the
 	// credential is still a credential: whoever reads a DB dump would otherwise
 	// hold a working login to an endpoint on the operator's network.
