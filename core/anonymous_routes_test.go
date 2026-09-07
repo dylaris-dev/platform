@@ -50,17 +50,19 @@ var anonymousUnlimitedRoutes = map[string]string{
 	// and sits outside all middleware on purpose. These four are metadata
 	// queries; the sibling that serves the actual files, /solder/mirror/, is
 	// the one that carries a limiter.
-	"/api":                        "solder: API banner, the no-slash spelling",
-	"/api/":                       "solder: API banner",
-	"/api/modpack":                "solder: published pack list",
-	"/api/modpack/{slug}":         "solder: pack metadata",
-	"/api/modpack/{slug}/{build}": "solder: build metadata",
+	"/api":                                   "solder: the retired shared root, explaining where it moved",
+	"/api/":                                  "solder: the retired shared root, explaining where it moved",
+	"/u/{handle}/api":                        "solder: API banner, the no-slash spelling",
+	"/u/{handle}/api/":                       "solder: API banner",
+	"/u/{handle}/api/modpack":                "solder: published pack list",
+	"/u/{handle}/api/modpack/{slug}":         "solder: pack metadata",
+	"/u/{handle}/api/modpack/{slug}/{build}": "solder: build metadata",
 
 	// A limiter here would be WRONG, not missing. The key is 256 bits of
 	// crypto/rand, so there is nothing to brute-force, and an IP bucket would
 	// lock out Technic launchers that share one NAT address. /solder/mirror/ is
 	// limited because it serves bytes, not because it checks a secret.
-	"/api/verify/{key}": "solder: API key check",
+	"/u/{handle}/api/verify/{key}": "solder: API key check",
 }
 
 var handleFuncRe = regexp.MustCompile(`HandleFunc\("([^"]*)"`)
@@ -198,7 +200,7 @@ func TestAnonymousUnlimitedRouteSurfaceIsFrozen(t *testing.T) {
 // which no handler test can see.
 func TestSolderAPIRootAnswersBothSpellings(t *testing.T) {
 	found := anonymousUnlimited(t)
-	for _, path := range []string{"/api", "/api/"} {
+	for _, path := range []string{"/u/{handle}/api", "/u/{handle}/api/"} {
 		if !found[path] {
 			t.Errorf("the solder API root %q is not registered; a Technic Platform "+
 				"entry using that spelling gets the panel's HTML instead of JSON", path)

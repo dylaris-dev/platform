@@ -74,3 +74,23 @@ export async function deleteKey(id: number): Promise<{ success: boolean }> {
   const res = await fetch(`${API_URL}/solder/keys/${id}`, { method: "DELETE", headers: getAuthHeader() });
   return { success: res.ok };
 }
+
+// The account's own Solder address. url is the exact string to paste into the
+// Technic Platform, rendered by Core from core_public_url so it cannot drift
+// from the address launchers are actually given; empty when that setting is
+// unset or no handle has been claimed.
+export async function getSolderHandle(): Promise<{ handle: string; url: string }> {
+  const res = await fetch(`${API_URL}/solder/handle`, { headers: getAuthHeader() });
+  const data = await res.json().catch(() => ({}));
+  return { handle: data.handle || '', url: data.url || '' };
+}
+
+export async function setSolderHandle(handle: string): Promise<{ success: boolean; handle?: string; url?: string; message?: string }> {
+  const res = await fetch(`${API_URL}/solder/handle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getAuthHeader() },
+    body: JSON.stringify({ handle }),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { success: res.ok, handle: data.handle, url: data.url, message: data.message };
+}

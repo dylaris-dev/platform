@@ -49,9 +49,16 @@ func (f *solderKeyCreateStore) CreateSolderKey(name, ownerID, keyHash string) (*
 
 func (f *solderKeyCreateStore) GetSolderKeyByHash(h string) (*store.SolderKey, error) {
 	if f.hashes[h] {
-		return &store.SolderKey{ID: 1, Name: "technic"}, nil
+		return &store.SolderKey{ID: 1, Name: "technic", OwnerID: solderTestOwner}, nil
 	}
 	return nil, nil
+}
+
+func (f *solderKeyCreateStore) GetUserIDBySolderHandle(handle string) (string, error) {
+	if handle == solderTestHandle {
+		return solderTestOwner, nil
+	}
+	return "", nil
 }
 
 func newSolderKeyHandler(st *solderKeyCreateStore) *SolderHandler {
@@ -173,9 +180,17 @@ func TestCreateSolderKeyRejectsADuplicate(t *testing.T) {
 	}
 }
 
-// keyRequest builds the verify request the Technic Platform makes.
+const (
+	solderTestOwner  = "aaaaaaaa-1111-4111-8111-111111111111"
+	solderTestHandle = "bartis"
+)
+
+// keyRequest builds the verify request the Technic Platform makes, against the
+// account's own Solder address.
 func keyRequest(key string) *http.Request {
-	return mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/solder/api/verify/"+key, nil), map[string]string{"key": key})
+	return mux.SetURLVars(
+		httptest.NewRequest(http.MethodGet, "/solder/u/"+solderTestHandle+"/api/verify/"+key, nil),
+		map[string]string{"handle": solderTestHandle, "key": key})
 }
 
 func repeat(s string, n int) string {

@@ -448,8 +448,9 @@ var requiredCaps = map[string]string{
 	"/api/solder/clients/{id:[0-9]+}":                                                               "modpack.delete",
 	"/api/packs/{id:[0-9]+}/clients":                                                                "modpack.read",
 	"/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}":                                              "modpack.write",
-	"/api/solder/keys":             "modpack.read",
-	"/api/solder/keys/{id:[0-9]+}": "modpack.delete",
+	"/api/solder/handle":                                                                            "modpack.read",
+	"/api/solder/keys":                                                                              "modpack.read",
+	"/api/solder/keys/{id:[0-9]+}":                                                                  "modpack.delete",
 
 	// Phase 4 Task 20: /library/* CONTENT. INSPECTED and found to be a single
 	// platform-shared file catalog (buildProvider has no per-owner scoping;
@@ -624,20 +625,30 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// published packs at all times. The modpacks feature is gated IN-HANDLER
 	// (Solder-shaped {"error":...} JSON), not by the 503 feature middleware.
 	solder := r.PathPrefix("/solder").Subrouter()
+	// Addressed per ACCOUNT. One shared /solder/api served every tenant, which
+	// forced pack slugs to be unique across customers and listed everyone's
+	// public packs together; see database.applySolderTenancySchema.
+	//
 	// Both spellings of the API root, answering identically rather than
 	// redirecting. This is the URL an operator types into the Technic Platform,
-	// and mux matched only the trailing-slash form - so "/solder/api" fell
-	// through to the panel's HTML catch-all and Technic saw a web page where it
-	// expected {"api":"TechnicSolder"}, reporting an invalid Solder URL for a
-	// Solder that was working. Upstream TechnicSolder answers both. A 301 would
-	// also work for a client that follows redirects, which is not something to
-	// assume about somebody else's HTTP client.
-	solder.HandleFunc("/api", solderHandler.Info).Methods("GET")
-	solder.HandleFunc("/api/", solderHandler.Info).Methods("GET")
-	solder.HandleFunc("/api/modpack", solderHandler.ListModpacks).Methods("GET")
-	solder.HandleFunc("/api/modpack/{slug}", solderHandler.GetModpack).Methods("GET")
-	solder.HandleFunc("/api/modpack/{slug}/{build}", solderHandler.GetBuild).Methods("GET")
-	solder.HandleFunc("/api/verify/{key}", solderHandler.VerifyKey).Methods("GET")
+	// and mux matched only the trailing-slash form once - so it fell through to
+	// the panel's HTML catch-all and Technic reported an invalid Solder URL for
+	// a Solder that was working. Upstream TechnicSolder answers both. A 301
+	// would also work for a client that follows redirects, which is not
+	// something to assume about somebody else's HTTP client.
+	solder.HandleFunc("/u/{handle}/api", solderHandler.Info).Methods("GET")
+	solder.HandleFunc("/u/{handle}/api/", solderHandler.Info).Methods("GET")
+	solder.HandleFunc("/u/{handle}/api/modpack", solderHandler.ListModpacks).Methods("GET")
+	solder.HandleFunc("/u/{handle}/api/modpack/{slug}", solderHandler.GetModpack).Methods("GET")
+	solder.HandleFunc("/u/{handle}/api/modpack/{slug}/{build}", solderHandler.GetBuild).Methods("GET")
+	solder.HandleFunc("/u/{handle}/api/verify/{key}", solderHandler.VerifyKey).Methods("GET")
+	// The retired shared root, answering in the Solder shape so the operator who
+	// typed the old URL reads a sentence instead of a web page. Only the ROOT:
+	// that is the URL a person enters into the Technic Platform and the one it
+	// probes, and a launcher holding a deeper old path cannot exist - the shared
+	// URL never served a published pack.
+	solder.HandleFunc("/api", solderHandler.LegacyAPI).Methods("GET")
+	solder.HandleFunc("/api/", solderHandler.LegacyAPI).Methods("GET")
 	// The mirror is the one route here that serves BYTES rather than JSON and
 	// it is unauthenticated, so it gets the same kind of per-IP limiter its
 	// sibling /api/share already had. Its own instance, not a shared one: a
@@ -927,6 +938,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.AddPackClient))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.RemovePackClient))))).Methods("DELETE")
 
+	// The account's own Solder address. Same gates as the keys beside it: the
+	// address and the key are the two halves of one setup, and a caller who may
+	// not hold a key has nothing to address.
+	api.HandleFunc("/solder/handle", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.GetHandle))))).Methods("GET")
+	api.HandleFunc("/solder/handle", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.SetHandle))))).Methods("POST")
 	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListKeys))))).Methods("GET")
 	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateKey))))).Methods("POST")
 	api.HandleFunc("/solder/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteKey))))).Methods("DELETE")

@@ -4223,6 +4223,26 @@
     },
     {
       "method": "GET",
+      "path": "/api/solder/handle",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the caller's Solder address, or the empty string when they have not claimed one.",
+      "handler": "SolderHandler.GetHandle",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/solder/handle",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "claims the caller's Solder address, once.",
+      "handler": "SolderHandler.SetHandle",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/solder/keys",
       "auth": "session",
       "authorization": "modpack.read",
@@ -4256,8 +4276,8 @@
       "path": "/solder/api",
       "auth": "none",
       "authorization": "public",
-      "description": "the root probe.",
-      "handler": "SolderHandler.Info",
+      "description": "answers every path under the RETIRED shared /solder/api prefix.",
+      "handler": "SolderHandler.LegacyAPI",
       "group": "solder",
       "external": false
     },
@@ -4266,48 +4286,8 @@
       "path": "/solder/api/",
       "auth": "none",
       "authorization": "public",
-      "description": "the root probe.",
-      "handler": "SolderHandler.Info",
-      "group": "solder",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/solder/api/modpack",
-      "auth": "none",
-      "authorization": "public",
-      "description": "Default: {modpacks:{slug:displayName}, mirror_url}.",
-      "handler": "SolderHandler.ListModpacks",
-      "group": "solder",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/solder/api/modpack/{slug}",
-      "auth": "none",
-      "authorization": "public",
-      "description": "404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth.",
-      "handler": "SolderHandler.GetModpack",
-      "group": "solder",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/solder/api/modpack/{slug}/{build}",
-      "auth": "none",
-      "authorization": "public",
-      "description": "the differential-update payload.",
-      "handler": "SolderHandler.GetBuild",
-      "group": "solder",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/solder/api/verify/{key}",
-      "auth": "none",
-      "authorization": "public",
-      "description": "Validates a Solder API key by hash lookup.",
-      "handler": "SolderHandler.VerifyKey",
+      "description": "answers every path under the RETIRED shared /solder/api prefix.",
+      "handler": "SolderHandler.LegacyAPI",
       "group": "solder",
       "external": false
     },
@@ -4318,6 +4298,66 @@
       "authorization": "public",
       "description": "streams a stored public artifact (a Solder mod zip, a loader zip, or a rendered pack .mrpack).",
       "handler": "SolderHandler.SolderMirror",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/u/{handle}/api",
+      "auth": "none",
+      "authorization": "public",
+      "description": "the root probe.",
+      "handler": "SolderHandler.Info",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/u/{handle}/api/",
+      "auth": "none",
+      "authorization": "public",
+      "description": "the root probe.",
+      "handler": "SolderHandler.Info",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/u/{handle}/api/modpack",
+      "auth": "none",
+      "authorization": "public",
+      "description": "Default: {modpacks:{slug:displayName}, mirror_url}.",
+      "handler": "SolderHandler.ListModpacks",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/u/{handle}/api/modpack/{slug}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth.",
+      "handler": "SolderHandler.GetModpack",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/u/{handle}/api/modpack/{slug}/{build}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "the differential-update payload.",
+      "handler": "SolderHandler.GetBuild",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/solder/u/{handle}/api/verify/{key}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "Validates a Solder API key by hash lookup.",
+      "handler": "SolderHandler.VerifyKey",
       "group": "solder",
       "external": false
     },
@@ -5033,10 +5073,10 @@
     }
   ],
   "counts": {
-    "total": 504,
+    "total": 508,
     "byAuth": {
-      "none": 36,
-      "session": 455,
+      "none": 38,
+      "session": 457,
       "user API key": 10,
       "warp key": 3
     },
@@ -5072,7 +5112,7 @@
       "settings": 28,
       "setup": 2,
       "share": 1,
-      "solder": 13,
+      "solder": 17,
       "sse-ticket": 1,
       "status": 1,
       "storage": 1,

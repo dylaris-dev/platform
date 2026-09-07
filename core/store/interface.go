@@ -706,6 +706,13 @@ type Store interface {
 	ListPackBuilds(packID int) ([]models.PackBuild, error)
 	// Public Solder lookups (addressed by SolderSlug + version string, not numeric ID).
 	GetPackBySolderSlug(slug string) (*models.Pack, error)
+	// Per-account Solder addressing. Slugs are unique per OWNER, so a bare slug
+	// is only an address once the account is known.
+	GetPackBySolderSlugForOwner(ownerID, slug string) (*models.Pack, error)
+	ListPublicSolderPacksByOwner(ownerID string) ([]models.Pack, error)
+	GetUserIDBySolderHandle(handle string) (string, error)
+	GetSolderHandle(userID string) (string, error)
+	SetSolderHandle(userID, handle string) error
 	GetPackBuildByVersion(packID int, versionString string) (*models.PackBuild, error)
 	ListSolderPublishedBuilds(packID int) ([]models.PackBuild, error)
 	ListPublicSolderPacks() ([]models.Pack, error)

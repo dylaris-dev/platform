@@ -101,14 +101,16 @@ var ExemptRoutes = map[string]bool{
 	// Public Solder API (Technic Launcher) - registered on the ROOT router
 	// with no setup-lock/maintenance/auth middleware, including its own
 	// subrouter mount point.
-	"/solder":                            true,
-	"/solder/api":                        true,
-	"/solder/api/":                       true,
-	"/solder/api/modpack":                true,
-	"/solder/api/modpack/{slug}":         true,
-	"/solder/api/modpack/{slug}/{build}": true,
-	"/solder/api/verify/{key}":           true,
-	"/solder/mirror/{rest:.*}":           true,
+	"/solder":                                       true,
+	"/solder/u/{handle}/api":                        true,
+	"/solder/u/{handle}/api/":                       true,
+	"/solder/u/{handle}/api/modpack":                true,
+	"/solder/u/{handle}/api/modpack/{slug}":         true,
+	"/solder/u/{handle}/api/modpack/{slug}/{build}": true,
+	"/solder/u/{handle}/api/verify/{key}":           true,
+	"/solder/api":                                   true,
+	"/solder/api/":                                  true,
+	"/solder/mirror/{rest:.*}":                      true,
 
 	// --- AUTHED-EXEMPT (AuthMiddleware only; in-handler filter / self / helper) ---
 

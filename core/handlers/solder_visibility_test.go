@@ -22,6 +22,17 @@ type solderVisibilityStore struct {
 func (f *solderVisibilityStore) ListPublicSolderPacks() ([]models.Pack, error) {
 	return f.public, nil
 }
+
+// Per account, which is how the read path addresses packs now.
+func (f *solderVisibilityStore) ListPublicSolderPacksByOwner(ownerID string) ([]models.Pack, error) {
+	var out []models.Pack
+	for _, p := range f.public {
+		if p.OwnerID == ownerID {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
 func (f *solderVisibilityStore) ListAllSolderPacks(ownerID string) ([]models.Pack, error) {
 	return f.byOwner[ownerID], nil
 }
@@ -57,9 +68,9 @@ func solderVisibilityFixture() (*SolderHandler, map[string]models.Pack) {
 	return &SolderHandler{state: &AppState{Store: fs}}, packs
 }
 
-func visibleSlugs(t *testing.T, h *SolderHandler, a solderAuth) map[string]bool {
+func visibleSlugs(t *testing.T, h *SolderHandler, ownerID string, a solderAuth) map[string]bool {
 	t.Helper()
-	packs, err := h.solderVisiblePacks(a)
+	packs, err := h.solderVisiblePacks(ownerID, a)
 	if err != nil {
 		t.Fatalf("solderVisiblePacks: %v", err)
 	}
@@ -73,48 +84,81 @@ func visibleSlugs(t *testing.T, h *SolderHandler, a solderAuth) map[string]bool 
 	return out
 }
 
-// Presenting a credential must ADD packs, never remove the public catalogue.
+// Presenting a credential must ADD packs, never remove the ones already listed.
 // Classic TechnicSolder walks every pack and only asks the key/client question
 // about the gated ones; written as a switch, a launcher that carried a Solder
-// key listed that key owner's packs ONLY and every other owner's public pack
-// disappeared from it.
+// key listed that key owner's packs ONLY and everything else disappeared.
+//
+// The list is now per ACCOUNT, so "already listed" means that account's public
+// packs rather than the whole platform's - which is the change that let pack
+// slugs stop being first come, first served across customers.
 func TestASolderCredentialAddsPacksAndNeverHidesThePublicOnes(t *testing.T) {
 	h, _ := solderVisibilityFixture()
 
 	tests := []struct {
-		name string
-		auth solderAuth
-		want []string
+		name  string
+		owner string
+		auth  solderAuth
+		want  []string
 	}{
 		{
-			name: "no credential sees the public catalogue",
-			auth: solderAuth{},
-			want: []string{"a-public", "b-public"},
+			name:  "no credential sees that account's public packs",
+			owner: visOwnerA,
+			auth:  solderAuth{},
+			want:  []string{"a-public"},
 		},
 		{
-			name: "a key adds its owner's gated pack",
-			auth: solderAuth{hasKey: true, ownerID: visOwnerA},
-			want: []string{"a-public", "b-public", "a-private"},
+			// The whole point of addressing per account: B's packs are not on
+			// A's Solder at all, so the two never share a slug namespace.
+			name:  "and nobody else's",
+			owner: visOwnerB,
+			auth:  solderAuth{},
+			want:  []string{"b-public"},
 		},
 		{
-			name: "a client id adds its whitelisted pack",
-			auth: solderAuth{clientID: 7},
-			want: []string{"a-public", "b-public", "b-hidden"},
+			name:  "a key adds its owner's gated pack",
+			owner: visOwnerA,
+			auth:  solderAuth{hasKey: true, ownerID: visOwnerA},
+			want:  []string{"a-public", "a-private"},
 		},
 		{
-			name: "a key and a client id together add both",
-			auth: solderAuth{hasKey: true, ownerID: visOwnerA, clientID: 7},
-			want: []string{"a-public", "b-public", "a-private", "b-hidden"},
+			// A key is a credential, not an address. Presenting A's key at B's
+			// Solder must add nothing: the URL says whose catalogue this is.
+			name:  "a foreign key adds nothing",
+			owner: visOwnerB,
+			auth:  solderAuth{hasKey: true, ownerID: visOwnerA},
+			want:  []string{"b-public"},
 		},
 		{
-			name: "a key for an owner with nothing gated still sees the catalogue",
-			auth: solderAuth{hasKey: true, ownerID: visOwnerB},
-			want: []string{"a-public", "b-public"},
+			name:  "a client id adds its whitelisted pack",
+			owner: visOwnerB,
+			auth:  solderAuth{clientID: 7},
+			want:  []string{"b-public", "b-hidden"},
+		},
+		{
+			// Same rule for the other credential: a client whitelisted for B's
+			// hidden pack must not surface it on A's Solder.
+			name:  "a client id whitelisted elsewhere adds nothing here",
+			owner: visOwnerA,
+			auth:  solderAuth{clientID: 7},
+			want:  []string{"a-public"},
+		},
+		{
+			name:  "a key and a client id together add both",
+			owner: visOwnerB,
+			auth:  solderAuth{hasKey: true, ownerID: visOwnerB, clientID: 7},
+			want:  []string{"b-public", "b-hidden"},
+		},
+		{
+			name:  "a key for an owner with nothing gated still sees their own",
+			owner: visOwnerB,
+			auth:  solderAuth{hasKey: true, ownerID: visOwnerB},
+			want:  []string{"b-public"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := visibleSlugs(t, h, tt.auth)
+			got := visibleSlugs(t, h, tt.owner, tt.auth)
 			for _, want := range tt.want {
 				if !got[want] {
 					t.Errorf("pack %q is missing from the listing", want)
@@ -131,7 +175,7 @@ func TestASolderCredentialAddsPacksAndNeverHidesThePublicOnes(t *testing.T) {
 // simply trail the public ones in the launcher.
 func TestTheMergedSolderListingStaysSorted(t *testing.T) {
 	h, _ := solderVisibilityFixture()
-	packs, err := h.solderVisiblePacks(solderAuth{hasKey: true, ownerID: visOwnerA, clientID: 7})
+	packs, err := h.solderVisiblePacks(visOwnerA, solderAuth{hasKey: true, ownerID: visOwnerA, clientID: 7})
 	if err != nil {
 		t.Fatalf("solderVisiblePacks: %v", err)
 	}

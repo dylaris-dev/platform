@@ -273,6 +273,10 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 		return err
 	}
 
+	if err := applySolderTenancySchema(db); err != nil {
+		return err
+	}
+
 	seedSystemModules(db)
 	return nil
 }

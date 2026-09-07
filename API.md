@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **503 routes** in 50 sections: 226 GET, 149 POST, 38 PUT, 37 PATCH, 54 DELETE.
-- **36** accept no credential at all; read the Gates column before assuming any of them is open.
-- **344** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **507 routes** in 51 sections: 229 GET, 150 POST, 38 PUT, 37 PATCH, 54 DELETE.
+- **38** accept no credential at all; read the Gates column before assuming any of them is open.
+- **346** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **9** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -172,7 +172,7 @@ can still show what exists.
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
-- [/api/solder](#apisolder) (6)
+- [/api/solder](#apisolder) (8)
 - [/api/sse-ticket](#apisse-ticket) (1)
 - [/api/status](#apistatus) (1)
 - [/api/storage](#apistorage) (1)
@@ -190,8 +190,9 @@ can still show what exists.
 - [/api/versions](#apiversions) (2)
 - [/api/warp](#apiwarp) (17)
 - [/healthz](#healthz) (1)
-- [/solder/api](#solderapi) (6)
+- [/solder/api](#solderapi) (2)
 - [/solder/mirror](#soldermirror) (1)
+- [/solder/u](#solderu) (6)
 
 ## /api/admin
 
@@ -768,6 +769,8 @@ can still show what exists.
 | GET | `/api/solder/clients` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListClients` | the Technic launcher clients the caller has registered. |
 | POST | `/api/solder/clients` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateClient` | registers a Technic launcher client under the caller. |
 | DELETE | `/api/solder/clients/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteClient` | removes one of the caller's clients; the delete is owner-scoped. |
+| GET | `/api/solder/handle` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.GetHandle` | the caller's Solder address, or the empty string when they have not claimed one. |
+| POST | `/api/solder/handle` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.SetHandle` | claims the caller's Solder address, once. |
 | GET | `/api/solder/keys` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListKeys` | the caller's Solder API keys, hashes only. |
 | POST | `/api/solder/keys` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateKey` | registers a Solder API key. |
 | DELETE | `/api/solder/keys/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteKey` | revokes one of the caller's Solder keys. |
@@ -933,16 +936,23 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/solder/api` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
-| GET | `/solder/api/` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
-| GET | `/solder/api/modpack` | **none** | _public_ | - | `SolderHandler.ListModpacks` | Default: {modpacks:{slug:displayName}, mirror_url}. |
-| GET | `/solder/api/modpack/{slug}` | **none** | _public_ | - | `SolderHandler.GetModpack` | 404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth. |
-| GET | `/solder/api/modpack/{slug}/{build}` | **none** | _public_ | - | `SolderHandler.GetBuild` | the differential-update payload. |
-| GET | `/solder/api/verify/{key}` | **none** | _public_ | - | `SolderHandler.VerifyKey` | Validates a Solder API key by hash lookup. |
+| GET | `/solder/api` | **none** | _public_ | - | `SolderHandler.LegacyAPI` | answers every path under the RETIRED shared /solder/api prefix. |
+| GET | `/solder/api/` | **none** | _public_ | - | `SolderHandler.LegacyAPI` | answers every path under the RETIRED shared /solder/api prefix. |
 
 ## /solder/mirror
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/solder/mirror/{rest:.*}` | **none** | _public_ | Limit | `SolderHandler.SolderMirror` | streams a stored public artifact (a Solder mod zip, a loader zip, or a rendered pack .mrpack). |
+
+## /solder/u
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/solder/u/{handle}/api` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
+| GET | `/solder/u/{handle}/api/` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
+| GET | `/solder/u/{handle}/api/modpack` | **none** | _public_ | - | `SolderHandler.ListModpacks` | Default: {modpacks:{slug:displayName}, mirror_url}. |
+| GET | `/solder/u/{handle}/api/modpack/{slug}` | **none** | _public_ | - | `SolderHandler.GetModpack` | 404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth. |
+| GET | `/solder/u/{handle}/api/modpack/{slug}/{build}` | **none** | _public_ | - | `SolderHandler.GetBuild` | the differential-update payload. |
+| GET | `/solder/u/{handle}/api/verify/{key}` | **none** | _public_ | - | `SolderHandler.VerifyKey` | Validates a Solder API key by hash lookup. |
 

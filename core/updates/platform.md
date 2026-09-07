@@ -8,6 +8,33 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.8
+
+### Features
+- **Solder is addressed per account.** Each user claims a handle under Account,
+  Solder Keys and gets their own URL, `/solder/u/{handle}/api/`. Their pack list
+  contains only their packs, and a key only verifies on its owner's address.
+  `core` `panel`
+- **Pack slugs are unique per account instead of platform-wide.** Two customers
+  can both call a pack `skyfactory`; before, the first one to take a name held
+  it for everybody. `core`
+
+### Breaking
+- **The shared `/solder/api/` is retired** and answers with the new address
+  instead. Anyone who linked a Solder there has to enter their own URL on the
+  Technic Platform again. A bare slug on a shared URL has no single answer once
+  slugs are per account, so the two changes are one. `core`
+- **A Solder handle is set once and cannot be changed.** The Technic Platform
+  stores the address inside every linked modpack and a launcher keeps it in the
+  installed copy, so a rename would silently stop each of them updating. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Renaming a pack's Solder slug onto one that is taken answers 409 with the same
+  message creating one does, instead of a flat server error. `core`
+
 ## 2026.09.07.7
 
 ### Features

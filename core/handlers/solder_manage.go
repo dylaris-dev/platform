@@ -215,3 +215,79 @@ func (h *SolderHandler) DeleteKey(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
+
+// --- Solder handle (the account's own Solder address) ---
+
+// solderHandleRe is the same shape as a pack slug: it goes in a URL a launcher
+// stores, so it has to be lowercase, unambiguous and free of anything that has
+// to be escaped.
+var solderHandleRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]{1,62}[a-z0-9])?$`)
+
+// solderAddress renders the URL an operator pastes into the Technic Platform.
+// Built from core_public_url, the same setting the Solder mirror is served
+// from, so it cannot drift from the address launchers are actually given.
+// Empty when that setting is unset, which the panel says rather than printing a
+// URL with a missing host.
+func (h *SolderHandler) solderAddress(handle string) string {
+	if handle == "" {
+		return ""
+	}
+	base, _ := h.state.Store.GetSetting("core_public_url")
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/solder/u/" + handle + "/api/"
+}
+
+// GetHandle GET /api/solder/handle - the caller's Solder address, or the empty
+// string when they have not claimed one.
+func (h *SolderHandler) GetHandle(w http.ResponseWriter, r *http.Request) {
+	handle, err := h.state.Store.GetSolderHandle(solderCaller(r))
+	if err != nil {
+		sendJSONError(w, "Failed to read the Solder handle", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"handle":  handle,
+		"url":     h.solderAddress(handle),
+	})
+}
+
+// SetHandle POST /api/solder/handle - claims the caller's Solder address, once.
+//
+// Once, because the Technic Platform stores the Solder URL per modpack and a
+// launcher keeps it inside the installed pack. A rename would break every linked
+// modpack and every install of it, silently, at a moment unrelated to the
+// change - so it is refused rather than warned about.
+func (h *SolderHandler) SetHandle(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Handle string `json:"handle"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	handle := strings.ToLower(strings.TrimSpace(req.Handle))
+	if !solderHandleRe.MatchString(handle) {
+		sendJSONError(w, "A Solder handle is 3 to 64 characters: lowercase letters, digits, dashes and underscores, starting and ending with a letter or digit.", http.StatusBadRequest)
+		return
+	}
+	err := h.state.Store.SetSolderHandle(solderCaller(r), handle)
+	if errors.Is(err, store.ErrSolderHandleSet) {
+		sendJSONError(w, "Your Solder address is already set and cannot be changed: the Technic Platform stores it per modpack, and every installed copy would stop updating.", http.StatusConflict)
+		return
+	}
+	if errors.Is(err, store.ErrNameTaken) {
+		sendJSONError(w, "That Solder handle is taken.", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		log.Printf("solder SetHandle: %v", err)
+		sendJSONError(w, "Failed to set the Solder handle", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"handle":  handle,
+		"url":     h.solderAddress(handle),
+	})
+}

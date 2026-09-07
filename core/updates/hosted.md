@@ -11,6 +11,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.8
+
+### Features
+- **Your modpacks now live at your own Solder address.** Pick a handle under
+  Account, Solder Keys and the page shows the URL to enter on your Technic
+  profile. Only your packs are listed there, and your pack names only have to be
+  unique to you: somebody else having a `skyfactory` no longer stops you.
+
+### Breaking
+- **If you already linked a Solder using the shared address, enter your own URL
+  on the Technic Platform again.** The old shared address no longer serves
+  packs; opening it tells you where yours is.
+- **The handle is chosen once and cannot be changed later.** Technic stores it
+  inside every linked modpack, so a change would stop installed copies from
+  updating.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.7
 
 ### Features

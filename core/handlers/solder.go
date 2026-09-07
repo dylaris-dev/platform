@@ -54,6 +54,33 @@ func solderKeyHash(plaintext string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// solderScope is the account a request addresses: /solder/u/{handle}/api/...
+//
+// Every read below is scoped to ONE account, and that is what makes per-owner
+// slugs possible. While one URL served every tenant, a bare slug had to be
+// globally unique - so pack names were first come, first served across
+// customers - and the public list enumerated the whole platform's modpacks to
+// anyone who opened it. The handle supplies the account, so a slug only has to
+// be an address within it.
+//
+// ok is false when the handle names nobody. The caller answers 404 in the
+// Solder shape and NEVER 403: on the launcher read path an address with nothing
+// behind it is not an authorization failure, and telling the two apart from
+// outside is exactly what lets someone enumerate handles.
+func (h *SolderHandler) solderScope(w http.ResponseWriter, r *http.Request) (ownerID string, ok bool) {
+	handle := mux.Vars(r)["handle"]
+	ownerID, err := h.state.Store.GetUserIDBySolderHandle(handle)
+	if err != nil {
+		solderJSONError(w, "Failed to resolve Solder", http.StatusInternalServerError)
+		return "", false
+	}
+	if ownerID == "" {
+		solderJSONError(w, "Modpack does not exist", http.StatusNotFound)
+		return "", false
+	}
+	return ownerID, true
+}
+
 // solderAuth is the resolved access context for one public read request.
 type solderAuth struct {
 	hasKey   bool   // a valid ?k= was supplied → sees packs owned by ownerID
@@ -116,8 +143,8 @@ func (h *SolderHandler) canAccessPack(a solderAuth, packID int, packOwnerID stri
 // vanished from it, and a launcher with only a client id saw its whitelist and
 // nothing else. Both are silent - the launcher shows a shorter list, with
 // nothing anywhere saying why.
-func (h *SolderHandler) solderVisiblePacks(a solderAuth) ([]models.Pack, error) {
-	packs, err := h.state.Store.ListPublicSolderPacks()
+func (h *SolderHandler) solderVisiblePacks(ownerID string, a solderAuth) ([]models.Pack, error) {
+	packs, err := h.state.Store.ListPublicSolderPacksByOwner(ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,11 +152,20 @@ func (h *SolderHandler) solderVisiblePacks(a solderAuth) ([]models.Pack, error) 
 	for i := range packs {
 		seen[packs[i].ID] = true
 	}
+	// The scope filter lives HERE rather than at each call below, so no
+	// credential can add a pack belonging to a different account no matter what
+	// it unlocks elsewhere. A key is not a way to read somebody else's address,
+	// and a client whitelisted for one tenant's hidden pack must not surface it
+	// on another tenant's Solder - both would otherwise leak through a list that
+	// is supposed to describe exactly one account.
 	add := func(extra []models.Pack, err error) error {
 		if err != nil {
 			return err
 		}
 		for i := range extra {
+			if extra[i].OwnerID != ownerID {
+				continue
+			}
 			if !seen[extra[i].ID] {
 				seen[extra[i].ID] = true
 				packs = append(packs, extra[i])
@@ -155,7 +191,14 @@ func (h *SolderHandler) solderVisiblePacks(a solderAuth) ([]models.Pack, error) 
 
 // Info is GET /solder/api/ — the root probe. version/stream are our own values;
 // only the KEY NAMES (api/version/stream) are contractual. Not feature-gated.
+// Info is the probe the Technic Platform makes against the URL an operator
+// entered. It resolves the handle first so a wrong one is reported HERE, at the
+// moment the URL is typed, rather than surviving to Link Solder and failing as
+// something that reads like a key problem.
 func (h *SolderHandler) Info(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.solderScope(w, r); !ok {
+		return
+	}
 	solderJSON(w, http.StatusOK, map[string]string{
 		"api":     "TechnicSolder",
 		"version": "1.0.0",
@@ -163,10 +206,31 @@ func (h *SolderHandler) Info(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// LegacyAPI answers every path under the RETIRED shared /solder/api prefix.
+//
+// That URL served every tenant from one namespace, which is what forced pack
+// slugs to be unique across customers and listed everybody's public packs
+// together. Addressing is per account now, so a bare slug here has no single
+// answer and the endpoint cannot be kept honest.
+//
+// It answers in the Solder shape rather than falling through to the panel's HTML
+// catch-all, because the operator who reaches this is the one who needs to read
+// the sentence: an HTML 404 is what made the missing trailing slash so hard to
+// diagnose one release ago.
+func (h *SolderHandler) LegacyAPI(w http.ResponseWriter, r *http.Request) {
+	solderJSONError(w,
+		"This Solder is addressed per account. Use /solder/u/{your handle}/api/ - the full URL is shown on the Solder Keys page in the panel.",
+		http.StatusNotFound)
+}
+
 // VerifyKey is GET /solder/api/verify/{key}. Validates a Solder API key by hash
 // lookup. 200 {"valid":..,"name":..} on match, 403 {"error":..} otherwise.
 func (h *SolderHandler) VerifyKey(w http.ResponseWriter, r *http.Request) {
 	if !h.modpacksEnabled(w, r) {
+		return
+	}
+	ownerID, ok := h.solderScope(w, r)
+	if !ok {
 		return
 	}
 	key := mux.Vars(r)["key"]
@@ -180,7 +244,11 @@ func (h *SolderHandler) VerifyKey(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-	if k == nil {
+	// The key has to belong to the account this URL addresses. Accepting any
+	// key here would let one tenant link somebody else's Solder to their own
+	// Technic account - the URL is public, so the key is the only thing that
+	// says who is entitled to it.
+	if k == nil || k.OwnerID != ownerID {
 		solderJSONError(w, "Invalid key provided.", http.StatusForbidden)
 		return
 	}
@@ -225,7 +293,11 @@ func (h *SolderHandler) ListModpacks(w http.ResponseWriter, r *http.Request) {
 	if !h.modpacksEnabled(w, r) {
 		return
 	}
-	packs, err := h.solderVisiblePacks(h.resolveSolderAuth(r))
+	ownerID, ok := h.solderScope(w, r)
+	if !ok {
+		return
+	}
+	packs, err := h.solderVisiblePacks(ownerID, h.resolveSolderAuth(r))
 	if err != nil {
 		solderJSONError(w, "Failed to list modpacks", http.StatusInternalServerError)
 		return
@@ -288,8 +360,11 @@ func (h *SolderHandler) GetModpack(w http.ResponseWriter, r *http.Request) {
 	if !h.modpacksEnabled(w, r) {
 		return
 	}
-	slug := mux.Vars(r)["slug"]
-	p, err := h.state.Store.GetPackBySolderSlug(slug)
+	ownerID, ok := h.solderScope(w, r)
+	if !ok {
+		return
+	}
+	p, err := h.state.Store.GetPackBySolderSlugForOwner(ownerID, mux.Vars(r)["slug"])
 	if err != nil {
 		solderJSONError(w, "Failed to load modpack", http.StatusInternalServerError)
 		return
@@ -328,8 +403,12 @@ func (h *SolderHandler) GetBuild(w http.ResponseWriter, r *http.Request) {
 	if !h.modpacksEnabled(w, r) {
 		return
 	}
+	ownerID, ok := h.solderScope(w, r)
+	if !ok {
+		return
+	}
 	vars := mux.Vars(r)
-	p, err := h.state.Store.GetPackBySolderSlug(vars["slug"])
+	p, err := h.state.Store.GetPackBySolderSlugForOwner(ownerID, vars["slug"])
 	if err != nil {
 		solderJSONError(w, "Failed to load modpack", http.StatusInternalServerError)
 		return

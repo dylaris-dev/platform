@@ -187,6 +187,15 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		p.SolderSlug = s
 	}
 	if err := h.state.Store.UpdatePack(p); err != nil {
+		// Same answer Create already gives. A Solder slug is unique per owner,
+		// so renaming one onto another of your own packs is a thing a person
+		// does by hand - and it came back as a flat 500 here, which reads as a
+		// server fault rather than as a name that is taken.
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {
+			sendJSONError(w, "A pack with that slug already exists", http.StatusConflict)
+			return
+		}
 		sendJSONError(w, "Failed to update", http.StatusInternalServerError)
 		return
 	}

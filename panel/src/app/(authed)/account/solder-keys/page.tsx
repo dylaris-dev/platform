@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { KeyRound, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff } from 'lucide-react';
+import { KeyRound, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff, Link2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
-    listKeys, createKey, deleteKey,
+    listKeys, createKey, deleteKey, getSolderHandle, setSolderHandle,
     type SolderKey,
 } from '@/lib/api/solderAccess';
 import { SkeletonList } from '@/components/Skeleton';
@@ -31,6 +31,13 @@ export default function SolderKeysPage() {
     const [platformKey, setPlatformKey] = useState('');
     const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string } | null>(null);
     const [deleting, setDeleting] = useState<SolderKey | null>(null);
+    // The account's own Solder address. Claimed once - the Technic Platform
+    // stores the URL per modpack and a launcher keeps it inside the installed
+    // pack, so a rename would break every one of them silently.
+    const [handle, setHandle] = useState('');
+    const [solderUrl, setSolderUrl] = useState('');
+    const [handleDraft, setHandleDraft] = useState('');
+    const [savingHandle, runSaveHandle] = useBusy();
     const [creatingKey, runCreate] = useBusy();
     const [deletingKey, runDelete] = useBusy();
 
@@ -47,7 +54,29 @@ export default function SolderKeysPage() {
         }
     }, []);
 
-    useEffect(() => { refresh(); }, [refresh]);
+    const refreshHandle = useCallback(async () => {
+        try {
+            const h = await getSolderHandle();
+            setHandle(h.handle);
+            setSolderUrl(h.url);
+        } catch {
+            // Leaves the card in its "not claimed yet" state, which is the
+            // honest reading of "we could not ask".
+        }
+    }, []);
+
+    useEffect(() => { refresh(); refreshHandle(); }, [refresh, refreshHandle]);
+
+    const handleClaim = async () => {
+        const res = await setSolderHandle(handleDraft.trim().toLowerCase());
+        if (!res.success) {
+            showToast(res.message || 'Could not set the address', false);
+            return;
+        }
+        setHandle(res.handle || '');
+        setSolderUrl(res.url || '');
+        showToast('Solder address set.');
+    };
 
     const handleCreate = async () => {
         const trimmed = name.trim();
@@ -116,6 +145,69 @@ export default function SolderKeysPage() {
                     </div>
                 </div>
             )}
+
+            {/* The address comes first: without it there is nothing to enter on
+                the Technic Platform, and a key on its own links nothing. */}
+            <section className="card p-4 mb-4">
+                <div className="flex items-start gap-2">
+                    <Link2 size={14} className="text-(--accent-light) shrink-0 mt-1" />
+                    <div className="min-w-0 flex-1">
+                        <h2 className="text-sm font-medium text-(--base-09)">Your Solder address</h2>
+                        {handle ? (
+                            <>
+                                <p className="text-xs text-(--base-06) mt-0.5">
+                                    Enter this as the Solder URL on your Technic profile, under Edit
+                                    Profile, Solder Configuration.
+                                </p>
+                                <div className="flex items-center gap-2 mt-2">
+                                    <code className="input-field input-mono flex-1 truncate">{solderUrl || `(set the public panel URL under Settings, Modpacks first)`}</code>
+                                    <button
+                                        type="button"
+                                        onClick={() => { navigator.clipboard.writeText(solderUrl); showToast('Address copied.'); }}
+                                        disabled={!solderUrl}
+                                        className="btn btn-secondary btn-sm disabled:opacity-40"
+                                    >
+                                        <Copy size={12} /> Copy
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <p className="text-xs text-(--base-06) mt-0.5">
+                                    Choose the name your Solder is reached under. Your packs live in
+                                    their own namespace, so their slugs only have to be unique to
+                                    you. This is set <strong className="text-(--base-08)">once</strong>:
+                                    the Technic Platform stores the address inside every linked
+                                    modpack, and changing it later would stop each installed copy
+                                    from updating.
+                                </p>
+                                <div className="flex items-center gap-2 mt-2">
+                                    <input
+                                        type="text"
+                                        value={handleDraft}
+                                        onChange={e => setHandleDraft(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') runSaveHandle(handleClaim); }}
+                                        className="input-field input-mono w-64"
+                                        placeholder="e.g. bartis"
+                                        maxLength={64}
+                                        spellCheck={false}
+                                        autoComplete="off"
+                                        disabled={modpacksDisabled}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => runSaveHandle(handleClaim)}
+                                        disabled={savingHandle || modpacksDisabled || handleDraft.trim().length < 3}
+                                        className="btn btn-primary btn-sm disabled:opacity-40"
+                                    >
+                                        Set address
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            </section>
 
             <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
                 <Shield size={14} className="text-(--accent-light) shrink-0 mt-0.5" />

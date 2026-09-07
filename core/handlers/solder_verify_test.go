@@ -9,8 +9,6 @@ import (
 
 	"dylaris-core/services"
 	"dylaris-core/store"
-
-	"github.com/gorilla/mux"
 )
 
 // solderVerifyStore answers the single lookup VerifyKey makes. The embedded nil
@@ -23,6 +21,13 @@ type solderVerifyStore struct {
 
 func (f *solderVerifyStore) GetSolderKeyByHash(string) (*store.SolderKey, error) {
 	return f.key, nil
+}
+
+func (f *solderVerifyStore) GetUserIDBySolderHandle(handle string) (string, error) {
+	if handle == solderTestHandle {
+		return solderTestOwner, nil
+	}
+	return "", nil
 }
 
 // Modpacks on, which is what every one of these endpoints is gated by.
@@ -40,12 +45,11 @@ func (f *solderVerifyStore) GetSetting(key string) (string, error) {
 // a field nobody reads costs nothing, one a client does read rejects a valid key.
 func TestSolderVerifyKeyResponseShape(t *testing.T) {
 	created := time.Date(2026, 9, 7, 14, 5, 6, 0, time.UTC)
-	st := &solderVerifyStore{key: &store.SolderKey{Name: "technic", CreatedAt: created}}
+	st := &solderVerifyStore{key: &store.SolderKey{Name: "technic", OwnerID: solderTestOwner, CreatedAt: created}}
 	h := &SolderHandler{state: &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
 
 	rec := httptest.NewRecorder()
-	req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/solder/api/verify/secret", nil), map[string]string{"key": "secret"})
-	h.VerifyKey(rec, req)
+	h.VerifyKey(rec, keyRequest("secret"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -70,12 +74,25 @@ func TestSolderVerifyKeyResponseShape(t *testing.T) {
 
 // An unknown key is a 403 with the contract's own wording, and must not leak
 // that the lookup even happened.
+// A key is a credential, not an address. Verifying a key that belongs to
+// somebody else on THIS account's Solder would let one tenant link another
+// tenant's Solder to their own Technic account - the URL is public, so the key
+// is the only thing that says who is entitled to it.
+func TestSolderVerifyKeyRejectsAForeignOwnersKey(t *testing.T) {
+	st := &solderVerifyStore{key: &store.SolderKey{Name: "someone else", OwnerID: "bbbbbbbb-2222-4222-8222-222222222222"}}
+	h := &SolderHandler{state: &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
+	rec := httptest.NewRecorder()
+	h.VerifyKey(rec, keyRequest("secret"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
 func TestSolderVerifyKeyRejectsUnknown(t *testing.T) {
 	st := &solderVerifyStore{key: nil}
 	h := &SolderHandler{state: &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
 	rec := httptest.NewRecorder()
-	req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/solder/api/verify/nope", nil), map[string]string{"key": "nope"})
-	h.VerifyKey(rec, req)
+	h.VerifyKey(rec, keyRequest("nope"))
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
