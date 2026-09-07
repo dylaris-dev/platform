@@ -90,6 +90,16 @@ func createBackupTables(db *sql.DB) error {
 		// run rather than inside the archive so the backup FORMAT does not have to
 		// change, and so an archive written by an older node still restores.
 		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS install_snapshot TEXT NOT NULL DEFAULT ''`,
+		// The archive's own description, the same bytes the node wrote INTO the
+		// archive as .dylaris/backup.json. Kept here as well so a same-instance
+		// restore does not have to fetch the object to read its first kilobyte;
+		// the copy in the archive is what makes a downloaded archive importable
+		// into a different Dylaris, which a column in this database cannot be.
+		//
+		// It supersedes install_snapshot, which stays: every run written before
+		// this column has one, and a restore of such a run must still put its
+		// install records back.
+		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS manifest TEXT NOT NULL DEFAULT ''`,
 		// Where this archive actually WENT, resolved at run time.
 		//
 		// The location used to be re-derived from the job on every read, which is

@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Restoring a backup now puts your mod list back as well.** Previously only
+  the files were rolled back, so the Mods tab could show a mod that was no
+  longer installed, or miss one that was running. Backups made from now on carry
+  the list; older ones do not, and restoring one leaves your list as it is.
+  `node`
+
 ## 2026.09.07.10
 
 ### Features

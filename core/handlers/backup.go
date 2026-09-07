@@ -976,6 +976,23 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		h.state.Store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
 		return runID, err
 	}
+	// What this archive contains, described. The SAME bytes go to the node (to
+	// be written into the archive as its first entry) and onto the run row, so a
+	// downloaded archive describes itself on a foreign platform while a
+	// same-instance restore reads the row and fetches nothing. Built here rather
+	// than when the node reports back, so it describes the moment the archive
+	// was taken and not the moment the report arrived.
+	//
+	// Best-effort: a description that could not be written is not a reason to
+	// refuse a backup. The restore side already treats an absent manifest as
+	// "this archive says nothing" and leaves the rows alone.
+	manifest := services.EncodeBackupManifest(
+		services.BuildBackupManifest(h.state.Store, srv.ID, deref(job.SubServer), h.state.ReleaseVersion))
+	if len(manifest) > 0 {
+		if err := h.state.Store.SetBackupRunManifest(runID, string(manifest)); err != nil {
+			log.Printf("backup manifest: run %d: %v", runID, err)
+		}
+	}
 	payload := map[string]interface{}{
 		"action":          "backup_run",
 		"runId":           runID,
@@ -990,6 +1007,12 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
+	// Only when there IS one: json.RawMessage(nil) marshals to the four bytes
+	// "null", and the node writes what it is given without parsing it - so an
+	// absent manifest would reach the archive as a file containing "null".
+	if len(manifest) > 0 {
+		payload["manifest"] = json.RawMessage(manifest)
+	}
 	if err := h.state.Queue.SendRawCommand(ctx, node.Token, payload); err != nil {
 		h.state.Store.UpdateBackupRunStatus(runID, "failed", "queue push failed: "+err.Error(), 0, "", time.Now())
 		return runID, err

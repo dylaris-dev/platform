@@ -207,6 +207,7 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			}
 			if result.Status == "success" {
 				b.restoreInstalls(restore.RunID, restore.ServerID)
+				b.restoreMods(restore.RunID, restore.ServerID)
 			}
 		}
 	}
@@ -665,6 +666,57 @@ func (b *BackupScheduler) snapshotInstalls(runID int, job *models.BackupJob) {
 	}
 	if err := b.store.SetBackupRunInstallSnapshot(runID, string(blob)); err != nil {
 		log.Printf("backup snapshot: run %d: %v", runID, err)
+	}
+}
+
+// restoreMods puts the archived mod rows back after a restore.
+//
+// The files have just been replaced wholesale by an atomic directory swap, and
+// until this ran the DATABASE kept describing whatever was installed last.
+// Measured both ways before it existed: back up, install a mod, restore - the
+// jar is gone and the row stays, so the panel lists a mod that is not there.
+// Install a mod, back up, uninstall it, restore - the jar is back and the row is
+// gone, so the mod runs and nothing in the panel knows about it. The second is
+// the worse one, because a jar the panel cannot name is a jar nobody updates.
+//
+// A run with no manifest changes nothing, and that is not a gap to close later:
+// every archive written before manifests existed has none, and clearing a
+// server's mod list on the strength of a description that does not exist would
+// replace a list that might be stale with no list at all.
+//
+// Scope matters. An entry with an EMPTY mod list still clears its sub-server -
+// that is the archive saying "there were none" - while a sub-server the manifest
+// does not mention is left alone, because the archive says nothing about it.
+// Those two must not collapse into each other.
+func (b *BackupScheduler) restoreMods(runID, serverID int) {
+	run, err := b.store.GetBackupRun(runID)
+	if err != nil || run == nil {
+		return
+	}
+	m, ok := DecodeBackupManifest(run.Manifest)
+	if !ok {
+		return
+	}
+	for _, entry := range m.Mods {
+		rows := make([]models.ServerMod, 0, len(entry.Mods))
+		for _, mod := range entry.Mods {
+			rows = append(rows, models.ServerMod{
+				ModrinthProjectID:   mod.ModrinthProjectID,
+				ModrinthProjectSlug: mod.ModrinthProjectSlug,
+				ModrinthVersionID:   mod.ModrinthVersionID,
+				Title:               mod.Title,
+				FileName:            mod.FileName,
+				TargetDir:           mod.TargetDir,
+				SHA512:              mod.SHA512,
+			})
+		}
+		// serverID comes from the RESTORE, never from the archive: an archive can
+		// be restored onto a different server, and an id read out of it would
+		// rewrite whatever the backup was taken from. Same rule restoreInstalls
+		// applies, for the same reason.
+		if err := b.store.ReplaceServerMods(serverID, entry.SubServer, rows); err != nil {
+			logErrf("backup-scheduler", "restore mods: server %d/%s: %v", serverID, entry.SubServer, err)
+		}
 	}
 }
 

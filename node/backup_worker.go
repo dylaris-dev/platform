@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -40,6 +42,63 @@ type BackupRunCommand struct {
 	// to instead of using bucket credentials (BYON tenant nodes never receive
 	// the operator's creds). Empty = use Storage creds (operator nodes).
 	PresignedPutURL string `json:"presignedPutUrl"`
+	// Manifest is Core's description of what this archive contains: loader,
+	// versions, installer origin, the installed-mod rows. It is written into the
+	// archive VERBATIM and never parsed here.
+	//
+	// Opaque on purpose. The node writing bytes it does not understand is what
+	// keeps the schema in one place: Core can add a field to the manifest
+	// without a node release, and a node can never disagree with Core about what
+	// a manifest means. Empty (an older Core) simply produces an archive with no
+	// manifest, which every reader must already handle - archives written before
+	// this existed have none either.
+	Manifest json.RawMessage `json:"manifest"`
+}
+
+// manifestEntryName is where the archive description lives inside the archive.
+//
+// Under a reserved directory rather than at the root so it cannot collide with
+// a file a server legitimately has, and so ONE prefix covers whatever else the
+// format grows later. It is written FIRST, so a reader can stream-parse it
+// without unpacking a multi-gigabyte world to reach it.
+const manifestEntryName = ".dylaris/backup.json"
+
+// manifestDirName is the reserved prefix manifestEntryName lives under. It is
+// skipped by the archive walk and by extraction, for the same reason
+// .dylaris-backups is: an entry the platform writes into the tree would
+// otherwise be archived into the NEXT backup and restored into a live server
+// directory.
+const manifestDirName = ".dylaris"
+
+// isManifestEntry reports whether a tar entry name addresses the reserved
+// manifest directory. It cleans the name first, because a tar header is written
+// by whoever produced the archive and "./.dylaris/backup.json" addresses the
+// same place as ".dylaris/backup.json".
+func isManifestEntry(name string) bool {
+	rel := strings.TrimPrefix(path.Clean("/"+strings.ReplaceAll(name, "\\", "/")), "/")
+	return rel == manifestDirName || strings.HasPrefix(rel, manifestDirName+"/")
+}
+
+// writeManifestEntry writes the manifest as the first entry of the tar.
+func writeManifestEntry(tw *tar.Writer, manifest []byte) error {
+	// "null" is what a JSON encoder produces for an absent RawMessage, and this
+	// side never parses the value - so without this the archive would carry a
+	// description file whose whole content is the word null.
+	if len(manifest) == 0 || string(bytes.TrimSpace(manifest)) == "null" {
+		return nil
+	}
+	hdr := &tar.Header{
+		Name:     manifestEntryName,
+		Mode:     0o644,
+		Size:     int64(len(manifest)),
+		Typeflag: tar.TypeReg,
+		ModTime:  time.Now(),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	_, err := tw.Write(manifest)
+	return err
 }
 
 type storageInfo struct {
@@ -72,7 +131,8 @@ type s3Cfg struct {
 // target is a file inside the very tree being walked, so a run can stream its
 // own half-written archive into itself.
 func isBackupStoreEntry(rel string) bool {
-	return rel == backupDirName || strings.HasPrefix(rel, backupDirName+"/")
+	return rel == backupDirName || strings.HasPrefix(rel, backupDirName+"/") ||
+		rel == manifestDirName || strings.HasPrefix(rel, manifestDirName+"/")
 }
 
 // RunBackup builds the archive and streams it directly to storage via an
@@ -133,7 +193,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 		// The goroutine is the source side of the pipe. Any error we hit
 		// has to propagate to the reader by closing the pipe with that
 		// error so the uploader sees it and aborts cleanly.
-		added, err := writeServerArchive(mw, serverRoot, rootDir, cmd.IncludePatterns, cmd.ExcludePatterns)
+		added, err := writeServerArchive(mw, serverRoot, rootDir, cmd.IncludePatterns, cmd.ExcludePatterns, cmd.Manifest)
 		addedAny = added
 		if err != nil {
 			pw.CloseWithError(err)
@@ -202,11 +262,19 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 //
 // Split out of RunBackup so the walk can be driven without Redis, a storage
 // manager or a live provider.
-func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclude []string) (bool, error) {
+func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclude []string, manifest []byte) (bool, error) {
 	resolvedRoot := resolveZipRoot(serverRoot)
 	gw := gzip.NewWriter(w)
 	tw := tar.NewWriter(gw)
 	addedAny := false
+
+	// Before the walk, so it is the first entry no matter what the walk finds.
+	// It deliberately does NOT set addedAny: a run whose include/exclude
+	// patterns match no file must still fail as "nothing matched" rather than
+	// upload an archive containing only its own description.
+	if err := writeManifestEntry(tw, manifest); err != nil {
+		return false, err
+	}
 
 	walkErr := filepath.Walk(rootDir, func(path string, info os.FileInfo, werr error) error {
 		if werr != nil {

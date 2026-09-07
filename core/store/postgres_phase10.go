@@ -187,3 +187,71 @@ func (s *PostgresStore) DeleteServerMod(id, serverID int) error {
 	}
 	return nil
 }
+
+// ListServerModSubServers returns every sub-server on this server that has mod
+// rows.
+//
+// Needed because a whole-server backup has to describe sub-servers the install
+// records do not know about: server_mods and sub_server_installs are written by
+// different paths, and a sub-server that predates install records still carries
+// mods. Describing only one source leaves the other's rows untouched by a
+// restore, which is the exact divergence the manifest exists to close.
+func (s *PostgresStore) ListServerModSubServers(serverID int) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT sub_server_name FROM server_mods WHERE server_id=$1 ORDER BY sub_server_name`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// ReplaceServerMods makes the rows for one (server, sub-server) exactly mods.
+//
+// One transaction, delete then insert, because the two halves are one statement
+// of fact: a restore says "this is what was installed", and a crash between them
+// must not leave a server with no mods recorded and files that say otherwise.
+//
+// An EMPTY slice is a legitimate instruction and clears the scope. That is the
+// backup-then-install-then-restore case: the archive had no mods, the row was
+// added afterwards, and the jar is gone the moment the directory is replaced.
+//
+// installed_by is left NULL and status is "installed". The row is being restated
+// from an archive, not installed by a person, and the archive deliberately
+// carries no user id - it may have come from another platform, whose user ids
+// mean nothing here.
+func (s *PostgresStore) ReplaceServerMods(serverID int, subServerName string, mods []models.ServerMod) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM server_mods WHERE server_id=$1 AND sub_server_name=$2`,
+		serverID, subServerName); err != nil {
+		return err
+	}
+	for i := range mods {
+		m := &mods[i]
+		if _, err := tx.Exec(`INSERT INTO server_mods
+			(server_id, sub_server_name, modrinth_project_id, modrinth_project_slug,
+			 modrinth_version_id, title, file_name, target_dir, sha512, installed_by,
+			 status, status_message, install_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,'','')
+			ON CONFLICT (server_id, sub_server_name, modrinth_project_id) DO NOTHING`,
+			serverID, subServerName, m.ModrinthProjectID, m.ModrinthProjectSlug,
+			m.ModrinthVersionID, m.Title, m.FileName, m.TargetDir, m.SHA512,
+			models.ServerModInstalled); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

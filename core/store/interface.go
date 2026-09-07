@@ -643,6 +643,13 @@ type Store interface {
 	// Drives the "Installed" view + the lazy update-detection scan.
 	UpsertServerMod(m *models.ServerMod) (int, error)
 	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
+	// ListServerModSubServers lists sub-servers that HAVE mod rows, which is not
+	// the same set as the ones with install records.
+	ListServerModSubServers(serverID int) ([]string, error)
+	// ReplaceServerMods makes the rows for one sub-server exactly mods, in one
+	// transaction. An empty slice clears the scope, which is a restore saying
+	// "there were none" rather than saying nothing.
+	ReplaceServerMods(serverID int, subServerName string, mods []models.ServerMod) error
 	DeleteServerMod(id, serverID int) error
 	// GetServerModByProject is what an install has to read BEFORE its own
 	// upsert: that upsert overwrites file_name, and the overwritten value is
@@ -668,6 +675,9 @@ type Store interface {
 	// SetBackupRunInstallSnapshot records how the archived sub-servers were
 	// installed, so a restore can put those records back.
 	SetBackupRunInstallSnapshot(runID int, snapshot string) error
+	// SetBackupRunManifest records the archive's own description, the same bytes
+	// the node writes into the archive.
+	SetBackupRunManifest(runID int, manifest string) error
 
 	// --- Sub-server installs ---
 	// How each sub-server was installed, per (server, sub-server): installer,

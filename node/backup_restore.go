@@ -156,6 +156,14 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "tar read: "+terr.Error())
 			return
 		}
+		// The archive's own description is not part of the server. Restoring it
+		// would drop a .dylaris directory into a live server tree, where the
+		// NEXT backup would archive it - a manifest nested inside a manifest,
+		// describing the wrong backup. Core reads this entry from the archive
+		// itself, never from a restored copy.
+		if isManifestEntry(hdr.Name) {
+			continue
+		}
 		// Path-traversal guard — entries can name "..", absolute paths,
 		// etc. The clean+prefix check rejects anything that escapes stageDir.
 		cleanPath := filepath.Join(stageDir, filepath.Clean("/"+hdr.Name))

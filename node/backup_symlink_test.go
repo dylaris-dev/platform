@@ -73,7 +73,7 @@ func TestBackupArchiveSurvivesASymlinkInTheServerDirectory(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	added, err := writeServerArchive(&buf, serverRoot, serverRoot, nil, nil)
+	added, err := writeServerArchive(&buf, serverRoot, serverRoot, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("a symlink in the server directory failed the whole backup: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBackupArchiveDropsASymlinkedDirectory(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if _, err := writeServerArchive(&buf, serverRoot, serverRoot, nil, nil); err != nil {
+	if _, err := writeServerArchive(&buf, serverRoot, serverRoot, nil, nil, nil); err != nil {
 		t.Fatalf("a symlinked directory failed the whole backup: %v", err)
 	}
 	entries := readArchive(t, buf.Bytes())
@@ -146,7 +146,7 @@ func TestBackupArchiveKeepsItsFilters(t *testing.T) {
 	write(backupDirName+"/run-1.tar.gz", "an earlier archive")
 
 	var buf bytes.Buffer
-	if _, err := writeServerArchive(&buf, serverRoot, serverRoot, nil, []string{"logs/**"}); err != nil {
+	if _, err := writeServerArchive(&buf, serverRoot, serverRoot, nil, []string{"logs/**"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	entries := readArchive(t, buf.Bytes())

@@ -371,7 +371,7 @@ func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*m
 	var r models.BackupRun
 	var completed sql.NullTime
 	var storageID sql.NullInt64
-	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage, &r.InstallSnapshot, &storageID)
+	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage, &r.InstallSnapshot, &r.Manifest, &storageID)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +386,7 @@ func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*m
 	return &r, nil
 }
 
-const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message, install_snapshot, storage_id`
+const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message, install_snapshot, manifest, storage_id`
 
 func (s *PostgresStore) ListBackupRuns(jobID, limit int) ([]models.BackupRun, error) {
 	if limit <= 0 {
@@ -637,5 +637,18 @@ func textArray(v []string) interface{} {
 // not care about.
 func (s *PostgresStore) SetBackupRunInstallSnapshot(runID int, snapshot string) error {
 	_, err := s.db.Exec(`UPDATE backup_runs SET install_snapshot = $1 WHERE id = $2`, snapshot, runID)
+	return err
+}
+
+// SetBackupRunManifest records the archive's own description on the run.
+//
+// Written at DISPATCH, before the node has archived anything, and that is
+// deliberate: these are the exact bytes handed to the node to write into the
+// archive, so the two copies describe the same moment. Capturing it after the
+// node reports back would describe the moment the report arrived, which is a
+// different one - a modpack changed while a large world was still being
+// archived would be recorded against an archive that predates it.
+func (s *PostgresStore) SetBackupRunManifest(runID int, manifest string) error {
+	_, err := s.db.Exec(`UPDATE backup_runs SET manifest = $1 WHERE id = $2`, manifest, runID)
 	return err
 }

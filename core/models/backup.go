@@ -71,6 +71,16 @@ type BackupRun struct {
 	// that failed - a restore then leaves the records alone, which is the
 	// honest answer when nobody wrote down what was there.
 	InstallSnapshot string `json:"-"`
+	// Manifest is what this archive contains, described: the install records
+	// AND the installed-mod rows, as JSON. The same bytes are inside the
+	// archive, so a downloaded archive describes itself on a foreign platform
+	// while a same-instance restore reads this copy and fetches nothing.
+	//
+	// Empty for every run written before manifests existed, and for failed
+	// runs. A restore then falls back to InstallSnapshot and leaves the mod
+	// rows alone, which is the honest answer when nobody wrote down what was
+	// there.
+	Manifest string `json:"-"`
 }
 
 // BackupRestore records a restore attempt against an archived BackupRun.

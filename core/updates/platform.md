@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.11
+
+### Features
+- **A backup now describes itself.** Each archive carries what it contains -
+  how each sub-server was installed and which mods were on it - written as its
+  first entry, so a downloaded archive can be read on any Dylaris rather than
+  only on the one that made it. `core` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Restoring a backup now restores the mod list too.** Before, only the files
+  rolled back: a mod installed after the backup stayed listed in the panel with
+  no jar behind it, and a mod uninstalled after the backup came back as a
+  running jar the panel knew nothing about. Archives made before this update
+  carry no mod list, and a restore of one leaves the list untouched rather than
+  guessing. `core` `node`
+
 ## 2026.09.07.10
 
 ### Features
