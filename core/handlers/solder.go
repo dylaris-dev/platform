@@ -184,7 +184,21 @@ func (h *SolderHandler) VerifyKey(w http.ResponseWriter, r *http.Request) {
 		solderJSONError(w, "Invalid key provided.", http.StatusForbidden)
 		return
 	}
-	solderJSON(w, http.StatusOK, map[string]string{"valid": "Key validated.", "name": k.Name})
+	// created_at is part of the shape upstream TechnicSolder has answered with
+	// for years, and it was missing here. Whether the Technic Platform reads it
+	// is not something this side can verify, so it is emitted rather than
+	// argued about: a field nobody reads costs nothing, and a missing field a
+	// client does read rejects a key that is perfectly valid.
+	//
+	// "2006-01-02 15:04:05" UTC, which is what the reference implementation
+	// emitted for most of its life (Laravel's pre-7 Carbon serialisation).
+	// Newer Solder builds emit ISO-8601 instead, so no client can be parsing
+	// this strictly - and where one is, it was written against the older shape.
+	solderJSON(w, http.StatusOK, map[string]string{
+		"valid":      "Key validated.",
+		"name":       k.Name,
+		"created_at": k.CreatedAt.UTC().Format("2006-01-02 15:04:05"),
+	})
 }
 
 // solderModpackObject is the single-modpack object shape (shared by GetModpack

@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The Solder API root answered only with a trailing slash.** `/solder/api`
+  fell through to the panel and returned HTML, so the Technic Platform reported
+  an invalid Solder URL for a Solder that was working one character away. Both
+  spellings now answer the same JSON. The URL to enter at technicpack.net is
+  `https://<your panel>/solder/api/`. `core`
+- **Solder key verification now returns `created_at`**, which upstream
+  TechnicSolder has always sent alongside `valid` and `name`. It was missing,
+  and a platform that reads the field would have rejected a valid key. `core`
+
 ## 2026.09.07.4
 
 ### Features

@@ -102,6 +102,7 @@ var ExemptRoutes = map[string]bool{
 	// with no setup-lock/maintenance/auth middleware, including its own
 	// subrouter mount point.
 	"/solder":                            true,
+	"/solder/api":                        true,
 	"/solder/api/":                       true,
 	"/solder/api/modpack":                true,
 	"/solder/api/modpack/{slug}":         true,

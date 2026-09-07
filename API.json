@@ -4253,6 +4253,16 @@
     },
     {
       "method": "GET",
+      "path": "/solder/api",
+      "auth": "none",
+      "authorization": "public",
+      "description": "the root probe.",
+      "handler": "SolderHandler.Info",
+      "group": "solder",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/solder/api/",
       "auth": "none",
       "authorization": "public",
@@ -5023,9 +5033,9 @@
     }
   ],
   "counts": {
-    "total": 503,
+    "total": 504,
     "byAuth": {
-      "none": 35,
+      "none": 36,
       "session": 455,
       "user API key": 10,
       "warp key": 3
@@ -5062,7 +5072,7 @@
       "settings": 28,
       "setup": 2,
       "share": 1,
-      "solder": 12,
+      "solder": 13,
       "sse-ticket": 1,
       "status": 1,
       "storage": 1,

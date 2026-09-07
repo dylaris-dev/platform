@@ -50,6 +50,7 @@ var anonymousUnlimitedRoutes = map[string]string{
 	// and sits outside all middleware on purpose. These four are metadata
 	// queries; the sibling that serves the actual files, /solder/mirror/, is
 	// the one that carries a limiter.
+	"/api":                        "solder: API banner, the no-slash spelling",
 	"/api/":                       "solder: API banner",
 	"/api/modpack":                "solder: published pack list",
 	"/api/modpack/{slug}":         "solder: pack metadata",
@@ -183,6 +184,25 @@ func TestAnonymousUnlimitedRouteSurfaceIsFrozen(t *testing.T) {
 		sort.Strings(stale)
 		t.Errorf("anonymousUnlimitedRoutes lists route(s) that are no longer registered"+
 			" that way; drop them so the list keeps meaning something:\n  %s", strings.Join(stale, "\n  "))
+	}
+}
+
+// Both spellings of the Solder API root have to stay registered. This is the URL
+// an operator types into the Technic Platform, and only the trailing-slash form
+// existed - so "/solder/api" fell through to the panel's HTML catch-all and
+// Technic reported an invalid Solder URL for a Solder that was answering
+// correctly one character away. Upstream TechnicSolder serves both.
+//
+// Checked here because this file already reads the registrations out of
+// routes.go, and because the failure it guards against is a route DISAPPEARING,
+// which no handler test can see.
+func TestSolderAPIRootAnswersBothSpellings(t *testing.T) {
+	found := anonymousUnlimited(t)
+	for _, path := range []string{"/api", "/api/"} {
+		if !found[path] {
+			t.Errorf("the solder API root %q is not registered; a Technic Platform "+
+				"entry using that spelling gets the panel's HTML instead of JSON", path)
+		}
 	}
 }
 

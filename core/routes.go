@@ -624,6 +624,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// published packs at all times. The modpacks feature is gated IN-HANDLER
 	// (Solder-shaped {"error":...} JSON), not by the 503 feature middleware.
 	solder := r.PathPrefix("/solder").Subrouter()
+	// Both spellings of the API root, answering identically rather than
+	// redirecting. This is the URL an operator types into the Technic Platform,
+	// and mux matched only the trailing-slash form - so "/solder/api" fell
+	// through to the panel's HTML catch-all and Technic saw a web page where it
+	// expected {"api":"TechnicSolder"}, reporting an invalid Solder URL for a
+	// Solder that was working. Upstream TechnicSolder answers both. A 301 would
+	// also work for a client that follows redirects, which is not something to
+	// assume about somebody else's HTTP client.
+	solder.HandleFunc("/api", solderHandler.Info).Methods("GET")
 	solder.HandleFunc("/api/", solderHandler.Info).Methods("GET")
 	solder.HandleFunc("/api/modpack", solderHandler.ListModpacks).Methods("GET")
 	solder.HandleFunc("/api/modpack/{slug}", solderHandler.GetModpack).Methods("GET")

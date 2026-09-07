@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **502 routes** in 50 sections: 225 GET, 149 POST, 38 PUT, 37 PATCH, 54 DELETE.
-- **35** accept no credential at all; read the Gates column before assuming any of them is open.
-- **344** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **35** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **503 routes** in 50 sections: 226 GET, 149 POST, 38 PUT, 37 PATCH, 54 DELETE.
+- **36** accept no credential at all; read the Gates column before assuming any of them is open.
+- **344** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **36** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **9** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -190,7 +190,7 @@ can still show what exists.
 - [/api/versions](#apiversions) (2)
 - [/api/warp](#apiwarp) (17)
 - [/healthz](#healthz) (1)
-- [/solder/api](#solderapi) (5)
+- [/solder/api](#solderapi) (6)
 - [/solder/mirror](#soldermirror) (1)
 
 ## /api/admin
@@ -933,6 +933,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| GET | `/solder/api` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
 | GET | `/solder/api/` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
 | GET | `/solder/api/modpack` | **none** | _public_ | - | `SolderHandler.ListModpacks` | Default: {modpacks:{slug:displayName}, mirror_url}. |
 | GET | `/solder/api/modpack/{slug}` | **none** | _public_ | - | `SolderHandler.GetModpack` | 404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth. |

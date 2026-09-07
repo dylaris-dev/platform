@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Linking a modpack to the Technic Platform could fail with "invalid Solder
+  URL" even when everything was set up correctly.** The address worked only with
+  a trailing slash, and key verification was missing a field the platform may
+  read. Both are fixed; if you entered the URL before and it was refused, try it
+  again.
+
 ## 2026.09.07.4
 
 ### Features
