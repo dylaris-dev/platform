@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.13
+
+### Features
+- Groundwork for platform-wide backups: Core can now re-encrypt every stored
+  credential from one CLUSTER_SECRET to another, which both a bundle restore on
+  a different instance and a secret rotation need. Nothing offers it yet. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.12
 
 ### Features
