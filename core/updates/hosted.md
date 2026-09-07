@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.6
+
+### Features
+- **You can link your modpacks to the Technic Platform.** Copy the API key from
+  your Technic profile under Edit Profile, Solder Configuration, add it under
+  Account, Solder Keys, then enter the Solder URL on Technic and click Link
+  Solder. The URL is your panel address followed by `/solder/api/`.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.5
 
 ### Features

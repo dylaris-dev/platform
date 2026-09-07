@@ -144,6 +144,14 @@ func (s *PostgresStore) CreateSolderKey(name, ownerID, keyHash string) (*SolderK
 		`INSERT INTO solder_keys (key_hash, name, owner_id) VALUES ($1, $2, $3)
 		 RETURNING id, name, owner_id, created_at`,
 		keyHash, name, ownerID).Scan(&k.ID, &k.Name, &k.OwnerID, &k.CreatedAt)
+	// key_hash is UNIQUE, and since an operator may PASTE a key rather than
+	// only mint one, a collision is now something a person can cause by hand -
+	// re-adding the same Technic key, or adding one somebody else already holds.
+	// It has to come back as an answer rather than as a 500, and never as the
+	// driver's message, which spells out the table and the constraint.
+	if isUniqueViolation(err) {
+		return nil, ErrNameTaken
+	}
 	if err != nil {
 		return nil, err
 	}

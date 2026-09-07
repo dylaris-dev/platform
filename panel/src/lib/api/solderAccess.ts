@@ -52,14 +52,22 @@ export async function removePackClient(packId: number, clientId: number): Promis
 
 export const listKeys = () => jget<SolderKey[]>("/solder/keys");
 
-export async function createKey(name: string): Promise<{ success: boolean; plaintext?: string; key?: SolderKey }> {
+// key is the value issued by the Technic Platform (Edit Profile -> Solder
+// Configuration). Leave it empty to have Core mint one instead, which is the
+// launcher-access case and never the Platform-link one: Technic only ever
+// verifies a key it issued itself.
+//
+// message is carried through because the two refusals here are both actionable -
+// a malformed key and one already registered - and "Create failed" told the
+// operator neither.
+export async function createKey(name: string, key?: string): Promise<{ success: boolean; plaintext?: string; keyRow?: SolderKey; message?: string }> {
   const res = await fetch(`${API_URL}/solder/keys`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getAuthHeader() },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, key: key ?? "" }),
   });
   const data = await res.json().catch(() => ({}));
-  return { success: res.ok, plaintext: data.plaintext, key: data.key };
+  return { success: res.ok, plaintext: data.plaintext, keyRow: data.key, message: data.message };
 }
 
 export async function deleteKey(id: number): Promise<{ success: boolean }> {

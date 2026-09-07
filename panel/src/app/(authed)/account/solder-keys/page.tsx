@@ -26,6 +26,9 @@ export default function SolderKeysPage() {
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
     const [name, setName] = useState('');
+    // Empty means "mint one". Anything typed here is the key the Technic
+    // Platform issued, which is the only key Technic will ever verify.
+    const [platformKey, setPlatformKey] = useState('');
     const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string } | null>(null);
     const [deleting, setDeleting] = useState<SolderKey | null>(null);
     const [creatingKey, runCreate] = useBusy();
@@ -49,15 +52,24 @@ export default function SolderKeysPage() {
     const handleCreate = async () => {
         const trimmed = name.trim();
         if (!trimmed) { showToast('Name required', false); return; }
+        const pasted = platformKey.trim();
         try {
-            const res = await createKey(trimmed);
-            if (res.success && res.plaintext) {
-                setCreating(false);
-                setName('');
+            const res = await createKey(trimmed, pasted);
+            if (!res.success) {
+                // Both refusals are actionable, so say which one it was.
+                showToast(res.message || 'Create failed', false);
+                return;
+            }
+            setCreating(false);
+            setName('');
+            setPlatformKey('');
+            refresh();
+            // Only a key we minted has a plaintext to show, and only once. A
+            // pasted one is not echoed back: the operator has it already.
+            if (res.plaintext) {
                 setRevealedKey({ plaintext: res.plaintext, name: trimmed });
-                refresh();
             } else {
-                showToast('Create failed', false);
+                showToast('Key added. Now click Link Solder on your Technic profile.');
             }
         } catch {
             showToast('Create failed', false);
@@ -169,6 +181,31 @@ export default function SolderKeysPage() {
                                     maxLength={128}
                                     autoFocus
                                 />
+                            </div>
+                            <div>
+                                <label className="input-label">Key from the Technic Platform</label>
+                                <input
+                                    type="text"
+                                    value={platformKey}
+                                    onChange={e => setPlatformKey(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
+                                    className="input-field input-mono w-full"
+                                    placeholder="leave empty to generate one"
+                                    maxLength={128}
+                                    spellCheck={false}
+                                    autoComplete="off"
+                                />
+                                <p className="text-xs text-(--base-06) mt-1.5">
+                                    To link this Solder to technicpack.net, paste the key from your
+                                    Technic profile under Edit Profile, Solder Configuration. Technic
+                                    only ever verifies a key it issued itself, so a generated one
+                                    cannot link it.
+                                </p>
+                                <p className="text-xs text-(--base-06) mt-1">
+                                    Leave it empty for a launcher key instead: Core generates one and
+                                    shows it once, and a launcher carries it to reach your private
+                                    packs.
+                                </p>
                             </div>
                         </div>
                         <div className="modal-footer">

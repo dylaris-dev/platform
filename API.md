@@ -769,7 +769,7 @@ can still show what exists.
 | POST | `/api/solder/clients` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateClient` | registers a Technic launcher client under the caller. |
 | DELETE | `/api/solder/clients/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteClient` | removes one of the caller's clients; the delete is owner-scoped. |
 | GET | `/api/solder/keys` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListKeys` | the caller's Solder API keys, hashes only. |
-| POST | `/api/solder/keys` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateKey` | mints a 64-character Solder API key. |
+| POST | `/api/solder/keys` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateKey` | registers a Solder API key. |
 | DELETE | `/api/solder/keys/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteKey` | revokes one of the caller's Solder keys. |
 
 ## /api/sse-ticket

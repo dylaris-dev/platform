@@ -4236,7 +4236,7 @@
       "path": "/api/solder/keys",
       "auth": "session",
       "authorization": "modpack.write",
-      "description": "mints a 64-character Solder API key.",
+      "description": "registers a Solder API key.",
       "handler": "SolderHandler.CreateKey",
       "group": "solder",
       "external": false

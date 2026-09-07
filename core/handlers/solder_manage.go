@@ -4,8 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
+
+	"dylaris-core/store"
 )
 
 // userID pulls the authenticated caller id (set by AuthMiddleware).
@@ -134,24 +139,70 @@ func (h *SolderHandler) ListKeys(w http.ResponseWriter, r *http.Request) {
 
 // CreateKey POST /api/solder/keys - mints a 64-character Solder API key. Only
 // its hash is stored, so the plaintext is shown once and cannot be recovered.
+// solderPastedKeyRe bounds a key an operator supplies. The Technic Platform's is
+// 32 hex characters today, but pinning that shape would break the first time it
+// changes and this value is never parsed - only hashed and compared. So the rule
+// is only what a key has to be to work: printable ASCII, no whitespace, long
+// enough not to be guessed.
+var solderPastedKeyRe = regexp.MustCompile(`^[!-~]{16,128}$`)
+
+// CreateKey POST /api/solder/keys - registers a Solder API key.
+//
+// Two ways in, and the second is the one that links this Solder to the Technic
+// Platform at all. Technic ISSUES the key: it lives on the operator's Technic
+// profile under Solder Configuration, and Solder is expected to accept it, after
+// which "Link Solder" makes technicpack.net call GET /solder/api/verify/{key}
+// against this install. Minting our own could never satisfy that - Technic never
+// learns a key we invented - so an install that could only generate one was
+// unlinkable, and said so with a bare 403 from a URL that was otherwise correct.
+// MEASURED: technicpack.net asked this install for a 32-hex key that had never
+// been created here, and got 403 because nothing could ever have created it.
+//
+// A generated key is still useful and stays the default: it is the ?k= a
+// launcher carries to see an owner's private packs, which has nothing to do with
+// the Platform.
 func (h *SolderHandler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
+		// Key is the value from the Technic Platform. Empty means "mint one".
+		Key string `json:"key"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+
+	plaintext := strings.TrimSpace(req.Key)
+	supplied := plaintext != ""
+	if supplied {
+		if !solderPastedKeyRe.MatchString(plaintext) {
+			sendJSONError(w, "That does not look like a Solder API key: 16 to 128 characters, no spaces. Copy it from your Technic profile under Solder Configuration.", http.StatusBadRequest)
+			return
+		}
+	} else {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+			return
+		}
+		plaintext = hex.EncodeToString(buf) // 64 chars, shown once
+	}
+
+	k, err := h.state.Store.CreateSolderKey(req.Name, solderCaller(r), solderKeyHash(plaintext))
+	if errors.Is(err, store.ErrNameTaken) {
+		sendJSONError(w, "That key is already registered here.", http.StatusConflict)
 		return
 	}
-	plaintext := hex.EncodeToString(buf) // 64 chars, shown once
-	k, err := h.state.Store.CreateSolderKey(req.Name, solderCaller(r), solderKeyHash(plaintext))
 	if err != nil {
 		log.Printf("solder CreateKey: %v", err)
 		sendJSONError(w, "Failed to create key", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "plaintext": plaintext, "key": k})
+	// A key we generated is shown once, because this is the only moment it
+	// exists in the clear. A key the operator pasted is not echoed: they already
+	// have it, and sending it back would put it in one more place for no gain.
+	out := map[string]interface{}{"success": true, "key": k}
+	if !supplied {
+		out["plaintext"] = plaintext
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 // DeleteKey DELETE /api/solder/keys/{id} - revokes one of the caller's Solder

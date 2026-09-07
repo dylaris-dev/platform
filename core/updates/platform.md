@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.6
+
+### Features
+- **A Solder API key issued by the Technic Platform can now be entered under
+  Account, Solder Keys.** Linking a self-hosted Solder to technicpack.net was
+  impossible before: Technic issues the key on your Technic profile and verifies
+  that exact value, while Core could only mint one of its own that Technic has
+  never seen. Leave the field empty for a launcher key, which still works as
+  before. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A key already registered here is refused with a clear message instead of a
+  server error. `core` `panel`
+
 ## 2026.09.07.5
 
 ### Features
