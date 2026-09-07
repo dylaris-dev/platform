@@ -45,13 +45,17 @@ func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
 	// packs.changed carries the pack owner's id and users.changed the subject's,
 	// and the filter below looks only at serverId - so both reached every
 	// authenticated session, handing any account the user ids of everyone else
-	// who touched a modpack, plus the timing of that activity. The pack owner id
-	// is the more expensive of the two: it is the first path segment of
-	// modpacks/<ownerID>/<slug>/<version>/pack.mrpack, which /solder/mirror
-	// serves to anyone, unauthenticated, on purpose (the Technic launcher cannot
-	// present a credential). That storage layout is accepted BECAUSE the path is
-	// not derivable from outside; broadcasting one of its two unknown segments is
-	// what makes it derivable.
+	// who touched a modpack, plus the timing of that activity.
+	//
+	// The owner id used to be worth more than that: it was the first path segment
+	// of modpacks/<ownerID>/<slug>/<version>/pack.mrpack, which /solder/mirror
+	// serves to anyone, unauthenticated, on purpose (a Technic launcher cannot
+	// present a credential). It no longer is - PacksHandler.mrpackStorageKey
+	// derives that directory from CLUSTER_SECRET, because the public Solder API
+	// prints the same owner id in every mods[].url and made the old path
+	// derivable anyway. This filter is not what carries that guarantee now, and
+	// it stays regardless: broadcasting other accounts' user ids and the timing
+	// of their activity is its own leak.
 	//
 	// Nothing loses a refresh: every subscriber in the panel ignores the payload
 	// and re-fetches, and what it re-fetches is its OWN packs (listPacks) and its

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/pkg/crypto"
 	"dylaris-core/storage/modpack"
 
 	"github.com/gorilla/mux"
@@ -249,8 +251,32 @@ func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, buil
 }
 
 // mrpackStorageKey is the storage key for a build's rendered .mrpack.
-func mrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
-	return fmt.Sprintf("modpacks/%s/%s/%s/pack.mrpack", pack.OwnerID, pack.InternalSlug, build.VersionString)
+//
+// The directory segment is opaque on purpose: the Node fetches this object over
+// /solder/mirror/, which is anonymous by necessity (see SolderMirror), so the
+// PATH is the credential here, the same model as /api/share/{token}. That only
+// holds while the path cannot be derived from something the platform publishes.
+//
+// It used to be modpacks/<ownerID>/<internalSlug>/<version>/, and the owner id
+// is printed in plain sight in every mods[].url the public Solder API serves -
+// in all three delivery modes, since the storage key is what a launcher
+// downloads by. One public pack therefore handed out a segment the layout
+// treated as secret, leaving only the internal slug between an anonymous caller
+// and every OTHER pack of that account. services.SystemEvents already refuses to
+// broadcast a pack owner id for exactly this reason; the Solder API published it
+// anyway.
+//
+// Derived rather than random so the key stays stable per (owner, pack, build):
+// re-rendering a draft install overwrites its object instead of leaving a new
+// one behind on every install. CLUSTER_SECRET cannot be empty (LoadConfig
+// refuses to boot on the default or an unset value), so the segment always has a
+// real key behind it. Rotating that secret moves the derived path: a PUBLISHED
+// build is unaffected because its key is stored on the build row, and an
+// unpublished one is re-rendered under the new path, orphaning the old object.
+func (h *PacksHandler) mrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
+	mac := hmac.New(sha256.New, crypto.DeriveKey(h.state.ClusterSecret, "mrpack-path"))
+	fmt.Fprintf(mac, "%s\x1f%s\x1f%s", pack.OwnerID, pack.InternalSlug, build.VersionString)
+	return "modpacks/" + hex.EncodeToString(mac.Sum(nil)) + "/pack.mrpack"
 }
 
 // persistMrpackForBuild renders + (for beta/release) persists the mrpack to
@@ -270,7 +296,7 @@ func (h *PacksHandler) persistMrpackForBuild(ctx context.Context, pack *models.P
 	if prov == nil {
 		return nil, fmt.Errorf("no modpack storage configured (Settings -> Modpacks)")
 	}
-	key := mrpackStorageKey(pack, build)
+	key := h.mrpackStorageKey(pack, build)
 	if err := prov.Put(ctx, key, data); err != nil {
 		return nil, fmt.Errorf("mrpack storage put: %w", err)
 	}
@@ -308,7 +334,7 @@ func (h *PacksHandler) ensureInstallMrpack(ctx context.Context, pack *models.Pac
 	if prov == nil {
 		return "", fmt.Errorf("modpack storage not configured")
 	}
-	key := mrpackStorageKey(pack, build)
+	key := h.mrpackStorageKey(pack, build)
 	if err := prov.Put(ctx, key, data); err != nil {
 		return "", err
 	}

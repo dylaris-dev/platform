@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A modpack's `.mrpack` is no longer stored under a guessable path.** The Node
+  downloads it over the unauthenticated Solder mirror, and the old path started
+  with the pack owner's user id, which the public Solder API prints in every mod
+  download URL. The directory is now derived from `CLUSTER_SECRET`. Builds you
+  have already published keep working; nothing to migrate. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.8
 
 ### Features
