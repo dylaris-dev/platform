@@ -103,6 +103,44 @@ function StorageModeCard({
             {config.mode === 'node-local' && (
                 <NodeLocalQuotaPanel config={config} onChange={onChange} />
             )}
+
+            {/* Outside the node-local block on purpose: this one is per OWNER
+                and applies in every mode, while the panel above bounds one
+                server's folder on one node's disk. */}
+            <div className="mt-4 border-t border-(--base-04) pt-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0 max-w-md">
+                        <label className="input-label flex items-center gap-1.5" htmlFor="backup-default-user-quota">
+                            Allowance per user without a subscription
+                            <HelpTip label="About the allowance">
+                                <p className="mb-2">
+                                    How much backup storage <strong>this platform</strong> holds for
+                                    someone who owns a server but has bought no node or route-only
+                                    location. Customers who bought one are judged by what their
+                                    purchase includes instead, set under Settings, Billing.
+                                </p>
+                                {LimitHelp}
+                                <p className="mt-2">
+                                    Administrators are never subject to it, and neither are backups
+                                    written to a storage the user connected themselves. New backups
+                                    are refused once it is reached; the ones already stored are kept.
+                                </p>
+                            </HelpTip>
+                        </label>
+                        <p id="backup-default-user-quota-hint" className="text-xs text-(--base-06) mt-1">
+                            Leave it unset for no limit. This lived under Settings, Billing until
+                            2026-09-07, where a self-hosted install could not reach it.
+                        </p>
+                    </div>
+                    <LimitField
+                        id="backup-default-user-quota"
+                        describedBy="backup-default-user-quota-hint"
+                        unit="GB"
+                        value={config.defaultUserQuotaGb}
+                        onChange={defaultUserQuotaGb => onChange({ ...config, defaultUserQuotaGb })}
+                    />
+                </div>
+            </div>
         </SettingsCard>
     );
 }

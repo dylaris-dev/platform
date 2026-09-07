@@ -52,25 +52,33 @@ func (f *billingSettingsFakeStore) GetUserBilling(string) (*store.UserBilling, e
 	return &store.UserBilling{}, nil
 }
 
+// Not an administrator: these tests are about the customer path. The
+// administrator exemption has its own table in services.
+func (f *billingSettingsFakeStore) GetUserByID(string) (*models.User, error) {
+	return &models.User{}, nil
+}
+
 func (f *billingSettingsFakeStore) BackupBytesByOwner(string) (int64, error) { return 0, nil }
 
 // Loading the billing screen and pressing Save must not change what the platform
-// enforces.
+// enforces for backups.
 //
-// It used to: the GET answered "0" for an unset R2 quota and the PUT turned an
+// It used to: the GET answered "0" for an unset quota and the PUT turned an
 // empty field back into "0", so an operator who came to edit the payment URL
 // stored a quota of NONE for every tenant - and the panel's own help text called
 // that "no cap". The screen said one thing, the guard did the opposite, and
-// nothing failed anywhere.
+// nothing failed anywhere. MEASURED in production before the field moved:
+// billing.r2_quota_gb held "0" and every backup was refused with "0 / 0 GB".
 //
-// Driven as the panel drives it: read the settings, send them back unchanged.
-func TestBillingSettingsRoundTripDoesNotCapBackups(t *testing.T) {
+// The allowance now lives under Settings, Backups, so the assertion is stronger
+// than "the round trip is harmless": this screen must not carry or write that
+// key AT ALL. Driven as the panel drives it - read, send back unchanged.
+func TestBillingSettingsRoundTripDoesNotTouchTheBackupAllowance(t *testing.T) {
 	st := &billingSettingsFakeStore{kv: map[string]string{}}
 	h := &BillingHandler{state: &AppState{Store: st}}
 
-	// Before: nothing configured, so nothing is capped.
-	if exceeded, _, _ := services.R2QuotaExceeded(st, "u1"); exceeded {
-		t.Fatal("a fresh install already reports the backup quota as exceeded")
+	if exceeded, _, _ := services.BackupAllowanceExceeded(st, "u1", true, nil); exceeded {
+		t.Fatal("a fresh install already reports the backup allowance as exceeded")
 	}
 
 	rec := httptest.NewRecorder()
@@ -79,56 +87,41 @@ func TestBillingSettingsRoundTripDoesNotCapBackups(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode GET: %v", err)
 	}
-	if q, _ := got["r2QuotaGb"].(string); q != "" {
-		t.Errorf("unset quota reads back as %q, want \"\" - an unset limit is not a limit of zero", q)
+	if _, ok := got["r2QuotaGb"]; ok {
+		t.Error("the billing screen still carries r2QuotaGb; the allowance moved to Settings, Backups")
 	}
 
 	body, _ := json.Marshal(got)
 	rec = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/settings/billing", bytes.NewReader(body))
-	h.SetBillingSettings(rec, req)
+	h.SetBillingSettings(rec, httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("save returned %d: %s", rec.Code, rec.Body.String())
 	}
-
-	// After: still nothing capped. This is the assertion that was false.
-	if exceeded, _, quota := services.R2QuotaExceeded(st, "u1"); exceeded {
+	if v, ok := st.kv[services.SettingBackupDefaultUserQuota]; ok {
+		t.Errorf("saving the billing screen wrote the backup allowance as %q", v)
+	}
+	if exceeded, _, quota := services.BackupAllowanceExceeded(st, "u1", true, nil); exceeded {
 		t.Errorf("saving the screen unchanged capped backups at %d bytes for a tenant storing none", quota)
 	}
 }
 
-// The three states an operator can express have to survive a write and a read.
-func TestBillingSettingsQuotaStates(t *testing.T) {
-	tests := []struct {
-		name     string
-		typed    string
-		want     string // what lands in the settings table
-		exceeded bool   // for a tenant storing zero bytes
-	}{
-		{name: "empty is unset", typed: "", want: "", exceeded: false},
-		{name: "unlimited is a decided no-cap", typed: services.LimitUnlimited, want: services.LimitUnlimited, exceeded: false},
-		// Zero is a real cap of none, and at zero bytes stored the tenant is
-		// already at it: the create gate answers at-or-over.
-		{name: "zero is a cap of none", typed: "0", want: "0", exceeded: true},
-		{name: "a number is that cap", typed: "250", want: "250", exceeded: false},
+// A panel bundle that still sends the old field must not be able to set the
+// allowance from here either. A stale bundle in somebody's browser is how the
+// last defect of this shape stayed alive past its fix.
+func TestBillingSettingsIgnoresALegacyQuotaField(t *testing.T) {
+	st := &billingSettingsFakeStore{kv: map[string]string{}}
+	h := &BillingHandler{state: &AppState{Store: st}}
+	body := billingSettingsBody(map[string]string{"r2QuotaGb": "0"})
+	rec := httptest.NewRecorder()
+	h.SetBillingSettings(rec, httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save returned %d: %s", rec.Code, rec.Body.String())
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			st := &billingSettingsFakeStore{kv: map[string]string{}}
-			h := &BillingHandler{state: &AppState{Store: st}}
-			body := billingSettingsBody(map[string]string{"r2QuotaGb": tt.typed})
-			rec := httptest.NewRecorder()
-			h.SetBillingSettings(rec, httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(body)))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("save returned %d: %s", rec.Code, rec.Body.String())
-			}
-			if got := st.kv[services.BillingR2QuotaKey]; got != tt.want {
-				t.Errorf("stored %q, want %q", got, tt.want)
-			}
-			if exceeded, _, _ := services.R2QuotaExceeded(st, "u1"); exceeded != tt.exceeded {
-				t.Errorf("exceeded = %v, want %v", exceeded, tt.exceeded)
-			}
-		})
+	if v, ok := st.kv[services.SettingBackupDefaultUserQuota]; ok {
+		t.Errorf("a legacy r2QuotaGb of 0 still reached the allowance as %q", v)
+	}
+	if exceeded, _, _ := services.BackupAllowanceExceeded(st, "u1", true, nil); exceeded {
+		t.Error("a legacy r2QuotaGb still capped backups")
 	}
 }
 
@@ -223,7 +216,7 @@ func TestUserBillingDefaultsDoNotInventAQuotaOfZero(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			kv := map[string]string{}
 			if tt.stored != "" {
-				kv[services.BillingR2QuotaKey] = tt.stored
+				kv[services.SettingBackupDefaultUserQuota] = tt.stored
 			}
 			st := &billingSettingsFakeStore{kv: kv}
 			h := &BillingHandler{state: &AppState{Store: st}}

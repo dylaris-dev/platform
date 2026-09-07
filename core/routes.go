@@ -944,11 +944,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// RequireBYONEnabled - with BYON off the tenant UI still asks, and needs the
 	// answer "no" rather than a 503 it would have to special-case.
 	api.HandleFunc("/me/entitlement", authHandler.AuthMiddleware(entitlementHandler.GetMine)).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(billingHandler.GetBillingSettings)))).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(billingHandler.SetBillingSettings)))).Methods("PUT")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(appState.RequireStoreEnabled(billingHandler.GetBillingSettings))))).Methods("GET")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingSettings))))).Methods("PUT")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(billingHandler.GetUserBilling)))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(billingHandler.SetBillingStatus)))).Methods("PATCH")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(billingHandler.SetBillingOverrides)))).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingOverrides))))).Methods("PATCH")
 	// Entitlement = WHAT a tenant may use (BYON / route-only), as opposed to the
 	// billing routes above, which are status and HOW MUCH.
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(entitlementHandler.GetForUser)))).Methods("GET")

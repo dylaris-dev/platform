@@ -37,7 +37,18 @@ type BackupScheduler struct {
 	// connection opens a saved storage connection as a backup backend.
 	// Optional; required only for jobs whose storage row is "connection".
 	connection func(connectionID int, prefix string) (backupstorage.Storage, error)
+	// storeEnabled mirrors config.StoreEnabled and reaches the backup
+	// allowance, which has to tell "no billing plane exists" from "this owner
+	// holds no entitlement" - the same distinction BillingLifecycleService
+	// already carries for the over-limit sweep. Zero value false means
+	// self-host, where the operator's Settings, Backups allowance is the answer.
+	storeEnabled bool
 }
+
+// SetStoreEnabled mirrors config.StoreEnabled into the scheduler. Without it the
+// cron path would resolve a different allowance from the manual path for the
+// same server, which is exactly the split this rebuild removes.
+func (b *BackupScheduler) SetStoreEnabled(v bool) { b.storeEnabled = v }
 
 func NewBackupScheduler(s store.Store, r *redis.Client, q *QueueService) *BackupScheduler {
 	return &BackupScheduler{store: s, redis: r, queue: q}
@@ -482,10 +493,16 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return fmt.Errorf("resolve storage: %w", err)
 	}
 
-	// R2 backup quota: skip the scheduled run once the tenant is at/over quota
-	// (0/unset = unlimited). The next_run is still advanced below so we don't
-	// re-check on a tight loop; the run resumes when usage drops or the limit rises.
-	if exceeded, used, quota := R2QuotaExceeded(b.store, srv.OwnerID); exceeded {
+	// Platform backup allowance: skip the scheduled run once the owner is at or
+	// over it. The next_run is still advanced below so we don't re-check on a
+	// tight loop; the run resumes when usage drops or the allowance rises.
+	//
+	// Skipped entirely when the archive is headed for a storage the TENANT
+	// connected: those bytes are theirs, they are not counted by
+	// BackupBytesByOwner, and deleteTenantBackups already refuses to touch them
+	// at any retention deadline. Charging them against our ceiling was the one
+	// place that did not take that distinction.
+	if exceeded, used, quota := BackupAllowanceExceeded(b.store, srv.OwnerID, b.storeEnabled, storage); exceeded {
 		log.Printf("backup-scheduler: job %d skipped — quota reached (%d/%d GB)", job.ID, used/(1<<30), quota/(1<<30))
 		next := ComputeBackupNextRun(job.Schedule, time.Now())
 		if next != nil {
@@ -496,6 +513,9 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// Per-server node-local cap - the same gate startBackupRun takes. Cron is
 	// the path that actually fills a disk: nobody is watching it, and it runs
 	// again every interval forever.
+	// No administrator exemption here, deliberately, unlike the allowance above:
+	// this one bounds a real disk on the MC host, and a full disk takes every
+	// server on that host down with it, including other people's.
 	if exceeded, used, quota := NodeLocalBackupQuotaExceeded(b.store, b.registry, srv); exceeded {
 		log.Printf("backup-scheduler: job %d skipped — per-server backup quota reached (%.1f/%.1f GB)",
 			job.ID, float64(used)/(1<<30), float64(quota)/(1<<30))

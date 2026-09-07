@@ -8,6 +8,40 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.3
+
+### Features
+- **The backup allowance for users without a subscription moved to Settings,
+  Backups.** It used to sit under Settings, Billing as "Flat quota per tenant" -
+  a screen that is hidden unless the hosted store is linked, so on a self-hosted
+  install the one control over every user's backup storage was on a page nobody
+  could open, while the guard reading it ran on every backup. `core` `panel`
+
+### Breaking
+- **The flat quota field is gone from Settings, Billing and its value moves on
+  first start.** A stored `0` is NOT carried across: the old screen wrote one by
+  itself when saved, so it says more about that defect than about anyone's
+  policy. If you meant a cap of none, set it again under Settings, Backups.
+  `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- **Administrators are no longer subject to the backup allowance.** The operator
+  of a hosted install had to sell themselves a subscription before their own
+  servers could be backed up. The per-server node-local cap still applies to
+  everyone, because it bounds a real disk. `core`
+- **A backup to storage the user connected themselves no longer counts against
+  the platform allowance.** Those bytes were already excluded from the usage
+  figure and from retention; only the gate still charged for them, so a customer
+  with their own bucket could pass the ceiling once and never back up again.
+  `core`
+- **The Usage screen judged backup storage by a different number than the guard
+  did.** It read the per-user override alone, so a customer on their purchase's
+  allowance was never shown as over while their backups were being refused.
+  `core` `panel`
+
 ## 2026.09.07.2
 
 ### Features

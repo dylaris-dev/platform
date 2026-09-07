@@ -3,12 +3,10 @@
 import { CreditCard, Info } from 'lucide-react';
 import {
     getBillingSettings, setBillingSettings, BillingSettings,
-    limitFromSetting, limitToSetting,
 } from '@/lib/api/billing';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
-import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 import HelpTip from '@/components/ui/HelpTip';
 
 const SPEC_RE = /^\d+[dwm]$/;
@@ -18,9 +16,6 @@ const DEFAULTS: BillingSettings = {
     gracePeriod: '3d',
     r2Retention: '1w',
     nodeRetention: '2w',
-    // Empty, not "0": unset means no cap, and a "0" default here was what the
-    // next save wrote back as a real cap of none for every tenant.
-    r2QuotaGb: '',
     r2IncludedGb: '50',
     r2BookableGb: '500',
     presignTtlNodeMin: '60',
@@ -41,10 +36,6 @@ export default function BillingTab() {
                 gracePeriod: res.gracePeriod || DEFAULTS.gracePeriod,
                 r2Retention: res.r2Retention || DEFAULTS.r2Retention,
                 nodeRetention: res.nodeRetention || DEFAULTS.nodeRetention,
-                // NOT `|| DEFAULTS`: an empty quota is the meaningful "no cap"
-                // answer, and substituting anything for it is the bug this
-                // screen shipped.
-                r2QuotaGb: res.r2QuotaGb ?? '',
                 r2IncludedGb: res.r2IncludedGb || DEFAULTS.r2IncludedGb,
                 r2BookableGb: res.r2BookableGb || DEFAULTS.r2BookableGb,
                 presignTtlNodeMin: res.presignTtlNodeMin || DEFAULTS.presignTtlNodeMin,
@@ -149,31 +140,10 @@ export default function BillingTab() {
                 </SettingsGroup>
 
                 <SettingsGroup
-                    title="Backup storage"
-                    description="What a tenant may store, and what they may book on top once they have agreed to be charged for it."
+                    title="Backup storage per purchased unit"
+                    description="What a purchase includes, and what a customer may book on top once they have agreed to be charged for it. What a customer with NO purchase gets is set under Settings, Backups."
                 >
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div className="min-w-0 max-w-md">
-                            <label className="input-label flex items-center gap-1.5" htmlFor="billing-r2-quota">
-                                Flat quota per tenant
-                                <HelpTip label="About the flat quota">{LimitHelp}</HelpTip>
-                            </label>
-                            <p id="billing-r2-quota-hint" className="text-xs text-(--base-06) mt-1">
-                                The fallback for tenants who bought nothing, which is everyone on a
-                                self-hosted install. New backups are refused with a message once
-                                exceeded; the ones already stored are kept.
-                            </p>
-                        </div>
-                        <LimitField
-                            id="billing-r2-quota"
-                            describedBy="billing-r2-quota-hint"
-                            unit="GB"
-                            value={limitFromSetting(s.r2QuotaGb)}
-                            onChange={v => patch({ r2QuotaGb: limitToSetting(v) })}
-                        />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label" htmlFor="billing-r2-included">Included per unit (GB)</label>
                             <input

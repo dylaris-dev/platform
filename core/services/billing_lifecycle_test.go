@@ -43,6 +43,8 @@ type billingFakeStore struct {
 	backupBytes int64
 	backupErr   error
 
+	user *models.User
+
 	pastDue   []store.UserBilling
 	suspended []store.UserBilling
 
@@ -116,27 +118,36 @@ func (f *billingFakeStore) ListBackupRunsByOwner(ownerID string) ([]store.Backup
 }
 
 func (f *billingFakeStore) GetUserByID(string) (*models.User, error) {
+	// Answers only where a test set one. The error is deliberate elsewhere: the
+	// allowance treats a failed lookup as "not known to be an admin" and falls
+	// through, so every case that does not set a user still exercises the
+	// customer path.
+	if f.user != nil {
+		return f.user, nil
+	}
 	return nil, errors.New("no user: email lookups are out of scope for lifecycle decision tests")
 }
 
 func timePtr(t time.Time) *time.Time { return &t }
 
-// --- R2QuotaExceeded: quota resolution (per-user > platform setting > no cap) ---
+// --- BackupAllowanceExceeded: administrator > override > entitlement > setting ---
 //
 // These follow the platform limit convention: absent is the only thing that
 // defers to the next scope, and 0 is a real cap of none. This table used to
 // assert the opposite for a stored zero, which is how the defect survived - the
 // test named the bug and then guarded it.
 
-func TestR2QuotaExceeded(t *testing.T) {
+func TestBackupAllowanceExceeded(t *testing.T) {
 	const GB = int64(1024 * 1024 * 1024)
 
 	cases := []struct {
-		name         string
-		store        *billingFakeStore
-		wantExceeded bool
-		wantUsed     int64
-		wantQuotaGB  int64
+		name          string
+		store         *billingFakeStore
+		storeDisabled bool
+		dest          *models.BackupStorage
+		wantExceeded  bool
+		wantUsed      int64
+		wantQuotaGB   int64
 	}{
 		{
 			name: "per-user override under quota",
@@ -187,7 +198,7 @@ func TestR2QuotaExceeded(t *testing.T) {
 			name: "platform setting of 0 is a cap of none",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{},
-				settings:    map[string]string{BillingR2QuotaKey: "0"},
+				settings:    map[string]string{SettingBackupDefaultUserQuota: "0"},
 				backupBytes: 1 * GB,
 			},
 			wantExceeded: true,
@@ -200,7 +211,7 @@ func TestR2QuotaExceeded(t *testing.T) {
 			name: "an override of 0 beats a platform setting that allows more",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{R2QuotaGB: ptr(0)},
-				settings:    map[string]string{BillingR2QuotaKey: "100"},
+				settings:    map[string]string{SettingBackupDefaultUserQuota: "100"},
 				backupBytes: 1 * GB,
 			},
 			wantExceeded: true,
@@ -213,7 +224,7 @@ func TestR2QuotaExceeded(t *testing.T) {
 			name: "no override falls back to the platform setting",
 			store: &billingFakeStore{
 				billing:     &store.UserBilling{},
-				settings:    map[string]string{BillingR2QuotaKey: "1"},
+				settings:    map[string]string{SettingBackupDefaultUserQuota: "1"},
 				backupBytes: 2 * GB,
 			},
 			wantExceeded: true,
@@ -247,11 +258,79 @@ func TestR2QuotaExceeded(t *testing.T) {
 			wantUsed:     0,
 			wantQuotaGB:  10,
 		},
+		{
+			// The operator is not a customer. Without this the owner of a
+			// hosted install cannot back up their own servers until they have
+			// sold themselves a subscription - and EffectiveEntitlement has
+			// opened with exactly this check all along.
+			name: "an administrator owner has no ceiling at all",
+			store: &billingFakeStore{
+				user:        &models.User{IsAdmin: true},
+				billing:     &store.UserBilling{R2QuotaGB: ptr(1)},
+				settings:    map[string]string{SettingBackupDefaultUserQuota: "1"},
+				backupBytes: 900 * GB,
+			},
+			wantExceeded: false,
+			wantUsed:     0,
+			wantQuotaGB:  0,
+		},
+		{
+			// Self-host: nothing was ever bought, so the entitlement step has
+			// nothing to say and the operator's own allowance answers.
+			name:          "without a store the entitlement step is skipped",
+			storeDisabled: true,
+			store: &billingFakeStore{
+				// Two units, which WOULD resolve to 100 GB with a store.
+				billing:     &store.UserBilling{MaxNodes: ptr(1), MaxLinks: ptr(1)},
+				settings:    map[string]string{SettingBackupDefaultUserQuota: "5"},
+				backupBytes: 6 * GB,
+			},
+			wantExceeded: true,
+			wantUsed:     6 * GB,
+			wantQuotaGB:  5,
+		},
+		{
+			name: "with a store the same tenant is judged by their entitlement",
+			store: &billingFakeStore{
+				billing:     &store.UserBilling{MaxNodes: ptr(1), MaxLinks: ptr(1)},
+				settings:    map[string]string{SettingBackupDefaultUserQuota: "5"},
+				backupBytes: 6 * GB,
+			},
+			wantExceeded: false,
+			wantUsed:     6 * GB,
+			wantQuotaGB:  100, // 50 included x 2 units
+		},
+		{
+			// Bytes on a bucket the tenant connected are not ours: they are not
+			// counted by BackupBytesByOwner and retention never touches them,
+			// so charging them against our ceiling refused a backup that cost
+			// us nothing.
+			name: "a storage the tenant owns is not measured against our ceiling",
+			dest: &models.BackupStorage{OwnerID: strPtr("owner-1")},
+			store: &billingFakeStore{
+				billing:     &store.UserBilling{R2QuotaGB: ptr(1)},
+				backupBytes: 900 * GB,
+			},
+			wantExceeded: false,
+			wantUsed:     0,
+			wantQuotaGB:  0,
+		},
+		{
+			name: "a platform storage still is",
+			dest: &models.BackupStorage{},
+			store: &billingFakeStore{
+				billing:     &store.UserBilling{R2QuotaGB: ptr(1)},
+				backupBytes: 900 * GB,
+			},
+			wantExceeded: true,
+			wantUsed:     900 * GB,
+			wantQuotaGB:  1,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			exceeded, used, quotaBytes := R2QuotaExceeded(tc.store, "owner-1")
+			exceeded, used, quotaBytes := BackupAllowanceExceeded(tc.store, "owner-1", !tc.storeDisabled, tc.dest)
 			if exceeded != tc.wantExceeded {
 				t.Errorf("exceeded = %v, want %v", exceeded, tc.wantExceeded)
 			}

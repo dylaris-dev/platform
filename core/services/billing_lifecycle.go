@@ -4,6 +4,7 @@ import (
 	"context"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/mailer"
+	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services/redisacl"
 	backupstorage "dylaris-core/storage/backup"
@@ -25,7 +26,6 @@ const (
 	BillingR2RetentionKey   = "billing.r2_retention"
 	BillingNodeRetentionKey = "billing.node_retention"
 	BillingPaymentURLKey    = "billing.payment_url"
-	BillingR2QuotaKey       = "billing.r2_quota_gb" // platform default; empty = no cap, 0 = none
 
 	// BillingR2IncludedKey is the backup storage one purchased UNIT brings, in
 	// GB. Multiplied by what the tenant holds, the same way every other
@@ -54,56 +54,27 @@ const (
 	DefaultNodeRetention = "2w"
 )
 
-// r2QuotaGB resolves a tenant's R2 backup quota in GB. nil means NO CAP.
-//
-// Resolution walks per-user override -> platform setting -> no cap, and each
-// step ANSWERS if it is set at all. That is the platform limit convention
-// (services.Limits): absent is the only thing that defers, and 0 is a real cap
-// of none like any other number.
-//
-// It used to collapse both into one int with 0 standing for unlimited, which
-// inverted the meaning of every zero an admin typed: the panel's limit control
-// says 0 is "none", and this read it as "no limit at all". Measured before the
-// fix - a per-user quota of 0 returned exceeded=false and blocked nothing.
-func r2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
-	if b != nil && b.R2QuotaGB != nil {
-		return b.R2QuotaGB
-	}
-	// What they are entitled to, plus what they agreed to be charged for on top.
-	// Ahead of the flat platform setting because it is the more specific answer:
-	// the flat one predates units and cannot see how many a tenant holds.
-	if q := entitledR2QuotaGB(st, b); q != nil {
-		return q
-	}
-	// ParseLimitSetting is the one reader of an operator-typed limit: "" defers
-	// to the default passed here (nil, no cap), "unlimited" is a decided no-cap,
-	// and a number is that cap including 0. A stored negative is a legacy
-	// "unlimited" and lands on the same nil.
-	raw, _ := st.GetSetting(BillingR2QuotaKey)
-	return ParseLimitSetting(raw, nil)
-}
-
 // R2IncludedGB is the backup storage a tenant's entitlement brings, before
 // anything they have agreed to be charged for. Zero when they hold nothing.
 //
 // "Entitlement", not "purchase": a live administrator grant is worth one unit of
 // its kind, so a comped tenant gets the same allowance a single BYON purchase
 // includes rather than none. See entitledUnits.
-func R2IncludedGB(st store.Store, b *store.UserBilling) int64 {
+func R2IncludedGB(st settingReader, b *store.UserBilling) int64 {
 	return settingInt(st, BillingR2IncludedKey, DefaultR2IncludedGB) * entitledUnits(b, time.Now())
 }
 
 // R2BookableGB is how much a tenant MAY take beyond the included amount once
 // metered backup billing is on. Also per unit: the cap on what they can spend
 // scales with what they hold, like the allowance it sits on top of.
-func R2BookableGB(st store.Store, b *store.UserBilling) int64 {
+func R2BookableGB(st settingReader, b *store.UserBilling) int64 {
 	return R2BookablePerUnit(st) * entitledUnits(b, time.Now())
 }
 
 // R2BookablePerUnit is the stored setting on its own, before any tenant's units
 // are applied. The operator screen edits this number, and the notification that
 // goes out when it changes is written against it.
-func R2BookablePerUnit(st store.Store) int64 {
+func R2BookablePerUnit(st settingReader) int64 {
 	return settingInt(st, BillingR2BookableKey, DefaultR2BookableGB)
 }
 
@@ -117,7 +88,7 @@ func R2BookablePerUnit(st store.Store) int64 {
 // shipped. That fallthrough is why a grant has to count as a unit: a comped
 // tenant took this path and landed on the platform setting, which is unset by
 // default and means no cap.
-func entitledR2QuotaGB(st store.Store, b *store.UserBilling) *int64 {
+func entitledR2QuotaGB(st settingReader, b *store.UserBilling) *int64 {
 	if entitledUnits(b, time.Now()) == 0 {
 		return nil
 	}
@@ -161,7 +132,14 @@ func entitledUnits(b *store.UserBilling, now time.Time) int64 {
 	return n
 }
 
-func settingInt(st store.Store, key string, fallback int64) int64 {
+// settingReader is the whole store surface the backup allowances need. Narrow
+// rather than store.Store so BackupAllowanceGB can hand its own narrow
+// interface straight through - every real caller still passes the full store.
+type settingReader interface {
+	GetSetting(key string) (string, error)
+}
+
+func settingInt(st settingReader, key string, fallback int64) int64 {
 	if v, _ := st.GetSetting(key); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
 			return n
@@ -170,23 +148,35 @@ func settingInt(st store.Store, key string, fallback int64) int64 {
 	return fallback
 }
 
-// R2QuotaExceeded reports whether a tenant may store one more byte of R2 backup.
-// It is a CREATE gate, so it answers at-or-over: sitting exactly on the quota
-// means the next backup does not fit.
+// backupQuotaStore is the allowance surface plus the one usage figure.
+type backupQuotaStore interface {
+	backupAllowanceStore
+	BackupBytesByOwner(ownerID string) (int64, error)
+}
+
+// BackupAllowanceExceeded reports whether a server owner may store one more
+// byte of backup on OUR storage. It is a CREATE gate, so it answers at-or-over:
+// sitting exactly on the allowance means the next backup does not fit.
+//
+// ownerID is the SERVER's owner, never the caller - see BackupAllowanceGB.
 //
 // quotaBytes is 0 when there is no cap, and both callers only read the numbers
 // on the exceeded path, so that overload never reaches a message.
 //
-// The plan step between the two scopes is gone along with plans themselves.
-func R2QuotaExceeded(st store.Store, ownerID string) (exceeded bool, usedBytes, quotaBytes int64) {
-	// A nil billing row is legal on this interface (the Postgres store
-	// substitutes a default one, but a caller's store need not), so it is
-	// guarded here rather than assumed away.
-	b, err := st.GetUserBilling(ownerID)
-	if err != nil {
+// `dest` is the storage the run has already resolved, and it takes the
+// parameter rather than leaving the check to its callers on purpose: a run
+// headed for a storage the TENANT connected must not meet our ceiling at all.
+// Those bytes are already excluded from BackupBytesByOwner (bst.owner_id IS
+// NULL) and deleteTenantBackups already refuses to touch them at any retention
+// deadline, so the gate was the single place that did not take the distinction
+// - a customer with their own bucket, once at our ceiling, could never back up
+// again although they were no longer using our storage. Folding it in here
+// leaves no version of this question a caller can ask without it.
+func BackupAllowanceExceeded(st backupQuotaStore, ownerID string, storeEnabled bool, dest *models.BackupStorage) (exceeded bool, usedBytes, quotaBytes int64) {
+	if dest != nil && dest.OwnerID != nil {
 		return false, 0, 0
 	}
-	quota := r2QuotaGB(st, b)
+	quota := BackupAllowanceGB(st, ownerID, storeEnabled)
 	if quota == nil {
 		return false, 0, 0
 	}

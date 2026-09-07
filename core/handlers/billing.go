@@ -271,12 +271,13 @@ func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Reque
 		"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
 		"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
 		"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
-		// Raw, with no default: "" is "never saved" and means no cap, which is
-		// not the same answer as a cap of 0 and must not read back as one. It
-		// used to default to "0" here, and the panel sent that straight back on
-		// the next save - so opening this screen and pressing Save stored a cap
-		// of NONE for every tenant.
-		"r2QuotaGb": get(services.BillingR2QuotaKey, ""),
+		// The flat per-tenant quota that used to live here has moved to
+		// Settings, Backups (services.SettingBackupDefaultUserQuota). It was the
+		// fallback for an owner who holds no entitlement, which includes every
+		// user of a self-hosted install - and this screen is hidden without a
+		// hosted store, so the one control over their backup storage was on a
+		// page they could not open while the guard behind it kept running.
+		//
 		// These two are plain quantities rather than tri-state limits, so they
 		// do carry their built-in default: a blank "included" field would read
 		// as "this product includes no backup storage", which is a different
@@ -297,7 +298,6 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		GracePeriod       string `json:"gracePeriod"`
 		R2Retention       string `json:"r2Retention"`
 		NodeRetention     string `json:"nodeRetention"`
-		R2QuotaGb         string `json:"r2QuotaGb"`
 		R2IncludedGb      string `json:"r2IncludedGb"`
 		R2BookableGb      string `json:"r2BookableGb"`
 		PresignTtlNodeMin string `json:"presignTtlNodeMin"`
@@ -311,16 +311,6 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 	for _, spec := range []string{req.GracePeriod, req.R2Retention, req.NodeRetention} {
 		if !services.ValidRetentionSpec(spec) {
 			sendJSONError(w, "Invalid retention spec (use e.g. 3d, 2w, 3m)", http.StatusBadRequest)
-			return
-		}
-	}
-	// Three states, all storable: "" is unset, "unlimited" is a decided no-cap,
-	// and a number is that cap including 0. Coercing "" to "0" here was how an
-	// unset quota became a cap of none on the first save anyone made.
-	req.R2QuotaGb = strings.TrimSpace(req.R2QuotaGb)
-	if req.R2QuotaGb != "" && req.R2QuotaGb != services.LimitUnlimited {
-		if n, err := strconv.ParseInt(req.R2QuotaGb, 10, 64); err != nil || n < 0 {
-			sendJSONError(w, "R2 quota must be a non-negative number of GB, \"unlimited\", or empty (0 means none)", http.StatusBadRequest)
 			return
 		}
 	}
@@ -375,7 +365,6 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		services.BillingGracePeriodKey:   req.GracePeriod,
 		services.BillingR2RetentionKey:   req.R2Retention,
 		services.BillingNodeRetentionKey: req.NodeRetention,
-		services.BillingR2QuotaKey:       req.R2QuotaGb,
 		services.BillingR2IncludedKey:    req.R2IncludedGb,
 		services.BillingR2BookableKey:    req.R2BookableGb,
 		services.PresignTTLNodeKey:       req.PresignTtlNodeMin,
@@ -467,12 +456,12 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 			"gracePeriod":   get(services.BillingGracePeriodKey, services.DefaultGracePeriod),
 			"r2Retention":   get(services.BillingR2RetentionKey, services.DefaultR2Retention),
 			"nodeRetention": get(services.BillingNodeRetentionKey, services.DefaultNodeRetention),
-			// Raw, like the settings GET above and for the same reason: "" is
-			// "never saved" and means no cap, which is not a cap of 0. It used
-			// to default to "0" here too, which told the panel the platform
-			// hands out no backup storage at all - and the panel rendered that
-			// as "default (unlimited)", the exact opposite.
-			"r2QuotaGb": get(services.BillingR2QuotaKey, ""),
+			// Raw, and read from where the allowance now lives: "" is "never
+			// saved" and means no cap, which is not a cap of 0. It defaulted to
+			// "0" here, which told the panel the platform hands out no backup
+			// storage at all - and the panel rendered that as "default
+			// (unlimited)", the exact opposite.
+			"r2QuotaGb": get(services.SettingBackupDefaultUserQuota, ""),
 		},
 	})
 }

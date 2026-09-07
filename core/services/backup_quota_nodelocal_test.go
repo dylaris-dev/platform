@@ -14,10 +14,18 @@ import (
 // tests never make one.
 type quotaFakeStore struct {
 	store.Store
-	kv map[string]string
+	kv      map[string]string
+	billing *store.UserBilling
+	user    *models.User
 }
 
 func (f *quotaFakeStore) GetSetting(key string) (string, error) { return f.kv[key], nil }
+
+func (f *quotaFakeStore) GetUserBilling(string) (*store.UserBilling, error) {
+	return f.billing, nil
+}
+
+func (f *quotaFakeStore) GetUserByID(string) (*models.User, error) { return f.user, nil }
 
 const gb = int64(1024 * 1024 * 1024)
 

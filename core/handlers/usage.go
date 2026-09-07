@@ -21,6 +21,13 @@ type usageView struct {
 
 func (h *UsageHandler) viewFor(u *store.TrafficUsage) usageView {
 	lim, _ := services.EffectiveLimits(h.state.Store, u.UserID)
+	// EffectiveLimits answers from the per-user overrides alone, which for
+	// backup storage is one step of a four-step chain. The card drew that
+	// number and the gate refused against the resolved one, so a tenant on an
+	// entitlement or on the operator's allowance was never shown as over while
+	// their backups were being refused - and an administrator, who has no
+	// ceiling at all, was shown one. Both readers now resolve the same way.
+	lim.R2QuotaGB = services.BackupAllowanceGB(h.state.Store, u.UserID, h.state.StoreEnabled)
 	// nil is no cap; a 0 cap is a real one and is exceeded by the first byte.
 	over := func(limGB *int64, bytes int64) bool {
 		return limGB != nil && bytes > *limGB*usageGiB

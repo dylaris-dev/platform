@@ -229,8 +229,8 @@ can still show what exists.
 | PUT | `/api/admin/settings/audit` | session | `settings.write` | - | `AuditSettingsHandler.SavePolicy` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/settings/auth` | session | `settings.read` | - | `AuthSettingsHandler.GetAuthPolicy` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/auth` | session | `settings.write` | - | `AuthSettingsHandler.SaveAuthPolicy` | PANEL settings.write (RequireCap at the route). |
-| GET | `/api/admin/settings/billing` | session | `plans.read` | RequireBYONEnabled | `BillingHandler.GetBillingSettings` | RequireCap("plans.read") at the route. |
-| PUT | `/api/admin/settings/billing` | session | `plans.write` | RequireBYONEnabled | `BillingHandler.SetBillingSettings` | RequireCap("plans.write") at the route. |
+| GET | `/api/admin/settings/billing` | session | `plans.read` | RequireBYONEnabled, RequireStoreEnabled | `BillingHandler.GetBillingSettings` | RequireCap("plans.read") at the route. |
+| PUT | `/api/admin/settings/billing` | session | `plans.write` | RequireBYONEnabled, RequireStoreEnabled | `BillingHandler.SetBillingSettings` | RequireCap("plans.write") at the route. |
 | GET | `/api/admin/settings/demo-account` | session | `settings.read` | - | `ServerHandler.GetDemoAccount` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/demo-account` | session | `settings.write` | - | `ServerHandler.SetDemoAccount` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/settings/features` | session | `settings.read` | - | `FeatureSettingsHandler.Get` | current bundle of platform toggles. |
@@ -290,7 +290,7 @@ can still show what exists.
 | GET | `/api/admin/usage` | session | `plans.read` | RequireBYONEnabled | `UsageHandler.GetAllUsage` | RequireCap("plans.read") at the route. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/billing` | session | `plans.read` | RequireBYONEnabled | `BillingHandler.GetUserBilling` | RequireCap("plans.read") at the route. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing` | session | `plans.write` | RequireBYONEnabled | `BillingHandler.SetBillingStatus` | RequireCap("plans.write") at the route. |
-| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides` | session | `plans.write` | RequireBYONEnabled | `BillingHandler.SetBillingOverrides` | RequireCap("plans.write") at the route. |
+| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides` | session | `plans.write` | RequireBYONEnabled, RequireStoreEnabled | `BillingHandler.SetBillingOverrides` | RequireCap("plans.write") at the route. |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion` | session | `users.write` | - | `UserHandler.CancelUserDeletion` | Admin override: clears the pending_deletion stamps and returns the user to active state. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/email` | session | `users.write` | NewUserEmailHandler | `AuthMiddleware` | - |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireBYONEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |

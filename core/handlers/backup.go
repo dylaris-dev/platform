@@ -923,14 +923,21 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		}
 		return 0, fmt.Errorf("storage not found: %w", err)
 	}
-	// R2 backup quota: refuse a new backup once the tenant is at/over quota
-	// (0/unset = unlimited, so solo/hoster is unaffected).
-	if exceeded, used, quota := services.R2QuotaExceeded(h.state.Store, srv.OwnerID); exceeded {
-		return 0, backupQuotaRefusal(used, quota, "", "raise the limit")
+	// Platform backup allowance for the SERVER'S OWNER, not for whoever pressed
+	// the button - an administrator running a backup on a customer's server has
+	// to meet the customer's ceiling, or the ceiling means nothing. Skipped
+	// where `storage` is one the tenant connected themselves; see
+	// BackupAllowanceExceeded.
+	if exceeded, used, quota := services.BackupAllowanceExceeded(h.state.Store, srv.OwnerID, h.state.StoreEnabled, storage); exceeded {
+		return 0, backupQuotaRefusal(used, quota, "", "raise the limit in Settings, Backups")
 	}
-	// Per-server node-local cap. Separate budget from the R2 one above: that
+	// Per-server node-local cap. Separate budget from the allowance above: that
 	// counts a tenant's object-storage bytes, this counts the .dylaris-backups/
 	// folder on the MC host, and only one of the two modes is ever active.
+	//
+	// No administrator exemption here, unlike the allowance: this bounds a real
+	// disk, and a full one takes down every server on the host including other
+	// people's.
 	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.state.Store, h.state.GRPCRegistry, srv); exceeded {
 		return 0, backupQuotaRefusal(used, quota, " on this server", "raise the per-server limit in Settings, Backups")
 	}

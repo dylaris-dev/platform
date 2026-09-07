@@ -9,7 +9,6 @@ export interface BillingSettings {
     // A tri-state limit as a string: "" is unset, "unlimited" is a decided
     // no-cap, a number is that cap including 0. Read and written through
     // limitFromSetting / limitToSetting, never by hand.
-    r2QuotaGb: string;
     // Plain quantities per purchased unit, not tri-state limits: an unlimited
     // included allowance would be free infinite storage, and an unlimited
     // bookable one is the open bill its ceiling exists to prevent.

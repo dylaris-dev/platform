@@ -57,7 +57,8 @@ func TestR2QuotaScalesWithUnits(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := r2QuotaGB(st, tt.billing)
+			st.billing = tt.billing
+			got := BackupAllowanceGB(st, "owner-1", true)
 			if got == nil || tt.want == nil {
 				t.Fatalf("quota = %v, want %v", got, tt.want)
 			}
@@ -74,8 +75,8 @@ func TestR2QuotaScalesWithUnits(t *testing.T) {
 // hand must not have it silently recomputed from the units they hold.
 func TestR2QuotaPerUserOverrideWins(t *testing.T) {
 	st := &quotaFakeStore{kv: map[string]string{}}
-	b := &store.UserBilling{MaxNodes: i64(3), R2QuotaGB: i64(10), BackupBillingEnabled: true}
-	got := r2QuotaGB(st, b)
+	st.billing = &store.UserBilling{MaxNodes: i64(3), R2QuotaGB: i64(10), BackupBillingEnabled: true}
+	got := BackupAllowanceGB(st, "owner-1", true)
 	if got == nil || *got != 10 {
 		t.Fatalf("quota = %v, want the override of 10", got)
 	}
@@ -87,17 +88,18 @@ func TestR2QuotaPerUserOverrideWins(t *testing.T) {
 // self-hosted install the moment this shipped - nobody there buys units, and
 // every one of them would have been handed a quota of none.
 func TestR2QuotaWithoutAPurchaseFallsThrough(t *testing.T) {
-	st := &quotaFakeStore{kv: map[string]string{BillingR2QuotaKey: "250"}}
+	st := &quotaFakeStore{kv: map[string]string{SettingBackupDefaultUserQuota: "250"}}
 
-	if got := r2QuotaGB(st, nil); got == nil || *got != 250 {
-		t.Fatalf("no billing row: quota = %v, want the platform setting of 250", got)
+	if got := BackupAllowanceGB(st, "owner-1", true); got == nil || *got != 250 {
+		t.Fatalf("no billing row: quota = %v, want the operator allowance of 250", got)
 	}
-	if got := r2QuotaGB(st, &store.UserBilling{}); got == nil || *got != 250 {
+	st.billing = &store.UserBilling{}
+	if got := BackupAllowanceGB(st, "owner-1", true); got == nil || *got != 250 {
 		t.Fatalf("a row with no units: quota = %v, want 250", got)
 	}
-	// And with no platform setting either, no cap at all - not a cap of zero.
-	bare := &quotaFakeStore{kv: map[string]string{}}
-	if got := r2QuotaGB(bare, &store.UserBilling{}); got != nil {
+	// And with no allowance set either, no cap at all - not a cap of zero.
+	bare := &quotaFakeStore{kv: map[string]string{}, billing: &store.UserBilling{}}
+	if got := BackupAllowanceGB(bare, "owner-1", true); got != nil {
 		t.Fatalf("quota = %v, want nil (no cap configured anywhere)", got)
 	}
 }
@@ -108,12 +110,12 @@ func TestR2QuotaHonoursTheSettings(t *testing.T) {
 		BillingR2IncludedKey: "100",
 		BillingR2BookableKey: "200",
 	}}
-	b := &store.UserBilling{MaxNodes: i64(2)}
-	if got := r2QuotaGB(st, b); got == nil || *got != 200 {
+	st.billing = &store.UserBilling{MaxNodes: i64(2)}
+	if got := BackupAllowanceGB(st, "owner-1", true); got == nil || *got != 200 {
 		t.Fatalf("billing off: quota = %v, want 200", got)
 	}
-	b.BackupBillingEnabled = true
-	if got := r2QuotaGB(st, b); got == nil || *got != 600 {
+	st.billing.BackupBillingEnabled = true
+	if got := BackupAllowanceGB(st, "owner-1", true); got == nil || *got != 600 {
 		t.Fatalf("billing on: quota = %v, want 600", got)
 	}
 }

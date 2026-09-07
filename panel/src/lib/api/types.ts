@@ -469,6 +469,10 @@ export interface BackupConfig {
     mode: 'shared' | 's3' | 'node-local';
     // null = no cap, 0 = none (node-local backups not allowed), n = the cap.
     quotaPerServerGb: number | null;
+    // What the PLATFORM holds for a server owner who bought nothing. Applies in
+    // every mode, unlike quotaPerServerGb above, which bounds one server's
+    // folder on one node's disk.
+    defaultUserQuotaGb: number | null;
     shareQuotaWithServer: boolean;
 }
 

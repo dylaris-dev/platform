@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.07.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backups to a bucket you connected yourself are no longer refused for being
+  over an allowance.** That allowance covers what we store for you, and once you
+  point backups at your own storage it no longer applies. Nothing on your side
+  needs changing.
+- **The storage figure on your usage screen now matches what the backup guard
+  actually enforces.** It could show you comfortably inside your allowance while
+  a backup was being refused for exceeding it.
+
 ## 2026.09.07.2
 
 ### Features

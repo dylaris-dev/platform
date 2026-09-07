@@ -1074,14 +1074,31 @@ type BackupConfig struct {
 	// separately. Useful when ops doesn't want two quotas to monitor.
 	// Only honored when Mode == "node-local"; ignored otherwise.
 	ShareQuotaWithServer bool `json:"shareQuotaWithServer"`
+
+	// DefaultUserQuotaGB is how much backup storage the PLATFORM holds for a
+	// server owner who holds no entitlement, on the limit convention: nil is no
+	// cap, 0 is a real "none", n is the cap. Unlike QuotaPerServerGB above it is
+	// per OWNER and applies in every mode - the two are different budgets, one a
+	// disk on the MC host and one what we store for a tenant.
+	//
+	// It lived on the Billing screen as billing.r2_quota_gb until 2026-09-07.
+	// That screen is hidden without a hosted store, so on a self-hosted install
+	// the single control over every user's backup storage sat on a page nobody
+	// could open, while the guard reading it ran on every backup.
+	// Administrators are exempt from it - see services.BackupAllowanceGB.
+	DefaultUserQuotaGB *int64 `json:"defaultUserQuotaGb"`
 }
 
 // Sourced from services, not literals, because the enforcement side has to
 // resolve the same values on an install that never saved this form - otherwise
 // the panel draws a bar against one number and Core refuses against another.
 var defaultBackupConfig = BackupConfig{
-	Mode:                 services.DefaultBackupMode,
-	QuotaPerServerGB:     services.LimitPtr(services.DefaultBackupQuotaPerServer),
+	Mode:             services.DefaultBackupMode,
+	QuotaPerServerGB: services.LimitPtr(services.DefaultBackupQuotaPerServer),
+	// nil, so an install that never saved this form keeps the behaviour it had:
+	// no platform ceiling on a tenant without an entitlement. A default number
+	// here would start refusing backups on upgrade for everyone.
+	DefaultUserQuotaGB:   nil,
 	ShareQuotaWithServer: false,
 }
 
@@ -1118,10 +1135,15 @@ func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Backup quota must be 0 or more GB (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
+	if req.DefaultUserQuotaGB != nil && *req.DefaultUserQuotaGB < 0 {
+		sendJSONError(w, "Default user backup allowance must be 0 or more GB (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		return
+	}
 
 	pairs := []struct{ k, v string }{
 		{"backup.mode", req.Mode},
 		{services.SettingBackupQuotaPerServer, services.FormatLimitSetting(req.QuotaPerServerGB)},
+		{services.SettingBackupDefaultUserQuota, services.FormatLimitSetting(req.DefaultUserQuotaGB)},
 		{"backup.share_quota_with_server", fmt.Sprintf("%t", req.ShareQuotaWithServer)},
 	}
 	for _, p := range pairs {
@@ -1142,6 +1164,9 @@ func (h *SettingsHandler) LoadBackupConfig() BackupConfig {
 	}
 	if v, err := h.state.Store.GetSetting(services.SettingBackupQuotaPerServer); err == nil {
 		cfg.QuotaPerServerGB = services.ParseLimitSetting(v, defaultBackupConfig.QuotaPerServerGB)
+	}
+	if v, err := h.state.Store.GetSetting(services.SettingBackupDefaultUserQuota); err == nil {
+		cfg.DefaultUserQuotaGB = services.ParseLimitSetting(v, defaultBackupConfig.DefaultUserQuotaGB)
 	}
 	if v, _ := h.state.Store.GetSetting("backup.share_quota_with_server"); v != "" {
 		cfg.ShareQuotaWithServer = v == "true"

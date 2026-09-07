@@ -755,6 +755,7 @@ func main() {
 	// backupstorage.Open for exactly those jobs.
 	backupScheduler.SetCoreStorage(appState.CoreStorageBackupBuilder())
 	backupScheduler.SetConnection(appState.ConnectionBackupBuilder())
+	backupScheduler.SetStoreEnabled(cfg.StoreEnabled)
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(bgCtx)
 

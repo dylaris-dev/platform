@@ -30,6 +30,10 @@ const FeatureCoreStorage = "core_storage"
 // error responses for the bring-your-own-node multi-tenancy subsystem.
 const FeatureBYON = "byon"
 
+// FeatureStore is the canonical name for the hosted store link (STORE_URL +
+// STORE_SHARED_KEY).
+const FeatureStore = "store"
+
 // RequireModpacksEnabled blocks the request with 503 feature_disabled when
 // the platform-wide modpacks toggle is off. Use on every WRITE endpoint that
 // touches modpack data (modpacks CRUD, versions, mods, publish, mrpack PAT
@@ -80,6 +84,29 @@ func (s *AppState) RequireBYONEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsBYONEnabled(r.Context()) {
 			featureDisabledResponse(w, FeatureBYON, "BYON (bring-your-own-node) is disabled by the platform admin.")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// RequireStoreEnabled blocks the request with 503 feature_disabled when this
+// install is not linked to the hosted store.
+//
+// For the endpoints that set money-shaped policy: platform billing defaults and
+// the per-user overrides. Without a store nothing was ever bought, so those
+// numbers govern nobody - and the panel has always hidden their screen on
+// `requiresStore`, so the API was answering for a page the operator could not
+// open. The billing STATUS route deliberately keeps only the BYON gate: an
+// operator suspending a user by hand is a thing a self-hosted install does.
+//
+// StoreEnabled is process config (config.StoreEnabled), not a settings row, so
+// this reads a field rather than the feature-flag cache.
+func (s *AppState) RequireStoreEnabled(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.StoreEnabled {
+			featureDisabledResponse(w, FeatureStore,
+				"This install is not linked to the hosted store, so there is nothing to bill. Per-user backup allowances live under Settings, Backups.")
 			return
 		}
 		next(w, r)
