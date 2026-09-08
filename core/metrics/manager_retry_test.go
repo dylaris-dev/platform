@@ -17,7 +17,7 @@ import (
 // needsRetry is the decision that fixes it, tested here rather than through the
 // ticker so the states are checkable without waiting on wall-clock time.
 func TestAnUnreachableTargetIsRetried(t *testing.T) {
-	m := NewManager(t.Context(), nil, false)
+	m := NewManager(t.Context())
 
 	// Before boot has chosen a target there is nothing to reopen. Retrying here
 	// would mean this loop deciding a policy it does not own.
@@ -46,7 +46,7 @@ func TestAnUnreachableTargetIsRetried(t *testing.T) {
 // Close is deliberate - shutdown, or an operator switching recording off. The
 // retry loop must not read it as an outage and reopen what was just shut down.
 func TestCloseIsNotAnOutage(t *testing.T) {
-	m := NewManager(t.Context(), nil, false)
+	m := NewManager(t.Context())
 	_ = m.Apply("host='127.0.0.1' port='1' user='x' dbname='x' sslmode='disable'")
 	if _, retry := m.needsRetry(); !retry {
 		t.Fatal("precondition: the failed target should be pending a retry")
@@ -73,4 +73,32 @@ func TestNeedsRetryOnANilManager(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	m.Watch(ctx)
+}
+
+// An empty target is not an outage either: it is what an installation with no
+// statistics database looks like, and what switching recording off leaves
+// behind. Retrying it would mean opening nothing, forever, every 15 seconds.
+func TestNoTargetIsNotRetried(t *testing.T) {
+	m := NewManager(t.Context())
+	if err := m.Apply(""); err != nil {
+		t.Fatalf("applying an empty target failed: %v", err)
+	}
+	if _, retry := m.needsRetry(); retry {
+		t.Error("a manager with no target wants a retry")
+	}
+	if m.Handle() != nil {
+		t.Error("an empty target opened something")
+	}
+
+	// And it retires what was open: this is the off switch, not a no-op.
+	_ = m.Apply("host='127.0.0.1' port='1' user='x' dbname='x' sslmode='disable'")
+	if _, retry := m.needsRetry(); !retry {
+		t.Fatal("precondition: the failed target should be pending a retry")
+	}
+	if err := m.Apply(""); err != nil {
+		t.Fatalf("applying an empty target after a failure: %v", err)
+	}
+	if _, retry := m.needsRetry(); retry {
+		t.Error("an emptied target is still retried, so recording cannot be switched off")
+	}
 }

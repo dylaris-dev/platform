@@ -23,8 +23,8 @@ func (s *metricsSettingsStore) SetSetting(k, v string) error        { s.vals[k] 
 // The settings table is the ONLY source. There was an environment variable
 // beside it that won where it was set, so the same question had two answers and
 // the panel could show a target that was not the one being written. For a
-// setting whose wrong value silently changes the resolution of history nobody
-// can backfill, that was the wrong trade.
+// setting whose wrong value silently sends history somewhere else, that was the
+// wrong trade.
 //
 // The site is named exactly: config.go's reader is the only way a variable
 // could come back, so its absence there IS the invariant.
@@ -44,7 +44,7 @@ func TestThereIsNoMetricsDatabaseEnvironmentVariable(t *testing.T) {
 func TestTheStoredTargetIsWhatBootApplies(t *testing.T) {
 	st := &metricsSettingsStore{vals: map[string]string{}}
 	want := MetricsDBTarget{
-		Mode: MetricsDBModeSeparate, Host: "metricsdb", Port: "5432",
+		Host: "metricsdb", Port: "5432",
 		DBName: "dylaris_metrics", User: "metrics", SSLMode: "disable",
 	}
 	if err := SaveMetricsDBTarget(st, want); err != nil {
@@ -57,19 +57,19 @@ func TestTheStoredTargetIsWhatBootApplies(t *testing.T) {
 	}
 }
 
-// Core mode has to produce the EMPTY dsn, because that is already the word
-// metrics.Open uses for "record into the Core database". Inventing a second
-// spelling would mean two places deciding what "core" means.
-func TestCoreModeIsTheEmptyDSN(t *testing.T) {
-	for _, mode := range []string{"", "core", "  core  ", "nonsense"} {
-		tg := MetricsDBTarget{Mode: mode, Host: "ignored", DBName: "ignored", User: "ignored"}
+// No host means no target, and the empty DSN is how that reaches the manager -
+// which closes rather than opening anything. A second spelling for "nothing
+// configured" would be a second thing to keep in step.
+func TestAnUnnamedTargetIsTheEmptyDSN(t *testing.T) {
+	for _, host := range []string{"", "   "} {
+		tg := MetricsDBTarget{Host: host, DBName: "ignored", User: "ignored"}
 		if dsn := tg.DSN(); dsn != "" {
-			t.Errorf("mode %q produced dsn %q; want empty", mode, dsn)
+			t.Errorf("host %q produced dsn %q; want empty", host, dsn)
 		}
 	}
-	sep := MetricsDBTarget{Mode: MetricsDBModeSeparate, Host: "h", DBName: "d", User: "u"}
-	if sep.DSN() == "" {
-		t.Error("a separate target produced the empty dsn, which means the Core database")
+	named := MetricsDBTarget{Host: "h", DBName: "d", User: "u"}
+	if named.DSN() == "" {
+		t.Error("a named target produced the empty dsn, which means nothing is recorded")
 	}
 }
 
@@ -78,10 +78,10 @@ func TestCoreModeIsTheEmptyDSN(t *testing.T) {
 // required-password rule here would make the documented setup unconfigurable.
 func TestAPasswordIsNotRequired(t *testing.T) {
 	tg := MetricsDBTarget{
-		Mode: MetricsDBModeSeparate, Host: "metricsdb", DBName: "dylaris_metrics", User: "metrics",
+		Host: "metricsdb", DBName: "dylaris_metrics", User: "metrics",
 	}.Normalize()
 	if err := tg.Validate(); err != nil {
-		t.Fatalf("a passwordless separate target was rejected: %v", err)
+		t.Fatalf("a passwordless target was rejected: %v", err)
 	}
 	if !strings.Contains(tg.DSN(), "password=") {
 		t.Error("the dsn dropped the password keyword entirely; lib/pq needs the field present")
@@ -89,13 +89,12 @@ func TestAPasswordIsNotRequired(t *testing.T) {
 }
 
 func TestValidateNamesWhatIsMissing(t *testing.T) {
-	base := MetricsDBTarget{Mode: MetricsDBModeSeparate, Host: "h", DBName: "d", User: "u", Port: "5432"}
+	base := MetricsDBTarget{Host: "h", DBName: "d", User: "u", Port: "5432"}
 	cases := []struct {
 		name string
 		mut  func(*MetricsDBTarget)
 		want string
 	}{
-		{"no host", func(t *MetricsDBTarget) { t.Host = "" }, "host"},
 		{"no database", func(t *MetricsDBTarget) { t.DBName = "" }, "database name"},
 		{"no user", func(t *MetricsDBTarget) { t.User = "" }, "user"},
 		{"port is not a number", func(t *MetricsDBTarget) { t.Port = "http" }, "port"},
@@ -114,13 +113,15 @@ func TestValidateNamesWhatIsMissing(t *testing.T) {
 			}
 		})
 	}
-	// The same gaps are fine in core mode - none of those fields is used.
+	// An unnamed target is valid and means "record nothing". That is how
+	// recording is switched off, and refusing it would leave an operator with a
+	// form they cannot save and a database they cannot stop writing to.
 	for _, c := range cases {
 		tg := base
-		tg.Mode = MetricsDBModeCore
+		tg.Host = ""
 		c.mut(&tg)
 		if err := tg.Validate(); err != nil {
-			t.Errorf("core mode rejected for %s: %v", c.name, err)
+			t.Errorf("an unnamed target was rejected for %s: %v", c.name, err)
 		}
 	}
 }
@@ -130,7 +131,7 @@ func TestValidateNamesWhatIsMissing(t *testing.T) {
 // worst kind of wrong answer to give an operator.
 func TestNormalizeTrimsEveryFieldExceptThePassword(t *testing.T) {
 	tg := MetricsDBTarget{
-		Mode: " separate ", Host: " h ", Port: " 6000 ", DBName: " d ", User: " u ",
+		Host: " h ", Port: " 6000 ", DBName: " d ", User: " u ",
 		Password: " secret ", SSLMode: " require ",
 	}.Normalize()
 	if tg.Host != "h" || tg.Port != "6000" || tg.DBName != "d" || tg.User != "u" || tg.SSLMode != "require" {
@@ -139,13 +140,13 @@ func TestNormalizeTrimsEveryFieldExceptThePassword(t *testing.T) {
 	if tg.Password != " secret " {
 		t.Errorf("the password was trimmed to %q; a space is a legal character in one", tg.Password)
 	}
-	if !tg.IsSeparate() {
-		t.Error("a padded mode was not recognised")
+	if !tg.Configured() {
+		t.Error("a target with a host was not recognised as configured")
 	}
 }
 
 func TestNormalizeFillsTheDefaultsAFormLeavesEmpty(t *testing.T) {
-	tg := MetricsDBTarget{Mode: MetricsDBModeSeparate, Host: "h", DBName: "d", User: "u"}.Normalize()
+	tg := MetricsDBTarget{Host: "h", DBName: "d", User: "u"}.Normalize()
 	if tg.Port != "5432" {
 		t.Errorf("port default = %q, want 5432", tg.Port)
 	}
@@ -154,13 +155,13 @@ func TestNormalizeFillsTheDefaultsAFormLeavesEmpty(t *testing.T) {
 	}
 }
 
-// A store with nothing in it must mean "the Core database", not an error and
-// not a broken separate target. This is the state of every fresh install.
-func TestAnUnconfiguredStoreMeansTheCoreDatabase(t *testing.T) {
+// A store with nothing in it must mean "nothing is recorded", not an error and
+// not a half-built target. This is the state of every fresh install.
+func TestAnUnconfiguredStoreRecordsNothing(t *testing.T) {
 	st := &metricsSettingsStore{vals: map[string]string{}}
 	tg := LoadMetricsDBTarget(st)
-	if tg.IsSeparate() {
-		t.Fatalf("an empty store produced a separate target: %+v", tg)
+	if tg.Configured() {
+		t.Fatalf("an empty store produced a configured target: %+v", tg)
 	}
 	if tg.DSN() != "" {
 		t.Errorf("dsn = %q, want empty", tg.DSN())
@@ -170,7 +171,7 @@ func TestAnUnconfiguredStoreMeansTheCoreDatabase(t *testing.T) {
 func TestSaveThenLoadRoundTrips(t *testing.T) {
 	st := &metricsSettingsStore{vals: map[string]string{}}
 	want := MetricsDBTarget{
-		Mode: MetricsDBModeSeparate, Host: "metricsdb", Port: "5432",
+		Host: "metricsdb", Port: "5432",
 		DBName: "dylaris_metrics", User: "metrics", Password: "pw", SSLMode: "disable",
 	}
 	if err := SaveMetricsDBTarget(st, want); err != nil {

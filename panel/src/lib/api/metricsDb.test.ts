@@ -3,14 +3,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
     metricsDBIncomplete,
-    metricsDBModeSummary,
     emptyMetricsDBTarget,
     type MetricsDBTarget,
 } from './metricsDb';
 
-const separate = (over: Partial<MetricsDBTarget> = {}): MetricsDBTarget => ({
+const target = (over: Partial<MetricsDBTarget> = {}): MetricsDBTarget => ({
     ...emptyMetricsDBTarget,
-    mode: 'separate',
     host: 'metricsdb',
     dbName: 'dylaris_metrics',
     user: 'metrics',
@@ -18,49 +16,32 @@ const separate = (over: Partial<MetricsDBTarget> = {}): MetricsDBTarget => ({
 });
 
 describe('what the statistics-database form will accept', () => {
-    // The Core option is the default and needs nothing. A fresh install has to
-    // be valid without anyone filling in a form.
-    it('the Core database is always complete', () => {
-        expect(metricsDBIncomplete(emptyMetricsDBTarget)).toBeNull();
-        // Even with leftovers from a separate target that was abandoned.
-        expect(metricsDBIncomplete({ ...separate({ host: '' }), mode: 'core' })).toBeNull();
+    // There is one target now, so an empty form is incomplete rather than a
+    // valid default. A fresh install has to name a database before it can save
+    // one, which is the whole reason the Core option was removed.
+    it('an empty target is incomplete', () => {
+        expect(metricsDBIncomplete(emptyMetricsDBTarget)).toMatch(/host/i);
     });
 
-    // A password is optional, and this is not a lenience: the reference
-    // deployment runs its metrics database with none at all, reachable only
-    // from Core on a two-member network. Requiring one would make the
-    // documented setup impossible to enter here.
-    it('a separate database is complete without a password', () => {
-        expect(metricsDBIncomplete(separate({ password: '' }))).toBeNull();
+    // Switching recording OFF must not require a database. The card only
+    // applies this check while the switch is on; the rule is asserted here
+    // because it is the card that would otherwise strand an installation with
+    // an empty form and no way to stop writing.
+    it('the card only blocks the save while recording is on', () => {
+        const card = readFileSync(
+            join(__dirname, '..', '..', 'components', 'settings', 'MetricsDatabaseCard.tsx'),
+            'utf8',
+        );
+        expect(card).toContain('saveBlockedReason={(enabled ? incomplete : null)');
     });
 
     it('names the field that is missing, so the message can point at it', () => {
-        expect(metricsDBIncomplete(separate({ host: '   ' }))).toMatch(/host/i);
-        expect(metricsDBIncomplete(separate({ dbName: '' }))).toMatch(/database name/i);
-        expect(metricsDBIncomplete(separate({ user: '' }))).toMatch(/user/i);
-        expect(metricsDBIncomplete(separate({ port: 'https' }))).toMatch(/port/i);
-        expect(metricsDBIncomplete(separate({ port: '0' }))).toMatch(/port/i);
-        expect(metricsDBIncomplete(separate({ port: '70000' }))).toMatch(/port/i);
-    });
-});
-
-describe('what each mode promises', () => {
-    // The resolution follows from WHICH database is used, never from what is
-    // installed in it. A summary that said "TimescaleDB found" without saying
-    // "still hour buckets" would have an operator install an extension to get
-    // minutes they will not get.
-    it('the Core database says hour buckets whether or not TimescaleDB is there', () => {
-        for (const ts of [true, false]) {
-            const msg = metricsDBModeSummary('core', ts).toLowerCase();
-            expect(msg).toContain('hour');
-            expect(msg).not.toContain('minute');
-        }
-    });
-
-    it('the separate database says minute buckets and what it needs', () => {
-        const msg = metricsDBModeSummary('separate', false);
-        expect(msg.toLowerCase()).toContain('minute');
-        expect(msg).toContain('TimescaleDB');
+        expect(metricsDBIncomplete(target({ host: '   ' }))).toMatch(/host/i);
+        expect(metricsDBIncomplete(target({ dbName: '' }))).toMatch(/database name/i);
+        expect(metricsDBIncomplete(target({ user: '' }))).toMatch(/user/i);
+        expect(metricsDBIncomplete(target({ port: 'https' }))).toMatch(/port/i);
+        expect(metricsDBIncomplete(target({ port: '0' }))).toMatch(/port/i);
+        expect(metricsDBIncomplete(target({ port: '70000' }))).toMatch(/port/i);
     });
 });
 
@@ -74,7 +55,7 @@ describe('the card that renders it', () => {
     // banner sitting above a host that has since been retyped is a claim about
     // a connection nobody ever made.
     it('editing a field clears the previous test result', () => {
-        expect(card).toMatch(/const set = \([^)]*\) => \{\s*\n\s*setTest\(null\);/);
+        expect(card).toMatch(/const set = \([^)]*\) => \{\s*\n\s*test\.clear\(\);/);
     });
 
     // The form uses the shared hook rather than its own snapshot ref. Hand-rolled
@@ -95,12 +76,17 @@ describe('the card that renders it', () => {
     });
 
     // Three severities. "Connected, but no TimescaleDB" is neither a pass nor a
-    // failure, and a two-state banner would have to call it one of them.
-    it('renders warning as its own severity, not as success or error', () => {
+    // failure, and a two-state banner would have to call it one of them. The
+    // banner is shared now, so that is where the three tones are asserted.
+    it('the shared banner renders warning as its own severity', () => {
+        const note = readFileSync(
+            join(__dirname, '..', '..', 'components', 'ui', 'ConnectionTest.tsx'),
+            'utf8',
+        );
         for (const sev of ['ok:', 'warning:', 'error:']) {
-            expect(card).toContain(sev);
+            expect(note).toContain(sev);
         }
-        expect(card).toContain('--warning-border');
+        expect(note).toContain('--warning-border');
     });
 });
 

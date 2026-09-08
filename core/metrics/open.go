@@ -8,17 +8,13 @@ import (
 	"time"
 )
 
-// Resolution is the bucket size each backend records at.
+// Resolution is the bucket size recorded at.
 //
-// This is the whole difference between the two deployments, and it is decided
-// by whether a dedicated database was configured rather than by a separate
-// knob. A knob would let someone ask for minute resolution into the Core
-// database, which is a query nobody waits for a year later - about 79 million
-// rows a year at a modest fleet size, on a database that cannot chunk them.
-const (
-	ResolutionDedicated = time.Minute
-	ResolutionShared    = time.Hour
-)
+// One value, because there is one place the statistics can go: a database of
+// their own, which is a TimescaleDB in every deployment this is built for.
+// Recording into the Core database at hour resolution used to be the
+// alternative; it is gone, and with it the only reason this was ever a pair.
+const ResolutionDedicated = time.Minute
 
 // FlushInterval is how often accumulated buckets are written.
 //
@@ -30,15 +26,13 @@ const FlushInterval = 5 * time.Minute
 // Handle is a configured recorder plus whatever has to be closed with it.
 type Handle struct {
 	Recorder *Recorder
-	// Dedicated is the separate connection, or nil when the buckets go into
-	// the Core database and the caller owns that pool.
+	// Dedicated is the connection this handle owns and closes.
 	Dedicated *sql.DB
 	// Resolution is the bucket size actually in use.
 	Resolution time.Duration
-	// Read is the pool to QUERY through - the dedicated one when there is one,
-	// otherwise Core's. Held separately from Dedicated so a reader never has to
-	// know which backend it got, and never has to guess that a nil Dedicated
-	// means "use the other handle".
+	// Read is the pool to QUERY through. The same pool as Dedicated now that
+	// there is only one backend, and kept as its own field because readers ask
+	// for it by that name and a reader should not have to know that.
 	Read *sql.DB
 }
 
@@ -49,29 +43,18 @@ func (h *Handle) Close() error {
 	return h.Dedicated.Close()
 }
 
-// Open prepares the recorder.
+// Open prepares the recorder against the statistics database.
 //
-// metricsURL empty means "use coreDB at hour resolution", which is the
-// supported default and what a self-hoster gets. A non-empty URL opens its own
-// pool and switches to minute resolution.
+// An empty URL is a caller error rather than a mode: "nothing configured" is
+// answered by the manager, which does not open anything at all, so anything
+// that reaches here is expected to name a database.
 //
-// An unreachable dedicated database is NOT fatal. It is reported and the
-// platform starts without long-term metrics, because a statistics store must
-// never be a reason Core does not come up.
-func Open(ctx context.Context, coreDB *sql.DB, metricsURL string, coreUsesTimescale bool) (*Handle, error) {
+// An unreachable database is NOT fatal to the platform. It is reported, the
+// manager keeps retrying, and Core starts without long-term metrics - because a
+// statistics store must never be a reason Core does not come up.
+func Open(ctx context.Context, metricsURL string) (*Handle, error) {
 	if metricsURL == "" {
-		if coreDB == nil {
-			return nil, fmt.Errorf("no database to record metrics into")
-		}
-		if err := EnsureSchema(ctx, coreDB, coreUsesTimescale); err != nil {
-			return nil, err
-		}
-		log.Printf("metrics: recording into the core database at %s resolution", ResolutionShared)
-		return &Handle{
-			Recorder:   NewRecorder(NewSQLStore(coreDB), ResolutionShared),
-			Resolution: ResolutionShared,
-			Read:       coreDB,
-		}, nil
+		return nil, fmt.Errorf("no statistics database is configured")
 	}
 
 	db, err := sql.Open("postgres", metricsURL)
@@ -91,14 +74,14 @@ func Open(ctx context.Context, coreDB *sql.DB, metricsURL string, coreUsesTimesc
 		_ = db.Close()
 		return nil, fmt.Errorf("reach metrics database: %w", err)
 	}
-	// A dedicated metrics database is a Timescale one in every deployment we
-	// build for; if the extension turns out to be missing, EnsureSchema logs it
-	// and the plain table carries on.
+	// The statistics database is a Timescale one in every deployment we build
+	// for; if the extension turns out to be missing, EnsureSchema logs it and
+	// the plain table carries on.
 	if err := EnsureSchema(ctx, db, true); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	log.Printf("metrics: recording into the dedicated database at %s resolution", ResolutionDedicated)
+	log.Printf("metrics: recording into the statistics database at %s resolution", ResolutionDedicated)
 	return &Handle{
 		Recorder:   NewRecorder(NewSQLStore(db), ResolutionDedicated),
 		Dedicated:  db,

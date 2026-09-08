@@ -126,12 +126,13 @@ export async function startDBMigration(target: DBTargetForm) {
 
 // POST probe the target connection; returns server version + whether the
 // timescaledb extension is installed there.
-export async function testDBMigrationConnection(target: DBTargetForm) {
+export async function testDBMigrationConnection(target: DBTargetForm, signal?: AbortSignal) {
     try {
         const res = await fetch(`${API_URL}/admin/db/migration/test-connection`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(target),
+            signal,
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }

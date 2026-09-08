@@ -29,12 +29,13 @@ export async function getTicketMigrationStatus() {
     } catch (err) { return handleError(err); }
 }
 
-export async function testTicketDBConnection(url: string) {
+export async function testTicketDBConnection(url: string, signal?: AbortSignal) {
     try {
         const res = await fetch(`${API_URL}/admin/tickets/migration/test-connection`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ url }),
+            signal,
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }

@@ -127,12 +127,13 @@ export interface GatewayDnsProbeResponse {
 // Try a credential without storing it. Blank token = test the stored one, which
 // is how a configuration is re-checked without retyping a secret the form never
 // shows back.
-export async function probeGatewayDns(provider: string, token: string): Promise<GatewayDnsProbeResponse> {
+export async function probeGatewayDns(provider: string, token: string, signal?: AbortSignal): Promise<GatewayDnsProbeResponse> {
     try {
         const res = await fetch(`${API_URL}/settings/gateway/dns/probe`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ provider, token }),
+            signal,
         });
         return (await handleResponse(res)) as GatewayDnsProbeResponse;
     } catch (err) {

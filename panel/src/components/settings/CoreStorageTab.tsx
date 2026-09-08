@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useState, useEffect, useReducer, useRef } from 'react';
 import { getCoreStorage, saveCoreStorage, testCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage, type CoreStorageConfig } from '@/lib/coreStorage';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
-import { Cable, CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2, Info } from 'lucide-react';
+import { CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { Badge } from '@/components/ui/Badge';
@@ -15,6 +15,8 @@ import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import HelpTip from '@/components/ui/HelpTip';
+import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
+import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 
 const BACKENDS = [
   { id: 'path', label: 'Filesystem Path', description: 'A local disk or an OS-level mount (NFS/SMB/WebDAV). Must be reachable by every Core.', icon: HardDrive },
@@ -31,7 +33,7 @@ export default function CoreStorageTab() {
   const [settings, setSettings] = useState<CoreStorageConfig>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
+
   // Kept out of the toast on purpose: a durability warning that scrolls away
   // after three seconds is a warning nobody acts on. It stays on screen until
   // the next test replaces or clears it.
@@ -170,16 +172,16 @@ export default function CoreStorageTab() {
   const dirty = snapshotRef.current !== null && JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
   useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
 
-  const handleTest = async () => {
-    setTesting(true);
-    const res = await testCoreStorage(settings);
-    if (res.success && res.ok) showToast(res.message || 'Connection successful: write, read and delete all succeeded.');
-    else showToast(res.message || 'Connection test failed.', false);
+  // The shared lifecycle: one at a time, disabled while it runs, and a
+  // deadline. The verdict now says whether the endpoint answered at all - a
+  // dead endpoint and a rejected access key were the same red toast before.
+  const test = useConnectionTest(useCallback(async (signal: AbortSignal) => {
+    const res = await testCoreStorage(settings, signal);
     // Cleared on every test, so a warning never outlives the config that
     // produced it: fixing the mount and re-testing makes it disappear.
     setTestWarning(res.warning || null);
-    setTesting(false);
-  };
+    return readConnTest(res, 'Connection successful: write, read and delete all succeeded.');
+  }, [settings]));
 
   const set = <K extends keyof CoreStorageConfig>(key: K, value: CoreStorageConfig[K]) =>
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -214,17 +216,7 @@ export default function CoreStorageTab() {
       title="Backend"
       form={savable}
       saveBlockedReason={blockedReason}
-      actions={!usingConnection && (
-        <button
-          type="button"
-          onClick={handleTest}
-          disabled={testing}
-          className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-        >
-          {testing ? <Loader2 size={13} className="animate-spin" /> : <Cable size={13} />}
-          {testing ? 'Testing...' : 'Test connection'}
-        </button>
-      )}
+      actions={!usingConnection && <TestConnectionButton test={test} small />}
     >
       {/* Backend selector */}
       <div>
@@ -449,6 +441,8 @@ export default function CoreStorageTab() {
           </button>
         </div>
       )}
+
+      <ConnectionTestNote result={test.result} />
 
       {testWarning && (
         <div className="alert alert-warning text-xs flex items-start gap-2">

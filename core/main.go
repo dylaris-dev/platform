@@ -384,17 +384,22 @@ func main() {
 
 	// Long-term metrics — leader-gated and OFF by default
 	// (feature_metrics_enabled). Records what the platform handled over months,
-	// into hour buckets in this database or minute buckets in a dedicated one.
-	// Nothing leaves the installation: telemetry that phoned
-	// home was removed in full and the README says so.
+	// into minute buckets in a statistics database of its own. Nothing leaves
+	// the installation: telemetry that phoned home was removed in full and the
+	// README says so.
 	//
-	// An unreachable metrics database is logged and skipped, never fatal. It is
-	// a statistics store; it must not be a reason Core does not come up.
+	// With no statistics database configured, nothing is recorded at all. There
+	// used to be a fallback into this database at hour resolution; it is gone,
+	// because two resolutions with no conversion between them meant an operator
+	// could end up with a year of history at the one they did not want.
+	//
+	// An unreachable statistics database is logged and skipped, never fatal. It
+	// is a statistics store; it must not be a reason Core does not come up.
 	//
 	// The TARGET is a panel setting and nothing else - boot reads the same
 	// stored row the settings screen writes, so the two cannot disagree about
 	// which database is being written.
-	metricsManager := metrics.NewManager(bgCtx, db, config.UsesTimescale(cfg.DBType))
+	metricsManager := metrics.NewManager(bgCtx)
 	appState.Metrics = metricsManager
 	defer metricsManager.Close()
 

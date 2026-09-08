@@ -105,12 +105,13 @@ export async function saveSMTPConfig(config: SMTPConfig) {
     } catch (err) { return handleError(err); }
 }
 
-export async function testSendSMTP(to?: string) {
+export async function testSendSMTP(to?: string, signal?: AbortSignal) {
     try {
         const res = await fetch(`${API_URL}/admin/settings/smtp/test`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ to: to || '' }),
+            signal,
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }

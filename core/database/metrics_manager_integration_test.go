@@ -37,19 +37,24 @@ func TestIntegrationTheMetricsTargetCanBeSwappedWhileRunning(t *testing.T) {
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBSSLMode)
 
-	m := metrics.NewManager(ctx, coreDB, false)
+	// Two dsns naming the same database. There is one server in CI, and what
+	// is under test is the handover between two pools, not where the rows land
+	// - so a second dsn that differs only in application_name is enough, and
+	// keeps both writes readable through coreDB.
+	second_dsn := dsn + " application_name=metrics-swap"
+
+	m := metrics.NewManager(ctx)
 	t.Cleanup(m.Close)
 
-	// Start on the Core database.
-	if err := m.Apply(""); err != nil {
-		t.Fatalf("opening the core-database target: %v", err)
+	if err := m.Apply(dsn); err != nil {
+		t.Fatalf("opening the first target: %v", err)
 	}
 	first := m.Handle()
-	if first == nil || first.Dedicated != nil {
-		t.Fatalf("the core target opened a dedicated pool: %+v", first)
+	if first == nil || first.Dedicated == nil {
+		t.Fatalf("the target opened no pool of its own: %+v", first)
 	}
-	if first.Resolution != metrics.ResolutionShared {
-		t.Fatalf("core resolution = %v, want %v", first.Resolution, metrics.ResolutionShared)
+	if first.Resolution != metrics.ResolutionDedicated {
+		t.Fatalf("resolution = %v, want %v", first.Resolution, metrics.ResolutionDedicated)
 	}
 
 	// A value recorded before the swap must still be written, not dropped: the
@@ -59,19 +64,19 @@ func TestIntegrationTheMetricsTargetCanBeSwappedWhileRunning(t *testing.T) {
 	t.Cleanup(func() { coreDB.Exec(`DELETE FROM metric_samples WHERE metric LIKE 'test.swap.%'`) })
 	m.Recorder().Observe(metrics.Key{Metric: before, Subject: "s"}, 7, at)
 
-	if err := m.Apply(dsn); err != nil {
-		t.Fatalf("swapping to the dedicated target: %v", err)
+	if err := m.Apply(second_dsn); err != nil {
+		t.Fatalf("swapping to the second target: %v", err)
 	}
 
 	second := m.Handle()
 	if second == nil || second.Dedicated == nil {
-		t.Fatal("after the swap there is no dedicated pool")
+		t.Fatal("after the swap there is no pool")
 	}
 	if second == first {
 		t.Fatal("Apply kept the same handle")
 	}
 	if second.Resolution != metrics.ResolutionDedicated {
-		t.Fatalf("dedicated resolution = %v, want %v", second.Resolution, metrics.ResolutionDedicated)
+		t.Fatalf("resolution after the swap = %v, want %v", second.Resolution, metrics.ResolutionDedicated)
 	}
 
 	// The pre-swap value survived, which is the flush-then-close order working.
@@ -101,15 +106,17 @@ func TestIntegrationTheMetricsTargetCanBeSwappedWhileRunning(t *testing.T) {
 // changed something else would otherwise tear down the recorder and lose the
 // buckets accumulated since the last flush - for no change.
 func TestIntegrationReapplyingTheSameTargetIsANoOp(t *testing.T) {
-	coreDB, _ := integrationDB(t)
-	m := metrics.NewManager(context.Background(), coreDB, false)
+	cfg := testDBConfig(t)
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBSSLMode)
+	m := metrics.NewManager(context.Background())
 	t.Cleanup(m.Close)
 
-	if err := m.Apply(""); err != nil {
+	if err := m.Apply(dsn); err != nil {
 		t.Fatal(err)
 	}
 	first := m.Handle()
-	if err := m.Apply(""); err != nil {
+	if err := m.Apply(dsn); err != nil {
 		t.Fatal(err)
 	}
 	if m.Handle() != first {
@@ -121,11 +128,13 @@ func TestIntegrationReapplyingTheSameTargetIsANoOp(t *testing.T) {
 // panel reports the failure; it does not get to stop the recording that was
 // already happening.
 func TestIntegrationAFailedApplyKeepsTheWorkingTarget(t *testing.T) {
-	coreDB, _ := integrationDB(t)
-	m := metrics.NewManager(context.Background(), coreDB, false)
+	cfg := testDBConfig(t)
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBSSLMode)
+	m := metrics.NewManager(context.Background())
 	t.Cleanup(m.Close)
 
-	if err := m.Apply(""); err != nil {
+	if err := m.Apply(dsn); err != nil {
 		t.Fatal(err)
 	}
 	working := m.Handle()

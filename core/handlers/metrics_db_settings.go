@@ -9,8 +9,8 @@ import (
 	"dylaris-core/services"
 )
 
-// MetricsDBHandler is where the long-term statistics choose their database:
-// the Core one, or a separate TimescaleDB.
+// MetricsDBHandler is where the long-term statistics get their database: a
+// TimescaleDB of their own.
 //
 // It lives beside the switch that turns recording on, because the two are one
 // decision in practice - the question "should this platform keep history"
@@ -50,19 +50,15 @@ type metricsDBResponse struct {
 	// Active describes what is being written RIGHT NOW, which is not always
 	// what is configured: an unreachable target leaves the previous one running.
 	Active metricsDBActive `json:"active"`
-	// CoreTimescale reports whether the CORE database has the extension. It
-	// does not change the resolution there - see the note in Test - but it
-	// decides whether the table is chunked and compressed.
-	CoreTimescale bool `json:"coreTimescale"`
 }
 
 type metricsDBActive struct {
-	// Recording is false when nothing is open: the feature is off, or the
-	// database could not be reached at boot.
+	// Recording is false when nothing is open: no database is configured, the
+	// feature is off, or the database could not be reached.
 	Recording bool `json:"recording"`
-	// Separate is true when a database of its own is in use.
-	Separate bool `json:"separate"`
-	// Resolution is "minute" or "hour", empty when nothing is recording.
+	// Resolution is "minute", empty when nothing is recording. Kept as a
+	// string rather than dropped because the screen states what it is writing,
+	// and a screen that only says "recording" invites the question.
 	Resolution string `json:"resolution,omitempty"`
 }
 
@@ -72,8 +68,6 @@ func (h *MetricsDBHandler) Get(w http.ResponseWriter, r *http.Request) {
 	pwSet := stored.Password != ""
 	stored.Password = ""
 
-	tsInstalled, _ := h.state.Store.TimescaleEnabled(r.Context())
-
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"settings": metricsDBResponse{
@@ -81,7 +75,6 @@ func (h *MetricsDBHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Enabled:         h.state.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false),
 			PasswordSet:     pwSet,
 			Active:          h.activeState(),
-			CoreTimescale:   tsInstalled,
 		},
 	})
 }
@@ -91,15 +84,11 @@ func (h *MetricsDBHandler) activeState() metricsDBActive {
 	if handle == nil {
 		return metricsDBActive{}
 	}
-	res := "hour"
+	res := ""
 	if handle.Resolution == metrics.ResolutionDedicated {
 		res = "minute"
 	}
-	return metricsDBActive{
-		Recording:  true,
-		Separate:   handle.Dedicated != nil,
-		Resolution: res,
-	}
+	return metricsDBActive{Recording: true, Resolution: res}
 }
 
 // Test POST /api/admin/settings/metrics-db/test - probe without saving.
@@ -113,21 +102,10 @@ func (h *MetricsDBHandler) Test(w http.ResponseWriter, r *http.Request) {
 	// the same question whether or not recording is currently on.
 	target := req.MetricsDBTarget
 
-	// The Core database needs no probe: Core is talking to it right now, so
-	// "can it be reached" is answered by this request existing. What is worth
-	// reporting is what the operator will GET.
-	if !target.IsSeparate() {
-		ts, _ := h.state.Store.TimescaleEnabled(r.Context())
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":   true,
-			"ok":        true,
-			"severity":  "ok",
-			"timescale": ts,
-			"message":   coreDBOutcome(ts),
-		})
+	if !target.Configured() {
+		sendJSONError(w, "Enter the database to test first.", http.StatusBadRequest)
 		return
 	}
-
 	if err := target.Validate(); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -135,11 +113,16 @@ func (h *MetricsDBHandler) Test(w http.ResponseWriter, r *http.Request) {
 
 	probe := services.ProbeMetricsDB(r.Context(), target)
 	if !probe.Reachable {
+		// The stage travels with the message. The panel words its heading from
+		// it - "not reachable" and "reached, then refused" are different
+		// problems, and the message alone left the reader to guess which they
+		// were looking at.
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":  true,
 			"ok":       false,
 			"severity": "error",
-			"message":  "Could not connect: " + probe.Error,
+			"stage":    probe.Stage,
+			"message":  probe.Error,
 		})
 		return
 	}
@@ -149,29 +132,14 @@ func (h *MetricsDBHandler) Test(w http.ResponseWriter, r *http.Request) {
 		"success":   true,
 		"ok":        true,
 		"severity":  sev,
+		"stage":     services.StageOK,
 		"timescale": probe.Timescale,
 		"version":   probe.Version,
 		"message":   msg,
 	})
 }
 
-// coreDBOutcome says what the Core database gives you.
-//
-// Hour buckets EITHER WAY, and that is worth being exact about rather than
-// tidy: the resolution follows from which database is used, not from what is
-// installed in it (core/metrics.Open). The extension only decides whether the
-// table is chunked and compressed, so a reader who is told "TimescaleDB found"
-// must not conclude they are now getting minutes.
-func coreDBOutcome(timescale bool) string {
-	if timescale {
-		return "Connected. Hour buckets in the Core database, stored as a compressed hypertable. " +
-			"Minute resolution needs a separate database - it is not something this extension turns on."
-	}
-	return "Connected. Hour buckets in the Core database, as a plain table - a few hundred megabytes a year, " +
-		"and no extension required. Choose a separate TimescaleDB for minute resolution."
-}
-
-// separateDBOutcome judges a reachable separate database.
+// separateDBOutcome judges a reachable statistics database.
 //
 // Missing TimescaleDB is a WARNING and not a refusal, and both halves of that
 // are deliberate. It is not an error because the data is identical and the
@@ -189,7 +157,8 @@ func separateDBOutcome(p services.MetricsDBProbe) (severity, message string) {
 	}
 	return "warning", "Connected" + v + ", but the TimescaleDB extension is not installed in this database. " +
 		"Minute buckets would go into a plain table - on the order of a hundred million rows a year, with no " +
-		"chunking or compression. Use a TimescaleDB image, or keep the Core database at hour resolution."
+		"chunking or compression. Use a PostgreSQL with TimescaleDB, and CREATE EXTENSION timescaledb in this " +
+		"database."
 }
 
 // Set PUT /api/admin/settings/metrics-db. PANEL settings.write.
@@ -203,18 +172,24 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Recording with nowhere to record is the one combination that cannot be
+	// stored. Switching the feature ON is a request for history, and there is
+	// no fallback database to give it to any more.
+	if req.Enabled && !target.Configured() {
+		sendJSONError(w, "Name the statistics database before switching recording on.",
+			http.StatusBadRequest)
+		return
+	}
 
-	// A separate database must answer before it is stored. Saving an
-	// unreachable one would leave the panel showing a target that is not being
-	// written to, with the recording quietly still going somewhere else - the
-	// single most confusing state this screen can be in.
-	//
-	// The Core database is exempt: this request proves it is reachable.
+	// A database must answer before it is stored. Saving an unreachable one
+	// would leave the panel showing a target that is not being written to,
+	// with the recording quietly still going somewhere else - the single most
+	// confusing state this screen can be in.
 	var probe services.MetricsDBProbe
-	if target.IsSeparate() {
+	if target.Configured() {
 		probe = services.ProbeMetricsDB(r.Context(), target)
 		if !probe.Reachable {
-			sendJSONError(w, "Could not connect to that database, so it was not saved: "+probe.Error,
+			sendJSONError(w, "Not saved, because the database could not be used: "+probe.Error,
 				http.StatusBadGateway)
 			return
 		}
@@ -226,10 +201,9 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The target is written BEFORE the switch, and that order is the point.
-	// Recording begins the instant the flag is true, and the first bucket it
-	// writes is at whatever resolution the stored target implies - so a switch
-	// that landed first would open a window recording into the OLD target, and
-	// the history would start at a resolution nobody chose.
+	// Recording begins the instant the flag is true and the first bucket lands
+	// in whatever target is stored - so a switch that landed first would open a
+	// window recording into the OLD database.
 	if err := h.setRecording(r, req.Enabled); err != nil {
 		sendJSONError(w, "The database was saved but the switch was not: "+err.Error(),
 			http.StatusInternalServerError)
@@ -259,7 +233,7 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	if applyErr != "" {
 		resp["warning"] = "Saved, but switching to it now failed (" + applyErr +
 			"). It will be used after the next Core restart."
-	} else if target.IsSeparate() && !probe.Timescale {
+	} else if target.Configured() && !probe.Timescale {
 		_, resp["warning"] = separateDBOutcome(probe)
 	}
 	json.NewEncoder(w).Encode(resp)

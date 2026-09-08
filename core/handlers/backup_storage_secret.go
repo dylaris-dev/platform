@@ -67,6 +67,22 @@ func validateBackupStorageEndpoint(bs models.BackupStorage) error {
 	return validateS3Endpoint("backup storage", jsonString(m["endpoint"]))
 }
 
+// backupStorageEndpoint reads the s3 endpoint out of the config blob.
+//
+// Only for the reachability step of a test, so an unparseable config or a
+// non-s3 provider is not an error here: it means there is nothing to dial and
+// the probe itself gets to produce the message.
+func backupStorageEndpoint(bs models.BackupStorage) string {
+	if bs.Provider != "s3" || len(bs.Config) == 0 {
+		return ""
+	}
+	m := map[string]json.RawMessage{}
+	if err := json.Unmarshal(bs.Config, &m); err != nil {
+		return ""
+	}
+	return jsonString(m["endpoint"])
+}
+
 // backupStorageIdentityFields are the s3 config fields that decide WHERE a
 // stored secret gets used. They mirror the trio mergeCoreStorageCandidate
 // compares (S3Endpoint / S3Bucket / S3AccessKey); the names differ only because

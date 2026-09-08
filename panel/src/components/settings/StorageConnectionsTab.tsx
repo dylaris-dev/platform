@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Pencil, X, Cloud, Save, Cable, Database } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, Cloud, Save, Cable, Database, Loader2 } from 'lucide-react';
 import {
     StorageConnection,
     StorageConnectionConfig,
@@ -15,6 +15,10 @@ import { toast } from '@/components/ui/Toast';
 import Switch from '@/components/ui/Switch';
 import HelpPanel, { HelpPanelButton, useHelpPanel, type HelpEntry } from '@/components/ui/HelpPanel';
 import SettingsPage from '@/components/settings/SettingsPage';
+import {
+    useConnectionTest, readConnTest, CONN_TEST_TIMEOUT_MS, type ConnTestResult,
+} from '@/lib/connectionTest';
+import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 
 // editing holds a StorageConnection plus a transient secret. The list never
 // carries the secret (secretSet only); a save sends secretAccessKey only when
@@ -141,11 +145,14 @@ export default function StorageConnectionsTab() {
     const [editing, setEditing] = useState<EditingConnection | null>(null);
     const [saving, setSaving] = useState(false);
     const [testingId, setTestingId] = useState<number | null>(null);
-    const [draftTesting, setDraftTesting] = useState(false);
+    // The verdict of the last row test, and which row it belongs to. One at a
+    // time on purpose: a list of stale green ticks is worse than none.
+    const [rowResult, setRowResult] = useState<{ id: number; result: ConnTestResult } | null>(null);
+
     // The verdict stays on screen inside the dialog rather than in a toast: it
     // is the thing being read while the fields next to it are corrected, and a
     // toast that has already faded is no help to that.
-    const [draftVerdict, setDraftVerdict] = useState<{ ok: boolean; message: string } | null>(null);
+
     const help = useHelpPanel();
 
     const reload = useCallback(async () => {
@@ -161,7 +168,7 @@ export default function StorageConnectionsTab() {
         setEditing(prev => (prev ? { ...prev, config: { ...prev.config, ...patch } } : prev));
         // Any edit invalidates the verdict above it. Leaving a green "OK" next
         // to a changed endpoint is worse than showing nothing.
-        setDraftVerdict(null);
+        draftTest.clear();
     };
 
     const payloadFor = (c: EditingConnection): StorageConnectionInput => {
@@ -195,7 +202,7 @@ export default function StorageConnectionsTab() {
         if (res.success) {
             toast('Connection saved.');
             setEditing(null);
-            setDraftVerdict(null);
+            draftTest.clear();
             reload();
         } else {
             // Show what the server said: a duplicate name and a connection that
@@ -208,15 +215,15 @@ export default function StorageConnectionsTab() {
     // Test what is on screen, before it is committed. Saving first and testing
     // afterwards was the only order available, and a saved-but-wrong connection
     // is a thing other screens can already select.
-    const handleDraftTest = async () => {
-        if (!editing) return;
-        setDraftTesting(true);
-        setDraftVerdict(null);
-        const res = await testDraftStorageConnection({ ...payloadFor(editing), id: editing.id });
-        setDraftTesting(false);
-        const ok = !!(res.success && res.ok);
-        setDraftVerdict({ ok, message: res.message || (ok ? 'Connection OK' : 'Connection failed') });
-    };
+    // The unsaved connection in the dialog. Shared lifecycle, so the button
+    // greys out while it runs and the verdict says whether the endpoint
+    // answered at all - a wrong endpoint and a wrong secret key are different
+    // problems, and the key is what people retype first.
+    const draftTest = useConnectionTest(useCallback(async (signal: AbortSignal) => {
+        if (!editing) return readConnTest({ success: false, message: 'Nothing to test.' }, '');
+        const res = await testDraftStorageConnection({ ...payloadFor(editing), id: editing.id }, signal);
+        return readConnTest(res, 'Connection OK: write, read and delete all succeeded.');
+    }, [editing]));
 
     const handleDelete = async (id: number) => {
         if (!(await confirmDialog({ title: 'Delete storage connection', message: 'Delete this storage connection? Features that reference it will fall back to their inline configuration.' }))) return;
@@ -225,12 +232,29 @@ export default function StorageConnectionsTab() {
         else toast(res.message || 'Delete failed.', false);
     };
 
+    // A saved row is tested in place. The verdict lands under the row rather
+    // than in a toast: "reached, but the bucket does not exist" is a sentence
+    // to read twice, and a toast takes it away while it is still being read.
     const handleTest = async (id: number) => {
         setTestingId(id);
-        const res = await testStorageConnection(id);
-        setTestingId(null);
-        const ok = !!(res.success && res.ok);
-        toast(res.message || (ok ? 'Connection OK' : 'Connection failed'), ok);
+        setRowResult(null);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), CONN_TEST_TIMEOUT_MS);
+        try {
+            const res = await testStorageConnection(id, controller.signal);
+            setRowResult({ id, result: readConnTest(res, 'Connection OK: write, read and delete all succeeded.') });
+        } catch {
+            setRowResult({
+                id,
+                result: {
+                    severity: 'error', stage: 'timeout', heading: 'No answer',
+                    message: `No answer within ${Math.round(CONN_TEST_TIMEOUT_MS / 1000)} seconds, so the test was stopped.`,
+                },
+            });
+        } finally {
+            clearTimeout(timer);
+            setTestingId(null);
+        }
     };
 
     if (loading) return (
@@ -250,7 +274,7 @@ export default function StorageConnectionsTab() {
             <div className="card card-pad">
                 <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-display font-semibold text-(--accent-light)">Connections</h3>
-                    <button onClick={() => { setEditing({ ...EMPTY }); setDraftVerdict(null); }} className="btn btn-primary btn-sm">
+                    <button onClick={() => { setEditing({ ...EMPTY }); draftTest.clear(); }} className="btn btn-primary btn-sm">
                         <Plus size={12} /> Add connection
                     </button>
                 </div>
@@ -272,10 +296,18 @@ export default function StorageConnectionsTab() {
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-1.5">
-                                    <button onClick={() => handleTest(c.id)} className="btn btn-secondary btn-sm" disabled={testingId === c.id}>
-                                        <Cable size={12} /> {testingId === c.id ? 'Testing…' : 'Test'}
+                                    <button
+                                        onClick={() => handleTest(c.id)}
+                                        className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                        disabled={testingId !== null}
+                                        aria-busy={testingId === c.id}
+                                    >
+                                        {testingId === c.id
+                                            ? <Loader2 size={12} className="animate-spin" />
+                                            : <Cable size={12} />}
+                                        {testingId === c.id ? 'Testing…' : 'Test'}
                                     </button>
-                                    <button onClick={() => { setEditing({ ...c }); setDraftVerdict(null); }} className="btn btn-secondary btn-sm">
+                                    <button onClick={() => { setEditing({ ...c }); draftTest.clear(); }} className="btn btn-secondary btn-sm">
                                         <Pencil size={12} /> Edit
                                     </button>
                                     <button onClick={() => handleDelete(c.id)} className="btn btn-danger btn-sm" aria-label={`Delete ${c.name}`}>
@@ -284,6 +316,12 @@ export default function StorageConnectionsTab() {
                                 </div>
                             </div>
                         ))}
+                    </div>
+                )}
+
+                {rowResult && (
+                    <div className="mt-3">
+                        <ConnectionTestNote result={rowResult.result} />
                     </div>
                 )}
             </div>
@@ -334,7 +372,7 @@ export default function StorageConnectionsTab() {
                                     <input
                                         type="text"
                                         value={editing.accessKey}
-                                        onChange={e => { setEditing({ ...editing, accessKey: e.target.value }); setDraftVerdict(null); }}
+                                        onChange={e => { setEditing({ ...editing, accessKey: e.target.value }); draftTest.clear(); }}
                                         className="input-field font-mono"
                                         autoComplete="off"
                                     />
@@ -345,7 +383,7 @@ export default function StorageConnectionsTab() {
                                     <input
                                         type="password"
                                         value={editing.secretAccessKey ?? ''}
-                                        onChange={e => { setEditing({ ...editing, secretAccessKey: e.target.value }); setDraftVerdict(null); }}
+                                        onChange={e => { setEditing({ ...editing, secretAccessKey: e.target.value }); draftTest.clear(); }}
                                         className="input-field font-mono"
                                         autoComplete="new-password"
                                         placeholder={editing.secretSet ? 'Leave blank to keep the stored secret' : ''}
@@ -364,24 +402,15 @@ export default function StorageConnectionsTab() {
                                     />
                                 </div>
 
-                                {draftVerdict && (
-                                    <div className={`text-xs px-3 py-2 rounded-md ${
-                                        draftVerdict.ok
-                                            ? 'text-(--success-light) bg-(--success-ghost)'
-                                            : 'text-(--error-light) bg-(--error-ghost)'
-                                    }`}>
-                                        {draftVerdict.message}
-                                    </div>
-                                )}
+                                <ConnectionTestNote result={draftTest.result} />
                             </div>
                             <div className="modal-footer">
-                                <button
-                                    onClick={handleDraftTest}
-                                    className="btn btn-secondary mr-auto"
-                                    disabled={draftTesting || saving}
-                                >
-                                    <Cable size={13} /> {draftTesting ? 'Testing…' : 'Test'}
-                                </button>
+                                <TestConnectionButton
+                                    test={draftTest}
+                                    label="Test"
+                                    className="mr-auto"
+                                    blockedReason={saving ? 'A save is in flight.' : null}
+                                />
                                 <button onClick={() => setEditing(null)} className="btn btn-secondary">Cancel</button>
                                 <button onClick={handleSave} className="btn btn-primary" disabled={saving}>
                                     <Save size={13} /> {saving ? 'Saving…' : 'Save'}

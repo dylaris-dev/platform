@@ -238,16 +238,33 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Storage not found", 404)
 		return
 	}
+	// Does the endpoint answer at all, before anything is signed. Without this
+	// step a wrong endpoint and a wrong secret arrive as the same failure, and
+	// the secret is what an operator retypes first - see services/conncheck.go.
+	if host, port, ok := services.HostPortFromEndpoint(backupStorageEndpoint(*storage)); ok {
+		if reach := services.Reachable(r.Context(), host, port); !reach.OK {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false, "stage": reach.Stage, "message": reach.Message,
+			})
+			return
+		}
+	}
 	provider, err := backupstorage.Open(r.Context(), storage, h.backupDeps())
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": err.Error()})
+		check := services.ClassifyStorageFailure(err.Error())
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false, "stage": check.Stage, "message": check.Message,
+		})
 		return
 	}
 	// Round-trip put/read-back/delete: a backend that accepts a write but hands
 	// back different or no bytes is broken, and put-then-delete alone reported it
 	// as green.
 	if ok, msg := probeBackupStorage(r.Context(), provider); !ok {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": msg})
+		check := services.ClassifyStorageFailure(msg)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false, "stage": check.Stage, "message": check.Message,
+		})
 		return
 	}
 	// A local/shared path on the container's own filesystem passes every probe

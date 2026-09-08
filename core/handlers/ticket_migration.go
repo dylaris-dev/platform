@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/services"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -139,9 +140,19 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 		return
 	}
 
+	// Reachability first, from the host in the DSN. A DSN typed by hand gets a
+	// hostname wrong far more often than a password, and "connected but query
+	// failed" was the message for both - see services/conncheck.go.
+	if host, port, ok := services.HostPortFromPostgresDSN(url); ok {
+		if reach := services.Reachable(r.Context(), host, port); !reach.OK {
+			sendConnTestFailure(w, reach)
+			return
+		}
+	}
+
 	db, err := sql.Open("postgres", url)
 	if err != nil {
-		sendJSONError(w, "Failed to open connection: "+err.Error(), http.StatusBadGateway)
+		sendConnTestFailure(w, services.Rejected("That DSN could not be parsed: "+err.Error()))
 		return
 	}
 	defer db.Close()
@@ -149,7 +160,7 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 
 	var version string
 	if err := db.QueryRow("SELECT version()").Scan(&version); err != nil {
-		sendJSONError(w, "Connected but query failed: "+err.Error(), http.StatusBadGateway)
+		sendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{

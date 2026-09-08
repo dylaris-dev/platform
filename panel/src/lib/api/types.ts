@@ -531,8 +531,11 @@ export const updateBackupStorage = (id: number, s: Partial<BackupStorage>): Prom
     fetchAPI(`/backup-storages/${id}`, { method: 'PATCH', body: JSON.stringify(s) });
 export const deleteBackupStorage = (id: number): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/backup-storages/${id}`, { method: 'DELETE' });
-export const testBackupStorage = (id: number): Promise<{ success: boolean; message?: string; warning?: string }> =>
-    fetchAPI(`/backup-storages/${id}/test`, { method: 'POST' });
+// The signal is how the shared test lifecycle (lib/connectionTest.ts) stops
+// waiting. `stage` says whether the endpoint answered at all - a dead endpoint
+// and a rejected key are different problems and no longer share a message.
+export const testBackupStorage = (id: number, signal?: AbortSignal): Promise<{ success: boolean; stage?: string; message?: string; warning?: string }> =>
+    fetchAPI(`/backup-storages/${id}/test`, { method: 'POST', signal });
 
 // --- STORAGE CONNECTIONS ---
 // Named, reusable storage backends (currently s3) that any feature can
@@ -582,8 +585,8 @@ export const updateStorageConnection = (id: number, c: StorageConnectionInput): 
     fetchAPI(`/storage-connections/${id}`, { method: 'PATCH', body: JSON.stringify(c) });
 export const deleteStorageConnection = (id: number): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/storage-connections/${id}`, { method: 'DELETE' });
-export const testStorageConnection = (id: number): Promise<{ success: boolean; ok?: boolean; message?: string }> =>
-    fetchAPI(`/storage-connections/${id}/test`, { method: 'POST' });
+export const testStorageConnection = (id: number, signal?: AbortSignal): Promise<{ success: boolean; ok?: boolean; stage?: string; message?: string }> =>
+    fetchAPI(`/storage-connections/${id}/test`, { method: 'POST', signal });
 
 // Test a connection that has NOT been saved, from inside the dialog.
 //
@@ -594,8 +597,9 @@ export const testStorageConnection = (id: number): Promise<{ success: boolean; o
 // connection, which then has to carry its own secret.
 export const testDraftStorageConnection = (
     c: StorageConnectionInput & { id: number },
-): Promise<{ success: boolean; ok?: boolean; message?: string }> =>
-    fetchAPI('/storage-connections/test', { method: 'POST', body: JSON.stringify(c) });
+    signal?: AbortSignal,
+): Promise<{ success: boolean; ok?: boolean; stage?: string; message?: string }> =>
+    fetchAPI('/storage-connections/test', { method: 'POST', body: JSON.stringify(c), signal });
 
 export const listBackupJobs = (serverId: number): Promise<{ success: boolean; jobs?: BackupJob[] }> =>
     fetchAPI(`/servers/${serverId}/backup-jobs`);

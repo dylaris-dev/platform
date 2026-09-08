@@ -643,11 +643,25 @@ const coreStorageProbePayload = "dylaris-probe"
 // object under a "_probe" sub-prefix so it never touches real Library/ticket
 // data.
 func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
+	// The stage rides along with every verdict. A wrong endpoint and a wrong
+	// secret key are both "connection test failed" without it, and they are
+	// fixed by different people - see services/conncheck.go.
+	respondStage := func(ok bool, msg, stage string) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "ok": ok, "message": msg, "stage": stage,
+		})
+	}
 	respond := func(ok bool, msg string) {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": msg})
+		stage := services.StageOK
+		if !ok {
+			stage = services.StageRejected
+		}
+		respondStage(ok, msg, stage)
 	}
 	respondWarn := func(ok bool, msg, warning string) {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": msg, "warning": warning})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "ok": ok, "message": msg, "warning": warning, "stage": services.StageOK,
+		})
 	}
 
 	var candidate CoreStorageConfig
@@ -662,6 +676,18 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		respond(false, err.Error())
 		return
 	}
+	// For an S3 backend, ask whether the endpoint answers at all before signing
+	// anything. A dead endpoint and a rejected key produce the same red box
+	// otherwise, and the key is what people retype first.
+	if effective.Backend == "s3" {
+		if host, port, ok := services.HostPortFromEndpoint(effective.S3Endpoint); ok {
+			if reach := services.Reachable(r.Context(), host, port); !reach.OK {
+				respondStage(false, reach.Message, reach.Stage)
+				return
+			}
+		}
+	}
+
 	// nil gate: the candidate may name a completely different path from the
 	// live one, so the live gate's verdict says nothing about it. An operator
 	// who asks to test a path is also entitled to have it actually tested
@@ -672,6 +698,13 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ok, msg := probeStorageProvider(r.Context(), prov)
+	if !ok {
+		// A local path never got the reachability step above, and its failures
+		// are filesystem ones; the classifier passes those through unchanged.
+		check := services.ClassifyStorageFailure(msg)
+		respondStage(false, check.Message, check.Stage)
+		return
+	}
 	if effective.Backend == "path" || effective.Backend == "local" {
 		// newStorageProviderForConfig(effective, "_probe") MkdirAll'd this
 		// exact directory; probeStorageProvider cleans up the object inside

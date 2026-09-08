@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2, Archive } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2, Archive, Loader2 } from 'lucide-react';
 import {
     BackupStorage,
     BackupConfig,
@@ -20,6 +20,8 @@ import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { type SavableForm } from '@/components/settings/SettingsCard';
+import { readConnTest, CONN_TEST_TIMEOUT_MS, type ConnTestResult } from '@/lib/connectionTest';
+import { ConnectionTestNote } from '@/components/ui/ConnectionTest';
 
 interface LocalConfig {
     basePath: string;
@@ -256,6 +258,10 @@ export default function BackupsTab() {
     // Persistent per-storage durability warnings from the last test. A warning
     // that scrolls away in a toast is one nobody acts on.
     const [testWarnings, setTestWarnings] = useState<Record<number, string>>({});
+    // Which row is being tested, and the verdict of the last one. Single-slot
+    // on purpose: a column of stale green ticks says less than one fresh line.
+    const [testingId, setTestingId] = useState<number | null>(null);
+    const [rowResult, setRowResult] = useState<{ id: number; result: ConnTestResult } | null>(null);
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
@@ -324,22 +330,41 @@ export default function BackupsTab() {
         else showToast(res.message || 'Delete failed.', false);
     };
 
+    // The button had no busy state at all: it looked idle for as long as the
+    // request took, which on an unreachable endpoint was however long the
+    // client waited - and with no deadline, that could be forever. Now it
+    // greys out, it has a deadline, and the verdict lands under the list
+    // instead of in a toast, because "reached, but that bucket does not exist"
+    // is a sentence worth reading twice.
     const handleTest = async (id: number) => {
-        const res = await testBackupStorage(id);
-        // Cleared on every test, so a warning never outlives the config that
-        // produced it: fixing the mount and re-testing makes it disappear.
-        setTestWarnings(prev => {
-            const next = { ...prev };
-            if (res.success && res.warning) next[id] = res.warning;
-            else delete next[id];
-            return next;
-        });
-        showToast(
-            res.success
-                ? (res.warning ? 'Connection OK, see the warning below.' : 'Connection OK')
-                : (res.message || 'Connection failed'),
-            res.success,
-        );
+        setTestingId(id);
+        setRowResult(null);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), CONN_TEST_TIMEOUT_MS);
+        try {
+            const res = await testBackupStorage(id, controller.signal);
+            // Cleared on every test, so a warning never outlives the config
+            // that produced it: fixing the mount and re-testing makes it
+            // disappear.
+            setTestWarnings(prev => {
+                const next = { ...prev };
+                if (res.success && res.warning) next[id] = res.warning;
+                else delete next[id];
+                return next;
+            });
+            setRowResult({ id, result: readConnTest(res, 'Connection OK: write, read and delete all succeeded.') });
+        } catch {
+            setRowResult({
+                id,
+                result: {
+                    severity: 'error', stage: 'timeout', heading: 'No answer',
+                    message: `No answer within ${Math.round(CONN_TEST_TIMEOUT_MS / 1000)} seconds, so the test was stopped.`,
+                },
+            });
+        } finally {
+            clearTimeout(timer);
+            setTestingId(null);
+        }
     };
 
     // This card had its own Discard/Save pair, hand-rolled and unregistered -
@@ -467,8 +492,17 @@ export default function BackupsTab() {
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1.5">
-                                        <button onClick={() => handleTest(s.id)} className="btn btn-secondary btn-sm" title="Test connection">
-                                            <Cable size={12} /> Test
+                                        <button
+                                            onClick={() => handleTest(s.id)}
+                                            className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                            title="Test connection"
+                                            disabled={testingId !== null}
+                                            aria-busy={testingId === s.id}
+                                        >
+                                            {testingId === s.id
+                                                ? <Loader2 size={12} className="animate-spin" />
+                                                : <Cable size={12} />}
+                                            {testingId === s.id ? 'Testing…' : 'Test'}
                                         </button>
                                         <button onClick={() => setEditing(s)} className="btn btn-secondary btn-sm">
                                             <Pencil size={12} /> Edit
@@ -478,6 +512,7 @@ export default function BackupsTab() {
                                         </button>
                                     </div>
                                 </div>
+                                {rowResult?.id === s.id && <ConnectionTestNote result={rowResult.result} />}
                                 {testWarnings[s.id] && (
                                     <div className="alert alert-warning text-xs flex items-start gap-2">
                                         <AlertTriangle size={14} className="shrink-0 mt-0.5" />

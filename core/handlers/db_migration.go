@@ -117,18 +117,27 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	}
 	params := req.toParams()
 
+	// Reachability first, and separately. "Failed to connect" used to cover a
+	// hostname that does not resolve and a password that was refused, which are
+	// fixed in different places by different people - see services/conncheck.go.
+	if reach := services.Reachable(r.Context(), params.Host, params.Port); !reach.OK {
+		sendConnTestFailure(w, reach)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	db, err := params.Open(ctx, 6*time.Second)
 	if err != nil {
-		sendJSONError(w, "Failed to connect: "+err.Error(), http.StatusBadGateway)
+		sendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
 		return
 	}
 	defer db.Close()
 
 	var version string
 	if err := db.QueryRowContext(ctx, "SELECT version()").Scan(&version); err != nil {
-		sendJSONError(w, "Connected but query failed: "+err.Error(), http.StatusBadGateway)
+		sendConnTestFailure(w, services.Rejected("Connected and authenticated, but the first query failed: "+
+			services.DescribePostgresError(err)))
 		return
 	}
 	// Report whether the target already has the TimescaleDB extension, so the UI

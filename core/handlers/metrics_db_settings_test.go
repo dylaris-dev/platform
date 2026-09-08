@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,19 +12,14 @@ import (
 	"dylaris-core/store"
 )
 
-// metricsDBStore is the settings table plus the one extension probe this
-// screen asks for.
+// metricsDBStore is the settings table and nothing else.
 type metricsDBStore struct {
 	store.Store
-	vals     map[string]string
-	timescal bool
+	vals map[string]string
 }
 
 func (s *metricsDBStore) GetSetting(k string) (string, error) { return s.vals[k], nil }
 func (s *metricsDBStore) SetSetting(k, v string) error        { s.vals[k] = v; return nil }
-func (s *metricsDBStore) TimescaleEnabled(context.Context) (bool, error) {
-	return s.timescal, nil
-}
 
 func metricsDBHandlerFor(st *metricsDBStore) *MetricsDBHandler {
 	// FeatureFlags reads the same store: this endpoint owns the recording
@@ -38,7 +32,6 @@ func metricsDBHandlerFor(st *metricsDBStore) *MetricsDBHandler {
 
 func storedSeparate() map[string]string {
 	return map[string]string{
-		services.MetricsDBModeSetting:     services.MetricsDBModeSeparate,
 		services.MetricsDBHostSetting:     "metricsdb",
 		services.MetricsDBPortSetting:     "5432",
 		services.MetricsDBNameSetting:     "dylaris_metrics",
@@ -114,27 +107,6 @@ func TestABlankPasswordIsKeptOnlyForTheSameEndpoint(t *testing.T) {
 	}
 }
 
-// The Core database records HOUR buckets whether or not TimescaleDB is
-// installed in it - the resolution follows from WHICH database is used, not
-// what is in it (core/metrics.Open). A test button that answered "TimescaleDB
-// found" without saying that would leave an operator expecting minutes.
-func TestTheCoreDatabaseNeverPromisesMinuteResolution(t *testing.T) {
-	for _, ts := range []bool{true, false} {
-		msg := strings.ToLower(coreDBOutcome(ts))
-		if !strings.Contains(msg, "hour") {
-			t.Errorf("timescale=%v: %q does not say hour buckets", ts, msg)
-		}
-		// It may TELL you minute resolution needs a separate database; it must
-		// not claim you are getting it here.
-		if strings.Contains(msg, "minute buckets") {
-			t.Errorf("timescale=%v: %q promises minute buckets from the Core database", ts, msg)
-		}
-	}
-	if !strings.Contains(coreDBOutcome(true), "hypertable") {
-		t.Error("with the extension present the answer should still say what it changes")
-	}
-}
-
 // A separate database without the extension is allowed and LOUD. Refusing it
 // would block a working setup; saying nothing would leave minute buckets
 // accumulating in a plain table, which is the one combination here that ends
@@ -159,40 +131,26 @@ func TestASeparateDatabaseWithoutTimescaleWarnsRatherThanFails(t *testing.T) {
 	}
 }
 
-// Testing the Core database must not require a probe: this request is itself
-// proof that Core can reach it, and dialling it again would only add a way for
-// a working setup to report a failure.
-func TestTestingTheCoreDatabaseAnswersWithoutDialling(t *testing.T) {
-	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}, timescal: true})
-	w := httptest.NewRecorder()
-	h.Test(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"mode":"core"}`)))
-
-	var resp struct {
-		OK        bool   `json:"ok"`
-		Severity  string `json:"severity"`
-		Timescale bool   `json:"timescale"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if !resp.OK || resp.Severity != "ok" {
-		t.Fatalf("core test returned ok=%v severity=%q", resp.OK, resp.Severity)
-	}
-	if !resp.Timescale {
-		t.Error("the extension is installed in this store but the answer says otherwise")
-	}
-}
-
-// A form missing its host is refused before anything is dialled, and the
-// message names the field so the panel can point at it.
-func TestAnIncompleteSeparateTargetIsRefusedBeforeDialling(t *testing.T) {
+// A form with nothing to dial is refused before anything is dialled, and the
+// message says what is missing so the panel can point at it.
+func TestAnIncompleteTargetIsRefusedBeforeDialling(t *testing.T) {
 	h := metricsDBHandlerFor(&metricsDBStore{vals: map[string]string{}})
 	w := httptest.NewRecorder()
-	h.Test(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"mode":"separate","dbName":"d","user":"u"}`)))
+	h.Test(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"dbName":"d","user":"u"}`)))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
 	}
-	if !strings.Contains(strings.ToLower(w.Body.String()), "host") {
+	if !strings.Contains(strings.ToLower(w.Body.String()), "database") {
+		t.Errorf("the error does not say what is missing: %s", w.Body.String())
+	}
+
+	// And a named host with a missing field is refused by Validate, naming it.
+	w = httptest.NewRecorder()
+	h.Test(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"host":"metricsdb","user":"u"}`)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if !strings.Contains(strings.ToLower(w.Body.String()), "database name") {
 		t.Errorf("the error does not name the missing field: %s", w.Body.String())
 	}
 }
@@ -207,32 +165,41 @@ func TestTheActiveBlockCopesWithNothingRecording(t *testing.T) {
 	}
 }
 
-// The switch and the database are saved together, by one request, because they
-// are one decision: recording starts at the moment the flag goes true and the
-// first bucket lands at whatever resolution the stored target implies. Two
-// endpoints meant a window where those disagreed.
-func TestOneSaveWritesBothTheSwitchAndTheTarget(t *testing.T) {
+// Recording ON with nowhere to record is the one combination that cannot be
+// saved. There is no fallback database any more: the Core one used to catch
+// this case at hour resolution, and its removal is exactly why the switch has
+// to be refused rather than quietly accepted.
+func TestRecordingCannotBeSwitchedOnWithoutADatabase(t *testing.T) {
 	st := &metricsDBStore{vals: map[string]string{}}
 	h := metricsDBHandlerFor(st)
 
 	w := httptest.NewRecorder()
-	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"enabled":true,"mode":"core"}`)))
+	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"enabled":true}`)))
+	if w.Code == http.StatusOK {
+		t.Fatalf("recording was switched on with no database: %s", w.Body.String())
+	}
+	if st.vals[services.MetricsEnabledSetting] == "true" {
+		t.Fatal("the switch was written despite the save being refused")
+	}
+}
+
+// Switching recording OFF must work with an empty form, and it is the reason
+// an unnamed target is valid. An installation that wants to stop must not have
+// to name a database first - that would be a trap with no way out of it.
+func TestRecordingCanAlwaysBeSwitchedOff(t *testing.T) {
+	st := &metricsDBStore{vals: map[string]string{services.MetricsEnabledSetting: "true"}}
+	h := metricsDBHandlerFor(st)
+
+	w := httptest.NewRecorder()
+	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"enabled":false}`)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
-	if st.vals[services.MetricsEnabledSetting] != "true" {
-		t.Fatalf("the recording switch was not written: %q", st.vals[services.MetricsEnabledSetting])
-	}
-	if st.vals[services.MetricsDBModeSetting] != services.MetricsDBModeCore {
-		t.Fatalf("the target was not written: %q", st.vals[services.MetricsDBModeSetting])
-	}
-
-	// And back off again, so the switch is genuinely written rather than only
-	// ever set - a handler that wrote "true" unconditionally would pass above.
-	w = httptest.NewRecorder()
-	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(`{"enabled":false,"mode":"core"}`)))
 	if st.vals[services.MetricsEnabledSetting] != "false" {
 		t.Fatalf("switching recording off did not write: %q", st.vals[services.MetricsEnabledSetting])
+	}
+	if st.vals[services.MetricsDBHostSetting] != "" {
+		t.Fatalf("an empty form left a host behind: %q", st.vals[services.MetricsDBHostSetting])
 	}
 }
 
@@ -266,7 +233,7 @@ func TestARefusedTargetLeavesTheSwitchAlone(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	h.Set(w, httptest.NewRequest("PUT", "/x", strings.NewReader(
-		`{"enabled":true,"mode":"separate","host":"127.0.0.1","port":"1","dbName":"d","user":"u"}`)))
+		`{"enabled":true,"host":"127.0.0.1","port":"1","dbName":"d","user":"u"}`)))
 
 	if w.Code == http.StatusOK {
 		t.Fatalf("an unreachable target was accepted: %s", w.Body.String())

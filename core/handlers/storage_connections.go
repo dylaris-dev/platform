@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/storage"
 	"dylaris-core/store"
 
@@ -275,11 +276,42 @@ func (h *StorageConnectionsHandler) TestConnection(w http.ResponseWriter, r *htt
 	}
 	prov, err := storageConnectionProvider(conn)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": false, "message": err.Error()})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "ok": false, "stage": services.StageRejected, "message": err.Error(),
+		})
 		return
 	}
+	writeStorageProbeVerdict(w, r, conn, prov)
+}
+
+// writeStorageProbeVerdict answers a storage test in two steps: does the
+// endpoint answer, and only then, does it accept these credentials for this
+// bucket.
+//
+// Shared by the saved and the draft test because they ask the identical
+// question of the identical provider - the only difference is where the
+// connection came from, which the reader of the result does not care about.
+func writeStorageProbeVerdict(w http.ResponseWriter, r *http.Request, conn *models.StorageConnection, prov storage.StorageProvider) {
+	endpoint, _, _ := storageConnectionIdentity(conn.Config, conn.AccessKey)
+	if host, port, ok := services.HostPortFromEndpoint(endpoint); ok {
+		if reach := services.Reachable(r.Context(), host, port); !reach.OK {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true, "ok": false, "stage": reach.Stage, "message": reach.Message,
+			})
+			return
+		}
+	}
 	ok, message := probeStorageProvider(r.Context(), prov)
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": message})
+	if !ok {
+		check := services.ClassifyStorageFailure(message)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "ok": false, "stage": check.Stage, "message": check.Message,
+		})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "ok": true, "stage": services.StageOK, "message": message,
+	})
 }
 
 // errStorageConnectionTestNeedsSecret is returned when an unsaved test has no
@@ -357,11 +389,12 @@ func (h *StorageConnectionsHandler) TestDraftConnection(w http.ResponseWriter, r
 	if err != nil {
 		// 200 with a verdict, like the saved-connection probe: the request
 		// worked, the configuration did not.
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": false, "message": err.Error()})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "ok": false, "stage": services.StageRejected, "message": err.Error(),
+		})
 		return
 	}
-	ok, message := probeStorageProvider(r.Context(), prov)
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ok": ok, "message": message})
+	writeStorageProbeVerdict(w, r, conn, prov)
 }
 
 // storageConnectionProvider builds a storage.StorageProvider from a resolved

@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
     Database, Loader2, CircleCheck, CircleAlert, Play, ServerCog,
-    ShieldAlert, RefreshCw, ListChecks, Gauge, Zap, TrendingUp,
+    ShieldAlert, ListChecks, Gauge, Zap, TrendingUp,
 } from 'lucide-react';
 import {
     getDBMigration, startDBMigration, testDBMigrationConnection, verifyDBMigration,
@@ -14,6 +14,8 @@ import {
 } from '@/lib/api/dbmigration';
 import { systemEvents } from '@/lib/systemEvents';
 import HelpTip from '@/components/ui/HelpTip';
+import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
+import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 
 const EMPTY_FORM: DBTargetForm = {
     host: '', port: '5432', user: 'dylaris', password: '', dbName: 'dylaris',
@@ -35,7 +37,7 @@ export default function DatabaseTab() {
     const [hasJob, setHasJob] = useState(false);
     const [loading, setLoading] = useState(true);
 
-    const [testing, setTesting] = useState(false);
+
     const [testResult, setTestResult] = useState<{ version: string; timescaleInstalled: boolean } | null>(null);
 
     const [verifying, setVerifying] = useState(false);
@@ -92,22 +94,27 @@ export default function DatabaseTab() {
         return () => clearInterval(t);
     }, [job, load]);
 
-    const set = (k: keyof DBTargetForm, v: string) => setForm(f => ({ ...f, [k]: v }));
+    const set = (k: keyof DBTargetForm, v: string) => {
+        // A retyped host makes the last verdict a claim about a connection
+        // nobody made, so it goes with the edit.
+        test.clear();
+        setTestResult(null);
+        setForm(f => ({ ...f, [k]: v }));
+    };
     const canSubmit = !!(form.host && form.port && form.user && form.dbName);
     const busy = !!job && dbMigrationInProgress(job.phase);
 
-    const doTest = async () => {
-        setTesting(true);
+    // The shared lifecycle owns the button state and the deadline; the version
+    // and the extension check stay here, because they are not a verdict on the
+    // connection but a description of what was found at the other end.
+    const test = useConnectionTest(useCallback(async (signal: AbortSignal) => {
         setTestResult(null);
-        const res = await testDBMigrationConnection(form);
-        setTesting(false);
+        const res = await testDBMigrationConnection(form, signal);
         if (res.success) {
             setTestResult({ version: res.version, timescaleInstalled: res.timescaleInstalled });
-            flash('Connection OK');
-        } else {
-            flash(res.message || 'Connection failed', false);
         }
-    };
+        return readConnTest(res, 'Connected.');
+    }, [form]));
 
     const doVerify = async () => {
         setVerifying(true);
@@ -306,7 +313,9 @@ export default function DatabaseTab() {
                     </div>
                 </div>
 
-                {/* Test result */}
+                {/* Test result: the verdict first, then what was found there. */}
+                <ConnectionTestNote result={test.result} />
+
                 {testResult && (
                     <div className="text-xs font-mono text-(--base-06) bg-(--base-01) border border-(--base-03) rounded-md p-3 space-y-1">
                         <div className="text-(--success-light)">{testResult.version}</div>
@@ -321,9 +330,10 @@ export default function DatabaseTab() {
 
                 {/* Actions */}
                 <div className="flex flex-wrap gap-2 pt-1">
-                    <button className="btn btn-secondary" onClick={doTest} disabled={!canSubmit || testing}>
-                        {testing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Test connection
-                    </button>
+                    <TestConnectionButton
+                        test={test}
+                        blockedReason={canSubmit ? null : 'Fill in host, port, user and database first.'}
+                    />
                     <button className="btn btn-secondary" onClick={doVerify} disabled={!canSubmit || verifying}>
                         {verifying ? <Loader2 size={14} className="animate-spin" /> : <ListChecks size={14} />} Verify against target
                     </button>

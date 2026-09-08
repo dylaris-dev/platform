@@ -10,6 +10,7 @@ import {
     GatewayDnsProbe,
 } from '@/lib/api/gatewayDns';
 import { useSettingsForm } from '@/lib/useSettingsForm';
+import { CONN_TEST_TIMEOUT_MS } from '@/lib/connectionTest';
 import SettingsCard from '@/components/settings/SettingsCard';
 import Switch from '@/components/ui/Switch';
 import HelpTip from '@/components/ui/HelpTip';
@@ -94,17 +95,36 @@ export default function GatewayDnsCard() {
 
     const v = form.value;
 
+    // The probe keeps its own state because its answer is more than a verdict:
+    // the zone list below is built from it. What it did not have is a deadline
+    // - this call crosses Core, the gateway and then the provider's API, and a
+    // token that hangs one of them used to leave the button spinning for as
+    // long as the tab stayed open.
     const runProbe = async () => {
         if (!v) return;
         setProbing(true);
         setProbe(null);
-        const res = await probeGatewayDns(v.provider, v.token);
-        setProbing(false);
-        if (!res.success || !res.probe) {
-            setProbe({ ok: false, zone_listing: false, message: res.message || 'Could not reach the gateway.' });
-            return;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), CONN_TEST_TIMEOUT_MS);
+        try {
+            const res = await probeGatewayDns(v.provider, v.token, controller.signal);
+            if (!res.success || !res.probe) {
+                setProbe({ ok: false, zone_listing: false, message: res.message || 'Could not reach the gateway.' });
+                return;
+            }
+            setProbe(res.probe);
+        } catch {
+            setProbe({
+                ok: false,
+                zone_listing: false,
+                message: `No answer within ${Math.round(CONN_TEST_TIMEOUT_MS / 1000)} seconds, so the test was ` +
+                    'stopped. The call goes through the gateway to the provider, so any of the three could be ' +
+                    'the one not answering.',
+            });
+        } finally {
+            clearTimeout(timer);
+            setProbing(false);
         }
-        setProbe(res.probe);
     };
 
     const toggleZone = (zone: string, on: boolean) => {
@@ -214,7 +234,7 @@ export default function GatewayDnsCard() {
                         </button>
                         {probe && (
                             <span className={`text-xs ${probe.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
-                                {probe.message}
+                                {probe.ok ? '' : 'Reached, but refused: '}{probe.message}
                             </span>
                         )}
                     </div>

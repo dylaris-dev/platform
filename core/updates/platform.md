@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.08.5
+
+### Features
+- **Every "Test connection" in Settings now says which step failed.** It reaches
+  the host first and only then authenticates, so a hostname typo, a firewall, a
+  wrong password and a missing database stop arriving as the same sentence.
+  Buttons grey out while a test runs, and an unreachable host answers in about
+  three seconds instead of hanging. `core` `panel`
+- **Four new Link metrics in the statistics picker**, covering how often a
+  player was carried across an edge restart and how much data that took. One of
+  them, "Resumes refused", counts the sessions that were ended rather than
+  resumed with a gap in them. `core`
+
+### Breaking
+- **Long-term statistics need a database of their own now.** Recording into the
+  platform's own database at hour resolution is gone, and so is the mode that
+  chose between the two. Name a PostgreSQL with TimescaleDB in Settings; with
+  none named nothing is recorded, and the switch cannot be turned on without
+  one. Switching recording OFF still works with the form empty. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.08.4
 
 ### Features

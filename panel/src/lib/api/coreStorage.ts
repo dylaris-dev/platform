@@ -66,6 +66,8 @@ export async function saveCoreStorage(s: CoreStorageConfig): Promise<SaveCoreSto
 export interface TestCoreStorageResponse {
   success: boolean;
   ok?: boolean;
+  /** How far the attempt got - see lib/connectionTest.ts. */
+  stage?: string;
   message?: string;
   /**
    * Set when the probe SUCCEEDED but the configured location is not durable -
@@ -82,12 +84,13 @@ export interface TestCoreStorageResponse {
 // it. The backend builds a provider straight from this request body (falling
 // back to the stored config only for an empty body) and never persists
 // anything - it just writes/reads/deletes a throwaway probe object.
-export async function testCoreStorage(candidate: CoreStorageConfig): Promise<TestCoreStorageResponse> {
+export async function testCoreStorage(candidate: CoreStorageConfig, signal?: AbortSignal): Promise<TestCoreStorageResponse> {
   try {
     const res = await fetch(`${API_URL}/settings/core-storage/test`, {
       method: 'POST',
       headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
       body: JSON.stringify(candidate),
+      signal,
     });
     return (await handleResponse(res)) as TestCoreStorageResponse;
   } catch (err) {

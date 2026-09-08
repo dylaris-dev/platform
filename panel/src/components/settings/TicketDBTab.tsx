@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-    Database, Plug, ArrowRightCircle, ShieldAlert, Download, Trash2, Loader2,
+    Database, ArrowRightCircle, ShieldAlert, Download, Trash2, Loader2,
     CircleCheck, CircleAlert, AlertTriangle, X,
 } from 'lucide-react';
 import {
@@ -15,6 +15,8 @@ import {
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
+import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
+import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
@@ -111,25 +113,18 @@ function CountsTable({ label, counts }: { label: string; counts: Record<string, 
 
 function MigrationCard({ onChanged, flash }: { onChanged: () => void; flash: (msg: string, ok?: boolean) => void }) {
     const [url, setUrl] = useState('');
-    const [testing, setTesting] = useState(false);
-    const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
     const [dryRun, setDryRun] = useState<{ source: Record<string, number>; target: Record<string, number> } | null>(null);
     const [dryRunning, setDryRunning] = useState(false);
     const [executing, setExecuting] = useState(false);
     const [migrationResult, setMigrationResult] = useState<{ migrated: Record<string, number>; skipped: Record<string, number> } | null>(null);
 
-    const handleTest = async () => {
-        if (!url.trim()) return;
-        setTesting(true);
-        setTestResult(null);
-        const res = await testTicketDBConnection(url);
-        setTesting(false);
-        if (res.success) {
-            setTestResult({ ok: true, msg: res.version || 'Connected.' });
-        } else {
-            setTestResult({ ok: false, msg: res.message || 'Connection failed.' });
-        }
-    };
+    // Shared lifecycle: disabled while it runs, a deadline, and a stage in the
+    // answer - a DSN typed by hand gets the host wrong far more often than the
+    // password, and the two used to arrive as the same red line.
+    const test = useConnectionTest(useCallback(async (signal: AbortSignal) => {
+        const res = await testTicketDBConnection(url, signal);
+        return readConnTest(res, res.version || 'Connected.');
+    }, [url]));
 
     const handleDryRun = async () => {
         if (!url.trim()) return;
@@ -172,18 +167,17 @@ function MigrationCard({ onChanged, flash }: { onChanged: () => void; flash: (ms
                 <input
                     type="text"
                     value={url}
-                    onChange={e => setUrl(e.target.value)}
+                    onChange={e => { test.clear(); setUrl(e.target.value); }}
                     placeholder="postgres://user:pass@host:5432/dbname?sslmode=disable"
                     className="input-field w-full input-mono text-xs"
                 />
             </div>
 
             <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={handleTest} disabled={testing || !url.trim()}
-                    className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-40">
-                    {testing ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
-                    Test connection
-                </button>
+                <TestConnectionButton
+                    test={test}
+                    blockedReason={url.trim() ? null : 'Enter the target DSN first.'}
+                />
                 <button type="button" onClick={handleDryRun} disabled={dryRunning || !url.trim()}
                     className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-40">
                     {dryRunning && <Loader2 size={14} className="animate-spin" />}
@@ -196,12 +190,7 @@ function MigrationCard({ onChanged, flash }: { onChanged: () => void; flash: (ms
                 </button>
             </div>
 
-            {testResult && (
-                <p className={`text-xs flex items-center gap-1 ${testResult.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
-                    {testResult.ok ? <CircleCheck size={12} /> : <CircleAlert size={12} />}
-                    {testResult.msg}
-                </p>
-            )}
+            <ConnectionTestNote result={test.result} />
 
             {dryRun && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-(--base-03)">

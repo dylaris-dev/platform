@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log"
 	"sync"
@@ -24,9 +23,7 @@ import (
 type Manager struct {
 	// base outlives every handle; each one gets a child context that is
 	// cancelled when that handle is retired.
-	base   context.Context
-	coreDB *sql.DB
-	coreTS bool
+	base context.Context
 
 	mu   sync.RWMutex
 	cur  *Handle
@@ -55,8 +52,8 @@ type Manager struct {
 }
 
 // NewManager returns a Manager with nothing open yet. Call Apply to open one.
-func NewManager(base context.Context, coreDB *sql.DB, coreUsesTimescale bool) *Manager {
-	m := &Manager{base: base, coreDB: coreDB, coreTS: coreUsesTimescale}
+func NewManager(base context.Context) *Manager {
+	m := &Manager{base: base}
 	go m.Watch(base)
 	return m
 }
@@ -111,6 +108,15 @@ func (m *Manager) Apply(dsn string) error {
 		return errors.New("no metrics manager is running")
 	}
 
+	// No target is not an outage: it is the configured state of an installation
+	// that records nothing, and it is what switching recording off looks like
+	// from here. Close rather than Open, so the retry loop does not spend the
+	// rest of the process trying to reopen a database nobody named.
+	if dsn == "" {
+		m.Close()
+		return nil
+	}
+
 	m.mu.Lock()
 	m.want, m.applied = dsn, true
 	same := m.cur != nil && m.dsn == dsn
@@ -120,7 +126,7 @@ func (m *Manager) Apply(dsn string) error {
 	}
 
 	ctx, cancel := context.WithCancel(m.base)
-	h, err := Open(ctx, m.coreDB, dsn, m.coreTS)
+	h, err := Open(ctx, dsn)
 	if err != nil {
 		cancel()
 		return err

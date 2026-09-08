@@ -380,7 +380,7 @@ func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error)
 		},
 		TriggerServerBackup: h.triggerServerBackup,
 		MetricsConfigured: func() bool {
-			return services.LoadMetricsDBTarget(h.state.Store).IsSeparate()
+			return services.LoadMetricsDBTarget(h.state.Store).Configured()
 		},
 	}, nil
 }

@@ -1,16 +1,17 @@
 // Where the long-term statistics are written.
 //
-// Two answers: the Core database, or a database of its own. The choice is not
-// cosmetic - it is what decides the RESOLUTION of everything the Statistics
-// screen will ever show, and it cannot be changed retroactively, because there
-// is no backfill. Picking it is part of switching recording on.
+// One answer: a database of its own, on a PostgreSQL carrying TimescaleDB. The
+// Core database used to be the other, at hour resolution, and both it and the
+// mode field that chose between them are gone - a second resolution nobody
+// could convert between was a choice whose only lasting effect was history that
+// turned out coarser than the operator thought.
+//
+// A target is therefore named or it is not. Not named means nothing is
+// recorded, and that is also how recording is switched off.
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 
-export type MetricsDBMode = 'core' | 'separate';
-
 export interface MetricsDBTarget {
-    mode: MetricsDBMode;
     host: string;
     port: string;
     dbName: string;
@@ -23,8 +24,7 @@ export interface MetricsDBTarget {
 /** What is being written RIGHT NOW, which is not always what is configured. */
 export interface MetricsDBActive {
     recording: boolean;
-    separate: boolean;
-    resolution?: 'minute' | 'hour';
+    resolution?: 'minute';
 }
 
 /**
@@ -54,18 +54,14 @@ export interface MetricsDBSettings extends MetricsDBRequest {
      */
     passwordSet: boolean;
     active: MetricsDBActive;
-    /**
-     * The CORE database has the TimescaleDB extension. It does NOT make the
-     * Core database record minutes - the resolution follows from which database
-     * is used - it only decides whether the table is chunked and compressed.
-     */
-    coreTimescale: boolean;
 }
 
 /** Result of the test button. `severity` drives the colour, not `ok`. */
 export interface MetricsDBTestResult {
     ok: boolean;
     severity: 'ok' | 'warning' | 'error';
+    /** How far the attempt got - see lib/connectionTest.ts. */
+    stage?: string;
     message: string;
     timescale?: boolean;
     version?: string;
@@ -74,7 +70,6 @@ export interface MetricsDBTestResult {
 export const emptyMetricsDBTarget: MetricsDBRequest = {
     enabled: false,
     noPassword: true,
-    mode: 'core',
     host: '',
     port: '5432',
     dbName: '',
@@ -109,12 +104,14 @@ export async function saveMetricsDB(
 
 export async function testMetricsDB(
     target: MetricsDBTarget,
+    signal?: AbortSignal,
 ): Promise<{ success: boolean } & Partial<MetricsDBTestResult> & { message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/settings/metrics-db/test`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
             body: JSON.stringify(target),
+            signal,
         });
         return (await handleResponse(res)) as { success: boolean } & Partial<MetricsDBTestResult>;
     } catch (err) {
@@ -125,34 +122,16 @@ export async function testMetricsDB(
 /**
  * Whether the form is complete enough to save or test.
  *
- * The Core option needs nothing, which is the point of it being the default: a
- * fresh install is already valid. A password is deliberately NOT required - the
- * reference deployment runs its metrics database without one, reachable only
- * from Core on a two-member network.
+ * A password is deliberately NOT required - the reference deployment runs its
+ * statistics database without one, reachable only from Core on a private
+ * network. Everything else is: there is no fallback database left to catch a
+ * half-filled form.
  */
 export function metricsDBIncomplete(t: MetricsDBTarget): string | null {
-    if (t.mode !== 'separate') return null;
-    if (!t.host.trim()) return 'Enter the host of the separate database.';
+    if (!t.host.trim()) return 'Enter the host of the statistics database.';
     if (!t.dbName.trim()) return 'Enter the database name.';
     if (!t.user.trim()) return 'Enter the user to connect as.';
     const port = Number(t.port.trim());
     if (!Number.isInteger(port) || port < 1 || port > 65535) return 'Port must be a number between 1 and 65535.';
     return null;
-}
-
-/**
- * One sentence describing what a mode gives you, for the form itself rather
- * than the test result.
- *
- * Hour buckets for the Core database EITHER WAY. The extension there changes
- * how the table is stored, never the resolution, and a form that blurred the
- * two would have an operator install TimescaleDB expecting minutes.
- */
-export function metricsDBModeSummary(mode: MetricsDBMode, coreTimescale: boolean): string {
-    if (mode === 'separate') {
-        return 'Minute buckets. Needs a TimescaleDB of its own - a plain PostgreSQL works but stores every minute as an ordinary row.';
-    }
-    return coreTimescale
-        ? 'Hour buckets, in the database this platform already uses, as a compressed hypertable. No second database to run.'
-        : 'Hour buckets, in the database this platform already uses. A few hundred megabytes a year and no extension needed.';
 }

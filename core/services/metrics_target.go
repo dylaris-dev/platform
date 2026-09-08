@@ -16,11 +16,16 @@ import (
 // The settings table is the ONLY answer. There was an environment variable too,
 // and it won where it was set - which meant the same question had two sources
 // and the panel could show a target that was not the one being written. For a
-// setting whose wrong value silently changes the resolution of history that
-// cannot be backfilled, one source is worth more than the convenience of
-// declaring it in a stack file.
+// setting whose wrong value silently changes what is being written, one source
+// is worth more than the convenience of declaring it in a stack file.
+//
+// There is also only one KIND of answer now. Recording into the Core database
+// at hour resolution used to be the alternative, selected by a mode field; it
+// is gone, along with the mode. A target is either named here, in which case it
+// is a database of its own, or it is not named and nothing is recorded.
+// `metrics_db_mode` may still exist as a stale row on an installation that
+// predates this - it is no longer read and no longer written.
 const (
-	MetricsDBModeSetting     = "metrics_db_mode"
 	MetricsDBHostSetting     = "metrics_db_host"
 	MetricsDBPortSetting     = "metrics_db_port"
 	MetricsDBNameSetting     = "metrics_db_name"
@@ -29,15 +34,9 @@ const (
 	MetricsDBSSLModeSetting  = "metrics_db_sslmode"
 )
 
-// The two modes. "core" is the default and needs no other field.
-const (
-	MetricsDBModeCore     = "core"
-	MetricsDBModeSeparate = "separate"
-)
-
-// MetricsDBTarget is the panel-configurable half. Empty Mode means core.
+// MetricsDBTarget is the panel-configurable half. An empty Host means no
+// target is configured, which is how recording is switched off.
 type MetricsDBTarget struct {
-	Mode     string `json:"mode"`
 	Host     string `json:"host"`
 	Port     string `json:"port"`
 	DBName   string `json:"dbName"`
@@ -46,17 +45,15 @@ type MetricsDBTarget struct {
 	SSLMode  string `json:"sslMode"`
 }
 
-// IsSeparate reports whether this target names a database of its own.
-func (t MetricsDBTarget) IsSeparate() bool {
-	return strings.TrimSpace(t.Mode) == MetricsDBModeSeparate
+// Configured reports whether a database is named at all. Nothing else in this
+// file needs to know more than that: a named target is a database of its own,
+// and an unnamed one means nothing is recorded.
+func (t MetricsDBTarget) Configured() bool {
+	return strings.TrimSpace(t.Host) != ""
 }
 
 // Normalize trims every field and fills the defaults a form leaves empty.
 func (t MetricsDBTarget) Normalize() MetricsDBTarget {
-	t.Mode = strings.TrimSpace(t.Mode)
-	if t.Mode != MetricsDBModeSeparate {
-		t.Mode = MetricsDBModeCore
-	}
 	t.Host = strings.TrimSpace(t.Host)
 	t.Port = strings.TrimSpace(t.Port)
 	t.DBName = strings.TrimSpace(t.DBName)
@@ -76,21 +73,22 @@ func (t MetricsDBTarget) Normalize() MetricsDBTarget {
 	return t
 }
 
-// Validate reports what a form is missing. The password is optional on purpose:
-// a database reached over a private network can legitimately have none, which is
-// how the reference deployment runs it.
+// Validate reports what a form is missing.
+//
+// An unconfigured target is valid and means "record nothing" - that is how
+// recording is switched off, and refusing to save it would leave an operator
+// unable to stop. The password is optional on purpose: a database reached over
+// a private network can legitimately have none, which is how the reference
+// deployment runs it.
 func (t MetricsDBTarget) Validate() error {
-	if !t.IsSeparate() {
+	if !t.Configured() {
 		return nil
 	}
-	if t.Host == "" {
-		return fmt.Errorf("a host is required for a separate database")
-	}
 	if t.DBName == "" {
-		return fmt.Errorf("a database name is required for a separate database")
+		return fmt.Errorf("a database name is required")
 	}
 	if t.User == "" {
-		return fmt.Errorf("a user is required for a separate database")
+		return fmt.Errorf("a user is required")
 	}
 	if p, err := strconv.Atoi(t.Port); err != nil || p < 1 || p > 65535 {
 		return fmt.Errorf("port must be a number between 1 and 65535")
@@ -98,15 +96,15 @@ func (t MetricsDBTarget) Validate() error {
 	return nil
 }
 
-// DSN renders what metrics.Open takes. Empty means "the Core database", which is
-// exactly what Open already treats as the shared-database case, so there is no
-// second way of saying it.
+// DSN renders what metrics.Open takes. Empty means there is nothing to open,
+// which the manager treats as "record nothing" - the same thing the panel says
+// when no database is configured, so there is no second way of saying it.
 //
 // lib/pq accepts this keyword form as readily as a URL, and it is the form the
 // DB-migration screen already uses - one less place where a password has to be
 // percent-encoded correctly.
 func (t MetricsDBTarget) DSN() string {
-	if !t.IsSeparate() {
+	if !t.Configured() {
 		return ""
 	}
 	n := t.Normalize()
@@ -119,15 +117,14 @@ func (t MetricsDBTarget) DSN() string {
 // LoadMetricsDBTarget reads the stored target, password included.
 //
 // A missing row is not an error and not a fault: it means nobody has configured
-// this, and the Core database is the answer. That is the same shape as every
-// other unset setting here.
+// this, and nothing is recorded. That is the same shape as every other unset
+// setting here.
 func LoadMetricsDBTarget(st store.Store) MetricsDBTarget {
 	get := func(k string) string {
 		v, _ := st.GetSetting(k)
 		return v
 	}
 	return MetricsDBTarget{
-		Mode:     get(MetricsDBModeSetting),
 		Host:     get(MetricsDBHostSetting),
 		Port:     get(MetricsDBPortSetting),
 		DBName:   get(MetricsDBNameSetting),
@@ -142,7 +139,6 @@ func LoadMetricsDBTarget(st store.Store) MetricsDBTarget {
 func SaveMetricsDBTarget(st store.Store, t MetricsDBTarget) error {
 	n := t.Normalize()
 	for _, kv := range []struct{ k, v string }{
-		{MetricsDBModeSetting, n.Mode},
 		{MetricsDBHostSetting, n.Host},
 		{MetricsDBPortSetting, n.Port},
 		{MetricsDBNameSetting, n.DBName},
@@ -163,6 +159,10 @@ type MetricsDBProbe struct {
 	Timescale bool   `json:"timescale"`
 	Version   string `json:"version,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Stage says which of the two steps failed - see services/conncheck.go.
+	// A host that never answered and a host that rejected the password are
+	// fixed in different places, and "could not connect" hid that difference.
+	Stage string `json:"stage,omitempty"`
 }
 
 // probeTimeout bounds the test button. Long enough for a cold container to
@@ -175,17 +175,29 @@ const probeTimeout = 8 * time.Second
 // data is STORED, not whether the target works, and the two mistakes an operator
 // can make here have opposite consequences. See the handler for which of them is
 // worth refusing a save over.
+//
+// Reachability comes first and separately. A host that never answered says
+// nothing about the password, and a probe that reported both as one failure
+// sent operators to retype credentials that were correct all along.
 func ProbeMetricsDB(ctx context.Context, t MetricsDBTarget) MetricsDBProbe {
 	n := t.Normalize()
+	if reach := Reachable(ctx, n.Host, n.Port); !reach.OK {
+		return MetricsDBProbe{Stage: StageUnreachable, Error: reach.Message}
+	}
 	db, err := DBConnParams{
 		Host: n.Host, Port: n.Port, User: n.User,
 		Password: n.Password, DBName: n.DBName, SSLMode: n.SSLMode,
 	}.Open(ctx, probeTimeout)
 	if err != nil {
-		return MetricsDBProbe{Error: err.Error()}
+		return MetricsDBProbe{Stage: StageRejected, Error: DescribePostgresError(err)}
 	}
 	defer db.Close()
-	return MetricsDBProbe{Reachable: true, Timescale: probeTimescale(ctx, db), Version: probeVersion(ctx, db)}
+	return MetricsDBProbe{
+		Reachable: true,
+		Stage:     StageOK,
+		Timescale: probeTimescale(ctx, db),
+		Version:   probeVersion(ctx, db),
+	}
 }
 
 // probeTimescale asks whether the extension is INSTALLED in this database, not

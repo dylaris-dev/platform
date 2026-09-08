@@ -16,6 +16,7 @@ import { getAuditPolicy, saveAuditPolicy, AuditPolicy } from '@/lib/api/serverAu
 import { Skeleton, SkeletonText, SkeletonFormRow } from '@/components/Skeleton';
 import { useAppData } from '@/lib/AppDataContext';
 import { useSettingsForm, type SettingsForm } from '@/lib/useSettingsForm';
+import { SMTP_TEST_TIMEOUT_MS } from '@/lib/connectionTest';
 import { useTabParam } from '@/lib/useTabParam';
 import { type TabItem } from '@/components/ui/Tabs';
 import GuardedTabs from '@/components/settings/GuardedTabs';
@@ -423,9 +424,22 @@ function MailSection() {
 
     const handleTest = async () => {
         setTesting(true);
-        const res = await testSendSMTP(testTo.trim() || undefined);
-        setTesting(false);
-        toast(res.message || (res.success ? 'Test sent.' : 'Test failed.'), !!res.success);
+        // A deadline, because fetch has none: a mail server that accepts the
+        // TCP connection and then stalls left this button spinning forever.
+        // Longer than the connection tests elsewhere on purpose - this one
+        // actually hands a message over, and a slow relay is not a broken one.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), SMTP_TEST_TIMEOUT_MS);
+        try {
+            const res = await testSendSMTP(testTo.trim() || undefined, controller.signal);
+            toast(res.message || (res.success ? 'Test sent.' : 'Test failed.'), !!res.success);
+        } catch {
+            toast(`No answer within ${Math.round(SMTP_TEST_TIMEOUT_MS / 1000)} seconds, so the test was ` +
+                'stopped. The mail may still be on its way - check the inbox before changing anything.', false);
+        } finally {
+            clearTimeout(timer);
+            setTesting(false);
+        }
     };
 
     return (

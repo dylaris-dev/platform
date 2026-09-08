@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+
+	"dylaris-core/services"
 )
 
 // slugify turns a display name into a URL-safe slug (lowercase, dashes for
@@ -90,4 +92,23 @@ func setAttachmentDisposition(w http.ResponseWriter, filename string) {
 		return
 	}
 	w.Header().Set("Content-Disposition", "attachment")
+}
+
+// sendConnTestFailure answers a failed "Test connection" with the stage
+// attached.
+//
+// The status stays 502 and `success` stays false, because that is what every
+// existing caller of these endpoints already reads. What is new is `stage`:
+// the panel words its heading from it, so "nothing answered on that address"
+// and "answered, then refused" stop arriving as the same red box. See
+// services/conncheck.go for why that distinction is the whole feature.
+func sendConnTestFailure(w http.ResponseWriter, check services.ConnCheck) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": false,
+		"ok":      false,
+		"stage":   check.Stage,
+		"message": check.Message,
+	})
 }

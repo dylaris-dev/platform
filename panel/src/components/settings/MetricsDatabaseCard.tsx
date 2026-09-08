@@ -1,39 +1,49 @@
 "use client";
 
-import { useState } from 'react';
-import { Database, CheckCircle2, AlertTriangle, XCircle, Loader2 } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { Database, AlertTriangle, Info } from 'lucide-react';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import {
     getMetricsDB, saveMetricsDB, testMetricsDB,
-    metricsDBIncomplete, metricsDBModeSummary,
+    metricsDBIncomplete,
     emptyMetricsDBTarget,
-    type MetricsDBSettings, type MetricsDBRequest, type MetricsDBMode, type MetricsDBTestResult,
+    type MetricsDBSettings, type MetricsDBRequest,
 } from '@/lib/api/metricsDb';
+import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
+import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 import SettingsCard from '@/components/settings/SettingsCard';
-import Segmented from '@/components/ui/Segmented';
 import { SwitchRow } from '@/components/ui/Switch';
 import Select from '@/components/ui/Select';
 import HelpTip from '@/components/ui/HelpTip';
 import Checkbox from '@/components/ui/Checkbox';
 
 /**
- * Long-term statistics: whether to record, and where.
+ * Long-term statistics: whether to record, and into which database.
  *
  * One card and ONE save, because those are one decision. Recording begins the
- * instant the switch goes on, the first bucket lands at whatever resolution the
- * stored target implies, and nothing can be backfilled or converted afterwards -
- * so a switch that could be flipped on another screen was a way to spend the
- * only chance to choose without noticing.
+ * instant the switch goes on, the first bucket lands in whatever target is
+ * stored, and nothing can be backfilled afterwards - so a switch that could be
+ * flipped on another screen was a way to spend the only chance to choose
+ * without noticing.
  *
  * It is also why the card is not part of the feature-switch bundle above: that
  * card saves seven booleans through one endpoint, this one has a target to
  * validate and a database to reach first. Two save models inside one card is
  * the exact confusion this page was untangled to remove; two cards for one
  * decision was the same mistake wearing the other hat.
+ *
+ * There is no choice of database. Recording into the platform's own database
+ * at hour resolution used to be the alternative; there was no conversion
+ * between the two resolutions, and the only durable effect of offering both was
+ * history that turned out coarser than the operator thought. What remains is
+ * one target, and the card's job is to make its requirements plain before
+ * anything is written.
  */
 export default function MetricsDatabaseCard() {
-    const [test, setTest] = useState<MetricsDBTestResult | null>(null);
-    const [testing, setTesting] = useState(false);
+    // A save can succeed and still have something to say - a database that
+    // works but has no TimescaleDB in it. That is not a test result and must
+    // not sit in the test banner, where the next test would silently erase it.
+    const [saveWarning, setSaveWarning] = useState<string | null>(null);
 
     const form = useSettingsForm<MetricsDBSettings>({
         load: async () => {
@@ -51,7 +61,7 @@ export default function MetricsDatabaseCard() {
             // The server's own copy wins: it normalises the port and ssl mode,
             // and it blanks the password it just stored.
             const stored = res.settings ?? value;
-            if (res.warning) setTest({ ok: true, severity: 'warning', message: res.warning });
+            if (res.warning) setSaveWarning(res.warning);
             return { ok: true, value: { ...stored, password: '', noPassword: !stored.passwordSet } };
         },
         successMessage: 'Statistics database saved.',
@@ -59,36 +69,26 @@ export default function MetricsDatabaseCard() {
 
     const value = form.value;
     const target: MetricsDBRequest = value ?? emptyMetricsDBTarget;
+
     const enabled = !!value?.enabled;
     const incomplete = metricsDBIncomplete(target);
+
+    // The shared lifecycle: one request at a time, disabled while it runs, and
+    // a deadline, because fetch has none of its own. The stage in the answer is
+    // what turns "connection failed" into either "nothing answered on that
+    // address" or "answered, and refused these credentials".
+    const test = useConnectionTest(useCallback(async (signal: AbortSignal) => {
+        const res = await testMetricsDB(target, signal);
+        return readConnTest(res, 'Connected.');
+    }, [target]));
 
     // A field edit invalidates the last test result. Leaving a green banner
     // above a host that has since been retyped is a claim about a connection
     // nobody made.
     const set = (partial: Partial<MetricsDBRequest>) => {
-        setTest(null);
+        test.clear();
+        setSaveWarning(null);
         form.patch(partial);
-    };
-
-    const runTest = async () => {
-        setTesting(true);
-        setTest(null);
-        try {
-            const res = await testMetricsDB(target);
-            if (!res.success) {
-                setTest({ ok: false, severity: 'error', message: res.message || 'The test could not be run.' });
-                return;
-            }
-            setTest({
-                ok: !!res.ok,
-                severity: res.severity ?? (res.ok ? 'ok' : 'error'),
-                message: res.message ?? '',
-                timescale: res.timescale,
-                version: res.version,
-            });
-        } finally {
-            setTesting(false);
-        }
     };
 
     return (
@@ -99,37 +99,39 @@ export default function MetricsDatabaseCard() {
             help={
                 <>
                     <p className="mb-2">
-                        The <strong>Core database</strong> keeps hour buckets beside everything else
-                        this platform stores. It needs no second service and no extension, and costs
-                        a few hundred megabytes a year.
+                        Statistics are kept as minute buckets. At a modest fleet size that is on the
+                        order of a hundred million rows a year, which is a query problem before it is
+                        a storage one - so this wants <strong>TimescaleDB</strong>, which chunks the
+                        table and compresses anything older than a week. A plain PostgreSQL is
+                        accepted and works, but stores every minute as an ordinary row.
                     </p>
                     <p className="mb-2">
-                        A <strong>separate database</strong> keeps minute buckets. That is roughly a
-                        hundred million rows a year at a modest fleet size, which is a query problem
-                        before it is a storage one - so it wants TimescaleDB, which chunks the table
-                        and compresses anything older than a week.
+                        Give it a <strong>database of its own</strong>. The same PostgreSQL the
+                        platform already runs on is the expected answer - one server, one extension,
+                        a second database inside it. What it must not be is the platform&apos;s own
+                        database: a table growing by a hundred million rows a year does not belong
+                        beside the tables every page of this panel reads.
                     </p>
                     <p>
-                        There is no conversion between the two and no backfill: whatever is recorded
-                        stays at the resolution it was recorded at. Choosing before you switch
-                        recording on is the whole point of this card.
+                        Nothing is backfilled. History starts at the save, so a target changed later
+                        starts a new history rather than moving the old one.
                     </p>
                 </>
             }
             form={form}
-            saveBlockedReason={incomplete ?? undefined}
+            // Only while recording is ON. Switching it off needs no database,
+            // and blocking that save would leave an installation unable to stop
+            // writing to one.
+            saveBlockedReason={(enabled ? incomplete : null) ?? undefined}
             loadFailedMessage="The statistics database settings could not be loaded, so they are shown read-only. Saving now would write these defaults over the real configuration."
             actions={
-                <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={runTest}
-                    disabled={testing || form.loading || form.loadFailed || !!incomplete}
-                    title={incomplete ?? 'Open a connection and report what it is'}
-                >
-                    {testing ? <Loader2 size={14} className="animate-spin" /> : null}
-                    {testing ? 'Testing…' : 'Test connection'}
-                </button>
+                <TestConnectionButton
+                    test={test}
+                    small
+                    blockedReason={incomplete ?? (form.loading || form.loadFailed
+                        ? 'The settings could not be loaded, so there is nothing to test.'
+                        : null)}
+                />
             }
         >
 
@@ -146,127 +148,109 @@ export default function MetricsDatabaseCard() {
                     <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
                     <span>
                         Nothing is being recorded. History starts when you switch this on and there
-                        is no way to fill in what came before, so choose the database below in the
-                        same save rather than turning it on first.
+                        is no way to fill in what came before, so fill in the database below and
+                        save both together rather than turning it on first.
                     </span>
                 </p>
             )}
 
-            <div className="flex flex-col gap-2">
-                <label className="input-label">Record into</label>
-                <Segmented<MetricsDBMode>
-                    ariaLabel="Statistics database"
-                    value={target.mode}
-                    onChange={mode => set({ mode })}
-                    options={[
-                        { id: 'core', label: 'Core database', hint: 'Hour buckets, no second service' },
-                        { id: 'separate', label: 'Separate database', hint: 'Minute buckets, needs TimescaleDB' },
-                    ]}
-                />
-                <p className="text-xs text-(--base-06) leading-relaxed max-w-2xl">
-                    {metricsDBModeSummary(target.mode, !!value?.coreTimescale)}
-                </p>
-            </div>
+            {/* Above the fields, not in the help panel behind the icon: these
+                two requirements are what makes a filled-in form wrong rather
+                than incomplete, and a form cannot warn about that afterwards -
+                the first minute bucket is already written by then. */}
+            <p className="flex items-start gap-1.5 text-xs text-(--base-06) leading-relaxed max-w-2xl">
+                <Info size={12} className="mt-0.5 shrink-0 text-(--base-07)" />
+                <span>
+                    Needs a PostgreSQL with <strong>TimescaleDB</strong>, and its <strong>own
+                    database</strong> inside it. The same server the platform already uses is the
+                    expected answer - a second database on it, never the platform&apos;s own. Without
+                    the extension every minute becomes an ordinary row: it works, and it is the one
+                    combination here that ends badly.
+                </span>
+            </p>
 
-            {target.mode === 'separate' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <Field label="Host" value={target.host} onChange={v => set({ host: v })}
-                        placeholder="metricsdb" />
-                    <Field label="Port" value={target.port} onChange={v => set({ port: v })}
-                        placeholder="5432" />
-                    <Field label="Database name" value={target.dbName} onChange={v => set({ dbName: v })}
-                        placeholder="dylaris_metrics" />
-                    <Field label="User" value={target.user} onChange={v => set({ user: v })}
-                        placeholder="metrics" />
-                    <div>
-                        <label className="input-label flex items-center gap-1.5">
-                            Password
-                            <HelpTip label="About the password">
-                                <p className="mb-2">
-                                    A metrics database reachable only from Core - on its own Docker
-                                    network, say - can legitimately run without one. Tick
-                                    <strong> This database has no password</strong> to say so; that
-                                    is also how a password already saved is REMOVED.
-                                </p>
-                                <p>
-                                    With the box unticked, leaving the field blank keeps the stored
-                                    password - but only while the host, port, database and user are
-                                    unchanged. Change any of those and blank means blank, so the old
-                                    credential is never sent to a different machine.
-                                </p>
-                            </HelpTip>
-                        </label>
-                        {/* Above the field, because it decides whether the field
-                            means anything. Blank alone cannot say "there is
-                            none": it already means "keep what is stored", which
-                            left a saved password with no way back off. */}
-                        <div className="mt-1.5 mb-1.5">
-                            <Checkbox
-                                checked={!!target.noPassword}
-                                onChange={v => set({ noPassword: v, ...(v ? { password: '' } : {}) })}
-                                label="This database has no password"
-                                hint={value?.passwordSet
-                                    ? 'One is stored. Ticking this removes it on save.'
-                                    : 'None is stored.'}
-                            />
-                        </div>
-                        <input
-                            className="input-field input-mono w-full"
-                            type="password"
-                            value={target.password ?? ''}
-                            disabled={!!target.noPassword}
-                            placeholder={target.noPassword
-                                ? 'No password'
-                                : value?.passwordSet ? 'Stored - leave blank to keep' : 'Enter a password'}
-                            onChange={e => set({ password: e.target.value })}
-                            autoComplete="new-password"
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Host" value={target.host} onChange={v => set({ host: v })}
+                    placeholder="metricsdb" />
+                <Field label="Port" value={target.port} onChange={v => set({ port: v })}
+                    placeholder="5432" />
+                <Field label="Database name" value={target.dbName} onChange={v => set({ dbName: v })}
+                    placeholder="dylaris_metrics" />
+                <Field label="User" value={target.user} onChange={v => set({ user: v })}
+                    placeholder="metrics" />
+                <div>
+                    <label className="input-label flex items-center gap-1.5">
+                        Password
+                        <HelpTip label="About the password">
+                            <p className="mb-2">
+                                A metrics database reachable only from Core - on its own Docker
+                                network, say - can legitimately run without one. Tick
+                                <strong> This database has no password</strong> to say so; that
+                                is also how a password already saved is REMOVED.
+                            </p>
+                            <p>
+                                With the box unticked, leaving the field blank keeps the stored
+                                password - but only while the host, port, database and user are
+                                unchanged. Change any of those and blank means blank, so the old
+                                credential is never sent to a different machine.
+                            </p>
+                        </HelpTip>
+                    </label>
+                    {/* Above the field, because it decides whether the field
+                        means anything. Blank alone cannot say "there is
+                        none": it already means "keep what is stored", which
+                        left a saved password with no way back off. */}
+                    <div className="mt-1.5 mb-1.5">
+                        <Checkbox
+                            checked={!!target.noPassword}
+                            onChange={v => set({ noPassword: v, ...(v ? { password: '' } : {}) })}
+                            label="This database has no password"
+                            hint={value?.passwordSet
+                                ? 'One is stored. Ticking this removes it on save.'
+                                : 'None is stored.'}
                         />
                     </div>
-                    <div>
-                        <label className="input-label">SSL mode</label>
-                        <div className="mt-1">
-                            <Select
-                                ariaLabel="SSL mode"
-                                value={target.sslMode}
-                                onChange={v => set({ sslMode: v })}
-                                    options={[
-                                    { value: 'disable', label: 'disable' },
-                                    { value: 'require', label: 'require' },
-                                    { value: 'verify-ca', label: 'verify-ca' },
-                                    { value: 'verify-full', label: 'verify-full' },
-                                ]}
-                            />
-                        </div>
+                    <input
+                        className="input-field input-mono w-full"
+                        type="password"
+                        value={target.password ?? ''}
+                        disabled={!!target.noPassword}
+                        placeholder={target.noPassword
+                            ? 'No password'
+                            : value?.passwordSet ? 'Stored - leave blank to keep' : 'Enter a password'}
+                        onChange={e => set({ password: e.target.value })}
+                        autoComplete="new-password"
+                    />
+                </div>
+                <div>
+                    <label className="input-label">SSL mode</label>
+                    <div className="mt-1">
+                        <Select
+                            ariaLabel="SSL mode"
+                            value={target.sslMode}
+                            onChange={v => set({ sslMode: v })}
+                                options={[
+                                { value: 'disable', label: 'disable' },
+                                { value: 'require', label: 'require' },
+                                { value: 'verify-ca', label: 'verify-ca' },
+                                { value: 'verify-full', label: 'verify-full' },
+                            ]}
+                        />
                     </div>
                 </div>
-            )}
+            </div>
 
-            {test && <TestResult result={test} />}
+            <ConnectionTestNote result={test.result} />
+
+            {saveWarning && (
+                <p className="flex items-start gap-1.5 text-xs leading-relaxed text-(--warning-light)">
+                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                    <span>{saveWarning}</span>
+                </p>
+            )}
 
             {value?.active && <ActiveLine active={value.active} />}
         </SettingsCard>
-    );
-}
-
-/**
- * The last test result.
- *
- * Three severities, not two. "Connected, but there is no TimescaleDB here" is
- * neither a failure nor a clean pass: it works and it will hurt later, which is
- * precisely the state a green tick would hide.
- */
-function TestResult({ result }: { result: MetricsDBTestResult }) {
-    const tone = {
-        ok: { Icon: CheckCircle2, cls: 'border-(--success-border) bg-(--success-ghost) text-(--success-light)' },
-        warning: { Icon: AlertTriangle, cls: 'border-(--warning-border) bg-(--warning-ghost) text-(--warning-light)' },
-        error: { Icon: XCircle, cls: 'border-(--error-border) bg-(--error-ghost) text-(--error-light)' },
-    }[result.severity];
-    const { Icon, cls } = tone;
-    return (
-        <div role="status" className={`flex items-start gap-2 rounded-md border p-3 ${cls}`}>
-            <Icon size={14} className="mt-0.5 shrink-0" />
-            <p className="text-xs leading-relaxed">{result.message}</p>
-        </div>
     );
 }
 
@@ -277,18 +261,17 @@ function TestResult({ result }: { result: MetricsDBTestResult }) {
  * the previous one recording, so "what is configured" and "what is running" can
  * legitimately differ, and only one of them is on this screen already.
  */
-function ActiveLine({ active }: { active: { recording: boolean; separate: boolean; resolution?: string } }) {
+function ActiveLine({ active }: { active: { recording: boolean; resolution?: string } }) {
     if (!active.recording) {
         return (
             <p className="text-[11px] font-mono text-(--base-06)">
-                Not recording: no metrics database is open.
+                Not recording: no statistics database is open.
             </p>
         );
     }
     return (
         <p className="text-[11px] font-mono text-(--base-06)">
-            Recording now into the {active.separate ? 'separate' : 'Core'} database,
-            {' '}{active.resolution} buckets.
+            Recording now, {active.resolution || 'minute'} buckets.
         </p>
     );
 }
