@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.08.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Scheduled platform backups now actually run, and retention now actually
+  prunes.** The schedule and retention fields were saved and read back but
+  nothing acted on them, so a job set to "every 24h" never ran and old bundles
+  were kept forever. A backup started by hand prunes too, so a job you only run
+  yourself no longer keeps every bundle it ever wrote. `core`
+
 ## 2026.09.08.3
 
 ### Features

@@ -789,6 +789,14 @@ func main() {
 	// backup import reports anything; see services.SetupResultService.
 	services.NewSetupResultService(pgStore, redisClient, coreLeader).Start(bgCtx)
 
+	// Platform backups on their schedule, and the retention that prunes them.
+	// Without this the schedule field on the screen would be a control that
+	// does nothing, which is worse than an absent one because somebody believes
+	// it.
+	platformBackups := handlers.NewPlatformBackupHandler(appState)
+	services.NewPlatformBackupScheduler(pgStore, coreLeader,
+		platformBackups.Runner, platformBackups.DeleteRunArchive).Start(bgCtx)
+
 	// Scheduled-tasks executor — per-server cron jobs (restart, say).
 	// Leader-gated, 30s tick. Publishes scheduled_tasks.changed via the SSE
 	// channel after each dispatch so the panel updates last-run/next-run.

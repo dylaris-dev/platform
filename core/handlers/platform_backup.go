@@ -176,7 +176,16 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
+	// Pruned here as well as on the scheduled path: retention that only applied
+	// to automatic runs would let a job run by hand every day keep every bundle
+	// it ever wrote.
+	h.scheduler().Prune(r.Context(), job.ID)
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "runId": runID})
+}
+
+// scheduler is the same object main.go starts, built here for its Prune only.
+func (h *PlatformBackupHandler) scheduler() *services.PlatformBackupScheduler {
+	return services.NewPlatformBackupScheduler(h.state.Store, nil, h.Runner, h.DeleteRunArchive)
 }
 
 // ListRuns GET /api/platform-backups/jobs/{id}/runs
@@ -311,6 +320,32 @@ func (h *PlatformBackupHandler) SetPassphrase(w http.ResponseWriter, r *http.Req
 }
 
 // ───────────── wiring ─────────────
+
+// Runner exposes the same factory to the scheduler, which lives in package
+// services and cannot reach the unexported provider builders here.
+func (h *PlatformBackupHandler) Runner() (*services.PlatformBackupRunner, error) {
+	return h.runner()
+}
+
+// DeleteRunArchive removes the bundle one run wrote.
+//
+// Resolved through the run's OWN recorded storage, not the job's current one: a
+// job whose destination was changed must still be able to prune what it wrote
+// to the old one.
+func (h *PlatformBackupHandler) DeleteRunArchive(ctx context.Context, run *models.PlatformBackupRun) error {
+	if run == nil || run.StorageKey == "" {
+		return nil
+	}
+	bs, err := services.ResolveJobStorage(h.state.Store, run.StorageID, "")
+	if err != nil {
+		return err
+	}
+	st, err := backupstorage.Open(ctx, bs, NewBackupHandler(h.state).backupDeps())
+	if err != nil {
+		return err
+	}
+	return st.Delete(ctx, run.StorageKey)
+}
 
 // runner builds a PlatformBackupRunner from this Core's own configuration.
 //
