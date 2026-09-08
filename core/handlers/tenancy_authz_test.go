@@ -137,6 +137,14 @@ func TestCanPlaceOnNode(t *testing.T) {
 		{"BYON active, caller is not the owner", false, other, true, &models.Node{OwnerID: strPtrTenancy(owner)}, false},
 		{"BYON inactive denies even the real owner", false, owner, false, &models.Node{OwnerID: strPtrTenancy(owner)}, false},
 		{"platform (shared) node stays operator-only even in BYON mode", false, owner, true, &models.Node{OwnerID: nil}, false},
+
+		// The hole this table did not cover: with BYON ACTIVE the admin bypass
+		// above made every tenant machine a placement target for any operator,
+		// while auto-placement (PlatformOnly), the pick loop and the rebalance
+		// worker all refused to cross that boundary. A customer's own hardware
+		// is not the operator's capacity.
+		{"admin may NOT place on another tenant's node while BYON is active", true, other, true, &models.Node{OwnerID: strPtrTenancy(owner)}, false},
+		{"admin who owns the node may place on it", true, owner, true, &models.Node{OwnerID: strPtrTenancy(owner)}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

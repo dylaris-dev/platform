@@ -47,6 +47,13 @@ func (f *fakeHandshakeStore) SetNodeSecretEnc(id int, enc string) error {
 	f.secretEnc[id] = enc
 	return nil
 }
+func (f *fakeHandshakeStore) SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error) {
+	if f.secretEnc[id] != prev {
+		return false, nil
+	}
+	f.secretEnc[id] = next
+	return true, nil
+}
 func (f *fakeHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) {
 	return f.uuidsByNode[nodeID], nil
 }

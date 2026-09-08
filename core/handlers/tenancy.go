@@ -60,19 +60,32 @@ func canManageNode(state *AppState, r *http.Request, node *models.Node) bool {
 	return false
 }
 
-// canPlaceOnNode reports whether the caller may place a server on a node. Admins
-// always may. In BYON mode a tenant may place ONLY on their own node. Platform
-// nodes (owner_id nil) are operator-only here: tenants get capacity on those via
-// the rented-server path (auto-provisioned by the operator), not by self-service
-// placement. Outside BYON mode, placement stays admin-only (today). Plan-limit
-// and node-capacity checks layer on top of this elsewhere.
+// canPlaceOnNode reports whether the caller may place a server on a node.
+//
+// An OWNED node belongs to its owner, and being an admin does not change that.
+// That is not a new rule here, it is the rule the rest of the platform already
+// applies and this function was the one place contradicting it:
+// applyPlacementScope sets PlatformOnly for an admin so auto-placement skips
+// tenant machines, placement.go honours it, and the rebalance worker refuses to
+// cross an ownership boundary in either direction. Only the explicit-nodeId path
+// and the transfer target went through here and were waved past, so the machine
+// a customer has root on was a placement target for every operator.
+//
+// Platform nodes (owner_id nil) stay operator-only for self-service: tenants get
+// capacity on those through the rented-server path, not by placing there
+// themselves. Plan-limit and node-capacity checks layer on top of this
+// elsewhere.
 func canPlaceOnNode(state *AppState, r *http.Request, node *models.Node) bool {
-	if IsAdmin(r) {
-		return true
+	if node == nil {
+		return false
 	}
-	if byonActive(state, r) && node != nil && node.OwnerID != nil {
+	if node.OwnerID != nil && byonActive(state, r) {
+		// Somebody's own hardware. Only that somebody, admin or not.
 		uid := byonCallerID(r)
 		return uid != "" && *node.OwnerID == uid
 	}
-	return false
+	// Unowned, or BYON switched off so an owner_id carries no tenancy meaning
+	// any more. Operator territory - and it must stay reachable by SOMEONE, or
+	// turning the feature off would strand every node that still has an owner.
+	return IsAdmin(r)
 }

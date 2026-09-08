@@ -157,6 +157,13 @@ func (f *fakeACLHandshakeStore) SetNodeSecretEnc(id int, enc string) error {
 	f.secrets[id] = enc
 	return nil
 }
+func (f *fakeACLHandshakeStore) SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error) {
+	if f.secrets[id] != prev {
+		return false, nil
+	}
+	f.secrets[id] = next
+	return true, nil
+}
 func (f *fakeACLHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) { return nil, nil }
 func (f *fakeACLHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, error) {
 	return "", false, nil

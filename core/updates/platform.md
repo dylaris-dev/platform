@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.08.6
+
+### Features
+- **The user picker puts you first.** Owner and assignment lists now open with
+  your own account, then everyone holding a role, then everyone else, each
+  alphabetically. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- **A tenant's own machine is no longer a placement target for operators.** The
+  target-node picker and the transfer dialog now offer only machines you may
+  actually place on, and the create and transfer calls refuse the rest.
+  Auto-placement and the rebalancer already worked this way; the explicit
+  node choice did not. `core` `panel`
+
+### Fixes
+- **A node could be locked out of the platform for good.** When several Core
+  replicas issued a node's credential at the same moment, the node kept one and
+  Core stored another, and every reconnect after that was refused. Re-pair such
+  a node from Settings once this release is running. `core`
+
 ## 2026.09.08.5
 
 ### Features

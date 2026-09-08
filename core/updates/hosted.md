@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.08.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Your own hardware is yours.** A node you brought yourself can no longer be
+  chosen as the destination for somebody else's server, and it is no longer
+  offered as one.
+
+### Fixes
+- **A node that could not reconnect stays fixable.** In rare cases a node ended
+  up holding a different credential than we did and was refused on every
+  attempt. That is fixed on our side; if your node has been offline and
+  reconnecting in a loop, tell us and we will re-pair it.
+
 ## 2026.09.07.14
 
 ### Features

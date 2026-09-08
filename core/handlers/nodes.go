@@ -76,6 +76,23 @@ func ownedBYONNode(uid string) func(models.Node) bool {
 	return func(n models.Node) bool { return isBYONNode(n) && uid != "" && *n.OwnerID == uid }
 }
 
+// placeableNode is the PLACEMENT predicate: a node this caller may be offered
+// as a target. An unowned node (platform or the operator's own external
+// hardware, the machines that hold CLUSTER_SECRET) is offered to any admin; an
+// owned node is offered only to its owner.
+//
+// It exists so the picker shows exactly what canPlaceOnNode will accept. A list
+// that offers a target the create call then refuses is a worse answer than a
+// shorter list.
+func placeableNode(uid string, admin, byon bool) func(models.Node) bool {
+	return func(n models.Node) bool {
+		if n.OwnerID != nil && byon {
+			return uid != "" && *n.OwnerID == uid
+		}
+		return admin
+	}
+}
+
 // filterNodes keeps the nodes keep() accepts, preserving order. Returns an
 // empty slice rather than nil so the JSON stays [] and never null.
 func filterNodes(nodes []models.Node, keep func(models.Node) bool) []models.Node {
@@ -155,6 +172,12 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			// unprivileged half of it was ever enforced. An admin who needs the
 			// whole fleet asks for the unscoped list, which is still theirs.
 			nodes = filterNodes(nodes, ownedBYONNode(byonCallerID(r)))
+		case "placement":
+			// What may I put a server on. Answers the target-node picker in the
+			// create wizard and the transfer dialog, and deliberately hides
+			// another tenant's machine from an operator: their hardware is not
+			// the operator's capacity, and canPlaceOnNode refuses it anyway.
+			nodes = filterNodes(nodes, placeableNode(byonCallerID(r), admin, byon))
 		default:
 			sendJSONError(w, "Unknown scope", 400)
 			return

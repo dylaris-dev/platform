@@ -5,6 +5,8 @@ import { Loader2, X, UserPlus, User } from 'lucide-react';
 import { assignOrphan, AssignOrphanInput, inspectOrphan } from '@/lib/api';
 import { getUsers } from '@/lib/api/resources';
 import type { User as UserType } from '@/lib/api';
+import { sortUsersForPicker } from '@/lib/userOrder';
+import { useAppData } from '@/lib/AppDataContext';
 import { OrphanFileBrowser } from './OrphanFileBrowser';
 import { Skeleton } from '@/components/Skeleton';
 
@@ -19,6 +21,8 @@ type OwnerMode = 'existing' | 'new';
 type ActiveTab = 'assign' | 'files';
 
 export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignOrphanModalProps) {
+    const { user } = useAppData();
+    const currentUserId = user?.id;
     const [activeTab, setActiveTab] = useState<ActiveTab>('assign');
 
     // Form state
@@ -62,9 +66,10 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                 setUsersLoading(false);
                 if (res.success && Array.isArray(res.users)) {
                     setUsersError(false);
-                    setUsers(res.users);
-                    if (res.users.length > 0) {
-                        setSelectedUserId(res.users[0].id);
+                    const ordered = sortUsersForPicker(res.users, currentUserId);
+                    setUsers(ordered);
+                    if (ordered.length > 0) {
+                        setSelectedUserId(ordered[0].id);
                     }
                 } else {
                     setUsersError(true);

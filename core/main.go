@@ -104,6 +104,10 @@ func (a *aclHandshakeStore) SetNodeSecretEnc(id int, enc string) error {
 	return a.store.SetNodeSecretEnc(id, enc)
 }
 
+func (a *aclHandshakeStore) SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error) {
+	return a.store.SetNodeSecretEncIfUnchanged(id, prev, next)
+}
+
 func (a *aclHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) {
 	servers, err := a.store.ListServersByNode(nodeID)
 	if err != nil {

@@ -133,3 +133,50 @@ func TestOwnedBYONNodeMatchesNothingWithoutACaller(t *testing.T) {
 		t.Errorf("an empty caller matched %+v", got)
 	}
 }
+
+// The placement picker must offer exactly what canPlaceOnNode will accept.
+//
+// It did not: the wizard asked for the unscoped list, so an operator was shown
+// every tenant's machine as a target for a new server - hardware that customer
+// has root on. Auto-placement never did this (applyPlacementScope sets
+// PlatformOnly for an admin), which is what made the gap easy to miss: the same
+// question had two answers depending on whether you picked the node yourself.
+func TestPlaceableNodeOffersOnlyWhatPlacementAccepts(t *testing.T) {
+	me := "11111111-1111-1111-1111-111111111111"
+	someoneElse := "22222222-2222-2222-2222-222222222222"
+
+	platform := models.Node{Name: "swarm-1"}
+	external := models.Node{Name: "office-box", Tags: "external"}
+	mine := models.Node{Name: "my-desktop", Tags: "external", OwnerID: &me}
+	theirs := models.Node{Name: "their-desktop", Tags: "external", OwnerID: &someoneElse}
+
+	tests := []struct {
+		name  string
+		uid   string
+		admin bool
+		byon  bool
+		node  models.Node
+		want  bool
+	}{
+		{"an admin gets platform hardware", me, true, true, platform, true},
+		{"an admin gets the operator's own external box", me, true, true, external, true},
+		{"an admin does NOT get another tenant's machine", me, true, true, theirs, false},
+		{"an admin DOES get a machine they own themselves", me, true, true, mine, true},
+		{"a tenant gets their own machine", me, false, true, mine, true},
+		{"a tenant does not get someone else's", me, false, true, theirs, false},
+		{"a tenant does not get platform hardware", me, false, true, platform, false},
+		{"a caller with no identity gets nothing owned", "", false, true, mine, false},
+		// With BYON off an owner_id is a leftover, not a tenancy. Something must
+		// still be able to place there or the node is stranded.
+		{"BYON off: an admin gets an owned node back", me, true, false, theirs, true},
+		{"BYON off: a non-admin still gets nothing", me, false, false, mine, false},
+	}
+	for _, c := range tests {
+		t.Run(c.name, func(t *testing.T) {
+			if got := placeableNode(c.uid, c.admin, c.byon)(c.node); got != c.want {
+				t.Errorf("placeableNode(%q, admin=%v, byon=%v)(%s) = %v, want %v",
+					c.uid, c.admin, c.byon, c.node.Name, got, c.want)
+			}
+		})
+	}
+}

@@ -349,11 +349,12 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             } catch { /* ignore */ }
         }
         // Node list for the move/transfer picker — only ONLINE nodes other than
-        // the one this server currently lives on. Admins see all nodes; a BYON
-        // owner sees the tenant-scoped list (their own nodes).
+        // the one this server currently lives on, and only ones this caller may
+        // actually place on: another tenant's machine is not a transfer target,
+        // for an operator either.
         if (canTransfer) {
             try {
-                const res = await getNodes();
+                const res = await getNodes('placement');
                 if (res.success && Array.isArray(res.nodes)) {
                     const targets: Node[] = res.nodes.filter(
                         (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,
@@ -450,7 +451,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         setMoveNodes([]);
         setShowTransferPopup(true);
         try {
-            const res = await getNodes();
+            const res = await getNodes('placement');
             if (res.success && Array.isArray(res.nodes)) {
                 const targets: Node[] = res.nodes.filter(
                     (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,

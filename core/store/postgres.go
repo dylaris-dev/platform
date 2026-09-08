@@ -929,6 +929,24 @@ func (s *PostgresStore) SetNodeSecretEnc(id int, enc string) error {
 	return err
 }
 
+// SetNodeSecretEncIfUnchanged writes next only while the row still holds prev,
+// and reports whether it landed. Every Core replica mints for the same node at
+// the same moment, because a node dials them all at once; an unconditional
+// UPDATE lets the last writer win and locks the node out for good. See
+// redisacl.LoadOrCreateNodeSecret.
+func (s *PostgresStore) SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error) {
+	res, err := s.db.Exec(
+		"UPDATE nodes SET node_secret_enc = $1 WHERE id = $2 AND node_secret_enc = $3", next, id, prev)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 // SetNodeConfig persists an admin's panel-configured name, region and tags in
 // one update and flips configured=true so the discovery scan stops letting the
 // heartbeat env overwrite these fields. Used by the unconfigured-node flow.

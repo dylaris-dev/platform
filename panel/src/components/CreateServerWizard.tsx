@@ -11,6 +11,7 @@ import { regionLabel, regionFlag } from '../lib/regions';
 import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu } from 'lucide-react';
 import CpuPinningControl from './CpuPinningControl';
 import { useAppData } from '@/lib/AppDataContext';
+import { sortUsersForPicker } from '@/lib/userOrder';
 import { nodeLabel } from '@/lib/nodeLabel';
 
 interface StoragePathInfo {
@@ -44,7 +45,10 @@ interface CreateServerWizardProps {
 export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = true }: CreateServerWizardProps) {
     // Admins get the full scheduling wizard (assign owner, any node, tags,
     // regions). A BYON tenant gets a slimmed flow: owner is themselves, and only
-    // their own nodes are selectable (getNodes already scopes the list to them).
+    // their own nodes are selectable. The 'placement' scope is what decides
+    // that, for both: it offers unowned machines to an operator and an owned one
+    // only to its owner, so the picker cannot suggest a target the create call
+    // would refuse.
     const { user } = useAppData();
     const isAdmin = !!user?.isAdmin;
 
@@ -106,8 +110,10 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         if (isAdmin) {
             getUsers().then(res => {
                 if (res.success && res.users) {
-                    setUsers(res.users);
-                    if (res.users.length > 0) setOwnerId(res.users[0].id);
+                    // Yourself first, then the role holders, then everyone else.
+                    const ordered = sortUsersForPicker(res.users, user?.id);
+                    setUsers(ordered);
+                    if (ordered.length > 0) setOwnerId(ordered[0].id);
                 }
             });
             getAvailableRegions().then(res => {
@@ -117,7 +123,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             setOwnerId(user.id);
         }
 
-        getNodes().then(res => {
+        getNodes('placement').then(res => {
             if (res.success && res.nodes) {
                 setNodes(res.nodes);
                 const online = res.nodes.filter((n: Node) => n.status === 'online');

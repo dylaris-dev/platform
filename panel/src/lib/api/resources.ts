@@ -28,9 +28,11 @@ export async function deleteUser(id: string) {
 }
 
 // --- NODES ---
-export async function getNodes() {
+// scope narrows the list server-side: 'placement' returns what this caller may
+// actually put a server on, which is not the whole fleet even for an operator.
+export async function getNodes(scope?: 'external' | 'byon' | 'placement') {
     try {
-        const res = await fetch(`${API_URL}/nodes`, { headers: getAuthHeader() });
+        const res = await fetch(`${API_URL}/nodes${scope ? `?scope=${scope}` : ''}`, { headers: getAuthHeader() });
         return handleResponse(res);
     } catch (err) { return handleError(err); }
 }

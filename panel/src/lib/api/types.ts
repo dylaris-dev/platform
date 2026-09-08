@@ -323,7 +323,7 @@ export const getNodeDeployBundle = (nodeId: number) => fetchAPI(`/nodes/${nodeId
  * Omitted returns everything the caller may see, which is what the node pickers
  * elsewhere in the panel want.
  */
-export const getNodes = (scope?: 'external' | 'byon') =>
+export const getNodes = (scope?: 'external' | 'byon' | 'placement') =>
     fetchAPI(scope ? `/nodes?scope=${scope}` : '/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
 export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);

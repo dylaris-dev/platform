@@ -21,6 +21,7 @@ var (
 type HandshakeStore interface {
 	GetNodeSecretEnc(id int) (string, error)
 	SetNodeSecretEnc(id int, enc string) error
+	SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error)
 	ServerUUIDsByNode(nodeID int) ([]string, error)
 	ResolveEnrollToken(plaintext string) (ownerID string, ok bool, err error)
 	ConsumeEnrollToken(plaintext string) (ownerID string, ok bool, err error)

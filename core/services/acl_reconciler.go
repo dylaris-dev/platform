@@ -20,6 +20,7 @@ type aclReconcilerStore interface {
 	ListNodes() ([]models.Node, error)
 	GetNodeSecretEnc(id int) (string, error)
 	SetNodeSecretEnc(id int, enc string) error
+	SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error)
 	ListServersByNode(nodeID int) ([]models.Server, error)
 	ListLinkKitsForACLReconcile(hardSuspendedBefore, overLimitBefore time.Time) ([]store.WarpAPIKey, error)
 	// ListLinkKitsForACLTeardown feeds the cleanup sweep: link kits that must
