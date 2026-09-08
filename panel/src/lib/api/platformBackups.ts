@@ -225,3 +225,108 @@ export async function setPlatformBackupPassphrase(
 export function platformBackupDownloadUrl(runId: number): string {
     return `${API_URL}/platform-backups/runs/${runId}/download`;
 }
+
+// ───────────── Reading a bundle back ─────────────
+
+/** What a restore is allowed to put back. Chosen per restore, not per bundle. */
+export interface PlatformRestoreSelection {
+    database: boolean;
+    library: boolean;
+    modpacks: boolean;
+}
+
+/** The empty database a restored dump goes into. Never the live one. */
+export interface RestoreTarget {
+    host: string;
+    port: string;
+    user: string;
+    password: string;
+    dbName: string;
+    sslMode: string;
+}
+
+export const EMPTY_TARGET: RestoreTarget = {
+    host: '', port: '5432', user: '', password: '', dbName: '', sslMode: 'disable',
+};
+
+export interface BundleInspection {
+    success: boolean;
+    /** The release that wrote it. Readable without the passphrase. */
+    source?: string;
+    createdAt?: string;
+    schema?: number;
+    /** True only when the passphrase actually opened it. */
+    passphraseOk?: boolean;
+    selection?: PlatformBackupSelection;
+    components?: PlatformBackupComponent[];
+    /**
+     * Whether the bundle carries the source installation's cluster secret. Without
+     * it the restored credentials cannot be re-encrypted for this installation,
+     * so nodes have to re-pair and storage credentials be entered again.
+     */
+    carriesClusterSecret?: boolean;
+    message?: string;
+}
+
+export interface PlatformRestoreResult {
+    source: string;
+    createdAt: string;
+    components: PlatformBackupComponent[];
+    reseal?: { buckets: { name: string; moved: number; unreadable: number }[] };
+    warnings?: string[];
+}
+
+/** Identifies a bundle. The passphrase is optional: without it only the header is read. */
+export async function inspectBundle(file: File, passphrase?: string): Promise<BundleInspection> {
+    try {
+        const form = new FormData();
+        form.append('bundle', file);
+        if (passphrase) form.append('passphrase', passphrase);
+        const res = await fetch(`${API_URL}/platform-backups/inspect`, {
+            method: 'POST', headers: getAuthHeader(), body: form,
+        });
+        return await handleResponse(res);
+    } catch (e) {
+        return handleError(e) as BundleInspection;
+    }
+}
+
+export interface RestoreRequest {
+    passphrase: string;
+    components: PlatformRestoreSelection;
+    target: RestoreTarget;
+    /** Confirms a target database that already holds tables. */
+    overwrite: boolean;
+}
+
+export async function restoreBundle(
+    file: File, req: RestoreRequest,
+): Promise<{ success: boolean; result?: PlatformRestoreResult; message?: string }> {
+    try {
+        const form = new FormData();
+        form.append('bundle', file);
+        form.append('request', JSON.stringify(req));
+        const res = await fetch(`${API_URL}/platform-backups/restore`, {
+            method: 'POST', headers: getAuthHeader(), body: form,
+        });
+        return await handleResponse(res);
+    } catch (e) {
+        return handleError(e);
+    }
+}
+
+/** Restores a run this instance already wrote, without carrying it through an upload. */
+export async function restorePlatformBackupRun(
+    runId: number, req: RestoreRequest,
+): Promise<{ success: boolean; result?: PlatformRestoreResult; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/platform-backups/runs/${runId}/restore`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+        return await handleResponse(res);
+    } catch (e) {
+        return handleError(e);
+    }
+}

@@ -196,6 +196,9 @@ var requiredCaps = map[string]string{
 	"/api/platform-backups/runs/{id:[0-9]+}/download": "settings.write",
 	"/api/platform-backups/targets":                   "settings.write",
 	"/api/platform-backups/passphrase":                "settings.write",
+	"/api/platform-backups/inspect":                   "settings.write",
+	"/api/platform-backups/restore":                   "settings.write",
+	"/api/platform-backups/runs/{id:[0-9]+}/restore":  "settings.write",
 	"/api/servers/{id:[0-9]+}/backup-jobs":            "backups.read",
 	"/api/servers/{id:[0-9]+}/backup-restores":        "backups.read",
 	"/api/servers/{id:[0-9]+}/backup-usage":           "backups.read",
@@ -1766,6 +1769,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/platform-backups/targets", authHandler.AuthMiddleware(pbCap(platformBackupHandler.ListTargets))).Methods("GET")
 	api.HandleFunc("/platform-backups/passphrase", authHandler.AuthMiddleware(pbCap(platformBackupHandler.PassphraseStatus))).Methods("GET")
 	api.HandleFunc("/platform-backups/passphrase", authHandler.AuthMiddleware(pbCap(platformBackupHandler.SetPassphrase))).Methods("PUT")
+
+	// Reading a bundle back. Inspect is settings.write like the rest: it takes
+	// a passphrase and confirms whether it opens the file, which is a thing
+	// only somebody entitled to restore should be able to test.
+	api.HandleFunc("/platform-backups/inspect", authHandler.AuthMiddleware(pbCap(platformBackupHandler.InspectBundle))).Methods("POST")
+	api.HandleFunc("/platform-backups/restore", authHandler.AuthMiddleware(pbCap(platformBackupHandler.RestoreBundle))).Methods("POST")
+	api.HandleFunc("/platform-backups/runs/{id:[0-9]+}/restore", authHandler.AuthMiddleware(pbCap(platformBackupHandler.RestoreRun))).Methods("POST")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/runs", authHandler.AuthMiddleware(backupHandler.ListRuns)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/download", authHandler.AuthMiddleware(backupHandler.DownloadRun)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/restore", authHandler.AuthMiddleware(backupHandler.RestoreRun)).Methods("POST")

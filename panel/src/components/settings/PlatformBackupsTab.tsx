@@ -17,6 +17,7 @@ import {
 } from '@/lib/api/platformBackups';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
+import PlatformRestoreCard from '@/components/settings/PlatformRestoreCard';
 import { SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
@@ -197,6 +198,8 @@ export default function PlatformBackupsTab() {
             skeletonCards={2}
         >
             <PassphraseCard isSet={passphraseSet} onChanged={() => setPassphraseSet(true)} />
+
+            <PlatformRestoreCard />
 
             <SettingsCard
                 title="Backup jobs"

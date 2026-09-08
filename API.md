@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **517 routes** in 52 sections: 234 GET, 152 POST, 39 PUT, 38 PATCH, 55 DELETE.
+- **520 routes** in 52 sections: 234 GET, 155 POST, 39 PUT, 38 PATCH, 55 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **346** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **15** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **346** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **15** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -165,7 +165,7 @@ can still show what exists.
 - [/api/notifications](#apinotifications) (4)
 - [/api/packs](#apipacks) (29)
 - [/api/placement](#apiplacement) (3)
-- [/api/platform-backups](#apiplatform-backups) (10)
+- [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
@@ -619,6 +619,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| POST | `/api/platform-backups/inspect` | session | _uncapped method_ | - | `PlatformBackupHandler.InspectBundle` | Multipart: `bundle` is the file, `passphrase` is optional. |
 | GET | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListJobs` | - |
 | POST | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.CreateJob` | - |
 | PATCH | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.UpdateJob` | - |
@@ -627,7 +628,9 @@ can still show what exists.
 | GET | `/api/platform-backups/jobs/{id:[0-9]+}/runs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListRuns` | - |
 | GET | `/api/platform-backups/passphrase` | session | _uncapped method_ | - | `PlatformBackupHandler.PassphraseStatus` | whether one is set, never what it is. |
 | PUT | `/api/platform-backups/passphrase` | session | _uncapped method_ | - | `PlatformBackupHandler.SetPassphrase` | - |
+| POST | `/api/platform-backups/restore` | session | _uncapped method_ | - | `PlatformBackupHandler.RestoreBundle` | Multipart: `bundle` is the file, `request` is the JSON above. |
 | GET | `/api/platform-backups/runs/{id:[0-9]+}/download` | session | _uncapped method_ | - | `PlatformBackupHandler.DownloadRun` | Streamed through Core rather than redirected to a presigned URL. |
+| POST | `/api/platform-backups/runs/{id:[0-9]+}/restore` | session | _uncapped method_ | - | `PlatformBackupHandler.RestoreRun` | The same restore, reading the bundle out of the storage it was written to rather than back up through an upload. |
 | GET | `/api/platform-backups/targets` | session | _uncapped method_ | - | `PlatformBackupHandler.ListTargets` | What the selection screen offers. |
 
 ## /api/regions

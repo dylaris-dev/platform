@@ -8,6 +8,35 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.08.3
+
+### Features
+- **Restore a platform bundle.** Upload one - from this installation or from
+  another Dylaris - and pick what comes back: the database, the Library, the
+  Modpacks, or any combination. The screen tells you what the bundle holds
+  before you commit to it. `core` `panel`
+- **A restored database goes into a new, empty database you name, never over the
+  one Core is running on.** The platform keeps working throughout, a failed
+  restore costs nothing, and you switch over by restarting Core with the new
+  `DB_*` values once you have checked the result. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- **Restored credentials are re-encrypted for the installation that receives
+  them.** Node secrets, storage credentials, the Modrinth token and secret
+  settings are stored under the cluster secret of whichever platform wrote them;
+  without this step a restore looks like it worked while every node fails to
+  authenticate. Anything that cannot be re-encrypted is left untouched and
+  reported, never rewritten. `core`
+- A bundle entry that would write outside its own area is skipped and reported
+  rather than obeyed. A bundle is a file somebody hands you, and it may not have
+  come from Dylaris. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.08.2
 
 ### Features

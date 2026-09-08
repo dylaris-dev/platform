@@ -41,6 +41,18 @@ type PGConn struct {
 	SSLMode  string
 }
 
+// PG turns a panel-supplied connection into what the external tools need.
+//
+// One shape for a database connection in this package, rather than two that
+// drift: DBConnParams is what the panel form produces and what database/sql
+// opens, PGConn is the same thing as arguments and environment for a subprocess.
+func (p DBConnParams) PG() PGConn {
+	return PGConn{
+		Host: p.Host, Port: p.Port, User: p.User,
+		Password: p.Password, Name: p.DBName, SSLMode: p.SSLMode,
+	}
+}
+
 // ErrPGToolMissing is an image without the client. Reported as its own thing so
 // an operator is told to update Core rather than shown a shell error.
 type ErrPGToolMissing struct{ Tool string }

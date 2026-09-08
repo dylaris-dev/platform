@@ -3064,6 +3064,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/platform-backups/inspect",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "Multipart: `bundle` is the file, `passphrase` is optional.",
+      "handler": "PlatformBackupHandler.InspectBundle",
+      "group": "platform-backups",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/platform-backups/jobs",
       "auth": "session",
@@ -3138,12 +3148,32 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/platform-backups/restore",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "Multipart: `bundle` is the file, `request` is the JSON above.",
+      "handler": "PlatformBackupHandler.RestoreBundle",
+      "group": "platform-backups",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/platform-backups/runs/{id:[0-9]+}/download",
       "auth": "session",
       "authorization": "no capability on this method",
       "description": "Streamed through Core rather than redirected to a presigned URL.",
       "handler": "PlatformBackupHandler.DownloadRun",
+      "group": "platform-backups",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/platform-backups/runs/{id:[0-9]+}/restore",
+      "auth": "session",
+      "authorization": "no capability on this method",
+      "description": "The same restore, reading the bundle out of the storage it was written to rather than back up through an upload.",
+      "handler": "PlatformBackupHandler.RestoreRun",
       "group": "platform-backups",
       "external": false
     },
@@ -5167,10 +5197,10 @@
     }
   ],
   "counts": {
-    "total": 518,
+    "total": 521,
     "byAuth": {
       "none": 38,
-      "session": 467,
+      "session": 470,
       "user API key": 10,
       "warp key": 3
     },
@@ -5199,7 +5229,7 @@
       "notifications": 4,
       "packs": 29,
       "placement": 3,
-      "platform-backups": 10,
+      "platform-backups": 13,
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
