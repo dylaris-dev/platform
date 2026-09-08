@@ -265,8 +265,12 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	subjectKind, subjectRef := normalizeTicketSubject(req.SubjectKind, req.SubjectRef)
 
 	t := &models.Ticket{
-		Region:       region,
+		Region: region,
+		// Both: the id for filtering and the colour, the NAME as a snapshot so
+		// the ticket still says what it was filed under after the category is
+		// deleted. See applyTicketCategorySnapshot.
 		CategoryID:   cat.ID,
+		CategoryName: cat.Name,
 		UserID:       userID,
 		ServerUUID:   strings.TrimSpace(req.ServerUUID),
 		ServerRegion: serverRegion,

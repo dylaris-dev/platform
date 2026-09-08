@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **520 routes** in 52 sections: 234 GET, 155 POST, 39 PUT, 38 PATCH, 55 DELETE.
+- **526 routes** in 52 sections: 236 GET, 157 POST, 40 PUT, 38 PATCH, 56 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **346** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **15** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **352** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (116)
+- [/api/admin](#apiadmin) (122)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -206,6 +206,12 @@ can still show what exists.
 | POST | `/api/admin/db/migration/test-connection` | session | `settings.write` | - | `DBMigrationHandler.TestConnection` | open the target and return its server version, so admins confirm they hit the right database. |
 | POST | `/api/admin/db/migration/verify` | session | `settings.write` | - | `DBMigrationHandler.VerifyMigration` | run the source-vs-target comparison on demand (the manual "Verify / Test" button). |
 | GET | `/api/admin/health` | session | `settings.read` | - | `HealthHandler.GetStatus` | Aggregated platform health, PANEL settings.read (RequireCap at the route). |
+| GET | `/api/admin/mail/templates` | session | `settings.write` | - | `MailTemplatesHandler.List` | - |
+| GET | `/api/admin/mail/templates/{key}` | session | `settings.write` | - | `MailTemplatesHandler.Get` | - |
+| PUT | `/api/admin/mail/templates/{key}` | session | `settings.write` | - | `MailTemplatesHandler.Save` | - |
+| DELETE | `/api/admin/mail/templates/{key}` | session | `settings.write` | - | `MailTemplatesHandler.Reset` | back to the built-in wording. |
+| POST | `/api/admin/mail/templates/{key}/preview` | session | `settings.write` | - | `MailTemplatesHandler.Preview` | Renders the SUBMITTED text rather than the saved one, so the preview follows the editor before anything is committed. |
+| POST | `/api/admin/mail/templates/{key}/test` | session | `settings.write` | - | `MailTemplatesHandler.TestSend` | - |
 | PUT | `/api/admin/maintenance` | session | `settings.write` | - | `MaintenanceHandler.SaveState` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/metrics/catalog` | session | `topology.read` | - | `MetricsHandler.Catalog` | The series this build records, plus how far back the record goes. |
 | GET | `/api/admin/metrics/export` | session | `topology.read` | - | `MetricsHandler.Export` | The point of the export is that the numbers can leave with the person reading them - into a spreadsheet, a due-diligence pack, a mail. |

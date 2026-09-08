@@ -107,7 +107,10 @@ export default function TicketCategoriesTab() {
     };
 
     const handleDelete = async (c: TicketCategory) => {
-        if (!(await confirmDialog({ title: 'Delete category', message: `Delete category "${c.name}"? Categories with tickets attached cannot be deleted — disable them instead.` }))) return;
+        // Deleting is safe for the tickets: each one keeps the category name it
+        // was filed under as text. What it loses is the ability to be filtered
+        // by that category, which is worth saying out loud.
+        if (!(await confirmDialog({ title: 'Delete category', message: `Delete category "${c.name}"? Tickets already filed under it keep the name, but can no longer be filtered by it. Disable it instead to stop new tickets while keeping the filter.` }))) return;
         setDeleting(c.id);
         const res = await deleteTicketCategory(c.id);
         setDeleting(null);
@@ -115,7 +118,7 @@ export default function TicketCategoriesTab() {
             showToast('Category deleted.');
             await load();
         } else {
-            showToast(res.message || 'Delete failed — try disabling instead.', false);
+            showToast(res.message || 'Delete failed.', false);
         }
     };
 
@@ -134,7 +137,8 @@ export default function TicketCategoriesTab() {
             description={<>
                 Categories users pick from when creating a ticket.{' '}
                 <span className="font-mono">requires_server</span> gates the server-picker step.
-                Categories with attached tickets can be disabled but not deleted.
+                Deleting one keeps the name on tickets already filed under it. Disable
+                instead to stop new tickets while keeping the category as a filter.
             </>}
             actions={
                 <button type="button" onClick={openCreate} className="btn btn-primary inline-flex items-center gap-2 shrink-0">

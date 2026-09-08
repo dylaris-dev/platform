@@ -8,6 +8,35 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09
+
+### Features
+- **Every mail the platform sends can now be edited.** Settings -> General ->
+  Mailing holds the subject and wording of the confirmation and password-reset
+  mails, with the available variables as buttons that insert at the cursor, a
+  preview, and a test send to yourself. Untouched templates keep the wording
+  they always had. `core` `panel`
+- **Mails now go out as HTML with a plain-text copy**, instead of text only. `core`
+- **A fresh install starts with support categories.** With none, the ticket form
+  refused every submission rather than showing an empty list, so a new install
+  had a closed support inbox and nothing said so. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A ticket category can be deleted again, even with tickets on it.** Each
+  ticket keeps the category name it was filed under, so nothing loses its label;
+  it just stops being filterable by a category that no longer exists. Deleting
+  used to be refused outright, which made a name typed wrong during setup
+  permanent. `core` `panel`
+- **A subject line with a non-ASCII character no longer arrives as gibberish.**
+  It could not happen while every subject was fixed in code; it can now that
+  they carry names. `core`
+
 ## 2026.09.08.6
 
 ### Features

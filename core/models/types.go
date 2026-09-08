@@ -572,3 +572,13 @@ type GatewayRouteLimit struct {
 	Scope     string `json:"scope"`
 	MaxRoutes *int   `json:"maxRoutes"`
 }
+
+// MailTemplate is an operator's override of one outgoing mail. It exists only
+// once the mail has been edited: no row means the built-in wording, so "reset to
+// default" is a delete rather than a copy of the original text back in.
+type MailTemplate struct {
+	Key       string    `json:"key"`
+	Subject   string    `json:"subject"`
+	Body      string    `json:"body"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}

@@ -24,6 +24,13 @@ type emailFakeStore struct {
 	tokenSetFor   string
 }
 
+// The mail dispatcher asks for an operator override before rendering. A store
+// that embeds the interface answers nil-pointer here rather than "no row",
+// so the fake has to say it explicitly: this install has edited nothing.
+func (f *emailFakeStore) GetMailTemplate(string) (*models.MailTemplate, error) {
+	return nil, nil
+}
+
 func (f *emailFakeStore) GetUserByID(id string) (*models.User, error) { return f.users[id], nil }
 func (f *emailFakeStore) GetUserByEmail(e string) (*models.User, error) {
 	return f.byEmail[e], nil

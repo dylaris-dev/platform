@@ -35,7 +35,11 @@ func createTicketTables(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS tickets (
 			id               SERIAL PRIMARY KEY,
 			region           VARCHAR(32) NOT NULL DEFAULT 'default',
-			category_id      INTEGER NOT NULL REFERENCES ticket_categories(id) ON DELETE RESTRICT,
+			-- Nullable + SET NULL, and the NAME is snapshotted beside it: a ticket
+			-- must survive the deletion of the category it was filed under.
+			-- See applyTicketCategorySnapshot.
+			category_id      INTEGER REFERENCES ticket_categories(id) ON DELETE SET NULL,
+			category_name    TEXT NOT NULL DEFAULT '',
 			user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			server_uuid      VARCHAR(64),
 			server_region    VARCHAR(32),

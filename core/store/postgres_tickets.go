@@ -110,7 +110,13 @@ func (s *PostgresStore) DeleteTicketCategory(id int) error {
 
 // ── Tickets ──────────────────────────────────────────────────────────
 
-const ticketSelectCols = `t.id, t.region, t.category_id, c.name AS category_name,
+// category_name comes from the ticket's own column, not from the join: the
+// category may have been deleted since, and the ticket keeps what it was filed
+// under. COALESCE onto c.name covers a row written before the snapshot column
+// existed; COALESCE on the id turns a deleted category into 0 rather than
+// failing the scan.
+const ticketSelectCols = `t.id, t.region, COALESCE(t.category_id, 0),
+	COALESCE(NULLIF(t.category_name, ''), c.name, '') AS category_name,
 	t.user_id, u.username AS user_name,
 	COALESCE(t.server_uuid, ''), COALESCE(t.server_region, ''),
 	COALESCE(t.subject_kind, ''), COALESCE(t.subject_ref, ''),
@@ -119,7 +125,7 @@ const ticketSelectCols = `t.id, t.region, t.category_id, c.name AS category_name
 	t.created_at, t.updated_at, t.closed_at`
 
 const ticketBaseFrom = `FROM tickets t
-	JOIN ticket_categories c ON t.category_id = c.id
+	LEFT JOIN ticket_categories c ON t.category_id = c.id
 	JOIN users u ON t.user_id = u.id
 	LEFT JOIN users au ON t.assigned_user_id = au.id`
 
@@ -159,14 +165,14 @@ func (s *PostgresStore) CreateTicket(t *models.Ticket) (int, error) {
 	var id int
 	err := s.db.QueryRow(
 		`INSERT INTO tickets
-			(region, category_id, user_id, server_uuid, server_region,
+			(region, category_id, category_name, user_id, server_uuid, server_region,
 			 subject_kind, subject_ref,
 			 title, status, priority, assigned_user_id, assigned_team)
-		 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''),
-		         $6, $7,
-		         $8, $9, $10, $11, NULLIF($12,''))
+		 VALUES ($1, $2, $3, $4, NULLIF($5,''), NULLIF($6,''),
+		         $7, $8,
+		         $9, $10, $11, $12, NULLIF($13,''))
 		 RETURNING id`,
-		t.Region, t.CategoryID, t.UserID, t.ServerUUID, t.ServerRegion,
+		t.Region, t.CategoryID, t.CategoryName, t.UserID, t.ServerUUID, t.ServerRegion,
 		t.SubjectKind, t.SubjectRef,
 		t.Title, t.Status, t.Priority, t.AssignedUserID, t.AssignedTeam,
 	).Scan(&id)

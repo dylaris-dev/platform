@@ -50,6 +50,10 @@ const TAB_GROUPS: SettingsGroup[] = [
             { slug: 'modules', label: 'Modules', always: true },
             { slug: 'features', label: 'Features', always: true },
             { slug: 'maintenance', label: 'Maintenance', always: true },
+            // Under General rather than under User settings: six places send
+            // mail and only two of them are about accounts - a billing warning
+            // is not a user setting.
+            { slug: 'mailing', label: 'Mailing', always: true },
             { slug: 'database', label: 'Database', always: true },
         ],
     },

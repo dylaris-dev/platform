@@ -172,8 +172,13 @@ func (h *TicketCategoriesHandler) DeleteCategory(w http.ResponseWriter, r *http.
 		sendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
+	// Deleting is allowed even with tickets attached. Each ticket carries the
+	// category NAME it was filed under, so nothing loses its label; the id goes
+	// NULL and the ticket stops being filterable by a category that no longer
+	// exists. Refusing used to be the protection, and it made a typo made in the
+	// first five minutes of an install permanent.
 	if err := h.state.Store.DeleteTicketCategory(id); err != nil {
-		sendJSONError(w, "Category has tickets attached — disable it instead of deleting", http.StatusConflict)
+		sendJSONError(w, "Could not delete the category", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

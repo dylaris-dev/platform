@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -245,28 +246,17 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// sendPasswordResetEmail wraps mailer.Send with the verification template.
-// Mirror of sendVerificationEmail (registration.go) — kept separate so the
-// templates can diverge (we'll likely want different copy/CTAs eventually).
+// sendPasswordResetEmail renders the password-reset template and sends it.
+//
+// The wording lives in the template now rather than in a Sprintf here, which
+// is what makes it editable without a deploy. Kept separate from the
+// verification mail on purpose: they are two definitions with two variable
+// sets, and ttl_minutes only makes sense on this one.
 func sendPasswordResetEmail(state *AppState, to, username, token string, ttlMinutes int) error {
-	transport, err := mailer.Load(state.Store, "auth")
-	if err != nil {
-		return fmt.Errorf("mail not configured: %w", err)
-	}
 	link := strings.TrimRight(state.FrontendURL, "/") + "/reset-password?token=" + token
-	body := fmt.Sprintf(`Hi %s,
-
-We received a request to reset your Dylaris account password. Use the link below to choose a new one:
-
-%s
-
-This link is valid for %d minute(s) and works exactly once. If you did not request a reset, you can safely ignore this email — your password remains unchanged.
-
-— Dylaris
-`, username, link, ttlMinutes)
-	return transport.Send(mailer.Message{
-		To:      to,
-		Subject: "Reset your Dylaris password",
-		Body:    body,
+	return services.SendMail(state.Store, mailer.KeyPasswordReset, to, state.FrontendURL, map[string]string{
+		"username":    username,
+		"reset_link":  link,
+		"ttl_minutes": strconv.Itoa(ttlMinutes),
 	})
 }

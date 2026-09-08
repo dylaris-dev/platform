@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -85,10 +86,16 @@ func LoadConfig(s SettingsReader, purpose string) (*SMTPConfig, error) {
 
 // Message is one outgoing email. Plain-text body for now — HTML can be
 // layered on later by tagging Body with MIME parts.
+// Message is one outgoing mail. Body (plain text) is always required, HTML
+// optional: a mail with no text alternative is unreadable in a text-only
+// client, worse on a screen reader, and scores worse with spam filters.
 type Message struct {
 	To      string
 	Subject string
 	Body    string
+	// HTML is optional. When set, the mail goes out as multipart/alternative
+	// with Body as the fallback part.
+	HTML string
 }
 
 // Send blocks until the SMTP exchange completes or fails. Keep it
@@ -109,24 +116,10 @@ func Send(cfg *SMTPConfig, msg Message) error {
 		fromHeader = fmt.Sprintf("%s <%s>", cfg.FromName, from)
 	}
 
-	headers := map[string]string{
-		"From":         fromHeader,
-		"To":           msg.To,
-		"Subject":      msg.Subject,
-		"MIME-Version": "1.0",
-		"Content-Type": `text/plain; charset="utf-8"`,
-		"Date":         time.Now().UTC().Format(time.RFC1123Z),
+	raw, aerr := buildRaw(fromHeader, msg)
+	if aerr != nil {
+		return aerr
 	}
-	var b strings.Builder
-	for k, v := range headers {
-		b.WriteString(k)
-		b.WriteString(": ")
-		b.WriteString(v)
-		b.WriteString("\r\n")
-	}
-	b.WriteString("\r\n")
-	b.WriteString(msg.Body)
-	raw := []byte(b.String())
 
 	var auth smtp.Auth
 	if cfg.Username != "" {
@@ -216,4 +209,57 @@ func sendDATA(client *smtp.Client, from, to string, body []byte) error {
 		return fmt.Errorf("write body: %w", err)
 	}
 	return wc.Close()
+}
+
+// buildRaw assembles the RFC 5322 message Send hands to the server.
+// Split out from Send because the rules live here - header encoding, part
+// order, CRLF - and none of them are testable through a socket.
+func buildRaw(fromHeader string, msg Message) ([]byte, error) {
+	// RFC 2047 the subject. It went out raw, which was harmless while every
+	// subject was an English constant in this repo. It stops being harmless
+	// the moment a subject can carry {{username}}: a non-ASCII byte in a raw
+	// header is undefined, and arrives as mojibake or gets the mail refused.
+	// QEncoding leaves pure ASCII untouched.
+	subject := msg.Subject
+	if !isASCII(subject) {
+		subject = mime.QEncoding.Encode("utf-8", subject)
+	}
+	contentType := `text/plain; charset="utf-8"`
+	boundary := ""
+	if msg.HTML != "" {
+		var berr error
+		if boundary, berr = mimeBoundary(); berr != nil {
+			return nil, fmt.Errorf("mime boundary: %w", berr)
+		}
+		contentType = `multipart/alternative; boundary="` + boundary + `"`
+	}
+
+	headers := map[string]string{
+		"From":         fromHeader,
+		"To":           msg.To,
+		"Subject":      subject,
+		"MIME-Version": "1.0",
+		"Content-Type": contentType,
+		"Date":         time.Now().UTC().Format(time.RFC1123Z),
+	}
+	var b strings.Builder
+	for k, v := range headers {
+		b.WriteString(k)
+		b.WriteString(": ")
+		b.WriteString(v)
+		b.WriteString("\r\n")
+	}
+	b.WriteString("\r\n")
+	if boundary == "" {
+		b.WriteString(msg.Body)
+	} else {
+		// Text first, HTML second. The order is the contract rather than a
+		// preference: a client renders the LAST part it understands, so
+		// reversing these shows everybody the plain text.
+		writePart(&b, boundary, "text/plain", msg.Body)
+		writePart(&b, boundary, "text/html", msg.HTML)
+		b.WriteString("--" + boundary + "--\r\n")
+	}
+	raw := []byte(b.String())
+	return raw, nil
 }

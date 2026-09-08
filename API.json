@@ -71,6 +71,62 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/admin/mail/templates",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "MailTemplatesHandler.List",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/mail/templates/{key}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "back to the built-in wording.",
+      "handler": "MailTemplatesHandler.Reset",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/mail/templates/{key}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "MailTemplatesHandler.Get",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/mail/templates/{key}",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "MailTemplatesHandler.Save",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/mail/templates/{key}/preview",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "Renders the SUBMITTED text rather than the saved one, so the preview follows the editor before anything is committed.",
+      "handler": "MailTemplatesHandler.Preview",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/mail/templates/{key}/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "MailTemplatesHandler.TestSend",
+      "group": "admin",
+      "external": false
+    },
+    {
       "method": "PUT",
       "path": "/api/admin/maintenance",
       "auth": "session",
@@ -5197,15 +5253,15 @@
     }
   ],
   "counts": {
-    "total": 521,
+    "total": 527,
     "byAuth": {
       "none": 38,
-      "session": 470,
+      "session": 476,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 116,
+      "admin": 122,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

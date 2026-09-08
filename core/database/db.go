@@ -153,6 +153,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := createTicketTables(db); err != nil {
 		return err
 	}
+	if err := createMailTemplateTables(db); err != nil {
+		return err
+	}
 	if err := migrateSchema(db); err != nil {
 		return err
 	}
@@ -204,6 +207,11 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := seedDefaultPanelRoles(db); err != nil {
 		return err
 	}
+	// After the tables exist and beside the other seeds: with none of these the
+	// support inbox refuses every ticket rather than showing an empty list.
+	if err := seedDefaultTicketCategories(db); err != nil {
+		return err
+	}
 	if err := backfillPanelRoleAssignments(db); err != nil {
 		return err
 	}
@@ -244,6 +252,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 		return err
 	}
 	if err := applyInviteAttributionNullable(db); err != nil {
+		return err
+	}
+	if err := applyTicketCategorySnapshot(db); err != nil {
 		return err
 	}
 	if err := applyModpackAuthoringSchema(db); err != nil {

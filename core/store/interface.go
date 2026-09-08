@@ -60,6 +60,12 @@ type Store interface {
 	GetNodeSecretEnc(id int) (string, error)
 	SetNodeSecretEnc(id int, enc string) error
 	SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error)
+
+	// Outgoing mail templates. A missing row means the built-in wording.
+	ListMailTemplates() ([]models.MailTemplate, error)
+	GetMailTemplate(key string) (*models.MailTemplate, error)
+	UpsertMailTemplate(t *models.MailTemplate) error
+	DeleteMailTemplate(key string) error
 	SetNodeDisplayName(id int, name string) error
 	// --- BYON node enrollment ---
 	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error

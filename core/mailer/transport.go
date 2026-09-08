@@ -73,6 +73,15 @@ func (t smtpTransport) Describe() string {
 	return "SMTP " + t.cfg.Host
 }
 
+// SenderIdentity is fromIdentity for callers outside this package: the address
+// and NAME a given purpose sends from. The name doubles as the platform's name
+// in a rendered template, which is deliberate - it is already configured, it is
+// already visible in the panel, and a separate "site name" setting beside it
+// would be two places to change one thing.
+func SenderIdentity(s SettingsReader, purpose string) (email, name string) {
+	return fromIdentity(s, purpose)
+}
+
 // fromIdentity resolves the sender shared by every transport.
 //
 // It reads the SMTP profile keys, which is a historical name rather than a

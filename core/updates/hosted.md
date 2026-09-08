@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09
+
+### Features
+- **Confirmation and password-reset emails look different.** They now arrive as
+  a formatted message with a button, and still carry a plain-text copy for
+  readers and clients that prefer one. Nothing changes about what the links do.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.08.6
 
 ### Features

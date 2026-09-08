@@ -75,16 +75,20 @@ func (t *resendTransport) Send(msg Message) error {
 	if t.fromName != "" {
 		from = fmt.Sprintf("%s <%s>", t.fromName, t.fromEmail)
 	}
-	// Text only, matching what the SMTP transport sends. Every message this
-	// panel produces is a short operational one - a verification link, a reset,
-	// a warning - and a plain-text copy is what arrives intact on a phone, in a
-	// client with images off, and in a plain-text-only reader.
-	body, err := json.Marshal(map[string]any{
+	// Text is always sent; HTML rides alongside it when the template has one.
+	// Resend builds the multipart/alternative itself, so this mirrors what the
+	// SMTP transport assembles by hand - and sending html WITHOUT text would
+	// leave a text-only reader with an empty message.
+	payload := map[string]any{
 		"from":    from,
 		"to":      []string{msg.To},
 		"subject": msg.Subject,
 		"text":    msg.Body,
-	})
+	}
+	if msg.HTML != "" {
+		payload["html"] = msg.HTML
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}

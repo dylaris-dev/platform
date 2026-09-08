@@ -376,6 +376,10 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/auth":                    "settings.read",
 	"/api/admin/settings/smtp":                    "settings.read",
 	"/api/admin/settings/smtp/test":               "settings.write",
+	"/api/admin/mail/templates":                   "settings.write",
+	"/api/admin/mail/templates/{key}":             "settings.write",
+	"/api/admin/mail/templates/{key}/preview":     "settings.write",
+	"/api/admin/mail/templates/{key}/test":        "settings.write",
 
 	// Phase 4 Task 18: gateway/warp topology + dns + infrastructure oversight
 	// (PANEL topology.*). /api/warp/enroll, /api/warp/assignment, /api/warp/link-boot
@@ -1693,6 +1697,17 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(authSettingsHandler.GetSMTPConfig))).Methods("GET")
 	api.HandleFunc("/admin/settings/smtp", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(authSettingsHandler.SaveSMTPConfig))).Methods("PUT")
 	api.HandleFunc("/admin/settings/smtp/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(authSettingsHandler.TestSendSMTP))).Methods("POST")
+
+	// --- Outgoing mail templates ---
+	// settings.write on the READ routes as well, on purpose: a template body is
+	// the exact wording of a password-reset mail.
+	mailTemplatesHandler := handlers.NewMailTemplatesHandler(appState)
+	api.HandleFunc("/admin/mail/templates", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.List))).Methods("GET")
+	api.HandleFunc("/admin/mail/templates/{key}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.Get))).Methods("GET")
+	api.HandleFunc("/admin/mail/templates/{key}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.Save))).Methods("PUT")
+	api.HandleFunc("/admin/mail/templates/{key}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.Reset))).Methods("DELETE")
+	api.HandleFunc("/admin/mail/templates/{key}/preview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.Preview))).Methods("POST")
+	api.HandleFunc("/admin/mail/templates/{key}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.TestSend))).Methods("POST")
 
 	// --- Beam Endpoints ---
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")
