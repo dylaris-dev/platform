@@ -110,6 +110,21 @@ func (f *FeatureFlags) IsTicketsEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_tickets_enabled", false)
 }
 
+// IsLibraryEnabled gates the shared file library: the browsable catalog of
+// server jars and archives an operator uploads once for everyone to install
+// from.
+//
+// It exists because the Library module row used to be the only gate, and a
+// module row hides a NAVBAR ENTRY. /library itself had no check and its Core
+// routes are capability-gated, so switching the module off removed the link and
+// left the page and its API open to anyone who knew the URL. A feature that can
+// only be hidden is not a feature that can be turned off.
+//
+// Default = false, matching the module row's own seeded default.
+func (f *FeatureFlags) IsLibraryEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_library_enabled", false)
+}
+
 // IsAutoMoveEnabled gates the gateway-only auto-move (server migration between
 // nodes) feature. Default = false (opt-in, and only meaningful while gateway
 // routing is active — the gateway is what lets a server keep its address after

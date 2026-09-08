@@ -6,7 +6,10 @@ import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload 
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { getCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage } from '@/lib/coreStorage';
-import { Network, Globe, AlertTriangle, Server, ChevronDown, ChevronRight } from 'lucide-react';
+import { Network, Globe, AlertTriangle, Server, ChevronDown, ChevronRight, KeyRound, FolderOpen } from 'lucide-react';
+import GuardedTabs from '@/components/settings/GuardedTabs';
+import type { TabItem } from '@/components/ui/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -19,7 +22,12 @@ import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
 import HelpTip from '@/components/ui/HelpTip';
 
+type FeatureTab = 'subsystems' | 'infrastructure' | 'apikeys' | 'tabs';
+
+const FEATURE_TABS: readonly FeatureTab[] = ['subsystems', 'infrastructure', 'apikeys', 'tabs'];
+
 export default function FeaturesTab() {
+    const [tab, setTab] = useTabParam<FeatureTab>(FEATURE_TABS, 'subsystems');
     // Auto-move is gateway-only — gate its toggle on the live routing mode.
     // ip_port means the gateway is off, so enabling auto-move would 409 on the
     // backend; we disable the control instead of letting that happen.
@@ -45,7 +53,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -155,20 +163,38 @@ export default function FeaturesTab() {
         setLastBulk(null);
     };
 
-    const platformDirty =
-        platformSnapshot.current !== null &&
-        JSON.stringify(platformFlags) !== JSON.stringify(platformSnapshot.current);
+    // Each tab saves only the flags it shows.
+    //
+    // The page used to be one card with eleven switches behind a single Save,
+    // and splitting it into tabs is only safe if a tab can commit its own half.
+    // Sending the whole object from a tab that renders three of its fields would
+    // write the other eight from whatever this browser happened to be holding -
+    // so the payload is built from the tab's own keys and Core leaves the rest
+    // alone.
+    const subsetPayload = (keys: readonly (keyof FeatureFlagsAdminPayload)[]): FeatureFlagsAdminPayload => {
+        const out: FeatureFlagsAdminPayload = {};
+        for (const k of keys) {
+            // The index write is the point: this copies a known-safe subset of
+            // one typed object into another of the same type.
+            (out as unknown as Record<string, unknown>)[k] = platformFlags[k];
+        }
+        return out;
+    };
 
-    const savePlatform = async (): Promise<boolean> => {
+    const subsetDirty = (keys: readonly (keyof FeatureFlagsAdminPayload)[]) =>
+        platformSnapshot.current !== null &&
+        keys.some(k => platformFlags[k] !== platformSnapshot.current![k]);
+
+    const savePlatformSubset = async (keys: readonly (keyof FeatureFlagsAdminPayload)[]): Promise<boolean> => {
         const prev = platformSnapshot.current;
         if (!prev) return false;
         // applyAuthoringToManual rides along only when the toggle it describes
         // actually moved; sending it otherwise would be a standing instruction
         // the admin never gave.
         const payload: FeatureFlagsAdminPayload =
-            platformFlags.modpackAuthoring !== prev.modpackAuthoring
-                ? { ...platformFlags, applyAuthoringToManual: applyToManual }
-                : platformFlags;
+            keys.includes('modpackAuthoring') && platformFlags.modpackAuthoring !== prev.modpackAuthoring
+                ? { ...subsetPayload(keys), applyAuthoringToManual: applyToManual }
+                : subsetPayload(keys);
         setPlatformSaving(true);
         try {
             const res = await updateSystemFeatures(payload);
@@ -192,7 +218,19 @@ export default function FeaturesTab() {
         setLastBulk(null);
     };
 
-    useUnsavedChanges({ dirty: platformDirty, save: savePlatform, discard: discardPlatform, saving: platformSaving });
+    // The three groups the one payload is now cut into. Listed here rather than
+    // inline so a new flag has exactly one place to be added and cannot end up
+    // in no tab at all - which would make it unsavable while looking fine.
+    const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library'] as const;
+    const INFRA_KEYS = ['autoMove', 'byon'] as const;
+    const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
+
+    // One registration covering all three: the unsaved-changes guard asks "is
+    // anything unsaved on this screen", and a tab switch inside GuardedTabs is
+    // what protects the individual halves.
+    const platformDirty = subsetDirty([...SUBSYSTEM_KEYS, ...INFRA_KEYS, ...API_KEY_KEYS]);
+    const saveAllPlatform = () => savePlatformSubset([...SUBSYSTEM_KEYS, ...INFRA_KEYS, ...API_KEY_KEYS]);
+    useUnsavedChanges({ dirty: platformDirty, save: saveAllPlatform, discard: discardPlatform, saving: platformSaving });
 
     const tabProxyDirty =
         tabProxySnapshot.current !== null &&
@@ -251,7 +289,7 @@ export default function FeaturesTab() {
     // The whitelist travels as a comma-separated string because that is what the
     // setting stores; the picker works on a Set and writes it back the same way.
     const allowedKeyCaps = new Set(
-        platformFlags.userApiKeyAllowedCaps.split(',').map(c => c.trim()).filter(Boolean),
+        (platformFlags.userApiKeyAllowedCaps ?? '').split(',').map(c => c.trim()).filter(Boolean),
     );
     const toggleKeyCap = (id: string) => {
         const next = new Set(allowedKeyCaps);
@@ -267,38 +305,38 @@ export default function FeaturesTab() {
         </div>
     );
 
-    // Three payloads, three endpoints, so three cards each owning its own save.
-    // They used to be seven boxes over those same three payloads, which is why
-    // "which of these does the one Save button write" had no answer on screen.
+    // A card per save, and now a tab per subject. The page used to be four cards
+    // down one 900-line scroll, three of which shared a single payload - so
+    // "which of these does this Save button write" had no answer on screen.
     const proxyForm = { dirty, saving, save: handleSave, discard: handleDiscard };
-    const platformForm = { dirty: platformDirty, saving: platformSaving, save: savePlatform, discard: discardPlatform };
     const proxyTabForm = { dirty: tabProxyDirty, saving: tabProxySaving, save: saveTabProxy, discard: discardTabProxy };
+    const platformSubsetForm = (keys: readonly (keyof FeatureFlagsAdminPayload)[]) => ({
+        dirty: subsetDirty(keys),
+        saving: platformSaving,
+        save: () => savePlatformSubset(keys),
+        discard: discardPlatform,
+    });
+
+    const TABS: TabItem<FeatureTab>[] = [
+        { id: 'subsystems', label: 'Subsystems', icon: Server },
+        { id: 'infrastructure', label: 'Infrastructure', icon: Network },
+        { id: 'apikeys', label: 'User API keys', icon: KeyRound },
+        { id: 'tabs', label: 'Custom tabs', icon: Globe },
+    ];
 
     return (
-        <SettingsPage
-            title="Feature toggles"
-            width="2xl"
-            description="Turn platform features on or off. A disabled feature hides all related UI and blocks its API endpoints."
-        >
-            <SettingsCard title="Proxy and network support" icon={Network} form={proxyForm}>
-                <SwitchRow
-                    label="Proxy support"
-                    description="BungeeCord, Velocity and Waterfall proxy containers, and server linking."
-                    checked={settings.proxyEnabled}
-                    onChange={v => setSettings(prev => ({ ...prev, proxyEnabled: v }))}
-                />
-            </SettingsCard>
+        <div className="flex flex-col h-full min-h-0">
+            <GuardedTabs items={TABS} active={tab} onChange={setTab} ariaLabel="Feature groups" />
 
-            {/* No Gateway toggle here: the gateway is on exactly when game
-                traffic routes through it, so the routing-mode selector in the
-                Gateway sub-tab is its only switch. */}
-
-            <SettingsCard title="Platform subsystems" icon={Server} form={platformForm}>
+            <div className="flex-1 overflow-y-auto pt-5">
+                <div className="space-y-6 max-w-3xl">
+                    {tab === 'subsystems' && (
+                        <SettingsCard title="Subsystems" icon={Server} form={platformSubsetForm(SUBSYSTEM_KEYS)}>
                 <SettingsGroup first>
                     <SwitchRow
                         label="Ticket system"
                         description={<>Enables the tickets module, inbox, attachments, canned responses and notifications. When off, all <code className="font-mono">/api/tickets/*</code> endpoints return 503 and the Tickets nav entry is hidden.</>}
-                        checked={platformFlags.tickets}
+                        checked={!!platformFlags.tickets}
                         disabled={!platformFlags.tickets && storageConfigured !== true}
                         onChange={v => editPlatformFlag('tickets', v)}
                     >
@@ -327,7 +365,6 @@ export default function FeaturesTab() {
                         )}
                     </SwitchRow>
                 </SettingsGroup>
-
                 {/* Two switches, one subsystem. "Modpacks" turns it on for ADMINS;
                     "Open authoring to users" widens it to everyone else. Nested
                     rather than side by side because the second is meaningless without
@@ -337,14 +374,14 @@ export default function FeaturesTab() {
                     <SwitchRow
                         label="Modpacks"
                         description={<>Turns on the modpack builder, storage and Solder endpoints for <strong>admins</strong>. When off, modpack write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable.</>}
-                        checked={platformFlags.modpacks}
+                        checked={!!platformFlags.modpacks}
                         onChange={v => editPlatformFlag('modpacks', v)}
                     />
                     <div className={`pl-4 border-l-2 border-(--base-03) space-y-3 ${platformFlags.modpacks ? '' : 'opacity-60'}`}>
                         <SwitchRow
                             label="Open authoring to users"
                             description="Lets non-admin users create and publish their own modpacks. Off means admins only. You can still revoke a single user afterwards under Settings, Users."
-                            checked={platformFlags.modpackAuthoring}
+                            checked={!!platformFlags.modpackAuthoring}
                             disabled={!platformFlags.modpacks}
                             onChange={v => editPlatformFlag('modpackAuthoring', v)}
                         />
@@ -369,7 +406,34 @@ export default function FeaturesTab() {
                         )}
                     </div>
                 </SettingsGroup>
+                <SettingsGroup title="File library">
+                    <SwitchRow
+                        label="File library"
+                        description={<>A shared catalog of server jars and archives you upload once, offered as an install source in the server wizard. When off, the library page and all <code className="font-mono">/api/library/*</code> endpoints return 503.</>}
+                        checked={!!platformFlags.library}
+                        onChange={v => editPlatformFlag('library', v)}
+                    />
+                    <p className="text-xs text-(--base-06)">
+                        Who sees it - admins only, or everyone - stays in Settings, Modules.
+                    </p>
+                </SettingsGroup>
+                        </SettingsCard>
+                    )}
 
+                    {tab === 'infrastructure' && (
+                        <>
+            <SettingsCard title="Proxy and network support" icon={Network} form={proxyForm}>
+                <SwitchRow
+                    label="Proxy support"
+                    description="BungeeCord, Velocity and Waterfall proxy containers, and server linking."
+                    checked={settings.proxyEnabled}
+                    onChange={v => setSettings(prev => ({ ...prev, proxyEnabled: v }))}
+                />
+            </SettingsCard>
+                            {/* No Gateway toggle here: the gateway is on exactly when
+                                game traffic routes through it, so the routing-mode
+                                selector in the Gateway sub-tab is its only switch. */}
+                            <SettingsCard title="Gateway-dependent features" icon={Server} form={platformSubsetForm(INFRA_KEYS)}>
                 {/* Auto-move and BYON are gateway-only. Both toggles are hard
                     disabled while routing is on IP:Port, since enabling either
                     then would 409 on the backend. */}
@@ -378,7 +442,7 @@ export default function FeaturesTab() {
                     <SwitchRow
                         label="Auto-move"
                         description="Lets the rebalance worker migrate opted-in servers to a less-loaded node when their current node is overloaded. Per-server opt-in lives in each server's resource settings. The route keeps the player address stable across the node change."
-                        checked={platformFlags.autoMove}
+                        checked={!!platformFlags.autoMove}
                         disabled={gatewayOff}
                         onChange={v => editPlatformFlag('autoMove', v)}
                     />
@@ -390,7 +454,7 @@ export default function FeaturesTab() {
                     <SwitchRow
                         label="BYON (bring your own node)"
                         description="Turns on tenant node enrollment, traffic metering and the Usage and Billing admin settings, which stay hidden while it is off."
-                        checked={platformFlags.byon}
+                        checked={!!platformFlags.byon}
                         disabled={gatewayOff}
                         onChange={v => editPlatformFlag('byon', v)}
                     />
@@ -405,7 +469,13 @@ export default function FeaturesTab() {
                         </p>
                     )}
                 </SettingsGroup>
+                            </SettingsCard>
+                            <MetricsDatabaseCard />
+                        </>
+                    )}
 
+                    {tab === 'apikeys' && (
+                        <SettingsCard title="User API keys" icon={KeyRound} form={platformSubsetForm(API_KEY_KEYS)}>
                 {/* Two controls, because "may users hold keys" and "which
                     capabilities may they put on one" are different decisions: an
                     operator can open the feature without opening the whole
@@ -416,7 +486,7 @@ export default function FeaturesTab() {
                     <SwitchRow
                         label="User API keys"
                         description={<>Lets non-admins mint scoped keys for the <code className="font-mono">/api/external</code> automation surface. Admins can always mint their own.</>}
-                        checked={platformFlags.userApiKeys}
+                        checked={!!platformFlags.userApiKeys}
                         onChange={v => editPlatformFlag('userApiKeys', v)}
                     />
 
@@ -502,15 +572,10 @@ export default function FeaturesTab() {
                     </div>
                 )}
                 </SettingsGroup>
-            </SettingsCard>
+                        </SettingsCard>
+                    )}
 
-            {/* Long-term statistics: the switch AND the database it records
-                into, in one card under one save. They were two, and separating
-                them let recording start before anyone had chosen a target -
-                which cannot be corrected later, because nothing is backfilled. */}
-            <MetricsDatabaseCard />
-
-            {/* WS5 custom-tab reverse proxy */}
+                    {tab === 'tabs' && (
             <SettingsCard title="Custom-tab reverse proxy" icon={Globe} form={proxyTabForm}>
                 <SettingsGroup first>
                     <SwitchRow
@@ -618,6 +683,9 @@ export default function FeaturesTab() {
                     </p>
                 </SettingsGroup>
             </SettingsCard>
-        </SettingsPage>
+                    )}
+                </div>
+            </div>
+        </div>
     );
 }

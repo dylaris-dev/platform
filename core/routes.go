@@ -1512,12 +1512,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// requiredCaps. The four mutations were hard `if !isAdmin` gated in-handler
 	// with no dedicated library-admin cap - that gate is now the chokepoint's
 	// job, so it is removed from library.go in the same commit.
-	api.HandleFunc("/library", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(libraryHandler.GetLibraryHandler))).Methods("GET")
-	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageReachable(libraryHandler.DeleteLibraryHandler)))).Methods("POST")
-	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(libraryHandler.MkdirLibraryHandler))))).Methods("POST")
-	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(libraryHandler.UploadLibraryHandler))))).Methods("POST")
-	api.HandleFunc("/library/download", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(libraryHandler.DownloadLibraryHandler))).Methods("GET")
-	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(libraryHandler.ToggleLibraryPathHandler))).Methods("POST")
+	api.HandleFunc("/library", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.GetLibraryHandler)))).Methods("GET")
+	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.DeleteLibraryHandler))))).Methods("POST")
+	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.MkdirLibraryHandler)))))).Methods("POST")
+	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.UploadLibraryHandler)))))).Methods("POST")
+	api.HandleFunc("/library/download", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.DownloadLibraryHandler)))).Methods("GET")
+	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireLibraryEnabled(libraryHandler.ToggleLibraryPathHandler)))).Methods("POST")
 
 	// Settings endpoints (PANEL settings.*; Phase 4 Task 17)
 	// NOTE: /settings/library + /settings/library/test (legacy library storage

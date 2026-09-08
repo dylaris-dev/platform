@@ -36,17 +36,28 @@ interface ModulesTabProps {
 // request), same as Library.
 const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library', 'Tickets', 'Modpacks', 'Custom Tabs']);
 
-// Modules whose enabled state AND audience are DERIVED from feature flags rather
-// than set here. Offering the controls would be worse than hiding them: an edit
-// would appear to work and then be silently undone the next time the owning
-// flags are saved. Position stays editable - reordering is this screen's job.
+// Modules whose ENABLED state is derived from a feature flag rather than set
+// here. Offering the control would be worse than hiding it: an edit would appear
+// to work and then be silently undone the next time the owning flag is saved.
+// Position stays editable - reordering is this screen's job.
 //
-// Modpacks follows Settings -> Features: it appears with the Modpacks subsystem
-// and widens from admin-only to everyone with "Open authoring to users".
+// Tickets is the one this list was missing. It had two independent switches, so
+// an operator could turn the feature on in Features, see no Tickets entry in the
+// navbar because the row here was still off, and have no way to connect the two
+// - meanwhile the whole ticket API was live and reachable by URL.
 const DERIVED_MODULES = new Map([
     ['Modpacks', 'Settings -> Features -> Modpacks'],
     ['Custom Tabs', 'Settings -> Features -> Custom-tab reverse proxy'],
+    ['Tickets', 'Settings -> Features -> Ticket system'],
+    ['Library', 'Settings -> Features -> File library'],
 ]);
+
+// Of those, the ones whose AUDIENCE is derived too, from a second flag that has
+// no other home (authoring for Modpacks, the audience picker for Custom Tabs).
+// For Tickets and Library the audience stays an answer to a different question -
+// whether the platform HAS the feature is not who should see it - so those two
+// keep the All/Admin control.
+const AUDIENCE_DERIVED = new Set(['Modpacks', 'Custom Tabs']);
 
 interface SortableModuleCardProps {
     module: AppModule;
@@ -101,7 +112,7 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                     hard-gates isAdmin, so the "all" option would never take
                     effect anyway - the toggle is locked to avoid a misleading
                     control) */}
-                {derivedFrom ? (
+                {derivedFrom && AUDIENCE_DERIVED.has(m.name) ? (
                     <div
                         className="inline-flex items-center gap-1 mono-label px-2 py-1 rounded-md bg-(--base-03)"
                         title={`Audience follows ${derivedFrom}`}
@@ -145,7 +156,7 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                     >
                         <span className={m.isEnabled ? 'toggle-knob toggle-knob-on' : 'toggle-knob toggle-knob-off'} />
                     </div>
-                ) : m.name === 'Servers' || m.name === 'Admin' ? (
+                ) : m.name === 'Servers' || m.name === 'Admin' || m.name === 'Infrastructure' ? (
                     <div className="toggle-track toggle-track-on opacity-50 cursor-not-allowed" title={`${m.name} module cannot be disabled`}>
                         <span className="toggle-knob toggle-knob-on" />
                     </div>

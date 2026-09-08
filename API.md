@@ -482,12 +482,12 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/library` | session | _no capability_ | RequireCoreStorageReachable | `LibraryHandler.GetLibraryHandler` | Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle. |
-| POST | `/api/library/delete` | session | `settings.write` | RequireCoreStorageReachable | `LibraryHandler.DeleteLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| GET | `/api/library/download` | session | _no capability_ | RequireCoreStorageReachable | `LibraryHandler.DownloadLibraryHandler` | streams the library file named by ?path. |
-| POST | `/api/library/mkdir` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable | `LibraryHandler.MkdirLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| POST | `/api/library/toggle` | session | `settings.write` | - | `LibraryHandler.ToggleLibraryPathHandler` | Body: { "path": "...", "enabled": false } Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| POST | `/api/library/upload` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable | `LibraryHandler.UploadLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
+| GET | `/api/library` | session | _no capability_ | RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.GetLibraryHandler` | Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle. |
+| POST | `/api/library/delete` | session | `settings.write` | RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.DeleteLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
+| GET | `/api/library/download` | session | _no capability_ | RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.DownloadLibraryHandler` | streams the library file named by ?path. |
+| POST | `/api/library/mkdir` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.MkdirLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
+| POST | `/api/library/toggle` | session | `settings.write` | RequireLibraryEnabled | `LibraryHandler.ToggleLibraryPathHandler` | Body: { "path": "...", "enabled": false } Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
+| POST | `/api/library/upload` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.UploadLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
 
 ## /api/maintenance
 

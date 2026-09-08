@@ -19,7 +19,7 @@ export default function LibraryPicker({ files, path, selectedFile, onNavigate, o
             )}
             <div className="space-y-1">
                 {files.length === 0 && (
-                    <p className="text-(--base-07) text-sm text-center py-4">Library is empty. Upload files in Settings &rarr; Library.</p>
+                    <p className="text-(--base-07) text-sm text-center py-4">Library is empty. Upload files on the Library page.</p>
                 )}
                 {files.map((f: any) => {
                     const fullPath = path ? `${path}/${f.name}` : f.name;

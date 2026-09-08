@@ -14,6 +14,10 @@ export interface FeatureFlags {
     // Raw platform flag. The panel ANDs this with the live routing mode, since
     // auto-move is only effective while the gateway is on.
     autoMove: boolean;
+    // The shared file library. It is here rather than derived from the module
+    // row because /library is a PAGE: a module row hides a navbar entry and
+    // leaves the page reachable by URL.
+    library: boolean;
     // BYON tenancy. Gates tenant-facing UI like the server transfer control.
     byon: boolean;
     // Store integration (dylaris.com). True only when the hosted Core has both
@@ -29,19 +33,24 @@ export interface FeatureFlags {
     modpackStorage: boolean;
 }
 
+// Every field is optional on the way OUT: the Features screen is a set of tabs
+// and each one saves only what it shows. Core leaves an absent flag alone, so a
+// tab cannot revert a flag it does not render. A GET always fills them all.
 export interface FeatureFlagsAdminPayload {
-    tickets: boolean;
+    tickets?: boolean;
+    // The shared file library.
+    library?: boolean;
     // The modpack subsystem. On its own it means admins can author.
-    modpacks: boolean;
+    modpacks?: boolean;
     // Opens authoring to non-admin users. Requires `modpacks`; the backend folds
     // it to false when the subsystem is off, so the two can never disagree.
-    modpackAuthoring: boolean;
+    modpackAuthoring?: boolean;
     // Write-only instruction, not stored state: what a change to
     // modpackAuthoring should do to users whose per-user flag an admin set BY
     // HAND. Omitted/false leaves those rows alone.
     applyAuthoringToManual?: boolean;
-    autoMove: boolean;
-    byon: boolean;
+    autoMove?: boolean;
+    byon?: boolean;
     // NO metrics flag. Long-term statistics are switched on by
     // /admin/settings/metrics-db, together with the database they record into:
     // the resolution is fixed the moment recording starts and nothing can be
@@ -49,11 +58,11 @@ export interface FeatureFlagsAdminPayload {
     // Whether NON-ADMINS may hold an API key at all. Default off: a key is a
     // second credential class that outlives a session and is not covered by the
     // account's 2FA, so a fresh install does not start handing them out.
-    userApiKeys: boolean;
+    userApiKeys?: boolean;
     // Comma-separated capability ids a non-admin may put on a key. EMPTY MEANS
     // NO EXTRA RESTRICTION, not "none" - the backend already stops a key from
     // exceeding what its creator holds.
-    userApiKeyAllowedCaps: string;
+    userApiKeyAllowedCaps?: string;
 }
 
 export async function getSystemFeatures(): Promise<{ success: boolean; features?: FeatureFlags; message?: string }> {

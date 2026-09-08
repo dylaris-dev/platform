@@ -8,6 +8,35 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.3
+
+### Features
+- **Settings -> Features is four tabs instead of one long page**: Subsystems,
+  Infrastructure, User API keys and Custom tabs. Each tab saves only what it
+  shows, so one tab can no longer revert a switch on another. `core` `panel`
+- **Tickets has one switch, not two.** Its navbar module now follows the feature
+  itself. With the feature on and the module off, the whole ticket API used to
+  be live with nothing in the panel leading to it. `core` `panel`
+- **The file library has its own switch** under Features -> Subsystems. Who sees
+  it stays in Settings -> Modules. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- **The file library was readable by any signed-in user even with its module
+  switched off.** A module row hides a navbar entry; the page and every
+  `/api/library` endpoint had no check of their own. All six now refuse when the
+  library is off. `core` `panel`
+
+### Fixes
+- **Infrastructure offered a working-looking off switch** in Settings -> Modules
+  that Core then refused. It is locked like Servers and Admin. `panel`
+- **A derived module row could stay stale forever.** Custom Tabs was only
+  recalculated when the tab-proxy card was saved, so an install that got its
+  flag first had no navbar entry until someone saved that form again. Every
+  derived row is now recalculated at startup. `core`
+
 ## 2026.09.09.2
 
 ### Features

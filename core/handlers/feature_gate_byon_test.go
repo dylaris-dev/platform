@@ -59,17 +59,20 @@ func TestFeatureSettings_ByonRoundTrip(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
-		want featureSettingsPayload
+		// The four flags this test drives, read back as plain booleans. The
+		// payload carries pointers now (absent means "not part of this
+		// request"), so comparing the structs would compare addresses.
+		want map[string]bool
 	}{
 		{
 			"byon on, modpacks on",
 			`{"tickets":false,"modpacks":true,"autoMove":false,"byon":true}`,
-			featureSettingsPayload{Tickets: false, Modpacks: true, AutoMove: false, Byon: true},
+			map[string]bool{"tickets": false, "modpacks": true, "autoMove": false, "byon": true},
 		},
 		{
 			"byon off, all off",
 			`{"tickets":false,"modpacks":false,"autoMove":false,"byon":false}`,
-			featureSettingsPayload{},
+			map[string]bool{"tickets": false, "modpacks": false, "autoMove": false, "byon": false},
 		},
 	}
 	for _, c := range cases {
@@ -99,8 +102,20 @@ func TestFeatureSettings_ByonRoundTrip(t *testing.T) {
 			if err := json.Unmarshal(getRW.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("decode GET: %v", err)
 			}
-			if resp.Features != c.want {
-				t.Fatalf("round-trip features = %+v, want %+v", resp.Features, c.want)
+			// GET always states every flag, so a nil here is itself a failure.
+			got := map[string]*bool{
+				"tickets":  resp.Features.Tickets,
+				"modpacks": resp.Features.Modpacks,
+				"autoMove": resp.Features.AutoMove,
+				"byon":     resp.Features.Byon,
+			}
+			for name, want := range c.want {
+				if got[name] == nil {
+					t.Fatalf("GET omitted %q; it must state every flag", name)
+				}
+				if *got[name] != want {
+					t.Fatalf("round-trip %s = %v, want %v", name, *got[name], want)
+				}
 			}
 		})
 	}

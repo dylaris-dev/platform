@@ -23,21 +23,36 @@ func NewFeatureSettingsHandler(state *AppState) *FeatureSettingsHandler {
 
 // featureSettingsPayload is the wire shape of GET + PUT. New platform-wide
 // feature flags get added here as we ship them.
+//
+// Every flag is a POINTER on the way in: absent means "this request is not
+// about that flag" and the stored value is left alone. GET always fills all of
+// them, so a reader sees plain booleans.
+//
+// It became partial because the screen it serves had grown into one card with
+// eleven switches and a capability matrix, all sharing a single save. Splitting
+// that into tabs the operator can reason about - subsystems, infrastructure,
+// API keys - is only safe if each tab can save its own half without sending a
+// stale copy of the other tab's. With whole-payload writes, two admins on two
+// tabs would each silently revert the other.
 type featureSettingsPayload struct {
-	Tickets  bool `json:"tickets"`
-	Modpacks bool `json:"modpacks"`
+	Tickets  *bool `json:"tickets"`
+	Modpacks *bool `json:"modpacks"`
+	// Library is the shared file catalog. It had no flag at all until now - the
+	// module row was its only switch, and that hides a navbar entry rather than
+	// closing anything.
+	Library *bool `json:"library"`
 	// ModpackAuthoring opens modpack authoring to non-admin users. Meaningless
 	// on its own: the subsystem must be on (Modpacks) for anyone, admin or not,
 	// to author at all.
-	ModpackAuthoring bool `json:"modpackAuthoring"`
+	ModpackAuthoring *bool `json:"modpackAuthoring"`
 	// ApplyAuthoringToManual decides what a change to ModpackAuthoring does to
 	// users whose per-user flag an admin set BY HAND. false (the safe default)
 	// leaves those rows alone; true overwrites them and drops their manual
 	// marker, so they follow the global switch again from here on. Write-only:
 	// it is an instruction for this request, not stored state.
-	ApplyAuthoringToManual bool `json:"applyAuthoringToManual"`
-	AutoMove               bool `json:"autoMove"`
-	Byon                   bool `json:"byon"`
+	ApplyAuthoringToManual bool  `json:"applyAuthoringToManual"`
+	AutoMove               *bool `json:"autoMove"`
+	Byon                   *bool `json:"byon"`
 	// NO metrics flag here, deliberately. Long-term statistics are switched on
 	// by MetricsDBHandler, together with the database they record into, because
 	// those two are one decision: the resolution is fixed at the moment
@@ -49,25 +64,42 @@ type featureSettingsPayload struct {
 	// enforced at mint AND at use (see APIKeysHandler.ownerStillHolds): turning
 	// it off has to stop keys that already exist, or an operator who switched it
 	// off would still be running every key created before that.
-	UserAPIKeys bool `json:"userApiKeys"`
+	UserAPIKeys *bool `json:"userApiKeys"`
 	// UserAPIKeyAllowedCaps narrows what a non-admin may put on a key, as a
 	// comma-separated capability list. EMPTY MEANS NO EXTRA RESTRICTION - the
 	// delegation subset check already stops a key from exceeding its creator.
-	UserAPIKeyAllowedCaps string `json:"userApiKeyAllowedCaps"`
+	//
+	// A pointer for the same reason as the booleans: an empty string is a
+	// meaningful value here (no restriction), so "not sent" needs its own shape
+	// or the API-keys tab would have to be saved from every other tab.
+	UserAPIKeyAllowedCaps *string `json:"userApiKeyAllowedCaps"`
+}
+
+// boolPtr / strPtr fill the GET response, which always states every flag.
+func boolPtr(b bool) *bool { return &b }
+
+// pick is the partial-update rule in one place: the submitted value when the
+// request mentioned the flag, the stored one when it did not.
+func pick(submitted *bool, stored bool) bool {
+	if submitted != nil {
+		return *submitted
+	}
+	return stored
 }
 
 // Get GET /api/admin/settings/features — current bundle of platform toggles.
 // PANEL settings.read (RequireCap at the route).
 func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
+	caps := strings.Join(h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context()), ",")
 	out := featureSettingsPayload{
-		Tickets:          h.state.FeatureFlags.IsTicketsEnabled(r.Context()),
-		Modpacks:         h.state.FeatureFlags.IsModpacksEnabled(r.Context()),
-		ModpackAuthoring: h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context()),
-		AutoMove:         h.state.FeatureFlags.IsAutoMoveEnabled(r.Context()),
-		Byon:             h.state.FeatureFlags.IsBYONEnabled(r.Context()),
-		UserAPIKeys:      h.state.FeatureFlags.UserAPIKeysEnabled(r.Context()),
-		UserAPIKeyAllowedCaps: strings.Join(
-			h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context()), ","),
+		Tickets:               boolPtr(h.state.FeatureFlags.IsTicketsEnabled(r.Context())),
+		Modpacks:              boolPtr(h.state.FeatureFlags.IsModpacksEnabled(r.Context())),
+		Library:               boolPtr(h.state.FeatureFlags.IsLibraryEnabled(r.Context())),
+		ModpackAuthoring:      boolPtr(h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context())),
+		AutoMove:              boolPtr(h.state.FeatureFlags.IsAutoMoveEnabled(r.Context())),
+		Byon:                  boolPtr(h.state.FeatureFlags.IsBYONEnabled(r.Context())),
+		UserAPIKeys:           boolPtr(h.state.FeatureFlags.UserAPIKeysEnabled(r.Context())),
+		UserAPIKeyAllowedCaps: &caps,
 	}
 	resp := map[string]interface{}{
 		"success":  true,
@@ -110,7 +142,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// server's address stable across a node change). Refuse the whole PUT
 	// rather than partially apply, so the admin gets a single clear error and
 	// no flag is half-written.
-	if req.AutoMove && !h.state.gatewayEnabled() {
+	if req.AutoMove != nil && *req.AutoMove && !h.state.gatewayEnabled() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -123,7 +155,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 
 	// Enabling Tickets requires Core file storage (attachments + backups need a
 	// durable off-host home). Refuse the whole PUT so nothing is half-written.
-	if req.Tickets && !h.state.CoreStorageConfigured() {
+	if req.Tickets != nil && *req.Tickets && !h.state.CoreStorageConfigured() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -134,34 +166,52 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The values that will be in force after this request: what it submitted,
+	// or what is stored for anything it did not mention.
+	ticketsNow := pick(req.Tickets, h.state.FeatureFlags.IsTicketsEnabled(r.Context()))
+	modpacksNow := pick(req.Modpacks, h.state.FeatureFlags.IsModpacksEnabled(r.Context()))
+	libraryNow := pick(req.Library, h.state.FeatureFlags.IsLibraryEnabled(r.Context()))
+	authoringWas := h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context())
+	authoringNow := pick(req.ModpackAuthoring, authoringWas)
+
 	// End-user authoring without the subsystem is not a state that means
 	// anything: nobody, admin or user, can author while modpacks are off. Rather
 	// than store a flag that does nothing (and would quietly take effect the day
 	// modpacks are switched on), fold it down here.
-	if !req.Modpacks {
-		req.ModpackAuthoring = false
+	//
+	// The fold can move a flag this request never mentioned - switching Modpacks
+	// off has to take authoring with it - so it forces the write rather than
+	// relying on the field being present.
+	forceAuthoringWrite := false
+	if !modpacksNow && authoringNow {
+		authoringNow = false
+		forceAuthoringWrite = true
 	}
 
 	// Whether the authoring flag is actually moving, read BEFORE the writes. The
 	// per-user bulk apply only runs on a transition: re-saving the Features form
 	// with authoring unchanged must not re-flatten per-user rows.
-	authoringWas := h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context())
-	authoringChanged := authoringWas != req.ModpackAuthoring
+	authoringChanged := authoringWas != authoringNow
 
 	writes := []struct {
 		key      string
 		val      bool
+		send     bool
 		cacheKey string
 		evtName  string
 	}{
-		{"feature_tickets_enabled", req.Tickets, "feature_tickets_enabled", "tickets"},
-		{"feature_modpacks_enabled", req.Modpacks, "feature_modpacks_enabled", "modpacks"},
-		{"feature_modpack_authoring_enabled", req.ModpackAuthoring, "feature_modpack_authoring_enabled", "modpackAuthoring"},
-		{"feature_auto_move_enabled", req.AutoMove, "feature_auto_move_enabled", "autoMove"},
-		{"feature_byon_enabled", req.Byon, "feature_byon_enabled", "byon"},
-		{"apikeys_user_enabled", req.UserAPIKeys, "apikeys_user_enabled", "userApiKeys"},
+		{"feature_tickets_enabled", ticketsNow, req.Tickets != nil, "feature_tickets_enabled", "tickets"},
+		{"feature_modpacks_enabled", modpacksNow, req.Modpacks != nil, "feature_modpacks_enabled", "modpacks"},
+		{"feature_library_enabled", libraryNow, req.Library != nil, "feature_library_enabled", "library"},
+		{"feature_modpack_authoring_enabled", authoringNow, req.ModpackAuthoring != nil || forceAuthoringWrite, "feature_modpack_authoring_enabled", "modpackAuthoring"},
+		{"feature_auto_move_enabled", pick(req.AutoMove, false), req.AutoMove != nil, "feature_auto_move_enabled", "autoMove"},
+		{"feature_byon_enabled", pick(req.Byon, false), req.Byon != nil, "feature_byon_enabled", "byon"},
+		{"apikeys_user_enabled", pick(req.UserAPIKeys, false), req.UserAPIKeys != nil, "apikeys_user_enabled", "userApiKeys"},
 	}
 	for _, kv := range writes {
+		if !kv.send {
+			continue
+		}
 		if err := h.state.Store.SetSetting(kv.key, boolStr(kv.val)); err != nil {
 			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -178,11 +228,13 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// the list is a NARROWING filter, and an entry that no key could carry
 	// anyway narrows nothing. Refusing the whole save over one stale id would
 	// make the field impossible to edit after a capability is renamed.
-	if err := h.state.Store.SetSetting("apikeys_user_allowed_caps", sanitizeKeyCapList(req.UserAPIKeyAllowedCaps)); err != nil {
-		sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
-		return
+	if req.UserAPIKeyAllowedCaps != nil {
+		if err := h.state.Store.SetSetting("apikeys_user_allowed_caps", sanitizeKeyCapList(*req.UserAPIKeyAllowedCaps)); err != nil {
+			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.state.FeatureFlags.Invalidate("apikeys_user_allowed_caps")
 	}
-	h.state.FeatureFlags.Invalidate("apikeys_user_allowed_caps")
 
 	// Bring the per-user column in line with the new global answer, so the users
 	// list shows the truth rather than a stale TRUE default from before the split.
@@ -193,10 +245,10 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// took effect.
 	usersChanged := int64(0)
 	if authoringChanged {
-		n, err := h.state.Store.BulkSetCanCreateModpacks(req.ModpackAuthoring, req.ApplyAuthoringToManual)
+		n, err := h.state.Store.BulkSetCanCreateModpacks(authoringNow, req.ApplyAuthoringToManual)
 		if err != nil {
 			log.Printf("features: modpack authoring bulk apply (to=%v includeManual=%v) failed: %v",
-				req.ModpackAuthoring, req.ApplyAuthoringToManual, err)
+				authoringNow, req.ApplyAuthoringToManual, err)
 		}
 		usersChanged = n
 	}
@@ -204,8 +256,24 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// Keep the navbar module in step: it appears when the subsystem is on, and
 	// widens from admin-only to everyone when authoring opens. Non-fatal for the
 	// same reason - the row is presentation, the flags are the gate.
-	if err := syncModpackModule(h.state, req.Modpacks, req.ModpackAuthoring); err != nil {
+	if err := syncModpackModule(h.state, modpacksNow, authoringNow); err != nil {
 		log.Printf("features: syncing the Modpacks module row failed: %v", err)
+	}
+
+	// Tickets and Library follow the same rule, for enabled only - who sees them
+	// stays the operator's choice in Settings -> Modules. Before this, Tickets
+	// had two independent switches and a module row left off while the feature
+	// was on produced a working ticket system with no way into it.
+	for _, m := range []struct {
+		name string
+		on   bool
+	}{
+		{ticketsModuleName, ticketsNow},
+		{libraryModuleName, libraryNow},
+	} {
+		if err := syncModuleEnabled(h.state, m.name, m.on); err != nil {
+			log.Printf("features: syncing the %s module row failed: %v", m.name, err)
+		}
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{

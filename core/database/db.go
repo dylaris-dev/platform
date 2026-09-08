@@ -292,5 +292,10 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	}
 
 	seedSystemModules(db)
+
+	// After the seed, so every row it owns is guaranteed to exist.
+	if err := applyDerivedModuleRows(db); err != nil {
+		return err
+	}
 	return nil
 }

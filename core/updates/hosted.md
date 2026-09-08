@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.3
+
+### Features
+- **Support is where you expect it.** When we have the ticket system running,
+  the Support entry now always appears in the menu. It could previously be
+  missing while tickets were fully working, and the only way in was a link from
+  a notification.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.09.2
 
 ### Features

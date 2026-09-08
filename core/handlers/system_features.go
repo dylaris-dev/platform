@@ -29,6 +29,10 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// "authoring is closed here" apart from "modpacks are off entirely".
 			"modpackAuthoring": h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context()),
 			"tickets":          h.state.FeatureFlags.IsTicketsEnabled(r.Context()),
+			// The shared file library. Needed here because /library is a page,
+			// not only a navbar entry: the module row hid the link and left the
+			// page reachable by URL, so the panel has to be able to gate it.
+			"library": h.state.FeatureFlags.IsLibraryEnabled(r.Context()),
 			// Raw admin flag; the panel ANDs it with the live routing mode,
 			// since auto-move is only effective while the gateway is on.
 			"autoMove": h.state.FeatureFlags.IsAutoMoveEnabled(r.Context()),
