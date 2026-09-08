@@ -1,11 +1,14 @@
 package store
 
 import (
+	"database/sql"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"dylaris-core/models"
 )
 
 // GetServerByUUID joins nodes for node_status/node_last_seen_at so the panel
@@ -117,7 +120,7 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		"cpu_limit", "node_id", "extra_jvm_flags", "start_command", "installer_type",
 		"minecraft_version", "build_number", "disk_limit", "server_type", "proxy_id",
 		"node_address", "host_port", "container_port", "region", "node_status",
-		"node_last_seen_at", "role", "permissions",
+		"node_last_seen_at", "node_owner_id", "node_tags", "role", "permissions",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		5, "uuid-c", "charlie", "node-1", "owner-name", 25565, "online", "running",
@@ -125,7 +128,7 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		1.5, 7, "", "", "",
 		"", "", int64(0), "game", nil,
 		"10.0.0.5", 25565, 25565, "default", "offline",
-		now, "owner", nil,
+		now, nil, "external,eu", "owner", nil,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.owner_id = $1")).
 		WithArgs(owner).
@@ -149,6 +152,89 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 	// after Region, this would scan "owner" or NULL into the wrong field.
 	if got[0].Role != "owner" {
 		t.Fatalf("Role = %q, want owner (role/permissions must still scan correctly after the NodeStatus/NodeLastSeenAt insertion)", got[0].Role)
+	}
+	// The node columns are joined only to be folded into NodeKind. A NULL
+	// owner with an "external" tag is an external platform node, and getting
+	// this wrong is how a server would land under the wrong tab.
+	if got[0].NodeKind != models.NodeKindExternal {
+		t.Fatalf("NodeKind = %q, want external", got[0].NodeKind)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// scanNodeKind folds the two joined node columns into the one answer that
+// travels. Ownership is asked FIRST: a customer's machine that also carries the
+// "external" tag is still the customer's, and demoting it to "external" would
+// put it back on a screen it must not reach.
+func TestScanNodeKindAsksOwnershipBeforeTheTag(t *testing.T) {
+	owner := "22222222-2222-2222-2222-222222222222"
+	cases := []struct {
+		name  string
+		owner sql.NullString
+		tags  string
+		want  models.NodeKind
+	}{
+		{"unowned, untagged", sql.NullString{}, "eu,ssd", models.NodeKindPlatform},
+		{"unowned, tagged external", sql.NullString{}, "external", models.NodeKindExternal},
+		{"owned", sql.NullString{String: owner, Valid: true}, "", models.NodeKindBYON},
+		{"owned AND tagged external", sql.NullString{String: owner, Valid: true}, "external", models.NodeKindBYON},
+		// An owner_id of the empty string is not an owner. It reaches here from
+		// rows written before the column was nullable.
+		{"owned by nobody", sql.NullString{String: "", Valid: true}, "", models.NodeKindPlatform},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := scanNodeKind(c.owner, c.tags); got != c.want {
+				t.Errorf("scanNodeKind = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// The admin list must ask the DATABASE not to send servers on customer-owned
+// nodes. Filtering them after they arrive was the previous behaviour and it put
+// every customer's server names into every admin's browser. If this predicate
+// is ever simplified away, the leak comes back silently - nothing else fails.
+func TestListServersForAdminAsksTheDatabaseToExcludeCustomerHardware(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	s := NewPostgresStore(db)
+
+	admin := "33333333-3333-3333-3333-333333333333"
+	mock.ExpectQuery(regexp.QuoteMeta("WHERE n.owner_id IS NULL")).
+		WithArgs(admin).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	if _, err := s.ListServersForUser(admin, true); err != nil {
+		t.Fatalf("ListServersForUser: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("the admin query did not filter on node ownership: %v", err)
+	}
+}
+
+// ListAllServers is the deliberate exception and must NOT carry the filter: a
+// proxy on a customer's node resolves its backends through it, and a filtered
+// answer there stops that customer's proxy routing instead of hiding anything.
+func TestListAllServersDoesNotFilterByNodeOwnership(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	s := NewPostgresStore(db)
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM servers s JOIN nodes n")).
+		WithArgs().
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	if _, err := s.ListAllServers(); err != nil {
+		t.Fatalf("ListAllServers: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet sqlmock expectations: %v", err)

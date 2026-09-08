@@ -160,7 +160,7 @@ export default function MailingTab() {
 
                         <div>
                             <label className="input-label mb-1 block" htmlFor="mt-subject">Subject</label>
-                            <input id="mt-subject" ref={subjectRef} className="input w-full" value={subject}
+                            <input id="mt-subject" ref={subjectRef} className="input-field w-full" value={subject}
                                 onFocus={() => { lastFocused.current = 'subject'; }}
                                 onChange={e => setSubject(e.target.value)} />
                         </div>
@@ -182,7 +182,7 @@ export default function MailingTab() {
 
                         <div>
                             <label className="input-label mb-1 block" htmlFor="mt-body">Body</label>
-                            <textarea id="mt-body" ref={bodyRef} rows={12} className="input w-full font-mono text-sm"
+                            <textarea id="mt-body" ref={bodyRef} rows={12} className="input-field w-full font-mono text-sm"
                                 value={body}
                                 onFocus={() => { lastFocused.current = 'body'; }}
                                 onChange={e => setBody(e.target.value)} />
@@ -205,7 +205,7 @@ export default function MailingTab() {
                                 <Send size={14} /> {testing ? 'Sending...' : 'Send a test to myself'}
                             </button>
                             {active.edited && (
-                                <button type="button" className="btn btn-sm btn-danger-ghost"
+                                <button type="button" className="btn btn-sm btn-danger"
                                     disabled={resetting} onClick={doReset}>
                                     <RotateCcw size={14} /> {resetting ? 'Resetting...' : 'Reset to default'}
                                 </button>

@@ -185,7 +185,12 @@ type Store interface {
 	GetInvite(serverID int, userID string) (*models.ServerInvite, error)
 	ListInvitesByServer(serverID int) ([]models.ServerInvite, error)
 	CountInvitesPerServer() (map[int]int, error)
+	// ListServersForUser answers "what may this account see". For an admin that
+	// is the platform's own servers plus the ones they own or were invited to -
+	// NOT servers on a customer's own node. Use ListAllServers when the answer
+	// is not being shown to anybody.
 	ListServersForUser(userID string, isAdmin bool) ([]models.Server, error)
+	ListAllServers() ([]models.Server, error)
 
 	// --- Authz (permission-system foundation, phase 1; additive) ---
 	// Read-side accessors the authz.Resolver depends on. Write-side CRUD

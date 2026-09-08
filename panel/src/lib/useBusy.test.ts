@@ -39,6 +39,10 @@ const LOCAL_ONLY = new Set([
     'startEdit',            // seeds an edit form
     'addHoster',            // appends an empty row to a form array
     'startCreate',          // opens an empty form dialog; the SAVE inside it is guarded
+    // Sets the node the confirm dialog is about. The delete itself lives in
+    // DeleteNodeModal and is disabled while it runs - and that dialog also
+    // makes you type the node's name, so a double click cannot reach it.
+    'onOpenDeleteDialog',
 ]);
 
 describe('a mutating button cannot be fired twice', () => {

@@ -12,7 +12,12 @@ import (
 
 // GetAdminServers GET /api/admin/servers — returns all DB servers with optional search filter
 func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) {
-	servers, err := h.state.Store.ListServersForUser("", true)
+	// The caller's own id matters even here: it is what keeps an operator's own
+	// servers, and any they were invited to, in their own admin list once
+	// customer-owned hardware stops being listed. Passing "" would have hidden
+	// the admin's own BYON servers from the admin.
+	userID, _ := r.Context().Value("userID").(string)
+	servers, err := h.state.Store.ListServersForUser(userID, true)
 	if err != nil {
 		sendJSONError(w, "Database error", 500)
 		return

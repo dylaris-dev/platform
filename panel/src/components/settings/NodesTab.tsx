@@ -10,6 +10,7 @@ import {
     mintEnrollToken, listEnrollTokens, revokeEnrollToken, type AdmissionCIDR, type NodeEnrollToken,
     getFleetStoragePlacement, setFleetStoragePlacement, type StoragePlacement as StoragePlacementConfig,
 } from '@/lib/api';
+import DeleteNodeModal, { type DeletableNode } from '@/components/nodes/DeleteNodeModal';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { timeAgo } from '@/lib/time';
@@ -42,12 +43,17 @@ interface DeployBundle {
     linkDiscoveryProof: string;
 }
 
-type SubTab = 'nodes' | 'placement' | 'enrollment';
+type SubTab = 'nodes' | 'external' | 'placement' | 'enrollment';
 
-export const NODE_TABS: readonly SubTab[] = ['nodes', 'placement', 'enrollment'];
+export const NODE_TABS: readonly SubTab[] = ['nodes', 'external', 'placement', 'enrollment'];
 
 const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
     { id: 'nodes', label: 'Nodes', icon: Server },
+    // Split from Nodes rather than mixed in: an external node is the operator's
+    // own hardware outside the swarm and only routes through gateway+beam, so
+    // "why can I not place a server there" has a different answer for it.
+    // Customers' machines appear on NEITHER - see the 'fleet' scope below.
+    { id: 'external', label: 'External nodes', icon: Globe },
     { id: 'placement', label: 'Placement', icon: SettingsIcon },
     // How a machine BECOMES a node (admission gate + enroll tokens) is a
     // different job from looking after the ones that already are, and mixing
@@ -68,7 +74,8 @@ export default function NodesTab() {
             <GuardedTabs items={NAV_ITEMS} active={subTab} onChange={setSubTab} ariaLabel="Node settings" />
 
             <div className="flex-1 overflow-y-auto pt-5">
-                {subTab === 'nodes' && <NodesPanel showToast={toast} />}
+                {subTab === 'nodes' && <NodesPanel showToast={toast} kind="platform" />}
+                {subTab === 'external' && <NodesPanel showToast={toast} kind="external" />}
                 {subTab === 'placement' && <PlacementPanel showToast={toast} />}
                 {subTab === 'enrollment' && (
                     <div className="space-y-6">
@@ -93,7 +100,7 @@ function isExternalNode(node: Node): boolean {
     return !!node.tags && node.tags.split(',').map(t => t.trim()).includes('external');
 }
 
-function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean) => void; kind: 'platform' | 'external' }) {
     // Applied routing mode from the shared app context (same source WarpTab
     // gates on) — no extra fetch, no new store. regions feed the config picker.
     const { routingMode, regions } = useAppData();
@@ -109,6 +116,7 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
     // Sticky rather than a toast: loadNodes runs on a 5s interval, so a toast
     // per failed poll would be a stream of them.
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<DeletableNode | null>(null);
 
     useEffect(() => {
         loadNodes();
@@ -117,7 +125,12 @@ function NodesPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => v
     }, []);
 
     const loadNodes = async () => {
-        const res = await getNodes();
+        // 'fleet' is the operator's own machines, platform and external. This
+        // screen used to ask for the unscoped list, which is every machine the
+        // caller may see - so a customer's node was listed here with Configure
+        // and Reset pairing live beside it. Enforced in Core, not here: a
+        // filter in the panel would still have sent the rows to the browser.
+        const res = await getNodes('fleet');
         // A dropped failure left the list at its last value - empty on the first
         // poll - and the panel then stated "No nodes connected". For an operator
         // checking whether the fleet is up, that is the worst possible thing to
@@ -178,22 +191,36 @@ LINK_IMAGE=<public link image, e.g. ghcr.io/dylaris-dev/gateway-link:latest>` : 
 LINK_SECRET=${revealed.linkSecret}
 LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
 
+    // Both tabs poll the same 'fleet' request and split it here. One poll, and
+    // the two tabs can never disagree about which machines exist. Customers'
+    // machines are absent already - Core does not send them to this scope.
+    const shownNodes = nodes.filter(n => isExternalNode(n) === (kind === 'external'));
+
     return (
         <div className="space-y-6">
             <div>
-                <h3 className="text-base font-display font-bold text-(--base-09) mb-4">Connected Nodes</h3>
+                <h3 className="text-base font-display font-bold text-(--base-09) mb-1">
+                    {kind === 'external' ? 'External nodes' : 'Cluster nodes'}
+                </h3>
+                <p className="text-xs text-(--base-06) mb-4">
+                    {kind === 'external'
+                        ? 'Your own machines outside the swarm. They reach players through the gateway and beam only.'
+                        : 'The machines running inside your swarm.'}
+                </p>
                 <div className="space-y-3">
                     {loadError && (
                         <div className="p-3 border border-(--error) rounded-md text-(--error) text-sm">
                             {loadError} The list below may be out of date.
                         </div>
                     )}
-                    {nodes.length === 0 && !loadError ? (
+                    {shownNodes.length === 0 && !loadError ? (
                         <div className="text-center p-8 border border-dashed border-(--base-04) rounded-lg text-(--base-06) text-sm">
-                            No nodes connected. Start a node!
+                            {kind === 'external'
+                                ? 'No external nodes. A node joins this tab by starting with NODE_EXTERNAL=true.'
+                                : 'No nodes connected. Start a node!'}
                         </div>
                     ) : (
-                        nodes.map(node => (
+                        shownNodes.map(node => (
                             <NodeCard
                                 key={node.id}
                                 node={node}
@@ -213,11 +240,21 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                                 revealingDeployBundle={revealingId === node.id}
                                 onResetPairing={() => resetPairing(node)}
                                 resettingPairing={resettingId === node.id}
+                                onOpenDeleteDialog={node.status === 'online' ? null : () => setDeleteTarget({ id: node.id, name: node.name })}
                             />
                         ))
                     )}
                 </div>
             </div>
+
+            {deleteTarget && (
+                <DeleteNodeModal
+                    node={deleteTarget}
+                    onClose={() => setDeleteTarget(null)}
+                    onDeleted={name => { setDeleteTarget(null); loadNodes(); showToast(`Node "${name}" deleted`); }}
+                    onError={msg => showToast(msg, false)}
+                />
+            )}
 
             {resetReveal && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setResetReveal(null)}>
@@ -287,6 +324,9 @@ interface NodeCardProps {
     revealingDeployBundle: boolean;
     onResetPairing: () => void;
     resettingPairing: boolean;
+    // Only offered while the node is offline: deleting a machine that is still
+    // running would leave its containers alive with nothing tracking them.
+    onOpenDeleteDialog: (() => void) | null;
 }
 
 // nodeActionClass styles a node action that OPENS an editor below the row.
@@ -311,7 +351,7 @@ export function nodeActionClass(active: boolean, needsAttention: boolean): strin
     return `${base} text-(--base-06) hover:text-(--accent-light)`;
 }
 
-function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing }: NodeCardProps) {
+function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onOpenDeleteDialog }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -371,9 +411,9 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
     };
 
     return (
-        <div className="card p-3 transition-colors hover:border-(--base-05)">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-4 min-w-0">
+        <div className="card p-2.5 transition-colors hover:border-(--base-05)">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-3 min-w-0">
                     {(() => {
                       const now = Date.now();
                       const { tier } = nodeConnectivity(node.status, node.lastSeenAt, now);
@@ -381,8 +421,8 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                       const title = tier === 'ok' ? node.status : connLabel(tier, node.lastSeenAt);
                       return <div className={`status-dot shrink-0 ${dot}`} title={title}></div>;
                     })()}
-                    <div className="w-10 h-10 bg-(--accent-ghost) text-(--accent-light) rounded-md flex items-center justify-center border border-(--accent-border) shrink-0">
-                        <Server size={24} />
+                    <div className="w-8 h-8 bg-(--accent-ghost) text-(--accent-light) rounded-md flex items-center justify-center border border-(--accent-border) shrink-0">
+                        <Server size={18} />
                     </div>
                     <div className="flex flex-col min-w-0">
                         <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 min-w-0">
@@ -494,6 +534,16 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                         <RotateCcw size={11} />
                         {resettingPairing ? 'Resetting…' : 'Reset pairing'}
                     </button>
+                    {onOpenDeleteDialog && (
+                        <button
+                            onClick={onOpenDeleteDialog}
+                            className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors"
+                            title="Delete this node and everything on it"
+                        >
+                            <Trash2 size={11} />
+                            Delete
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -509,7 +559,7 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
             )}
 
             {/* Placement summary / editor */}
-            <div className="mt-3 pt-3 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+            <div className="mt-2.5 pt-2.5 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-6 gap-x-3 gap-y-2 text-xs">
                 <Stat label="Total CPU" value={node.totalCpu ? `${node.totalCpu.toFixed(1)} cores` : '—'} />
                 <Stat
                     label="CPU cores"
@@ -804,7 +854,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
     return (
         <div>
             <div className="mono-label">{label}</div>
-            <div className="text-sm text-(--base-09) mt-0.5">{value}</div>
+            <div className="text-sm text-(--base-09) leading-tight">{value}</div>
         </div>
     );
 }

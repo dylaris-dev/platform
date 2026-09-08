@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
 
 const TABS = [
-    { slug: 'servers', label: 'All Servers' },
+    { slug: 'servers', label: 'Servers' },
     { slug: 'users', label: 'Users' },
     { slug: 'routes', label: 'Routes' },
     { slug: 'disk', label: 'Disk Analysis' },

@@ -114,7 +114,7 @@ export default function PlatformRestoreCard() {
                     <div>
                         <label className="input-label mb-1 block" htmlFor="pr-pass">Backup passphrase</label>
                         <div className="flex gap-2">
-                            <input id="pr-pass" type="password" className="input flex-1" value={passphrase}
+                            <input id="pr-pass" type="password" className="input-field flex-1" value={passphrase}
                                 autoComplete="off"
                                 onChange={e => {
                                     setPassphrase(e.target.value);
@@ -178,18 +178,18 @@ export default function PlatformRestoreCard() {
                         <div className="space-y-2">
                             <p className="input-label">Target database</p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                <input className="input" placeholder="Host" value={target.host}
+                                <input className="input-field" placeholder="Host" value={target.host}
                                     onChange={e => setTarget(t => ({ ...t, host: e.target.value }))} />
-                                <input className="input" placeholder="Port" value={target.port}
+                                <input className="input-field" placeholder="Port" value={target.port}
                                     onChange={e => setTarget(t => ({ ...t, port: e.target.value }))} />
-                                <input className="input" placeholder="User" value={target.user}
+                                <input className="input-field" placeholder="User" value={target.user}
                                     onChange={e => setTarget(t => ({ ...t, user: e.target.value }))} />
-                                <input className="input" type="password" placeholder="Password" value={target.password}
+                                <input className="input-field" type="password" placeholder="Password" value={target.password}
                                     autoComplete="off"
                                     onChange={e => setTarget(t => ({ ...t, password: e.target.value }))} />
-                                <input className="input" placeholder="Database name" value={target.dbName}
+                                <input className="input-field" placeholder="Database name" value={target.dbName}
                                     onChange={e => setTarget(t => ({ ...t, dbName: e.target.value }))} />
-                                <select className="input" value={target.sslMode}
+                                <select className="input-field" value={target.sslMode}
                                     onChange={e => setTarget(t => ({ ...t, sslMode: e.target.value }))}>
                                     <option value="disable">sslmode: disable</option>
                                     <option value="require">sslmode: require</option>

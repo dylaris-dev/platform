@@ -79,6 +79,10 @@ export default function AdminServersPage() {
     // Auto-hides UI when only the 'default' region exists.
     const [regionFilter, setRegionFilter] = useState<Set<string>>(new Set());
     const [showRegionMenu, setShowRegionMenu] = useState(false);
+    // Which machines a server sits on. A segmented filter rather than a second
+    // tab bar: this page already sits under the admin tab bar, and the panel
+    // caps sub-navigation at one level.
+    const [kindFilter, setKindFilter] = useState<'all' | 'platform' | 'external'>('all');
 
     const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
@@ -113,8 +117,20 @@ export default function AdminServersPage() {
         if (regionFilter.size > 0) {
             list = list.filter(s => regionFilter.has(s.region || 'default'));
         }
+        if (kindFilter !== 'all') {
+            // A server on a node that has not reconnected since the external
+            // tag was introduced reports as 'platform'. Treating a missing
+            // value as platform keeps it visible somewhere rather than in
+            // neither list.
+            list = list.filter(s => (s.nodeKind ?? 'platform') === kindFilter);
+        }
         return list;
-    }, [servers, search, regionFilter]);
+    }, [servers, search, regionFilter, kindFilter]);
+
+    const externalCount = useMemo(
+        () => servers.filter(s => s.nodeKind === 'external').length,
+        [servers]
+    );
 
     return (
         <div className="flex flex-col gap-4 h-full">
@@ -133,6 +149,32 @@ export default function AdminServersPage() {
                     <button onClick={() => setSearch('')} className="text-(--base-05) hover:text-(--base-07) transition-colors">
                         <X size={14} />
                     </button>
+                )}
+                {/* Hidden until there is something to separate: on an install
+                    with no external nodes this filter would only ever have one
+                    populated option. */}
+                {externalCount > 0 && (
+                    <div className="flex bg-(--base-03) p-0.5 rounded-md shrink-0" role="group" aria-label="Filter by node kind">
+                        {([
+                            ['all', 'All'],
+                            ['platform', 'Cluster'],
+                            ['external', 'External'],
+                        ] as const).map(([id, label]) => (
+                            <button
+                                key={id}
+                                type="button"
+                                onClick={() => setKindFilter(id)}
+                                aria-pressed={kindFilter === id}
+                                className={`px-2.5 py-1 text-[11px] rounded-sm transition-colors ${
+                                    kindFilter === id
+                                        ? 'bg-(--accent) text-white'
+                                        : 'text-(--base-07) hover:text-(--base-09)'
+                                }`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
                 )}
                 {multiRegion && (
                     <div className="relative">
@@ -239,6 +281,14 @@ export default function AdminServersPage() {
                                     )}
                                     <td className="py-2.5 pr-4 hidden lg:table-cell">
                                         <span className="text-(--base-06) text-xs">{s.node}</span>
+                                        {s.nodeKind === 'external' && (
+                                            <span
+                                                className="ml-1.5 px-1 py-0.5 rounded text-[10px] bg-(--base-03) text-(--base-07) align-middle"
+                                                title="Runs on your own hardware outside the swarm - gateway and beam only"
+                                            >
+                                                External
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="py-2.5 pr-4 hidden xl:table-cell">
                                         <span className="text-(--base-06) text-xs tabular-nums" title={s.createdAt}>{formatRelativeDate(s.createdAt)}</span>

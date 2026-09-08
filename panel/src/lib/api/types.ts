@@ -165,6 +165,9 @@ export interface Server {
     // Node reachability for the honest connectivity display (joined from nodes).
     nodeStatus?: string;
     nodeLastSeenAt?: string;
+    // Whose machine this server runs on, derived by Core from the node row.
+    // The node's owner id is deliberately NOT sent - only the class.
+    nodeKind?: 'platform' | 'external' | 'byon';
     serverType?: 'game' | 'proxy';
     proxyId?: number | null;
     createdAt?: string;
@@ -320,10 +323,14 @@ export const getNodeDeployBundle = (nodeId: number) => fetchAPI(`/nodes/${nodeId
  *   'byon'     - machines the CALLER brought. Owner-scoped for everyone, admins
  *                included: it answers "your machines", and an admin's own are
  *                not the fleet's. The unscoped call is how an admin sees all.
+ *   'fleet'    - the machines the OPERATOR runs: platform and external, never a
+ *                customer's. Admin only. This is what an administration screen
+ *                wants, because Configure and Reset pairing have no meaning on
+ *                hardware somebody else owns.
  * Omitted returns everything the caller may see, which is what the node pickers
  * elsewhere in the panel want.
  */
-export const getNodes = (scope?: 'external' | 'byon' | 'placement') =>
+export const getNodes = (scope?: 'external' | 'byon' | 'placement' | 'fleet') =>
     fetchAPI(scope ? `/nodes?scope=${scope}` : '/nodes');
 export const createNode = (data: Partial<Node>) => fetchAPI('/nodes', { method: 'POST', body: JSON.stringify(data) });
 export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
@@ -1328,6 +1335,9 @@ export interface AdminServer {
     memberCount?: number;
     proxyId?: number | null;
     region?: string;
+    // Whose machine it runs on. 'byon' never appears here: Core does not send
+    // servers on customer-owned hardware to an operator's list at all.
+    nodeKind?: 'platform' | 'external' | 'byon';
 }
 export interface DiskAnalysis {
     nodeOnline?: boolean;

@@ -30,7 +30,7 @@ export async function deleteUser(id: string) {
 // --- NODES ---
 // scope narrows the list server-side: 'placement' returns what this caller may
 // actually put a server on, which is not the whole fleet even for an operator.
-export async function getNodes(scope?: 'external' | 'byon' | 'placement') {
+export async function getNodes(scope?: 'external' | 'byon' | 'placement' | 'fleet') {
     try {
         const res = await fetch(`${API_URL}/nodes${scope ? `?scope=${scope}` : ''}`, { headers: getAuthHeader() });
         return handleResponse(res);

@@ -1575,7 +1575,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
 
                                 <div className="flex flex-wrap items-center gap-3">
                                     <select
-                                        className="input input-sm"
+                                        className="input-field text-xs py-1"
                                         value={tlKind}
                                         onChange={e => setTlKind(e.target.value)}
                                         aria-label="Traffic kind"
@@ -1587,7 +1587,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                     {isRegionalKind(tlKind) && (
                                         trafficRegions.length > 0 ? (
                                             <select
-                                                className="input input-sm"
+                                                className="input-field text-xs py-1"
                                                 value={effectiveTrafficRegion}
                                                 onChange={e => setTlRegion(e.target.value)}
                                                 aria-label="Region"

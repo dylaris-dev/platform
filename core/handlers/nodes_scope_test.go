@@ -180,3 +180,38 @@ func TestPlaceableNodeOffersOnlyWhatPlacementAccepts(t *testing.T) {
 		})
 	}
 }
+
+// scope=fleet is what Settings -> Nodes asks for: the machines the OPERATOR
+// runs. That screen offers Configure, Reset pairing and the deploy bundle, and
+// it used to ask for the unscoped list - so every tenant's machine appeared
+// there with those buttons live beside it.
+//
+// Both halves matter. Platform AND external must survive, because external is
+// the operator's own hardware outside the swarm and dropping it would hide real
+// capacity; every BYON node must go, whoever owns it, including the admin's own
+// - Settings is where the platform is administered, and a machine an admin
+// brought as a customer is managed from the customer surface like anyone's.
+func TestFleetScopeKeepsTheOperatorsMachinesAndNoCustomers(t *testing.T) {
+	me := "11111111-1111-1111-1111-111111111111"
+	someoneElse := "22222222-2222-2222-2222-222222222222"
+
+	nodes := []models.Node{
+		{Name: "swarm-1"},
+		{Name: "office-box", Tags: "external"},
+		{Name: "my-own-byon", OwnerID: &me},
+		{Name: "a-customers-box", OwnerID: &someoneElse},
+		// Ownership is asked before the tag, so this is a customer's machine
+		// that happens to be tagged - not an external one.
+		{Name: "customer-box-tagged", OwnerID: &someoneElse, Tags: "external"},
+	}
+
+	got := filterNodes(nodes, func(n models.Node) bool { return !isBYONNode(n) })
+
+	var names []string
+	for _, n := range got {
+		names = append(names, n.Name)
+	}
+	if len(names) != 2 || names[0] != "swarm-1" || names[1] != "office-box" {
+		t.Fatalf("scope=fleet returned %v, want [swarm-1 office-box]", names)
+	}
+}

@@ -110,7 +110,10 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 
 	if srv.ServerType == "proxy" {
 		// Return endpoints for every linked game-server.
-		linked, _ := h.state.Store.ListServersForUser("", true)
+		// The fleet, not a visible list: a proxy on a customer's own node has
+		// its backends on that same node, and filtering them out here would
+		// stop that customer's proxy routing rather than hide anything.
+		linked, _ := h.state.Store.ListAllServers()
 		var out []endpoint
 		for _, child := range linked {
 			if child.ProxyID == nil || *child.ProxyID != srv.ID {

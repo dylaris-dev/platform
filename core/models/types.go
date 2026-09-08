@@ -417,12 +417,17 @@ type Server struct {
 	// the server's last node-pushed status and freezes when the node goes away.
 	NodeStatus     string     `json:"nodeStatus"`
 	NodeLastSeenAt *time.Time `json:"nodeLastSeenAt"`
-	OwnerID        string     `json:"ownerId"`
-	OwnerName      string     `json:"owner"`
-	GameImage      string     `json:"image"`
-	Port           int        `json:"port"`
-	Memory         int        `json:"memory"`
-	CPULimit       float64    `json:"cpuLimit"`
+	// NodeKind is whose machine this server runs on, derived from the node row
+	// rather than carried on it. The derived answer travels and the inputs do
+	// not: nodes.owner_id would tell every reader WHICH account owns the
+	// hardware, which is a different fact than the one a server list needs.
+	NodeKind  NodeKind `json:"nodeKind"`
+	OwnerID   string   `json:"ownerId"`
+	OwnerName string   `json:"owner"`
+	GameImage string   `json:"image"`
+	Port      int      `json:"port"`
+	Memory    int      `json:"memory"`
+	CPULimit  float64  `json:"cpuLimit"`
 	// CPUPinningMode: 'shared' (default), 'auto' or 'manual'. Cpuset is the
 	// effective core list (e.g. "0-3,8"), empty when shared/unpinned.
 	CPUPinningMode   string `json:"cpuPinningMode"`

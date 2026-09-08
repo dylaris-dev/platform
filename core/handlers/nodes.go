@@ -178,6 +178,19 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			// another tenant's machine from an operator: their hardware is not
 			// the operator's capacity, and canPlaceOnNode refuses it anyway.
 			nodes = filterNodes(nodes, placeableNode(byonCallerID(r), admin, byon))
+		case "fleet":
+			// The machines the OPERATOR runs: platform and external, never a
+			// customer's. It backs Settings -> Nodes, which offers Configure,
+			// Reset pairing and the deploy bundle - none of which an operator
+			// has any business doing to hardware somebody else owns.
+			//
+			// That screen used to ask for the unscoped list, so every tenant's
+			// machine appeared there with those buttons live next to it.
+			if !admin {
+				sendJSONError(w, "Forbidden", 403)
+				return
+			}
+			nodes = filterNodes(nodes, func(n models.Node) bool { return !isBYONNode(n) })
 		default:
 			sendJSONError(w, "Unknown scope", 400)
 			return

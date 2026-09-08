@@ -342,7 +342,7 @@ function PassphraseCard({ isSet, onChanged }: { isSet: boolean; onChanged: () =>
                     )}
                     <div>
                         <label className="input-label mb-1 block" htmlFor="pb-pass">Passphrase</label>
-                        <input id="pb-pass" type="password" className="input w-full" value={value}
+                        <input id="pb-pass" type="password" className="input-field w-full" value={value}
                             autoComplete="new-password"
                             onChange={e => setValue(e.target.value)} />
                         {tooShort && (
@@ -351,7 +351,7 @@ function PassphraseCard({ isSet, onChanged }: { isSet: boolean; onChanged: () =>
                     </div>
                     <div>
                         <label className="input-label mb-1 block" htmlFor="pb-pass-2">Repeat</label>
-                        <input id="pb-pass-2" type="password" className="input w-full" value={repeat}
+                        <input id="pb-pass-2" type="password" className="input-field w-full" value={repeat}
                             autoComplete="new-password"
                             onChange={e => setRepeat(e.target.value)} />
                         {mismatch && (
@@ -420,18 +420,18 @@ function JobEditor({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-name">Name</label>
-                    <input id="pb-name" className="input w-full" value={draft.name}
+                    <input id="pb-name" className="input-field w-full" value={draft.name}
                         onChange={e => onChange({ ...draft, name: e.target.value })} />
                 </div>
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-schedule">Schedule</label>
-                    <input id="pb-schedule" className="input w-full" value={draft.schedule}
+                    <input id="pb-schedule" className="input-field w-full" value={draft.schedule}
                         placeholder="manual, every 24h, every 7d"
                         onChange={e => onChange({ ...draft, schedule: e.target.value })} />
                 </div>
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-storage">Destination</label>
-                    <select id="pb-storage" className="input w-full" value={draft.storageId ?? ''}
+                    <select id="pb-storage" className="input-field w-full" value={draft.storageId ?? ''}
                         onChange={e => onChange({ ...draft, storageId: e.target.value ? Number(e.target.value) : null })}>
                         <option value="">Default storage</option>
                         {/* Already platform-only: a tenant's own storages live
@@ -443,7 +443,7 @@ function JobEditor({
                 </div>
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-retention">Keep</label>
-                    <input id="pb-retention" type="number" min={1} className="input w-full" value={draft.retentionCount}
+                    <input id="pb-retention" type="number" min={1} className="input-field w-full" value={draft.retentionCount}
                         onChange={e => onChange({ ...draft, retentionCount: Math.max(1, Number(e.target.value) || 1) })} />
                 </div>
             </div>
@@ -489,7 +489,7 @@ function JobEditor({
                 </div>
 
                 {draft.selection.servers.mode === 'owner' && (
-                    <select className="input w-full" value={draft.selection.servers.ownerId || ''}
+                    <select className="input-field w-full" value={draft.selection.servers.ownerId || ''}
                         onChange={e => onChange({
                             ...draft,
                             selection: { ...draft.selection, servers: { ...draft.selection.servers, ownerId: e.target.value || undefined } },
@@ -503,7 +503,7 @@ function JobEditor({
 
                 {draft.selection.servers.mode === 'list' && (
                     <div className="space-y-2">
-                        <input className="input w-full" placeholder="Filter by name or UUID" value={filter}
+                        <input className="input-field w-full" placeholder="Filter by name or UUID" value={filter}
                             onChange={e => setFilter(e.target.value)} />
                         <div className="max-h-56 overflow-y-auto border border-(--base-04) rounded-md divide-y divide-(--base-03)">
                             {visible.length === 0 && (

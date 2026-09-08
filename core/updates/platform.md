@@ -8,6 +8,31 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.2
+
+### Features
+- **Servers on a customer's own node no longer appear in operator lists.** Admin
+  -> Servers and the admin view of the sidebar now show the platform's own
+  machines plus anything you own or were invited to. They used to be sent to the
+  browser and merely hidden there. `core` `panel`
+- **Settings -> Nodes is split into Nodes and External nodes**, and no longer
+  lists machines a customer brought. Configure, Reset pairing and the setup
+  values have no meaning on hardware somebody else owns. `core` `panel`
+- **Deleting a node moved to Settings -> Nodes.** Infrastructure is a read-only
+  view of how the fleet is doing again, so one machine is managed from one
+  screen. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Twenty inputs and one button rendered as unstyled browser controls** on the
+  Platform backups, Restore, Users and Mailing screens: they named a CSS class
+  that was never defined. `panel`
+
 ## 2026.09.09
 
 ### Features

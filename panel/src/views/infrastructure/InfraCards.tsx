@@ -184,12 +184,10 @@ export function StatCard({ label, value, sub, icon }: { label: string; value: st
 
 export function NodeCard({
   node,
-  onDelete,
   gatewayEnabled,
   onNavigateToAdminDisk,
 }: {
   node: NodeInfo;
-  onDelete: (node: NodeInfo) => void;
   gatewayEnabled: boolean;
   onNavigateToAdminDisk: (nodeId: number) => void;
 }) {
@@ -235,15 +233,6 @@ export function NodeCard({
           <span className={`mono-label ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
             {node.status}
           </span>
-          {!isOnline && (
-            <button
-              onClick={() => onDelete(node)}
-              className="p-1 rounded-md hover:bg-(--error)/10 text-(--base-05) hover:text-(--error-light) transition-colors"
-              title="Delete node"
-            >
-              <Trash2 size={13} />
-            </button>
-          )}
         </div>
       </div>
 

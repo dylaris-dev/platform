@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.2
+
+### Features
+- **Servers running on your own machine are no longer listed in our operator
+  screens.** They were only ever visible to our own staff, and now they are not
+  sent there at all. Nothing changes about how you run them, and inviting us to
+  a server still works if you want help with one.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.09
 
 ### Features
