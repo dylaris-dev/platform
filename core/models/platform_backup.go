@@ -73,9 +73,23 @@ type PlatformBackupSelection struct {
 // bundle, because an empty bundle looks exactly like a successful backup.
 var ErrEmptyPlatformBackupSelection = errors.New("a platform backup must include at least one component")
 
+// ServerMode is the selection's server mode with absence read as "none".
+//
+// An ABSENT mode and a WRONG one are different things and must not be treated
+// alike. A payload that omits the servers object at all, or a row written
+// before the field existed, selects no servers - the forgiving reading, and the
+// safe direction. A mode that is present but unrecognised is a mistake or a
+// newer version's word, and is refused rather than silently read as none.
+func (s PlatformBackupSelection) ServerMode() PlatformBackupServerMode {
+	if s.Servers.Mode == "" {
+		return PlatformBackupServersNone
+	}
+	return s.Servers.Mode
+}
+
 // Validate reports whether this selection describes a run that can be executed.
 func (s PlatformBackupSelection) Validate() error {
-	switch s.Servers.Mode {
+	switch s.ServerMode() {
 	case PlatformBackupServersNone, PlatformBackupServersAll, PlatformBackupServersBYON:
 	case PlatformBackupServersOwner:
 		if s.Servers.OwnerID == nil || *s.Servers.OwnerID == "" {
@@ -90,7 +104,7 @@ func (s PlatformBackupSelection) Validate() error {
 	}
 
 	if !s.Database && !s.MetricsDB && !s.Library && !s.Modpacks &&
-		s.Servers.Mode == PlatformBackupServersNone {
+		s.ServerMode() == PlatformBackupServersNone {
 		return ErrEmptyPlatformBackupSelection
 	}
 	return nil

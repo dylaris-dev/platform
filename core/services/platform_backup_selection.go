@@ -20,6 +20,8 @@ import (
 // what it names, so an id pointing at a deleted server is the ordinary state of
 // a healthy configuration, and the run has to carry on and say what it skipped.
 func SelectBackupServers(all []models.BackupTargetServer, sel models.PlatformBackupServers) (picked []models.BackupTargetServer, missing []int) {
+	// An absent mode is "none", the same reading Validate takes; anything else
+	// unrecognised falls through to the default below and selects nothing.
 	switch sel.Mode {
 	case models.PlatformBackupServersAll:
 		return append([]models.BackupTargetServer{}, all...), nil

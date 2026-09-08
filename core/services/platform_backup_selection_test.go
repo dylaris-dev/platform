@@ -207,6 +207,35 @@ func TestPlatformBackupSelectionValidate(t *testing.T) {
 	}
 }
 
+// An ABSENT mode and a WRONG one are not the same thing. A payload that omits
+// the servers object, or a row written before the field existed, selects no
+// servers. A mode that is present but unrecognised is refused - reading it as
+// none would silently drop what a newer version meant, and reading it as
+// anything else would archive on the strength of a word we cannot interpret.
+func TestAnAbsentServerModeIsNoneAndAWrongOneIsRefused(t *testing.T) {
+	absent := models.PlatformBackupSelection{Database: true}
+	if err := absent.Validate(); err != nil {
+		t.Fatalf("a selection with no servers object was refused: %v", err)
+	}
+	if got := absent.ServerMode(); got != models.PlatformBackupServersNone {
+		t.Errorf("ServerMode() = %q, want none", got)
+	}
+	picked, missing := SelectBackupServers(fleet(), absent.Servers)
+	if len(picked) != 0 || len(missing) != 0 {
+		t.Errorf("an absent mode selected %v", ids(picked))
+	}
+
+	// And absence alone is still an empty run.
+	if err := (models.PlatformBackupSelection{}).Validate(); !errors.Is(err, models.ErrEmptyPlatformBackupSelection) {
+		t.Errorf("err = %v, want ErrEmptyPlatformBackupSelection", err)
+	}
+
+	wrong := models.PlatformBackupSelection{Database: true, Servers: models.PlatformBackupServers{Mode: "everything"}}
+	if err := wrong.Validate(); err == nil {
+		t.Error("an unrecognised mode was accepted")
+	}
+}
+
 func TestPlatformBackupSelectionValidateRejectsIncompleteServerModes(t *testing.T) {
 	cases := []struct {
 		name string

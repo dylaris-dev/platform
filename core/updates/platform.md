@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.08
+
+### Features
+- Groundwork for platform-wide backups: Core can now assemble one bundle from a
+  selected set of components and seal it under the backup passphrase. Nothing
+  offers it yet. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.07.14
 
 ### Features
