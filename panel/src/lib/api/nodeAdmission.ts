@@ -52,13 +52,85 @@ export async function deleteAdmissionCIDR(id: string): Promise<{ success: boolea
     }
 }
 
-export async function resetNodePairing(nodeId: number): Promise<{ success: boolean; token?: string; env?: string; note?: string; message?: string }> {
+/**
+ * Clears the node's secret and cuts its live Redis access.
+ *
+ * It no longer hands back a token. A node holding the cluster secret re-pairs
+ * itself within seconds; any other node then shows up under connection
+ * attempts, where it is admitted with one click instead of an environment
+ * variable and a redeploy.
+ */
+export async function resetNodePairing(nodeId: number): Promise<{ success: boolean; note?: string; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/nodes/${nodeId}/reset-pairing`, {
             method: 'POST',
             headers: getAuthHeader(),
         });
-        return (await handleResponse(res)) as { success: boolean; token?: string; env?: string; note?: string; message?: string };
+        return (await handleResponse(res)) as { success: boolean; note?: string; message?: string };
+    } catch (err) {
+        return handleError(err) as { success: boolean; message?: string };
+    }
+}
+
+/**
+ * One connection Core is refusing.
+ *
+ * Only `peerIp` is observed - Core reads it off the socket. Everything else is
+ * what the machine SAID about itself, before any proof was checked, so the UI
+ * labels it as reported and the approval is bound to the address rather than to
+ * anything on this list.
+ */
+export interface NodeJoinAttempt {
+    nodeToken: string;
+    nodeName: string;
+    displayName: string;
+    peerIp: string;
+    reportedPublicIp: string;
+    reportedPrivateIps: string;
+    hostname: string;
+    cpuCores: number;
+    cpuModel: string;
+    memoryBytes: number;
+    releaseVersion: string;
+    reason: string;
+    attempts: number;
+    firstSeenAt: string;
+    lastSeenAt: string;
+    approvedUntil?: string;
+    approvedFromIp?: string;
+    approvedBy?: string;
+}
+
+export async function listNodeJoinAttempts(): Promise<{ success: boolean; attempts?: NodeJoinAttempt[]; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/nodes/join-attempts`, { headers: getAuthHeader() });
+        return (await handleResponse(res)) as { success: boolean; attempts?: NodeJoinAttempt[]; message?: string };
+    } catch (err) {
+        return handleError(err) as { success: boolean; message?: string };
+    }
+}
+
+/** Admits this identity from the address the attempt came from, briefly. */
+export async function approveNodeJoinAttempt(nodeToken: string): Promise<{ success: boolean; note?: string; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/nodes/join-attempts/${encodeURIComponent(nodeToken)}/approve`, {
+            method: 'POST',
+            headers: getAuthHeader(),
+        });
+        return (await handleResponse(res)) as { success: boolean; note?: string; message?: string };
+    } catch (err) {
+        return handleError(err) as { success: boolean; message?: string };
+    }
+}
+
+/** Drops the row. It comes back if the machine keeps trying - this is not a block. */
+export async function dismissNodeJoinAttempt(nodeToken: string): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/nodes/join-attempts/${encodeURIComponent(nodeToken)}`, {
+            method: 'DELETE',
+            headers: getAuthHeader(),
+        });
+        return (await handleResponse(res)) as { success: boolean; message?: string };
     } catch (err) {
         return handleError(err) as { success: boolean; message?: string };
     }

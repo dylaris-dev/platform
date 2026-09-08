@@ -736,7 +736,28 @@ func main() {
 	// Serves in its own goroutine; the handle comes back so shutdown can drain
 	// node streams instead of severing them. A bind failure surfaces here,
 	// synchronously, rather than from inside a goroutine after boot continued.
-	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, pgStore, cfg.GRPCTLSEnabled, cfg.ClusterSecret)
+	// The gRPC package imports neither models nor store, so the join-attempt
+	// recorder is adapted here rather than satisfied directly - the same shape
+	// StoreAdapter already uses for node lookups.
+	joinAttempts := &nodegrpc.JoinAttemptFuncs{
+		Record: func(a nodegrpc.JoinAttempt) error {
+			return pgStore.RecordNodeJoinAttempt(models.NodeJoinAttempt{
+				NodeToken:          a.NodeToken,
+				PeerIP:             a.PeerIP,
+				ReportedPublicIP:   a.PublicIP,
+				ReportedPrivateIPs: a.PrivateIPs,
+				Hostname:           a.Hostname,
+				CPUCores:           a.CPUCores,
+				CPUModel:           a.CPUModel,
+				MemoryBytes:        a.MemoryBytes,
+				ReleaseVersion:     a.ReleaseVersion,
+				Reason:             a.Reason,
+			})
+		},
+		Consume: pgStore.ConsumeNodeJoinApproval,
+		Forget:  pgStore.DeleteNodeJoinAttempt,
+	}
+	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret)
 	if err != nil {
 		log.Fatalf("gRPC server error: %v", err)
 	}

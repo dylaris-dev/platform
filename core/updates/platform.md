@@ -8,6 +8,39 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.4
+
+### Features
+- **A node Core is refusing is now listed in the panel.** Settings -> Nodes
+  shows the attempt with the address Core observed and what the machine reports
+  about itself, and one click admits it: the node picks up a new secret on its
+  next retry, about a minute later. `core` `node` `panel`
+- **NODE_RECOVERY_TOKEN is gone.** Re-pairing a node no longer means editing its
+  environment and restarting it - on a Swarm stack that was a stack edit and a
+  redeploy to re-admit one host. If you run the Swarm stack, take the new
+  `NODE_HOSTNAME: "{{.Node.Hostname}}"` line with it, or the panel shows a
+  container id where the machine's name should be. `core` `node`
+- **A node that has lost its secret keeps dialling instead of stopping at
+  startup.** That is what makes it visible and admittable. It still refuses to
+  re-register as a NEW node, which is the thing that guard was written for.
+  `node`
+
+### Breaking
+- **NODE_RECOVERY_TOKEN is no longer read by the node.** Remove it from your node
+  environment; a token minted before this release can no longer be redeemed.
+  Settings -> Nodes replaces it. `node`
+
+### Security
+- **An admission is bound to the address Core saw the node connect from and
+  lapses after 15 minutes.** The identity on a refused attempt is self-reported,
+  so an approval that stood indefinitely, or for any address, would admit
+  whoever presented that identity next. `core`
+
+### Fixes
+- **A refused node connection left no record anywhere.** It was one line on
+  Core's stdout, which goes when the container restarts, so a node retrying for
+  hours looked exactly like a machine that had been switched off. `core`
+
 ## 2026.09.09.3
 
 ### Features

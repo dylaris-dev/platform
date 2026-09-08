@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **526 routes** in 52 sections: 236 GET, 157 POST, 40 PUT, 38 PATCH, 56 DELETE.
+- **529 routes** in 52 sections: 237 GET, 158 POST, 40 PUT, 38 PATCH, 57 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **352** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **355** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (122)
+- [/api/admin](#apiadmin) (125)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -217,9 +217,12 @@ can still show what exists.
 | GET | `/api/admin/metrics/export` | session | `topology.read` | - | `MetricsHandler.Export` | The point of the export is that the numbers can leave with the person reading them - into a spreadsheet, a due-diligence pack, a mail. |
 | GET | `/api/admin/metrics/series` | session | `topology.read` | - | `MetricsHandler.Series` | ?metric=platform.players&from=…&to=…&step=300&subject=…&region=…&split=1 |
 | GET | `/api/admin/metrics/summary` | session | `topology.read` | - | `MetricsHandler.Summary` | The headline numbers, reduced over the window. |
+| GET | `/api/admin/nodes/join-attempts` | session | `nodes.read` | - | `NodeAdmissionHandler.ListJoinAttempts` | the connections Core is REFUSING, so an operator can see them at all. |
+| DELETE | `/api/admin/nodes/join-attempts/{token}` | session | `nodes.write` | - | `NodeAdmissionHandler.DismissJoinAttempt` | drop a row an operator has decided is not theirs to act on. |
+| POST | `/api/admin/nodes/join-attempts/{token}/approve` | session | `nodes.write` | - | `NodeAdmissionHandler.ApproveJoinAttempt` | let this machine back in, without touching the machine. |
 | GET | `/api/admin/nodes/{id:[0-9]+}/disk-analysis` | session | `nodes.read` | - | `NodeHandler.GetDiskAnalysis` | cross-references disk folders on a node with DB servers. |
 | DELETE | `/api/admin/nodes/{id:[0-9]+}/orphan` | session | `nodes.delete` | - | `NodeHandler.DeleteOrphanedFolder` | deletes an orphaned UUID folder from a node via gRPC. |
-| POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE + RECOVER: clear the node's secret, hard-cut its live Redis ACL, and mint a single-use recovery token bound to its identity. |
+| POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE: clear the node's secret and hard-cut its live Redis ACL. |
 | GET | `/api/admin/panel-roles` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelRoles` | the level-1 staff roles and their capabilities. |
 | POST | `/api/admin/panel-roles` | session | `panelroles.write` | - | `PanelRolesHandler.CreatePanelRole` | adds a staff role. |
 | PATCH | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.write` | - | `PanelRolesHandler.UpdatePanelRole` | renames a staff role and replaces its capability set. |

@@ -1,14 +1,11 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
@@ -127,10 +124,21 @@ func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
-// ResetPairing POST /api/admin/nodes/{id}/reset-pairing — REVOKE + RECOVER:
-// clear the node's secret, hard-cut its live Redis ACL, and mint a single-use
-// recovery token bound to its identity. The node row / owner / servers / backups
-// are untouched; recovery re-provisions the ACL under a fresh secret on re-pair.
+// ResetPairing POST /api/admin/nodes/{id}/reset-pairing — REVOKE: clear the
+// node's secret and hard-cut its live Redis ACL. The node row / owner / servers
+// / backups are untouched, and the next connect re-provisions the ACL under a
+// fresh secret.
+//
+// It no longer mints anything. This used to hand back a single-use
+// NODE_RECOVERY_TOKEN that an operator had to write into the node's environment
+// and restart it for - which on a Swarm stack is a stack edit and a redeploy to
+// re-admit one host, and which had to be started from a screen that never showed
+// the node was being refused. A node that holds CLUSTER_SECRET was never
+// affected either way: it re-pairs by itself in seconds via the cluster proof.
+//
+// What replaced it: the node keeps dialling, Core records the refusal, and an
+// operator admits it from the same screen the refusal is listed on. See
+// ApproveJoinAttempt below.
 func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(id)
@@ -140,19 +148,9 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	}
 	uid := byonCallerID(r)
 
-	b := make([]byte, 32)
-	if _, rerr := rand.Read(b); rerr != nil {
-		sendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
-		return
-	}
-	token := hex.EncodeToString(b)
-	t := time.Now().AddDate(0, 0, 7)
-	if err := h.state.Store.CreateRecoveryToken(uid, token, node.Token, &t); err != nil {
-		sendJSONError(w, "Failed to create recovery token", http.StatusInternalServerError)
-		return
-	}
-	// Invalidate the current secret: HasSecret -> false forces the next reconnect
-	// through the recovery branch (which re-issues a fresh secret under this id).
+	// Invalidate the current secret: HasSecret -> false sends the next reconnect
+	// down the first-issuance branch, which accepts a cluster proof or an
+	// admission granted here.
 	if err := h.state.Store.SetNodeSecretEnc(node.ID, ""); err != nil {
 		sendJSONError(w, "Failed to reset secret", http.StatusInternalServerError)
 		return
@@ -173,8 +171,85 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"token":   token,
-		"env":     "NODE_RECOVERY_TOKEN=" + token,
-		"note":    "Shown once. Set NODE_RECOVERY_TOKEN on the node to re-pair under its existing identity, then remove it after a successful reconnect.",
+		"note":    "The node's secret is cleared. A node holding the cluster secret re-pairs itself within seconds; any other node will appear under Connection attempts, where you can admit it.",
 	})
+}
+
+// ListJoinAttempts GET /api/admin/nodes/join-attempts — the connections Core is
+// REFUSING, so an operator can see them at all.
+//
+// Every field except peerIp is what the caller SAID about itself, sent before
+// any proof is checked. The panel labels them as reported for that reason; the
+// address is the one thing on the row that cannot be chosen by the caller.
+func (h *NodeAdmissionHandler) ListJoinAttempts(w http.ResponseWriter, r *http.Request) {
+	attempts, err := h.state.Store.ListNodeJoinAttempts()
+	if err != nil {
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "attempts": attempts})
+}
+
+// ApproveJoinAttempt POST /api/admin/nodes/join-attempts/{token}/approve — let
+// this machine back in, without touching the machine.
+//
+// Two acts, in this order. The node's secret is cleared, which is what sends its
+// next connect down the first-issuance branch at all; then the admission is
+// armed. Doing it the other way round would arm a door that the next connect
+// walks straight past, because a node whose secret Core still holds is answered
+// with a challenge and never reaches the branch that checks admissions.
+//
+// The armed window is short and tied to the address the attempt came from. The
+// identity on a refused attempt is self-claimed - anyone who learns a node's id
+// can knock - so an approval that stood indefinitely, or for any source address,
+// would be an invitation to whoever knocks next.
+func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http.Request) {
+	token := mux.Vars(r)["token"]
+	node, err := h.state.Store.GetNodeByToken(token)
+	if err != nil || node == nil {
+		sendJSONError(w, "No node with that identity", http.StatusNotFound)
+		return
+	}
+	if err := h.state.Store.SetNodeSecretEnc(node.ID, ""); err != nil {
+		sendJSONError(w, "Failed to reset secret", http.StatusInternalServerError)
+		return
+	}
+	if h.state.Redis != nil {
+		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
+	}
+	uid := byonCallerID(r)
+	armed, err := h.state.Store.ApproveNodeJoinAttempt(token, uid)
+	if err != nil {
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	if !armed {
+		// No row, or a row with no observed address. Both mean there is nothing
+		// to bind the admission to, and admitting an identity from anywhere is
+		// exactly what this must not do.
+		sendJSONError(w, "That attempt is no longer listed, or Core never saw an address for it. Wait for the node to try again.", http.StatusConflict)
+		return
+	}
+	if uid != "" {
+		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+			EventType:   "node.join_approved",
+			ActorUserID: &uid,
+			Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token},
+		})
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"note":    "Admitted. The node retries every 30 seconds, so it should be back within a minute.",
+	})
+}
+
+// DismissJoinAttempt DELETE /api/admin/nodes/join-attempts/{token} — drop a row
+// an operator has decided is not theirs to act on. It comes back if the machine
+// keeps trying, which is the point: dismissing is not blocking.
+func (h *NodeAdmissionHandler) DismissJoinAttempt(w http.ResponseWriter, r *http.Request) {
+	if err := h.state.Store.DeleteNodeJoinAttempt(mux.Vars(r)["token"]); err != nil {
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

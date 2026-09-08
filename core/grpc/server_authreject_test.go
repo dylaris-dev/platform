@@ -197,7 +197,7 @@ func (a *acceptingClusterACL) EnrollPlatform(context.Context, string, string) (s
 // users), and thirty seconds later both did it again. 249 node rows, 119 of them
 // in one hour, and the node never came back.
 //
-// The two sides now say the same thing: re-pair with NODE_RECOVERY_TOKEN.
+// The two sides now say the same thing: admit the node from Settings -> Nodes.
 func TestAPairedNodeIsNeverReEnrolledUnderANewIdentity(t *testing.T) {
 	acl := &acceptingClusterACL{}
 

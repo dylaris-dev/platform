@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.4
+
+### Features
+- **A node of yours that gets locked out is now put back from our side, in about
+  a minute.** We used to send you a one-time token to paste into your node's
+  configuration and restart it. Your node now keeps trying on its own and we let
+  it back in - nothing changes on your machine.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.09.3
 
 ### Features

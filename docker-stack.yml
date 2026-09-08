@@ -276,12 +276,22 @@ services:
       REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
       # Redis-ACL bootstrap (mandatory -- no open-Redis fallback). CORE_GRPC_ADDR
       # is Core's gRPC mesh port on the same Docker network (DYLARIS_GRPC_PORT,
-      # default 25501). NODE_ENROLL_TOKEN (first boot) and NODE_RECOVERY_TOKEN
-      # (re-pairing after a secret reset) are single-use, operator-generated in
-      # the panel; a node with an already-cached secret can start without them.
+      # default 25501). NODE_ENROLL_TOKEN is the single-use first-boot token,
+      # generated in the panel; a node with an already-cached secret starts
+      # without it.
+      #
+      # There is no NODE_RECOVERY_TOKEN any more. A node whose secret and Core's
+      # have diverged keeps dialling and appears under Settings -> Nodes ->
+      # Connection attempts, where an operator admits it. That is the whole
+      # reason it went: re-admitting one host used to mean editing this file and
+      # redeploying the stack.
       CORE_GRPC_ADDR: "core:25501"
       NODE_ENROLL_TOKEN: "${NODE_ENROLL_TOKEN:-}"
-      NODE_RECOVERY_TOKEN: "${NODE_RECOVERY_TOKEN:-}"
+      # The HOST's name, not the task's. Inside a Swarm task os.Hostname() is the
+      # container id, which is useless for recognising a machine in the panel;
+      # Swarm templates the real one here. It templates the hostname but NOT the
+      # address, which is why only this is passed.
+      NODE_HOSTNAME: "{{.Node.Hostname}}"
       PORT_RANGE: "${PORT_RANGE:-25600-25699}"
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com

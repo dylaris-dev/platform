@@ -39,7 +39,9 @@ func TestIdentityChange(t *testing.T) {
 			if adopt != c.wantAdopt {
 				t.Fatalf("adopt = %v, want %v", adopt, c.wantAdopt)
 			}
-			if c.wantError && !strings.Contains(err.Error(), "NODE_RECOVERY_TOKEN") {
+			// Naming a recovery route at all is the point; it is the panel now
+			// rather than an environment variable on the machine.
+			if c.wantError && !strings.Contains(err.Error(), "Settings -> Nodes") {
 				t.Errorf("the refusal does not say how to recover: %v", err)
 			}
 		})

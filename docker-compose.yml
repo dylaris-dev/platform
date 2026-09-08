@@ -185,12 +185,21 @@ services:
       REDIS_ADDR: "redis:6379"
       # Redis-ACL bootstrap (mandatory -- no open-Redis fallback). CORE_GRPC_ADDR
       # is Core's gRPC mesh port on the same Docker network (DYLARIS_GRPC_PORT,
-      # default 25501). NODE_ENROLL_TOKEN (first boot) and NODE_RECOVERY_TOKEN
-      # (re-pairing after a secret reset) are single-use, operator-generated in
-      # the panel; a node with an already-cached secret can start without them.
+      # default 25501). NODE_ENROLL_TOKEN is the single-use first-boot token,
+      # generated in the panel; a node with an already-cached secret starts
+      # without it.
+      #
+      # There is no NODE_RECOVERY_TOKEN any more. A node whose secret and Core's
+      # have diverged keeps dialling and appears under Settings -> Nodes ->
+      # Connection attempts, where an operator admits it. Nothing is set here to
+      # bring a node back.
       CORE_GRPC_ADDR: "core:25501"
       NODE_ENROLL_TOKEN: "${NODE_ENROLL_TOKEN:-}"
-      NODE_RECOVERY_TOKEN: "${NODE_RECOVERY_TOKEN:-}"
+      # The machine's own name, shown next to a refused connection so an
+      # operator can tell which host is knocking. Plain Docker gives the
+      # container a useful hostname already, so the node's own os.Hostname() is
+      # the fallback and this is only needed under Swarm - see docker-stack.yml.
+      NODE_HOSTNAME: "${NODE_HOSTNAME:-}"
       PORT_RANGE: "${PORT_RANGE:-25600-25699}"
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com

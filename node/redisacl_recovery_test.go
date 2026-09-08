@@ -8,39 +8,28 @@ import (
 )
 
 // The regression this pins: a node that still has .node_secret on disk must
-// STILL present its recovery token. Reset pairing wipes Core's copy of the
-// secret and DELUSERs the node's Redis users but cannot reach the node's disk,
-// so "has a cached secret" and "needs to re-pair" are true at the same time -
-// and the else-chain that used to build this treated them as alternatives.
+// STILL present its enroll token. Reset pairing wipes Core's copy of the secret
+// and DELUSERs the node's Redis users but cannot reach the node's disk, so "has
+// a cached secret" and "needs to re-pair" are true at the same time - and the
+// else-chain that used to build this treated them as alternatives.
+//
+// NODE_RECOVERY_TOKEN is gone: re-admission is decided in the panel now, so the
+// node has nothing to present for it and nothing to be configured with.
 func TestBootstrapCreds(t *testing.T) {
 	cases := []struct {
 		name      string
 		hasCached bool
-		recovery  string
 		enroll    string
 		wantProof bool
 		wantToken string
 	}{
-		{
-			name:      "reset pairing: cached secret AND recovery token, both must go out",
-			hasCached: true,
-			recovery:  "rec-token",
-			wantProof: true,
-			wantToken: "rec-token",
-		},
 		{
 			name:      "first boot: no cache, enroll token only",
 			enroll:    "enroll-token",
 			wantToken: "enroll-token",
 		},
 		{
-			name:      "recovery beats enroll when an operator left both set",
-			recovery:  "rec-token",
-			enroll:    "enroll-token",
-			wantToken: "rec-token",
-		},
-		{
-			name:      "steady state: cached secret, no tokens, proof only",
+			name:      "steady state: cached secret, no token, proof only",
 			hasCached: true,
 			wantProof: true,
 		},
@@ -52,13 +41,13 @@ func TestBootstrapCreds(t *testing.T) {
 			wantToken: "enroll-token",
 		},
 		{
-			name: "nothing to present at all",
+			name: "nothing to present at all - the state an operator now resolves from the panel",
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			proof, token := bootstrapCreds(c.hasCached, c.recovery, c.enroll)
+			proof, token := bootstrapCreds(c.hasCached, c.enroll)
 			if proof != c.wantProof {
 				t.Errorf("sendProof = %v, want %v", proof, c.wantProof)
 			}
@@ -69,7 +58,7 @@ func TestBootstrapCreds(t *testing.T) {
 	}
 }
 
-// The recovery token is only useful if it actually reaches the wire. Pin that
+// The enroll token is only useful if it actually reaches the wire. Pin that
 // bootstrapSecretViaGRPC assigns EnrollToken from bootstrapCreds' result and
 // not from a branch of its own - a re-introduced `else if` there would restore
 // the exact defect while TestBootstrapCreds stayed green.
@@ -80,7 +69,7 @@ func TestBootstrapAuthTakesItsCredentialsFromBootstrapCreds(t *testing.T) {
 	}
 	body := string(src)
 
-	if !strings.Contains(body, "sendProof, token := bootstrapCreds(hasCached, nodeRecoveryToken, nodeEnrollToken)") {
+	if !strings.Contains(body, "sendProof, token := bootstrapCreds(hasCached, nodeEnrollToken)") {
 		t.Error("bootstrapSecretViaGRPC no longer asks bootstrapCreds what to present")
 	}
 	if !strings.Contains(body, "auth.EnrollToken = token") {

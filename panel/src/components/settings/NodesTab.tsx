@@ -11,6 +11,7 @@ import {
     getFleetStoragePlacement, setFleetStoragePlacement, type StoragePlacement as StoragePlacementConfig,
 } from '@/lib/api';
 import DeleteNodeModal, { type DeletableNode } from '@/components/nodes/DeleteNodeModal';
+import NodeJoinAttempts from '@/components/settings/NodeJoinAttempts';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { timeAgo } from '@/lib/time';
@@ -112,7 +113,6 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     const [revealed, setRevealed] = useState<DeployBundle | null>(null);
     const [revealingId, setRevealingId] = useState<number | null>(null);
     const [resettingId, setResettingId] = useState<number | null>(null);
-    const [resetReveal, setResetReveal] = useState<{ nodeId: string; token: string; env: string } | null>(null);
     // Sticky rather than a toast: loadNodes runs on a 5s interval, so a toast
     // per failed poll would be a stream of them.
     const [loadError, setLoadError] = useState<string | null>(null);
@@ -159,17 +159,14 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     const resetPairing = async (node: Node) => {
         if (!await confirmDialog({
             title: `Reset pairing for "${node.name}"?`,
-            message: 'Its current secret is invalidated immediately; the node must re-pair with the one-time recovery token you are about to receive. Server data is preserved.',
+            message: 'Its current secret is invalidated immediately. A node holding the cluster secret re-pairs itself within seconds; any other node appears under Connection attempts, where you admit it. Nothing needs changing on the machine, and server data is preserved.',
             confirmLabel: 'Reset pairing',
         })) return;
         setResettingId(node.id);
         const res = await resetNodePairing(node.id);
         setResettingId(null);
-        if (res.success && res.token) {
-            setResetReveal({ nodeId: node.name, token: res.token, env: res.env || `NODE_RECOVERY_TOKEN=${res.token}` });
-        } else {
-            showToast(res.message || 'Reset failed.', false);
-        }
+        if (res.success) showToast(res.note || 'Pairing reset.');
+        else showToast(res.message || 'Reset failed.', false);
     };
 
     // Extracted so the copy buttons below can send the exact same string that
@@ -198,6 +195,12 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
 
     return (
         <div className="space-y-6">
+            {/* Above the list, and only on the Nodes tab so it appears once: a
+                machine Core is refusing is the most urgent thing on this screen
+                and used to be invisible here entirely. It renders nothing when
+                nothing is being refused. */}
+            {kind === 'platform' && <NodeJoinAttempts onAdmitted={loadNodes} />}
+
             <div>
                 <h3 className="text-base font-display font-bold text-(--base-09) mb-1">
                     {kind === 'external' ? 'External nodes' : 'Cluster nodes'}
@@ -254,25 +257,6 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                     onDeleted={name => { setDeleteTarget(null); loadNodes(); showToast(`Node "${name}" deleted`); }}
                     onError={msg => showToast(msg, false)}
                 />
-            )}
-
-            {resetReveal && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setResetReveal(null)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Recovery token — {resetReveal.nodeId}</h3></div>
-                        <div className="modal-body space-y-3">
-                            <p className="text-sm text-(--base-07)">The node&apos;s secret is now invalidated. Deliver this token to the node and restart it. Shown once.</p>
-                            <div className="space-y-1">
-                                <label className="mono-label">Recovery ENV</label>
-                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{resetReveal.env}</pre>
-                                <button onClick={() => { navigator.clipboard.writeText(resetReveal.env); showToast('Recovery ENV copied.', true); }} className="btn btn-secondary btn-sm">
-                                    <Copy size={12} /> Copy recovery ENV
-                                </button>
-                            </div>
-                        </div>
-                        <div className="modal-footer"><button onClick={() => setResetReveal(null)} className="btn btn-primary">Done</button></div>
-                    </div>
-                </div>
             )}
 
             {revealed && (
@@ -529,7 +513,7 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                         onClick={onResetPairing}
                         disabled={resettingPairing}
                         className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
-                        title="Invalidate this node's secret and mint a one-time recovery token"
+                        title="Invalidate this node's secret; the node re-pairs itself or waits to be admitted"
                     >
                         <RotateCcw size={11} />
                         {resettingPairing ? 'Resetting…' : 'Reset pairing'}

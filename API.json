@@ -178,6 +178,36 @@
     },
     {
       "method": "GET",
+      "path": "/api/admin/nodes/join-attempts",
+      "auth": "session",
+      "authorization": "nodes.read",
+      "description": "the connections Core is REFUSING, so an operator can see them at all.",
+      "handler": "NodeAdmissionHandler.ListJoinAttempts",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/nodes/join-attempts/{token}",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "drop a row an operator has decided is not theirs to act on.",
+      "handler": "NodeAdmissionHandler.DismissJoinAttempt",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/nodes/join-attempts/{token}/approve",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "let this machine back in, without touching the machine.",
+      "handler": "NodeAdmissionHandler.ApproveJoinAttempt",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/nodes/{id:[0-9]+}/disk-analysis",
       "auth": "session",
       "authorization": "nodes.read",
@@ -201,7 +231,7 @@
       "path": "/api/admin/nodes/{id:[0-9]+}/reset-pairing",
       "auth": "session",
       "authorization": "nodes.write",
-      "description": "REVOKE + RECOVER: clear the node's secret, hard-cut its live Redis ACL, and mint a single-use recovery token bound to its identity.",
+      "description": "REVOKE: clear the node's secret and hard-cut its live Redis ACL.",
       "handler": "NodeAdmissionHandler.ResetPairing",
       "group": "admin",
       "external": false
@@ -5253,15 +5283,15 @@
     }
   ],
   "counts": {
-    "total": 527,
+    "total": 530,
     "byAuth": {
       "none": 38,
-      "session": 476,
+      "session": 479,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 122,
+      "admin": 125,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

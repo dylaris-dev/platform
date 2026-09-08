@@ -226,6 +226,10 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 			Public:  nodeIPs.Public,
 			Private: nodeIPs.Private,
 		},
+		// Sent on every connect, not only while bootstrapping: this is the
+		// stream that starts failing when the two secrets diverge, and it is
+		// the only place Core learns what the machine calls itself.
+		Identity: machineIdentity(),
 	}
 	// The node already holds a secret by the time the mesh runs, so it MUST present
 	// a proof. Core refuses an empty proof for a node with a stored secret.

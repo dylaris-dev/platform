@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 
 	beamauth "dylaris-pkg/beam/auth"
 	pb "dylaris-proto/node"
@@ -62,6 +63,16 @@ type AdmissionChecker interface {
 
 // peerIP returns the TCP source IP of the gRPC connection (NOT the self-reported
 // auth.Ips value and NOT the overlay IP), or nil if it cannot be resolved.
+// peerIPString is peerIP as text, empty when the address is unknown. An empty
+// value never matches an approval: ConsumeNodeJoinApproval refuses one, so an
+// unidentifiable caller cannot be let in by a blank on both sides.
+func peerIPString(ctx context.Context) string {
+	if ip := peerIP(ctx); ip != nil {
+		return ip.String()
+	}
+	return ""
+}
+
 func peerIP(ctx context.Context) net.IP {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p.Addr == nil {
@@ -74,13 +85,61 @@ func peerIP(ctx context.Context) net.IP {
 	return net.ParseIP(host)
 }
 
-// RecoveryTokenConsumer single-use-consumes a recovery/enroll token and returns
-// the node token it re-pairs (empty for a normal enroll token). Used ONLY by the
-// known-node recovery branch. Satisfied by *store.PostgresStore. nil = recovery off.
-type RecoveryTokenConsumer interface {
-	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
-	ResolveRecoveryToken(plaintext string) (recoversNodeToken string, ok bool, err error)
+// JoinAttempt is one refused connection, as this layer sees it.
+//
+// Only PeerIP is observed; everything else is what the caller said about itself
+// and travels solely so a human can recognise the machine in the panel. The
+// struct lives here rather than in models because this package deliberately
+// imports neither models nor store - main.go adapts it, the way StoreAdapter
+// already does for node lookups.
+type JoinAttempt struct {
+	NodeToken      string
+	PeerIP         string
+	PublicIP       string
+	PrivateIPs     string
+	Hostname       string
+	CPUCores       int
+	CPUModel       string
+	MemoryBytes    int64
+	ReleaseVersion string
+	Reason         string
 }
+
+// JoinAttemptRecorder makes a refusal visible and lets an operator undo it.
+//
+// It replaced RecoveryTokenConsumer, which existed for NODE_RECOVERY_TOKEN: an
+// admin-minted token that had to be put in the node's own environment and the
+// node restarted. On a Swarm stack that is an edit and a redeploy to re-admit
+// one machine, and it could only be started from a screen that never showed the
+// node was being refused in the first place. Re-admission is now decided in the
+// panel, and nothing is set on the machine.
+//
+// nil = neither recording nor panel admission, which is what every test that
+// does not care wants.
+type JoinAttemptRecorder interface {
+	RecordJoinAttempt(a JoinAttempt) error
+	// ConsumeJoinApproval reports whether an operator has admitted this identity
+	// FROM THIS ADDRESS, and closes the door behind it. Bounded by address
+	// because the identity in a refused attempt is self-claimed.
+	ConsumeJoinApproval(nodeToken, peerIP string) (bool, error)
+	// ForgetJoinAttempts drops the record once the node is back, so the list is
+	// of machines that need attention rather than a history.
+	ForgetJoinAttempts(nodeToken string) error
+}
+
+// JoinAttemptFuncs adapts plain functions to JoinAttemptRecorder, so main.go can
+// wire the store without this package importing it.
+type JoinAttemptFuncs struct {
+	Record  func(a JoinAttempt) error
+	Consume func(nodeToken, peerIP string) (bool, error)
+	Forget  func(nodeToken string) error
+}
+
+func (f *JoinAttemptFuncs) RecordJoinAttempt(a JoinAttempt) error { return f.Record(a) }
+func (f *JoinAttemptFuncs) ConsumeJoinApproval(t, ip string) (bool, error) {
+	return f.Consume(t, ip)
+}
+func (f *JoinAttemptFuncs) ForgetJoinAttempts(t string) error { return f.Forget(t) }
 
 // Node is a minimal representation used by the gRPC layer.
 // Matches the fields needed from models.Node.
@@ -111,7 +170,7 @@ type Server struct {
 	acl        ACLHandshake
 	linkCreds  LinkCredSource
 	admission  AdmissionChecker
-	recovery   RecoveryTokenConsumer
+	joins      JoinAttemptRecorder
 	// updateGate refuses or warns a node that has not applied a mandatory
 	// update. Set after construction rather than as an eighth positional
 	// argument; nil means neither, which is what every test wants.
@@ -124,7 +183,7 @@ type Server struct {
 func (s *Server) SetUpdateGate(g *UpdateGate) { s.updateGate = g }
 
 // NewServer creates a new gRPC server for Node connections.
-func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, recovery RecoveryTokenConsumer) *Server {
+func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, joins JoinAttemptRecorder) *Server {
 	return &Server{
 		registry:   registry,
 		nodeLookup: lookup,
@@ -132,7 +191,7 @@ func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHand
 		acl:        acl,
 		linkCreds:  linkCreds,
 		admission:  admission,
-		recovery:   recovery,
+		joins:      joins,
 	}
 }
 
@@ -190,6 +249,43 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		_ = stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
 			AuthResult: &pb.AuthResult{Ok: false, Message: msg},
 		}})
+	}
+
+	// recordRefusal makes a rejection VISIBLE. sendFail above writes a line to
+	// Core's stdout, which dies with the container - so a node hammering the door
+	// for six hours left nothing an operator could find, and the panel showed a
+	// machine that was simply "offline".
+	//
+	// Called only for identities Core already knows. An unknown claimant is not
+	// approvable (Core will not mint a secret for an identity it has no row for),
+	// so listing one would add nothing to act on and would let anyone who can
+	// reach this port write rows into that table.
+	//
+	// Best-effort: a failure to record must never change whether a node is
+	// admitted. It is a screen, not a gate.
+	recordRefusal := func(reason string) {
+		if s.joins == nil {
+			return
+		}
+		a := JoinAttempt{
+			NodeToken:      auth.NodeToken,
+			PeerIP:         peerIPString(ctx),
+			ReleaseVersion: auth.ReleaseVersion,
+			Reason:         reason,
+		}
+		if ips := auth.GetIps(); ips != nil {
+			a.PublicIP = ips.Public
+			a.PrivateIPs = strings.Join(ips.Private, ",")
+		}
+		if id := auth.GetIdentity(); id != nil {
+			a.Hostname = id.Hostname
+			a.CPUCores = int(id.CpuCores)
+			a.CPUModel = id.CpuModel
+			a.MemoryBytes = id.MemoryBytes
+		}
+		if err := s.joins.RecordJoinAttempt(a); err != nil {
+			log.Printf("acl: could not record the refused join for %s: %v", tokenPrefix(auth.NodeToken), err)
+		}
 	}
 
 	// Mandatory-update gate, BEFORE any lookup or provisioning. A node that is
@@ -264,11 +360,11 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// "Reset pairing" points at a screen where the node is not
 				// listed. That is a dead end an operator can only leave by
 				// touching the node's disk, so the message has to say so.
-				const msg = "Core has no record of this node. A recovery token is issued " +
-					"per node and cannot be minted for one that is not listed, so clear the " +
-					"cached identity on the node (.node_id and .node_secret in its storage " +
-					"directory) and restart it; it will pair again. If the node IS listed in " +
-					"the panel, use Settings -> Nodes -> Reset pairing and NODE_RECOVERY_TOKEN instead."
+				const msg = "Core has no record of this node. Re-admission is granted per " +
+					"node and cannot be granted for one that is not listed, so clear the cached " +
+					"identity on the node (.node_id and .node_secret in its storage directory) " +
+					"and restart it; it will pair again. If the node IS listed in the panel, " +
+					"admit it from Settings -> Nodes instead - nothing needs setting on the machine."
 				sendFail(msg)
 				return fmt.Errorf("acl: node %s presents a secret proof for an unknown identity; refusing to mint a new one", tokenPrefix(auth.NodeToken))
 			}
@@ -344,37 +440,46 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				}
 				ok, verr := s.acl.VerifyChallenge(ctx, node.ID, nonce, cr.Response)
 				if verr != nil || !ok {
+					// The node holds a secret and so does Core, and they differ.
+					// Core will not re-hand the secret to a bare token holder, so
+					// this repeats every thirty seconds until somebody acts - which
+					// is exactly why it has to be written down where an operator
+					// looks.
+					recordRefusal("the node's secret and Core's do not match")
 					sendFail("bad challenge response")
 					return fmt.Errorf("acl: bad challenge response for node %d", node.ID)
 				}
 			} else {
 				// First issuance for a known node. Accept EITHER:
-				//  (1) a cluster_proof (HMAC under CLUSTER_SECRET) — original path; or
-				//  (2) P0b-5 recovery: a single-use recovery token bound to THIS node
-				//      token, presented as auth.EnrollToken (fed via NODE_RECOVERY_TOKEN).
+				//  (1) a cluster_proof (HMAC under CLUSTER_SECRET) — the operator's
+				//      own machines, which hold it and recover by themselves; or
+				//  (2) an admission an operator granted in the panel, bound to the
+				//      address this connection is actually coming from.
 				// EnsureExisting below re-issues the secret + re-provisions the ACL under
 				// the SAME token/id (node_secret_enc was cleared -> a fresh secret is minted).
-				// Recovery is NOT gated by admission (known id, not a new registration).
+				// Neither path is gated by admission control: this is a known id, not a
+				// new registration.
+				//
+				// (2) replaced a single-use token an operator had to put in the node's
+				// own environment and restart it for. The check is deliberately the
+				// same SHAPE - one-shot, consumed here, refusable - and the address
+				// binding is what a token in an env var could not offer: the identity
+				// on a refused attempt is self-claimed, so "this id" alone would admit
+				// whoever knocks with it next.
 				if !s.acl.VerifyClusterProof(node.Token, auth.ClusterProof) {
-					recovered := false
-					if s.recovery != nil && auth.EnrollToken != "" {
-						recoversNodeToken, ok, rerr := s.recovery.ResolveRecoveryToken(auth.EnrollToken)
-						if rerr != nil {
-							sendFail("recovery check failed")
-							return fmt.Errorf("acl: node %d recovery check failed: %w", node.ID, rerr)
+					admitted := false
+					if s.joins != nil {
+						ok, aerr := s.joins.ConsumeJoinApproval(node.Token, peerIPString(ctx))
+						if aerr != nil {
+							sendFail("admission check failed")
+							return fmt.Errorf("acl: node %d admission check failed: %w", node.ID, aerr)
 						}
-						if ok && recoversNodeToken == node.Token {
-							_, _, consumedOk, cerr := s.recovery.ConsumeNodeEnrollToken(auth.EnrollToken)
-							if cerr != nil {
-								sendFail("recovery check failed")
-								return fmt.Errorf("acl: node %d recovery check failed: %w", node.ID, cerr)
-							}
-							recovered = consumedOk
-						}
+						admitted = ok
 					}
-					if !recovered {
-						sendFail("cluster proof or recovery token required")
-						return fmt.Errorf("acl: node %d first-issuance without valid cluster proof or recovery token", node.ID)
+					if !admitted {
+						recordRefusal("waiting to be admitted: no cluster secret and no approval")
+						sendFail("this node is not admitted; approve it in Settings -> Nodes")
+						return fmt.Errorf("acl: node %d first-issuance without cluster proof or panel admission", node.ID)
 					}
 				}
 			}
@@ -396,6 +501,13 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			}
 			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: res}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
+			}
+			// It is in. The list is of machines needing attention, not a history,
+			// so the row goes rather than lingering as a resolved-looking warning.
+			if s.joins != nil {
+				if err := s.joins.ForgetJoinAttempts(node.Token); err != nil {
+					log.Printf("acl: could not clear the refused-join record for node %d: %v", node.ID, err)
+				}
 			}
 		}
 	}
@@ -447,7 +559,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 // stream was severed by process exit instead of drained. Bind errors are
 // returned synchronously rather than raised from inside a goroutine, so a port
 // clash now fails the caller's boot sequence at a defined point.
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, recovery RecoveryTokenConsumer, tlsEnabled bool, clusterSecret string) (*grpc.Server, error) {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, joins JoinAttemptRecorder, tlsEnabled bool, clusterSecret string) (*grpc.Server, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -488,7 +600,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 
 	grpcServer := grpc.NewServer(opts...)
 
-	srv := NewServer(registry, lookup, coreID, acl, linkCreds, admission, recovery)
+	srv := NewServer(registry, lookup, coreID, acl, linkCreds, admission, joins)
 	// The mandatory-update policy is installed for the REAL server only. Tests
 	// construct Server directly and stay silent about updates unless they ask.
 	srv.SetUpdateGate(NewUpdateGate())

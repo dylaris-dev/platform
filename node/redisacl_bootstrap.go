@@ -147,17 +147,27 @@ func ensureNodeSecret(ctx context.Context) []byte {
 		log.Println("redisacl: using cached node secret")
 		return s
 	}
-	// P0b-5 hard guard: a node that already holds a server-assigned identity but has
-	// no cached secret must NOT silently re-pair as if it were new. It has to prove
-	// authority to re-pair. Accepted bootstrap credentials: a recovery token
-	// (NODE_RECOVERY_TOKEN), an enroll token (NODE_ENROLL_TOKEN), or — for platform
-	// nodes not yet migrated off CLUSTER_SECRET — the cluster secret (cluster proof).
-	// Without any of these, fail loudly instead of spinning on a rejected handshake.
-	if hadAssignedID && nodeRecoveryToken == "" && nodeEnrollToken == "" && clusterSecret == "" {
-		log.Printf("redisacl: FATAL paired node id %s has no cached secret and no way to re-pair. "+
-			"Obtain a recovery token from the panel (Settings -> Nodes -> Reset pairing) and start the node "+
-			"with NODE_RECOVERY_TOKEN set to re-pair under this identity.", nodeID)
-		return nil // caller (main.go) log.Fatal's on a nil secret -> process stops.
+	// A node that already holds a server-assigned identity but has no cached
+	// secret must NOT silently re-pair as if it were new. That guard stays; what
+	// changed is what happens when it has no credential to offer.
+	//
+	// It used to STOP here. That is what made re-pairing an on-machine job: a
+	// node that never dials is a node Core cannot see, so the only way back was
+	// to put a token in its environment and restart it. It now keeps dialling
+	// with the identity it claims and no proof. Core refuses that - it will not
+	// mint a secret for an unproven caller - but it RECORDS the attempt, and an
+	// operator can admit the machine from Settings -> Nodes without touching it.
+	//
+	// This does not weaken the guard, because the guard was never about the
+	// refusal. It was written after a node re-registered as NEW and produced 249
+	// node rows in an afternoon, orphaning the servers on the old id. Dialling
+	// with an existing identity and no proof cannot do that: Core refuses to
+	// mint for an identity it does not know, and allowIdentityChange still
+	// governs adopting a different one.
+	if hadAssignedID && nodeEnrollToken == "" && clusterSecret == "" {
+		log.Printf("redisacl: paired node id %s has no cached secret. Dialling Core without a proof; "+
+			"it will be refused until an operator admits it in Settings -> Nodes, where this node's "+
+			"connection attempts are listed.", nodeID)
 	}
 	// Shared reconnect schedule: 12x5s, then every 30s. Never gives up - a node
 	// whose Core is briefly away has to come back on its own.
@@ -212,38 +222,37 @@ func identityChange(assignedID, currentID string, allow bool) (adopt bool, err e
 	if !allow {
 		return false, fmt.Errorf(
 			"Core assigned identity %s but this node is already running as %s; "+
-				"refusing to change identity outside startup. Restart the node with "+
-				"NODE_RECOVERY_TOKEN to re-pair under its existing identity",
+				"refusing to change identity outside startup. Restart the node; if Core "+
+				"still refuses it, admit it from Settings -> Nodes",
 			assignedID, currentID)
 	}
 	return true, nil
 }
 
 // bootstrapCreds decides what a bootstrap NodeAuth carries: a proof of the
-// cached secret, and - INDEPENDENTLY - the one-shot token that lets Core issue
-// a new one. Recovery wins over enroll: it is the deliberate, admin-minted act.
+// cached secret, and - INDEPENDENTLY - the enroll token that lets Core issue a
+// first one.
 //
-// The independence is the whole point. These three used to be one else-chain,
-// so a cached secret suppressed the token entirely. Reset pairing
-// (core/handlers/node_admission.go) wipes Core's copy of the secret and
-// DELUSERs the node's three Redis users, but it cannot touch .node_secret on
-// the node's own disk - so a reset node still has a cache, sent only the
-// now-worthless proof, and never sent the recovery token the panel had just
-// told the operator to set. Core answered "cluster proof or recovery token
-// required", main's Redis bootstrap loop retried that forever, and the
-// documented recovery path was completable only by deleting .node_secret by
-// hand, which nothing tells the operator to do.
+// The independence is the whole point. These used to be one else-chain, so a
+// cached secret suppressed the token entirely. Reset pairing wipes Core's copy
+// of the secret and DELUSERs the node's three Redis users, but it cannot touch
+// .node_secret on the node's own disk - so a reset node still has a cache, sent
+// only the now-worthless proof, and never sent the token that would have let it
+// back in. Core answered "cluster proof required", the bootstrap loop retried
+// forever, and the documented recovery was completable only by deleting
+// .node_secret by hand, which nothing told the operator to do.
+//
+// There used to be a THIRD credential here, NODE_RECOVERY_TOKEN, and it is gone
+// on purpose. Re-pairing meant editing the environment of the node and
+// restarting it, which on a five-machine Swarm stack means touching the stack
+// for one host. Re-admission is now decided in the panel: the node keeps
+// dialling, Core records the refused attempt, and an operator approves it from
+// Settings -> Nodes. Nothing has to be set on the machine.
 //
 // Sending both is safe on every Core branch: with a secret on file Core runs
 // the challenge and ignores the token; without one the token is the only way in.
-func bootstrapCreds(hasCached bool, recoveryToken, enrollToken string) (sendProof bool, token string) {
-	switch {
-	case recoveryToken != "":
-		token = recoveryToken
-	case enrollToken != "":
-		token = enrollToken
-	}
-	return hasCached, token
+func bootstrapCreds(hasCached bool, enrollToken string) (sendProof bool, token string) {
+	return hasCached, enrollToken
 }
 
 func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]byte, error) {
@@ -264,14 +273,14 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 		return nil, fmt.Errorf("open stream: %w", err)
 	}
 
-	auth := &pb.NodeAuth{NodeToken: nodeID, AclSupported: true}
+	auth := &pb.NodeAuth{NodeToken: nodeID, AclSupported: true, Identity: machineIdentity()}
 	// See grpc_mesh.go: Core needs this at connect time to answer a
 	// mandatory-update deadline. Empty on an unstamped build.
 	if v := nodeReleaseVersion(); !v.IsZero() {
 		auth.ReleaseVersion = v.String()
 	}
 	cached, hasCached := loadNodeSecret(nodeSecretDir)
-	sendProof, token := bootstrapCreds(hasCached, nodeRecoveryToken, nodeEnrollToken)
+	sendProof, token := bootstrapCreds(hasCached, nodeEnrollToken)
 	if sendProof {
 		auth.SecretProof = aclProof(cached, nodeID)
 	}

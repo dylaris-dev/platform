@@ -587,3 +587,40 @@ type MailTemplate struct {
 	Body      string    `json:"body"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// NodeJoinAttempt is a connection Core REFUSED, kept so an operator can see it
+// and decide whether to let that machine back in.
+//
+// Read the trust boundary off the field names: PeerIP is observed from the
+// socket, everything else is what the caller SAID about itself. The panel shows
+// both and labels them, because an operator recognising their own machine is the
+// whole purpose - but only the address can be relied on when deciding.
+type NodeJoinAttempt struct {
+	NodeToken string `json:"nodeToken"`
+	// The node row this identity belongs to, resolved for display. Only known
+	// identities are ever recorded.
+	NodeName    string `json:"nodeName"`
+	DisplayName string `json:"displayName"`
+
+	PeerIP string `json:"peerIp"`
+
+	ReportedPublicIP   string `json:"reportedPublicIp"`
+	ReportedPrivateIPs string `json:"reportedPrivateIps"`
+	Hostname           string `json:"hostname"`
+	CPUCores           int    `json:"cpuCores"`
+	CPUModel           string `json:"cpuModel"`
+	MemoryBytes        int64  `json:"memoryBytes"`
+	ReleaseVersion     string `json:"releaseVersion"`
+
+	Reason      string    `json:"reason"`
+	Attempts    int       `json:"attempts"`
+	FirstSeenAt time.Time `json:"firstSeenAt"`
+	LastSeenAt  time.Time `json:"lastSeenAt"`
+
+	// ApprovedUntil is set while an admission is armed. It is deliberately short
+	// and tied to ApprovedFromIP: the identity in this row is self-claimed, so an
+	// approval that never expired would admit whoever knocks with it next.
+	ApprovedUntil  *time.Time `json:"approvedUntil,omitempty"`
+	ApprovedFromIP string     `json:"approvedFromIp,omitempty"`
+	ApprovedBy     string     `json:"approvedBy,omitempty"`
+}

@@ -260,6 +260,9 @@ var requiredCaps = map[string]string{
 	"/api/admin/nodes/{id:[0-9]+}/disk-analysis":       "nodes.read",
 	"/api/admin/nodes/{id:[0-9]+}/orphan":              "nodes.delete",
 	"/api/admin/nodes/{id:[0-9]+}/reset-pairing":       "nodes.write",
+	"/api/admin/nodes/join-attempts":                   "nodes.read",
+	"/api/admin/nodes/join-attempts/{token}/approve":   "nodes.write",
+	"/api/admin/nodes/join-attempts/{token}":           "nodes.write",
 	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/files":   "nodes.read",
 	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/content": "nodes.read",
 	"/api/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect": "nodes.read",
@@ -1354,6 +1357,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/disk-analysis", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.GetDiskAnalysis))).Methods("GET")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.DeleteOrphanedFolder))).Methods("DELETE")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.ResetPairing))).Methods("POST")
+	// Refused connections, and letting one back in. Registered BEFORE nothing
+	// else claims the path: "join-attempts" cannot collide with the {id:[0-9]+}
+	// routes above, which is why the numeric constraint on those is load-bearing.
+	api.HandleFunc("/admin/nodes/join-attempts", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeAdmissionHandler.ListJoinAttempts))).Methods("GET")
+	api.HandleFunc("/admin/nodes/join-attempts/{token}/approve", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.ApproveJoinAttempt))).Methods("POST")
+	api.HandleFunc("/admin/nodes/join-attempts/{token}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.DismissJoinAttempt))).Methods("DELETE")
 
 	// Orphan file browser (PANEL nodes.read/write; read-only browse, write on assign - no DB servers row required)
 	api.HandleFunc("/disk/orphans/{nodeId:[0-9]+}/{uuid}/files", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.ListOrphanFiles))).Methods("GET")

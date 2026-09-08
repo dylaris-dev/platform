@@ -116,6 +116,32 @@ message NodeAuth {
   // every image built before stamping sends nothing, and refusing those would
   // lock out the installed base on the day it ships.
   string release_version = 7;
+  // What this machine SAYS it is. Sent so an operator can recognise a node that
+  // is being refused - the panel lists rejected join attempts, and "some
+  // identity from some address" is not enough to decide whether to let it back
+  // in.
+  //
+  // Self-reported and NEVER used for anything but display. It arrives before
+  // any proof is checked, so treating it as fact would let anyone who can reach
+  // the port write into the panel. The one field on that screen that cannot be
+  // forged is the observed source address, which Core reads from the connection
+  // rather than from here.
+  //
+  // The real machine's name needs help on Swarm: os.Hostname() inside a task is
+  // the task name, so the node reads NODE_HOSTNAME, which the compose file
+  // templates from {{.Node.Hostname}}.
+  NodeIdentity identity = 8;
+}
+
+// NodeIdentity is the self-reported description of a machine, for humans.
+// Nothing here is trusted; see the comment on NodeAuth.identity.
+message NodeIdentity {
+  string hostname = 1;
+  // Physical cores as the node counts them, and the model string from the OS.
+  int32  cpu_cores = 2;
+  string cpu_model = 3;
+  // Total memory in bytes.
+  int64  memory_bytes = 4;
 }
 
 message AuthResult {

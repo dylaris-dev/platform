@@ -74,8 +74,13 @@ type Store interface {
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	CountPendingNodeEnrollTokens(userID string) (int, error)
 	DeleteNodeEnrollToken(id, userID string) error
-	CreateRecoveryToken(userID, plaintext, nodeToken string, expiresAt *time.Time) error
-	ResolveRecoveryToken(plaintext string) (recoversNodeToken string, ok bool, err error)
+	// NO recovery-token methods here on purpose. Minting one and redeeming it
+	// were the two halves of NODE_RECOVERY_TOKEN, and re-admission is decided in
+	// the panel now - see ApproveNodeJoinAttempt. The methods still exist on
+	// PostgresStore because real databases still hold rows with
+	// recovers_node_token set, and ResolveNodeEnrollToken must keep refusing to
+	// redeem those as ordinary enroll tokens. Off the interface so no handler
+	// can reach them and re-grow the old flow.
 	// --- P0b-5 node admission ---
 	ConsumeOneShotJoin() (won bool, err error)
 	AddAdmissionCIDR(cidr, label string) error
@@ -191,6 +196,13 @@ type Store interface {
 	// is not being shown to anybody.
 	ListServersForUser(userID string, isAdmin bool) ([]models.Server, error)
 	ListAllServers() ([]models.Server, error)
+
+	// --- Refused node connections (panel-driven re-admission) ---
+	RecordNodeJoinAttempt(a models.NodeJoinAttempt) error
+	ListNodeJoinAttempts() ([]models.NodeJoinAttempt, error)
+	ApproveNodeJoinAttempt(nodeToken, approvedBy string) (bool, error)
+	ConsumeNodeJoinApproval(nodeToken, peerIP string) (bool, error)
+	DeleteNodeJoinAttempt(nodeToken string) error
 
 	// --- Authz (permission-system foundation, phase 1; additive) ---
 	// Read-side accessors the authz.Resolver depends on. Write-side CRUD

@@ -134,9 +134,6 @@ var (
 	// nodeEnrollToken mirrors NODE_ENROLL_TOKEN (BYON per-user enroll token).
 	// Reused by the heartbeat AND the gRPC secret bootstrap.
 	nodeEnrollToken string
-	// nodeRecoveryToken mirrors NODE_RECOVERY_TOKEN — an admin-minted, single-use
-	// token to re-pair a node under its EXISTING identity after its secret was reset.
-	nodeRecoveryToken string
 )
 
 // hasTag reports whether comma-separated tags contains target (trimmed).
@@ -595,7 +592,6 @@ func parseConfig() {
 	// heartbeat's NODE_ENROLL_TOKEN) so the gRPC bootstrap can reuse it.
 	coreGRPCAddr, _ = resolveNodeAddr(os.Getenv("CORE_GRPC_ADDR"), nodeExternal, warpProxyCorePort)
 	nodeEnrollToken = os.Getenv("NODE_ENROLL_TOKEN")
-	nodeRecoveryToken = os.Getenv("NODE_RECOVERY_TOKEN")
 	// Cache the per-node secret on the first persisted storage path so it
 	// survives restarts (resolved the same way StorageManager picks paths[0]).
 	nodeSecretDir = firstPersistedStoragePath(storagePaths)

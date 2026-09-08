@@ -137,7 +137,7 @@ func coreLinkHint(detail string) string {
 	case strings.Contains(d, "no such host"):
 		return "[The hostname does not resolve from this machine.]"
 	case strings.Contains(d, "unauthenticated"), strings.Contains(d, "permission denied"), strings.Contains(d, "proof"):
-		return "[Core rejected this node's identity proof. The node secret and Core disagree - re-pair the node, or use NODE_RECOVERY_TOKEN.]"
+		return "[Core rejected this node's identity proof. The node secret and Core disagree - admit this node from Settings -> Nodes in the panel; nothing needs changing here.]"
 	default:
 		return ""
 	}

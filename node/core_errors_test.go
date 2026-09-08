@@ -52,7 +52,9 @@ func TestCoreLinkHintNamesTheFix(t *testing.T) {
 		{
 			name:   "identity refused",
 			detail: "Core core-1 rejected this node's identity: invalid secret proof",
-			want:   "re-pair the node",
+			// The route out of this state moved from the node's environment to
+			// the panel, so the hint has to send the reader there.
+			want: "Settings -> Nodes",
 		},
 	}
 
