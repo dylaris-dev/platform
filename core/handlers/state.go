@@ -105,6 +105,24 @@ type AppState struct {
 	// an AppState built without one - only ever a test - simply never pauses.
 	StorageS3 *storage.S3Resilience
 
+	// PlatformDB is how to reach Core's OWN database with an external tool.
+	// Not a handle - the handle lives in the store - but the connection
+	// DESCRIPTION pg_dump and pg_restore need as a subprocess, for platform
+	// backups.
+	PlatformDB services.PGConn
+	// PlatformDBMajor is that server's major version, asked once at boot.
+	//
+	// Asked rather than configured, and carried rather than re-asked: it
+	// decides WHICH installed client is run, and the constraint points both
+	// ways - pg_dump refuses a newer server, pg_restore emits SQL an older one
+	// does not understand.
+	PlatformDBMajor int
+	// PlatformBackupWorkDir is where a platform run spools components before
+	// they are sealed. A component of unknown length - a dump, a storage walk -
+	// has to land on disk first, because tar writes a member's size ahead of
+	// its bytes.
+	PlatformBackupWorkDir string
+
 	// StorageStatus forwards StorageGate's and StorageS3's transitions onto the
 	// system-events channel and answers GET /api/storage/connection. It reads
 	// both backends live rather than mirroring them. Nil-safe, so an AppState

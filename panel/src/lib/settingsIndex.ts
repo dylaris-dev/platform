@@ -71,6 +71,8 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     { page: 'storage-migration', label: 'Storage migration', where: 'Storage', keywords: ['migrate', 'move', 'copy', 'transfer', 'storage'] },
     { page: 'backups', label: 'Server backup storages and retention', where: 'Storage', keywords: ['backup', 'restore', 'retention', 'schedule', 's3', 'server backup'] },
     { page: 'backups', label: 'Backup allowance per user', where: 'Storage', keywords: ['backup', 'quota', 'allowance', 'limit', 'gb', 'storage per user'] },
+    { page: 'platform-backups', label: 'Platform backup jobs', where: 'Storage', keywords: ['platform backup', 'bundle', 'database backup', 'disaster recovery', 'migrate instance', 'export platform'] },
+    { page: 'platform-backups', label: 'Backup passphrase', where: 'Storage', keywords: ['passphrase', 'platform backup', 'encryption', 'restore', 'bundle password'] },
 
     // Servers & content
     { page: 'servers', label: 'Sub-server limits', where: 'Servers & Content', keywords: ['sub-server', 'limit', 'max servers'] },

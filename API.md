@@ -135,10 +135,10 @@ can still show what exists.
 
 ## At a glance
 
-- **507 routes** in 51 sections: 229 GET, 150 POST, 38 PUT, 37 PATCH, 54 DELETE.
+- **517 routes** in 52 sections: 234 GET, 152 POST, 39 PUT, 38 PATCH, 55 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **346** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **9** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **346** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **15** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **15** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -165,6 +165,7 @@ can still show what exists.
 - [/api/notifications](#apinotifications) (4)
 - [/api/packs](#apipacks) (29)
 - [/api/placement](#apiplacement) (3)
+- [/api/platform-backups](#apiplatform-backups) (10)
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
@@ -613,6 +614,21 @@ can still show what exists.
 | POST | `/api/placement/pick` | session | _no capability_ | - | `PlacementHandler.PickNode` | any authed user (helper). |
 | GET | `/api/placement/regions` | session | _no capability_ | - | `PlacementHandler.AvailableRegionsHandler` | returns the union of region keys currently advertised by online nodes. |
 | GET | `/api/placement/tags` | session | _no capability_ | - | `PlacementHandler.AvailableTagsHandler` | returns the union of all tags currently advertised by online nodes, optionally scoped to a single region. |
+
+## /api/platform-backups
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListJobs` | - |
+| POST | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.CreateJob` | - |
+| PATCH | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.UpdateJob` | - |
+| DELETE | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.DeleteJob` | - |
+| POST | `/api/platform-backups/jobs/{id:[0-9]+}/run` | session | _uncapped method_ | - | `PlatformBackupHandler.RunJob` | Synchronous on purpose, for now: a platform run is started by a person who is looking at the screen, and the components it covers are the database and the storage areas rather than every world. |
+| GET | `/api/platform-backups/jobs/{id:[0-9]+}/runs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListRuns` | - |
+| GET | `/api/platform-backups/passphrase` | session | _uncapped method_ | - | `PlatformBackupHandler.PassphraseStatus` | whether one is set, never what it is. |
+| PUT | `/api/platform-backups/passphrase` | session | _uncapped method_ | - | `PlatformBackupHandler.SetPassphrase` | - |
+| GET | `/api/platform-backups/runs/{id:[0-9]+}/download` | session | _uncapped method_ | - | `PlatformBackupHandler.DownloadRun` | Streamed through Core rather than redirected to a presigned URL. |
+| GET | `/api/platform-backups/targets` | session | _uncapped method_ | - | `PlatformBackupHandler.ListTargets` | What the selection screen offers. |
 
 ## /api/regions
 

@@ -8,6 +8,36 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.08.2
+
+### Features
+- **Settings, Platform Backups.** Back up the platform itself: the database,
+  the Library, Modpacks, and servers you select individually, by owner, or all
+  at once. Each run says what it covered and what it skipped. `core` `panel`
+- Selected servers are backed up by their OWN backup job, so each archive keeps
+  that owner's quota, retention and destination and stays individually
+  restorable. A server with no enabled job is reported rather than silently left
+  out. `core`
+- The statistics database is shown but not yet covered - it is TimescaleDB and
+  needs its own handling. Selecting it records the gap in the run instead of
+  backing it up half way. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- **A platform bundle is encrypted with a passphrase you set once, and losing it
+  loses every bundle taken under it.** There is no recovery: a bundle is restored
+  on machines that hold no copy of the passphrase, which is what makes it safe to
+  keep anywhere. Write it down outside Dylaris. `core` `panel`
+- Downloading a bundle needs the settings WRITE permission, not read: it contains
+  the whole database, and with it every node secret and stored credential.
+  Downloads stream through Core rather than a pre-signed link, so no URL that
+  opens the installation outlives the session. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.08
 
 ### Features

@@ -84,6 +84,7 @@ const TAB_GROUPS: SettingsGroup[] = [
             { slug: 'storage-connections', label: 'Storage Connections', always: true },
             { slug: 'storage-migration', label: 'Storage Migration', always: true },
             { slug: 'backups', label: 'Server Backups', always: true },
+            { slug: 'platform-backups', label: 'Platform Backups', always: true },
         ],
     },
     {

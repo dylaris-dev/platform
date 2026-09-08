@@ -183,10 +183,22 @@ var requiredCaps = map[string]string{
 	"/api/storage-connections/{id:[0-9]+}/test": "settings.write",
 	// Same capability as the saved-connection probe: it runs the same write,
 	// read-back and delete against an operator-supplied endpoint.
-	"/api/storage-connections/test":            "settings.write",
-	"/api/servers/{id:[0-9]+}/backup-jobs":     "backups.read",
-	"/api/servers/{id:[0-9]+}/backup-restores": "backups.read",
-	"/api/servers/{id:[0-9]+}/backup-usage":    "backups.read",
+	"/api/storage-connections/test": "settings.write",
+	// The platform's OWN backups. settings.write throughout, the DOWNLOAD
+	// included: a platform bundle is the whole database, and the database holds
+	// every node secret, every storage credential and every user row. Reading
+	// configuration and downloading the installation are not the same
+	// permission.
+	"/api/platform-backups/jobs":                      "settings.write",
+	"/api/platform-backups/jobs/{id:[0-9]+}":          "settings.write",
+	"/api/platform-backups/jobs/{id:[0-9]+}/run":      "settings.write",
+	"/api/platform-backups/jobs/{id:[0-9]+}/runs":     "settings.write",
+	"/api/platform-backups/runs/{id:[0-9]+}/download": "settings.write",
+	"/api/platform-backups/targets":                   "settings.write",
+	"/api/platform-backups/passphrase":                "settings.write",
+	"/api/servers/{id:[0-9]+}/backup-jobs":            "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-restores":        "backups.read",
+	"/api/servers/{id:[0-9]+}/backup-usage":           "backups.read",
 
 	// Phase 4 Task 11: per-server network (gateway) routes. GET+POST /routes
 	// share one template -> network.read representative; the fine
@@ -529,6 +541,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
 	backupHandler := handlers.NewBackupHandler(appState)
+	platformBackupHandler := handlers.NewPlatformBackupHandler(appState)
 	storageConnectionsHandler := handlers.NewStorageConnectionsHandler(appState)
 	regionsHandler := handlers.NewRegionsHandler(appState)
 	userRegionsHandler := handlers.NewUserRegionsHandler(appState)
@@ -1738,6 +1751,21 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.UpdateJob)).Methods("PATCH")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteJob)).Methods("DELETE")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/trigger", authHandler.AuthMiddleware(backupHandler.TriggerJob)).Methods("POST")
+
+	// The platform's own backups. Every route is settings.write, the download
+	// included - see the capability map above for why reading configuration and
+	// downloading the installation are not the same permission.
+	pbCap := appState.Authz.RequireCap("settings.write")
+	api.HandleFunc("/platform-backups/jobs", authHandler.AuthMiddleware(pbCap(platformBackupHandler.ListJobs))).Methods("GET")
+	api.HandleFunc("/platform-backups/jobs", authHandler.AuthMiddleware(pbCap(platformBackupHandler.CreateJob))).Methods("POST")
+	api.HandleFunc("/platform-backups/jobs/{id:[0-9]+}", authHandler.AuthMiddleware(pbCap(platformBackupHandler.UpdateJob))).Methods("PATCH")
+	api.HandleFunc("/platform-backups/jobs/{id:[0-9]+}", authHandler.AuthMiddleware(pbCap(platformBackupHandler.DeleteJob))).Methods("DELETE")
+	api.HandleFunc("/platform-backups/jobs/{id:[0-9]+}/run", authHandler.AuthMiddleware(pbCap(platformBackupHandler.RunJob))).Methods("POST")
+	api.HandleFunc("/platform-backups/jobs/{id:[0-9]+}/runs", authHandler.AuthMiddleware(pbCap(platformBackupHandler.ListRuns))).Methods("GET")
+	api.HandleFunc("/platform-backups/runs/{id:[0-9]+}/download", authHandler.AuthMiddleware(pbCap(platformBackupHandler.DownloadRun))).Methods("GET")
+	api.HandleFunc("/platform-backups/targets", authHandler.AuthMiddleware(pbCap(platformBackupHandler.ListTargets))).Methods("GET")
+	api.HandleFunc("/platform-backups/passphrase", authHandler.AuthMiddleware(pbCap(platformBackupHandler.PassphraseStatus))).Methods("GET")
+	api.HandleFunc("/platform-backups/passphrase", authHandler.AuthMiddleware(pbCap(platformBackupHandler.SetPassphrase))).Methods("PUT")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/runs", authHandler.AuthMiddleware(backupHandler.ListRuns)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/download", authHandler.AuthMiddleware(backupHandler.DownloadRun)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/restore", authHandler.AuthMiddleware(backupHandler.RestoreRun)).Methods("POST")
