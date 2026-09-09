@@ -495,6 +495,18 @@ func main() {
 	routeRepublisher.SetLeader(coreLeader)
 	routeRepublisher.Start(bgCtx)
 
+	// Tells each node which of its servers may be reached by which other server.
+	// The node refuses everything else at the container itself; see
+	// services/netpolicy_publisher.go and platform/node/netpolicy.go.
+	//
+	// A node enforces NOTHING until this has published once, deliberately: a
+	// Core that knew nothing about the policy must not be able to cut a linked
+	// proxy off from its backends.
+	netPolicy := services.NewNetPolicyPublisher(pgStore, redisClient)
+	netPolicy.SetLeader(coreLeader)
+	netPolicy.Start(bgCtx)
+	appState.NetPolicy = netPolicy
+
 	// Modpack auto-update checker — hourly, leader-gated. Pauses when the
 	// modpacks feature is off; per-row staleness governed by the admin cadence
 	// setting (modpack_update_check_interval_hours, default 24h).

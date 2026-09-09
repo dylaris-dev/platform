@@ -68,6 +68,14 @@ type NodeHeartbeat struct {
 	// that is a third answer, not `false`. See models.Node.Isolation.
 	Isolation       *bool  `json:"isolation,omitempty"`
 	IsolationNotice string `json:"isolationNotice,omitempty"`
+	// NetPolicy is whether this node refuses server-to-server traffic that
+	// nothing allowed, NetPolicyServers how many of its servers currently carry
+	// the rules, and NetPolicyNotice the one sentence worth showing about it.
+	// Pointers for the same reason as above: an older node reports nothing, and
+	// nothing is not "off".
+	NetPolicy        *bool  `json:"netPolicy,omitempty"`
+	NetPolicyServers int    `json:"netPolicyServers,omitempty"`
+	NetPolicyNotice  string `json:"netPolicyNotice,omitempty"`
 	// SharedStorage is non-empty when the node found one of its storage paths
 	// mounted into another node too. That topology cannot work - node identity
 	// lives in the first storage path - and it silently destroys a server on the

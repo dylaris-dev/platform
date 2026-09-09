@@ -31,7 +31,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
     Pencil, X, AlertTriangle, Cpu, KeyRound, Copy,
-    ShieldCheck, Plus, Trash2, Ticket, RotateCcw, Eye, EyeOff,
+    ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, Eye, EyeOff,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
 
@@ -396,6 +396,56 @@ function IsolationBadge({ node }: { node: Node }) {
     );
 }
 
+// ── Per-server network policy ─────────────────────────────────────────
+//
+// Whether this node refuses traffic between two game servers that nothing
+// allowed. A server accepts the node, the Link, and whatever a proxy link
+// added; everything else is dropped at the container itself.
+//
+// FOUR states, and each one means something different to whoever is reading:
+//
+//   undefined  the node has not reported. An older node and an offline one both
+//              look like this, and neither has been measured.
+//   false      not enforced. On a customer's own machine that is deliberate,
+//              and the notice says so rather than looking like a fault.
+//   true + notice   enforced, but something is not holding - either no policy
+//              has arrived yet, or a server could not be given its rules and is
+//              running open right now. Fail-open is only acceptable while this
+//              is visible.
+//   true       enforced and holding.
+function NetPolicyBadge({ node }: { node: Node }) {
+    if (node.netPolicy === undefined) return null;
+
+    if (node.netPolicy === false) {
+        return (
+            <span
+                className="badge badge-neutral inline-flex items-center gap-1"
+                title={node.netPolicyNotice || 'Servers on this node accept connections from any other server.'}
+            >
+                <ShieldOff size={11} />
+                No server rules
+            </span>
+        );
+    }
+    if (node.netPolicyNotice) {
+        return (
+            <span className="badge badge-warning inline-flex items-center gap-1" title={node.netPolicyNotice}>
+                <AlertTriangle size={11} />
+                Rules not holding
+            </span>
+        );
+    }
+    return (
+        <span
+            className="badge badge-success inline-flex items-center gap-1"
+            title={`Each server accepts this node, the Link and its linked proxy, and refuses every other server. ${node.netPolicyServers ?? 0} server(s) carry the rules.`}
+        >
+            <ShieldCheck size={11} />
+            Server rules on
+        </span>
+    );
+}
+
 // ── Node addresses ────────────────────────────────────────────────────
 //
 // A node's addresses are not a credential, and they are not public either. The
@@ -625,6 +675,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         <span className="badge badge-accent" title="External / home node — forces gateway+beam">external</span>
                     )}
                     <IsolationBadge node={node} />
+                    <NetPolicyBadge node={node} />
                     {node.needsConfiguration && (
                         <span
                             className="badge badge-warning inline-flex items-center gap-1"

@@ -52,6 +52,9 @@ func EnrichNodesWithLiveStats(ctx context.Context, st NodeServerCounter, rdb *re
 		nodes[i].SharedStorage = hb.SharedStorage
 		nodes[i].Isolation = hb.Isolation
 		nodes[i].IsolationNotice = hb.IsolationNotice
+		nodes[i].NetPolicy = hb.NetPolicy
+		nodes[i].NetPolicyServers = hb.NetPolicyServers
+		nodes[i].NetPolicyNotice = hb.NetPolicyNotice
 	}
 	return seen
 }

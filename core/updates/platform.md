@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.10
+
+### Features
+- **A game server now refuses connections from other game servers.** It accepts
+  the node, the Link, and the proxy it is linked to in the panel - nothing else.
+  The rules live in the server's own container and are re-applied after every
+  restart. `core` `node`
+- **Settings -> Nodes shows whether a node is enforcing them**, how many of its
+  servers carry the rules, and says so plainly when something is not holding.
+  `core` `panel`
+
+### Breaking
+- **Servers on your own nodes can no longer reach each other directly.** In a
+  BungeeCord or Velocity network nothing needs that - cross-server plugin
+  messages travel through the proxy - and plugins sharing a database or Redis
+  are unaffected, because outbound traffic is not filtered. If you run something
+  that opens a direct socket between two servers, it will be refused. Nothing is
+  enforced until Core has sent the node a policy, so an older Core cannot switch
+  this on by surprise. `core` `node`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.09.11
 
 ### Features

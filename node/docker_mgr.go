@@ -40,6 +40,16 @@ type DockerManager struct {
 	// though isolation is on. Reported in the heartbeat; see isolation_state.go.
 	isolation isolationState
 
+	// Per-server ingress policy. selfContainer is this node's own container name
+	// (its address is one of the two every server always accepts), and
+	// netPolicyImage is the image the throwaway helper runs - the node's own, so
+	// nothing extra is ever pulled. Empty means enforcement is off on this node.
+	// See netpolicy.go.
+	selfContainer  string
+	netPolicyImage string
+	netPolicy      netPolicyState
+	netPolicySrc   policySource
+
 	// Bridge gateway per Docker network id: where a container on it reaches the
 	// host, and therefore the warp proxy. Only consulted in warp-proxy mode, and
 	// cached because every container create asks for it.

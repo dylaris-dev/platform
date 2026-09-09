@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"dylaris-core/metrics"
 	"sync"
 	"time"
@@ -200,6 +201,11 @@ type AppState struct {
 	// gateway is deployed, which the DNS settings surface reports rather than
 	// failing: a platform-only install has no records to write.
 	GatewayHubURL string
+
+	// NetPolicy republishes the per-server ingress policy. Held so linking a
+	// proxy takes effect at once instead of on the next tick - a person who just
+	// pressed the button is watching for it to work.
+	NetPolicy interface{ RunOnce(ctx context.Context) }
 
 	// AdminSecret mirrors config.AdminSecret: the RAM-only break-glass secret
 	// that gates /setup admin creation. Empty = feature disabled. Never

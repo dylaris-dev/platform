@@ -339,6 +339,12 @@ type Node struct {
 	// the strength of nothing.
 	Isolation       *bool  `json:"isolation,omitempty"`
 	IsolationNotice string `json:"isolationNotice,omitempty"`
+	// NetPolicy is the per-server ingress rule state, live from the heartbeat
+	// exactly like the fields above. nil is "this node has not said", which an
+	// older node and an unreachable one both are.
+	NetPolicy        *bool  `json:"netPolicy,omitempty"`
+	NetPolicyServers int    `json:"netPolicyServers,omitempty"`
+	NetPolicyNotice  string `json:"netPolicyNotice,omitempty"`
 	// SharedStorage is non-empty when this node found one of its storage paths
 	// mounted into another node as well. That topology cannot work - node
 	// identity itself lives in the first storage path - and it destroys a server

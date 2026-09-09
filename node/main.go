@@ -326,6 +326,25 @@ func main() {
 		log.Printf("tenant-net: isolation disabled on this host-net node; MC servers stay on the shared local dylaris_net")
 	}
 
+	// Per-server ingress policy: a game server accepts the node, the Link, and
+	// whatever Core has allowed. See netpolicy.go for why it is enforced in the
+	// container's own namespace and why that needs no new privilege here.
+	//
+	// NOT on an external or BYON node. That machine is the customer's; separating
+	// their own servers from each other protects nobody, and reaching into
+	// containers on hardware that is not ours is not something to do for nothing.
+	if !nodeExternal {
+		self, _ := os.Hostname()
+		dockerMgr.selfContainer = self
+		dockerMgr.netPolicyImage = dockerMgr.resolveSelfImage(self)
+		if dockerMgr.netPolicyImage == "" {
+			log.Printf("netpolicy: could not resolve this node's own image; per-server rules are NOT being applied")
+		}
+		startNetPolicyReconciler(ctx, dockerMgr, rdb, nodeID)
+	} else {
+		log.Printf("netpolicy: not enforced on an external/BYON node; servers there share the plain Docker network")
+	}
+
 	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
 	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, getPortMode)
 	// Redis holds the port ledger but is in-memory only, so a host reboot wipes
@@ -1030,6 +1049,16 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		data["isolation"] = isolating
 		if notice != "" {
 			data["isolationNotice"] = notice
+		}
+		// Per-server ingress policy, reported for the same reason: fail-open is
+		// only acceptable while the failing is visible, and a node's log is not
+		// where anyone looks for it.
+		enforced := dm.netPolicyImage != "" && !nodeExternal
+		applied, failures, lastReason, unpublished := dm.netPolicy.snapshot()
+		data["netPolicy"] = enforced
+		data["netPolicyServers"] = applied
+		if n := netPolicyNotice(enforced, nodeExternal, applied, failures, lastReason, unpublished); n != "" {
+			data["netPolicyNotice"] = n
 		}
 	}
 	// Which release this IMAGE was built from. Core cannot see it any other way,

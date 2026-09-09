@@ -73,6 +73,13 @@ export interface Node {
     // and servers went onto the shared network anyway.
     isolation?: boolean;
     isolationNotice?: string;
+    // Per-server ingress policy: whether this node refuses server-to-server
+    // traffic nothing allowed, how many of its servers currently carry the
+    // rules, and the one sentence worth showing. Undefined means the node has
+    // not reported - which an older node and an offline one both are.
+    netPolicy?: boolean;
+    netPolicyServers?: number;
+    netPolicyNotice?: string;
     serverCount?: number;
     // Placement (persisted)
     cpuOvercommitRatio?: number;

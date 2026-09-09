@@ -66,6 +66,13 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// The proxy can only reach this server once the node has been told to allow
+	// it, so republish now rather than at the next tick. Linking is the moment
+	// somebody is watching for it to work.
+	if h.state.NetPolicy != nil {
+		h.state.NetPolicy.RunOnce(r.Context())
+	}
+
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

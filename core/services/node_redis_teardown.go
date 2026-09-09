@@ -18,6 +18,7 @@ import (
 // second copy is how one of them ends up missing a key nobody notices.
 func NodeRedisKeys(token string) []string {
 	return []string{
+		"dylaris:node:" + token + ":netpolicy",
 		"dylaris:node:" + token + ":storage_placement",
 		"dylaris:node:" + token + ":cpu",
 		"dylaris:node:" + token + ":cpu:sig",

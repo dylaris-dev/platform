@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.10
+
+### Features
+- **Your servers are now shielded from each other.** A server accepts its proxy
+  and the platform's own management traffic, and refuses connections from any
+  other server - so one server being compromised no longer means the rest are
+  reachable from it.
+
+### Breaking
+- Nothing. Proxy networks are unaffected: BungeeCord and Velocity route
+  everything through the proxy, and plugins that share a database or Redis keep
+  working. Machines you host yourself are left exactly as they were.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.09.9
 
 ### Features

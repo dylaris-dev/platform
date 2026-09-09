@@ -127,6 +127,17 @@ RUN if [ "$INSTALL_QUOTA" = "1" ]; then apk add --no-cache quota-tools e2fsprogs
 ARG SERVICE=node
 ARG RUN_AS=root
 ENV SERVICE=$SERVICE
+
+# nftables, Node only (~1 MB). It is what writes the per-server ingress rules.
+#
+# The node does NOT use it on itself. It starts a throwaway container from THIS
+# image joined to a game server's network namespace
+# (--network container:<mc_uuid> --cap-add NET_ADMIN), which writes the ruleset
+# and exits - so the capability is borrowed for a second by something that goes
+# away, and the node keeps exactly the privileges it already had. That is only
+# possible because the helper image is one every host running a node has
+# already pulled: this one. See node/netpolicy.go.
+RUN if [ "$SERVICE" = "node" ]; then apk add --no-cache nftables && echo "nftables installed (per-server ingress policy)"; fi
 # mkdir the data mount point BEFORE chown so a fresh named volume mounted here
 # inherits uid-1000 ownership (Docker seeds a new volume's ownership from the
 # image dir). Without this, non-root Core (RUN_AS=dylaris) cannot write the volume.
