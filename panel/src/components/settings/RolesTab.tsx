@@ -17,7 +17,7 @@ import {
 } from '@/lib/api/panelRoles';
 import { getUsers, type User } from '@/lib/api';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
-import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { SkeletonCard } from '@/components/Skeleton';
 import { MODE_LABELS, MODE_HELP } from '@/lib/access/accessMode';
 import { privilegedUsers, searchUsers } from '@/lib/access/panelAssignments';
 import { useBusy } from '@/lib/useBusy';
@@ -124,22 +124,17 @@ export default function RolesTab() {
         }
     };
 
-    if (loading) {
-        return (
-            <div className="max-w-3xl space-y-6">
-                <SkeletonHeader />
-                <SkeletonCard height="h-28" />
-                <SkeletonCard height="h-56" />
-                <SkeletonCard height="h-56" />
-            </div>
-        );
-    }
-
     return (
+        // The loading state goes through SettingsPage rather than a branch of
+        // its own: the skeleton has to be as wide as the page, and this page
+        // has two columns now, so a hand-rolled one drew a narrow placeholder
+        // and then jumped. SettingsPage is the only thing that knows the width.
         <SettingsPage
             title="Roles and permissions"
             icon={ShieldCheck}
             width="5xl"
+            loading={loading}
+            skeletonCards={3}
             description="Who may delegate access on their own servers, which capability bundles panel staff can hold, and who holds them."
         >
             {/* Section A - permissions_mode */}
