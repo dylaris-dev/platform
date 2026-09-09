@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **529 routes** in 52 sections: 237 GET, 158 POST, 40 PUT, 38 PATCH, 57 DELETE.
+- **528 routes** in 52 sections: 237 GET, 158 POST, 40 PUT, 37 PATCH, 57 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **355** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **354** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -161,7 +161,7 @@ can still show what exists.
 - [/api/me](#apime) (26)
 - [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
-- [/api/nodes](#apinodes) (17)
+- [/api/nodes](#apinodes) (16)
 - [/api/notifications](#apinotifications) (4)
 - [/api/packs](#apipacks) (29)
 - [/api/placement](#apiplacement) (3)
@@ -564,7 +564,6 @@ can still show what exists.
 | POST | `/api/nodes/link-updates` | session | `nodes.write` | - | `NodeHandler.TriggerLinkUpdate` | queues the node-level "link_update" command. |
 | PUT | `/api/nodes/{id:[0-9]+}` | session | `nodes.write` | - | `NodeHandler.UpdateNode` | edits a node. |
 | DELETE | `/api/nodes/{id:[0-9]+}` | session | `nodes.delete` | - | `NodeHandler.DeleteNode` | removes a node, then cleans up the Redis ACL user and keys that belong to it. |
-| PATCH | `/api/nodes/{id:[0-9]+}/config` | session | `nodes.write` | - | `NodeHandler.ConfigureNode` | adopts an auto-discovered node: an admin sets its name, region and tags, which are persisted to the DB and marked configured=true so the heartbeat env stops overwriting them. |
 | GET | `/api/nodes/{id:[0-9]+}/cpu` | session | _no capability_ | - | `CPUPinningHandler.GetNodeCPU` | the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core). |
 | GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _no capability_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it). |
 | DELETE | `/api/nodes/{id:[0-9]+}/force` | session | `nodes.delete` | - | `NodeHandler.ForceDeleteNode` | deletes an offline node and all its servers |

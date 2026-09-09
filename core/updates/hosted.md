@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.5
+
+### Features
+- **Your node's region and tags now always come from your node.** What you set
+  in `NODE_REGION` and `NODE_TAGS` on your own machine is what we use, and
+  nothing on our side can override it any more. Nothing for you to change or
+  update.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.09.4
 
 ### Features

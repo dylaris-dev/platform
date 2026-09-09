@@ -134,9 +134,6 @@ type Store interface {
 	SetNodePlacement(id int, cpuRatio, ramRatio float64) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error
 	SetNodeRegion(id int, region string) error
-	// SetNodeConfig persists an admin's panel-configured name/region/tags and
-	// marks the node configured=true so the heartbeat env stops overwriting them.
-	SetNodeConfig(id int, name, region, tags string) error
 	SumAllocatedByNode(nodeID int) (totalRAMMB int64, totalCPU float64, err error)
 	// ServerDiskLimitsByNode returns uuid -> disk limit in MB for every server
 	// on the node, including servers whose limit is 0 (unlimited). Used to sum

@@ -337,13 +337,15 @@ type Node struct {
 	Unusable       bool   `json:"unusable,omitempty"`
 	UnusableReason string `json:"unusableReason,omitempty"`
 
-	// Configured marks that an admin has adopted this node via the panel.
-	// While false, the heartbeat env keeps name/tags/region in sync; once true
-	// the DB values win and the env no longer overwrites them.
+	// Configured is a legacy marker: an admin adopted this node through the
+	// Configure dialog, which no longer exists. Tags and region follow the
+	// node's environment again regardless of it; all it still does is stop the
+	// heartbeat renaming a row that was renamed by hand back then. Nothing sets
+	// it any more.
 	Configured bool `json:"configured"`
 	// NeedsConfiguration is a derived (not persisted) flag set at API-response
-	// time: true when the node has no region assigned (booted with only a
-	// CLUSTER_SECRET, no DYLARIS_REGION), so an admin should configure it.
+	// time: true when the node reports no region, i.e. it was started without
+	// NODE_REGION. The fix is on the node, not here.
 	NeedsConfiguration bool `json:"needsConfiguration,omitempty"`
 }
 

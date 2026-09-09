@@ -2712,16 +2712,6 @@
       "external": false
     },
     {
-      "method": "PATCH",
-      "path": "/api/nodes/{id:[0-9]+}/config",
-      "auth": "session",
-      "authorization": "nodes.write",
-      "description": "adopts an auto-discovered node: an admin sets its name, region and tags, which are persisted to the DB and marked configured=true so the heartbeat env stops overwriting them.",
-      "handler": "NodeHandler.ConfigureNode",
-      "group": "nodes",
-      "external": false
-    },
-    {
       "method": "GET",
       "path": "/api/nodes/{id:[0-9]+}/cpu",
       "auth": "session",
@@ -5283,10 +5273,10 @@
     }
   ],
   "counts": {
-    "total": 530,
+    "total": 529,
     "byAuth": {
       "none": 38,
-      "session": 479,
+      "session": 478,
       "user API key": 10,
       "warp key": 3
     },
@@ -5311,7 +5301,7 @@
       "me": 26,
       "modrinth": 6,
       "modules": 6,
-      "nodes": 17,
+      "nodes": 16,
       "notifications": 4,
       "packs": 29,
       "placement": 3,

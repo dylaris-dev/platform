@@ -255,7 +255,7 @@ type NodeLinkState struct {
 }
 
 // applyHeartbeatRegion stores an auto-discovered node's DYLARIS_REGION, but
-// only once it names a region that EXISTS - the same rule ConfigureNode applies
+// only once it names a region that EXISTS - a region an operator has created
 // when an admin adopts a node by hand.
 //
 // It has to be the same rule because this column is a join key, not a label.
@@ -292,6 +292,35 @@ func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported stri
 	}
 	log.Printf("Node region updated for %s: %q -> %q", node.Name, node.Region, region)
 	s.store.SetNodeRegion(node.ID, region)
+}
+
+// syncNodeMetadataFromHeartbeat applies the two fields a node supplies through
+// its own environment: NODE_TAGS and NODE_REGION.
+//
+// An empty value is the node saying NOTHING, not saying "none", so it leaves
+// the column alone. A node that never sets NODE_REGION keeps whatever region it
+// has rather than being blanked on every beat.
+func (s *DiscoveryService) syncNodeMetadataFromHeartbeat(node *models.Node, hb NodeHeartbeat) {
+	// Say it out loud the first time the environment takes a field back off a
+	// node that was configured by hand, so the change of ownership is something
+	// an operator can read rather than discover.
+	if hb.Tags != "" && node.Tags != hb.Tags {
+		if node.Configured {
+			log.Printf("Node %s: NODE_TAGS now wins over the value set in the panel (%q -> %q)",
+				node.Name, node.Tags, hb.Tags)
+		} else {
+			log.Printf("Node Tags updated for %s: %s", node.Name, hb.Tags)
+		}
+		s.store.SetNodeTags(node.ID, hb.Tags)
+	}
+
+	if hb.Region != "" {
+		if node.Configured && node.Region != hb.Region {
+			log.Printf("Node %s: NODE_REGION now wins over the value set in the panel (%q -> %q)",
+				node.Name, node.Region, hb.Region)
+		}
+		s.applyHeartbeatRegion(node, hb.Region)
+	}
 }
 
 func (s *DiscoveryService) scanNodes() {
@@ -365,20 +394,28 @@ func (s *DiscoveryService) scanNodes() {
 				s.publishServersChanged(ctx)
 			}
 
-			// Name + tags are config fields: only let the heartbeat env drive them
-			// while the node hasn't been adopted by an admin. Once configured=true
-			// the panel-set values win and the env is ignored (DB precedence).
-			if !node.Configured {
-				if hb.Name != "" && node.Name != hb.Name {
-					log.Printf("Node Name updated: %s → %s", node.Name, hb.Name)
-					s.store.SetNodeName(node.ID, hb.Name)
-				}
-
-				if node.Tags != hb.Tags && hb.Tags != "" {
-					log.Printf("Node Tags updated for %s: %s", node.Name, hb.Tags)
-					s.store.SetNodeTags(node.ID, hb.Tags)
-				}
+			// The node's environment is the source of truth for tags and region;
+			// the panel only displays them.
+			//
+			// It used to be the other way round after a single visit to the
+			// Configure dialog: that set configured=TRUE, and from then on the
+			// env was ignored forever with nothing on the node able to correct
+			// it. A Swarm stack sets NODE_TAGS and NODE_REGION once, in one
+			// file, for every node it starts - having to repeat that per node in
+			// the panel, and having the file silently stop mattering afterwards,
+			// is the wrong way round.
+			//
+			// NAME stays gated, which is not an oversight. The heartbeat's name
+			// field carries the node's Core-MINTED identity, not anything from
+			// its env, so letting it win would rename an adopted node to a uuid.
+			// Nothing sets configured=TRUE any more, so this now only protects
+			// rows that were renamed while the Configure dialog still existed.
+			if !node.Configured && hb.Name != "" && node.Name != hb.Name {
+				log.Printf("Node Name updated: %s → %s", node.Name, hb.Name)
+				s.store.SetNodeName(node.ID, hb.Name)
 			}
+
+			s.syncNodeMetadataFromHeartbeat(node, hb)
 
 			if hb.IP != "auto" && hb.IP != "" && node.Address != hb.IP {
 				log.Printf("Node IP updated for %s: %s -> %s", node.Name, node.Address, hb.IP)
@@ -400,13 +437,6 @@ func (s *DiscoveryService) scanNodes() {
 					cpu = node.TotalCPU // keep last known
 				}
 				s.store.UpdateNodeCapacity(node.ID, cpu, totalRAMMB)
-			}
-
-			// Region — only update when the heartbeat carries one AND the node has
-			// not been adopted by an admin. Configured nodes (and nodes that don't
-			// broadcast DYLARIS_REGION) keep whatever the admin set.
-			if !node.Configured && hb.Region != "" {
-				s.applyHeartbeatRegion(node, hb.Region)
 			}
 
 			// Hardware-change guard: if the node's host CPU layout changed since we

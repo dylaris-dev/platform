@@ -83,8 +83,8 @@ export interface Node {
     // the node has no region yet (booted with only a CLUSTER_SECRET).
     configured?: boolean;
     needsConfiguration?: boolean;
-    // Optional, non-unique human label. Defaults to the node's hostname on
-    // enroll; editable via configureNode independently of the unique `name`.
+    // Optional, non-unique human label, set from the name the node called
+    // itself with when it enrolled. Read-only: the node supplies it.
     displayName?: string;
 }
 
@@ -343,10 +343,6 @@ export const setNodeStoragePlacement = (id: number, placement: StoragePlacement)
 export const getFleetStoragePlacement = () => fetchAPI('/settings/storage-placement');
 export const setFleetStoragePlacement = (placement: StoragePlacement) =>
     fetchAPI('/settings/storage-placement', { method: 'PUT', body: JSON.stringify(placement) });
-// Adopt an auto-discovered node: persist name/region/tags to the DB. After this
-// the heartbeat env no longer overwrites them.
-export const configureNode = (id: number, data: { name?: string; region: string; tags?: string; displayName?: string }) =>
-    fetchAPI(`/nodes/${id}/config`, { method: 'PATCH', body: JSON.stringify(data) });
 // Set the node's container CPU pool (which host cores its containers may use).
 // "" clears the restriction (all cores allowed).
 export const updateNodeCpuset = (id: number, cpusetCpus: string) =>

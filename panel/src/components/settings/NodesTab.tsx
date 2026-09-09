@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     getNodes, Node,
     getPlacementSettings, savePlacementSettings, PlacementSettings,
-    setNodePlacement, configureNode, Region,
+    setNodePlacement,
     getNodeCpu, getNodeStorage, getNodeDeployBundle, updateNodeCpuset, type NodeCpuTopology,
     getNodeAdmission, updateNodeAdmission, addAdmissionCIDR, deleteAdmissionCIDR, resetNodePairing,
     mintEnrollToken, listEnrollTokens, revokeEnrollToken, type AdmissionCIDR, type NodeEnrollToken,
@@ -30,7 +30,7 @@ import { regionLabel, regionFlag } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    Pencil, X, AlertTriangle, SlidersHorizontal, Cpu, KeyRound, Copy,
+    Pencil, X, AlertTriangle, Cpu, KeyRound, Copy,
     ShieldCheck, Plus, Trash2, Ticket, RotateCcw,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
@@ -103,13 +103,12 @@ function isExternalNode(node: Node): boolean {
 
 function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean) => void; kind: 'platform' | 'external' }) {
     // Applied routing mode from the shared app context (same source WarpTab
-    // gates on) — no extra fetch, no new store. regions feed the config picker.
-    const { routingMode, regions } = useAppData();
+    // gates on) — no extra fetch, no new store.
+    const { routingMode } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
 
     const [nodes, setNodes] = useState<Node[]>([]);
     const [editingPlacement, setEditingPlacement] = useState<number | null>(null);
-    const [editingConfig, setEditingConfig] = useState<number | null>(null);
     const [revealed, setRevealed] = useState<DeployBundle | null>(null);
     const [revealingId, setRevealingId] = useState<number | null>(null);
     const [resettingId, setResettingId] = useState<number | null>(null);
@@ -227,16 +226,11 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                             <NodeCard
                                 key={node.id}
                                 node={node}
-                                regions={regions}
                                 gatewayRequired={isExternalNode(node) && gatewayOff}
                                 isEditing={editingPlacement === node.id}
-                                isConfiguring={editingConfig === node.id}
-                                onEdit={() => { setEditingConfig(null); setEditingPlacement(node.id); }}
+                                onEdit={() => setEditingPlacement(node.id)}
                                 onCancel={() => setEditingPlacement(null)}
                                 onSaved={() => { setEditingPlacement(null); loadNodes(); showToast('Placement updated'); }}
-                                onConfigure={() => { setEditingPlacement(null); setEditingConfig(node.id); }}
-                                onConfigCancel={() => setEditingConfig(null)}
-                                onConfigSaved={() => { setEditingConfig(null); loadNodes(); showToast('Node configured'); }}
                                 onCpuPoolSaved={() => { loadNodes(); showToast('Container CPU pool updated'); }}
                                 onError={msg => showToast(msg, false)}
                                 onRevealDeployBundle={() => revealDeployBundle(node.id)}
@@ -290,18 +284,13 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
 
 interface NodeCardProps {
     node: Node;
-    regions: Region[];
     // External node + gateway not active — its servers can't receive player
     // traffic or file access until routing mode is switched to Gateway/Both.
     gatewayRequired: boolean;
     isEditing: boolean;
-    isConfiguring: boolean;
     onEdit: () => void;
     onCancel: () => void;
     onSaved: () => void;
-    onConfigure: () => void;
-    onConfigCancel: () => void;
-    onConfigSaved: () => void;
     onCpuPoolSaved: () => void;
     onError: (msg: string) => void;
     onRevealDeployBundle: () => void;
@@ -335,7 +324,7 @@ export function nodeActionClass(active: boolean, needsAttention: boolean): strin
     return `${base} text-(--base-06) hover:text-(--accent-light)`;
 }
 
-function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, onEdit, onCancel, onSaved, onConfigure, onConfigCancel, onConfigSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onOpenDeleteDialog }: NodeCardProps) {
+function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onOpenDeleteDialog }: NodeCardProps) {
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -427,7 +416,7 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
 
                 <div className="flex items-center flex-wrap gap-3 gap-y-2 shrink-0">
                     {node.region && (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium" title="Region (DYLARIS_REGION env)">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium" title="Region, from the node's NODE_REGION env">
                             <span>{regionFlag(node.region)}</span>
                             <span>{regionLabel(node.region)}</span>
                         </span>
@@ -447,10 +436,10 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                     {node.needsConfiguration && (
                         <span
                             className="badge badge-warning inline-flex items-center gap-1"
-                            title="This node booted with only a cluster secret and has no region. Configure its name, region and tags so it can be used for placement."
+                            title="This node reports no region, so placement cannot use it. Set NODE_REGION in the node's environment and restart it - region and tags come from the node, not from here."
                         >
                             <AlertTriangle size={11} />
-                            Needs configuration
+                            No region
                         </span>
                     )}
                     {gatewayRequired && (
@@ -462,15 +451,6 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                             Requires gateway
                         </span>
                     )}
-                    <button
-                        onClick={isConfiguring ? onConfigCancel : onConfigure}
-                        aria-expanded={isConfiguring}
-                        className={nodeActionClass(isConfiguring, !!node.needsConfiguration)}
-                        title="Configure name, region and tags"
-                    >
-                        <SlidersHorizontal size={11} />
-                        Configure
-                    </button>
                     <button
                         onClick={isEditing ? onCancel : onEdit}
                         aria-expanded={isEditing}
@@ -530,17 +510,6 @@ function NodeCard({ node, regions, gatewayRequired, isEditing, isConfiguring, on
                     )}
                 </div>
             </div>
-
-            {/* Configuration editor (name / region / tags) */}
-            {isConfiguring && (
-                <NodeConfigForm
-                    node={node}
-                    regions={regions}
-                    onSaved={onConfigSaved}
-                    onCancel={onConfigCancel}
-                    onError={onError}
-                />
-            )}
 
             {/* Placement summary / editor */}
             <div className="mt-2.5 pt-2.5 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-6 gap-x-3 gap-y-2 text-xs">
@@ -741,93 +710,6 @@ function NodeCpuPoolEditor({
                     className="btn btn-secondary btn-sm disabled:opacity-40"
                 >
                     <Save size={12} /> {saving ? 'Saving…' : 'Save pool'}
-                </button>
-            </div>
-        </div>
-    );
-}
-
-// NodeConfigForm lets an admin adopt an auto-discovered node by setting its
-// name, region and tags, plus an optional human display name. Saving persists
-// to the DB (PATCH /nodes/{id}/config); from then on the node's heartbeat env
-// no longer overwrites name/region/tags.
-function NodeConfigForm({
-    node, regions, onSaved, onCancel, onError,
-}: {
-    node: Node;
-    regions: Region[];
-    onSaved: () => void;
-    onCancel: () => void;
-    onError: (msg: string) => void;
-}) {
-    const [name, setName] = useState(node.name || node.token || '');
-    const [displayName, setDisplayName] = useState(node.displayName || '');
-    const [region, setRegion] = useState(node.region || '');
-    const [tags, setTags] = useState(node.tags && node.tags !== 'auto-discovered' ? node.tags : '');
-    const [saving, setSaving] = useState(false);
-
-    const handleSave = async () => {
-        if (!region) { onError('Please select a region'); return; }
-        setSaving(true);
-        const res = await configureNode(node.id, { name: name.trim(), region, tags: tags.trim(), displayName: displayName.trim() });
-        setSaving(false);
-        if (res.success) onSaved();
-        else onError(res.message || res.error || 'Save failed');
-    };
-
-    return (
-        <div className="mt-3 pt-3 border-t border-(--base-03) space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Node Name</label>
-                    <input
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        className="input-field text-sm"
-                        placeholder={node.token}
-                    />
-                </div>
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Display Name</label>
-                    <input
-                        value={displayName}
-                        onChange={e => setDisplayName(e.target.value)}
-                        className="input-field text-sm"
-                        placeholder={node.name || node.token}
-                    />
-                </div>
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Region</label>
-                    <select
-                        value={region}
-                        onChange={e => setRegion(e.target.value)}
-                        className="input-field text-sm"
-                    >
-                        <option value="">Select region…</option>
-                        {regions.map(rg => (
-                            <option key={rg.id} value={rg.id}>{rg.displayName}</option>
-                        ))}
-                    </select>
-                </div>
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Tags</label>
-                    <input
-                        value={tags}
-                        onChange={e => setTags(e.target.value)}
-                        className="input-field text-sm"
-                        placeholder="e.g. premium, ssd"
-                    />
-                </div>
-            </div>
-            <p className="text-xs text-(--base-06)">
-                Saving adopts this node: its name, region and tags are managed here from now on and the node&apos;s env values no longer overwrite them. Display name is a purely cosmetic label shown on the card. Keep the <code className="font-mono bg-(--base-03) px-1 py-0.5 rounded text-(--base-08)">external</code> tag if this is a home/Warp node.
-            </p>
-            <div className="flex items-center gap-2 justify-end">
-                <button onClick={onCancel} className="btn btn-secondary btn-sm">
-                    <X size={12} /> Cancel
-                </button>
-                <button onClick={handleSave} disabled={saving} className="btn btn-primary btn-sm disabled:opacity-40">
-                    <Save size={12} /> {saving ? 'Saving…' : 'Save'}
                 </button>
             </div>
         </div>

@@ -947,17 +947,6 @@ func (s *PostgresStore) SetNodeSecretEncIfUnchanged(id int, prev, next string) (
 	return n == 1, nil
 }
 
-// SetNodeConfig persists an admin's panel-configured name, region and tags in
-// one update and flips configured=true so the discovery scan stops letting the
-// heartbeat env overwrite these fields. Used by the unconfigured-node flow.
-func (s *PostgresStore) SetNodeConfig(id int, name, region, tags string) error {
-	_, err := s.db.Exec(
-		`UPDATE nodes SET name = $1, region = $2, tags = $3, configured = TRUE WHERE id = $4`,
-		name, region, tags, id,
-	)
-	return err
-}
-
 func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error) {
 	query := `
 		SELECT s.id, s.uuid, s.name, n.name as node_name, u.username as owner_name, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image, s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, COALESCE(s.server_type, 'game'), s.proxy_id

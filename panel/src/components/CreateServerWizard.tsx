@@ -321,7 +321,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     {availableRegions.length === 0 ? (
                                         <div className="rounded-md border border-dashed border-(--base-04) bg-(--base-02) px-3 py-2.5 text-xs text-(--base-06)">
                                             No node currently reports a region. Set{' '}
-                                            <code className="font-mono bg-(--base-03) px-1.5 py-0.5 rounded text-(--base-08)">DYLARIS_REGION=eu-central</code>{' '}
+                                            <code className="font-mono bg-(--base-03) px-1.5 py-0.5 rounded text-(--base-08)">NODE_REGION=eu-central</code>{' '}
                                             on a node and redeploy it — the pill bar will appear once a heartbeat lands.
                                         </div>
                                     ) : (

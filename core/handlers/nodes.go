@@ -207,9 +207,9 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			nodes[i].Unusable = true
 			nodes[i].UnusableReason = "requires_gateway"
 		}
-		// A node with no region was booted with only a CLUSTER_SECRET (no
-		// NODE_REGION) and never adopted — flag it so the panel can prompt
-		// an admin to configure name/region/tags.
+		// A node with no region was booted without NODE_REGION - flag it so the
+		// panel can say so. The fix is on the node, in its environment: nothing
+		// in the panel sets a region any more.
 		if nodes[i].Region == "" {
 			nodes[i].NeedsConfiguration = true
 		}
@@ -275,87 +275,6 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true, "message": "Node updated",
-	})
-}
-
-// ConfigureNode adopts an auto-discovered node: an admin sets its name, region
-// and tags, which are persisted to the DB and marked configured=true so the
-// heartbeat env stops overwriting them.
-// PATCH /api/nodes/{id}/config (admin-only)
-func (h *NodeHandler) ConfigureNode(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
-		sendJSONError(w, "DB error", 503)
-		return
-	}
-
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		sendJSONError(w, "Invalid node id", 400)
-		return
-	}
-
-	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil {
-		sendJSONError(w, "Node not found", 404)
-		return
-	}
-
-	var req struct {
-		Name        string  `json:"name"`        // optional; keeps current name when empty
-		Region      string  `json:"region"`      // required — clears the needs-configuration state
-		Tags        string  `json:"tags"`        // optional, comma-separated
-		DisplayName *string `json:"displayName"` // optional; nil = leave unchanged
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON body", 400)
-		return
-	}
-
-	region := strings.TrimSpace(req.Region)
-	if region == "" {
-		sendJSONError(w, "region is required", 400)
-		return
-	}
-	// Region must be a known region so placement stays consistent.
-	if _, err := h.state.Store.GetRegion(region); err != nil {
-		sendJSONError(w, "unknown region", 400)
-		return
-	}
-
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = node.Name // keep current display name
-	} else if name != node.Name {
-		// Node names are unique (idx_nodes_name_unique). Reject a rename that
-		// would collide with a different node up-front for a clean message.
-		if existing, nameErr := h.state.Store.GetNodeByName(name); nameErr == nil && existing != nil && existing.ID != node.ID {
-			sendJSONError(w, "a node with this name already exists", 409)
-			return
-		}
-	}
-
-	tags := strings.TrimSpace(req.Tags)
-
-	if err := h.state.Store.SetNodeConfig(id, name, region, tags); err != nil {
-		log.Printf("ConfigureNode: SetNodeConfig failed (id=%d): %v", id, err)
-		sendJSONError(w, "Failed to save node configuration (name may already be in use)", 500)
-		return
-	}
-
-	if req.DisplayName != nil {
-		if err := h.state.Store.SetNodeDisplayName(id, *req.DisplayName); err != nil {
-			log.Printf("ConfigureNode: SetNodeDisplayName failed (id=%d): %v", id, err)
-			sendJSONError(w, "Failed to save display name", 500)
-			return
-		}
-	}
-
-	updated, _ := h.state.Store.GetNodeByID(id)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "Node configured",
-		"node":    updated,
 	})
 }
 

@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.5
+
+### Features
+- **Tickets and Library keep the audience you give them.** Settings -> Modules
+  offers All/Admin for both, and every Core start used to write that column
+  back, so the choice held only until the next restart. Tickets now starts
+  admin-only. `core`
+- **Reordering those two modules sticks as well**, for the same reason. `core`
+
+### Breaking
+- **A node's region and tags come from the node, always.** The Configure dialog
+  in Settings -> Nodes is gone: `NODE_REGION` and `NODE_TAGS` on the machine are
+  now the only place they are set, and the first heartbeat after this release
+  replaces whatever the panel holds. Check those two variables on any node you
+  configured by hand before you deploy. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- **The panel named the wrong variable for a node's region.** It asked for
+  `DYLARIS_REGION`, which is Core's own region; a node reads `NODE_REGION` and
+  ignores the other one entirely. `panel`
+
 ## 2026.09.09.4
 
 ### Features

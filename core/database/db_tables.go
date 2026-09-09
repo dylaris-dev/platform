@@ -260,7 +260,7 @@ func seedSystemModules(db *sql.DB) {
 		// Tickets module, default disabled. Admin opts in from
 		// Settings → Modules. Once enabled it appears in the user-facing
 		// sidebar via the standard module loader.
-		{"Tickets", "internal", "life-buoy", "/tickets", "all", 5, false, false},
+		{"Tickets", "internal", "life-buoy", "/tickets", "admin", 5, false, false},
 		// Custom tabs across every server the viewer may see, full width.
 		// Default disabled like Tickets: it is only useful once the operator
 		// has configured a proxy host and someone has actually made a tab.
@@ -281,7 +281,17 @@ func seedSystemModules(db *sql.DB) {
 	db.Exec(`INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position, access_role) SELECT 'Admin', 'internal', 'shield-check', '/admin', TRUE, TRUE, 2, 'admin' WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'Admin')`)
 	db.Exec(`UPDATE modules SET position = 2, is_enabled = TRUE, is_system = TRUE, access_role = 'admin' WHERE name = 'Admin'`)
 	db.Exec(`UPDATE modules SET position = 3, is_enabled = TRUE, is_system = TRUE, icon = 'cpu', access_role = 'admin' WHERE name = 'Infrastructure'`)
-	db.Exec(`UPDATE modules SET position = 4, is_system = FALSE, icon = 'folder-open', access_role = 'admin' WHERE name = 'Library'`)
+	// access_role and position are NOT re-applied for Library and Tickets, and
+	// that omission is the point. Settings -> Modules offers a real All/Admin
+	// choice for these two - their ENABLED state follows a feature flag, their
+	// audience stays the operator's answer to a different question - and a boot
+	// that rewrote the column put every such choice back on the next Core
+	// restart, silently and with nothing on screen admitting it. Position is the
+	// same story: this screen advertises drag-to-reorder.
+	//
+	// The seed above still sets both, so a fresh install starts where it should;
+	// after that the row belongs to the operator.
+	db.Exec(`UPDATE modules SET is_system = FALSE, icon = 'folder-open' WHERE name = 'Library'`)
 	// Gateway was retired as a standalone module — its UI moved into the
 	// Infrastructure module's Routes tab. Drop the row from existing installs.
 	db.Exec(`DELETE FROM modules WHERE name = 'Gateway'`)
@@ -289,9 +299,10 @@ func seedSystemModules(db *sql.DB) {
 	// as a non-system, opt-in module. Drop only the legacy system row.
 	db.Exec(`DELETE FROM modules WHERE name IN ('Console', 'Modpacks', 'Files') AND is_system = TRUE`)
 	db.Exec(`DELETE FROM modules WHERE name = 'Tickets' AND is_system = TRUE`)
-	// Migrate existing Tickets row if present from prior phase: ensure it
-	// keeps the correct icon + non-system flag + position.
-	db.Exec(`UPDATE modules SET icon = 'life-buoy', url = '/tickets', is_system = FALSE, access_role = 'all', position = 5 WHERE name = 'Tickets'`)
+	// Migrate existing Tickets row if present from prior phase: ensure it keeps
+	// the correct icon and non-system flag. Audience and position are left alone
+	// for the reason spelled out at the Library row above.
+	db.Exec(`UPDATE modules SET icon = 'life-buoy', url = '/tickets', is_system = FALSE WHERE name = 'Tickets'`)
 
 	// Route limits follow the platform limit convention: NULL = no limit, 0 =
 	// none, n = the cap. -1 is from the convention BEFORE that one, where a panel

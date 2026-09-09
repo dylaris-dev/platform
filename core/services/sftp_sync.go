@@ -132,9 +132,9 @@ type sftpServerEntry struct {
 //
 // Keyed by the node's TOKEN, never its NAME. Both start out equal - enrollment
 // sets nodes.name and nodes.token to the same Core-minted identity - but only
-// the token is stable. The panel's node-adoption form has a "Node Name" field
-// next to its "Display Name" one (PATCH /nodes/{id}/config -> SetNodeConfig),
-// so an admin typing a friendly name there renames the row.
+// the token is stable. The panel used to carry a "Node Name" field that renamed
+// the row (PATCH /nodes/{id}/config); it is gone, and this key must stay on the
+// token anyway - the two can still differ on any row renamed while it existed.
 //
 // Keying by the name made that rename break SFTP on the node, silently and in
 // two ways at once. The node reads this key under the identity Core ASSIGNED it

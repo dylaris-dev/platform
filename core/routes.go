@@ -248,7 +248,6 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/node-admission/cidrs":         "nodes.write",
 	"/api/admin/settings/node-admission/cidrs/{id}":    "nodes.delete",
 	"/api/nodes/{id:[0-9]+}":                           "nodes.write",
-	"/api/nodes/{id:[0-9]+}/config":                    "nodes.write",
 	"/api/nodes/{id:[0-9]+}/storage-placement":         "nodes.write",
 	"/api/settings/storage-placement":                  "settings.read",
 	"/api/nodes/{id:[0-9]+}/force":                     "nodes.delete",
@@ -1331,7 +1330,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/nodes", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.CreateNode))).Methods("POST")
 	api.HandleFunc("/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.UpdateNode))).Methods("PUT")
 	// Adopt an auto-discovered node: admin sets name/region/tags (DB precedence).
-	api.HandleFunc("/nodes/{id:[0-9]+}/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.ConfigureNode))).Methods("PATCH")
 	api.HandleFunc("/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.DeleteNode))).Methods("DELETE")
 	// These 4 reads carry their own admin-vs-BYON-owner data filter (canManageNode,
 	// tenancy.go) rather than a pure IsAdmin gate, so like GET /nodes they stay
