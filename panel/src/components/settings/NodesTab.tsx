@@ -26,12 +26,12 @@ import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
-import { regionLabel, regionFlag } from '@/lib/regions';
+import { regionFlag, regionLabelFrom } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
     Pencil, X, AlertTriangle, Cpu, KeyRound, Copy,
-    ShieldCheck, Plus, Trash2, Ticket, RotateCcw,
+    ShieldCheck, Plus, Trash2, Ticket, RotateCcw, Eye, EyeOff,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
 
@@ -116,6 +116,10 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     // per failed poll would be a stream of them.
     const [loadError, setLoadError] = useState<string | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<DeletableNode | null>(null);
+    // Reveals every address on this list at once. Component state on purpose:
+    // it must not survive a reload, or "blurred by default" would only be true
+    // on the first visit of the browser's lifetime.
+    const [revealAddresses, setRevealAddresses] = useState(false);
 
     useEffect(() => {
         loadNodes();
@@ -201,9 +205,25 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
             {kind === 'platform' && <NodeJoinAttempts onAdmitted={loadNodes} />}
 
             <div>
-                <h3 className="text-base font-display font-bold text-(--base-09) mb-1">
-                    {kind === 'external' ? 'External nodes' : 'Cluster nodes'}
-                </h3>
+                <div className="flex items-start justify-between gap-3 mb-1">
+                    <h3 className="text-base font-display font-bold text-(--base-09)">
+                        {kind === 'external' ? 'External nodes' : 'Cluster nodes'}
+                    </h3>
+                    {shownNodes.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setRevealAddresses(v => !v)}
+                            aria-pressed={revealAddresses}
+                            className="text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors shrink-0"
+                            title={revealAddresses
+                                ? 'Blur every address on this list again'
+                                : 'Show every address on this list. They blur again when the page is reloaded.'}
+                        >
+                            {revealAddresses ? <EyeOff size={12} /> : <Eye size={12} />}
+                            {revealAddresses ? 'Hide addresses' : 'Show addresses'}
+                        </button>
+                    )}
+                </div>
                 <p className="text-xs text-(--base-06) mb-4">
                     {kind === 'external'
                         ? 'Your own machines outside the swarm. They reach players through the gateway and beam only.'
@@ -238,6 +258,7 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                                 onResetPairing={() => resetPairing(node)}
                                 resettingPairing={resettingId === node.id}
                                 onOpenDeleteDialog={node.status === 'online' ? null : () => setDeleteTarget({ id: node.id, name: node.name })}
+                                revealAddresses={revealAddresses}
                             />
                         ))
                     )}
@@ -300,6 +321,9 @@ interface NodeCardProps {
     // Only offered while the node is offline: deleting a machine that is still
     // running would leave its containers alive with nothing tracking them.
     onOpenDeleteDialog: (() => void) | null;
+    // The panel-wide "show addresses" switch. Per-field reveals live in the
+    // card; this overrides all of them at once.
+    revealAddresses: boolean;
 }
 
 // nodeActionClass styles a node action that OPENS an editor below the row.
@@ -324,7 +348,129 @@ export function nodeActionClass(active: boolean, needsAttention: boolean): strin
     return `${base} text-(--base-06) hover:text-(--accent-light)`;
 }
 
-function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onOpenDeleteDialog }: NodeCardProps) {
+// ── Node addresses ────────────────────────────────────────────────────
+//
+// A node's addresses are not a credential, and they are not public either. The
+// public one is precisely what somebody needs to aim at a machine that is
+// otherwise only reachable through the gateway, and this screen is one an
+// operator leaves open, screenshots and screen-shares. So they are blurred
+// until asked for, per field, and blurred again on the next load - the reveal
+// is deliberately not remembered anywhere.
+//
+// Copying does not require revealing. The value goes to the clipboard from the
+// node object, not from what is on screen, so a blurred field is still usable
+// for the thing an operator actually does with an address.
+
+interface NodeAddress {
+    key: string;
+    label: string;
+    value: string;
+    title: string;
+}
+
+// addressesOf lists what the panel knows about how to reach a node, in the
+// order an operator asks for it.
+//
+// The public IP is omitted when it repeats the address, and BOTH can be absent:
+// a node in gateway+beam mode reports no public IP by design, and its address
+// is then never refreshed either, because the heartbeat carries no IP to
+// refresh it with. An empty row is honest about that; a stale one would not be.
+export function addressesOf(node: Pick<Node, 'address' | 'publicIp' | 'privateIps'>): NodeAddress[] {
+    const out: NodeAddress[] = [];
+    if (node.address) {
+        out.push({
+            key: 'address',
+            label: 'Address',
+            value: node.address,
+            title: 'The address this node last reported for itself. Core shows it; it does not dial it.',
+        });
+    }
+    if (node.publicIp && node.publicIp !== node.address) {
+        out.push({
+            key: 'public',
+            label: 'Public',
+            value: node.publicIp,
+            title: 'The address the node sees itself as from the internet. A node running gateway+beam reports none on purpose.',
+        });
+    }
+    for (const ip of node.privateIps ?? []) {
+        out.push({
+            key: `private:${ip}`,
+            label: 'Private',
+            value: ip,
+            title: 'A private IPv4 address on the node. Reachable from the other machines on its network, not from outside.',
+        });
+    }
+    return out;
+}
+
+function AddressChip({ addr, revealed, onToggle }: { addr: NodeAddress; revealed: boolean; onToggle: (() => void) | null }) {
+    return (
+        <span
+            className="text-xs font-mono text-(--base-06) inline-flex items-center gap-1.5 bg-(--base-01) px-2 py-1 rounded-sm border border-(--base-04) w-fit whitespace-nowrap"
+            title={addr.title}
+        >
+            <Globe size={14} className="opacity-70 shrink-0" />
+            <span className="text-[10px] uppercase tracking-[0.06em] text-(--base-05)">{addr.label}</span>
+            <button
+                type="button"
+                onClick={() => {
+                    navigator.clipboard.writeText(addr.value);
+                    toast(`${addr.label} copied.`);
+                }}
+                title={`Copy ${addr.label.toLowerCase()}`}
+                className={`transition-colors hover:text-(--accent-light) ${revealed ? '' : 'blur-xs select-none'}`}
+            >
+                {addr.value}
+            </button>
+            {onToggle && (
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    aria-pressed={revealed}
+                    aria-label={revealed ? `Hide ${addr.label.toLowerCase()}` : `Show ${addr.label.toLowerCase()}`}
+                    className="text-(--base-05) hover:text-(--accent-light) transition-colors shrink-0"
+                >
+                    {revealed ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+            )}
+        </span>
+    );
+}
+
+function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) {
+    const [shown, setShown] = useState<Record<string, boolean>>({});
+    const addrs = addressesOf(node);
+
+    if (addrs.length === 0) {
+        return (
+            <span className="text-xs text-(--base-05) italic" title="This node has not reported an address. Nodes in gateway+beam mode never do.">
+                no address reported
+            </span>
+        );
+    }
+
+    return (
+        <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+            {addrs.map(addr => (
+                <AddressChip
+                    key={addr.key}
+                    addr={addr}
+                    revealed={revealAll || !!shown[addr.key]}
+                    // While the master switch is on there is nothing a per-field
+                    // eye could do, so it is not offered rather than offered and
+                    // inert.
+                    onToggle={revealAll ? null : () => setShown(s => ({ ...s, [addr.key]: !s[addr.key] }))}
+                />
+            ))}
+        </div>
+    );
+}
+
+function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onOpenDeleteDialog, revealAddresses }: NodeCardProps) {
+    // For the region label: the name an operator gave the region wins over the
+    // built-in map, so renaming it in Settings -> Regions shows up here.
+    const { regions } = useAppData();
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -403,10 +549,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                                 {node.displayName || node.name || (node.token ? node.token.slice(0, 8) : '')}
                             </div>
                             <div className="h-4 w-px bg-(--base-04) hidden md:block"></div>
-                            <div className="text-xs font-mono text-(--base-06) flex items-center bg-(--base-01) px-2 py-1 rounded-sm border border-(--base-04) w-fit whitespace-nowrap">
-                                <Globe size={14} className="mr-1.5 opacity-70" />
-                                {node.address}
-                            </div>
+                            <NodeAddresses node={node} revealAll={revealAddresses} />
                         </div>
                         {node.status !== 'online' && node.lastSeenAt && (
                             <p className="text-[10px] text-(--base-05) font-mono mt-1">Last seen {timeAgo(node.lastSeenAt)}</p>
@@ -416,9 +559,9 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
 
                 <div className="flex items-center flex-wrap gap-3 gap-y-2 shrink-0">
                     {node.region && (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium" title="Region, from the node's NODE_REGION env">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium" title={`Region "${node.region}", from the node's NODE_REGION env`}>
                             <span>{regionFlag(node.region)}</span>
-                            <span>{regionLabel(node.region)}</span>
+                            <span>{regionLabelFrom(node.region, regions)}</span>
                         </span>
                     )}
                     {node.tags && node.tags !== 'auto-discovered' && (

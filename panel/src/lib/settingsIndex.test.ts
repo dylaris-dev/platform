@@ -42,6 +42,7 @@ describe('the settings index points at places that exist', () => {
             users: tabsDeclaredIn('UserManagementTab.tsx', 'USER_TABS'),
             nodes: tabsDeclaredIn('NodesTab.tsx', 'NODE_TABS'),
             gateway: tabsDeclaredIn('GatewayTab.tsx', 'GATEWAY_TABS'),
+            mailing: tabsDeclaredIn('MailingTab.tsx', 'MAILING_TABS'),
         };
 
         const bad = SETTINGS_INDEX
@@ -62,8 +63,8 @@ describe('searchSettings', () => {
     // The point of the index over a filter across visible labels: these words
     // are nowhere on the screens they lead to.
     it.each([
-        ['smtp', 'users'],
-        ['resend', 'users'],
+        ['smtp', 'mailing'],
+        ['resend', 'mailing'],
         ['2fa', 'users'],
         ['r2', 'storage-connections'],
         ['bucket', 'storage-connections'],
@@ -101,8 +102,8 @@ describe('searchSettings', () => {
 
 describe('hrefFor', () => {
     it('carries the tab so the search lands on the right one', () => {
-        expect(hrefFor({ page: 'users', tab: 'email', label: 'x', where: 'y' }))
-            .toBe('/settings/users?tab=email');
+        expect(hrefFor({ page: 'mailing', tab: 'delivery', label: 'x', where: 'y' }))
+            .toBe('/settings/mailing?tab=delivery');
     });
 
     it('omits it for a page with no tabs', () => {

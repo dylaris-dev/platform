@@ -31,6 +31,9 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     { page: 'features', label: 'Feature switches', where: 'General', keywords: ['tickets', 'modpacks', 'byon', 'proxy', 'api keys', 'automove', 'flags'] },
     { page: 'features', label: 'Tab proxy', where: 'General → Features', keywords: ['tab', 'proxy', 'public links', 'iframe'] },
     { page: 'maintenance', label: 'Maintenance mode', where: 'General', keywords: ['maintenance', 'banner', 'downtime', 'closed'] },
+    { page: 'mailing', tab: 'delivery', label: 'Outgoing email', where: 'General → Mailing', keywords: ['smtp', 'resend', 'mail', 'sender', 'from', 'relay', 'port 587', 'starttls', 'email'] },
+    { page: 'mailing', tab: 'delivery', label: 'Send a test email', where: 'General → Mailing', keywords: ['test', 'smtp', 'mail', 'try'] },
+    { page: 'mailing', tab: 'templates', label: 'Mail templates', where: 'General → Mailing', keywords: ['template', 'wording', 'subject', 'body', 'mail text', 'verification mail', 'reset mail'] },
     { page: 'database', label: 'Database migration', where: 'General', keywords: ['database', 'postgres', 'migrate', 'hypertable', 'timescale'] },
 
     // Access
@@ -39,8 +42,6 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     { page: 'users', tab: 'signin', label: 'Two-factor enforcement', where: 'User settings → Registration & sign-in', keywords: ['2fa', 'mfa', 'totp', 'otp', 'authenticator'] },
     { page: 'users', tab: 'signin', label: 'Password minimum length', where: 'User settings → Registration & sign-in', keywords: ['password', 'length', 'strength'] },
     { page: 'users', tab: 'signin', label: 'Reset link lifetime', where: 'User settings → Registration & sign-in', keywords: ['reset', 'forgot', 'expiry', 'ttl', 'link'] },
-    { page: 'users', tab: 'email', label: 'Outgoing email', where: 'User settings → Email', keywords: ['smtp', 'resend', 'mail', 'sender', 'from', 'relay', 'port 587', 'starttls'] },
-    { page: 'users', tab: 'email', label: 'Send a test email', where: 'User settings → Email', keywords: ['test', 'smtp', 'mail', 'try'] },
     { page: 'users', tab: 'accounts', label: 'Allow username changes', where: 'User settings → Accounts', keywords: ['rename', 'username', 'cooldown'] },
     { page: 'users', tab: 'accounts', label: 'Public demo account', where: 'User settings → Accounts', keywords: ['demo', 'readonly', 'showcase'] },
     { page: 'users', tab: 'retention', label: 'Auto-delete inactive users', where: 'User settings → Retention', keywords: ['delete', 'inactive', 'dormant', 'anonymize', 'gdpr', 'dsgvo', 'cleanup'] },

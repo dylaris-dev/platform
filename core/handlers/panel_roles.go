@@ -92,6 +92,49 @@ func (h *PanelRolesHandler) ListPanelRoles(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "roles": views})
 }
 
+type panelAssignmentView struct {
+	UserID      string   `json:"userId"`
+	PanelRoleID *int     `json:"panelRoleId"`
+	GrantCaps   []string `json:"grantCaps"`
+	DenyCaps    []string `json:"denyCaps"`
+}
+
+// ListPanelAssignments GET /api/admin/panel-roles/assignments - who holds a
+// panel role or a per-user override, all of them at once.
+//
+// It exists because the only way to read this was one user at a time, so the
+// Roles screen could show a person's panel role only after somebody clicked
+// them. It listed the LEGACY role in that column instead, which is a different
+// concept - the button beside it edited the panel role, and the two disagreed
+// on every staff member.
+//
+// Under panelroles.read rather than hung off /users deliberately. /users runs
+// under users.read, and who has which privileges is a different question from
+// who has an account: a reader allowed to list people should not learn the
+// privilege map for free. It returns ids only, so it cannot be used to
+// enumerate accounts either.
+func (h *PanelRolesHandler) ListPanelAssignments(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", 503)
+		return
+	}
+	assignments, err := h.state.Store.ListUserPanelAssignments()
+	if err != nil {
+		sendJSONError(w, "Failed to list panel role assignments", 500)
+		return
+	}
+	views := make([]panelAssignmentView, 0, len(assignments))
+	for _, a := range assignments {
+		views = append(views, panelAssignmentView{
+			UserID:      a.UserID,
+			PanelRoleID: a.PanelRoleID,
+			GrantCaps:   normalizeCaps(a.CapOverrides.Grant),
+			DenyCaps:    normalizeCaps(a.CapOverrides.Deny),
+		})
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "assignments": views})
+}
+
 // CreatePanelRole POST /api/admin/panel-roles - adds a staff role. A duplicate
 // name answers 409 with that reason rather than a bare 500.
 func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Request) {

@@ -103,6 +103,65 @@ func (s *PostgresStore) GetUserPanelAuthz(userID string) (*int, CapOverrides, er
 	return nil, ov, nil
 }
 
+// PanelAssignment is one user's level-1 panel authz, for the assignments list.
+//
+// It carries no user detail on purpose - no name, no email, not even the legacy
+// role. The screen that reads it already holds the user list it is allowed to
+// see, and joins on the id. Returning user data here would make a
+// panelroles.read endpoint a second way to enumerate accounts, which is exactly
+// what putting this under panelroles.read instead of on /users was avoiding.
+type PanelAssignment struct {
+	UserID       string
+	PanelRoleID  *int
+	CapOverrides CapOverrides
+}
+
+// ListUserPanelAssignments returns every user who holds a panel role or a
+// per-user capability override.
+//
+// Users with neither are left out rather than returned empty: the caller is
+// asking who has been GIVEN something, and one row per account would make the
+// answer a copy of the user table that has to be filtered again on the other
+// side. It replaces N calls to GetUserPanelAuthz, which is what the panel did
+// when it needed this for more than one person at a time - it opened the editor
+// per user, so it could not show the state of anybody it had not clicked.
+func (s *PostgresStore) ListUserPanelAssignments() ([]PanelAssignment, error) {
+	rows, err := s.db.Query(
+		`SELECT id, panel_role_id, COALESCE(panel_cap_overrides, '{}'::jsonb)
+		 FROM users
+		 WHERE panel_role_id IS NOT NULL OR panel_cap_overrides IS NOT NULL
+		 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []PanelAssignment{}
+	for rows.Next() {
+		var a PanelAssignment
+		var roleID sql.NullInt64
+		var ovJSON []byte
+		if err := rows.Scan(&a.UserID, &roleID, &ovJSON); err != nil {
+			return nil, err
+		}
+		if roleID.Valid {
+			r := int(roleID.Int64)
+			a.PanelRoleID = &r
+		}
+		_ = json.Unmarshal(ovJSON, &a.CapOverrides)
+		// The WHERE clause can only test whether the column is NULL, and
+		// clearing both lists in the editor writes {"grant":[],"deny":[]} rather
+		// than NULL. So a user whose overrides were removed still matches the
+		// query and has to be dropped here, or they would be listed as holding
+		// something forever after having it taken away.
+		if a.PanelRoleID == nil && len(a.CapOverrides.Grant) == 0 && len(a.CapOverrides.Deny) == 0 {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // GetServerGrant returns the reworked invite for (server_id, user_id).
 // sql.ErrNoRows when the user has no direct grant on that server.
 func (s *PostgresStore) GetServerGrant(serverID int, userID string) (*ServerGrant, error) {

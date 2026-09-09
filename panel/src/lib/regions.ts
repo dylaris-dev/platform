@@ -38,3 +38,21 @@ export function regionLabel(key: string): string {
 export function regionFlag(key: string): string {
     return REGION_META[key]?.flag ?? '🌐';
 }
+
+/**
+ * regionLabelFrom prefers the name an operator gave the region in Settings ->
+ * Regions over the built-in map.
+ *
+ * The map above is a starting point for keys nobody has renamed, not an
+ * authority: a region renamed in the panel used to keep showing its old label
+ * everywhere it was rendered, because the label came from code and the name
+ * lived in the database.
+ *
+ * The region list the panel caches holds only ENABLED regions, so a node parked
+ * in a disabled one falls back to the map. That is the right way round - the
+ * fallback is always a readable name, never a blank.
+ */
+export function regionLabelFrom(key: string, regions: { id: string; displayName?: string }[]): string {
+    const named = regions.find(r => r.id === key)?.displayName?.trim();
+    return named || regionLabel(key);
+}

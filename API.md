@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **528 routes** in 52 sections: 237 GET, 158 POST, 40 PUT, 37 PATCH, 57 DELETE.
+- **529 routes** in 52 sections: 238 GET, 158 POST, 40 PUT, 37 PATCH, 57 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **354** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **355** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (125)
+- [/api/admin](#apiadmin) (126)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -225,6 +225,7 @@ can still show what exists.
 | POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE: clear the node's secret and hard-cut its live Redis ACL. |
 | GET | `/api/admin/panel-roles` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelRoles` | the level-1 staff roles and their capabilities. |
 | POST | `/api/admin/panel-roles` | session | `panelroles.write` | - | `PanelRolesHandler.CreatePanelRole` | adds a staff role. |
+| GET | `/api/admin/panel-roles/assignments` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelAssignments` | who holds a panel role or a per-user override, all of them at once. |
 | PATCH | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.write` | - | `PanelRolesHandler.UpdatePanelRole` | renames a staff role and replaces its capability set. |
 | DELETE | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.delete` | - | `PanelRolesHandler.DeletePanelRole` | deletes a staff role. |
 | GET | `/api/admin/regions` | session | `regions.read` | - | `RegionsHandler.AdminListRegions` | RequireCap("regions.read") at the route; includes disabled regions. |

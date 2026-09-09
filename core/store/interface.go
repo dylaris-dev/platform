@@ -209,6 +209,7 @@ type Store interface {
 	GetPanelRole(id int) (*PanelRole, error)
 	GetServerRole(id int) (*ServerRole, error)
 	GetUserPanelAuthz(userID string) (*int, CapOverrides, error)
+	ListUserPanelAssignments() ([]PanelAssignment, error)
 	GetServerGrant(serverID int, userID string) (*ServerGrant, error)
 	GetAccountGrant(ownerUserID, userID string) (*ServerGrant, error)
 

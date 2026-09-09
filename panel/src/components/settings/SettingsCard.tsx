@@ -349,3 +349,24 @@ export function SettingsRow({
         </div>
     );
 }
+
+/**
+ * The pill in a card's `actions` slot that says whether the thing the card
+ * configures is actually in force.
+ *
+ * `active` must be the state IN FORCE, not the half-edited form: a badge that
+ * turns green while you type has only moved the lie earlier. It lived beside
+ * the user-settings cards until the mail transport moved out of that file and
+ * needed it too; every use is a SettingsCard action, so this is its home.
+ */
+export function StatusBadge({ active, activeLabel = 'Active', inactiveLabel = 'Off' }: { active: boolean; activeLabel?: string; inactiveLabel?: string }) {
+    return (
+        <span
+            className={`text-[9px] font-mono uppercase tracking-[0.08em] px-1.5 py-0.5 rounded-sm ${
+                active ? 'text-(--success-light) bg-(--success-ghost)' : 'text-(--base-06) bg-(--base-03)'
+            }`}
+        >
+            {active ? activeLabel : inactiveLabel}
+        </span>
+    );
+}

@@ -62,6 +62,27 @@ export async function assignUserPanelRole(userId: string, panelRoleId: number | 
     } catch (err) { return handleError(err); }
 }
 
+// One user's assignment, as the list endpoint returns it. Ids only: the
+// caller joins against the user list it already holds, which is what keeps a
+// panelroles.read endpoint from doubling as a way to enumerate accounts.
+export interface PanelAssignment {
+    userId: string;
+    panelRoleId: number | null;
+    grantCaps: string[];
+    denyCaps: string[];
+}
+
+// listPanelAssignments GET /admin/panel-roles/assignments - everyone who holds
+// a panel role or an override, in one call. The per-user GET below still exists
+// and is what the assignment editor pre-fills from; this is for showing the
+// whole picture without opening anybody.
+export async function listPanelAssignments(): Promise<{ success: boolean; assignments?: PanelAssignment[]; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/panel-roles/assignments`, { headers: getAuthHeader() });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
+}
+
 export async function getUserPanelRole(userId: string): Promise<{ success: boolean; panelRoleId?: number | null; grantCaps?: string[]; denyCaps?: string[]; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/users/${userId}/panel-role`, { headers: getAuthHeader() });

@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from 'react';
-import { CircleCheck, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { CircleCheck, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye, Search } from 'lucide-react';
 import { getCatalog, getPermissionsMode, type CatalogScope, type PermissionsMode } from '@/lib/api/authzCatalog';
 import {
     listPanelRoles,
@@ -10,13 +10,16 @@ import {
     deletePanelRole,
     assignUserPanelRole,
     getUserPanelRole,
+    listPanelAssignments,
     setPermissionsMode,
     type PanelRole,
+    type PanelAssignment,
 } from '@/lib/api/panelRoles';
 import { getUsers, type User } from '@/lib/api';
 import CapabilityPicker from '@/components/access/CapabilityPicker';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { MODE_LABELS, MODE_HELP } from '@/lib/access/accessMode';
+import { privilegedUsers, searchUsers } from '@/lib/access/panelAssignments';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import SettingsPage from '@/components/settings/SettingsPage';
@@ -43,7 +46,9 @@ export default function RolesTab() {
     const [catalog, setCatalog] = useState<CatalogScope[]>([]);
     const [roles, setRoles] = useState<PanelRole[]>([]);
     const [users, setUsers] = useState<User[]>([]);
+    const [assignments, setAssignments] = useState<PanelAssignment[]>([]);
     const [loading, setLoading] = useState(true);
+    const [userQuery, setUserQuery] = useState('');
 
     const [roleModal, setRoleModal] = useState<{ role: PanelRole | null } | null>(null);
     const [deletingRole, setDeletingRole] = useState<PanelRole | null>(null);
@@ -58,6 +63,21 @@ export default function RolesTab() {
         else if (!res.success) showToast(res.message || 'Failed to load panel roles', false);
     }, [showToast]);
 
+    // Who holds what. Kept separate from the role list because it changes for a
+    // different reason - saving an assignment reloads this, editing a role does
+    // not - and because a failure here must not empty the privilege list: an
+    // empty one reads as "nobody has anything", which is the worst thing to be
+    // wrong about on this screen.
+    const loadAssignments = useCallback(async () => {
+        const res = await listPanelAssignments();
+        if (res.success && res.assignments) setAssignments(res.assignments);
+        else if (!res.success) showToast(res.message || 'Failed to load panel role assignments', false);
+    }, [showToast]);
+
+    const privileged = useMemo(
+        () => privilegedUsers(users, assignments, roles), [users, assignments, roles]);
+    const matchingUsers = useMemo(() => searchUsers(users, userQuery), [users, userQuery]);
+
     useEffect(() => {
         (async () => {
             const [modeRes, catalogRes, usersRes] = await Promise.all([
@@ -69,10 +89,10 @@ export default function RolesTab() {
             else showToast(modeRes.message || 'Failed to load permissions mode - shown value is unconfirmed', false);
             if (catalogRes.success && catalogRes.catalog) setCatalog(catalogRes.catalog);
             if (usersRes.success && usersRes.users) setUsers(usersRes.users);
-            await loadRoles();
+            await Promise.all([loadRoles(), loadAssignments()]);
             setLoading(false);
         })();
-    }, [loadRoles, showToast]);
+    }, [loadRoles, loadAssignments, showToast]);
 
     const handleSetMode = async (next: PermissionsMode) => {
         if (modeSaving || next === mode) return;
@@ -96,6 +116,9 @@ export default function RolesTab() {
         if (res.success) {
             showToast('Panel role deleted');
             loadRoles();
+            // Everyone who held it is back to no role, so the list beside it is
+            // now wrong until this returns.
+            loadAssignments();
         } else {
             showToast(res.message || 'Failed to delete panel role', false);
         }
@@ -116,6 +139,7 @@ export default function RolesTab() {
         <SettingsPage
             title="Roles and permissions"
             icon={ShieldCheck}
+            width="5xl"
             description="Who may delegate access on their own servers, which capability bundles panel staff can hold, and who holds them."
         >
             {/* Section A - permissions_mode */}
@@ -211,46 +235,124 @@ export default function RolesTab() {
                 )}
             </SettingsCard>
 
-            {/* Section C - assign a panel role to a user */}
-            <SettingsCard
-                title="User assignment"
-                bodySpacing="none"
-                description="Assign a panel role, plus optional per-user grant and deny overrides, to a user."
-            >
-                <div className="table-wrapper">
-                    <table className="w-full">
-                        <thead>
-                            <tr>
-                                <th className="table-th text-left">Username</th>
-                                <th className="table-th text-left">Role</th>
-                                <th className="table-th text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {users.map(u => (
-                                <tr key={u.id} className="table-tr table-tr-hover">
-                                    <td className="table-td font-mono font-medium text-(--base-09)">{u.username}</td>
-                                    <td className="table-td">
-                                        <span className={`badge ${u.isAdmin ? 'badge-accent' : 'badge-neutral'}`}>
-                                            {(u.role || (u.isAdmin ? 'admin' : 'user')).toUpperCase()}
-                                        </span>
-                                    </td>
-                                    <td className="table-td text-right">
-                                        <button
-                                            type="button"
-                                            onClick={() => setAssignUser(u)}
-                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                            title="Assign panel role"
-                                        >
-                                            <UserCog size={13} />
-                                        </button>
-                                    </td>
+            {/* Section C - who holds what, and everybody else */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                <SettingsCard
+                    title="Who holds a panel role"
+                    bodySpacing="none"
+                    description="Everyone the panel has given something: a role, a capability override, or platform admin. Admins are listed because admin short-circuits every capability."
+                >
+                    {privileged.length === 0 ? (
+                        <div className="card p-6 flex flex-col items-center text-center gap-2">
+                            <ShieldCheck size={22} className="text-(--base-05)" />
+                            <p className="text-sm text-(--base-07)">Nobody holds a panel role yet.</p>
+                            <p className="text-xs text-(--base-06)">Find someone in the list beside this one and assign one.</p>
+                        </div>
+                    ) : (
+                        <div className="table-wrapper">
+                            <table className="w-full">
+                                <thead>
+                                    <tr>
+                                        <th className="table-th text-left">User</th>
+                                        <th className="table-th text-left">Panel role</th>
+                                        <th className="table-th text-right">Edit</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {privileged.map(p => (
+                                        <tr key={p.user.id} className="table-tr table-tr-hover">
+                                            <td className="table-td">
+                                                <span className="font-mono font-medium text-(--base-09)">{p.user.username}</span>
+                                                {p.isAdmin && (
+                                                    <span className="badge badge-accent ml-2" title="Platform admin: holds every panel capability regardless of the role beside it">
+                                                        admin
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="table-td">
+                                                {p.roleName
+                                                    ? <span className="badge badge-neutral">{p.roleName}</span>
+                                                    : <span className="text-xs text-(--base-05)">no role</span>}
+                                                {(p.grantCount > 0 || p.denyCount > 0) && (
+                                                    <span className="mono-label ml-2" title="Per-user capability overrides on top of the role">
+                                                        {p.grantCount > 0 && `+${p.grantCount}`}
+                                                        {p.grantCount > 0 && p.denyCount > 0 && ' '}
+                                                        {p.denyCount > 0 && `-${p.denyCount}`}
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="table-td text-right">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAssignUser(p.user)}
+                                                    className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
+                                                    title={`Edit ${p.user.username}'s panel role`}
+                                                >
+                                                    <UserCog size={13} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </SettingsCard>
+
+                <SettingsCard
+                    title="All users"
+                    bodySpacing="none"
+                    description="Search anyone and give them a panel role, plus optional per-user grant and deny overrides."
+                >
+                    <div className="relative mb-3">
+                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-05) pointer-events-none" />
+                        <input
+                            type="search"
+                            value={userQuery}
+                            onChange={e => setUserQuery(e.target.value)}
+                            placeholder="Search by username or email"
+                            aria-label="Search users"
+                            className="input-field w-full pl-8"
+                            spellCheck={false}
+                        />
+                    </div>
+                    <div className="table-wrapper max-h-[420px] overflow-y-auto">
+                        <table className="w-full">
+                            <thead>
+                                <tr>
+                                    <th className="table-th text-left">User</th>
+                                    <th className="table-th text-right">Assign</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </SettingsCard>
+                            </thead>
+                            <tbody>
+                                {matchingUsers.map(u => (
+                                    <tr key={u.id} className="table-tr table-tr-hover">
+                                        <td className="table-td min-w-0">
+                                            <span className="font-mono font-medium text-(--base-09)">{u.username}</span>
+                                            {u.email && <span className="block text-xs text-(--base-06) truncate">{u.email}</span>}
+                                        </td>
+                                        <td className="table-td text-right">
+                                            <button
+                                                type="button"
+                                                onClick={() => setAssignUser(u)}
+                                                className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
+                                                title={`Assign a panel role to ${u.username}`}
+                                            >
+                                                <UserCog size={13} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        {matchingUsers.length === 0 && (
+                            <p className="p-6 text-center text-sm text-(--base-06)">
+                                {users.length === 0 ? 'No users.' : `Nobody matches "${userQuery}".`}
+                            </p>
+                        )}
+                    </div>
+                </SettingsCard>
+            </div>
 
             {/* Create/Edit role modal */}
             {roleModal && (
@@ -297,7 +399,7 @@ export default function RolesTab() {
                     roles={roles}
                     catalog={catalog}
                     onClose={() => setAssignUser(null)}
-                    onSaved={() => { setAssignUser(null); showToast('User panel role updated'); }}
+                    onSaved={() => { setAssignUser(null); loadAssignments(); showToast('User panel role updated'); }}
                     onError={msg => showToast(msg, false)}
                 />
             )}

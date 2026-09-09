@@ -14,6 +14,10 @@ import UserManagementTab from '@/components/settings/UserManagementTab';
 // UserManagementTab. AccountPolicyCard moved in with them; rendering it here as
 // well would have put two copies of one form on one page, each able to overwrite
 // the other.
+//
+// The Email one is no longer among them. It configured the mail TRANSPORT,
+// which is not an account setting, and now sits under Settings -> Mailing
+// beside the templates it sends.
 export default function SettingsUsersPage() {
     return (
         <div className="flex flex-col h-full min-h-0">
@@ -21,7 +25,7 @@ export default function SettingsUsersPage() {
                 <div className="min-w-0">
                     <h2 className="h-section">User settings</h2>
                     <p className="text-sm text-(--base-06)">
-                        How accounts behave here: registration, sign-in, email, password reset and renames.
+                        How accounts behave here: registration, sign-in, password reset, renames and retention.
                     </p>
                 </div>
                 <Link href="/admin/users" className="btn btn-secondary btn-sm shrink-0">

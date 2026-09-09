@@ -8,6 +8,35 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.8
+
+### Features
+- **Settings -> Mailing now holds both halves of mail**: how it is sent, and
+  what it says. The transport settings were filed under User settings, where
+  most of what sends mail here has nothing to do with accounts. `panel`
+- **Roles shows who actually holds one.** Two lists side by side: everyone with
+  a panel role, an override or admin, and a searchable list of every user to
+  assign from. The old table showed the legacy role in a column beside a button
+  that edits the panel role. `core` `panel`
+- **A node's addresses are on its card**, public and private, blurred until you
+  ask for one and blurred again on the next load. Click a value to copy it
+  without revealing it. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A node in an unknown region was told to fix the wrong setting.** The error
+  named DYLARIS_REGION, which is Core's own region and does nothing on a node.
+  The node reads NODE_REGION. `core`
+- **Settings opens on Status** instead of Modules. `panel`
+- **A renamed region shows its new name** in the node list and the create-server
+  wizard. Both read a built-in table of labels, so renaming a region in
+  Settings -> Regions changed nothing outside that page. `panel`
+
 ## 2026.09.09.7
 
 ### Features

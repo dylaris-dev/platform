@@ -7,7 +7,7 @@ import {
     getAvailableTags, getAvailableRegions, pickNode, NodeCandidate,
     updateServerResources, API_URL,
 } from '../lib/api';
-import { regionLabel, regionFlag } from '../lib/regions';
+import { regionFlag, regionLabelFrom } from '../lib/regions';
 import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu } from 'lucide-react';
 import CpuPinningControl from './CpuPinningControl';
 import { useAppData } from '@/lib/AppDataContext';
@@ -49,7 +49,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     // that, for both: it offers unowned machines to an operator and an owned one
     // only to its owner, so the picker cannot suggest a target the create call
     // would refuse.
-    const { user } = useAppData();
+    // regions carries the operator's own names for them; regionLabelFrom
+    // prefers those over the built-in map.
+    const { user, regions } = useAppData();
     const isAdmin = !!user?.isAdmin;
 
     const [step, setStep] = useState(1);
@@ -315,7 +317,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         <span className="font-mono text-[10px] text-(--base-06) ml-auto">
                                             {availableRegions.length === 0
                                                 ? 'no regions configured'
-                                                : selectedRegion ? regionLabel(selectedRegion) : 'any'}
+                                                : selectedRegion ? regionLabelFrom(selectedRegion, regions) : 'any'}
                                         </span>
                                     </div>
                                     {availableRegions.length === 0 ? (
@@ -349,7 +351,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                     }`}
                                                 >
                                                     <span>{regionFlag(r)}</span>
-                                                    <span>{regionLabel(r)}</span>
+                                                    <span>{regionLabelFrom(r, regions)}</span>
                                                 </button>
                                             ))}
                                         </div>
@@ -494,7 +496,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 <div className="flex-1 flex items-center justify-center rounded-md border border-dashed border-(--base-04) bg-(--base-02) p-6 text-center">
                                                     <p className="text-xs text-(--base-06)">
                                                         {selectedRegion
-                                                            ? <>No tags in region <span className="font-mono">{regionLabel(selectedRegion)}</span>.</>
+                                                            ? <>No tags in region <span className="font-mono">{regionLabelFrom(selectedRegion, regions)}</span>.</>
                                                             : <>No tags advertised by any online node.<br/>Tag nodes in <span className="font-mono">Settings → Nodes</span> first.</>}
                                                     </p>
                                                 </div>

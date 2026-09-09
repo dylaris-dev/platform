@@ -257,6 +257,16 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/admin/panel-roles/assignments",
+      "auth": "session",
+      "authorization": "panelroles.read",
+      "description": "who holds a panel role or a per-user override, all of them at once.",
+      "handler": "PanelRolesHandler.ListPanelAssignments",
+      "group": "admin",
+      "external": false
+    },
+    {
       "method": "DELETE",
       "path": "/api/admin/panel-roles/{id:[0-9]+}",
       "auth": "session",
@@ -5273,15 +5283,15 @@
     }
   ],
   "counts": {
-    "total": 529,
+    "total": 530,
     "byAuth": {
       "none": 38,
-      "session": 478,
+      "session": 479,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 125,
+      "admin": 126,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

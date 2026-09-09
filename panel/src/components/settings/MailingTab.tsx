@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Eye, Mail, RotateCcw, Send } from 'lucide-react';
+import { AlertTriangle, Eye, FileText, Mail, RotateCcw, Send } from 'lucide-react';
 import {
     listMailTemplates, saveMailTemplate, resetMailTemplate,
     previewMailTemplate, testSendMailTemplate,
@@ -12,9 +12,51 @@ import { Skeleton } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
+import MailDeliverySection from '@/components/settings/MailDeliverySection';
+import GuardedTabs from '@/components/settings/GuardedTabs';
+import { useTabParam } from '@/lib/useTabParam';
+import { type TabItem } from '@/components/ui/Tabs';
+
+type MailingSubTab = 'delivery' | 'templates';
+
+// Kept beside the type so the settings-index test can prove every tab the
+// search points at actually exists here.
+export const MAILING_TABS: readonly MailingSubTab[] = ['delivery', 'templates'];
 
 /**
- * Editing the mail the platform sends.
+ * Everything about the mail the platform sends: how it gets out, and what it
+ * says.
+ *
+ * Those were two pages until now, and the transport half was filed under User
+ * settings - so an operator setting mail up for the first time configured a
+ * server on one screen and found the wording on another, with nothing on
+ * either saying the other existed.
+ */
+export default function MailingTab() {
+    const [tab, setTab] = useTabParam<MailingSubTab>(MAILING_TABS, 'delivery');
+
+    const TABS: TabItem<MailingSubTab>[] = [
+        { id: 'delivery', label: 'Delivery', icon: Send },
+        { id: 'templates', label: 'Templates', icon: FileText },
+    ];
+
+    return (
+        <div className="flex flex-col h-full min-h-0">
+            <GuardedTabs items={TABS} active={tab} onChange={setTab} ariaLabel="Mailing" />
+
+            <div className="flex-1 overflow-y-auto pt-5">
+                {tab === 'delivery' ? (
+                    <div className="space-y-6 max-w-3xl"><MailDeliverySection /></div>
+                ) : (
+                    <MailTemplatesSection />
+                )}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Editing the wording of the mail the platform sends.
  *
  * The editor opens on what WILL be sent, not on an empty box: a blank field
  * that silently means "the default" is how people end up retyping wording that
@@ -25,7 +67,7 @@ import { useBusy } from '@/lib/useBusy';
  * the panel would both inherit the panel's styles and let it fight with them -
  * the point of a preview is to show what the mail client will show.
  */
-export default function MailingTab() {
+function MailTemplatesSection() {
     const [templates, setTemplates] = useState<MailTemplate[]>([]);
     const [loading, setLoading] = useState(true);
     const [activeKey, setActiveKey] = useState<string>('');
@@ -135,7 +177,7 @@ export default function MailingTab() {
 
     return (
         <SettingsCard
-            title="Outgoing mail"
+            title="Mail templates"
             description="The wording of every mail the platform sends. Edits take effect on the next send; no restart."
             icon={Mail}
         >

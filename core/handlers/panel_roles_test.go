@@ -26,6 +26,7 @@ type panelRolesFakeStore struct {
 	createCalls int
 	updateCalls int
 	deleteCalls int
+	assignments []store.PanelAssignment
 }
 
 func (f *panelRolesFakeStore) ListPanelRoles() ([]store.PanelRole, error) { return f.roles, nil }
@@ -43,6 +44,9 @@ func (f *panelRolesFakeStore) UpdatePanelRole(id int, name string, caps []string
 func (f *panelRolesFakeStore) DeletePanelRole(int) error {
 	f.deleteCalls++
 	return nil
+}
+func (f *panelRolesFakeStore) ListUserPanelAssignments() ([]store.PanelAssignment, error) {
+	return f.assignments, nil
 }
 
 func panelRoleReq(method, target string, vars map[string]string, isAdmin bool, body interface{}) *http.Request {
@@ -199,5 +203,74 @@ func TestPanelRoles_ListReturnsRoles(t *testing.T) {
 	}
 	if !resp.Success || len(resp.Roles) != 1 || resp.Roles[0].Name != "admin" || !resp.Roles[0].IsSystem {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+// The assignments list is the Roles screen's whole picture of who holds what.
+// Two things it must not do: turn an empty override set into a JSON null, and
+// turn "no role" into a role id. The panel renders a badge off one and a count
+// off the other, so either would show a privilege nobody has.
+func TestPanelRoles_ListAssignments(t *testing.T) {
+	roleID := 3
+	fs := &panelRolesFakeStore{assignments: []store.PanelAssignment{
+		{UserID: "u1", PanelRoleID: &roleID},
+		{UserID: "u2", CapOverrides: store.CapOverrides{Grant: []string{"nodes.read"}}},
+	}}
+	h := NewPanelRolesHandler(&AppState{Store: fs})
+	rec := httptest.NewRecorder()
+	h.ListPanelAssignments(rec, panelRoleReq("GET", "/api/admin/panel-roles/assignments", nil, true, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// Decoded from the raw body rather than through a struct, so an omitted or
+	// null field is visible instead of arriving as a zero value.
+	var raw struct {
+		Success     bool `json:"success"`
+		Assignments []struct {
+			UserID      string    `json:"userId"`
+			PanelRoleID *int      `json:"panelRoleId"`
+			GrantCaps   *[]string `json:"grantCaps"`
+			DenyCaps    *[]string `json:"denyCaps"`
+		} `json:"assignments"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !raw.Success || len(raw.Assignments) != 2 {
+		t.Fatalf("got %+v", raw)
+	}
+
+	first := raw.Assignments[0]
+	if first.PanelRoleID == nil || *first.PanelRoleID != 3 {
+		t.Errorf("panelRoleId = %v, want 3", first.PanelRoleID)
+	}
+	if first.GrantCaps == nil || first.DenyCaps == nil {
+		t.Errorf("empty caps encoded as null, want []: %s", rec.Body.String())
+	}
+
+	second := raw.Assignments[1]
+	if second.PanelRoleID != nil {
+		t.Errorf("panelRoleId = %v, want null for an overrides-only row", *second.PanelRoleID)
+	}
+	if second.GrantCaps == nil || len(*second.GrantCaps) != 1 {
+		t.Errorf("grantCaps = %v, want the one that was stored", second.GrantCaps)
+	}
+}
+
+// No assignments must encode as [], not null: the panel iterates it.
+func TestPanelRoles_ListAssignmentsEmptyIsAList(t *testing.T) {
+	h := NewPanelRolesHandler(&AppState{Store: &panelRolesFakeStore{}})
+	rec := httptest.NewRecorder()
+	h.ListPanelAssignments(rec, panelRoleReq("GET", "/api/admin/panel-roles/assignments", nil, true, nil))
+
+	var raw struct {
+		Assignments *[]struct{} `json:"assignments"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if raw.Assignments == nil {
+		t.Fatalf("assignments encoded as null, want []: %s", rec.Body.String())
 	}
 }

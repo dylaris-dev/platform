@@ -23,7 +23,7 @@ type DiscoveryService struct {
 	// (single-Core dev mode); non-nil = only run when this Core holds the
 	// global lease. See pkg/leader.
 	leader leader.Election
-	// badRegionReported remembers which unknown DYLARIS_REGION value was last
+	// badRegionReported remembers which unknown NODE_REGION value was last
 	// reported per node, so a misconfigured node is announced once instead of
 	// every 5 seconds. The error stream is capped at 500 entries and trims
 	// itself, so a repeating report would evict every other error in about
@@ -42,7 +42,7 @@ type NodeHeartbeat struct {
 	IP            string                 `json:"ip"`            // IP for display
 	ClusterSecret string                 `json:"clusterSecret"` // For validation
 	Tags          string                 `json:"tags"`
-	Region        string                 `json:"region"` // DYLARIS_REGION env, e.g. "eu-central"
+	Region        string                 `json:"region"` // NODE_REGION env on the node, e.g. "eu-central"
 	IPs           NodeIPs                `json:"ips"`
 	CPUUsage      float64                `json:"cpuUsage"`
 	RAMFree       int64                  `json:"ramFree"`
@@ -254,7 +254,7 @@ type NodeLinkState struct {
 	UpdateAvailable bool   `json:"updateAvailable"`
 }
 
-// applyHeartbeatRegion stores an auto-discovered node's DYLARIS_REGION, but
+// applyHeartbeatRegion stores an auto-discovered node's NODE_REGION, but
 // only once it names a region that EXISTS - a region an operator has created
 // when an admin adopts a node by hand.
 //
@@ -263,14 +263,14 @@ type NodeLinkState struct {
 // across an ocean), it is what stops the rebalancer moving a server between
 // regions, it decides which servers regional staff may see, and it is copied
 // onto every server created on this node - where CountServersInRegion reads it
-// to decide whether a region may be deleted. A DYLARIS_REGION typo used to be
+// to decide whether a region may be deleted. A NODE_REGION typo used to be
 // written through unchecked, and each of those consumers then answered about a
 // region no row describes: staff silently lost sight of the servers, and the
 // delete guard counted zero for a region that was really in use.
 //
 // Region ids are canonically lowercase - CreateRegion lowercases and the id
 // regex allows nothing else - so normalise before the lookup. Otherwise
-// DYLARIS_REGION=EU would be refused over its casing while naming a region
+// NODE_REGION=EU would be refused over its casing while naming a region
 // that plainly exists.
 func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported string) {
 	region := strings.ToLower(strings.TrimSpace(reported))
@@ -281,7 +281,7 @@ func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported stri
 		// Once per distinct bad value, not once per 5s tick: see badRegionReported.
 		if s.badRegionReported[node.ID] != region {
 			s.badRegionReported[node.ID] = region
-			logErrf("discovery", "node %s reports region %q, which is not a configured region - keeping %q. Create the region or fix DYLARIS_REGION on that node.",
+			logErrf("discovery", "node %s reports region %q, which is not a configured region - keeping %q. Create the region or fix NODE_REGION on that node.",
 				node.Name, reported, node.Region)
 		}
 		return

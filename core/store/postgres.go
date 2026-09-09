@@ -898,7 +898,7 @@ func (s *PostgresStore) UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB 
 }
 
 // SetNodeRegion persists the canonical region key reported by a node's
-// DYLARIS_REGION env. Empty string clears the region (node is "anywhere").
+// NODE_REGION env. Empty string clears the region (node is "anywhere").
 func (s *PostgresStore) SetNodeRegion(id int, region string) error {
 	_, err := s.db.Exec(`UPDATE nodes SET region = $1 WHERE id = $2`, region, id)
 	return err

@@ -231,6 +231,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/users/{id:[0-9a-f-]{36}}/email":            "users.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":       "panelroles.write",
 	"/api/admin/panel-roles":                               "panelroles.read",
+	"/api/admin/panel-roles/assignments":                   "panelroles.read",
 	"/api/admin/panel-roles/{id:[0-9]+}":                   "panelroles.write",
 
 	// Phase 4 Task 13: nodes / admission / disk-orphans / admin servers (PANEL
@@ -1156,6 +1157,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// grants panelroles.write to a custom role. No delegation check is added here
 	// (out of scope); flagged for a future delegation-check phase.
 	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.read")(panelRolesHandler.ListPanelRoles))).Methods("GET")
+	// Registered before the {id} route so "assignments" is never read as an id.
+	// It could not be with this id pattern, but the order says so out loud.
+	api.HandleFunc("/admin/panel-roles/assignments", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.read")(panelRolesHandler.ListPanelAssignments))).Methods("GET")
 	api.HandleFunc("/admin/panel-roles", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.write")(panelRolesHandler.CreatePanelRole))).Methods("POST")
 	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.write")(panelRolesHandler.UpdatePanelRole))).Methods("PATCH")
 	api.HandleFunc("/admin/panel-roles/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("panelroles.delete")(panelRolesHandler.DeletePanelRole))).Methods("DELETE")
