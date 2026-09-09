@@ -1838,7 +1838,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		log.Printf("backup_run: starting run=%d job=%d server=%s sub=%s", bcmd.RunID, bcmd.JobID, bcmd.ServerUUID, bcmd.SubServer)
-		RunBackup(ctx, rdb, storage, bcmd)
+		RunBackup(ctx, rdb, storage, dm, bcmd)
 
 	case "backup_restore":
 		var rcmd BackupRestoreCommand

@@ -140,7 +140,80 @@ func isBackupStoreEntry(rel string) bool {
 // that pushes bytes into the pipe; the storage uploader reads from the
 // other end and pushes them out. For multi-GB worlds this keeps the
 // node's working set under a few megabytes regardless of archive size.
-func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd BackupRunCommand) {
+// saveFlushWait is how long `save-all flush` is given before the files are
+// read.
+//
+// It is a WAIT, not a confirmation. A server acknowledges a save on its
+// console, which this process does not read, so there is nothing to observe.
+// gracefulStop makes the same trade with the same command and three seconds;
+// this one is longer on purpose - a stop that reads a moment early loses that
+// moment, while a backup that reads a moment early produces a damaged archive
+// that nobody finds out about until a restore.
+const saveFlushWait = 5 * time.Second
+
+// worldSaveGuard pauses a running server's world saving for the duration of an
+// archive, and turns it back on afterwards.
+//
+// Without it the archive holds whatever the JVM happened to have flushed. A
+// player's position and inventory live in memory until an autosave, which is
+// why restoring a backup taken while someone was online put them back where
+// they last saved rather than where they were. The less visible half is worse:
+// a tar over a live world can capture a region file mid-write, and that archive
+// fails only at restore time.
+//
+// The cost, accepted deliberately: while saving is off the server keeps running
+// and keeps not persisting. resume() is deferred, so every ordinary return and
+// every panic re-enables it. A SIGKILL of the node process is the case that is
+// not covered - saving then stays off until that server restarts.
+type worldSaveGuard struct {
+	uuid string
+	// send is nil when saving was never paused, which is both the "server was
+	// not running" case and the guard's own record that there is nothing to undo.
+	send func(command string)
+}
+
+// pauseWorldSaves stops the server writing its world, flushes what it holds,
+// and returns the guard that puts it back.
+func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid string) *worldSaveGuard {
+	g := &worldSaveGuard{uuid: uuid}
+	if rdb == nil || dm == nil {
+		return g
+	}
+	// A stopped server has everything on disk already, and its console queue is
+	// drained by the log-shipper INSIDE the container - so a command pushed now
+	// would not be read now, it would be read by the next start. Turning saving
+	// off on a server that is only just booting is the one outcome worse than an
+	// inconsistent backup.
+	info, err := dm.cli.ContainerInspect(ctx, "mc_"+uuid)
+	if err != nil || info.State == nil || !info.State.Running {
+		return g
+	}
+	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
+	g.send = func(command string) { rdb.RPush(context.Background(), inputKey, command) }
+
+	g.send("save-off")
+	g.send("save-all flush")
+	log.Printf("backup: server %s: saving paused and flushed before the archive", uuid)
+	time.Sleep(saveFlushWait)
+	return g
+}
+
+// resume re-enables saving, once, however many times it is called.
+//
+// The command goes out on a background context on purpose: the caller's may
+// already be cancelled, and a cancelled backup is exactly the moment when
+// leaving a server unable to save would be worst.
+func (g *worldSaveGuard) resume() {
+	if g == nil || g.send == nil {
+		return
+	}
+	send := g.send
+	g.send = nil
+	send("save-on")
+	log.Printf("backup: server %s: saving resumed", g.uuid)
+}
+
+func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRunCommand) {
 	// At-least-once delivery: a redelivery while this run is still going would
 	// archive the same tree twice into the same key. See backup_inflight.go.
 	key := fmt.Sprintf("%d", cmd.RunID)
@@ -175,6 +248,12 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 		return
 	}
 
+	// Everything that could refuse this run has now refused it, so this is the
+	// last point at which pausing saves would be wasted. From here the guard
+	// covers every exit, including the panic paths.
+	saves := pauseWorldSaves(ctx, rdb, dm, cmd.ServerUUID)
+	defer saves.resume()
+
 	// For node-local storage the destination is on the same disk we're
 	// reading from — no pipe/uploader is needed. We still want to keep
 	// the streaming tar+gzip path so RAM stays bounded for large worlds,
@@ -186,6 +265,9 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, cmd B
 	// size without waiting for the upload to complete.
 	counter := &countingWriter{}
 	mw := io.MultiWriter(pw, counter)
+
+	stopProgress := reportBackupProgress(ctx, rdb, cmd.RunID, counter)
+	defer stopProgress()
 
 	addedAny := false
 
@@ -597,6 +679,42 @@ func reportBackup(ctx context.Context, rdb *redis.Client, runID int, status, err
 	if err := rdb.Publish(ctx, queue.BackupResultsChannel(nodeID), data).Err(); err != nil {
 		log.Printf("backup result publish failed: %v", err)
 	}
+}
+
+// backupProgressInterval is how often a running backup says how much it has
+// archived so far.
+const backupProgressInterval = 5 * time.Second
+
+// reportBackupProgress publishes the archived byte count until the returned
+// stop function is called.
+//
+// BYTES, not a phase. The tar and the upload run CONCURRENTLY over a single
+// pipe - the packer writes while the uploader reads - so "copying files" and
+// then "uploading to storage" are not two stages that could be reported; they
+// are the same stage seen from two ends. The byte count is the one number that
+// is true at every moment of a run.
+//
+// A progress message can still lose a race with the terminal one, because
+// Pub/Sub orders nothing. That is handled where it has to be anyway - Core
+// ignores a "running" report for a run that has already finished - rather than
+// by trying to stop this ticker before every one of RunBackup's exits.
+func reportBackupProgress(ctx context.Context, rdb *redis.Client, runID int, counter *countingWriter) func() {
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(backupProgressInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				reportBackup(ctx, rdb, runID, "running", "", counter.Total())
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // resolveServerRoot resolves the sub-server root via the node's

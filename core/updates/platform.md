@@ -8,6 +8,34 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.7
+
+### Features
+- **A running backup now shows how much it has archived**, updated every few
+  seconds. Not a phase: the archive and the upload run at the same time through
+  one pipe, so bytes is the only number that is true at every moment of a run.
+  `core` `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backups of a running server are consistent again.** Saving is paused and
+  flushed before the files are read, and switched back on afterwards. Until now
+  the archive held only what the server had happened to write to disk, so a
+  restore could put players back where they last saved rather than where they
+  were - and a large world could be captured mid-write and fail only at restore
+  time. `node`
+- **The backups page no longer flickers while a backup runs.** It replaced the
+  job list with placeholders on every five-second refresh. `panel`
+- **A failed backup says why, where you can read it.** The message was rendered
+  after the delete button, truncated, with the text only in a tooltip. The
+  status word is now coloured too - a failure used to be the same grey as
+  everything else. `panel`
+
 ## 2026.09.09.6
 
 ### Features

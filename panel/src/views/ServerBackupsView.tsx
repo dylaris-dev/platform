@@ -189,6 +189,15 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
     );
 }
 
+// The dot was already coloured; the word beside it was not, so a failure read
+// as neutral grey. badge-success / badge-error / badge-warning all exist in
+// globals.css and were simply never used here.
+function runBadgeClass(status: string): string {
+    if (status === 'success') return 'badge badge-success';
+    if (status === 'failed') return 'badge badge-error';
+    return 'badge badge-warning';
+}
+
 export default function ServerBackupsView() {
     const paramId = useRouteId('servers');
     const { servers } = useAppData();
@@ -209,13 +218,22 @@ export default function ServerBackupsView() {
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
+    // Deliberately no setLoading(true) beyond the initial value: this runs every
+    // 5 seconds while a backup is going, and raising the flag swapped the job
+    // list for skeletons for the length of three round trips each time. That was
+    // the flicker. NodesTab polls on the same interval and has never touched a
+    // loading flag.
+    //
+    // Keyed on serverId, not the server OBJECT: AppDataContext replaces the
+    // servers array on every servers.changed event, so depending on the object
+    // gave reload a new identity for unrelated reasons - which re-ran the mount
+    // effect and rebuilt the poll timer.
     const reload = useCallback(async () => {
-        if (!server) return;
-        setLoading(true);
+        if (!serverId) return;
         const [jobsRes, storagesRes, restoresRes] = await Promise.all([
-            listBackupJobs(server.id),
+            listBackupJobs(serverId),
             listBackupStorages(),
-            listBackupRestores(server.id),
+            listBackupRestores(serverId),
         ]);
         if (jobsRes.success && jobsRes.jobs) setJobs(jobsRes.jobs);
         if (storagesRes.success && storagesRes.storages) setStorages(storagesRes.storages);
@@ -229,18 +247,21 @@ export default function ServerBackupsView() {
             if (r.success && r.runs) allRuns[j.id] = r.runs;
         }));
         setRuns(allRuns);
-    }, [server]);
+    }, [serverId]);
 
     useEffect(() => { reload(); }, [reload]);
 
-    // Refresh while any run or restore is in progress.
+    // Refresh while any run or restore is in progress. The two conditions are
+    // computed outside the effect so it depends on BOOLEANS: runs and
+    // restoreHistory are replaced wholesale by every reload, so depending on
+    // them tore the timer down and rebuilt it on every tick.
+    const hasRunningBackup = Object.values(runs).some(list => list.some(r => r.status === 'running'));
+    const hasPendingRestore = restoresNeedPolling(restoreHistory);
     useEffect(() => {
-        const hasRunning = Object.values(runs).some(list => list.some(r => r.status === 'running'));
-        const hasPendingRestore = restoresNeedPolling(restoreHistory);
-        if (!hasRunning && !hasPendingRestore) return;
+        if (!hasRunningBackup && !hasPendingRestore) return;
         const interval = setInterval(reload, 5000);
         return () => clearInterval(interval);
-    }, [runs, restoreHistory, reload]);
+    }, [hasRunningBackup, hasPendingRestore, reload]);
 
     const subServers = server?.activeSubServer ? [server.activeSubServer] : [];
 
@@ -426,11 +447,12 @@ export default function ServerBackupsView() {
                                     <div className="mono-label mb-2">Recent Runs</div>
                                     <div className="space-y-1">
                                         {runs[job.id].slice(0, 5).map(run => (
-                                            <div key={run.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-(--base-03)/40">
+                                            <div key={run.id} className="rounded hover:bg-(--base-03)/40">
+                                            <div className="flex items-center gap-3 py-1.5 px-2">
                                                 <span className={`badge-dot ${run.status === 'success' ? 'bg-(--success-light)' : run.status === 'failed' ? 'bg-(--error)' : 'bg-(--warning) animate-pulse'}`} />
                                                 <span className="text-sm text-(--base-08) flex-1">{formatRel(run.startedAt)}</span>
-                                                <span className="text-xs text-(--base-06) tabular-nums w-20 text-right">{formatBytes(run.sizeBytes)}</span>
-                                                <span className="badge badge-neutral capitalize">{run.status}</span>
+                                                <span className="text-xs text-(--base-06) tabular-nums w-20 text-right" title={run.status === 'running' ? 'Archived so far' : 'Archive size'}>{formatBytes(run.sizeBytes)}</span>
+                                                <span className={runBadgeClass(run.status) + ' capitalize'}>{run.status}</span>
                                                 {run.status === 'success' && (
                                                     <>
                                                         <button
@@ -448,11 +470,16 @@ export default function ServerBackupsView() {
                                                 <button onClick={() => handleDeleteRun(run.id)} className="btn btn-danger btn-sm" title="Delete">
                                                     <Trash2 size={11} />
                                                 </button>
-                                                {run.status === 'failed' && run.errorMessage && (
-                                                    <span className="text-[10px] text-(--error-light) max-w-xs truncate" title={run.errorMessage}>
-                                                        {run.errorMessage}
-                                                    </span>
-                                                )}
+                                            </div>
+                                            {/* Its own line, full width. It used to sit AFTER the delete
+                                                button, truncated with the text only in a tooltip - so the
+                                                one thing a failed backup has to tell you was the least
+                                                readable thing in the row. */}
+                                            {run.status === 'failed' && run.errorMessage && (
+                                                <p className="px-2 pb-2 -mt-0.5 text-xs text-(--error-light) break-words">
+                                                    {run.errorMessage}
+                                                </p>
+                                            )}
                                             </div>
                                         ))}
                                     </div>

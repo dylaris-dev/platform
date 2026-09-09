@@ -262,13 +262,42 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 			if !b.reporterMatchesServer(msg.Channel, job.ServerID, "backup result") {
 				continue
 			}
-			b.store.UpdateBackupRunStatus(result.RunID, result.Status, result.Error, result.SizeBytes, run.StorageKey, time.Now())
+			apply, completed := applyBackupReport(result.Status, run.Status, time.Now())
+			if !apply {
+				continue
+			}
+			b.store.UpdateBackupRunStatus(result.RunID, result.Status, result.Error, result.SizeBytes, run.StorageKey, completed)
 			if result.Status == "success" {
 				b.snapshotInstalls(result.RunID, job)
 				b.enforceRetention(ctx, run.JobID)
 			}
 		}
 	}
+}
+
+// applyBackupReport decides what an incoming result message does to the row:
+// whether to write it at all, and what completed_at it implies.
+//
+// A "running" report is PROGRESS, not an outcome - the node publishes the
+// archived byte count every few seconds so a backup in flight can show how far
+// it has got. Two things follow, and both are the reason this is a function
+// rather than an inline condition:
+//
+//   - Pub/Sub orders nothing, so a progress message can arrive after the
+//     terminal one. Writing it would put a finished run back into progress and
+//     replace its error message with an empty string. Refusing it here is also
+//     what lets the node keep its ticker running instead of having to stop it
+//     before every one of RunBackup's exits.
+//   - completed_at must stay NULL while the run is going. The store writes NULL
+//     for a zero time, so a zero time is what "not finished" looks like.
+func applyBackupReport(reportStatus, rowStatus string, now time.Time) (apply bool, completed time.Time) {
+	if reportStatus == "running" {
+		if rowStatus != "running" {
+			return false, time.Time{}
+		}
+		return true, time.Time{}
+	}
+	return true, now
 }
 
 // enforceRetention deletes successful runs that exceed the job's retention

@@ -11,6 +11,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.7
+
+### Features
+- **A running backup shows how much it has archived so far**, updated every few
+  seconds while it works. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backups taken while your server is running are consistent again.** The
+  server is asked to pause and flush its world before the files are read, and to
+  resume afterwards. Until now a backup held only what happened to be on disk at
+  that moment, so restoring one could put players back where they last saved
+  rather than where they were. `node`
+- **The backups page no longer flickers while a backup runs**, and a failed
+  backup now shows its reason in full instead of hiding it in a tooltip.
+
 ## 2026.09.09.6
 
 ### Features
