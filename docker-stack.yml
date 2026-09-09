@@ -308,6 +308,12 @@ services:
       # in this topology they need Redis by IP, and until it was listed here the
       # documented "set it to the leader's private IP in Swarm" was impossible
       # without editing this file. GRPC_TLS_ENABLED must match Core's setting.
+      #
+      # REQUIRED: the node refuses to start without it, and there is deliberately
+      # NO default. In Swarm the only correct value is the leader node's private
+      # IP (e.g. 10.0.0.5:6379) and this file cannot know it - a default that
+      # boots but cannot be reached is what this replaces. Set it in the stack's
+      # environment before deploying the node.
       SIDECAR_REDIS_ADDR: "${SIDECAR_REDIS_ADDR:-}"
       SIDECAR_REDIS_DB: "${SIDECAR_REDIS_DB:-}"
       GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"

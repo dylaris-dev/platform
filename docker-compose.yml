@@ -211,7 +211,13 @@ services:
       NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
       # MC containers are host siblings and cannot resolve Docker service DNS in
       # every topology, so they may need Redis by IP rather than by name.
-      SIDECAR_REDIS_ADDR: "${SIDECAR_REDIS_ADDR:-}"
+      #
+      # REQUIRED: the node refuses to start without it. Defaulted here because
+      # on this single-host testbed the answer is knowable - MC containers join
+      # the same dylaris_net the redis service is on. A single-label name keeps
+      # every server on the shared network (no per-tenant isolation), which is
+      # correct for a testbed; Settings -> Nodes says so out loud.
+      SIDECAR_REDIS_ADDR: "${SIDECAR_REDIS_ADDR:-redis:6379}"
       SIDECAR_REDIS_DB: "${SIDECAR_REDIS_DB:-}"
       STORAGE_PATHS: "${STORAGE_PATHS:-}"
       DYLARIS_CPUSET_CPUS: "${DYLARIS_CPUSET_CPUS:-}"

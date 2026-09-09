@@ -50,6 +50,8 @@ func EnrichNodesWithLiveStats(ctx context.Context, st NodeServerCounter, rdb *re
 		nodes[i].PortRange = hb.PortRange
 		nodes[i].PortRangeNotice = hb.PortRangeNotice
 		nodes[i].SharedStorage = hb.SharedStorage
+		nodes[i].Isolation = hb.Isolation
+		nodes[i].IsolationNotice = hb.IsolationNotice
 	}
 	return seen
 }

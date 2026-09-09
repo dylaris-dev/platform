@@ -349,3 +349,25 @@ func (a *TenantAllocator) enlarge(ownerID string, usedDockerSubnets []*net.IPNet
 	o.Subnet = newNet.String()
 	return oldNet, newNet, a.save()
 }
+
+// restoreSubnet puts an owner back on the block enlarge() moved them off.
+//
+// enlarge writes the new subnet to disk before any Docker work is attempted,
+// which is the only order that keeps two callers from picking the same free
+// block. The cost is that an abandoned enlarge leaves the file describing a
+// network nobody built: every address handed out afterwards sits outside the
+// live network, and nothing on it starts. This is how that is undone.
+func (a *TenantAllocator) restoreSubnet(ownerID string, subnet *net.IPNet) error {
+	if subnet == nil {
+		return nil
+	}
+	o, ok := a.state.Owners[ownerID]
+	if !ok {
+		return nil
+	}
+	if o.Subnet == subnet.String() {
+		return nil
+	}
+	o.Subnet = subnet.String()
+	return a.save()
+}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"testing"
 )
 
@@ -262,5 +263,65 @@ func TestAllocatorPersistenceRoundTrip(t *testing.T) {
 	ip, _, err := b.ipFor("owner-A", "srv-1")
 	if err != nil || ip.String() != "10.0.0.4" {
 		t.Fatalf("reloaded ipFor(srv-1) = %v,%v want 10.0.0.4", ip, err)
+	}
+}
+
+// enlarge() writes the new subnet to disk before any Docker work is attempted,
+// which is the only order that stops two callers picking the same free block.
+// The cost is that an abandoned enlarge leaves the file describing a network
+// nobody built - and then every address handed out is outside the live network,
+// so nothing on it starts. restoreSubnet is how that is undone.
+func TestRestoreSubnetAfterAnAbandonedEnlarge(t *testing.T) {
+	a := loadTenantAllocator(t.TempDir())
+
+	if _, err := a.ensureSubnet("owner-A", nil); err != nil {
+		t.Fatalf("ensureSubnet: %v", err)
+	}
+	before := a.state.Owners["owner-A"].Subnet
+
+	oldNet, newNet, err := a.enlarge("owner-A", nil)
+	if err != nil {
+		t.Fatalf("enlarge: %v", err)
+	}
+	if a.state.Owners["owner-A"].Subnet == before {
+		t.Fatal("enlarge did not move the owner, so this proves nothing")
+	}
+	if oldNet.String() != before {
+		t.Fatalf("enlarge reported old subnet %s, want %s", oldNet, before)
+	}
+
+	if err := a.restoreSubnet("owner-A", oldNet); err != nil {
+		t.Fatalf("restoreSubnet: %v", err)
+	}
+	if got := a.state.Owners["owner-A"].Subnet; got != before {
+		t.Errorf("subnet = %s, want %s (%s was never built)", got, before, newNet)
+	}
+
+	// And it has to survive a restart: the node reads this file at boot, so a
+	// rollback that lived only in memory would come back wrong.
+	reloaded := loadTenantAllocator(filepath.Dir(a.path))
+	if got := reloaded.state.Owners["owner-A"].Subnet; got != before {
+		t.Errorf("after reload subnet = %s, want %s - the rollback was not saved", got, before)
+	}
+}
+
+// Restoring is safe to call when there is nothing to restore. Both cases reach
+// it on the abandon path: an owner whose record is already gone, and an enlarge
+// that failed before it moved anything.
+func TestRestoreSubnetIsANoOpWithNothingToRestore(t *testing.T) {
+	a := loadTenantAllocator(t.TempDir())
+	if _, err := a.ensureSubnet("owner-A", nil); err != nil {
+		t.Fatalf("ensureSubnet: %v", err)
+	}
+	current := a.state.Owners["owner-A"].Subnet
+
+	if err := a.restoreSubnet("owner-A", nil); err != nil {
+		t.Errorf("nil subnet: %v", err)
+	}
+	if err := a.restoreSubnet("owner-nobody", mustCIDR(t, "10.99.0.0/26")); err != nil {
+		t.Errorf("unknown owner: %v", err)
+	}
+	if got := a.state.Owners["owner-A"].Subnet; got != current {
+		t.Errorf("subnet moved to %s, want %s left alone", got, current)
 	}
 }

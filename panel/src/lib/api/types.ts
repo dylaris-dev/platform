@@ -68,6 +68,11 @@ export interface Node {
     cpusetCpus?: string;
     publicIp?: string;
     privateIps?: string[];
+    // Per-tenant network isolation, live from the heartbeat. isolationNotice is
+    // set only when there is something to say: it is off and why, or it is on
+    // and servers went onto the shared network anyway.
+    isolation?: boolean;
+    isolationNotice?: string;
     serverCount?: number;
     // Placement (persisted)
     cpuOvercommitRatio?: number;

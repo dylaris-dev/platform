@@ -269,17 +269,33 @@ func (t *TenantNetworkManager) release(serverUUID string) {
 		return
 	}
 	name := tenantNetworkName(owner)
-	id, found, ferr := t.findNetwork(name)
-	if ferr != nil || !found {
-		return
-	}
-	_ = t.api.NetworkDisconnect(t.ctx, id, t.nodeContainer, true)
-	// The Link is on here too (connectLink); an endpoint left behind makes the
-	// remove below fail with "has active endpoints" and strands the network.
-	_ = t.api.NetworkDisconnect(t.ctx, id, linkContainerName, true)
-	if rerr := t.api.NetworkRemove(t.ctx, id); rerr != nil {
+	switch removed, rerr := t.removeTenantNetwork(name); {
+	case rerr != nil:
 		log.Printf("tenant-net: remove empty %s: %v", name, rerr)
-	} else {
+	case removed:
 		log.Printf("tenant-net: removed empty tenant net %s", name)
 	}
+}
+
+// removeTenantNetwork detaches everything this node put on an owner's network
+// and removes it. Reports whether a network was actually there to remove.
+// CALLER MUST HOLD t.mu.
+//
+// BOTH endpoints, always, and that is the whole reason this is one function
+// instead of the two copies it replaces. The node is the obvious one. The Link
+// is attached to every tenant network as well (connectLink), on any deployment
+// that carries player traffic - and the enlarge path disconnected only the
+// node, so its remove could not succeed while a Link was running, which is
+// exactly when it is asked to.
+func (t *TenantNetworkManager) removeTenantNetwork(name string) (bool, error) {
+	id, found, err := t.findNetwork(name)
+	if err != nil || !found {
+		return false, err
+	}
+	_ = t.api.NetworkDisconnect(t.ctx, id, t.nodeContainer, true)
+	_ = t.api.NetworkDisconnect(t.ctx, id, linkContainerName, true)
+	if rerr := t.api.NetworkRemove(t.ctx, id); rerr != nil {
+		return false, rerr
+	}
+	return true, nil
 }

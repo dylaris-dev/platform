@@ -324,6 +324,13 @@ type Node struct {
 	// of the node quietly binding ports the host firewall does not allow.
 	PortRange       string `json:"portRange,omitempty"`
 	PortRangeNotice string `json:"portRangeNotice,omitempty"`
+	// Isolation is whether this node puts each tenant's servers on their own
+	// Docker network, and IsolationNotice is the one sentence about it worth
+	// showing - off and why, or on but not holding. Live from the heartbeat,
+	// like everything above: it is a property of the running node, not a
+	// setting, so a persisted copy could only ever be out of date.
+	Isolation       bool   `json:"isolation"`
+	IsolationNotice string `json:"isolationNotice,omitempty"`
 	// SharedStorage is non-empty when this node found one of its storage paths
 	// mounted into another node as well. That topology cannot work - node
 	// identity itself lives in the first storage path - and it destroys a server

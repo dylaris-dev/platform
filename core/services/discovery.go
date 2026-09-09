@@ -59,6 +59,13 @@ type NodeHeartbeat struct {
 	// the host firewall must open, and sees a typo instead of a silent default.
 	PortRange       string `json:"portRange,omitempty"`
 	PortRangeNotice string `json:"portRangeNotice,omitempty"`
+	// Isolation is whether this node puts each tenant's servers on their own
+	// Docker network. IsolationNotice is set when there is something to say
+	// about it - it is off and why, or it is on and servers went onto the shared
+	// network anyway, which a boot-time state cannot express. The node composes
+	// the sentence; Core carries it.
+	Isolation       bool   `json:"isolation"`
+	IsolationNotice string `json:"isolationNotice,omitempty"`
 	// SharedStorage is non-empty when the node found one of its storage paths
 	// mounted into another node too. That topology cannot work - node identity
 	// lives in the first storage path - and it silently destroys a server on the

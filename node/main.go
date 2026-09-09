@@ -533,7 +533,38 @@ func parseConfig() {
 	// Stays EMPTY when the node is on the warp proxy: loopback is the node's own
 	// answer and would be a container's own loopback, so the address has to be
 	// resolved per network against its bridge gateway at container-create time.
-	mcRedisAddr = resolveSidecarRedisAddr(os.Getenv("SIDECAR_REDIS_ADDR"), redisAddr, redisViaWarpProxy, "")
+	// SIDECAR_REDIS_ADDR is REQUIRED, and refusing to start is the point.
+	//
+	// It is the Redis address baked into every MC container and into the Link.
+	// Those are host SIBLINGS of this node, not children of it, so the name this
+	// node uses for Redis is not necessarily a name they can resolve. It used to
+	// fall back to REDIS_ADDR, which works silently right up until a container
+	// leaves the shared network - and it is also the value that decides whether
+	// per-tenant isolation is available at all. So the one setting that governs
+	// isolation was the one nobody had to set, and a value that switches it off
+	// was indistinguishable from a value nobody had thought about.
+	//
+	// Both shipped compose files set it to "" when the operator does not, and a
+	// set-but-empty variable overrides a code default - so "unset" was the
+	// normal case rather than an unusual one.
+	//
+	// The exception is the local warp proxy, where there IS no single answer: a
+	// container reaches warp through the gateway of ITS OWN network, so the
+	// address is resolved per network at creation time (sidecarRedisAddr), and
+	// an empty value there is that instruction rather than an omission.
+	sidecarRedisEnv := os.Getenv("SIDECAR_REDIS_ADDR")
+	if missingSidecarRedisAddr(sidecarRedisEnv, redisViaWarpProxy) {
+		log.Fatalf("FATAL: SIDECAR_REDIS_ADDR is not set.\n" +
+			"  It is the Redis address given to every MC container and to the Link. They are host\n" +
+			"  siblings of this node, so they do not necessarily resolve the name this node uses.\n" +
+			"  Set it in the node's environment:\n" +
+			"    Swarm            the leader node's PRIVATE IP, e.g. 10.0.0.5:6379\n" +
+			"    single host      the Redis service name, e.g. redis:6379\n" +
+			"  An IP or a dotted name also makes per-tenant network isolation available; a bare\n" +
+			"  single-label name keeps every server on the shared network. Settings -> Nodes now\n" +
+			"  shows which of the two you got.")
+	}
+	mcRedisAddr = resolveSidecarRedisAddr(sidecarRedisEnv, redisAddr, redisViaWarpProxy, "")
 	mcRedisDB = os.Getenv("SIDECAR_REDIS_DB")
 	if mcRedisDB == "" {
 		mcRedisDB = strconv.Itoa(redisDB)
@@ -978,6 +1009,17 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	data["portRange"] = fmt.Sprintf("%d-%d", portRangeStart, portRangeEnd)
 	if portRangeNotice != "" {
 		data["portRangeNotice"] = portRangeNotice
+	}
+	// Per-tenant network isolation, so an operator can read the state where the
+	// question is asked instead of in a container log that dies with the
+	// container. The notice covers the case a boot line cannot: isolation ON,
+	// and servers on the shared network anyway. See isolation_state.go.
+	data["isolation"] = tenantIsolationEnabled
+	if dm != nil {
+		fallbacks, lastReason := dm.isolation.snapshot()
+		if notice := isolationNotice(tenantIsolationEnabled, fallbacks, lastReason); notice != "" {
+			data["isolationNotice"] = notice
+		}
 	}
 	// Which release this IMAGE was built from. Core cannot see it any other way,
 	// and without it the panel assumes the node moved whenever Core did - so an

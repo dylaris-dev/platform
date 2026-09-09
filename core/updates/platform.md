@@ -8,6 +8,35 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.10
+
+### Features
+- **Settings -> Nodes says whether a node isolates its tenants.** It was one
+  line in the node's log at boot, on a machine whose logs die with the
+  container. Three states, because isolation can be on and a server still end up
+  on the shared network: Isolated, Shared network, and Isolation not holding
+  with the reason and the count. `core` `node` `panel`
+
+### Breaking
+- **`SIDECAR_REDIS_ADDR` is now required on the node; without it the node
+  refuses to start.** Set it in the node's environment BEFORE deploying this
+  release. In Swarm it is the leader node's private IP, e.g. `10.0.0.5:6379`;
+  on a single host it is the Redis service name. It used to fall back to
+  `REDIS_ADDR` silently, and that fallback is also what decided whether tenant
+  isolation was available - so the setting governing isolation was one nobody
+  had to make. External/BYON nodes are unaffected: they reach Redis through
+  warp's local proxy, where the address is resolved per network. `node`
+
+### Security
+- Nothing.
+
+### Fixes
+- **Enlarging a tenant's network no longer destroys their servers.** Growing a
+  tenant past ~60 servers on one node removed their containers, then failed to
+  remove the old network because the Link was still attached to it, and returned
+  before putting any container back. Every failure path now restores both the
+  containers and the recorded subnet. `node`
+
 ## 2026.09.09.9
 
 ### Features

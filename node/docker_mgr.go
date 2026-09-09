@@ -36,6 +36,9 @@ type DockerManager struct {
 	portMgr       *PortManager          // nil when gateway is enabled (port binding not needed)
 	tenant        *TenantNetworkManager // nil = isolation disabled (redis guard); servers stay on dylaris_net
 	selfHostNet   bool                  // true when this node's own container uses --network host
+	// isolation counts the servers that were put on the shared network even
+	// though isolation is on. Reported in the heartbeat; see isolation_state.go.
+	isolation isolationState
 
 	// Bridge gateway per Docker network id: where a container on it reaches the
 	// host, and therefore the warp proxy. Only consulted in warp-proxy mode, and
@@ -832,6 +835,13 @@ func (dm *DockerManager) tenantEndpoints(serverUUID, ownerID, globalNetID, globa
 		}
 	}
 	if err != nil {
+		// Four unrelated conditions arrive here - an exhausted pool, the /24
+		// ceiling, an unreadable allocator file, any Docker error - and all of
+		// them produce the same outcome: a server that an operator believes is
+		// isolated, sitting on the shared network. It was a log line and
+		// nothing else, on a machine whose logs die with the container.
+		// Recorded so the heartbeat can say it out loud.
+		dm.isolation.recordFallback(err)
 		log.Printf("tenant-net: falling back to dylaris_net for %s: %v", serverUUID, err)
 		return fallback
 	}
@@ -863,7 +873,7 @@ func (dm *DockerManager) EnlargeTenant(ownerID string) error {
 		t.mu.Unlock()
 		return err
 	}
-	_, newNet, err := t.alloc.enlarge(ownerID, used)
+	oldNet, newNet, err := t.alloc.enlarge(ownerID, used)
 	if err != nil {
 		t.mu.Unlock()
 		return err
@@ -883,21 +893,53 @@ func (dm *DockerManager) EnlargeTenant(ownerID string) error {
 		}
 	}
 
-	// Drop the old network (disconnect node first) and recreate at the new subnet.
-	t.mu.Lock()
-	if id, found, _ := t.findNetwork(name); found {
-		_ = t.api.NetworkDisconnect(t.ctx, id, t.nodeContainer, true)
-		if rerr := t.api.NetworkRemove(t.ctx, id); rerr != nil {
-			log.Printf("tenant-net: enlarge remove old %s: %v", name, rerr)
+	// Past this line every one of the owner's containers is GONE, so no failure
+	// may simply return: it would leave a tenant with none of their servers
+	// running and nothing that puts them back. It used to, on two paths.
+	//
+	// The allocator is rolled back with them. enlarge() writes the new subnet to
+	// disk before any of this Docker work happens, so an abandoned attempt
+	// leaves the recorded subnet describing a network that does not exist -
+	// after which every address the allocator hands out is outside the live
+	// network and nothing on it can start.
+	abandon := func(cause error) error {
+		t.mu.Lock()
+		if rbErr := t.alloc.restoreSubnet(ownerID, oldNet); rbErr != nil {
+			log.Printf("tenant-net: enlarge could not restore %s to %s: %v", ownerID, oldNet, rbErr)
 		}
+		t.mu.Unlock()
+		dm.recreateOwnerContainers(uuids, had)
+		return cause
+	}
+
+	// Drop the old network and recreate at the new subnet. removeTenantNetwork
+	// is what release() uses; this path used to have its own copy of the
+	// teardown and that copy did not know about the Link.
+	t.mu.Lock()
+	if _, rerr := t.removeTenantNetwork(name); rerr != nil {
+		// Fatal, not a log line. The old network keeps the NAME, so
+		// EnsureTenantNetwork below would find it, skip creation, and then
+		// connect the node at an address from the new subnet - which cannot
+		// work, and leaves the tenant half-built either way.
+		t.mu.Unlock()
+		return abandon(fmt.Errorf("enlarge: could not remove old network %s: %w", name, rerr))
 	}
 	_, err = t.EnsureTenantNetwork(ownerID)
 	t.mu.Unlock()
 	if err != nil {
-		return fmt.Errorf("enlarge: recreate net: %w", err)
+		return abandon(fmt.Errorf("enlarge: recreate net: %w", err))
 	}
 
 	// Recreate the servers that had a container (rejoin new net at remapped IP).
+	dm.recreateOwnerContainers(uuids, had)
+	return nil
+}
+
+// recreateOwnerContainers puts back the containers EnlargeTenant removed, on
+// whatever network the owner ended up with. Shared by the success path and by
+// abandon(), because a tenant whose servers were destroyed to make room for a
+// resize must get them back whether or not the resize worked.
+func (dm *DockerManager) recreateOwnerContainers(uuids []string, had map[string]bool) {
 	for _, u := range uuids {
 		if !had[u] {
 			continue
@@ -911,7 +953,6 @@ func (dm *DockerManager) EnlargeTenant(ownerID string) error {
 			log.Printf("tenant-net: enlarge recreate %s: %v", u, rerr)
 		}
 	}
-	return nil
 }
 
 // loadSavedConfig reads a server's persisted .node_config.json (written by

@@ -11,11 +11,15 @@ import (
 
 // fakeDockerNet is an in-memory dockerNetAPI for daemon-free tests.
 type fakeDockerNet struct {
-	nets     []network.Summary
-	created  []network.CreateOptions
-	connects []string // "netID|container"
-	removed  []string
-	nextID   int
+	nets        []network.Summary
+	created     []network.CreateOptions
+	connects    []string // "netID|container"
+	disconnects []string // "netID|container"
+	removed     []string
+	nextID      int
+	// removeErr is returned by NetworkRemove, so a test can stage the failure
+	// Docker reports when an endpoint is still attached.
+	removeErr error
 	// connectErr[container] is returned by NetworkConnect for that container,
 	// so a test can stage an absent Link the way Docker reports one.
 	connectErr map[string]error
@@ -50,8 +54,14 @@ func (f *fakeDockerNet) NetworkConnect(_ context.Context, id, c string, _ *netwo
 	f.connects = append(f.connects, id+"|"+c)
 	return nil
 }
-func (f *fakeDockerNet) NetworkDisconnect(_ context.Context, _, _ string, _ bool) error { return nil }
+func (f *fakeDockerNet) NetworkDisconnect(_ context.Context, id, c string, _ bool) error {
+	f.disconnects = append(f.disconnects, id+"|"+c)
+	return nil
+}
 func (f *fakeDockerNet) NetworkRemove(_ context.Context, id string) error {
+	if f.removeErr != nil {
+		return f.removeErr
+	}
 	f.removed = append(f.removed, id)
 	return nil
 }
@@ -276,5 +286,84 @@ func TestServerConfigDecodesOwnerID(t *testing.T) {
 	}
 	if cfg.UUID != "srv-1" || cfg.Docker.RAM != 2048 {
 		t.Fatalf("other fields lost: %+v", cfg)
+	}
+}
+
+// Tearing a tenant network down has to detach the LINK as well as the node.
+//
+// The Link is attached to every tenant network (connectLink) on any deployment
+// that carries player traffic, and Docker refuses to remove a network that
+// still has an endpoint. release() knew this; the enlarge path had its own copy
+// of the teardown and that copy disconnected only the node - so its remove
+// could not succeed in exactly the deployments it is asked to run in. There is
+// one teardown now, and this pins both endpoints.
+func TestRemoveTenantNetworkDetachesTheLinkToo(t *testing.T) {
+	m, f := newTestManager(t, "bridge")
+
+	name, err := m.EnsureTenantNetwork("owner-A")
+	if err != nil {
+		t.Fatalf("EnsureTenantNetwork: %v", err)
+	}
+	id, found, _ := m.findNetwork(name)
+	if !found {
+		t.Fatal("the network under test does not exist")
+	}
+	f.disconnects = nil
+
+	removed, err := m.removeTenantNetwork(name)
+	if err != nil || !removed {
+		t.Fatalf("removeTenantNetwork = (%v, %v), want (true, nil)", removed, err)
+	}
+
+	want := map[string]bool{id + "|node-host": false, id + "|" + linkContainerName: false}
+	for _, d := range f.disconnects {
+		if _, ok := want[d]; ok {
+			want[d] = true
+		}
+	}
+	for d, seen := range want {
+		if !seen {
+			t.Errorf("%s was never disconnected; Docker then refuses the remove with \"has active endpoints\"", d)
+		}
+	}
+	if len(f.removed) != 1 || f.removed[0] != id {
+		t.Errorf("removed = %v, want [%s]", f.removed, id)
+	}
+}
+
+// A network that is not there is not an error, and is not a removal either.
+// release() logs "removed empty tenant net" off this, and saying it about a
+// network nobody found would be a line an operator cannot act on.
+func TestRemoveTenantNetworkOnAMissingNetwork(t *testing.T) {
+	m, _ := newTestManager(t, "bridge")
+
+	removed, err := m.removeTenantNetwork(tenantNetworkName("owner-nobody"))
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if removed {
+		t.Error("reported a removal of a network that did not exist")
+	}
+}
+
+// A remove that fails must SAY so rather than reporting success. Everything the
+// enlarge path does afterwards - creating the network at the new subnet,
+// connecting the node at an address inside it - is wrong if the old network is
+// still standing under the same name.
+func TestRemoveTenantNetworkReportsAFailedRemove(t *testing.T) {
+	m, f := newTestManager(t, "bridge")
+
+	name, err := m.EnsureTenantNetwork("owner-A")
+	if err != nil {
+		t.Fatalf("EnsureTenantNetwork: %v", err)
+	}
+	f.removeErr = fmt.Errorf("network %s has active endpoints", name)
+
+	removed, err := m.removeTenantNetwork(name)
+	if err == nil {
+		t.Fatal("a failed remove reported success")
+	}
+	if removed {
+		t.Error("reported a removal that did not happen")
 	}
 }
