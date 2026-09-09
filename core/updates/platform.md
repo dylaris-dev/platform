@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Restarting a node no longer disconnects the players on it.** The Link
+  sidecar was destroyed and rebuilt on every node start, so a stack deploy took
+  every gateway-routed player on every host offline for 10 to 30 seconds and cut
+  any file transfer running through it - whether or not anything about the Link
+  had changed. The node now compares the running container and leaves a correct
+  one alone. `node`
+- **The link count on the Infrastructure page always read zero.** It matched an
+  image name nothing has ever shipped, so a node running its Link reported none.
+  `node`
+
 ## 2026.09.09.5
 
 ### Features

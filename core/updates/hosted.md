@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Restarting your node no longer disconnects the players on it.** Until now a
+  restart rebuilt the tunnel component alongside it every time, which took
+  everyone off your servers for 10 to 30 seconds and interrupted any file
+  transfer in progress. It is now left alone unless it actually needs replacing.
+  `node`
+
 ## 2026.09.09.5
 
 ### Features

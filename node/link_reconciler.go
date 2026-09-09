@@ -30,11 +30,21 @@ func startLinkReconciler(ctx context.Context, dm *DockerManager) {
 			return
 		}
 		if sig != last {
-			if err := dm.EnsureLinkContainer(linkImage, nodeID, secret, proof); err != nil {
+			// The signature lives in this variable, so it is empty at every node
+			// start and a boot always looks like a change. EnsureLinkContainer
+			// is what makes that harmless: it compares the running container and
+			// leaves a correct one alone, so the reconciler adopts it instead of
+			// rebuilding it under the players on it.
+			recreated, err := dm.EnsureLinkContainer(linkImage, nodeID, secret, proof)
+			if err != nil {
 				log.Printf("link: failed to ensure Link sidecar: %v", err)
 				return
 			}
-			log.Println("link: Link sidecar (re)started")
+			if recreated {
+				log.Println("link: Link sidecar (re)started")
+			} else {
+				log.Println("link: Link sidecar already current, left running")
+			}
 			last = sig
 			// A fresh spawn just pulled, so the next drift check can wait a full
 			// interval rather than immediately pulling the same image again.

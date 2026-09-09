@@ -210,8 +210,13 @@ func TriggerLinkImageUpdate(dm *DockerManager) {
 }
 
 // applyLinkImageUpdate replaces the Link container with the current image.
+//
+// Replace, not Ensure: this path has already decided. The drift check got here
+// because the image genuinely moved, and the manual button got here because an
+// operator asked for it having been told it interrupts sessions. Making it
+// idempotent would turn "apply now" into a silent no-op.
 func applyLinkImageUpdate(dm *DockerManager, nodeID, secret, proof string) {
-	if err := dm.EnsureLinkContainer(linkImage, nodeID, secret, proof); err != nil {
+	if err := dm.ReplaceLinkContainer(linkImage, nodeID, secret, proof); err != nil {
 		log.Printf("link: image update failed: %v", err)
 		return
 	}
