@@ -672,7 +672,11 @@ func (a *App) rememberReadableCookies(target *url.URL, resp *http.Response) {
 		if !ok {
 			continue
 		}
-		a.readable[key][strings.TrimSpace(name)] = v
+		name = strings.TrimSpace(name)
+		a.readable[key][name] = v
+		// Core has spoken about this cookie again, so a pending local deletion
+		// is stale - it would otherwise delete the sign-in the user just made.
+		delete(a.readableGone, name)
 	}
 }
 
@@ -692,18 +696,30 @@ func (a *App) readableCookieScript(target *url.URL, nonce string) string {
 	a.readableMu.Lock()
 	defer a.readableMu.Unlock()
 	held := a.readable[panelKey(target)]
-	if len(held) == 0 {
+	if len(held) == 0 && len(a.readableGone) == 0 {
 		return ""
 	}
-	lines := make([]string, 0, len(held))
-	for _, v := range held {
+	lines := make([]string, 0, len(held)+len(a.readableGone))
+	emit := func(v string) {
 		enc, err := json.Marshal(v)
 		if err != nil {
-			continue
+			return
 		}
 		// json.Marshal escapes <, > and & by default, which is what keeps a
 		// value containing "</script>" from closing this element.
 		lines = append(lines, "document.cookie="+string(enc)+";")
+	}
+	for _, v := range held {
+		emit(v)
+	}
+	// Deletions for cookies dropped locally, whatever panel this page belongs
+	// to: every panel is proxied onto one origin, so that is where the copy is.
+	// A name Core has set again is no longer in here (rememberReadableCookies).
+	for name, v := range a.readableGone {
+		if _, stillHeld := held[name]; stillHeld {
+			continue
+		}
+		emit(v)
 	}
 	sort.Strings(lines) // stable output, so the injected bytes do not churn
 	attr := ""

@@ -64,7 +64,9 @@ type NodeHeartbeat struct {
 	// about it - it is off and why, or it is on and servers went onto the shared
 	// network anyway, which a boot-time state cannot express. The node composes
 	// the sentence; Core carries it.
-	Isolation       bool   `json:"isolation"`
+	// A POINTER: a node that does not report the field has not measured it, and
+	// that is a third answer, not `false`. See models.Node.Isolation.
+	Isolation       *bool  `json:"isolation,omitempty"`
 	IsolationNotice string `json:"isolationNotice,omitempty"`
 	// SharedStorage is non-empty when the node found one of its storage paths
 	// mounted into another node too. That topology cannot work - node identity

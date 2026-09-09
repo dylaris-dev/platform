@@ -197,6 +197,22 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The live half of a node, from its heartbeat. ListNodes answers from the
+	// nodes TABLE, and everything a running node reports about itself has no
+	// column - so on this endpoint those fields were whatever the zero value
+	// is, for every node, always.
+	//
+	// It went unnoticed while nothing on this screen displayed one. Isolation
+	// was the first, and it arrived reading `false` on every node in the fleet:
+	// the badge could only ever say "shared network", including about nodes
+	// that were isolating perfectly well. Enriched here, after the scope filter
+	// so the Redis reads cover only the nodes actually being returned.
+	//
+	// Shared with the infrastructure page and the metrics collector rather than
+	// done a third way here - that function exists because the first two had
+	// already drifted.
+	services.EnrichNodesWithLiveStats(r.Context(), h.state.Store, h.state.Redis, nodes)
+
 	// Derive the unusable flag at response time (no DB column needed): an
 	// external/home node only routes via gateway+beam, so while the platform
 	// is in ip_port mode it has no reachable path. Panel uses this to show a

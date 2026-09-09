@@ -329,7 +329,15 @@ type Node struct {
 	// showing - off and why, or on but not holding. Live from the heartbeat,
 	// like everything above: it is a property of the running node, not a
 	// setting, so a persisted copy could only ever be out of date.
-	Isolation       bool   `json:"isolation"`
+	//
+	// A POINTER, and omitempty, because there are three answers and not two.
+	// nil is "nobody measured": a node from before this field existed, or one
+	// that is not reporting at all. A plain bool made that indistinguishable
+	// from "no isolation" - the panel guards on `=== undefined`, and a
+	// non-pointer bool ships `"isolation": false` for every silent node, so the
+	// guard could never fire and an offline node was labelled shared-network on
+	// the strength of nothing.
+	Isolation       *bool  `json:"isolation,omitempty"`
 	IsolationNotice string `json:"isolationNotice,omitempty"`
 	// SharedStorage is non-empty when this node found one of its storage paths
 	// mounted into another node as well. That topology cannot work - node

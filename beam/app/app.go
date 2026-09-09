@@ -68,6 +68,22 @@ type App struct {
 	// document, telling B's login screen a session exists when none does.
 	readableMu sync.Mutex
 	readable   map[string]map[string]string
+	// readableGone are Max-Age=0 lines for cookies that were dropped locally,
+	// keyed by cookie NAME and not by panel.
+	//
+	// Forgetting the replay source is not the same as removing the cookie.
+	// readableCookieScript writes these into document.cookie, which puts them in
+	// the webview's OWN store - Core sets them with a positive Max-Age, so they
+	// are persistent and outlive the app. Clearing only the map above stopped
+	// the re-injection and left that copy in place, so "clear local data" ended
+	// with the panel still seeing a sign-in hint while the shell's jar was gone:
+	// the authed shell over a dead session, which is the state it was supposed
+	// to get someone out of.
+	//
+	// Not per panel, because the cookie store is not: every panel is proxied
+	// onto the same wails.localhost origin, so a deletion has to go out whatever
+	// the app was repointed at.
+	readableGone map[string]string
 
 	// updates caches whether a newer build is waiting, so the launcher injected
 	// into every proxied page can render its dot without a network call on the
@@ -1379,11 +1395,27 @@ func (a *App) forgetPanelSession() {
 	// And the readable half, which is a SECOND record of the same fact. The
 	// shell's jar is what authenticates a proxied request; the readable set is
 	// what the injected script writes into document.cookie so the panel can see
-	// it is signed in. Clearing only the first leaves the next page load
-	// re-injecting the sign-in hint over a session that no longer exists - the
-	// panel then renders its authed shell and every request inside it fails,
-	// which is worse than being signed out, and is not what the user asked for.
+	// it is signed in. Leaving it behind means the next page load re-injects the
+	// sign-in hint over a session that no longer exists - the panel then renders
+	// its authed shell and every request inside it fails, which is worse than
+	// being signed out, and is not what the user asked for.
+	//
+	// Dropping the map is not enough, and that was the first version of this.
+	// The script already wrote those cookies into the WEBVIEW's store, where
+	// they are persistent (Core sets a positive Max-Age) - so forgetting the
+	// source stopped nothing that had already happened, and the panel went on
+	// seeing a sign-in hint across restarts until the cookie expired on its own.
+	// A deletion has to be sent, and the injector is the only thing that can
+	// send it.
 	a.readableMu.Lock()
+	for _, held := range a.readable {
+		for name := range held {
+			if a.readableGone == nil {
+				a.readableGone = map[string]string{}
+			}
+			a.readableGone[name] = name + "=; Path=/; Max-Age=0"
+		}
+	}
 	a.readable = nil
 	a.readableMu.Unlock()
 }

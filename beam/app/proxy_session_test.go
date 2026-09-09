@@ -205,13 +205,58 @@ func TestClearingLocalDataForgetsTheReadableCookiesToo(t *testing.T) {
 	captureShellCookies(resp, a.panelCookies(), target)
 	a.rememberReadableCookies(target, resp)
 
-	if a.readableCookieScript(target, "") == "" {
+	if !strings.Contains(a.readableCookieScript(target, ""), "dylaris_signed_in=1") {
 		t.Fatal("nothing was remembered, so this proves nothing about clearing it")
 	}
 
 	a.forgetPanelSession()
 
-	if got := a.readableCookieScript(target, ""); got != "" {
+	got := a.readableCookieScript(target, "")
+	if strings.Contains(got, "dylaris_signed_in=1") {
 		t.Errorf("the sign-in hint survived the clear and will be replayed: %q", got)
+	}
+	// Not "" - that was the first version of this assertion and it encoded the
+	// bug. The script had ALREADY written this cookie into the webview's own
+	// store, where Core's positive Max-Age makes it persistent, so forgetting
+	// the source stopped nothing that had happened: the panel went on reading a
+	// sign-in hint across restarts. Something has to go out and delete it, and
+	// this injector is the only thing that can.
+	if !strings.Contains(got, "dylaris_signed_in=; Path=/; Max-Age=0") {
+		t.Errorf("no deletion is sent, so the copy already in the webview stays: %q", got)
+	}
+
+	// A fresh sign-in outranks the pending deletion, or clearing local data once
+	// would delete the hint from every session afterwards.
+	again := &http.Response{Header: http.Header{}}
+	again.Header.Add("Set-Cookie", "dylaris_signed_in=1; Path=/; Max-Age=86400; Secure")
+	a.rememberReadableCookies(target, again)
+	after := a.readableCookieScript(target, "")
+	if !strings.Contains(after, "dylaris_signed_in=1") || strings.Contains(after, "Max-Age=0") {
+		t.Errorf("signing in again did not retire the deletion: %q", after)
+	}
+}
+
+// The deletion is not scoped to the panel the app happens to be pointed at.
+//
+// Every panel is proxied onto the SAME wails.localhost origin, so that is where
+// the cookie lives - one store, not one per panel. RepointPanel calls
+// forgetPanelSession and then changes the target, so a deletion filed under the
+// old panel's key would never be injected again, and the old panel's sign-in
+// hint would sit in the store telling the NEW panel a session exists.
+func TestTheReadableDeletionFollowsTheOriginNotThePanel(t *testing.T) {
+	a := &App{}
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+
+	oldPanel, _ := url.Parse("https://panel-a.example.com/")
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Add("Set-Cookie", "dylaris_signed_in=1; Path=/; Max-Age=86400; Secure")
+	a.rememberReadableCookies(oldPanel, resp)
+
+	a.forgetPanelSession()
+
+	newPanel, _ := url.Parse("https://panel-b.example.com/")
+	if got := a.readableCookieScript(newPanel, ""); !strings.Contains(got, "dylaris_signed_in=; Path=/; Max-Age=0") {
+		t.Errorf("repointing left panel A's hint in the shared store: %q", got)
 	}
 }

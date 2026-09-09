@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The isolation badge in Settings -> Nodes was answering from the database
+  instead of from the node.** It read "Shared network" on every machine,
+  including ones isolating perfectly well, and said the same about nodes that
+  had reported nothing at all. A node that has not reported now shows no badge.
+  `core`
+- **A host-networked node no longer claims to isolate.** It cannot join a
+  per-tenant network, so its servers stay on the shared one - but it reported
+  the setting instead of the fact and showed a green "Isolated". `node`
+- **"Isolation off" now names which of the three reasons applies.** Host
+  networking and the warp proxy both pointed the reader at SIDECAR_REDIS_ADDR,
+  which is irrelevant on the first and must not be set on the second. `node`
+
 ## 2026.09.09.10
 
 ### Features

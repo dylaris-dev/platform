@@ -1014,10 +1014,21 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	// question is asked instead of in a container log that dies with the
 	// container. The notice covers the case a boot line cannot: isolation ON,
 	// and servers on the shared network anyway. See isolation_state.go.
-	data["isolation"] = tenantIsolationEnabled
+	//
+	// Reported from the MANAGER, not from tenantIsolationEnabled. Those are two
+	// different facts and this used to send the wrong one: a host-net node with
+	// a perfectly good SIDECAR_REDIS_ADDR has tenantIsolationEnabled = true and
+	// no manager at all (main.go's else-if), so every one of its servers is on
+	// the shared network while the panel showed a green "Isolated". The variable
+	// says the address ALLOWS isolation; dm.tenant says it is happening.
+	//
+	// Omitted entirely when there is no DockerManager, because then nothing has
+	// been measured - and absent is the one answer the panel renders as nothing
+	// at all, which is what an unmeasured node deserves.
 	if dm != nil {
-		fallbacks, lastReason := dm.isolation.snapshot()
-		if notice := isolationNotice(tenantIsolationEnabled, fallbacks, lastReason); notice != "" {
+		isolating, notice := isolationReport(dm, redisViaWarpProxy)
+		data["isolation"] = isolating
+		if notice != "" {
 			data["isolationNotice"] = notice
 		}
 	}
