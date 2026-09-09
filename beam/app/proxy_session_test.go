@@ -181,3 +181,37 @@ func TestSessionIsPersistedOnlyWhenCookiesArrive(t *testing.T) {
 		t.Error("the header is read after it has been stripped, so the flag is always false")
 	}
 }
+
+// "Clear local data" has to clear BOTH records of the session, and used to
+// clear one.
+//
+// The shell's jar is what authenticates a proxied request; the readable set is
+// what the injected script writes into document.cookie so the panel can tell it
+// is signed in. Dropping only the jar leaves the next page load re-injecting a
+// sign-in hint for a session that no longer exists - the panel renders its
+// authed shell and every request inside it fails, which is worse than being
+// signed out and is not what the user asked for.
+func TestClearingLocalDataForgetsTheReadableCookiesToo(t *testing.T) {
+	a := &App{}
+	target, _ := url.Parse("https://panel.example.com/")
+
+	// Somewhere else for the session file, so a real one is never touched.
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Add("Set-Cookie", "dylaris_session=secret-jwt; Path=/; HttpOnly; Secure")
+	resp.Header.Add("Set-Cookie", "dylaris_signed_in=1; Path=/; Max-Age=86400; Secure")
+	captureShellCookies(resp, a.panelCookies(), target)
+	a.rememberReadableCookies(target, resp)
+
+	if a.readableCookieScript(target, "") == "" {
+		t.Fatal("nothing was remembered, so this proves nothing about clearing it")
+	}
+
+	a.forgetPanelSession()
+
+	if got := a.readableCookieScript(target, ""); got != "" {
+		t.Errorf("the sign-in hint survived the clear and will be replayed: %q", got)
+	}
+}

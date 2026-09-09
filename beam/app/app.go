@@ -1376,6 +1376,16 @@ func (a *App) forgetPanelSession() {
 	// out until the next launch, which is not what "clear local data" means and
 	// leaves the token sitting in a file after they asked for it to be gone.
 	a.clearStoredSession()
+	// And the readable half, which is a SECOND record of the same fact. The
+	// shell's jar is what authenticates a proxied request; the readable set is
+	// what the injected script writes into document.cookie so the panel can see
+	// it is signed in. Clearing only the first leaves the next page load
+	// re-injecting the sign-in hint over a session that no longer exists - the
+	// panel then renders its authed shell and every request inside it fails,
+	// which is worse than being signed out, and is not what the user asked for.
+	a.readableMu.Lock()
+	a.readable = nil
+	a.readableMu.Unlock()
 }
 
 // The panel list, exposed to the app-shell settings page.

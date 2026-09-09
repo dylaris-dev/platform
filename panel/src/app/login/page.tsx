@@ -6,6 +6,7 @@ import LoginForm from "@/components/LoginForm";
 import { getSetupStatus } from '@/lib/api/setup';
 import { demoLogin } from '@/lib/api/auth';
 import { hasSession } from '@/lib/api/sessionState';
+import { navigateAfterLogin, popLoginRedirect } from '@/lib/postLogin';
 
 function LoginPageInner() {
   const router = useRouter();
@@ -28,16 +29,18 @@ function LoginPageInner() {
         router.replace('/setup');
         return;
       }
+      // Already signed in. A push is enough here and inside Beam too: this
+      // page IS a document, so the proxy's cookie replay has already run.
       if (hasSession()) {
-        const target = sessionStorage.getItem('postLoginRedirect') || '/servers';
-        sessionStorage.removeItem('postLoginRedirect');
-        router.push(target);
+        router.push(popLoginRedirect());
         return;
       }
       if (wantsDemo) {
         const res = await demoLogin();
         if (res.success) {
-          router.replace('/servers');
+          // This one DID establish a session, so it follows the same rule as
+          // the sign-in form.
+          navigateAfterLogin('/servers', router.replace);
           return;
         }
         // Fall through to the normal form rather than stranding the visitor on

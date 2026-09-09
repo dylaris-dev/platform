@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Signing in inside the Beam app no longer bounces straight back to the
+  sign-in form.** Beam is shown the panel through its own proxy, and the step
+  that hands the session to the page only runs on a full page load - which
+  signing in was not doing. `panel`
+- **A Beam file operation that cannot start now says why.** Every one of them
+  reported "not logged in", including to somebody plainly signed in: one failed
+  handshake between the panel and the app was remembered as the answer for the
+  rest of the session, and nothing retried it. It retries now, and reports the
+  real reason when it cannot. `panel`
+- **The Beam app no longer offers you a download of itself.** The Files page
+  showed the "Download Beam" bar inside Beam. `panel`
+
 ## 2026.09.09.8
 
 ### Features

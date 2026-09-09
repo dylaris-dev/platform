@@ -11,6 +11,7 @@ import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
 import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from '@/lib/api';
 import { isFatalBeamUploadError, cleanBeamGrpcMessage } from './beamUploadErrors';
 import { devLog } from '@/lib/devLog';
+import { cacheSuccess } from '@/lib/cacheSuccess';
 import { API_URL } from '@/lib/api/core';
 import {
     reportUploadStart,
@@ -121,17 +122,26 @@ export async function getWailsConnectionMode(): Promise<string> {
     }
 }
 
-// syncSessionWithWails pushes the panel's session token + API base to
-// the Wails side so its Core client (used for the relay-address lookup)
-// is authenticated. Promise-cached: SetSession tears down any live
-// relay tunnel, so it must run exactly once — every caller awaits the
-// same cached promise instead of re-invoking it.
-let sessionSyncPromise: Promise<void> | null = null;
-export function syncSessionWithWails(): Promise<void> {
-    if (!sessionSyncPromise) {
-        sessionSyncPromise = doSyncSession();
-    }
-    return sessionSyncPromise;
+// The outcome of the handshake below, carried rather than logged.
+//
+// A failure used to be invisible: doSyncSession returned void on every path,
+// so a caller could not tell "the session is on the native side" from "we tried
+// and it did not go". The native side then answered for it, with the only thing
+// it knows in that state - "not logged in" - which is both unactionable and, to
+// somebody who is plainly signed into the panel it is being shown in, untrue.
+export type SessionSync = { ok: true } | { ok: false; reason: string };
+
+// syncSessionWithWails pushes the panel's session token + API base to the Wails
+// side so its Core client (used for the relay-address lookup) is authenticated.
+//
+// Cached on SUCCESS, not on having tried. SetSession tears down any live relay
+// tunnel, so a handshake that WORKED must not run twice; one that failed tore
+// nothing down - it is refused before that point on every path - so the next
+// caller is free to try again, and something has to, or the app stays
+// unauthenticated until it is restarted.
+const syncSession = cacheSuccess(doSyncSession, result => result.ok);
+export function syncSessionWithWails(): Promise<SessionSync> {
+    return syncSession();
 }
 
 // wailsAPIBase is the API base SetSession will actually accept.
@@ -160,12 +170,15 @@ export async function wailsAPIBase(app: WailsAppBindings): Promise<string> {
     return window.location.origin + '/api';
 }
 
-async function doSyncSession(): Promise<void> {
+async function doSyncSession(): Promise<SessionSync> {
     devLog('beam.session', 'info', 'syncSessionWithWails: start');
     const app = getWailsApp();
     if (!app || typeof app.SetSession !== 'function') {
         devLog('beam.session', 'warn', 'syncSessionWithWails: Wails app or SetSession binding unavailable');
-        return;
+        // Not a transient failure - this build of Beam has no way to be handed
+        // a session - so the reason says what to do about it rather than
+        // inviting the user to try the same thing again.
+        return { ok: false, reason: 'This version of the Beam app cannot accept a sign-in from the panel. Update Beam and open it again.' };
     }
     // The one place the panel still needs a real bearer, and the reason the
     // endpoint below exists: Wails' NATIVE side calls Core directly, with no
@@ -185,17 +198,23 @@ async function doSyncSession(): Promise<void> {
     }
     if (!token) {
         devLog('beam.session', 'warn', 'syncSessionWithWails: Core did not issue a session token');
-        return;
+        return { ok: false, reason: 'The panel could not hand your sign-in to Beam. Reload the page; if it keeps happening, sign in again.' };
     }
     const apiUrl = await wailsAPIBase(app);
     devLog('beam.session', 'info', `SetSession → ${apiUrl}`);
     try {
         await app.SetSession(apiUrl, token);
         devLog('beam.session', 'info', 'SetSession OK');
+        return { ok: true };
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         devLog('beam.session', 'error', `SetSession failed: ${message}`);
         console.warn('Wails SetSession failed:', err);
+        // The Go-side message carried through rather than replaced: the two
+        // rejections it can produce - an apiURL that is not the configured
+        // panel origin, and a Core client that would not build - say different
+        // things, and neither is guessable from here.
+        return { ok: false, reason: `Beam would not accept the sign-in: ${message}` };
     }
 }
 
@@ -223,7 +242,14 @@ export async function ensureWailsConnection(
         devLog('beam.connect', 'warn', 'ensureWailsConnection: skipped (no Wails app or no serverUuid)');
         return;
     }
-    await syncSessionWithWails();
+    // A failed handshake is reported here rather than let through to
+    // ConnectToServer, which can only answer "not logged in" - the least
+    // informative sentence available and the one that used to be shown.
+    const sync = await syncSessionWithWails();
+    if (!sync.ok) {
+        devLog('beam.connect', 'error', `ensureWailsConnection: session handshake failed: ${sync.reason}`);
+        throw new Error(sync.reason);
+    }
     if (!opts.force && serverUuid === lastConnectedServer) {
         devLog('beam.connect', 'info', 'ensureWailsConnection: cache hit, skipping reconnect');
         return;
@@ -272,7 +298,16 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
             // Wait for the session to reach the Wails side first — the
             // native ops reject with "not logged in" until SetSession
             // has run, which would otherwise flash in the file list.
-            await syncSessionWithWails();
+            //
+            // And if it did not reach it, say so instead of calling anyway.
+            // The binding's answer in that state is "not logged in", which the
+            // file browser prints verbatim - to somebody looking at it through
+            // a panel they are signed into.
+            const sync = await syncSessionWithWails();
+            if (!sync.ok) {
+                devLog('beam.op', 'error', `${label} not attempted: ${sync.reason}`);
+                return { success: false, message: sync.reason };
+            }
             const result = await fn();
             if (result === undefined || result === null) return { success: true };
             if (typeof result === 'object' && 'success' in (result as Record<string, unknown>)) {

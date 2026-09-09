@@ -11,6 +11,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.09.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Signing in inside the Beam app no longer sends you straight back to the
+  sign-in form.** Nothing to update on your side - the fix is in the panel the
+  app shows you.
+- **A Beam file operation that cannot start now tells you why**, instead of
+  saying "not logged in" while you are signed in. It also tries again by itself
+  rather than staying stuck until you restart the app.
+- **The Beam app no longer offers you a download of itself** on a server's
+  Files page.
+
 ## 2026.09.09.7
 
 ### Features

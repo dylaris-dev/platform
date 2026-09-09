@@ -9,6 +9,7 @@ import FileBrowserView from '@/views/FileBrowserView';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import { downloadBeamApp } from '@/lib/beamDownload';
+import { isWails } from '@/lib/adapters';
 
 export default function ServerFilesPage() {
     const paramId = useRouteId('servers');
@@ -21,8 +22,21 @@ export default function ServerFilesPage() {
 
     if (!server) return null;
 
-    const beamEnabled = (fileAccessMode === 'beam' || fileAccessMode === 'both') && beamSettings?.enabled !== false;
+    // Beam's own half of the bar is hidden INSIDE Beam. The app proxies this
+    // page, so it was offering the user a download of the program they were
+    // reading it in - and taking the width to do it. BeamDownloadButton in the
+    // navbar was fixed for exactly this and documents it; this page was the one
+    // Beam surface that never asked.
+    //
+    // Read at render, not in an effect: window.go is injected before the first
+    // render in Wails, which is the assumption FileBrowserView already relies on.
+    const insideBeam = isWails();
+    const beamEnabled = (fileAccessMode === 'beam' || fileAccessMode === 'both')
+        && beamSettings?.enabled !== false
+        && !insideBeam;
 
+    // SFTP stays: it is a way to reach the files that has nothing to do with
+    // which program is showing this page.
     const showSftp = (fileAccessMode === 'sftp' || fileAccessMode === 'both') && server.nodeAddress;
     const hasInfoBar = showSftp || beamEnabled;
 

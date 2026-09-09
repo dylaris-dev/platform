@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { login } from '../lib/api/auth';
 import { getRegistrationStatus, resendVerification } from '../lib/api/registration';
 import { ShieldCheck, ArrowLeft, MailCheck } from 'lucide-react';
+import { navigateAfterLogin, popLoginRedirect } from '@/lib/postLogin';
 
 type Step = 'credentials' | '2fa' | 'verify-needed';
 
@@ -35,11 +36,12 @@ export default function LoginForm() {
     }).catch(() => {});
   }, []);
 
+  // The single exit for every way of signing in - credentials and 2FA both
+  // land here - which is why the Beam-vs-browser navigation rule only has to
+  // be applied once. See navigateAfterLogin for why it is not always a push.
   const finish = (token: string) => {
     void token;
-    const target = sessionStorage.getItem('postLoginRedirect') || '/servers';
-    sessionStorage.removeItem('postLoginRedirect');
-    router.push(target);
+    navigateAfterLogin(popLoginRedirect(), router.push);
   };
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
