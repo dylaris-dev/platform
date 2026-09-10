@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.10.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Unlinking a server from its proxy now withdraws the proxy's access at
+  once.** It waited for the next publish, so for up to half a minute the proxy
+  could still reach a server somebody had just disconnected it from. Linking
+  already took effect immediately. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.10.2
 
 ### Features

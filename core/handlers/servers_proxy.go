@@ -197,6 +197,13 @@ func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Withdraw the proxy's allow rule now, for the same reason linking installs
+	// it now - and this direction matters more: until it is withdrawn the proxy
+	// can still reach a server somebody has just disconnected it from.
+	if h.state.NetPolicy != nil {
+		h.state.NetPolicy.RunOnce(r.Context())
+	}
+
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
