@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.10.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Correction to 2026.09.10.4.** That entry said Link bandwidth would appear
+  under Gateway. It does not: a Link reports no throughput of its own and is
+  deliberately left out of the bandwidth view, because a permanent 0 bps cannot
+  be told apart from an outage. What the fix restored is a Link's counters -
+  tunnels established and lost, resumes served and refused, dial and handshake
+  failures - and those appear under Statistics. Nothing to install; the fix
+  itself shipped with 2026.09.10.4.
+
 ## 2026.09.10.4
 
 ### Features
