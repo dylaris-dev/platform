@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.10.6
+
+### Features
+- A node now reports which machine it runs on. Groundwork: it lets a Link be
+  tied to its node without being configured with one, which is what a Link
+  running as a cluster service rather than a node sidecar will need. Nothing
+  changes for you yet. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.10.5
 
 ### Features

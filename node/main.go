@@ -975,6 +975,20 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 			"public":  publicIP,
 			"private": getPrivateIPs(),
 		},
+		// The MACHINE this node runs on, as Swarm names it (NODE_HOSTNAME,
+		// falling back to the kernel outside Swarm - see machineHostname).
+		//
+		// It is here so something else on the same machine can be tied to this
+		// node without being told which node it is. The Link is the case that
+		// needs it: a mode:global service gets no per-replica configuration -
+		// Swarm exposes only .Node.Hostname and .Node.ID in an env template, and
+		// neither is the server-assigned uuid everything is keyed by - so the
+		// hostname is the only value both sides can arrive at independently.
+		//
+		// The Hub joins on it to publish beam:node:<uuid>, the mapping the beam
+		// relay resolves a ticket through. Core reads this heartbeat and ignores
+		// the field; nothing depends on it being stored.
+		"hostname": machineHostname(),
 	}
 	// Auth: the node stamps a per-node HMAC signature instead of shipping the raw
 	// CLUSTER_SECRET over Redis. The secret is guaranteed non-nil after the
