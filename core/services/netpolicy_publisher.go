@@ -77,6 +77,16 @@ func BuildNodePolicies(servers []models.Server) map[int]map[string][]string {
 
 	out := make(map[int]map[string][]string)
 	for _, s := range servers {
+		// A server with no node is not groupable, and grouping it anyway is how
+		// this failed the first time: ListServers carried only the node NAME, so
+		// every row arrived with NodeID = 0 and the whole fleet was filed under a
+		// machine that does not exist. Every real node then got an empty policy,
+		// and nothing anywhere reported a problem. Skipped and counted now, so
+		// the same regression is a log line instead of a silent unpolicing.
+		if s.NodeID == 0 {
+			out[0] = nil // marker for the caller; never published
+			continue
+		}
 		if _, ok := out[s.NodeID]; !ok {
 			out[s.NodeID] = make(map[string][]string)
 		}
@@ -142,6 +152,10 @@ func (p *NetPolicyPublisher) RunOnce(ctx context.Context) {
 	}
 
 	byNode := BuildNodePolicies(servers)
+	if _, orphaned := byNode[0]; orphaned {
+		logErrf("netpolicy", "some servers came back with no node id and were skipped; "+
+			"every policy below may be short. ListServers must carry s.node_id")
+	}
 	for _, n := range nodes {
 		// A customer's own machine is left alone, deliberately: their servers
 		// may talk to each other, and the node there does not enforce anything.

@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.10.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The per-server rules from the last release reached no node.** The server
+  list Core builds them from carried the node's NAME but not its id, so every
+  server was filed under a machine that does not exist and each real node was
+  sent an empty policy. Nothing failed anywhere - a missing id reads as zero.
+  `core`
+
 ## 2026.09.10
 
 ### Features

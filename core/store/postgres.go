@@ -949,7 +949,7 @@ func (s *PostgresStore) SetNodeSecretEncIfUnchanged(id int, prev, next string) (
 
 func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error) {
 	query := `
-		SELECT s.id, s.uuid, s.name, n.name as node_name, u.username as owner_name, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image, s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, COALESCE(s.server_type, 'game'), s.proxy_id
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, u.username as owner_name, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image, s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, COALESCE(s.server_type, 'game'), s.proxy_id
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
@@ -973,7 +973,12 @@ func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error
 	var servers []models.Server
 	for rows.Next() {
 		var srv models.Server
-		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeName, &srv.OwnerName, &srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer, &srv.CreatedAt, &srv.ServerType, &srv.ProxyID); err != nil {
+		// node_id is SELECTed and scanned, and that is not decoration. It used to
+		// carry only the node NAME, so every row came back with NodeID = 0 - a
+		// legal-looking value that any caller grouping by node silently files
+		// under a machine that does not exist. The network-policy publisher did
+		// exactly that and published an empty policy for the whole fleet.
+		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerName, &srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer, &srv.CreatedAt, &srv.ServerType, &srv.ProxyID); err != nil {
 			continue
 		}
 		servers = append(servers, srv)

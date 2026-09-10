@@ -110,3 +110,27 @@ func TestNetPolicyKeyIsInsideTheNodeGrant(t *testing.T) {
 		t.Errorf("key = %q, want %q", got, want)
 	}
 }
+
+// A server that arrives without a node id must not be filed under node 0 and
+// silently published to nobody. This is the shape that shipped: ListServers
+// carried only the node NAME, every row came back with NodeID = 0, and every
+// real node was handed an empty policy with nothing failing anywhere.
+func TestBuildNodePoliciesRefusesToGroupAServerWithNoNode(t *testing.T) {
+	servers := []models.Server{
+		srv(1, "uuid-real", 10, "game", nil),
+		srv(2, "uuid-orphan", 0, "game", proxyRef(1)),
+	}
+	got := BuildNodePolicies(servers)
+
+	if _, ok := got[10]["uuid-real"]; !ok {
+		t.Error("the server with a real node disappeared")
+	}
+	if len(got[0]) != 0 {
+		t.Errorf("a server with no node was given a policy: %v", got[0])
+	}
+	// The marker is what lets the caller say so out loud instead of publishing
+	// a short policy and moving on.
+	if _, marked := got[0]; !marked {
+		t.Error("no marker for the orphaned server; the caller cannot report it")
+	}
+}
