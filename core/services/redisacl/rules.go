@@ -319,6 +319,24 @@ func BuildLinkACLRules(password, nodeToken, tunnelToken string) []interface{} {
 		"~link:"+tunnelToken,
 		"~online_link:"+tunnelToken,
 		"~dylaris:errors:link:"+nodeToken,
+		// The Link's telemetry stream, named by the same instance its error
+		// stream is (link/link.go errLogInstance: the NodeID when there is one).
+		//
+		// It was missing, and the effect was invisible from either side. The
+		// Link publishes to it every tick, Redis answers NOPERM, go-redis
+		// returns an ordinary error and the publisher logs to its own stdout;
+		// Core's gateway bandwidth consumer scans dylaris:link:*:stats and finds
+		// nothing, so the panel's Link bandwidth simply has no data rather than
+		// an error. Measured 2026-09-10 in production: NINE link error streams
+		// existed, with 4 to 365 entries each, and not one stats stream existed
+		// at all - for any link, of any shape.
+		//
+		// Neither ACL test could see it. The gateway's key sweep checks the
+		// Hub's wildcard rules, which DO grant it; the platform twin scans the
+		// node's source, and the key is written by the Link, which lives in the
+		// other repository. Two builders for one consumer, and each test was
+		// looking at the other one.
+		"~dylaris:link:"+nodeToken+":stats",
 		"~hub:link:discovery:"+nodeToken,
 		"~beam:node:"+nodeToken,
 		"%R~sys:edges", "%R~edge:registry:*", "%R~edge:cert:fingerprint:*",
@@ -364,6 +382,11 @@ func BuildRouteOnlyLinkACLRules(password, tunnelToken, instanceID string) []inte
 		"~link:"+tunnelToken,
 		"~online_link:"+tunnelToken,
 		"~dylaris:errors:link:"+instanceID,
+		// Same stream, same instance, same reason as BuildLinkACLRules above. A
+		// route-only link has no NodeID, so errLogInstance falls back to the ACL
+		// username - which is what instanceID already is, so both names agree
+		// without either side deriving anything new.
+		"~dylaris:link:"+instanceID+":stats",
 		"%R~sys:edges", "%R~edge:registry:*", "%R~edge:cert:fingerprint:*",
 	)
 	for _, c := range commandCats {

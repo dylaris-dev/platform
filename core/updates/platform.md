@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.10.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Link bandwidth appears under Gateway.** Every Link has been publishing its
+  throughput since the feature shipped and none of it was ever stored: the
+  Redis account a Link is given covered its error stream but not its statistics
+  stream, so each write was refused and the panel had nothing to draw. Nodes
+  pick the corrected account up within a minute of the deploy, with no restart.
+  `core`
+
 ## 2026.09.10.3
 
 ### Features
