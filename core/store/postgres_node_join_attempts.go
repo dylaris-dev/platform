@@ -109,6 +109,40 @@ func (s *PostgresStore) ApproveNodeJoinAttempt(nodeToken, approvedBy string) (bo
 	return n == 1, err
 }
 
+// ArmNodeJoinApproval arms the same admission ApproveNodeJoinAttempt does, for
+// a node that has NOT been refused yet: the roll-key action clears a working
+// node's secret and lets it straight back in from where it last authenticated.
+//
+// fromIP is the address of that last successful authentication, which Core read
+// off the socket, so it is as unforgeable as the peer_ip an approval binds to.
+// Same window, same one-shot consume, same address binding - an admission armed
+// here is never weaker than one granted from the list. An empty address arms
+// nothing: an admission for any source is exactly what this must not produce.
+//
+// An existing row keeps what it recorded about the refusals; only the admission
+// is written. A new row is not a refusal, so it says so and counts none.
+func (s *PostgresStore) ArmNodeJoinApproval(nodeToken, fromIP, approvedBy string) (bool, error) {
+	if fromIP == "" {
+		return false, nil
+	}
+	res, err := s.db.Exec(`
+		INSERT INTO node_join_attempts (
+			node_token, peer_ip, reason, attempts,
+			approved_until, approved_from_ip, approved_by)
+		VALUES ($1, $2, 'Its key was rolled in the panel. Waiting for it to reconnect.', 0,
+			NOW() + $3::interval, $2, $4)
+		ON CONFLICT (node_token) DO UPDATE SET
+			approved_until = EXCLUDED.approved_until,
+			approved_from_ip = EXCLUDED.approved_from_ip,
+			approved_by = EXCLUDED.approved_by`,
+		nodeToken, fromIP, nodeJoinApprovalWindow.String(), approvedBy)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 // ConsumeNodeJoinApproval answers whether this identity may be admitted from
 // this address, and closes the door behind it.
 //

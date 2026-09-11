@@ -991,6 +991,22 @@ func TestCap_NodeAdmissionCIDRsPanel(t *testing.T) {
 	}
 }
 
+// TestCap_RollSecretNeedsNodesWrite proves POST /admin/nodes/{id}/roll-secret is
+// gated the way reset-pairing is: it revokes a node's secret, so reading nodes
+// is not enough.
+func TestCap_RollSecretNeedsNodesWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "reader-id", "reader", "nodes.read")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	if c := doAs(t, srv, "POST", "/api/admin/nodes/5/roll-secret", testIdentity{UserID: "reader-id", Username: "reader"}); c != 403 {
+		t.Errorf("nodes.read-only holder must NOT roll a node's key (needs nodes.write), got %d", c)
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/nodes/5/roll-secret", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 on roll-secret, got %d", c)
+	}
+}
+
 // TestCap_DiskOrphansPanel proves the disk-orphans browse routes are gated
 // PANEL nodes.read (browse) vs nodes.write (assign).
 func TestCap_DiskOrphansPanel(t *testing.T) {

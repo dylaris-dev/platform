@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -160,10 +161,17 @@ func (a *aclHandshakeStore) NodeLimitReached(ownerID string) bool {
 
 // CreatePlatformNode is CreateBYONNode without the owner binding: the row stays
 // owner_id NULL, which is what makes it an operator node rather than a tenant's.
+//
+// Its only caller is EnrollPlatform, after the cluster proof was verified, so the
+// row is marked as cluster-minted. That marker is what lets the stale sweep take
+// it: this node re-pairs by itself. An admin-created row never carries it.
 func (a *aclHandshakeStore) CreatePlatformNode(token, address, displayName string) (int, error) {
 	n := &models.Node{Name: token, Token: token, Address: address, Status: "offline"}
 	if err := a.store.CreateNode(n); err != nil {
 		return 0, err
+	}
+	if err := a.store.SetNodeEnrolledVia(n.ID, store.NodeEnrolledViaClusterProof); err != nil {
+		return 0, fmt.Errorf("mark node %d as cluster-proof enrolled: %w", n.ID, err)
 	}
 	if displayName != "" {
 		if err := a.store.SetNodeDisplayName(n.ID, displayName); err != nil {
@@ -766,8 +774,9 @@ func main() {
 				Reason:             a.Reason,
 			})
 		},
-		Consume: pgStore.ConsumeNodeJoinApproval,
-		Forget:  pgStore.DeleteNodeJoinAttempt,
+		Consume:       pgStore.ConsumeNodeJoinApproval,
+		Forget:        pgStore.DeleteNodeJoinAttempt,
+		Authenticated: pgStore.SetNodeLastAuthPeerIP,
 	}
 	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret)
 	if err != nil {

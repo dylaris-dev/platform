@@ -377,13 +377,24 @@ func TestIntegrationGatewayBandwidthStatsTable(t *testing.T) {
 // cannot check: nodes.owner_id is nullable, and the sweep's own
 // "id NOT IN (SELECT node_id FROM servers)" sits one nullable column away from
 // matching nothing at all.
-func TestIntegrationStaleNodeSweepSparesBYONNodes(t *testing.T) {
+//
+// The same holds for an operator node whose row an admin created. It holds no
+// CLUSTER_SECRET, so once swept its cached secret proof names an identity Core
+// has forgotten and it cannot pair again without hands on the machine. Only a
+// row the cluster proof minted may go.
+//
+// Each node differs from the swept one in exactly ONE of the two filters, so
+// either filter going missing fails its own assertion. The BYON node carries
+// the cluster-proof marker it could never get in production for that reason:
+// without it, the marker alone would spare it and the owner filter would be
+// untested.
+func TestIntegrationStaleNodeSweepSparesNodesThatCannotRePair(t *testing.T) {
 	db, st := integrationDB(t)
 	f := newFixture(t, st) // supplies the user that owns the BYON node
 
 	stale := time.Now().Add(-48 * time.Hour)
 
-	mkNode := func(prefix string, owner *string) *models.Node {
+	mkNode := func(prefix string, owner *string, enrolledVia string) *models.Node {
 		t.Helper()
 		n := &models.Node{Name: uniqueName(prefix), Address: "127.0.0.1", Token: uniqueName(prefix + "t_"), Status: "offline"}
 		if err := st.CreateNode(n); err != nil {
@@ -395,14 +406,20 @@ func TestIntegrationStaleNodeSweepSparesBYONNodes(t *testing.T) {
 				t.Fatalf("SetNodeOwner(%s): %v", prefix, err)
 			}
 		}
+		if enrolledVia != "" {
+			if err := st.SetNodeEnrolledVia(n.ID, enrolledVia); err != nil {
+				t.Fatalf("SetNodeEnrolledVia(%s): %v", prefix, err)
+			}
+		}
 		if _, err := db.Exec(`UPDATE nodes SET status = 'offline', last_seen_at = $1 WHERE id = $2`, stale, n.ID); err != nil {
 			t.Fatalf("age node %s: %v", prefix, err)
 		}
 		return n
 	}
 
-	byon := mkNode("byon_", &f.user.ID)
-	platform := mkNode("plat_", nil)
+	byon := mkNode("byon_", &f.user.ID, store.NodeEnrolledViaClusterProof)
+	adminCreated := mkNode("admin_", nil, "")
+	clusterMinted := mkNode("plat_", nil, store.NodeEnrolledViaClusterProof)
 
 	if _, err := st.DeleteStaleOfflineNodes(time.Now().Add(-24 * time.Hour)); err != nil {
 		t.Fatalf("DeleteStaleOfflineNodes: %v", err)
@@ -411,10 +428,90 @@ func TestIntegrationStaleNodeSweepSparesBYONNodes(t *testing.T) {
 	if got, err := st.GetNodeByID(byon.ID); err != nil || got == nil {
 		t.Errorf("the BYON node was swept: a tenant's pairing must survive being offline (err=%v)", err)
 	}
-	// The operator's own unadopted node is exactly the churn the sweep exists
-	// for, so sparing everything would be the opposite mistake.
-	if got, _ := st.GetNodeByID(platform.ID); got != nil {
-		t.Errorf("the platform node survived the sweep: the cleanup no longer cleans anything up")
+	if got, err := st.GetNodeByID(adminCreated.ID); err != nil || got == nil {
+		t.Errorf("an admin-created node was swept: it cannot re-pair by itself (err=%v)", err)
+	}
+	// A cluster-minted node that went away is exactly the churn the sweep
+	// exists for, so sparing everything would be the opposite mistake.
+	if got, _ := st.GetNodeByID(clusterMinted.ID); got != nil {
+		t.Errorf("the cluster-proof node survived the sweep: the cleanup no longer cleans anything up")
+	}
+}
+
+// The roll-key action arms the admission an approval arms, for a node that has
+// not been refused yet. It must be the same door: one-shot, address-bound, and
+// never armed for an empty address. Against a real Postgres because the upsert,
+// the interval arithmetic and the consume's single UPDATE are the mechanism.
+func TestIntegrationRollSecretArmsTheSameOneShotAdmission(t *testing.T) {
+	_, st := integrationDB(t)
+
+	fresh := uniqueName("roll_t_")
+	t.Cleanup(func() { st.DeleteNodeJoinAttempt(fresh) })
+
+	if ok, err := st.ArmNodeJoinApproval(fresh, "", "admin-1"); err != nil || ok {
+		t.Fatalf("armed for an empty address (ok=%v err=%v): that admits the identity from anywhere", ok, err)
+	}
+	if ok, err := st.ArmNodeJoinApproval(fresh, "203.0.113.7", "admin-1"); err != nil || !ok {
+		t.Fatalf("ArmNodeJoinApproval: ok=%v err=%v", ok, err)
+	}
+	if ok, err := st.ConsumeNodeJoinApproval(fresh, "198.51.100.1"); err != nil || ok {
+		t.Errorf("the admission admitted another address (ok=%v err=%v)", ok, err)
+	}
+	if ok, err := st.ConsumeNodeJoinApproval(fresh, "203.0.113.7"); err != nil || !ok {
+		t.Errorf("the admission did not admit its own address (ok=%v err=%v)", ok, err)
+	}
+	if ok, err := st.ConsumeNodeJoinApproval(fresh, "203.0.113.7"); err != nil || ok {
+		t.Errorf("the admission was consumed twice (ok=%v err=%v)", ok, err)
+	}
+
+	// A node that was already being refused keeps what was recorded about the
+	// refusals; only the admission is written.
+	refused := uniqueName("roll_r_")
+	t.Cleanup(func() { st.DeleteNodeJoinAttempt(refused) })
+	if err := st.RecordNodeJoinAttempt(models.NodeJoinAttempt{NodeToken: refused, PeerIP: "198.51.100.9", Reason: "refused"}); err != nil {
+		t.Fatalf("RecordNodeJoinAttempt: %v", err)
+	}
+	if ok, err := st.ArmNodeJoinApproval(refused, "203.0.113.7", "admin-1"); err != nil || !ok {
+		t.Fatalf("ArmNodeJoinApproval over an existing row: ok=%v err=%v", ok, err)
+	}
+	attempts, err := st.ListNodeJoinAttempts()
+	if err != nil {
+		t.Fatalf("ListNodeJoinAttempts: %v", err)
+	}
+	var row *models.NodeJoinAttempt
+	for i := range attempts {
+		if attempts[i].NodeToken == refused {
+			row = &attempts[i]
+		}
+	}
+	if row == nil {
+		t.Fatal("the refused row is gone after arming")
+	}
+	if row.PeerIP != "198.51.100.9" || row.Attempts != 1 || row.Reason != "refused" {
+		t.Errorf("arming rewrote the refusal record: %+v", row)
+	}
+	if row.ApprovedFromIP != "203.0.113.7" || row.ApprovedBy != "admin-1" || row.ApprovedUntil == nil {
+		t.Errorf("the admission was not armed as asked: %+v", row)
+	}
+	// The same window an approval gets, not an open-ended one.
+	if d := time.Until(*row.ApprovedUntil); d <= 0 || d > 16*time.Minute {
+		t.Errorf("armed for %v, want about fifteen minutes", d)
+	}
+}
+
+// The address the roll-key admission binds to, empty until the node authenticates.
+func TestIntegrationNodeLastAuthPeerIPRoundTrip(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	if ip, err := st.GetNodeLastAuthPeerIP(f.node.ID); err != nil || ip != "" {
+		t.Fatalf("a node that never authenticated reads (%q, %v), want ''", ip, err)
+	}
+	if err := st.SetNodeLastAuthPeerIP(f.node.ID, "203.0.113.7"); err != nil {
+		t.Fatalf("SetNodeLastAuthPeerIP: %v", err)
+	}
+	if ip, err := st.GetNodeLastAuthPeerIP(f.node.ID); err != nil || ip != "203.0.113.7" {
+		t.Errorf("read back (%q, %v), want 203.0.113.7", ip, err)
 	}
 }
 

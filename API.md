@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **529 routes** in 52 sections: 238 GET, 158 POST, 40 PUT, 37 PATCH, 57 DELETE.
+- **530 routes** in 52 sections: 238 GET, 159 POST, 40 PUT, 37 PATCH, 57 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **355** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **356** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (126)
+- [/api/admin](#apiadmin) (127)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -223,6 +223,7 @@ can still show what exists.
 | GET | `/api/admin/nodes/{id:[0-9]+}/disk-analysis` | session | `nodes.read` | - | `NodeHandler.GetDiskAnalysis` | cross-references disk folders on a node with DB servers. |
 | DELETE | `/api/admin/nodes/{id:[0-9]+}/orphan` | session | `nodes.delete` | - | `NodeHandler.DeleteOrphanedFolder` | deletes an orphaned UUID folder from a node via gRPC. |
 | POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE: clear the node's secret and hard-cut its live Redis ACL. |
+| POST | `/api/admin/nodes/{id:[0-9]+}/roll-secret` | session | `nodes.write` | - | `NodeAdmissionHandler.RollSecret` | replace the node's secret and let it straight back in from the address it last authenticated from. |
 | GET | `/api/admin/panel-roles` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelRoles` | the level-1 staff roles and their capabilities. |
 | POST | `/api/admin/panel-roles` | session | `panelroles.write` | - | `PanelRolesHandler.CreatePanelRole` | adds a staff role. |
 | GET | `/api/admin/panel-roles/assignments` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelAssignments` | who holds a panel role or a per-user override, all of them at once. |

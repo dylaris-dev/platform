@@ -787,11 +787,41 @@ func (s *PostgresStore) DeleteServersByNode(nodeID int) error {
 	return err
 }
 
-// DeleteStaleOfflineNodes sweeps PLATFORM nodes (owner_id IS NULL) that have
-// been offline past the cutoff and carry no servers. NodeCleanupService runs it
-// every 5 minutes with a 24h cutoff.
+// NodeEnrolledViaClusterProof is the nodes.enrolled_via value for a row created
+// because the node proved CLUSTER_SECRET. It is the only value the stale sweep
+// acts on: such a node re-pairs by itself, so deleting its row costs nothing.
+const NodeEnrolledViaClusterProof = "cluster_proof"
+
+// SetNodeEnrolledVia records how a node row came to exist. See
+// NodeEnrolledViaClusterProof.
+func (s *PostgresStore) SetNodeEnrolledVia(id int, via string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET enrolled_via = $1 WHERE id = $2`, via, id)
+	return err
+}
+
+// SetNodeLastAuthPeerIP records the socket address of a node's latest
+// successful authentication. It is the address the roll-key action binds its
+// re-admission to, so it must be the OBSERVED one, never the node's
+// self-reported public IP.
+func (s *PostgresStore) SetNodeLastAuthPeerIP(id int, ip string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET last_auth_peer_ip = $1 WHERE id = $2`, ip, id)
+	return err
+}
+
+// GetNodeLastAuthPeerIP returns what SetNodeLastAuthPeerIP last wrote, empty
+// when the node has not authenticated since the column existed.
+func (s *PostgresStore) GetNodeLastAuthPeerIP(id int) (string, error) {
+	var ip string
+	err := s.db.QueryRow(`SELECT last_auth_peer_ip FROM nodes WHERE id = $1`, id).Scan(&ip)
+	return ip, err
+}
+
+// DeleteStaleOfflineNodes sweeps PLATFORM nodes (owner_id IS NULL) that got
+// their row through the cluster proof, have been offline past the cutoff and
+// carry no servers. NodeCleanupService runs it every 5 minutes with a 24h
+// cutoff.
 //
-// The owner_id filter is the load-bearing half. A BYON node is a tenant's own
+// The owner_id filter is the first load-bearing half. A BYON node is a tenant's own
 // machine, paired deliberately through a single-use enroll token, and a customer
 // who registers one and then does not create a server for a day - a laptop, a
 // home box switched off over a weekend - had the pairing deleted out from under
@@ -802,18 +832,26 @@ func (s *PostgresStore) DeleteServersByNode(nodeID int) error {
 // loops on a rejected handshake with no BYON way back in (that path needs an
 // enroll or recovery token the tenant does not have). Support ticket, every time.
 //
-// The operator's own fleet keeps the sweep: an unadopted platform node that
-// stopped reporting is exactly the churn this was written to clean up, and the
-// operator can always re-enroll one with the cluster secret.
+// The enrolled_via filter is the second. The sweep exists for the churn the
+// cluster-proof path produces: a machine holding CLUSTER_SECRET that pairs,
+// never gets a server and goes away. Deleting that row costs nothing, because
+// the same proof mints it a new one. It used to take every operator node on the
+// belief that any of them could "re-enroll with the cluster secret", and an
+// external node deployed without that secret cannot. Swept, it was locked out
+// exactly like the BYON case above, and the way back was deleting .node_id and
+// .node_secret on the machine by hand. A node that cannot re-pair by itself
+// must never be swept, and rows from before the marker existed are spared too,
+// since nothing can tell an old cluster-minted row from an admin-created one.
 func (s *PostgresStore) DeleteStaleOfflineNodes(offlineSince time.Time) (int, error) {
 	result, err := s.db.Exec(`
 		DELETE FROM nodes
 		WHERE status = 'offline'
 			AND owner_id IS NULL
+			AND enrolled_via = $2
 			AND last_seen_at IS NOT NULL
 			AND last_seen_at < $1
 			AND id NOT IN (SELECT DISTINCT node_id FROM servers)
-	`, offlineSince)
+	`, offlineSince, NodeEnrolledViaClusterProof)
 	if err != nil {
 		return 0, err
 	}

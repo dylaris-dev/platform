@@ -32,10 +32,21 @@ func (noSecretACL) EnsureExisting(context.Context, int, string) (string, error) 
 }
 
 type recordingJoins struct {
-	recorded []JoinAttempt
-	admitIP  string
-	consumed int
-	forgot   []string
+	recorded      []JoinAttempt
+	admitIP       string
+	consumed      int
+	forgot        []string
+	authenticated []authRecord
+}
+
+type authRecord struct {
+	nodeID int
+	peerIP string
+}
+
+func (r *recordingJoins) RecordAuthenticated(nodeID int, peerIP string) error {
+	r.authenticated = append(r.authenticated, authRecord{nodeID, peerIP})
+	return nil
 }
 
 func (r *recordingJoins) RecordJoinAttempt(a JoinAttempt) error {
@@ -144,6 +155,112 @@ func TestAnApprovalDoesNotAdmitTheSameIdentityFromAnotherAddress(t *testing.T) {
 	if joins.admitIP != "203.0.113.7" {
 		t.Error("a refused attempt from elsewhere disarmed the operator's approval")
 	}
+}
+
+// provisionedACL is a known node whose secret Core holds, answering the
+// challenge the way verdict says.
+type provisionedACL struct {
+	noSecretACL
+	verdict bool
+}
+
+func (provisionedACL) HasSecret(context.Context, int) (bool, error) { return true, nil }
+func (a provisionedACL) VerifyChallenge(context.Context, int, string, string) (bool, error) {
+	return a.verdict, nil
+}
+
+// runConnect drives one NodeConnect from fromIP with the given messages.
+func runConnect(t *testing.T, lookup NodeLookup, acl ACLHandshake, joins JoinAttemptRecorder, fromIP string, msgs ...*pb.NodeMessage) error {
+	t.Helper()
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		Addr: &net.TCPAddr{IP: net.ParseIP(fromIP), Port: 51234},
+	})
+	srv := NewServer(NewRegistry(), lookup, "core-test", acl, nil, nil, joins)
+	return srv.NodeConnect(&fakeNodeStream{ctx: ctx, recv: msgs})
+}
+
+func authMsg(a *pb.NodeAuth) *pb.NodeMessage {
+	return &pb.NodeMessage{Payload: &pb.NodeMessage_Auth{Auth: a}}
+}
+
+// The roll-key action binds the admission it arms to the address of the node's
+// last SUCCESSFUL authentication. Every way in has to leave that address, and it
+// has to be the socket's: authFor reports 198.51.100.9 as the node's public IP,
+// so a recorder fed the self-reported value would fail here.
+func TestEverySuccessfulAuthenticationRecordsTheObservedAddress(t *testing.T) {
+	cases := []struct {
+		name   string
+		lookup NodeLookup
+		acl    ACLHandshake
+		joins  *recordingJoins
+		msgs   []*pb.NodeMessage
+		wantID int
+	}{
+		{
+			name:   "challenge verified",
+			lookup: knownNodeLookup{token: "node-abc"},
+			acl:    provisionedACL{verdict: true},
+			joins:  &recordingJoins{},
+			msgs: []*pb.NodeMessage{
+				authMsg(authFor("node-abc")),
+				{Payload: &pb.NodeMessage_ChallengeResponse{ChallengeResponse: &pb.NodeChallengeResponse{Response: "ok"}}},
+			},
+			wantID: 42,
+		},
+		{
+			name:   "first issuance through a panel admission",
+			lookup: knownNodeLookup{token: "node-abc"},
+			acl:    noSecretACL{},
+			joins:  &recordingJoins{admitIP: "203.0.113.7"},
+			msgs:   []*pb.NodeMessage{authMsg(authFor("node-abc"))},
+			wantID: 42,
+		},
+		{
+			name:   "new node through the cluster proof",
+			lookup: rejectingLookup{},
+			acl:    &acceptingClusterACL{},
+			joins:  &recordingJoins{},
+			msgs:   []*pb.NodeMessage{authMsg(authFor("eu-node-00"))},
+			wantID: 7,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := runConnect(t, tc.lookup, tc.acl, tc.joins, "203.0.113.7", tc.msgs...); err != nil {
+				t.Fatalf("the node was refused: %v", err)
+			}
+			want := []authRecord{{tc.wantID, "203.0.113.7"}}
+			if len(tc.joins.authenticated) != 1 || tc.joins.authenticated[0] != want[0] {
+				t.Errorf("recorded %v, want %v", tc.joins.authenticated, want)
+			}
+		})
+	}
+}
+
+// A refused node has proved nothing, so its address must not become the one a
+// later roll-key admission is bound to.
+func TestARefusedNodeRecordsNoAuthenticatedAddress(t *testing.T) {
+	t.Run("wrong challenge response", func(t *testing.T) {
+		joins := &recordingJoins{}
+		err := runConnect(t, knownNodeLookup{token: "node-abc"}, provisionedACL{verdict: false}, joins, "203.0.113.7",
+			authMsg(authFor("node-abc")),
+			&pb.NodeMessage{Payload: &pb.NodeMessage_ChallengeResponse{ChallengeResponse: &pb.NodeChallengeResponse{Response: "bad"}}})
+		if err == nil {
+			t.Fatal("a wrong challenge response was accepted")
+		}
+		if len(joins.authenticated) != 0 {
+			t.Errorf("recorded %v for a node that failed its challenge", joins.authenticated)
+		}
+	})
+	t.Run("no secret and no admission", func(t *testing.T) {
+		joins := &recordingJoins{}
+		if err := connectKnownNode(t, joins, "203.0.113.7", authFor("node-abc")); err == nil {
+			t.Fatal("the node was admitted without any credential")
+		}
+		if len(joins.authenticated) != 0 {
+			t.Errorf("recorded %v for a refused node", joins.authenticated)
+		}
+	})
 }
 
 // A node with no identity block - an older image - must still be recorded, or

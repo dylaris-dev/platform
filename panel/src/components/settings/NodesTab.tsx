@@ -6,7 +6,7 @@ import {
     getPlacementSettings, savePlacementSettings, PlacementSettings,
     setNodePlacement,
     getNodeCpu, getNodeStorage, getNodeDeployBundle, updateNodeCpuset, type NodeCpuTopology,
-    getNodeAdmission, updateNodeAdmission, addAdmissionCIDR, deleteAdmissionCIDR, resetNodePairing,
+    getNodeAdmission, updateNodeAdmission, addAdmissionCIDR, deleteAdmissionCIDR, resetNodePairing, rollNodeSecret,
     mintEnrollToken, listEnrollTokens, revokeEnrollToken, type AdmissionCIDR, type NodeEnrollToken,
     getFleetStoragePlacement, setFleetStoragePlacement, type StoragePlacement as StoragePlacementConfig,
 } from '@/lib/api';
@@ -31,7 +31,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
     Pencil, X, AlertTriangle, Cpu, KeyRound, Copy,
-    ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, Eye, EyeOff,
+    ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, RefreshCw, Eye, EyeOff,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
 
@@ -112,6 +112,7 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     const [revealed, setRevealed] = useState<DeployBundle | null>(null);
     const [revealingId, setRevealingId] = useState<number | null>(null);
     const [resettingId, setResettingId] = useState<number | null>(null);
+    const [rollingId, setRollingId] = useState<number | null>(null);
     // Sticky rather than a toast: loadNodes runs on a 5s interval, so a toast
     // per failed poll would be a stream of them.
     const [loadError, setLoadError] = useState<string | null>(null);
@@ -170,6 +171,21 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
         setResettingId(null);
         if (res.success) showToast(res.note || 'Pairing reset.');
         else showToast(res.message || 'Reset failed.', false);
+    };
+
+    // Core answers 409 when it has no address to bind the re-admission to, and
+    // its message says what to do instead, so that message is what is shown.
+    const rollSecret = async (node: Node) => {
+        if (!await confirmDialog({
+            title: `Roll the key for "${node.name}"?`,
+            message: "The node's secret is replaced. Its Redis access is cut at once and restored when it reconnects, normally within a minute. Nothing needs changing on the machine, and server data is preserved.",
+            confirmLabel: 'Roll key',
+        })) return;
+        setRollingId(node.id);
+        const res = await rollNodeSecret(node.id);
+        setRollingId(null);
+        if (res.success) showToast(res.note || 'Key rolled.');
+        else showToast(res.message || 'Rolling the key failed.', false);
     };
 
     // Extracted so the copy buttons below can send the exact same string that
@@ -257,6 +273,8 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                                 revealingDeployBundle={revealingId === node.id}
                                 onResetPairing={() => resetPairing(node)}
                                 resettingPairing={resettingId === node.id}
+                                onRollSecret={() => rollSecret(node)}
+                                rollingSecret={rollingId === node.id}
                                 onOpenDeleteDialog={node.status === 'online' ? null : () => setDeleteTarget({ id: node.id, name: node.name })}
                                 revealAddresses={revealAddresses}
                             />
@@ -318,6 +336,8 @@ interface NodeCardProps {
     revealingDeployBundle: boolean;
     onResetPairing: () => void;
     resettingPairing: boolean;
+    onRollSecret: () => void;
+    rollingSecret: boolean;
     // Only offered while the node is offline: deleting a machine that is still
     // running would leave its containers alive with nothing tracking them.
     onOpenDeleteDialog: (() => void) | null;
@@ -565,7 +585,7 @@ function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) 
     );
 }
 
-function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onOpenDeleteDialog, revealAddresses }: NodeCardProps) {
+function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onRollSecret, rollingSecret, onOpenDeleteDialog, revealAddresses }: NodeCardProps) {
     // For the region label: the name an operator gave the region wins over the
     // built-in map, so renaming it in Settings -> Regions shows up here.
     const { regions } = useAppData();
@@ -740,6 +760,15 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     >
                         <RotateCcw size={11} />
                         {resettingPairing ? 'Resetting…' : 'Reset pairing'}
+                    </button>
+                    <button
+                        onClick={onRollSecret}
+                        disabled={rollingSecret}
+                        className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+                        title="Replace this node's secret; it reconnects with a new one by itself"
+                    >
+                        <RefreshCw size={11} />
+                        {rollingSecret ? 'Rolling…' : 'Roll key'}
                     </button>
                     {onOpenDeleteDialog && (
                         <button

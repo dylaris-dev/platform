@@ -81,10 +81,6 @@ type NodeHeartbeat struct {
 	// lives in the first storage path - and it silently destroys a server on the
 	// next migration, so it is carried all the way to the panel.
 	SharedStorage []models.SharedStorageConflict `json:"sharedStorage,omitempty"`
-	// EnrollToken is the per-user BYON enroll token (NODE_ENROLL_TOKEN). When a
-	// NEW node presents a valid one, it is bound to that user (owner_id). Empty
-	// for platform nodes.
-	EnrollToken string `json:"enrollToken,omitempty"`
 	// ReleaseVersion is the release this node's IMAGE was built from, stamped in
 	// at build time. It is what lets the panel say whether the NODE is behind,
 	// rather than assuming it moved whenever Core did - an operator who updates

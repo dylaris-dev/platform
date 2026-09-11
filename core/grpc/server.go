@@ -125,14 +125,19 @@ type JoinAttemptRecorder interface {
 	// ForgetJoinAttempts drops the record once the node is back, so the list is
 	// of machines that need attention rather than a history.
 	ForgetJoinAttempts(nodeToken string) error
+	// RecordAuthenticated stores the socket address of a SUCCESSFUL
+	// authentication. The roll-key action binds the admission it arms to it, so
+	// it is the observed address, never the self-reported one.
+	RecordAuthenticated(nodeID int, peerIP string) error
 }
 
 // JoinAttemptFuncs adapts plain functions to JoinAttemptRecorder, so main.go can
 // wire the store without this package importing it.
 type JoinAttemptFuncs struct {
-	Record  func(a JoinAttempt) error
-	Consume func(nodeToken, peerIP string) (bool, error)
-	Forget  func(nodeToken string) error
+	Record        func(a JoinAttempt) error
+	Consume       func(nodeToken, peerIP string) (bool, error)
+	Forget        func(nodeToken string) error
+	Authenticated func(nodeID int, peerIP string) error
 }
 
 func (f *JoinAttemptFuncs) RecordJoinAttempt(a JoinAttempt) error { return f.Record(a) }
@@ -140,6 +145,9 @@ func (f *JoinAttemptFuncs) ConsumeJoinApproval(t, ip string) (bool, error) {
 	return f.Consume(t, ip)
 }
 func (f *JoinAttemptFuncs) ForgetJoinAttempts(t string) error { return f.Forget(t) }
+func (f *JoinAttemptFuncs) RecordAuthenticated(id int, ip string) error {
+	return f.Authenticated(id, ip)
+}
 
 // Node is a minimal representation used by the gRPC layer.
 // Matches the fields needed from models.Node.
@@ -509,6 +517,16 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					log.Printf("acl: could not clear the refused-join record for node %d: %v", node.ID, err)
 				}
 			}
+		}
+	}
+
+	// Every branch above either returned or authenticated the node, so this one
+	// line covers the challenge, the first issuance and a new enrolment alike.
+	// Best-effort: it feeds the roll-key action, and a node that has just proved
+	// itself must not be turned away because a bookkeeping write failed.
+	if s.joins != nil {
+		if err := s.joins.RecordAuthenticated(node.ID, peerIPString(ctx)); err != nil {
+			log.Printf("acl: could not record the authenticated address for node %d: %v", node.ID, err)
 		}
 	}
 

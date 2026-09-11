@@ -132,7 +132,8 @@ var (
 	// the first persisted storage path so it survives restarts.
 	nodeSecretDir string
 	// nodeEnrollToken mirrors NODE_ENROLL_TOKEN (BYON per-user enroll token).
-	// Reused by the heartbeat AND the gRPC secret bootstrap.
+	// Sent only on the gRPC enrolment. It used to ride in the Redis heartbeat
+	// too, where nothing read it: a single-use credential on a second channel.
 	nodeEnrollToken string
 )
 
@@ -638,8 +639,8 @@ func parseConfig() {
 	// Storage paths (comma-separated, default: ./dylaris_data/servers)
 	storagePaths = os.Getenv("STORAGE_PATHS")
 
-	// Redis ACL bootstrap config. nodeEnrollToken is read here (mirrors the
-	// heartbeat's NODE_ENROLL_TOKEN) so the gRPC bootstrap can reuse it.
+	// Redis ACL bootstrap config. nodeEnrollToken is read here for the gRPC
+	// bootstrap, the one place it is sent.
 	coreGRPCAddr, _ = resolveNodeAddr(os.Getenv("CORE_GRPC_ADDR"), nodeExternal, warpProxyCorePort)
 	nodeEnrollToken = os.Getenv("NODE_ENROLL_TOKEN")
 	// Cache the per-node secret on the first persisted storage path so it
@@ -995,13 +996,6 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	// startup bootstrap (main fatals otherwise); read through the guarded
 	// accessor since the ACL watchdog / gRPC mesh can rotate it concurrently.
 	data["sig"] = aclHeartbeatSig(getNodeSecret(), id, ts)
-
-	// BYON: advertise the per-user enroll token so Core can bind this node to its
-	// owner on first discovery. Only present when the operator brought the node
-	// with NODE_ENROLL_TOKEN set; platform nodes omit it.
-	if nodeEnrollToken != "" {
-		data["enrollToken"] = nodeEnrollToken
-	}
 
 	// Include live CPU/RAM in heartbeat
 	if mon != nil {

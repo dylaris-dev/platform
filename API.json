@@ -237,6 +237,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/admin/nodes/{id:[0-9]+}/roll-secret",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "description": "replace the node's secret and let it straight back in from the address it last authenticated from.",
+      "handler": "NodeAdmissionHandler.RollSecret",
+      "group": "admin",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/admin/panel-roles",
       "auth": "session",
@@ -5283,15 +5293,15 @@
     }
   ],
   "counts": {
-    "total": 530,
+    "total": 531,
     "byAuth": {
       "none": 38,
-      "session": 479,
+      "session": 480,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 126,
+      "admin": 127,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

@@ -260,6 +260,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/nodes/{id:[0-9]+}/disk-analysis":       "nodes.read",
 	"/api/admin/nodes/{id:[0-9]+}/orphan":              "nodes.delete",
 	"/api/admin/nodes/{id:[0-9]+}/reset-pairing":       "nodes.write",
+	"/api/admin/nodes/{id:[0-9]+}/roll-secret":         "nodes.write",
 	"/api/admin/nodes/join-attempts":                   "nodes.read",
 	"/api/admin/nodes/join-attempts/{token}/approve":   "nodes.write",
 	"/api/admin/nodes/join-attempts/{token}":           "nodes.write",
@@ -1359,6 +1360,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/disk-analysis", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.GetDiskAnalysis))).Methods("GET")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/orphan", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.DeleteOrphanedFolder))).Methods("DELETE")
 	api.HandleFunc("/admin/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.ResetPairing))).Methods("POST")
+	api.HandleFunc("/admin/nodes/{id:[0-9]+}/roll-secret", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeAdmissionHandler.RollSecret))).Methods("POST")
 	// Refused connections, and letting one back in. Registered BEFORE nothing
 	// else claims the path: "join-attempts" cannot collide with the {id:[0-9]+}
 	// routes above, which is why the numeric constraint on those is load-bearing.

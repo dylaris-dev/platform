@@ -1,5 +1,5 @@
 // P0b-5 admin API: node admission config (join/IP mode + CIDRs), per-node
-// reset-pairing, and the enroll-token surface. Mirrors the featureFlags.ts
+// reset-pairing and roll-secret, and the enroll-token surface. Mirrors the featureFlags.ts
 // fetch/auth-header pattern (auth token key: authToken || token).
 
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
@@ -63,6 +63,25 @@ export async function deleteAdmissionCIDR(id: string): Promise<{ success: boolea
 export async function resetNodePairing(nodeId: number): Promise<{ success: boolean; note?: string; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/nodes/${nodeId}/reset-pairing`, {
+            method: 'POST',
+            headers: getAuthHeader(),
+        });
+        return (await handleResponse(res)) as { success: boolean; note?: string; message?: string };
+    } catch (err) {
+        return handleError(err) as { success: boolean; message?: string };
+    }
+}
+
+/**
+ * Replaces the node's secret and lets it back in from the address it last
+ * authenticated from, so it re-pairs by itself within a minute.
+ *
+ * Answers 409 with a message saying what to do instead when Core has no such
+ * address; nothing is changed on the node in that case.
+ */
+export async function rollNodeSecret(nodeId: number): Promise<{ success: boolean; note?: string; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/nodes/${nodeId}/roll-secret`, {
             method: 'POST',
             headers: getAuthHeader(),
         });

@@ -15,7 +15,8 @@ import (
 )
 
 // NodeAdmissionHandler serves the admin admission config (join/IP mode + CIDRs)
-// and the per-node reset-pairing action. All endpoints are admin-only.
+// and the per-node reset-pairing and roll-secret actions. All endpoints are
+// admin-only.
 type NodeAdmissionHandler struct {
 	state *AppState
 }
@@ -172,6 +173,70 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"note":    "The node's secret is cleared. A node holding the cluster secret re-pairs itself within seconds; any other node will appear under Connection attempts, where you can admit it.",
+	})
+}
+
+// RollSecret POST /api/admin/nodes/{id}/roll-secret - replace the node's secret
+// and let it straight back in from the address it last authenticated from.
+//
+// Rotation existed only as a side effect of ResetPairing and of an approval.
+// This is ResetPairing followed by the approval an operator would otherwise give
+// under Connection attempts, armed ahead of time: a node without CLUSTER_SECRET
+// re-pairs within a minute instead of waiting to be noticed. A node holding
+// CLUSTER_SECRET re-pairs through its cluster proof as it always did, and the
+// armed admission is dropped with its row once the node is back.
+//
+// The admission is the SAME one an approval arms - one-shot, fifteen minutes,
+// bound to an address Core read off a socket - so rolling a key never opens a
+// wider door than admitting a node does. With no recorded address there is
+// nothing to bind it to, and the node is left exactly as it was: an unbound
+// admission would admit its identity from anywhere, and clearing the secret
+// without one is what Reset pairing already offers.
+func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(mux.Vars(r)["id"])
+	node, err := h.state.Store.GetNodeByID(id)
+	if err != nil || node == nil {
+		sendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
+	fromIP, err := h.state.Store.GetNodeLastAuthPeerIP(node.ID)
+	if err != nil {
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	if fromIP == "" {
+		sendJSONError(w, "Core has not recorded an address this node authenticated from, so there is nothing to bind its re-admission to. Nothing was changed. Use Reset pairing instead, then admit the node under Connection attempts.", http.StatusConflict)
+		return
+	}
+	uid := byonCallerID(r)
+
+	// Same order as ApproveJoinAttempt: the secret goes first, because a node
+	// whose secret Core still holds is answered with a challenge and never
+	// reaches the branch that consumes an admission.
+	if err := h.state.Store.SetNodeSecretEnc(node.ID, ""); err != nil {
+		sendJSONError(w, "Failed to reset secret", http.StatusInternalServerError)
+		return
+	}
+	if h.state.Redis != nil {
+		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
+	}
+	// Audited once the secret is gone, before arming: the revocation has
+	// happened whether or not the admission below lands.
+	if uid != "" {
+		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+			EventType:   "node.secret_rolled",
+			ActorUserID: &uid,
+			Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token},
+		})
+	}
+	armed, err := h.state.Store.ArmNodeJoinApproval(node.Token, fromIP, uid)
+	if err != nil || !armed {
+		sendJSONError(w, "The node's secret is cleared, but its re-admission could not be armed. It will appear under Connection attempts, where you can admit it.", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"note":    "Key rolled. The node's Redis access is cut until it reconnects with a new secret, normally within a minute.",
 	})
 }
 

@@ -124,10 +124,14 @@ export default function NodeJoinAttempts({ onAdmitted }: { onAdmitted: () => voi
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <span className="font-medium text-sm text-(--base-09)">{name}</span>
-                                        <span className="badge badge-warning inline-flex items-center gap-1">
-                                            <AlertTriangle size={11} />
-                                            refused {a.attempts}x
-                                        </span>
+                                        {/* A node whose key was rolled is listed with its
+                                            admission armed before it was ever refused. */}
+                                        {a.attempts > 0 && (
+                                            <span className="badge badge-warning inline-flex items-center gap-1">
+                                                <AlertTriangle size={11} />
+                                                refused {a.attempts}x
+                                            </span>
+                                        )}
                                         {armed && <span className="badge badge-accent">admitted, waiting for it to reconnect</span>}
                                     </div>
                                     <p className="text-xs text-(--base-06) mt-0.5">{a.reason}</p>
