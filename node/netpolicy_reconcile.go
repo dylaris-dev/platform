@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -92,19 +94,33 @@ func loadNetPolicy(ctx context.Context, rdb *redis.Client, nodeToken string) (ma
 	return out, true, nil
 }
 
-// infraPeers are the two addresses every server accepts unconditionally.
+// infraPeers are the addresses every server accepts unconditionally: the node
+// itself, plus every running Link container on this host.
 //
 // They are never subject to a rule, and that is deliberate rather than an
 // oversight: a rule that can remove the node or the Link is a rule that can
 // brick a server. The node is how it is managed (RCON, stats, the tab proxy);
 // the Link is the ONLY way in for a player, because in gateway routing an MC
 // container binds no host port at all.
+//
+// The Link is found by isLinkContainer (image, with the legacy fixed name as
+// a fallback), never by the one fixed name dylaris_link: once the Link runs
+// as a Swarm stack service its task container is named
+// <stack>_<svc>.<slot>.<taskid>, generated fresh by Swarm on every deploy, so
+// a name-based lookup would return nothing here and every server would start
+// refusing the Link while looking healthy. More than one Link may legitimately
+// be running - a start-first stack update keeps the old one up beside the new
+// one for a moment - and every one of them is allowed.
+//
+// Resolved on every call, never cached: Docker hands a container a new
+// address whenever it is recreated, so a stored address can later belong to
+// somebody else's server.
 func (dm *DockerManager) infraPeers() []string {
 	var out []string
 	if dm.selfContainer != "" {
 		out = append(out, dm.containerAddrs(dm.selfContainer)...)
 	}
-	out = append(out, dm.containerAddrs(linkContainerName)...)
+	out = append(out, dm.linkAddrs()...)
 	return out
 }
 
@@ -116,8 +132,48 @@ func (dm *DockerManager) containerAddrs(name string) []string {
 	if err != nil || info.NetworkSettings == nil {
 		return nil
 	}
+	return networkAddrs(info.NetworkSettings.Networks)
+}
+
+// linkAddrs returns every network address held by every running Link
+// container on this host, found via isLinkContainer - see infraPeers for why
+// that is by image rather than by a fixed name, and why this is never cached.
+func (dm *DockerManager) linkAddrs() []string {
+	containers, err := dm.cli.ContainerList(dm.ctx, container.ListOptions{})
+	if err != nil {
+		// Matches ListRunningMCContainers' own list-error handling one pass
+		// down in reconcileNetPolicy: log it plainly, no rate limiter - list
+		// errors are rare enough that this does not spam.
+		log.Printf("netpolicy: cannot list containers to find the Link: %v", err)
+		return nil
+	}
+	return linkContainerAddrs(containers)
+}
+
+// linkContainerAddrs picks the Link containers out of a ContainerList result
+// and returns every address they hold. Pure, so the "which containers count"
+// question is tested without a Docker daemon.
+func linkContainerAddrs(containers []container.Summary) []string {
 	var out []string
-	for _, ep := range info.NetworkSettings.Networks {
+	for _, c := range containers {
+		if !isLinkContainer(c.Names, c.Image) || c.NetworkSettings == nil {
+			continue
+		}
+		out = append(out, networkAddrs(c.NetworkSettings.Networks)...)
+	}
+	return out
+}
+
+// networkAddrs turns a container's per-network endpoints into every address it
+// holds: all networks, not just one, and both IPv4 and global IPv6. Shared by
+// containerAddrs (one container, via ContainerInspect) and linkContainerAddrs
+// (many, via ContainerList) - both endpoint types carry the same field shape.
+func networkAddrs(networks map[string]*network.EndpointSettings) []string {
+	var out []string
+	for _, ep := range networks {
+		if ep == nil {
+			continue
+		}
 		if ep.IPAddress != "" {
 			out = append(out, ep.IPAddress)
 		}

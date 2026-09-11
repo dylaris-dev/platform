@@ -2,8 +2,12 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 )
 
 // The ruleset is the whole security boundary, so what it must NOT contain
@@ -193,5 +197,135 @@ func TestNetPolicyKeyIsInsideTheNodesOwnGrant(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "dylaris:node:"+id+":") {
 		t.Errorf("key %q is outside the granted prefix", got)
+	}
+}
+
+// endpoints builds a NetworkSettingsSummary the way ContainerList actually
+// returns one, so the test data is shaped like the real thing rather than
+// like whatever is convenient to assert on.
+func endpoints(byNetwork map[string]network.EndpointSettings) *container.NetworkSettingsSummary {
+	m := make(map[string]*network.EndpointSettings, len(byNetwork))
+	for name, ep := range byNetwork {
+		ep := ep
+		m[name] = &ep
+	}
+	return &container.NetworkSettingsSummary{Networks: m}
+}
+
+// TestLinkContainerAddrs covers the helper the brief asks for: given
+// ContainerList summaries, it returns exactly the addresses of the Link
+// containers among them.
+func TestLinkContainerAddrs(t *testing.T) {
+	tests := []struct {
+		name       string
+		containers []container.Summary
+		want       []string
+	}{
+		{
+			name: "the node-managed link",
+			containers: []container.Summary{{
+				Names:           []string{"/dylaris_link"},
+				Image:           "ghcr.io/dylaris-dev/gateway-link:latest",
+				NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.5"}}),
+			}},
+			want: []string{"10.0.0.5"},
+		},
+		{
+			name: "a stack task, generated name",
+			containers: []container.Summary{{
+				Names:           []string{"/dylaris-prod_link.abc.xyz"},
+				Image:           "ghcr.io/dylaris-dev/gateway-link@sha256:deadbeef",
+				NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.7"}}),
+			}},
+			want: []string{"10.0.0.7"},
+		},
+		{
+			name: "two links at once, start-first overlap",
+			containers: []container.Summary{
+				{
+					Names:           []string{"/dylaris_link"},
+					Image:           "ghcr.io/dylaris-dev/gateway-link:latest",
+					NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.5"}}),
+				},
+				{
+					Names:           []string{"/dylaris-prod_link.def.uvw"},
+					Image:           "ghcr.io/dylaris-dev/gateway-link@sha256:deadbeef",
+					NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.9"}}),
+				},
+			},
+			want: []string{"10.0.0.5", "10.0.0.9"},
+		},
+		{
+			name: "a custom LINK_IMAGE registry but the legacy name",
+			containers: []container.Summary{{
+				Names:           []string{"/dylaris_link"},
+				Image:           "registry.example.test/private/link:2026.09",
+				NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.11"}}),
+			}},
+			want: []string{"10.0.0.11"},
+		},
+		{
+			name: "an mc server and the node itself are excluded",
+			containers: []container.Summary{
+				{
+					Names:           []string{"/mc_7f3a"},
+					Image:           "itzg/minecraft-server:latest",
+					NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.20"}}),
+				},
+				{
+					Names:           []string{"/dylaris_node"},
+					Image:           "ghcr.io/dylaris-dev/platform-node:latest",
+					NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.2"}}),
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "ipv4 and global ipv6 on two networks, all addresses",
+			containers: []container.Summary{{
+				Names: []string{"/dylaris_link"},
+				Image: "ghcr.io/dylaris-dev/gateway-link:latest",
+				NetworkSettings: endpoints(map[string]network.EndpointSettings{
+					"dylaris_net": {IPAddress: "10.0.0.5"},
+					"ipv6_net":    {GlobalIPv6Address: "2001:db8::5"},
+				}),
+			}},
+			want: []string{"10.0.0.5", "2001:db8::5"},
+		},
+		{
+			name: "empty NetworkSettings, no panic",
+			containers: []container.Summary{{
+				Names:           []string{"/dylaris_link"},
+				Image:           "ghcr.io/dylaris-dev/gateway-link:latest",
+				NetworkSettings: &container.NetworkSettingsSummary{},
+			}},
+			want: nil,
+		},
+		{
+			name: "nil NetworkSettings, no panic",
+			containers: []container.Summary{{
+				Names:           []string{"/dylaris_link"},
+				Image:           "ghcr.io/dylaris-dev/gateway-link:latest",
+				NetworkSettings: nil,
+			}},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := linkContainerAddrs(tt.containers)
+			sort.Strings(got)
+			want := append([]string(nil), tt.want...)
+			sort.Strings(want)
+			if len(got) != len(want) {
+				t.Fatalf("linkContainerAddrs = %v, want %v", got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("linkContainerAddrs = %v, want %v", got, want)
+				}
+			}
+		})
 	}
 }
