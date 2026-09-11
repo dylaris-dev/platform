@@ -747,7 +747,7 @@ func (dm *DockerManager) RemoveOwnLinkContainer(configuredImage string) {
 		return
 	}
 	if c.Config == nil || !isOwnLinkContainer(c.Name, c.Config.Hostname, c.Config.Image, c.Config.Labels, configuredImage) {
-		log.Printf("link: %s was not created by this node, left running", linkContainerName)
+		log.Printf("link: %s was not recognised as this node's Link, left running", linkContainerName)
 		return
 	}
 	// By id: the name is the one thing another container could hold by the
@@ -1713,12 +1713,27 @@ func isLinkContainer(names []string, image string) bool {
 	return false
 }
 
-// CountLinkContainers returns the number of running Link containers on this host.
-func (dm *DockerManager) CountLinkContainers() int {
+// CountLinkContainers returns the number of running Link containers on this
+// host, and false when the Docker list itself failed. A failed list is not
+// zero: the caller (the heartbeat) must omit linkCount for that pass rather
+// than report a false "no Link", which is what a panic-free `return 0, nil`
+// used to do.
+func (dm *DockerManager) CountLinkContainers() (count int, ok bool) {
 	containers, err := dm.cli.ContainerList(dm.ctx, container.ListOptions{})
 	if err != nil {
-		return 0
+		// Matches linkAddrs' own list-error handling: log it plainly, no rate
+		// limiter - list errors are rare enough that this does not spam.
+		log.Printf("link: cannot list containers to count the Link: %v", err)
+		return 0, false
 	}
+	return linkContainerCount(containers), true
+}
+
+// linkContainerCount counts the Link containers in a ContainerList result.
+// Pure, so the "which containers count" question is tested without a Docker
+// daemon; see linkContainerAddrs for the sibling that returns addresses
+// instead of a count.
+func linkContainerCount(containers []container.Summary) int {
 	count := 0
 	for _, c := range containers {
 		if isLinkContainer(c.Names, c.Image) {

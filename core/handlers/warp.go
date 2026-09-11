@@ -607,9 +607,11 @@ const byonLinkRedisAddr = "host.docker.internal:25571"
 func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) {
 	// 409, not a refusal: in a fresh kit the Link starts beside the node and asks
 	// before the node has enrolled, so "not yet" is the normal first answer and
-	// the Link waits it out.
+	// the Link waits it out. The other way here is an existing node redeployed
+	// with the new kit whose key was never bound in the panel - its Link also
+	// waits forever, so the message has to name both causes.
 	if key.BoundNodeID == 0 {
-		sendJSONError(w, "This machine has not enrolled as a node yet. The Link retries until it has.", http.StatusConflict)
+		sendJSONError(w, "This key is not bound to an enrolled node yet: a new node is still enrolling, or an existing node's key must be bound to it in the panel (Update this machine). The Link retries until it has.", http.StatusConflict)
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(key.BoundNodeID)

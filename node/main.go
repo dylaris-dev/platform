@@ -983,9 +983,14 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		}
 	}
 
-	// Include link container count
+	// Include link container count. A failed Docker list is left out entirely
+	// rather than reported as 0: an absent field is "unknown" end to end (Core
+	// keeps a nil pointer, the panel shows no warning), while a false 0 reads
+	// as "no Link is running" on a node that may well have one.
 	if dm != nil {
-		data["linkCount"] = dm.CountLinkContainers()
+		if count, ok := dm.CountLinkContainers(); ok {
+			data["linkCount"] = count
+		}
 	}
 
 	// Include storage info in heartbeat, enriched with whether each path can
