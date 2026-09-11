@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.11.2
+
+### Features
+- **BYON: the Link now runs beside your node.** New machines get it; for an existing
+  one choose "Update this machine" and redeploy (players reconnect once). `node`
+- **Route-only: your link can start while our API is unreachable** after you
+  redeploy with the current file; nothing is required.
+
+### Breaking
+- Nothing. A machine you do not update keeps working as before.
+
+### Security
+- **BYON: your node now logs in with a key that never leaves your machine.** It is
+  registered automatically the first time the updated node connects. `node`
+
+### Fixes
+- **BYON: a deploy file from the panel could leave your node unable to reach us.** If a
+  machine never came online after you deployed one, deploy the current file.
+
 ## 2026.09.10
 
 ### Features

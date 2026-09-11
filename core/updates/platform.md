@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.11.2
+
+### Features
+- **The panel warns about a gateway node without a Link**, on Infrastructure and in
+  Settings -> Nodes. `panel` `core` `node`
+- **BYON machines run their Link beside the node,** booted by Core through the
+  machine's warp key. `core` `panel`
+- **Roll key no longer restarts a node that logs in with a key;** its Redis logins stay.
+  Reset pairing still replaces everything and restarts it. `core` `panel`
+
+### Breaking
+- **With `NODE_MANAGES_LINK=false` a node removes the Link it started.** Bring the
+  Link service up first. `node`
+- **A node that registered its key is refused on an older image.** Before rolling one
+  back use Roll key; without `CLUSTER_SECRET` it needs Admit on every reconnect. `node`
+
+### Security
+- **A node logs in with its own Ed25519 key,** registered on its first connect; a
+  database dump plus `CLUSTER_SECRET` no longer computes that login. `core` `node`
+- **Core no longer re-pairs a customer's node on the cluster secret alone,** and a
+  database error no longer enrols a known node as a new one. `core`
+
+### Fixes
+- **Node deploy files carry the control-channel pin again;** some wrote
+  `GRPC_TLS_ENABLED: "false"` and never reached a TLS Core. Redeploy those. `core` `panel`
+
 ## 2026.09.11
 
 ### Features
