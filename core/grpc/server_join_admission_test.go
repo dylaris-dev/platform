@@ -2,7 +2,6 @@ package nodegrpc
 
 import (
 	"context"
-	"errors"
 	"net"
 	"testing"
 
@@ -20,7 +19,7 @@ type knownNodeLookup struct {
 
 func (k knownNodeLookup) GetNodeByToken(t string) (*Node, error) {
 	if t != k.token {
-		return nil, errors.New("no such node")
+		return nil, ErrNodeNotFound
 	}
 	return &Node{ID: 42, Token: k.token, Owned: k.owned}, nil
 }

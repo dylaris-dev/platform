@@ -992,6 +992,91 @@ func (s *PostgresStore) SetNodeSecretEncIfUnchanged(id int, prev, next string) (
 	return n == 1, nil
 }
 
+// GetNodePublicKeys returns the node's registered Ed25519 public key and the
+// last one an operator rejected, both hex, empty for none.
+func (s *PostgresStore) GetNodePublicKeys(id int) (key, rejected string, err error) {
+	err = s.db.QueryRow(`SELECT node_public_key, node_rejected_public_key FROM nodes WHERE id = $1`, id).Scan(&key, &rejected)
+	return key, rejected, err
+}
+
+// SetNodePublicKeyIfUnchanged registers the node's public key (hex) only while
+// the row still holds prevKey and prevRejected, and reports whether it landed.
+// A compare-and-set for the reason SetNodeSecretEncIfUnchanged is one: a node
+// dials every Core replica at once, and an unconditional UPDATE would let
+// whichever replica writes last decide which key the node logs in with. Only
+// ever called for a key the node has just signed a Core nonce with.
+func (s *PostgresStore) SetNodePublicKeyIfUnchanged(id int, prevKey, prevRejected, key string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE nodes SET node_public_key = $1
+		 WHERE id = $2 AND node_public_key = $3 AND node_rejected_public_key = $4`, key, id, prevKey, prevRejected)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// RejectNodePublicKey moves the node's key aside, so presenting it again is
+// refused with an instruction to generate a new one, and reports whether the
+// row is a KEY node: one that holds a key now or has held one.
+//
+// One statement, because the answer decides whether the caller also clears the
+// secret. Right-hand sides of SET read the row as it was, so a row with no key
+// keeps the rejected key it already had instead of having it blanked, and
+// RETURNING reads the row as it is now.
+func (s *PostgresStore) RejectNodePublicKey(id int) (keyNode bool, err error) {
+	err = s.db.QueryRow(`
+		UPDATE nodes
+		   SET node_rejected_public_key = CASE WHEN node_public_key <> '' THEN node_public_key ELSE node_rejected_public_key END,
+		       node_public_key = ''
+		 WHERE id = $1
+		RETURNING node_rejected_public_key <> ''`, id).Scan(&keyNode)
+	return keyNode, err
+}
+
+// ResetNodeLogin is Reset pairing's write, as ONE statement: the key moved aside
+// exactly as RejectNodePublicKey moves it, the secret cleared, and any admission
+// already armed for the node disarmed.
+//
+// Each part is in the statement for a reason. With the key and the secret
+// written separately, a failure between them left the key rejected and the
+// secret in place - the state Roll key produces, which keeps the very secret a
+// Reset exists to take away. With the admission left armed, one a Roll key had
+// armed for fifteen minutes let whoever sits at that address re-pair with a
+// fresh key right after the Reset and be handed the secret it had just made.
+//
+// Every data-modifying part of a WITH runs exactly once and to completion within
+// the one statement, whether or not the main query reads it, so no failure can
+// leave one part without the others. An Admit given after the Reset arms the row
+// again and is not affected. A missing node row is sql.ErrNoRows.
+func (s *PostgresStore) ResetNodeLogin(id int) error {
+	var n int
+	err := s.db.QueryRow(`
+		WITH reset AS (
+			UPDATE nodes
+			   SET node_rejected_public_key = CASE WHEN node_public_key <> '' THEN node_public_key ELSE node_rejected_public_key END,
+			       node_public_key = '',
+			       node_secret_enc = ''
+			 WHERE id = $1
+			RETURNING token
+		), disarm AS (
+			UPDATE node_join_attempts
+			   SET approved_until = NULL, approved_from_ip = ''
+			 WHERE node_token IN (SELECT token FROM reset)
+			RETURNING node_token
+		)
+		SELECT COUNT(*) FROM reset`, id).Scan(&n)
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error) {
 	query := `
 		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, u.username as owner_name, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image, s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, COALESCE(s.server_type, 'game'), s.proxy_id

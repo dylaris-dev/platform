@@ -19,7 +19,8 @@ message NodeMessage {
     NodeAuth          auth          = 10;
     AuthResult        auth_result   = 11;
 
-    // Reconnect challenge-response (Core->Node nonce, Node->Core HMAC of it)
+    // Reconnect challenge-response (Core->Node nonce, Node->Core HMAC and/or
+    // Ed25519 signature of it)
     NodeChallenge         challenge          = 12;
     NodeChallengeResponse challenge_response = 13;
 
@@ -131,6 +132,18 @@ message NodeAuth {
   // the task name, so the node reads NODE_HOSTNAME, which the compose file
   // templates from {{.Node.Hostname}}.
   NodeIdentity identity = 8;
+  // The node's Ed25519 PUBLIC key (32 bytes), empty from an image without key
+  // support. The node generates the pair itself and the private half never
+  // leaves its disk; this is its identity, the SSH host-key model.
+  //
+  // Presenting it proves nothing: Core answers with a challenge, and only a
+  // signature over that nonce (NodeChallengeResponse.signature) shows the
+  // caller holds the private half. Core stores it at enrolment, at a first
+  // issuance, or on a row with no key yet once the secret challenge passed; a
+  // row that holds a key accepts only its signature from then on. A key of the
+  // wrong length or of small order (one a signature can be forged for) is
+  // refused as malformed.
+  bytes node_public_key = 9;
 }
 
 // NodeIdentity is the self-reported description of a machine, for humans.
@@ -182,16 +195,32 @@ message AuthResult {
   // it already has. Core leaves it empty for an owned (BYON) node, which reaches
   // Redis through its warp proxy. Field 12 because 6 is taken by assigned_id.
   string redis_addr = 12;
+  // Set with ok=false when the node presented a key an operator has replaced
+  // (Reset pairing, Roll key or an approval moved it aside). The node must
+  // generate a NEW key pair, persist it and connect again; the retry lands in
+  // the branch that asks for a cluster proof or a panel admission. Never set on
+  // a successful auth. An image that predates it ignores it and is refused as
+  // before, which is right: it presented the refused key.
+  bool node_key_rejected = 13;
 }
 
-// Reconnect challenge: Core issues a fresh single-use nonce; the node returns
-// HMAC-SHA256(per-node-secret, "dylaris-redis-acl:v1:challenge:"+nonce).
+// Reconnect challenge: Core issues a fresh single-use nonce. The node answers
+// with every proof it can give, because it cannot know which one Core will
+// read: response = HMAC-SHA256(per-node-secret,
+// "dylaris-redis-acl:v1:challenge:"+nonce) when it holds the secret, and
+// signature = Ed25519(node key,
+// "dylaris-node-auth:v1:" + NodeAuth.node_token + ":" + nonce) when it holds a
+// key (dylaris-pkg/nodeauth). The node_token is the identity this same
+// NodeAuth presented, so a signature proves that node's login and no other.
+// Core reads the signature for a row that holds a key and the HMAC only for a
+// row that never had one.
 message NodeChallenge {
   string nonce = 1;
 }
 
 message NodeChallengeResponse {
-  string response = 1;
+  string response = 1;   // HMAC of the nonce under the per-node secret, hex
+  bytes  signature = 2;  // Ed25519 signature over domain, node_token and nonce
 }
 
 message NodeIPs {

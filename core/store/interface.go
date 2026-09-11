@@ -60,6 +60,12 @@ type Store interface {
 	GetNodeSecretEnc(id int) (string, error)
 	SetNodeSecretEnc(id int, enc string) error
 	SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error)
+	// RejectNodePublicKey moves the node's login key aside and reports whether
+	// the row is a key node (holds or has held a key). See PostgresStore.
+	RejectNodePublicKey(id int) (keyNode bool, err error)
+	// ResetNodeLogin moves the key aside and clears the secret in one statement:
+	// Reset pairing's write. See PostgresStore.
+	ResetNodeLogin(id int) error
 
 	// Outgoing mail templates. A missing row means the built-in wording.
 	ListMailTemplates() ([]models.MailTemplate, error)

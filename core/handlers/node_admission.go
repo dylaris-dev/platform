@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -126,10 +127,57 @@ func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
-// ResetPairing POST /api/admin/nodes/{id}/reset-pairing — REVOKE: clear the
-// node's secret and hard-cut its live Redis ACL. The node row / owner / servers
-// / backups are untouched, and the next connect re-provisions the ACL under a
-// fresh secret.
+// revokeNodeLogin takes away what the node logs in with. A key node is one that
+// holds or has held an Ed25519 key.
+//
+// A key node has its key moved aside: its next connect is told to generate a new
+// one, and the new one gets in only through a cluster proof (a platform node's)
+// or an admission.
+//
+// rotate says whether the SERVICE secret goes as well. Every Redis password, the
+// heartbeat signature, the beam proofs and the migration token derive from it, so
+// Reset pairing - the answer to a node that may be compromised - passes true:
+// leaving the secret would leave every one of those with whoever holds it. The
+// cost is paid knowingly: the re-admitted node is handed a new secret, restarts,
+// and recreates its MC containers, disconnecting their players. Roll key and an
+// approval pass false. They are routine, the key is the login they replace, and a
+// key node keeps its secret and its players. A node that never had a key logs in
+// with the secret itself, so for it the secret is cleared whatever rotate says.
+//
+// Reset's writes - key, secret, and any admission already armed for the node -
+// are ONE statement (ResetNodeLogin): apart, a failure between them left the
+// Roll key state behind a Reset, or a Roll key's admission open after it. For
+// Roll and an
+// approval the order is harmless: a node without a key has nothing to move
+// aside, so the only write that changes its row is the clear.
+func (h *NodeAdmissionHandler) revokeNodeLogin(nodeID int, rotate bool) error {
+	if rotate {
+		if err := h.state.Store.ResetNodeLogin(nodeID); err != nil {
+			return fmt.Errorf("reset login of node %d: %w", nodeID, err)
+		}
+		return nil
+	}
+	keyNode, err := h.state.Store.RejectNodePublicKey(nodeID)
+	if err != nil {
+		return fmt.Errorf("reject key of node %d: %w", nodeID, err)
+	}
+	if !keyNode {
+		if err := h.state.Store.SetNodeSecretEnc(nodeID, ""); err != nil {
+			return fmt.Errorf("clear secret of node %d: %w", nodeID, err)
+		}
+	}
+	return nil
+}
+
+// ResetPairing POST /api/admin/nodes/{id}/reset-pairing - REVOKE: refuse the
+// node's key, clear its secret and hard-cut its live Redis ACL. The node row /
+// owner / servers / backups are untouched; the re-admitted node gets a new
+// secret and restarts its game servers. See revokeNodeLogin for why.
+//
+// It also disarms any admission armed for the node before it, such as the one a
+// Roll key arms: otherwise whoever sits at that address re-pairs with a fresh
+// key right after the Reset and is handed the new secret. An Admit given after
+// the Reset arms it again, which is how a reset node comes back.
 //
 // It no longer mints anything. This used to hand back a single-use
 // NODE_RECOVERY_TOKEN that an operator had to write into the node's environment
@@ -150,11 +198,11 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	}
 	uid := byonCallerID(r)
 
-	// Invalidate the current secret: HasSecret -> false sends the next reconnect
-	// down the first-issuance branch, which accepts a cluster proof or an
-	// admission granted here.
-	if err := h.state.Store.SetNodeSecretEnc(node.ID, ""); err != nil {
-		sendJSONError(w, "Failed to reset secret", http.StatusInternalServerError)
+	// Revoke the login: the next reconnect goes down the branch that accepts a
+	// cluster proof or an admission granted here.
+	if err := h.revokeNodeLogin(node.ID, true); err != nil {
+		log.Printf("reset-pairing: %v", err)
+		sendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
 	}
 	// Hard-cut the live Redis ACL so a possibly-compromised node loses access at
@@ -173,12 +221,16 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"note":    "The node's secret is cleared. A node holding the cluster secret re-pairs itself within seconds; any other node will appear under Connection attempts, where you can admit it.",
+		"note":    "The node's key is refused, its secret cleared, and any re-admission armed earlier by Roll key cancelled. A node holding the cluster secret re-pairs itself within seconds; any other node will appear under Connection attempts, where you can admit it. Once back it gets a new secret and restarts its game servers, which disconnects their players.",
 	})
 }
 
-// RollSecret POST /api/admin/nodes/{id}/roll-secret - replace the node's secret
-// and let it straight back in from the address it last authenticated from.
+// RollSecret POST /api/admin/nodes/{id}/roll-secret - replace the node's key
+// (the secret, for a node that has no key) and let it straight back in from the
+// address it last authenticated from. The route keeps its old name because the
+// panel and the audit trail already use it. Unlike Reset pairing it keeps a key
+// node's service secret, so the node's game servers are not restarted (see
+// revokeNodeLogin).
 //
 // Rotation existed only as a side effect of ResetPairing and of an approval.
 // This is ResetPairing followed by the approval an operator would otherwise give
@@ -212,18 +264,18 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 	}
 	uid := byonCallerID(r)
 
-	// Same order as ApproveJoinAttempt: the secret goes first, because a node
-	// whose secret Core still holds is answered with a challenge and never
-	// reaches the branch that consumes an admission.
-	if err := h.state.Store.SetNodeSecretEnc(node.ID, ""); err != nil {
-		log.Printf("roll-secret: node %d: clear secret: %v", node.ID, err)
-		sendJSONError(w, "Failed to reset secret", http.StatusInternalServerError)
+	// Same order as ApproveJoinAttempt: the login goes first, because a node
+	// whose key or secret Core still accepts is answered with a challenge and
+	// never reaches the branch that consumes an admission.
+	if err := h.revokeNodeLogin(node.ID, false); err != nil {
+		log.Printf("roll-secret: %v", err)
+		sendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
 		return
 	}
 	if h.state.Redis != nil {
 		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
-	// Audited once the secret is gone, before arming: the revocation has
+	// Audited once the login is gone, before arming: the revocation has
 	// happened whether or not the admission below lands.
 	if uid != "" {
 		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
@@ -234,16 +286,16 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 	}
 	armed, err := h.state.Store.ArmNodeJoinApproval(node.Token, fromIP, uid)
 	if err != nil || !armed {
-		// The secret is already gone by this point, so the node has changed
+		// The login is already gone by this point, so the node has changed
 		// state either way - log why arming failed, or this 500 explains
 		// nothing afterwards.
 		log.Printf("roll-secret: node %d: arm join approval failed (armed=%v): %v", node.ID, armed, err)
-		sendJSONError(w, "The node's secret is cleared, but its re-admission could not be armed. It will appear under Connection attempts, where you can admit it.", http.StatusInternalServerError)
+		sendJSONError(w, "The node's key is revoked, but its re-admission could not be armed. It will appear under Connection attempts, where you can admit it.", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"note":    "Key rolled. The node's Redis access is cut at once. The re-admission is armed for 15 minutes; a node that is online reconnects with a new secret well within that window.",
+		"note":    "Key rolled. The node's Redis access is cut at once. The re-admission is armed for 15 minutes; a node that is online reconnects with a new key well within that window, without restarting its game servers (a node too old to have a key gets a new secret instead, which does restart them).",
 	})
 }
 
@@ -265,11 +317,11 @@ func (h *NodeAdmissionHandler) ListJoinAttempts(w http.ResponseWriter, r *http.R
 // ApproveJoinAttempt POST /api/admin/nodes/join-attempts/{token}/approve — let
 // this machine back in, without touching the machine.
 //
-// Two acts, in this order. The node's secret is cleared, which is what sends its
-// next connect down the first-issuance branch at all; then the admission is
-// armed. Doing it the other way round would arm a door that the next connect
-// walks straight past, because a node whose secret Core still holds is answered
-// with a challenge and never reaches the branch that checks admissions.
+// Two acts, in this order. The node's login is revoked (revokeNodeLogin), which
+// is what sends its next connect down the branch that checks admissions at all;
+// then the admission is armed. Doing it the other way round would arm a door
+// that the next connect walks straight past, because a node whose key or secret
+// Core still accepts is answered with a challenge and never reaches that branch.
 //
 // The armed window is short and tied to the address the attempt came from. The
 // identity on a refused attempt is self-claimed - anyone who learns a node's id
@@ -282,8 +334,9 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		sendJSONError(w, "No node with that identity", http.StatusNotFound)
 		return
 	}
-	if err := h.state.Store.SetNodeSecretEnc(node.ID, ""); err != nil {
-		sendJSONError(w, "Failed to reset secret", http.StatusInternalServerError)
+	if err := h.revokeNodeLogin(node.ID, false); err != nil {
+		log.Printf("approve-join: %v", err)
+		sendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
 		return
 	}
 	if h.state.Redis != nil {

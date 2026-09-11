@@ -448,7 +448,8 @@ type NodeMessage_AuthResult struct {
 }
 
 type NodeMessage_Challenge struct {
-	// Reconnect challenge-response (Core->Node nonce, Node->Core HMAC of it)
+	// Reconnect challenge-response (Core->Node nonce, Node->Core HMAC and/or
+	// Ed25519 signature of it)
 	Challenge *NodeChallenge `protobuf:"bytes,12,opt,name=challenge,proto3,oneof"`
 }
 
@@ -712,7 +713,19 @@ type NodeAuth struct {
 	// The real machine's name needs help on Swarm: os.Hostname() inside a task is
 	// the task name, so the node reads NODE_HOSTNAME, which the compose file
 	// templates from {{.Node.Hostname}}.
-	Identity      *NodeIdentity `protobuf:"bytes,8,opt,name=identity,proto3" json:"identity,omitempty"`
+	Identity *NodeIdentity `protobuf:"bytes,8,opt,name=identity,proto3" json:"identity,omitempty"`
+	// The node's Ed25519 PUBLIC key (32 bytes), empty from an image without key
+	// support. The node generates the pair itself and the private half never
+	// leaves its disk; this is its identity, the SSH host-key model.
+	//
+	// Presenting it proves nothing: Core answers with a challenge, and only a
+	// signature over that nonce (NodeChallengeResponse.signature) shows the
+	// caller holds the private half. Core stores it at enrolment, at a first
+	// issuance, or on a row with no key yet once the secret challenge passed; a
+	// row that holds a key accepts only its signature from then on. A key of the
+	// wrong length or of small order (one a signature can be forged for) is
+	// refused as malformed.
+	NodePublicKey []byte `protobuf:"bytes,9,opt,name=node_public_key,json=nodePublicKey,proto3" json:"node_public_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -799,6 +812,13 @@ func (x *NodeAuth) GetReleaseVersion() string {
 func (x *NodeAuth) GetIdentity() *NodeIdentity {
 	if x != nil {
 		return x.Identity
+	}
+	return nil
+}
+
+func (x *NodeAuth) GetNodePublicKey() []byte {
+	if x != nil {
+		return x.NodePublicKey
 	}
 	return nil
 }
@@ -913,9 +933,16 @@ type AuthResult struct {
 	// EMPTY MEANS "Core names none", never "nowhere": the node keeps the address
 	// it already has. Core leaves it empty for an owned (BYON) node, which reaches
 	// Redis through its warp proxy. Field 12 because 6 is taken by assigned_id.
-	RedisAddr     string `protobuf:"bytes,12,opt,name=redis_addr,json=redisAddr,proto3" json:"redis_addr,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RedisAddr string `protobuf:"bytes,12,opt,name=redis_addr,json=redisAddr,proto3" json:"redis_addr,omitempty"`
+	// Set with ok=false when the node presented a key an operator has replaced
+	// (Reset pairing, Roll key or an approval moved it aside). The node must
+	// generate a NEW key pair, persist it and connect again; the retry lands in
+	// the branch that asks for a cluster proof or a panel admission. Never set on
+	// a successful auth. An image that predates it ignores it and is refused as
+	// before, which is right: it presented the refused key.
+	NodeKeyRejected bool `protobuf:"varint,13,opt,name=node_key_rejected,json=nodeKeyRejected,proto3" json:"node_key_rejected,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AuthResult) Reset() {
@@ -1032,8 +1059,23 @@ func (x *AuthResult) GetRedisAddr() string {
 	return ""
 }
 
-// Reconnect challenge: Core issues a fresh single-use nonce; the node returns
-// HMAC-SHA256(per-node-secret, "dylaris-redis-acl:v1:challenge:"+nonce).
+func (x *AuthResult) GetNodeKeyRejected() bool {
+	if x != nil {
+		return x.NodeKeyRejected
+	}
+	return false
+}
+
+// Reconnect challenge: Core issues a fresh single-use nonce. The node answers
+// with every proof it can give, because it cannot know which one Core will
+// read: response = HMAC-SHA256(per-node-secret,
+// "dylaris-redis-acl:v1:challenge:"+nonce) when it holds the secret, and
+// signature = Ed25519(node key,
+// "dylaris-node-auth:v1:" + NodeAuth.node_token + ":" + nonce) when it holds a
+// key (dylaris-pkg/nodeauth). The node_token is the identity this same
+// NodeAuth presented, so a signature proves that node's login and no other.
+// Core reads the signature for a row that holds a key and the HMAC only for a
+// row that never had one.
 type NodeChallenge struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Nonce         string                 `protobuf:"bytes,1,opt,name=nonce,proto3" json:"nonce,omitempty"`
@@ -1080,7 +1122,8 @@ func (x *NodeChallenge) GetNonce() string {
 
 type NodeChallengeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Response      string                 `protobuf:"bytes,1,opt,name=response,proto3" json:"response,omitempty"`
+	Response      string                 `protobuf:"bytes,1,opt,name=response,proto3" json:"response,omitempty"`   // HMAC of the nonce under the per-node secret, hex
+	Signature     []byte                 `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"` // Ed25519 signature over domain, node_token and nonce
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1120,6 +1163,13 @@ func (x *NodeChallengeResponse) GetResponse() string {
 		return x.Response
 	}
 	return ""
+}
+
+func (x *NodeChallengeResponse) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
 }
 
 type NodeIPs struct {
@@ -3163,7 +3213,7 @@ const file_node_node_proto_rawDesc = "" +
 	"\x0fhash_files_resp\x18v \x01(\v2\x1b.dylaris.node.HashFilesRespH\x00R\rhashFilesResp\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
-	"\apayload\"\xc3\x02\n" +
+	"\apayload\"\xeb\x02\n" +
 	"\bNodeAuth\x12\x1d\n" +
 	"\n" +
 	"node_token\x18\x01 \x01(\tR\tnodeToken\x12'\n" +
@@ -3173,12 +3223,13 @@ const file_node_node_proto_rawDesc = "" +
 	"\racl_supported\x18\x05 \x01(\bR\faclSupported\x12#\n" +
 	"\rcluster_proof\x18\x06 \x01(\tR\fclusterProof\x12'\n" +
 	"\x0frelease_version\x18\a \x01(\tR\x0ereleaseVersion\x126\n" +
-	"\bidentity\x18\b \x01(\v2\x1a.dylaris.node.NodeIdentityR\bidentity\"\x87\x01\n" +
+	"\bidentity\x18\b \x01(\v2\x1a.dylaris.node.NodeIdentityR\bidentity\x12&\n" +
+	"\x0fnode_public_key\x18\t \x01(\fR\rnodePublicKey\"\x87\x01\n" +
 	"\fNodeIdentity\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1b\n" +
 	"\tcpu_cores\x18\x02 \x01(\x05R\bcpuCores\x12\x1b\n" +
 	"\tcpu_model\x18\x03 \x01(\tR\bcpuModel\x12!\n" +
-	"\fmemory_bytes\x18\x04 \x01(\x03R\vmemoryBytes\"\xbf\x03\n" +
+	"\fmemory_bytes\x18\x04 \x01(\x03R\vmemoryBytes\"\xeb\x03\n" +
 	"\n" +
 	"AuthResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x17\n" +
@@ -3198,11 +3249,13 @@ const file_node_node_proto_rawDesc = "" +
 	" \x01(\tR\x15updateRequiredVersion\x128\n" +
 	"\x18update_required_deadline\x18\v \x01(\tR\x16updateRequiredDeadline\x12\x1d\n" +
 	"\n" +
-	"redis_addr\x18\f \x01(\tR\tredisAddr\"%\n" +
+	"redis_addr\x18\f \x01(\tR\tredisAddr\x12*\n" +
+	"\x11node_key_rejected\x18\r \x01(\bR\x0fnodeKeyRejected\"%\n" +
 	"\rNodeChallenge\x12\x14\n" +
-	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"3\n" +
+	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"Q\n" +
 	"\x15NodeChallengeResponse\x12\x1a\n" +
-	"\bresponse\x18\x01 \x01(\tR\bresponse\";\n" +
+	"\bresponse\x18\x01 \x01(\tR\bresponse\x12\x1c\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\";\n" +
 	"\aNodeIPs\x12\x16\n" +
 	"\x06public\x18\x01 \x01(\tR\x06public\x12\x18\n" +
 	"\aprivate\x18\x02 \x03(\tR\aprivate\"\"\n" +

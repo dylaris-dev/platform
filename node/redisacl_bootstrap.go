@@ -131,13 +131,32 @@ func setLinkCreds(secret, proof string, persist bool) {
 // ensureNodeSecret returns the per-node secret. Uses the
 // cached .node_secret when present (no Core contact needed — resilience); else
 // bootstraps it from Core via a one-shot gRPC handshake. Loops until success or
-// ctx cancel; never fatal.
+// ctx cancel. Fatal only when .node_id exists and cannot be read: see below.
 func ensureNodeSecret(ctx context.Context) []byte {
 	// Adopt a previously assigned identity before any credential/key derivation.
-	hadAssignedID := false
-	if id, ok := loadNodeID(nodeSecretDir); ok {
+	// Every connect from here on presents it. A file that is there but cannot be
+	// read stops the node rather than letting it dial as NODE_ID or the hostname:
+	// that is another identity, which Core enrols as a NEW node when the node
+	// holds CLUSTER_SECRET, and its servers stay behind on the old one.
+	id, idErr := cachedNodeID(nodeSecretDir)
+	if idErr != nil {
+		log.Fatalf("redisacl: %v. That file holds this node's identity, and dialling Core without it "+
+			"would present a different one. Repair it and restart. To pair this machine as a NEW node instead, "+
+			"delete .node_id, .node_secret AND .node_key together from %s and restart: with .node_secret left "+
+			"behind, Core refuses the node as presenting a secret proof for an identity it does not know.", idErr, nodeSecretDir)
+	}
+	hadAssignedID := id != ""
+	if hadAssignedID {
 		nodeID = id
-		hadAssignedID = true
+	}
+	// The key before anything dials, for the same reason. A key this node cannot
+	// read is not replaced; the node goes on without one, which Core admits by
+	// the secret only while its row has never held a key.
+	if k, err := loadOrCreateNodeKey(nodeSecretDir); err != nil {
+		log.Printf("nodekey: WARN %v. This node presents no key: Core admits it by its secret while its "+
+			"row holds no key, and refuses it once it does.", err)
+	} else {
+		setNodeKey(k)
 	}
 	if s, p, ok := loadLinkCreds(nodeSecretDir); ok {
 		setLinkCreds(s, p, false) // already on disk, no need to re-persist
@@ -164,10 +183,13 @@ func ensureNodeSecret(ctx context.Context) []byte {
 	// with an existing identity and no proof cannot do that: Core refuses to
 	// mint for an identity it does not know, and allowIdentityChange still
 	// governs adopting a different one.
+	//
+	// With a key it usually needs no operator at all: Core hands the secret it
+	// already holds to a node that signs with the key registered for it.
 	if hadAssignedID && nodeEnrollToken == "" && clusterSecret == "" {
-		log.Printf("redisacl: paired node id %s has no cached secret. Dialling Core without a proof; "+
-			"it will be refused until an operator admits it in Settings -> Nodes, where this node's "+
-			"connection attempts are listed.", nodeID)
+		log.Printf("redisacl: paired node id %s has no cached secret. Dialling Core with its key and no "+
+			"secret proof; Core hands the secret back if it holds this key, and otherwise refuses it until "+
+			"an operator admits it in Settings -> Nodes, where this node's connection attempts are listed.", nodeID)
 	}
 	// Shared reconnect schedule: 12x5s, then every 30s. Never gives up - a node
 	// whose Core is briefly away has to come back on its own.
@@ -288,13 +310,15 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 	if clusterSecret != "" {
 		auth.ClusterProof = aclClusterProof(clusterSecret, nodeID)
 	}
+	key := currentNodeKey()
+	auth.NodePublicKey = publicKeyOf(key)
 	ips := getNodeIPs()
 	auth.Ips = &pb.NodeIPs{Public: ips.Public, Private: ips.Private}
 
 	if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_Auth{Auth: auth}}); err != nil {
 		return nil, fmt.Errorf("send auth: %w", err)
 	}
-	res, err := recvAuthResult(stream, cached)
+	res, err := recvAuthResult(stream, auth.NodeToken, cached, key)
 	if err != nil {
 		return nil, fmt.Errorf("recv auth result: %w", err)
 	}
@@ -302,6 +326,12 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 		msg := "rejected"
 		if res != nil {
 			msg = res.Message
+			// Every caller retries on an error, and the retry presents the new
+			// key, which lands in the branch that asks for a cluster proof or
+			// the admission the operator armed.
+			if res.NodeKeyRejected {
+				replaceRejectedNodeKey(nodeSecretDir, auth.NodePublicKey)
+			}
 		}
 		return nil, fmt.Errorf("auth rejected: %s", msg)
 	}

@@ -2,9 +2,11 @@ package redisacl
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 
 	"github.com/google/uuid"
@@ -35,6 +37,11 @@ type HandshakeStore interface {
 	// BindEnrollWarpKey binds the BYON node key an enroll token was minted for
 	// to the node that token created. bound=false for a token minted without one.
 	BindEnrollWarpKey(enrollToken string, nodeID int) (bound bool, err error)
+	// GetNodePublicKeys reads the node's Ed25519 login key and the last one an
+	// operator rejected, hex, '' for none. SetNodePublicKeyIfUnchanged writes
+	// the key only while the row still holds prevKey and prevRejected.
+	GetNodePublicKeys(id int) (key, rejected string, err error)
+	SetNodePublicKeyIfUnchanged(id int, prevKey, prevRejected, key string) (bool, error)
 }
 
 // Handshake performs the per-node ACL bootstrap during the node gRPC handshake.
@@ -171,6 +178,50 @@ func (h *Handshake) VerifyChallenge(ctx context.Context, nodeID int, nonce, resp
 		return false, err
 	}
 	return VerifyChallenge(secret, nonce, response), nil
+}
+
+// NodeKeys returns the node's registered Ed25519 key and the last one an
+// operator rejected, nil for none.
+//
+// A stored value that is not a key is an error, not "none". Reading it as none
+// would hand a key row back to the secret challenge, which is the one downgrade
+// the key login must never allow.
+func (h *Handshake) NodeKeys(ctx context.Context, nodeID int) (key, rejected ed25519.PublicKey, err error) {
+	k, r, err := h.store.GetNodePublicKeys(nodeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read keys of node %d: %w", nodeID, err)
+	}
+	if key, err = decodeNodeKey(k); err != nil {
+		return nil, nil, fmt.Errorf("node %d public key: %w", nodeID, err)
+	}
+	if rejected, err = decodeNodeKey(r); err != nil {
+		return nil, nil, fmt.Errorf("node %d rejected key: %w", nodeID, err)
+	}
+	return key, rejected, nil
+}
+
+func decodeNodeKey(s string) (ed25519.PublicKey, error) {
+	if s == "" {
+		return nil, nil
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != ed25519.PublicKeySize {
+		return nil, errors.New("not a hex Ed25519 public key")
+	}
+	return b, nil
+}
+
+// SetNodeKey registers key as the node's login key while the row still holds
+// prevKey and prevRejected - the keys the caller read before it verified the
+// node - and reports whether it landed. The caller has just verified a
+// signature by key over a fresh nonce.
+func (h *Handshake) SetNodeKey(ctx context.Context, nodeID int, prevKey, prevRejected, key ed25519.PublicKey) (bool, error) {
+	won, err := h.store.SetNodePublicKeyIfUnchanged(nodeID,
+		hex.EncodeToString(prevKey), hex.EncodeToString(prevRejected), hex.EncodeToString(key))
+	if err != nil {
+		return false, fmt.Errorf("store key of node %d: %w", nodeID, err)
+	}
+	return won, nil
 }
 
 // VerifyClusterProof checks a node's cluster_proof against CLUSTER_SECRET.

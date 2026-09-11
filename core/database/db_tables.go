@@ -209,6 +209,14 @@ func migrateSchema(db *sql.DB) error {
 		// routes use the derived token. Deliberately NOT link_secret, which
 		// link_ownership.go reads with a different meaning.
 		{"nodes", "link_token", "TEXT NOT NULL DEFAULT ''"},
+		// The node's Ed25519 public key, hex; '' = the node logs in with its
+		// secret. Not a secret: a dump of it cannot sign, which is the point of
+		// moving the login off node_secret_enc.
+		{"nodes", "node_public_key", "TEXT NOT NULL DEFAULT ''"},
+		// The last key an operator moved aside (Reset pairing, Roll key, an
+		// approval). Kept so the node presenting it again is told to generate a
+		// new one rather than being let back in with the key that was replaced.
+		{"nodes", "node_rejected_public_key", "TEXT NOT NULL DEFAULT ''"},
 		// NOTE: modversions.modrinth_download_url and server_mods.target_dir are
 		// deliberately NOT in this set. Their tables are created by later phases,
 		// so the ALTER here hits a table that does not exist yet - which is how

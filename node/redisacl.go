@@ -4,6 +4,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -120,25 +123,66 @@ func saveNodeSecret(workdir string, secret []byte) error {
 }
 
 // loadNodeID reads the cached server-assigned node id from <workdir>/.node_id.
-// Returns ok=false when the file is missing or empty.
+// Returns ok=false when the file is missing, unreadable or empty.
 func loadNodeID(workdir string) (string, bool) {
+	id, err := cachedNodeID(workdir)
+	return id, err == nil && id != ""
+}
+
+// cachedNodeID is loadNodeID for the caller that must not guess. A file that
+// exists but cannot be read, or reads empty, is an error rather than "no
+// identity": the fallback is dialling Core as NODE_ID or the hostname, which is
+// a DIFFERENT identity, and a node holding CLUSTER_SECRET would be enrolled
+// under it as a new node. "" with a nil error means there is no file.
+func cachedNodeID(workdir string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(workdir, ".node_id"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
 	if err != nil {
-		return "", false
+		return "", fmt.Errorf("read .node_id: %w", err)
 	}
 	id := strings.TrimSpace(string(b))
 	if id == "" {
-		return "", false
+		return "", errors.New(".node_id is empty")
 	}
-	return id, true
+	return id, nil
 }
 
-// saveNodeID persists the server-assigned node id with 0600 perms.
+// saveNodeID persists the server-assigned node id with 0600 perms. Atomically:
+// a plain WriteFile truncates first, and a crash in between left an empty file,
+// which cachedNodeID now refuses to boot on.
 func saveNodeID(workdir, id string) error {
-	if err := ensureSecretDir(workdir); err != nil {
+	return writeFileAtomic(workdir, ".node_id", []byte(id))
+}
+
+// writeFileAtomic writes name in dir through a temp file in the same directory,
+// fsynced, then renamed over the old one, so a crash leaves the old content or
+// the new and never half of either. CreateTemp opens the file 0600, the mode
+// every file beside .node_secret needs.
+func writeFileAtomic(dir, name string, data []byte) error {
+	if err := ensureSecretDir(dir); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(workdir, ".node_id"), []byte(id), 0600)
+	tmp, err := os.CreateTemp(dir, name+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err = tmp.Write(data); err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmpName, filepath.Join(dir, name))
+	}
+	if err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write %s: %w", name, err)
+	}
+	return nil
 }
 
 // loadLinkCreds reads the cached Core-delivered Link tunnel token + discovery proof

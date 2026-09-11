@@ -231,7 +231,7 @@
       "path": "/api/admin/nodes/{id:[0-9]+}/reset-pairing",
       "auth": "session",
       "authorization": "nodes.write",
-      "description": "REVOKE: clear the node's secret and hard-cut its live Redis ACL.",
+      "description": "REVOKE: refuse the node's key, clear its secret and hard-cut its live Redis ACL.",
       "handler": "NodeAdmissionHandler.ResetPairing",
       "group": "admin",
       "external": false
@@ -241,7 +241,7 @@
       "path": "/api/admin/nodes/{id:[0-9]+}/roll-secret",
       "auth": "session",
       "authorization": "nodes.write",
-      "description": "replace the node's secret and let it straight back in from the address it last authenticated from.",
+      "description": "replace the node's key (the secret, for a node that has no key) and let it straight back in from the address it last authenticated from.",
       "handler": "NodeAdmissionHandler.RollSecret",
       "group": "admin",
       "external": false

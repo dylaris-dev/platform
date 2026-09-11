@@ -222,8 +222,8 @@ can still show what exists.
 | POST | `/api/admin/nodes/join-attempts/{token}/approve` | session | `nodes.write` | - | `NodeAdmissionHandler.ApproveJoinAttempt` | let this machine back in, without touching the machine. |
 | GET | `/api/admin/nodes/{id:[0-9]+}/disk-analysis` | session | `nodes.read` | - | `NodeHandler.GetDiskAnalysis` | cross-references disk folders on a node with DB servers. |
 | DELETE | `/api/admin/nodes/{id:[0-9]+}/orphan` | session | `nodes.delete` | - | `NodeHandler.DeleteOrphanedFolder` | deletes an orphaned UUID folder from a node via gRPC. |
-| POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE: clear the node's secret and hard-cut its live Redis ACL. |
-| POST | `/api/admin/nodes/{id:[0-9]+}/roll-secret` | session | `nodes.write` | - | `NodeAdmissionHandler.RollSecret` | replace the node's secret and let it straight back in from the address it last authenticated from. |
+| POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE: refuse the node's key, clear its secret and hard-cut its live Redis ACL. |
+| POST | `/api/admin/nodes/{id:[0-9]+}/roll-secret` | session | `nodes.write` | - | `NodeAdmissionHandler.RollSecret` | replace the node's key (the secret, for a node that has no key) and let it straight back in from the address it last authenticated from. |
 | GET | `/api/admin/panel-roles` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelRoles` | the level-1 staff roles and their capabilities. |
 | POST | `/api/admin/panel-roles` | session | `panelroles.write` | - | `PanelRolesHandler.CreatePanelRole` | adds a staff role. |
 | GET | `/api/admin/panel-roles/assignments` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelAssignments` | who holds a panel role or a per-user override, all of them at once. |

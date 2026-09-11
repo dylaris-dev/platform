@@ -3,6 +3,7 @@ package nodegrpc
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"io"
 	"log"
@@ -48,7 +49,7 @@ func (f *fakeNodeStream) Recv() (*pb.NodeMessage, error) {
 type rejectingLookup struct{}
 
 func (rejectingLookup) GetNodeByToken(string) (*Node, error) {
-	return nil, errors.New("no such node")
+	return nil, ErrNodeNotFound
 }
 
 // rejectingACL refuses the cluster proof and fails enrollment, so both doors in
@@ -78,6 +79,14 @@ func (rejectingACL) VerifyChallenge(context.Context, int, string, string) (bool,
 func (rejectingACL) VerifyClusterProof(string, string) bool { return false }
 
 func (rejectingACL) HasSecret(context.Context, int) (bool, error) { return false, nil }
+
+func (rejectingACL) NodeKeys(context.Context, int) (ed25519.PublicKey, ed25519.PublicKey, error) {
+	return nil, nil, nil
+}
+
+func (rejectingACL) SetNodeKey(context.Context, int, ed25519.PublicKey, ed25519.PublicKey, ed25519.PublicKey) (bool, error) {
+	return true, nil
+}
 
 // connectWithAuth runs one NodeConnect against the fakes and returns whatever
 // the standard logger emitted plus the messages the node received.

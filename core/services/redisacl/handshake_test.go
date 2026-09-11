@@ -2,6 +2,8 @@ package redisacl
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -42,10 +44,24 @@ type fakeHandshakeStore struct {
 	bindCalls     int
 	lastBindToken string
 	lastBindNode  int
+
+	pubKey, rejectedKey map[int]string
 }
 
 func newFakeHandshakeStore() *fakeHandshakeStore {
-	return &fakeHandshakeStore{secretEnc: map[int]string{}, uuidsByNode: map[int][]string{}}
+	return &fakeHandshakeStore{secretEnc: map[int]string{}, uuidsByNode: map[int][]string{},
+		pubKey: map[int]string{}, rejectedKey: map[int]string{}}
+}
+
+func (f *fakeHandshakeStore) GetNodePublicKeys(id int) (string, string, error) {
+	return f.pubKey[id], f.rejectedKey[id], nil
+}
+func (f *fakeHandshakeStore) SetNodePublicKeyIfUnchanged(id int, prevKey, prevRejected, key string) (bool, error) {
+	if f.pubKey[id] != prevKey || f.rejectedKey[id] != prevRejected {
+		return false, nil
+	}
+	f.pubKey[id] = key
+	return true, nil
 }
 
 func (f *fakeHandshakeStore) GetNodeSecretEnc(id int) (string, error) { return f.secretEnc[id], nil }
@@ -397,6 +413,43 @@ func TestVerifyClusterProof(t *testing.T) {
 	wrongSecretProof := ClusterProof("a-different-cluster-secret", token)
 	if h.VerifyClusterProof(token, wrongSecretProof) {
 		t.Fatal("VerifyClusterProof must reject a proof built from a different cluster secret")
+	}
+}
+
+// A stored key that does not decode must be an error, never "no key": read as
+// none, it would hand a key row back to the secret challenge.
+func TestNodeKeysRoundTripAndRefuseAMalformedValue(t *testing.T) {
+	store := newFakeHandshakeStore()
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+	ctx := context.Background()
+
+	if k, r, err := h.NodeKeys(ctx, 3); k != nil || r != nil || err != nil {
+		t.Fatalf("NodeKeys on a row with none = (%x, %x, %v), want nils", k, r, err)
+	}
+	pub, _, _ := ed25519.GenerateKey(nil)
+	if won, err := h.SetNodeKey(ctx, 3, nil, nil, pub); err != nil || !won {
+		t.Fatalf("SetNodeKey on a row with no key = (%v, %v), want it stored", won, err)
+	}
+	// A second first registration, read before the first landed, must not
+	// replace it.
+	other, _, _ := ed25519.GenerateKey(nil)
+	if won, err := h.SetNodeKey(ctx, 3, nil, nil, other); err != nil || won {
+		t.Errorf("a stale first registration = (%v, %v), want it refused", won, err)
+	}
+	if store.pubKey[3] != hex.EncodeToString(pub) {
+		t.Errorf("stored %q, want the hex key", store.pubKey[3])
+	}
+	if k, _, err := h.NodeKeys(ctx, 3); err != nil || !k.Equal(pub) {
+		t.Errorf("NodeKeys = (%x, %v), want the stored key", k, err)
+	}
+
+	for name, bad := range map[string]string{"not hex": "zz", "too short": "abcd"} {
+		t.Run(name, func(t *testing.T) {
+			store.rejectedKey[3] = bad
+			if _, _, err := h.NodeKeys(ctx, 3); err == nil {
+				t.Error("a malformed stored key read as a valid answer")
+			}
+		})
 	}
 }
 

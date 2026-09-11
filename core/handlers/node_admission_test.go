@@ -5,8 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -213,6 +215,7 @@ type rollSecretFakeStore struct {
 
 	node       *models.Node
 	lastAuthIP string
+	keyNode    bool // what RejectNodePublicKey answers
 
 	ops      []string
 	armToken string
@@ -233,6 +236,29 @@ func (f *rollSecretFakeStore) GetNodeLastAuthPeerIP(int) (string, error) { retur
 func (f *rollSecretFakeStore) SetNodeSecretEnc(id int, enc string) error {
 	f.ops = append(f.ops, "clear-secret:"+strconv.Itoa(id)+":"+enc)
 	return nil
+}
+
+func (f *rollSecretFakeStore) RejectNodePublicKey(id int) (bool, error) {
+	f.ops = append(f.ops, "reject-key:"+strconv.Itoa(id))
+	return f.keyNode, nil
+}
+
+func (f *rollSecretFakeStore) ResetNodeLogin(id int) error {
+	f.ops = append(f.ops, "reset-login:"+strconv.Itoa(id))
+	return nil
+}
+
+func (f *rollSecretFakeStore) GetNodeByToken(token string) (*models.Node, error) {
+	if f.node == nil || f.node.Token != token {
+		return nil, sql.ErrNoRows
+	}
+	return f.node, nil
+}
+
+func (f *rollSecretFakeStore) ApproveNodeJoinAttempt(token, by string) (bool, error) {
+	f.ops = append(f.ops, "arm")
+	f.armToken, f.armBy = token, by
+	return true, nil
 }
 
 func (f *rollSecretFakeStore) ArmNodeJoinApproval(token, fromIP, by string) (bool, error) {
@@ -287,9 +313,10 @@ func TestRollSecret_ArmsTheAdmissionAtTheLastAuthAddress(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	// The secret must be cleared BEFORE the admission is armed: a node whose
-	// secret Core still holds is challenged and never consumes an admission.
-	want := []string{"clear-secret:5:", "arm"}
+	// The login must be revoked BEFORE the admission is armed: a node whose key
+	// or secret Core still accepts is challenged and never consumes an
+	// admission. This node never had a key, so its secret goes as well.
+	want := []string{"reject-key:5", "clear-secret:5:", "arm"}
 	if strings.Join(fs.ops, ",") != strings.Join(want, ",") {
 		t.Fatalf("ops = %v, want %v", fs.ops, want)
 	}
@@ -299,6 +326,58 @@ func TestRollSecret_ArmsTheAdmissionAtTheLastAuthAddress(t *testing.T) {
 	}
 	if len(fs.audits) != 1 || fs.audits[0] != "node.secret_rolled" {
 		t.Errorf("audits = %v, want exactly node.secret_rolled", fs.audits)
+	}
+}
+
+// Reset pairing, Roll key and an approval all replace the node's KEY, first.
+// Reset pairing is the compromise response and clears the secret of every node,
+// accepting that the re-admitted node restarts its game servers. Roll key and an
+// approval keep a key node's secret, and with it its players; a node that never
+// had a key still logs in with its secret, so for it the secret always goes.
+func TestAdminActionsReplaceTheKeyAndOnlyResetRotatesAKeyNodesSecret(t *testing.T) {
+	actions := []struct {
+		name string
+		run  func(h *NodeAdmissionHandler, w http.ResponseWriter)
+	}{
+		{"reset pairing", func(h *NodeAdmissionHandler, w http.ResponseWriter) {
+			r := httptest.NewRequest("POST", "/api/admin/nodes/5/reset-pairing", nil)
+			h.ResetPairing(w, mux.SetURLVars(r, map[string]string{"id": "5"}))
+		}},
+		{"roll key", func(h *NodeAdmissionHandler, w http.ResponseWriter) {
+			h.RollSecret(w, rollSecretReq("5"))
+		}},
+		{"approve", func(h *NodeAdmissionHandler, w http.ResponseWriter) {
+			r := httptest.NewRequest("POST", "/api/admin/nodes/join-attempts/node-abc/approve", nil)
+			h.ApproveJoinAttempt(w, mux.SetURLVars(r, map[string]string{"token": "node-abc"}))
+		}},
+	}
+	for _, a := range actions {
+		for _, keyNode := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s, key node %v", a.name, keyNode), func(t *testing.T) {
+				fs := &rollSecretFakeStore{node: &models.Node{ID: 5, Token: "node-abc"}, lastAuthIP: "203.0.113.7", keyNode: keyNode}
+				rec := httptest.NewRecorder()
+				a.run(NewNodeAdmissionHandler(&AppState{Store: fs}), rec)
+
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+				}
+				if a.name == "reset pairing" {
+					// One write for the key and the secret: as two, a failure
+					// between them left the Roll key state behind a Reset.
+					if len(fs.ops) == 0 || fs.ops[0] != "reset-login:5" ||
+						slices.Contains(fs.ops, "reject-key:5") || slices.Contains(fs.ops, "clear-secret:5:") {
+						t.Fatalf("ops = %v, want the key and the secret revoked in one write", fs.ops)
+					}
+					return
+				}
+				if len(fs.ops) == 0 || fs.ops[0] != "reject-key:5" {
+					t.Fatalf("ops = %v, want the key rejected first", fs.ops)
+				}
+				if cleared := slices.Contains(fs.ops, "clear-secret:5:"); cleared != !keyNode {
+					t.Errorf("secret cleared = %v for key node = %v; ops %v", cleared, keyNode, fs.ops)
+				}
+			})
+		}
 	}
 }
 

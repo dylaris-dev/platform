@@ -66,7 +66,7 @@ export default function NodeJoinAttempts({ onAdmitted }: { onAdmitted: () => voi
         const name = a.displayName || a.nodeName || a.hostname || a.nodeToken.slice(0, 8);
         if (!(await confirmDialog({
             title: 'Admit this node',
-            message: `Let "${name}" back in from ${a.peerIp}? Core will issue it a new secret on its next attempt, within about a minute. Approve this only if you recognise the machine and the address.`,
+            message: `Let "${name}" back in from ${a.peerIp}? The node's current key is replaced by a new one it generates on its next attempt, within about a minute. Approve this only if you recognise the machine and the address.`,
             confirmLabel: 'Admit',
             destructive: false,
         }))) return;

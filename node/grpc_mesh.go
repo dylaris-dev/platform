@@ -243,6 +243,10 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	if clusterSecret != "" {
 		auth.ClusterProof = aclClusterProof(clusterSecret, m.nodeToken)
 	}
+	// The node's login key; see node_key.go. Presented on every connect so a
+	// Core whose row has no key yet can register it.
+	key := currentNodeKey()
+	auth.NodePublicKey = publicKeyOf(key)
 	// Which release this image was built from, so Core can answer a
 	// mandatory-update deadline at CONNECT time rather than a heartbeat later.
 	// Empty on an unstamped build, which Core reads as unknown and admits.
@@ -259,7 +263,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	}
 
 	// Step 2: Wait for auth result (answering a challenge nonce if Core sends one)
-	authResult, err := recvAuthResult(stream, currentSecret)
+	authResult, err := recvAuthResult(stream, auth.NodeToken, currentSecret, key)
 	if err != nil {
 		log.Printf("gRPC Mesh: Failed to receive auth result from Core %s: %v", info.ID, err)
 		cancel()
@@ -271,6 +275,10 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		msg := "unknown"
 		if authResult != nil {
 			msg = authResult.Message
+			// The discovery loop redials within ten seconds with the new key.
+			if authResult.NodeKeyRejected {
+				replaceRejectedNodeKey(nodeSecretDir, auth.NodePublicKey)
+			}
 		}
 		// Reported like the transport failures: a node rejected at the auth step
 		// is online, reachable and still absent from the panel, which from the

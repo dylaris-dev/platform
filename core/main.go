@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -132,6 +134,14 @@ func (a *aclHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, 
 
 func (a *aclHandshakeStore) BindEnrollWarpKey(enrollToken string, nodeID int) (bool, error) {
 	return a.store.BindWarpKeyFromEnrollToken(enrollToken, nodeID)
+}
+
+func (a *aclHandshakeStore) GetNodePublicKeys(id int) (string, string, error) {
+	return a.store.GetNodePublicKeys(id)
+}
+
+func (a *aclHandshakeStore) SetNodePublicKeyIfUnchanged(id int, prevKey, prevRejected, key string) (bool, error) {
+	return a.store.SetNodePublicKeyIfUnchanged(id, prevKey, prevRejected, key)
 }
 
 func (a *aclHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
@@ -690,6 +700,9 @@ func main() {
 	grpcLookup := &nodegrpc.StoreAdapter{
 		GetByToken: func(token string) (int, bool, error) {
 			node, err := pgStore.GetNodeByToken(token)
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, false, nodegrpc.ErrNodeNotFound
+			}
 			if err != nil {
 				return 0, false, err
 			}

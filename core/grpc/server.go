@@ -1,9 +1,12 @@
 package nodegrpc
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +14,7 @@ import (
 	"strings"
 
 	beamauth "dylaris-pkg/beam/auth"
+	"dylaris-pkg/nodeauth"
 	pb "dylaris-proto/node"
 
 	"google.golang.org/grpc"
@@ -22,8 +26,14 @@ import (
 	"time"
 )
 
-// NodeLookup interface for looking up Nodes by token.
-// Implemented by the store.Store interface.
+// ErrNodeNotFound is what a NodeLookup returns when Core has no row for the
+// token, and the only lookup failure that may lead to an enrolment. Any other
+// error is a failure to KNOW: read as "unknown", a database blip sent a node Core
+// does have through the cluster-proof door, which mints a second row for it.
+var ErrNodeNotFound = errors.New("nodegrpc: no node with that token")
+
+// NodeLookup looks up Nodes by token. A token Core has no row for is
+// ErrNodeNotFound (errors.Is), and nothing else may be reported as one.
 type NodeLookup interface {
 	GetNodeByToken(token string) (*Node, error)
 }
@@ -38,6 +48,12 @@ type ACLHandshake interface {
 	VerifyChallenge(ctx context.Context, nodeID int, nonce, response string) (ok bool, err error)
 	VerifyClusterProof(token, proof string) bool
 	HasSecret(ctx context.Context, nodeID int) (ok bool, err error)
+	// NodeKeys returns the node's registered Ed25519 login key and the last key
+	// an operator rejected, nil for none. SetNodeKey registers a key the node
+	// has just signed a fresh nonce with, only while the row still holds
+	// prevKey and prevRejected, and reports whether it landed.
+	NodeKeys(ctx context.Context, nodeID int) (key, rejected ed25519.PublicKey, err error)
+	SetNodeKey(ctx context.Context, nodeID int, prevKey, prevRejected, key ed25519.PublicKey) (stored bool, err error)
 }
 
 // LinkCredSource supplies the per-node Link sidecar credentials (tunnel token +
@@ -266,7 +282,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	// node connect mints/provisions per-node scoped Redis creds and enrolls unknown
 	// BYON nodes (with a valid enroll token). There is no OFF path anymore.
 	ctx := stream.Context()
-	sendFail := func(msg string) {
+	refuse := func(ar *pb.AuthResult) {
 		// The reason reaches the node and reached nothing else: every rejection
 		// below returns a descriptive error into gRPC, which has no interceptor,
 		// so the authority side logged nothing at all. A node locked out of the
@@ -274,11 +290,10 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		// or challenge responses left no trace. Logged in the closure rather
 		// than at the call sites so a future rejection path cannot forget it.
 		// Token is prefixed, never whole - it is a credential.
-		log.Printf("acl: node auth rejected (%s) for %s from %v", msg, tokenPrefix(auth.NodeToken), peerIP(ctx))
-		_ = stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{
-			AuthResult: &pb.AuthResult{Ok: false, Message: msg},
-		}})
+		log.Printf("acl: node auth rejected (%s) for %s from %v", ar.Message, tokenPrefix(auth.NodeToken), peerIP(ctx))
+		_ = stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: ar}})
 	}
+	sendFail := func(msg string) { refuse(&pb.AuthResult{Ok: false, Message: msg}) }
 
 	// recordRefusal makes a rejection VISIBLE. sendFail above writes a line to
 	// Core's stdout, which dies with the container - so a node hammering the door
@@ -330,6 +345,71 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		return fmt.Errorf("node %s refused: %s", tokenPrefix(auth.NodeToken), verdict.Message)
 	}
 
+	// The public key the node presents, if any. Only its shape is judged here:
+	// 32 bytes, and not a point of small order, for which a signature can be
+	// made without any private key (nodeauth.ValidPublicKey). Whether the caller
+	// holds the private half is what the challenge asks, and nothing is stored,
+	// and no single-use credential spent, before it answers. An image without
+	// key support presents none and is treated as before.
+	presented := ed25519.PublicKey(auth.GetNodePublicKey())
+	if len(presented) != 0 && !nodeauth.ValidPublicKey(presented) {
+		sendFail("malformed node key")
+		return fmt.Errorf("acl: node %s presented an unusable key (%d bytes, or a point of small order)", tokenPrefix(auth.NodeToken), len(presented))
+	}
+
+	// challenge sends a fresh single-use nonce, so a captured answer cannot be
+	// replayed, and returns it with the node's answer. One challenge carries every
+	// proof: the node answers with the HMAC of its secret AND the signature of its
+	// key, whichever it holds, and each branch below reads the one it trusts.
+	challenge := func() (string, *pb.NodeChallengeResponse, error) {
+		nonce, err := newChallengeNonce()
+		if err != nil {
+			sendFail("challenge init failed")
+			return "", nil, fmt.Errorf("acl: nonce generation failed for %s: %w", tokenPrefix(auth.NodeToken), err)
+		}
+		if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_Challenge{
+			Challenge: &pb.NodeChallenge{Nonce: nonce},
+		}}); err != nil {
+			return "", nil, fmt.Errorf("failed to send challenge: %w", err)
+		}
+		respMsg, err := stream.Recv()
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to receive challenge response: %w", err)
+		}
+		cr := respMsg.GetChallengeResponse()
+		if cr == nil {
+			sendFail("challenge response required")
+			return "", nil, fmt.Errorf("acl: %s sent no challenge response", tokenPrefix(auth.NodeToken))
+		}
+		return nonce, cr, nil
+	}
+
+	// stillPaired is the last check before a secret leaves Core or the stream is
+	// registered. The challenge waits on the node for as long as the stream stays
+	// open, and an operator can act in that time: a Reset pairing or a Roll key
+	// that lands while a caller holds its answer back must not be undone by the
+	// answer. So the row is read again at the end, and the login stands only if
+	// the row still holds the key it was proved with (authKey), and, for a login
+	// by the secret, if the answer still verifies against the secret the row holds
+	// NOW - a Reset empties the row and EnsureExisting mints a new one into it. A
+	// secret minted during such a race stays on the row and never reaches the
+	// caller.
+	stillPaired := func(nodeID int, authKey ed25519.PublicKey, hmacNonce, hmacResp string) (bool, error) {
+		if authKey != nil {
+			now, _, err := s.acl.NodeKeys(ctx, nodeID)
+			if err != nil {
+				return false, err
+			}
+			if !bytes.Equal(now, authKey) {
+				return false, nil
+			}
+		}
+		if hmacNonce != "" {
+			return s.acl.VerifyChallenge(ctx, nodeID, hmacNonce, hmacResp)
+		}
+		return true, nil
+	}
+
 	var node *Node
 	{
 		address := ""
@@ -337,6 +417,14 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			address = ips.GetPublic()
 		}
 		existing, lookErr := s.nodeLookup.GetNodeByToken(auth.NodeToken)
+		if lookErr != nil && !errors.Is(lookErr, ErrNodeNotFound) {
+			// Core could not tell whether it knows this node, so it must not
+			// treat it as new: a node that lost its cached secret and holds
+			// CLUSTER_SECRET would be enrolled under a second identity for a
+			// database blip, and adopt it at its next start.
+			sendFail("node lookup failed")
+			return fmt.Errorf("acl: node lookup failed for %s: %w", tokenPrefix(auth.NodeToken), lookErr)
+		}
 		if lookErr != nil {
 			// P0b-5 admission gate: network + join, for NEW registrations only.
 			// Runs BEFORE the enroll-token check (network -> join -> enroll token).
@@ -397,21 +485,48 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail(msg)
 				return fmt.Errorf("acl: node %s presents a secret proof for an unknown identity; refusing to mint a new one", tokenPrefix(auth.NodeToken))
 			}
+			enroll := auth.EnrollToken != ""
+			if !enroll && !s.acl.VerifyClusterProof(auth.NodeToken, auth.ClusterProof) {
+				sendFail("unknown node and no enroll token or cluster proof")
+				return fmt.Errorf("acl: unknown node %s without enroll token or cluster proof", tokenPrefix(auth.NodeToken))
+			}
+			// The key is proven before the enroll token is spent or a row exists,
+			// so a row only ever carries a key that has signed a Core nonce.
+			if len(presented) > 0 {
+				nonce, cr, cerr := challenge()
+				if cerr != nil {
+					return cerr
+				}
+				if !nodeauth.VerifyChallenge(presented, auth.NodeToken, nonce, cr.GetSignature()) {
+					sendFail("bad challenge response")
+					return fmt.Errorf("acl: unknown node %s could not prove the key it presented", tokenPrefix(auth.NodeToken))
+				}
+			}
 			var assignedID, secretHex string
 			var id int
 			var eerr error
-			switch {
-			case auth.EnrollToken != "":
+			if enroll {
 				assignedID, id, secretHex, eerr = s.acl.Enroll(ctx, auth.NodeToken, auth.EnrollToken, address)
-			case s.acl.VerifyClusterProof(auth.NodeToken, auth.ClusterProof):
+			} else {
 				assignedID, id, secretHex, eerr = s.acl.EnrollPlatform(ctx, auth.NodeToken, address)
-			default:
-				sendFail("unknown node and no enroll token or cluster proof")
-				return fmt.Errorf("acl: unknown node %s without enroll token or cluster proof", tokenPrefix(auth.NodeToken))
 			}
 			if eerr != nil {
 				sendFail("enrollment failed")
 				return fmt.Errorf("acl: enroll failed for %s: %w", tokenPrefix(auth.NodeToken), eerr)
+			}
+			// The key goes on the row the enrolment just created. A failure is
+			// logged rather than refused: it leaves a row with no key, which is
+			// every node's state before keys existed, and the node registers the
+			// key on its next connect by proving the secret it is handed now.
+			// Refusing would strand a spent enroll token and a row whose id the
+			// node never learns.
+			keyStored := false
+			if len(presented) > 0 {
+				stored, kerr := s.acl.SetNodeKey(ctx, id, nil, nil, presented)
+				if kerr != nil || !stored {
+					log.Printf("acl: node %d enrolled, but its key was not stored (stored=%v); it registers it on its next connect: %v", id, stored, kerr)
+				}
+				keyStored = kerr == nil && stored
 			}
 			// Consume the one-shot join slot HERE, only after enrollment actually
 			// validated the enroll token and created the node - never during the
@@ -425,8 +540,18 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					log.Printf("acl: node %d (%s): consume one-shot join slot: %v", id, tokenPrefix(assignedID), cerr)
 				}
 			}
+			// The same last check as a known node's login: the key this enrolment
+			// stored must still be the row's before its secret and its identity
+			// leave Core. Not recorded as a refusal: the only token the caller has
+			// shown is one it chose itself, not a row Core knows.
+			if keyStored {
+				if ok, cerr := stillPaired(id, presented, "", ""); cerr != nil || !ok {
+					sendFail("the node's pairing changed during login; connect again")
+					return fmt.Errorf("acl: node %d: its pairing changed during its enrolment (re-read error: %v)", id, cerr)
+				}
+			}
 			// The enroll token is the only door that produces an owned node (see
-			// the switch above); the cluster proof always produces a platform one.
+			// the door check above); the cluster proof always produces a platform one.
 			owned := auth.EnrollToken != ""
 			node = &Node{ID: id, Token: assignedID, Owned: owned}
 			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID,
@@ -447,31 +572,92 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail("acl state error")
 				return fmt.Errorf("acl: secret-state lookup failed for node %d: %w", node.ID, serr)
 			}
-			if hasSecret {
-				// A provisioned node MUST prove possession of its secret against a
-				// fresh single-use nonce, so a captured proof cannot be replayed. We
-				// never re-hand the secret to a bare token holder; a node that
-				// genuinely lost its cached secret recovers via operator action, not
-				// a silent re-issue.
-				nonce, nerr := newChallengeNonce()
-				if nerr != nil {
-					sendFail("challenge init failed")
-					return fmt.Errorf("acl: nonce generation failed for node %d: %w", node.ID, nerr)
+			key, rejected, kerr := s.acl.NodeKeys(ctx, node.ID)
+			if kerr != nil {
+				sendFail("acl state error")
+				return fmt.Errorf("acl: key-state lookup failed for node %d: %w", node.ID, kerr)
+			}
+			if len(presented) > 0 && bytes.Equal(presented, rejected) {
+				// An operator moved this key aside (Reset pairing, Roll key or an
+				// approval). The node is told so rather than merely refused: it
+				// generates a new pair and comes straight back, and the new key is
+				// let in only by a cluster proof (a platform node's, never a
+				// customer's) or the admission the operator armed.
+				refuse(&pb.AuthResult{Ok: false, NodeKeyRejected: true,
+					Message: "an operator replaced this node's key; generate a new one and connect again"})
+				return fmt.Errorf("acl: node %d presented the key an operator rejected", node.ID)
+			}
+
+			// The per-node secret had two jobs and now has one. It USED to be the
+			// login as well as the root of the node's service credentials. The
+			// login is now the node's own Ed25519 key, the SSH host-key model: Core
+			// stores only the public half, so a copy of the database cannot log in
+			// as a node. The secret stays the SERVICE secret, unchanged in value:
+			// the node's Redis passwords, the heartbeat signature, the beam proofs
+			// and the migration token still derive from it.
+			//
+			// The residual, stated plainly: node_secret_enc decrypts under a key
+			// derived from CLUSTER_SECRET, so a database dump plus CLUSTER_SECRET
+			// still computes every one of those service credentials. It no longer
+			// computes the login.
+			//
+			// secretLogin: a row that has NEVER held a key still logs in with its
+			// secret, the challenge every node answered before keys existed. A row
+			// that holds a key, or held one an operator rejected, never accepts it
+			// again - that is the downgrade the key login exists to prevent.
+			secretLogin := key == nil && rejected == nil && hasSecret
+			var nonce string
+			var cr *pb.NodeChallengeResponse
+			if len(presented) > 0 || secretLogin {
+				var cerr error
+				if nonce, cr, cerr = challenge(); cerr != nil {
+					return cerr
 				}
-				if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_Challenge{
-					Challenge: &pb.NodeChallenge{Nonce: nonce},
-				}}); err != nil {
-					return fmt.Errorf("failed to send challenge: %w", err)
+			}
+			// A presented key must be HELD, on every branch: a row keeps only keys
+			// that have signed a nonce, and a bad signature is a refusal an operator
+			// can see, recorded exactly where a wrong secret is.
+			if len(presented) > 0 && !nodeauth.VerifyChallenge(presented, auth.NodeToken, nonce, cr.GetSignature()) {
+				recordRefusal("the node could not prove the key it presented")
+				sendFail("bad challenge response")
+				return fmt.Errorf("acl: bad key signature for node %d", node.ID)
+			}
+			// storeKey registers the presented key on this row only while the row
+			// still holds the keys read above, so two replicas re-pairing one node
+			// at once cannot have the later write replace the earlier. Losing to a
+			// replica that stored this very key is not a failure: every replica the
+			// node dialled checked the same signature.
+			storeKey := func() (bool, error) {
+				won, err := s.acl.SetNodeKey(ctx, node.ID, key, rejected, presented)
+				if err != nil || won {
+					return won, err
 				}
-				respMsg, rerr := stream.Recv()
-				if rerr != nil {
-					return fmt.Errorf("failed to receive challenge response: %w", rerr)
+				now, _, err := s.acl.NodeKeys(ctx, node.ID)
+				if err != nil {
+					return false, err
 				}
-				cr := respMsg.GetChallengeResponse()
-				if cr == nil {
-					sendFail("challenge response required")
-					return fmt.Errorf("acl: node %d sent no challenge response", node.ID)
-				}
+				return bytes.Equal(now, presented), nil
+			}
+			// rehand: give the node its EXISTING service secret on this auth.
+			rehand := false
+			// authKey is the key this login was proved with, hmacNonce the nonce
+			// its secret answered; stillPaired checks both again at the end.
+			var authKey ed25519.PublicKey
+			hmacNonce := ""
+			switch {
+			case key != nil && bytes.Equal(presented, key):
+				authKey = presented
+				// The node proved the key Core holds for it. A node that says it
+				// has no cached secret - it sent no secret proof, which a node
+				// with one always sends - is handed the one Core already holds.
+				//
+				// The old rule stays true: Core never re-hands the secret to a bare
+				// token holder, and a signer is not one. Nor is a new secret ever
+				// minted here. Every Redis password this node and its containers
+				// use derives from it, so a new one would make the node recreate
+				// its MC containers at its next start and drop every player.
+				rehand = auth.SecretProof == ""
+			case secretLogin:
 				ok, verr := s.acl.VerifyChallenge(ctx, node.ID, nonce, cr.Response)
 				if verr != nil || !ok {
 					// The node holds a secret and so does Core, and they differ.
@@ -483,14 +669,49 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					sendFail("bad challenge response")
 					return fmt.Errorf("acl: bad challenge response for node %d", node.ID)
 				}
-			} else {
+				hmacNonce = nonce
+				// Trust on first use, anchored by the secret the node has just
+				// proved: from its next connect on, only this key logs it in. A
+				// failure to store is not a refusal - the node authenticated
+				// exactly as it always has - and the next connect tries again.
+				if len(presented) > 0 {
+					stored, serr := storeKey()
+					switch {
+					case serr != nil:
+						log.Printf("acl: node %d proved its secret, but registering its key failed; retried on its next connect: %v", node.ID, serr)
+					case !stored:
+						// Between the read and the write another replica registered
+						// a DIFFERENT key for this row. The row now logs in by that
+						// key only, and this caller does not hold it.
+						recordRefusal("another Core replica registered a different key for this node during its login")
+						sendFail("this node's key changed while it logged in; connect again")
+						return fmt.Errorf("acl: node %d: another key was registered during its first key login", node.ID)
+					default:
+						authKey = presented
+						log.Printf("acl: node %d registered its key; it logs in with the key from now on", node.ID)
+					}
+				}
+			default:
+				// First issuance, or re-pairing under the identity Core already
+				// has: a row with no secret yet, a key row whose key an operator
+				// rejected, or a key row the node now presents a DIFFERENT proven
+				// key for. The same row either way - the node keeps its id, its
+				// servers and its Redis users.
+				if key != nil && len(presented) == 0 {
+					recordRefusal("this node logs in with a key and presented none: its image predates keys, or it could not read its .node_key")
+					sendFail("this node logs in with a key and presented none. Run a current image with its .node_key in place " +
+						"(the node logs why it could not read it), or reset its pairing in Settings -> Nodes")
+					return fmt.Errorf("acl: node %d holds a key row and presented no key", node.ID)
+				}
 				// First issuance for a known node. Accept EITHER:
 				//  (1) a cluster_proof (HMAC under CLUSTER_SECRET) — the operator's
 				//      own machines, which hold it and recover by themselves; or
 				//  (2) an admission an operator granted in the panel, bound to the
 				//      address this connection is actually coming from.
 				// EnsureExisting below re-issues the secret + re-provisions the ACL under
-				// the SAME token/id (node_secret_enc was cleared -> a fresh secret is minted).
+				// the SAME token/id (a fresh secret when node_secret_enc was cleared, as
+				// every Reset pairing does; the stored one for a key node after Roll key
+				// or an approval, which leave it alone).
 				// Neither path is gated by admission control: this is a known id, not a
 				// new registration.
 				//
@@ -500,7 +721,17 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// binding is what a token in an env var could not offer: the identity
 				// on a refused attempt is self-claimed, so "this id" alone would admit
 				// whoever knocks with it next.
-				if !s.acl.VerifyClusterProof(node.Token, auth.ClusterProof) {
+				//
+				// (1) is the operator's door and opens only for the operator's rows.
+				// A customer's (BYON) machine never holds CLUSTER_SECRET, so a
+				// cluster proof for an owned row is by definition not that machine.
+				// Accepted here, it let anyone holding CLUSTER_SECRET and a customer
+				// node's id put their own key on that row, be handed the node's
+				// stored service secret and its server commands, and shut the real
+				// node out. An owned row re-pairs only through an admission armed in
+				// the panel.
+				clusterProof := !node.Owned && s.acl.VerifyClusterProof(node.Token, auth.ClusterProof)
+				if !clusterProof {
 					admitted := false
 					if s.joins != nil {
 						ok, aerr := s.joins.ConsumeJoinApproval(node.Token, peerIPString(ctx))
@@ -511,22 +742,67 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 						admitted = ok
 					}
 					if !admitted {
-						recordRefusal("waiting to be admitted: no cluster secret and no approval")
+						reason := "waiting to be admitted: no cluster secret and no approval"
+						switch {
+						case node.Owned && auth.ClusterProof != "":
+							reason = "a cluster proof was presented for a customer's node, which re-pairs only through an admission"
+						case key != nil:
+							reason = "the node presents a different key than Core holds for it"
+						}
+						recordRefusal(reason)
 						sendFail("this node is not admitted; approve it in Settings -> Nodes")
 						return fmt.Errorf("acl: node %d first-issuance without cluster proof or panel admission", node.ID)
 					}
 				}
+				// Stored before any secret is handed out: if it cannot be, the
+				// node would be let in on a key Core does not know it holds.
+				if len(presented) > 0 {
+					stored, serr := storeKey()
+					if serr != nil {
+						sendFail("acl state error")
+						return fmt.Errorf("acl: storing the key of node %d: %w", node.ID, serr)
+					}
+					if !stored {
+						recordRefusal("another Core replica registered a different key for this node during its re-pair")
+						sendFail("this node's key changed while it was being admitted; connect again")
+						return fmt.Errorf("acl: node %d: another key was registered during its re-pair", node.ID)
+					}
+					authKey = presented
+				}
+				// The node is re-admitted, so it gets its secret: a fresh one when
+				// the row has none, the one Core already holds when it has one.
+				// Minted only in the first case, so re-pairing a key node never
+				// rotates what its Redis passwords derive from.
+				rehand = true
 			}
 			secretHex, perr := s.acl.EnsureExisting(ctx, node.ID, node.Token)
 			if perr != nil {
 				sendFail("acl provision failed")
 				return fmt.Errorf("acl: provision failed for node %d: %w", node.ID, perr)
 			}
+			// Nothing has left Core yet; see stillPaired. After this the secret is
+			// sent and the stream registered.
+			hmacResp := ""
+			if hmacNonce != "" {
+				hmacResp = cr.Response
+			}
+			paired, cerr := stillPaired(node.ID, authKey, hmacNonce, hmacResp)
+			if cerr != nil {
+				sendFail("acl state error")
+				return fmt.Errorf("acl: re-reading the pairing of node %d: %w", node.ID, cerr)
+			}
+			if !paired {
+				recordRefusal("the node's pairing changed while it logged in (Reset pairing, Roll key or an approval)")
+				sendFail("the node's pairing changed during login; connect again")
+				return fmt.Errorf("acl: node %d: its pairing changed during the login; nothing handed out, not registered", node.ID)
+			}
 			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, RedisAddr: s.redisAddrFor(node.Owned)}
 			applyUpdateWarning(res, verdict)
-			if !hasSecret {
-				// First-time issue for this known node (feature newly enabled, or
-				// the secret was reset). Deliver once; later connects must prove it.
+			if !hasSecret || rehand {
+				// A first issue for this known node (the secret was reset), or the
+				// existing secret handed back to a node that proved its key or was
+				// re-admitted. EnsureExisting mints only when the row holds none,
+				// so in the second case this is the stored value, byte for byte.
 				res.NodeSecret = secretHex
 			}
 			if s.linkCreds != nil {

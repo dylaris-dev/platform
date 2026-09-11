@@ -164,7 +164,7 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     const resetPairing = async (node: Node) => {
         if (!await confirmDialog({
             title: `Reset pairing for "${node.name}"?`,
-            message: 'Its current secret is invalidated immediately. A node holding the cluster secret re-pairs itself within seconds; any other node appears under Connection attempts, where you admit it. Nothing needs changing on the machine, and server data is preserved.',
+            message: 'Use this when the node may be compromised. Its key is refused, its secret invalidated and any re-admission armed by Roll key cancelled, immediately. A node holding the cluster secret re-pairs itself within seconds; any other node appears under Connection attempts, where you admit it. Once back it gets a new secret and restarts its game servers, which disconnects their players. Nothing needs changing on the machine, and server data is preserved. To replace only the key without restarting anything, use Roll key.',
             confirmLabel: 'Reset pairing',
         })) return;
         setResettingId(node.id);
@@ -179,7 +179,7 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     const rollSecret = async (node: Node) => {
         if (!await confirmDialog({
             title: `Roll the key for "${node.name}"?`,
-            message: "The node's secret is replaced. Its Redis access is cut at once and restored when it reconnects, normally within a minute. Nothing needs changing on the machine, and server data is preserved.",
+            message: "The node's key is replaced: it generates a new one and is let back in from the address it last connected from. Its Redis access is cut at once and restored when it reconnects, normally within a minute. Its game servers are not restarted (a node too old to have a key gets a new secret instead, which does restart them). Nothing needs changing on the machine, and server data is preserved.",
             confirmLabel: 'Roll key',
         })) return;
         setRollingId(node.id);
@@ -723,7 +723,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         onClick={onResetPairing}
                         disabled={resettingPairing}
                         className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
-                        title="Invalidate this node's secret; the node re-pairs itself or waits to be admitted"
+                        title="For a node that may be compromised: refuse its key and replace its secret, which restarts its game servers"
                     >
                         <RotateCcw size={11} />
                         {resettingPairing ? 'Resetting…' : 'Reset pairing'}
@@ -733,7 +733,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         disabled={rollingSecret || !canRollKey(node.status)}
                         className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
                         title={canRollKey(node.status)
-                            ? "Replace this node's secret; it reconnects with a new one by itself"
+                            ? "Replace this node's key; it reconnects with a new one by itself, without restarting its game servers"
                             : 'Roll key re-admits the node for 15 minutes; use it while the node is online, or use Reset pairing and admit it under Connection attempts'}
                     >
                         <RefreshCw size={11} />
