@@ -50,13 +50,10 @@ func resolveNodeAddr(env string, external bool, proxyPort string) (addr string, 
 // wrong for them whenever it is loopback. gateway is the bridge gateway of the
 // network the container joins; empty means it could not be determined yet, and
 // the caller must fail rather than bake in an address that cannot work.
-func resolveSidecarRedisAddr(sidecarEnv, nodeAddr string, nodeViaProxy bool, gateway string) string {
-	if v := strings.TrimSpace(sidecarEnv); v != "" {
-		return v
-	}
+func resolveSidecarRedisAddr(nodeAddr string, nodeViaProxy bool, gateway string) string {
 	if !nodeViaProxy {
-		// Unchanged behaviour: works whenever the node's address is routable
-		// from a container, which is every case except the proxy's loopback.
+		// Routable from a container whenever it is not the proxy's loopback:
+		// the node and its containers sit on the overlay Core's address names.
 		return nodeAddr
 	}
 	if gateway == "" {

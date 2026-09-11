@@ -22,30 +22,28 @@ func envMap(t *testing.T, env []string) map[string]string {
 	return m
 }
 
-// These tests read and mutate PACKAGE GLOBALS (nodeID, mcRedisAddr, mcRedisDB,
-// nodeSecret). Every subtest saves the old values and restores them via
-// defer/t.Cleanup, and none of them call t.Parallel(), per the wave brief -
-// mutating shared package state concurrently would corrupt other tests.
+// These tests read and mutate PACKAGE GLOBALS (nodeID, redisDB, nodeSecret).
+// Every subtest saves the old values and restores them via defer/t.Cleanup, and
+// none of them call t.Parallel(), per the wave brief - mutating shared package
+// state concurrently would corrupt other tests.
 
 func TestBuildRedisEnv(t *testing.T) {
 	origNodeID := nodeID
-	origMCRedisAddr := mcRedisAddr
-	origMCRedisDB := mcRedisDB
+	origRedisDB := redisDB
 	origNodeSecret := nodeSecret
 	t.Cleanup(func() {
 		nodeID = origNodeID
-		mcRedisAddr = origMCRedisAddr
-		mcRedisDB = origMCRedisDB
+		redisDB = origRedisDB
 		nodeSecret = origNodeSecret
 	})
 
+	const addr = "10.1.2.3:6379"
 	nodeID = "node-test-1"
-	mcRedisAddr = "10.1.2.3:6379"
-	mcRedisDB = "2"
+	redisDB = 2
 	nodeSecret = []byte("unit-test-secret-value-buildredisenv")
 
 	t.Run("with sub-server: full 7-entry env, correctly scoped ACL user/pass", func(t *testing.T) {
-		got := buildRedisEnv("uuid-abc", "sub1", mcRedisAddr)
+		got := buildRedisEnv("uuid-abc", "sub1", addr)
 		if len(got) != 7 {
 			t.Fatalf("got %d env entries, want 7: %v", len(got), got)
 		}
@@ -54,8 +52,8 @@ func TestBuildRedisEnv(t *testing.T) {
 		wantUser := aclShipperUsername(nodeID, "uuid-abc")
 		wantPass := aclShipperPassword(nodeSecret, nodeID, "uuid-abc")
 
-		if m["REDIS_ADDR"] != mcRedisAddr {
-			t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], mcRedisAddr)
+		if m["REDIS_ADDR"] != addr {
+			t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], addr)
 		}
 		if m["REDIS_USER"] != wantUser {
 			t.Errorf("REDIS_USER = %q, want %q (scoped shipper user, NOT plain node user)", m["REDIS_USER"], wantUser)
@@ -63,8 +61,9 @@ func TestBuildRedisEnv(t *testing.T) {
 		if m["REDIS_PASS"] != wantPass {
 			t.Errorf("REDIS_PASS = %q, want %q", m["REDIS_PASS"], wantPass)
 		}
-		if m["REDIS_DB"] != mcRedisDB {
-			t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], mcRedisDB)
+		// The node's own DB: SIDECAR_REDIS_DB is gone, and there is one Redis.
+		if m["REDIS_DB"] != "2" {
+			t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], "2")
 		}
 		if m["SERVER_UUID"] != "uuid-abc" {
 			t.Errorf("SERVER_UUID = %q, want %q", m["SERVER_UUID"], "uuid-abc")
@@ -78,7 +77,7 @@ func TestBuildRedisEnv(t *testing.T) {
 	})
 
 	t.Run("without sub-server: SUB_SERVER omitted (6 entries)", func(t *testing.T) {
-		got := buildRedisEnv("uuid-abc", "", mcRedisAddr)
+		got := buildRedisEnv("uuid-abc", "", addr)
 		if len(got) != 6 {
 			t.Fatalf("got %d env entries, want 6: %v", len(got), got)
 		}
@@ -90,21 +89,19 @@ func TestBuildRedisEnv(t *testing.T) {
 }
 
 func TestBuildLinkEnv(t *testing.T) {
-	origMCRedisAddr := mcRedisAddr
-	origMCRedisDB := mcRedisDB
+	origRedisDB := redisDB
 	origNodeSecret := nodeSecret
 	origClusterSecret := clusterSecret
 	origNodeExternal := nodeExternal
 	t.Cleanup(func() {
-		mcRedisAddr = origMCRedisAddr
-		mcRedisDB = origMCRedisDB
+		redisDB = origRedisDB
 		nodeSecret = origNodeSecret
 		clusterSecret = origClusterSecret
 		nodeExternal = origNodeExternal
 	})
 
-	mcRedisAddr = "10.9.9.9:6379"
-	mcRedisDB = "5"
+	const addr = "10.9.9.9:6379"
+	redisDB = 5
 	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
 	// What makes this node in-cluster, and the only thing that does. Without it
 	// the node is BYON and the link belongs on the public address.
@@ -115,7 +112,7 @@ func TestBuildLinkEnv(t *testing.T) {
 	// global inside the function body), so the package-global nodeID is
 	// deliberately left untouched by this test.
 	testNodeID := "nodeXYZ"
-	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1", mcRedisAddr)
+	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1", addr)
 
 	if len(got) != 8 {
 		t.Fatalf("got %d env entries, want 8: %v", len(got), got)
@@ -134,8 +131,8 @@ func TestBuildLinkEnv(t *testing.T) {
 	if m["LINK_DISCOVERY_PROOF"] != "discovery-proof-1" {
 		t.Errorf("LINK_DISCOVERY_PROOF = %q, want %q", m["LINK_DISCOVERY_PROOF"], "discovery-proof-1")
 	}
-	if m["REDIS_ADDR"] != mcRedisAddr {
-		t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], mcRedisAddr)
+	if m["REDIS_ADDR"] != addr {
+		t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], addr)
 	}
 	if m["REDIS_USER"] != wantUser {
 		t.Errorf("REDIS_USER = %q, want %q (scoped link user, NOT plain node user)", m["REDIS_USER"], wantUser)
@@ -143,8 +140,8 @@ func TestBuildLinkEnv(t *testing.T) {
 	if m["REDIS_PASS"] != wantPass {
 		t.Errorf("REDIS_PASS = %q, want %q", m["REDIS_PASS"], wantPass)
 	}
-	if m["REDIS_DB"] != mcRedisDB {
-		t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], mcRedisDB)
+	if m["REDIS_DB"] != "5" {
+		t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], "5")
 	}
 	// A node in our own datacenter keeps the link on the private path, which is
 	// the direct one there.

@@ -119,9 +119,9 @@ func dedupeSorted(in []string) []string {
 
 // netPolicyState is what this node can tell an operator about the policy.
 //
-// Same shape and the same reason as isolationState: a failure that only ever
-// reached a log line is a failure nobody sees, because a node's stdout dies
-// with its container. Fail-open is only acceptable while the failing is loud.
+// A failure that only ever reached a log line is a failure nobody sees,
+// because a node's stdout dies with its container. Fail-open is only
+// acceptable while the failing is loud.
 type netPolicyState struct {
 	mu sync.Mutex
 	// unpublished is the state before Core has ever published a policy for this

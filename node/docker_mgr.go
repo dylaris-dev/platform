@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -29,16 +28,12 @@ import (
 type DockerManager struct {
 	cli           *client.Client
 	ctx           context.Context
-	hostDataPath  string                // Host filesystem path for dylaris_data (resolved from volume mount, legacy)
-	localDataPath string                // Container-local path for dylaris_data (for file I/O inside this container, legacy)
-	storageMgr    *StorageManager       // Multi-path storage manager
-	hostPathCache map[string]string     // local storage path -> host path (resolved from container mounts)
-	portMgr       *PortManager          // nil when gateway is enabled (port binding not needed)
-	tenant        *TenantNetworkManager // nil = isolation disabled (redis guard); servers stay on dylaris_net
-	selfHostNet   bool                  // true when this node's own container uses --network host
-	// isolation counts the servers that were put on the shared network even
-	// though isolation is on. Reported in the heartbeat; see isolation_state.go.
-	isolation isolationState
+	hostDataPath  string            // Host filesystem path for dylaris_data (resolved from volume mount, legacy)
+	localDataPath string            // Container-local path for dylaris_data (for file I/O inside this container, legacy)
+	storageMgr    *StorageManager   // Multi-path storage manager
+	hostPathCache map[string]string // local storage path -> host path (resolved from container mounts)
+	portMgr       *PortManager      // nil when gateway is enabled (port binding not needed)
+	selfHostNet   bool              // true when this node's own container uses --network host
 
 	// Per-server ingress policy. selfContainer is this node's own container name
 	// (its address is one of the two every server always accepts), and
@@ -157,7 +152,7 @@ func (dm *DockerManager) buildHostPathCache() {
 // Docker daemon. The daemon is authoritative (no DNS), so this works from a
 // host-net node whose resolver is the host's, and it removes the wildcard-DNS
 // answer the old net.LookupIP path had to defend against. Prefers the
-// dylaris_net / tenant endpoint; errors when the container is absent or has no
+// dylaris_net endpoint; errors when the container is absent or has no
 // IP (stopped). The caller still runs the private-IP guard on the result.
 func (dm *DockerManager) ResolveMCContainerIP(uuid string) (net.IP, error) {
 	name := "mc_" + uuid
@@ -175,7 +170,7 @@ func (dm *DockerManager) ResolveMCContainerIP(uuid string) (net.IP, error) {
 }
 
 // pickContainerIP selects the IPv4 to reach a container for a control-plane dial:
-// prefer a dylaris_net / *_dylaris_net / tenant endpoint, else the first endpoint
+// prefer a dylaris_net / *_dylaris_net endpoint, else the first endpoint
 // that carries an IP. Returns nil when no endpoint has an IPv4 (stopped). The
 // caller still runs guardPrivateAddr on the result, so a non-private pick is
 // refused, not dialled.
@@ -184,7 +179,7 @@ func pickContainerIP(networks map[string]*network.EndpointSettings) net.IP {
 		if ep == nil || ep.IPAddress == "" {
 			continue
 		}
-		if isGlobalNetName(netName) || strings.HasPrefix(netName, "dylaris_tenant_") {
+		if isGlobalNetName(netName) {
 			if ip := net.ParseIP(ep.IPAddress); ip != nil {
 				return ip
 			}
@@ -336,7 +331,6 @@ func normalizeImageRef(image string) string {
 
 type ServerConfig struct {
 	UUID            string       `json:"uuid"`
-	OwnerID         string       `json:"ownerId"` // tenant key for network isolation; empty on restart/reconcile (resolved from allocator)
 	Docker          DockerConfig `json:"docker"`
 	ActiveSubServer string       `json:"activeSubServer"`
 	// ExistingBinds, when non-empty, overrides the default bind-mount
@@ -382,27 +376,28 @@ func (dm *DockerManager) networkGateway(netID string) (string, error) {
 
 // sidecarRedisAddr is the Redis address baked into a container joining netID.
 //
-// Usually the configured value. In warp-proxy mode there is no single answer:
-// the container reaches warp through the gateway of ITS network, so the address
-// is resolved per network here rather than once at startup. Failing is correct
-// when it cannot be resolved - a container started with an address that cannot
-// work looks healthy and ships no console output at all.
-func (dm *DockerManager) sidecarRedisAddr(netID string) (string, error) {
-	if mcRedisAddr != "" {
-		return mcRedisAddr, nil
+// nodeAddr is the node's own address, which is right for a container too
+// everywhere except the warp proxy. There the container reaches warp through
+// the gateway of ITS network, so the address is resolved per network here
+// rather than once at startup. Failing is correct when it cannot be resolved -
+// a container started with an address that cannot work looks healthy and ships
+// no console output at all.
+func (dm *DockerManager) sidecarRedisAddr(netID, nodeAddr string) (string, error) {
+	gw := ""
+	if redisViaWarpProxy {
+		var err error
+		if gw, err = dm.networkGateway(netID); err != nil {
+			return "", fmt.Errorf("redis address for a container on %s: %w", netID, err)
+		}
 	}
-	gw, err := dm.networkGateway(netID)
-	if err != nil {
-		return "", fmt.Errorf("redis address for a container on %s: %w", netID, err)
-	}
-	return resolveSidecarRedisAddr("", redisAddr, redisViaWarpProxy, gw), nil
+	return resolveSidecarRedisAddr(nodeAddr, redisViaWarpProxy, gw), nil
 }
 
 // buildRedisEnv returns the env-slice that the log-shipper inside the container
 // needs to connect to Redis and identify the server stream.
 //
 // sidecarAddr is resolved for the CONTAINER's network by the caller and is
-// deliberately a parameter, not the node's own package-global redisAddr: those
+// deliberately a parameter, not the node's own address (nodeRedis): those
 // two differ on the warp proxy, where the node's is loopback and a container's
 // is the bridge gateway.
 func buildRedisEnv(uuid, subServer, sidecarAddr string) []string {
@@ -424,7 +419,7 @@ func buildRedisEnv(uuid, subServer, sidecarAddr string) []string {
 		fmt.Sprintf("REDIS_ADDR=%s", sidecarAddr),
 		fmt.Sprintf("REDIS_USER=%s", user),
 		fmt.Sprintf("REDIS_PASS=%s", pass),
-		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
+		fmt.Sprintf("REDIS_DB=%d", redisDB),
 		fmt.Sprintf("SERVER_UUID=%s", uuid),
 		"TERM=xterm-256color",
 	}
@@ -456,8 +451,8 @@ func linkPrefersPublicEdge() bool {
 
 // buildLinkEnv builds the env for a node-managed Link sidecar. Link authenticates
 // to Redis with its own per-node ACL user (derived from nodeSecret, provisioned by
-// Core), and presents the Core-delivered tunnel token + discovery proof. Redis addr
-// uses the SIDECAR (mc) address for the same non-Swarm-DNS reason as MC containers.
+// Core), and presents the Core-delivered tunnel token + discovery proof. The Redis
+// address is resolved like an MC container's (sidecarRedisAddr).
 func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr string) []string {
 	// Redis ACL is mandatory: Link always authenticates with its own per-node ACL
 	// user (nodeSecret guaranteed non-nil after the startup bootstrap).
@@ -470,7 +465,7 @@ func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr string) []
 		fmt.Sprintf("REDIS_ADDR=%s", sidecarAddr),
 		fmt.Sprintf("REDIS_USER=%s", user),
 		fmt.Sprintf("REDIS_PASS=%s", pass),
-		fmt.Sprintf("REDIS_DB=%s", mcRedisDB),
+		fmt.Sprintf("REDIS_DB=%d", redisDB),
 		// Which of an edge's two addresses the link tries first. On an external
 		// machine the private one is reachable too - warp routes the overlay -
 		// so preferring it succeeds and puts every player's bytes through the
@@ -623,7 +618,10 @@ func (dm *DockerManager) ensureLinkContainer(image, nodeID, linkSecret, linkDisc
 	if err != nil {
 		return false, err
 	}
-	sidecarAddr, err := dm.sidecarRedisAddr(netID)
+	// The address this process booted on, not the current one: a live promote
+	// must not look like env drift to linkIsCurrent, or the Link would be
+	// recreated under the players on it. See linkRedisAddr.
+	sidecarAddr, err := dm.sidecarRedisAddr(netID, linkRedisAddr)
 	if err != nil {
 		return false, err
 	}
@@ -660,12 +658,6 @@ func (dm *DockerManager) ensureLinkContainer(image, nodeID, linkSecret, linkDisc
 	}
 	if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
 		return false, fmt.Errorf("link container start error: %v", err)
-	}
-	// Isolated servers live on their owner's tenant net, and the route points at
-	// mc_<uuid> by NAME - so a Link that is not on those networks cannot resolve
-	// a single one of them. No-op when isolation is off.
-	if dm.tenant != nil {
-		dm.tenant.AttachLinkToAll()
 	}
 	return true, nil
 }
@@ -814,172 +806,20 @@ func (dm *DockerManager) findExistingGlobalNetwork() (id, name string, found boo
 	return "", "", false
 }
 
-// tenantEndpoints builds the NetworkingConfig for a server container. Isolation
-// off (dm.tenant == nil) or any resolution/allocation error falls back to
-// dylaris_net so a server is never left unstartable by the isolation layer. The
-// enlarge-on-overflow retry is added in a later task.
-func (dm *DockerManager) tenantEndpoints(serverUUID, ownerID, globalNetID, globalNetName string) *network.NetworkingConfig {
-	// Keyed by the network's REAL name, which carries the compose/stack prefix
-	// on most deployments. Keying it "dylaris_net" there names no network and
-	// Docker creates the container with no endpoint at all - see
-	// ensureGlobalNetwork.
+// serverEndpoints puts a server container on the shared server network.
+//
+// Keyed by the network's REAL name, which carries the compose/stack prefix on
+// most deployments. Keying it "dylaris_net" there names no network and Docker
+// creates the container with no endpoint at all - see ensureGlobalNetwork.
+func serverEndpoints(globalNetID, globalNetName string) *network.NetworkingConfig {
 	if globalNetName == "" {
 		globalNetName = "dylaris_net"
 	}
-	fallback := &network.NetworkingConfig{
+	return &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			globalNetName: {NetworkID: globalNetID},
 		},
 	}
-	if dm.tenant == nil {
-		return fallback
-	}
-	nc, err := dm.tenant.endpointsFor(serverUUID, ownerID)
-	if errors.Is(err, errSubnetFull) {
-		if owner, ok := dm.tenant.resolveOwner(serverUUID, ownerID); ok {
-			if eErr := dm.EnlargeTenant(owner); eErr != nil {
-				log.Printf("tenant-net: enlarge failed for owner %s: %v", owner, eErr)
-			} else {
-				nc, err = dm.tenant.endpointsFor(serverUUID, ownerID)
-			}
-		}
-	}
-	if err != nil {
-		// Four unrelated conditions arrive here - an exhausted pool, the /24
-		// ceiling, an unreadable allocator file, any Docker error - and all of
-		// them produce the same outcome: a server that an operator believes is
-		// isolated, sitting on the shared network. It was a log line and
-		// nothing else, on a machine whose logs die with the container.
-		// Recorded so the heartbeat can say it out loud.
-		dm.isolation.recordFallback(err)
-		log.Printf("tenant-net: falling back to dylaris_net for %s: %v", serverUUID, err)
-		return fallback
-	}
-	return nc
-}
-
-// ReleaseTenant frees a deleted server's tenant assignment; no-op when isolation
-// is off. Removes the owner's network when it was the last server.
-func (dm *DockerManager) ReleaseTenant(serverUUID string) {
-	if dm.tenant == nil {
-		return
-	}
-	dm.tenant.release(serverUUID)
-}
-
-// EnlargeTenant recreates an owner's tenant network with a larger subnet and
-// rejoins the owner's servers with remapped fixed IPs. Docker cannot resize a
-// subnet in place, so the same-named network is force-recreated. Rare: only when
-// a tenant exceeds ~60 servers on one node. Reshuffles IPs (mc_<uuid> survives).
-func (dm *DockerManager) EnlargeTenant(ownerID string) error {
-	t := dm.tenant
-	if t == nil {
-		return fmt.Errorf("tenant isolation disabled")
-	}
-
-	t.mu.Lock()
-	used, err := t.discoverUsedSubnets()
-	if err != nil {
-		t.mu.Unlock()
-		return err
-	}
-	oldNet, newNet, err := t.alloc.enlarge(ownerID, used)
-	if err != nil {
-		t.mu.Unlock()
-		return err
-	}
-	uuids := t.alloc.serversForOwner(ownerID)
-	name := tenantNetworkName(ownerID)
-	t.mu.Unlock()
-
-	log.Printf("tenant-net: enlarging %s to %s (%d servers)", name, newNet, len(uuids))
-
-	// Remove the owner's containers so their endpoints release the old network.
-	had := make(map[string]bool, len(uuids))
-	for _, u := range uuids {
-		if _, ierr := dm.cli.ContainerInspect(dm.ctx, "mc_"+u); ierr == nil {
-			had[u] = true
-			dm.cli.ContainerRemove(dm.ctx, "mc_"+u, container.RemoveOptions{Force: true})
-		}
-	}
-
-	// Past this line every one of the owner's containers is GONE, so no failure
-	// may simply return: it would leave a tenant with none of their servers
-	// running and nothing that puts them back. It used to, on two paths.
-	//
-	// The allocator is rolled back with them. enlarge() writes the new subnet to
-	// disk before any of this Docker work happens, so an abandoned attempt
-	// leaves the recorded subnet describing a network that does not exist -
-	// after which every address the allocator hands out is outside the live
-	// network and nothing on it can start.
-	abandon := func(cause error) error {
-		t.mu.Lock()
-		if rbErr := t.alloc.restoreSubnet(ownerID, oldNet); rbErr != nil {
-			log.Printf("tenant-net: enlarge could not restore %s to %s: %v", ownerID, oldNet, rbErr)
-		}
-		t.mu.Unlock()
-		dm.recreateOwnerContainers(uuids, had)
-		return cause
-	}
-
-	// Drop the old network and recreate at the new subnet. removeTenantNetwork
-	// is what release() uses; this path used to have its own copy of the
-	// teardown and that copy did not know about the Link.
-	t.mu.Lock()
-	if _, rerr := t.removeTenantNetwork(name); rerr != nil {
-		// Fatal, not a log line. The old network keeps the NAME, so
-		// EnsureTenantNetwork below would find it, skip creation, and then
-		// connect the node at an address from the new subnet - which cannot
-		// work, and leaves the tenant half-built either way.
-		t.mu.Unlock()
-		return abandon(fmt.Errorf("enlarge: could not remove old network %s: %w", name, rerr))
-	}
-	_, err = t.EnsureTenantNetwork(ownerID)
-	t.mu.Unlock()
-	if err != nil {
-		return abandon(fmt.Errorf("enlarge: recreate net: %w", err))
-	}
-
-	// Recreate the servers that had a container (rejoin new net at remapped IP).
-	dm.recreateOwnerContainers(uuids, had)
-	return nil
-}
-
-// recreateOwnerContainers puts back the containers EnlargeTenant removed, on
-// whatever network the owner ended up with. Shared by the success path and by
-// abandon(), because a tenant whose servers were destroyed to make room for a
-// resize must get them back whether or not the resize worked.
-func (dm *DockerManager) recreateOwnerContainers(uuids []string, had map[string]bool) {
-	for _, u := range uuids {
-		if !had[u] {
-			continue
-		}
-		cfg, ok := dm.loadSavedConfig(u)
-		if !ok {
-			log.Printf("tenant-net: enlarge cannot recreate %s (no saved config)", u)
-			continue
-		}
-		if rerr := dm.RecreateWithCommand(cfg); rerr != nil {
-			log.Printf("tenant-net: enlarge recreate %s: %v", u, rerr)
-		}
-	}
-}
-
-// loadSavedConfig reads a server's persisted .node_config.json (written by
-// saveNodeConfig). Used by the enlarge path to recreate containers.
-func (dm *DockerManager) loadSavedConfig(uuid string) (ServerConfig, bool) {
-	var cfg ServerConfig
-	if dm.storageMgr == nil {
-		return cfg, false
-	}
-	data, err := os.ReadFile(filepath.Join(dm.storageMgr.GetServerDir(uuid), ".node_config.json"))
-	if err != nil {
-		return cfg, false
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, false
-	}
-	return cfg, true
 }
 
 // RunInstallerContainer runs a one-shot container with the given image,
@@ -1125,10 +965,9 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 
-	// Resolved against the network the container joins. In warp-proxy mode that
-	// is always dylaris_net: the proxy leaves mcRedisAddr empty, which turns
-	// tenant isolation off, so there is no second network in play.
-	sidecarAddr, err := dm.sidecarRedisAddr(netID)
+	// Resolved against the network the container joins, which is dylaris_net:
+	// the bridge gateway in warp-proxy mode, the node's own address otherwise.
+	sidecarAddr, err := dm.sidecarRedisAddr(netID, nodeRedis.current())
 	if err != nil {
 		return err
 	}
@@ -1157,7 +996,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	applyPidsLimit(hc)
 	applyIOWeight(hc)
 
-	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID, netName)
+	nc := serverEndpoints(netID, netName)
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
@@ -1342,7 +1181,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 
-	sidecarAddr, err := dm.sidecarRedisAddr(netID)
+	sidecarAddr, err := dm.sidecarRedisAddr(netID, nodeRedis.current())
 	if err != nil {
 		return "", err
 	}
@@ -1429,7 +1268,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		log.Printf("Container %s: binding host port %d → container port %d/tcp", containerName, hostP, cPort)
 	}
 
-	nc := dm.tenantEndpoints(config.UUID, config.OwnerID, netID, netName)
+	nc := serverEndpoints(netID, netName)
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
@@ -1869,9 +1708,13 @@ func redisEnvDrift(current, want []string) string {
 
 // ReconcileRedisEnv checks all running MC containers and restarts any whose
 // baked-in Redis connection env doesn't match what a container created NOW
-// would get. This handles the case where Node is redeployed with a new
-// SIDECAR_REDIS_ADDR — running containers still have the old value from
-// creation time.
+// would get. This handles a node that restarts on a different Redis address -
+// running containers still have the old value from creation time.
+//
+// Startup only, deliberately. A live promote (redis_addr.go) does not call
+// this: restarting every server on the machine is what an address change must
+// not cost while players are on them, so running containers keep the address
+// they were created with until the node itself restarts.
 //
 // It compares the CREDENTIALS too, not just the address, because they drift for
 // a different and less visible reason. buildRedisEnv derives REDIS_USER and
@@ -1902,7 +1745,7 @@ func (dm *DockerManager) ReconcileRedisEnv() {
 		log.Printf("ReconcileRedisEnv: cannot resolve the server network: %v", err)
 		return
 	}
-	wantAddr, err := dm.sidecarRedisAddr(netID)
+	wantAddr, err := dm.sidecarRedisAddr(netID, nodeRedis.current())
 	if err != nil {
 		log.Printf("ReconcileRedisEnv: %v", err)
 		return

@@ -54,7 +54,7 @@ func TestIdentityChange(t *testing.T) {
 // decision at all.
 func TestOnlyEnsureNodeSecretMayChangeIdentity(t *testing.T) {
 	var callers []string
-	for _, f := range []string{"main.go", "redisacl_bootstrap.go", "grpc_mesh.go"} {
+	for _, f := range []string{"main.go", "redisacl_bootstrap.go", "grpc_mesh.go", "redis_addr.go"} {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)

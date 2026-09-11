@@ -10,7 +10,7 @@ import (
 // them is touched until a node connects, and no test here connects one.
 func startTestGRPCServer(t *testing.T, port int) (stop func(), err error) {
 	t.Helper()
-	srv, err := StartGRPCServer(port, NewRegistry(), nil, "core-test", nil, nil, nil, nil, false, "")
+	srv, err := StartGRPCServer(port, NewRegistry(), nil, "core-test", nil, nil, nil, nil, false, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -26,7 +26,7 @@ func startTestGRPCServer(t *testing.T, port int) (stop func(), err error) {
 // flakes", which CI then disproved on a busy runner. No test here needs a
 // chosen port.
 func TestStartGRPCServerReturnsAStoppableServer(t *testing.T) {
-	srv, err := StartGRPCServer(0, NewRegistry(), nil, "core-test", nil, nil, nil, nil, false, "")
+	srv, err := StartGRPCServer(0, NewRegistry(), nil, "core-test", nil, nil, nil, nil, false, "", "")
 	if err != nil {
 		t.Fatalf("StartGRPCServer: %v", err)
 	}

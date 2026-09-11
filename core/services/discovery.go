@@ -59,20 +59,11 @@ type NodeHeartbeat struct {
 	// the host firewall must open, and sees a typo instead of a silent default.
 	PortRange       string `json:"portRange,omitempty"`
 	PortRangeNotice string `json:"portRangeNotice,omitempty"`
-	// Isolation is whether this node puts each tenant's servers on their own
-	// Docker network. IsolationNotice is set when there is something to say
-	// about it - it is off and why, or it is on and servers went onto the shared
-	// network anyway, which a boot-time state cannot express. The node composes
-	// the sentence; Core carries it.
-	// A POINTER: a node that does not report the field has not measured it, and
-	// that is a third answer, not `false`. See models.Node.Isolation.
-	Isolation       *bool  `json:"isolation,omitempty"`
-	IsolationNotice string `json:"isolationNotice,omitempty"`
 	// NetPolicy is whether this node refuses server-to-server traffic that
 	// nothing allowed, NetPolicyServers how many of its servers currently carry
 	// the rules, and NetPolicyNotice the one sentence worth showing about it.
-	// Pointers for the same reason as above: an older node reports nothing, and
-	// nothing is not "off".
+	// A POINTER: an older node reports nothing, and nothing is not "off". See
+	// models.Node.NetPolicy.
 	NetPolicy        *bool  `json:"netPolicy,omitempty"`
 	NetPolicyServers int    `json:"netPolicyServers,omitempty"`
 	NetPolicyNotice  string `json:"netPolicyNotice,omitempty"`

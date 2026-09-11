@@ -173,6 +173,15 @@ message AuthResult {
   string update_required = 9;        // human-readable warning, empty when none
   string update_required_version = 10;  // the release the node must reach
   string update_required_deadline = 11; // RFC3339, empty when immediate
+  // The Redis address this node should use: Core's own configured REDIS_ADDR,
+  // verbatim and never resolved to an IP, because the node and its containers
+  // sit on the same overlay as Core and a resolved address could belong to a
+  // network they are not on. Set on every successful auth.
+  //
+  // EMPTY MEANS "Core names none", never "nowhere": the node keeps the address
+  // it already has. Core leaves it empty for an owned (BYON) node, which reaches
+  // Redis through its warp proxy. Field 12 because 6 is taken by assigned_id.
+  string redis_addr = 12;
 }
 
 // Reconnect challenge: Core issues a fresh single-use nonce; the node returns

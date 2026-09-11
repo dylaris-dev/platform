@@ -272,8 +272,10 @@ services:
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       NODE_TAGS: "${NODE_TAGS:-}"
       NODE_REGION: "${NODE_REGION:-}"
-      # Managed/external Redis by default (bundled redis service commented out).
-      REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
+      # No REDIS_ADDR: the node is told Core's own REDIS_ADDR on every auth and
+      # caches it in .redis_addr in its storage path, so pointing Core at a
+      # managed Redis points the nodes there too. Set it here only to override
+      # that answer on a node that cannot reach Core at its first boot.
       # Redis-ACL bootstrap (mandatory -- no open-Redis fallback). CORE_GRPC_ADDR
       # is Core's gRPC mesh port on the same Docker network (DYLARIS_GRPC_PORT,
       # default 25501). NODE_ENROLL_TOKEN is the single-use first-boot token,
@@ -303,19 +305,7 @@ services:
       # rejected. Must equal Core's JWT_SECRET AND the gateway relay's BEAM_JWT_SECRET.
       BEAM_JWT_SECRET: "${JWT_SECRET}"
       # Same reason as the core block above: forwarded so the stack environment
-      # actually reaches the container. SIDECAR_REDIS_ADDR matters most here -
-      # MC containers are host siblings and cannot resolve Swarm overlay DNS, so
-      # in this topology they need Redis by IP, and until it was listed here the
-      # documented "set it to the leader's private IP in Swarm" was impossible
-      # without editing this file. GRPC_TLS_ENABLED must match Core's setting.
-      #
-      # REQUIRED: the node refuses to start without it, and there is deliberately
-      # NO default. In Swarm the only correct value is the leader node's private
-      # IP (e.g. 10.0.0.5:6379) and this file cannot know it - a default that
-      # boots but cannot be reached is what this replaces. Set it in the stack's
-      # environment before deploying the node.
-      SIDECAR_REDIS_ADDR: "${SIDECAR_REDIS_ADDR:-}"
-      SIDECAR_REDIS_DB: "${SIDECAR_REDIS_DB:-}"
+      # actually reaches the container. GRPC_TLS_ENABLED must match Core's setting.
       GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
       GRPC_TLS_FINGERPRINT: "${GRPC_TLS_FINGERPRINT:-}"
       NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
@@ -358,7 +348,8 @@ services:
   #       condition: any
 
   # ── Bundled Redis (Valkey) — DISABLED for production ────────────────────────
-  # Production defaults to a managed/external Redis (set REDIS_ADDR on core+node).
+  # Production defaults to a managed/external Redis (set REDIS_ADDR on core; the
+  # nodes are told Core's).
   # To run the bundled Valkey instead, UNCOMMENT this block, seed the aclfile
   # admin user once before the first deploy (see the command below), and leave
   # REDIS_ADDR unset so it falls back to "redis:6379". Redis ACL is mandatory:

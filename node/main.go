@@ -34,14 +34,18 @@ var (
 	nodeID        string
 	clusterSecret string
 
-	// Node Redis
-	redisAddr string
-	redisDB   int
+	// Node Redis. redisEnvAddr is resolveNodeAddr's answer for REDIS_ADDR: the
+	// variable, or the warp proxy's loopback on an external node without one. It
+	// is only where the address STARTS; nodeRedis (redis_addr.go) is what the
+	// node actually dials.
+	redisEnvAddr string
+	redisDB      int
 
-	// Redis address passed to MC containers (non-Swarm, can't resolve Swarm DNS).
-	// Empty when it can only be answered per network - see redisViaWarpProxy.
-	mcRedisAddr string
-	mcRedisDB   string
+	// linkRedisAddr is the address the node-managed Link is created with: the
+	// one this process booted on, not the current one. The Link is reconciled by
+	// comparing its env, so following a live promote would recreate it under
+	// the players on it. It moves with the next node restart.
+	linkRedisAddr string
 
 	// redisViaWarpProxy: the node reached Redis through warp's LOCAL proxy
 	// rather than a configured address. Loopback is right for the node, which is
@@ -49,10 +53,10 @@ var (
 	// against the bridge gateway of the network they join instead.
 	redisViaWarpProxy bool
 
-	// tenantIsolationEnabled gates per-owner Docker-network isolation for this
-	// node. Set in parseConfig from the Redis-reachability guard; false keeps MC
-	// servers on the shared dylaris_net.
-	tenantIsolationEnabled bool
+	// redisAddrFollowsCore: this node's address is Core's to give - cached in
+	// .redis_addr and replaced by Core's answer. Only a node that holds
+	// CLUSTER_SECRET and is not on the proxy; see followsCoreRedisAddr.
+	redisAddrFollowsCore bool
 
 	nodeTags          string
 	nodeRegion        string
@@ -223,24 +227,43 @@ func main() {
 	parseConfig()
 
 	log.Printf("Starting Dylaris Node '%s'...", nodeID)
-	log.Printf("Connecting to Redis at %s (DB: %d)", redisAddr, redisDB)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Where Redis is: the warp proxy, else what Core last said (cached - only on
+	// a node that follows Core), else REDIS_ADDR. With none of them, the secret
+	// bootstrap below - or one more auth round trip after it - asks Core. See
+	// redis_addr.go.
+	cachedRedisAddr := ""
+	if redisAddrFollowsCore {
+		cachedRedisAddr, _ = loadRedisAddr(nodeSecretDir)
+	}
+	bootAddr, bootSrc := resolveBootRedisAddr(redisEnvAddr, redisViaWarpProxy, cachedRedisAddr)
+	nodeRedis.set(bootAddr, bootSrc == redisAddrFromFile)
+	if bootAddr != "" && !redisViaWarpProxy {
+		log.Printf("Redis address %s, from %s", bootAddr, bootSrc)
+	}
 
 	secret := ensureNodeSecret(ctx)
 	if secret == nil {
 		log.Fatal("redisacl: shutdown before node secret could be obtained")
 	}
-	redisUserEff := aclNodeUsername(nodeID)
-	redisPassEff := aclNodePassword(secret, nodeID)
+	// ensureNodeSecret asks Core only when it has no cached secret. A node that
+	// has one but knows no address still has to ask.
+	if nodeRedis.current() == "" {
+		s := askCoreForRedisAddr(ctx)
+		if s == nil {
+			log.Fatal("redisaddr: shutdown before a Redis address could be obtained")
+		}
+		// The same rule as every re-confirm: a secret Core rotated restarts the
+		// agent, an unchanged one is a no-op.
+		setNodeSecret(s, true)
+		secret = s
+	}
+	log.Printf("Connecting to Redis at %s (DB: %d)", nodeRedis.current(), redisDB)
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     redisAddr,
-		Username: redisUserEff,
-		Password: redisPassEff,
-		DB:       redisDB,
-	})
+	rdb := newNodeRedisClient(secret)
 
 	// Non-fatal: retry on the platform's shared schedule (12x5s, then every
 	// 30s). On auth failure re-confirm with Core (which re-applies the ACL) and
@@ -261,10 +284,7 @@ func main() {
 			// clearing any connections poisoned by the earlier auth failure.
 			setNodeSecret(s, true)
 			_ = rdb.Close()
-			rdb = redis.NewClient(&redis.Options{
-				Addr: redisAddr, Username: aclNodeUsername(nodeID),
-				Password: aclNodePassword(s, nodeID), DB: redisDB,
-			})
+			rdb = newNodeRedisClient(s)
 		} else if berr != nil {
 			log.Printf("redisacl: re-confirm with Core failed: %v", berr)
 		}
@@ -275,6 +295,13 @@ func main() {
 		}
 	}
 	log.Println("Connected to Redis (ACL mode)")
+	// The address just proved itself, so it is cached unless it came from the
+	// cache. Only on a node that follows Core: anywhere else nothing would ever
+	// replace the file, and it would outrank the operator's own REDIS_ADDR.
+	if redisAddrFollowsCore {
+		nodeRedis.persistIfNew()
+	}
+	linkRedisAddr = nodeRedis.current()
 
 	// Wired here, immediately after Redis authenticates and before the mesh
 	// starts, so the very first control-channel failure already has somewhere to
@@ -312,19 +339,7 @@ func main() {
 	// is host-net, but an operator who changed that gets connection-refused with
 	// no clue why, so say it once here instead.
 	if redisViaWarpProxy && !dockerMgr.selfHostNet {
-		log.Printf("WARNING: using the local warp proxy (%s) but this node is NOT host-networked; 127.0.0.1 is this container, not the host where warp listens. Set REDIS_ADDR/CORE_GRPC_ADDR explicitly or run the node with network_mode: host.", redisAddr)
-	}
-
-	// Tenant network isolation: build the per-owner network manager when the
-	// Redis guard allows it. The allocator persists beside .node_secret.
-	if tenantIsolationEnabled && !dockerMgr.selfHostNet {
-		host, _ := os.Hostname()
-		dockerMgr.tenant = newTenantNetworkManager(dockerMgr.cli, dockerMgr.ctx, loadTenantAllocator(nodeSecretDir), host)
-		log.Printf("tenant-net: manager active (node container %q, state dir %s)", host, nodeSecretDir)
-	} else if tenantIsolationEnabled && dockerMgr.selfHostNet {
-		// A host-net node cannot join a per-tenant bridge network, so isolation is
-		// unavailable here; MC servers stay on the shared local dylaris_net.
-		log.Printf("tenant-net: isolation disabled on this host-net node; MC servers stay on the shared local dylaris_net")
+		log.Printf("WARNING: using the local warp proxy (%s) but this node is NOT host-networked; 127.0.0.1 is this container, not the host where warp listens. Set REDIS_ADDR/CORE_GRPC_ADDR explicitly or run the node with network_mode: host.", nodeRedis.current())
 	}
 
 	// Per-server ingress policy: a game server accepts the node, the Link, and
@@ -533,10 +548,14 @@ func parseConfig() {
 		log.Printf("No Node ID provided. Automatically using system hostname: '%s'", nodeID)
 	}
 
-	// 2. Node Redis
-	redisAddr, redisViaWarpProxy = resolveNodeAddr(os.Getenv("REDIS_ADDR"), nodeExternal, warpProxyRedisPort)
+	// 2. Node Redis. Where the address STARTS: REDIS_ADDR, or the warp proxy's
+	// loopback on an external node without it. A node holding CLUSTER_SECRET no
+	// longer needs either: it boots from its cached .redis_addr or asks Core
+	// (main, and redis_addr.go). A node without the secret resolves exactly as it
+	// always did, and still refuses to start with neither.
+	redisEnvAddr, redisViaWarpProxy = resolveNodeAddr(os.Getenv("REDIS_ADDR"), nodeExternal, warpProxyRedisPort)
 	if redisViaWarpProxy {
-		log.Printf("REDIS_ADDR unset on an external node: using the local warp proxy at %s", redisAddr)
+		log.Printf("REDIS_ADDR unset on an external node: using the local warp proxy at %s", redisEnvAddr)
 	}
 	redisDB = 0
 	if dbStr := os.Getenv("REDIS_DB"); dbStr != "" {
@@ -544,64 +563,20 @@ func parseConfig() {
 			redisDB = db
 		}
 	}
-
-	if redisAddr == "" {
-		log.Fatal("FATAL: REDIS_ADDR is missing!")
+	redisAddrFollowsCore = followsCoreRedisAddr(clusterSecret, redisViaWarpProxy)
+	if !redisAddrFollowsCore && redisEnvAddr == "" {
+		log.Fatal("FATAL: REDIS_ADDR is missing. This node holds no CLUSTER_SECRET, so Core does not give it " +
+			"a Redis address: set REDIS_ADDR, or NODE_EXTERNAL=true to use the local warp proxy.")
 	}
 
-	// 2b. MC Container Redis (non-Swarm containers can't resolve Swarm DNS).
-	// Stays EMPTY when the node is on the warp proxy: loopback is the node's own
-	// answer and would be a container's own loopback, so the address has to be
-	// resolved per network against its bridge gateway at container-create time.
-	// SIDECAR_REDIS_ADDR is REQUIRED, and refusing to start is the point.
-	//
-	// It is the Redis address baked into every MC container and into the Link.
-	// Those are host SIBLINGS of this node, not children of it, so the name this
-	// node uses for Redis is not necessarily a name they can resolve. It used to
-	// fall back to REDIS_ADDR, which works silently right up until a container
-	// leaves the shared network - and it is also the value that decides whether
-	// per-tenant isolation is available at all. So the one setting that governs
-	// isolation was the one nobody had to set, and a value that switches it off
-	// was indistinguishable from a value nobody had thought about.
-	//
-	// Both shipped compose files set it to "" when the operator does not, and a
-	// set-but-empty variable overrides a code default - so "unset" was the
-	// normal case rather than an unusual one.
-	//
-	// The exception is the local warp proxy, where there IS no single answer: a
-	// container reaches warp through the gateway of ITS OWN network, so the
-	// address is resolved per network at creation time (sidecarRedisAddr), and
-	// an empty value there is that instruction rather than an omission.
-	sidecarRedisEnv := os.Getenv("SIDECAR_REDIS_ADDR")
-	if missingSidecarRedisAddr(sidecarRedisEnv, redisViaWarpProxy) {
-		log.Fatalf("FATAL: SIDECAR_REDIS_ADDR is not set.\n" +
-			"  It is the Redis address given to every MC container and to the Link. They are host\n" +
-			"  siblings of this node, so they do not necessarily resolve the name this node uses.\n" +
-			"  Set it in the node's environment:\n" +
-			"    Swarm            the leader node's PRIVATE IP, e.g. 10.0.0.5:6379\n" +
-			"    single host      the Redis service name, e.g. redis:6379\n" +
-			"  An IP or a dotted name also makes per-tenant network isolation available; a bare\n" +
-			"  single-label name keeps every server on the shared network. Settings -> Nodes now\n" +
-			"  shows which of the two you got.")
-	}
-	mcRedisAddr = resolveSidecarRedisAddr(sidecarRedisEnv, redisAddr, redisViaWarpProxy, "")
-	mcRedisDB = os.Getenv("SIDECAR_REDIS_DB")
-	if mcRedisDB == "" {
-		mcRedisDB = strconv.Itoa(redisDB)
-	}
-
-	// Tenant isolation requires isolated containers to still reach Redis by host
-	// IP (they leave dylaris_net). Classify SIDECAR_REDIS_ADDR and fail safe.
-	//
-	// The proxy leaves mcRedisAddr empty, which lands on the safe side by
-	// construction: a per-network gateway address is exactly what an isolated
-	// container could NOT be given ahead of time, and a BYON node is host-net,
-	// where isolation is unavailable anyway.
-	tenantIsolationEnabled = redisAddrIsolationSafe(mcRedisAddr)
-	if tenantIsolationEnabled {
-		log.Printf("Tenant network isolation ENABLED (SIDECAR_REDIS_ADDR=%q is host-reachable)", mcRedisAddr)
-	} else {
-		log.Printf("Tenant network isolation DISABLED: SIDECAR_REDIS_ADDR=%q looks Docker-DNS-only; keeping MC servers on dylaris_net so Redis stays reachable", mcRedisAddr)
+	// SIDECAR_REDIS_ADDR was the address baked into MC containers and the Link,
+	// and the input that decided per-tenant network isolation. Both are gone:
+	// containers are given this node's own address (or the per-network gateway
+	// on the warp proxy), and the per-server network policy is the isolation
+	// now. Nodes deployed before this still carry it, so say it does nothing
+	// rather than leave an operator believing it does.
+	if os.Getenv("SIDECAR_REDIS_ADDR") != "" || os.Getenv("SIDECAR_REDIS_DB") != "" {
+		log.Println("SIDECAR_REDIS_ADDR / SIDECAR_REDIS_DB are set and IGNORED: MC containers and the Link are given this node's own Redis address. Remove them from the node's environment.")
 	}
 
 	// 3. CPU Pinning (cpuset-cpus) default for all MC containers on this node
@@ -1037,30 +1012,14 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	if portRangeNotice != "" {
 		data["portRangeNotice"] = portRangeNotice
 	}
-	// Per-tenant network isolation, so an operator can read the state where the
-	// question is asked instead of in a container log that dies with the
-	// container. The notice covers the case a boot line cannot: isolation ON,
-	// and servers on the shared network anyway. See isolation_state.go.
-	//
-	// Reported from the MANAGER, not from tenantIsolationEnabled. Those are two
-	// different facts and this used to send the wrong one: a host-net node with
-	// a perfectly good SIDECAR_REDIS_ADDR has tenantIsolationEnabled = true and
-	// no manager at all (main.go's else-if), so every one of its servers is on
-	// the shared network while the panel showed a green "Isolated". The variable
-	// says the address ALLOWS isolation; dm.tenant says it is happening.
+	// Per-server ingress policy, so an operator can read the state where the
+	// question is asked: fail-open is only acceptable while the failing is
+	// visible, and a node's log is not where anyone looks for it.
 	//
 	// Omitted entirely when there is no DockerManager, because then nothing has
 	// been measured - and absent is the one answer the panel renders as nothing
 	// at all, which is what an unmeasured node deserves.
 	if dm != nil {
-		isolating, notice := isolationReport(dm, redisViaWarpProxy)
-		data["isolation"] = isolating
-		if notice != "" {
-			data["isolationNotice"] = notice
-		}
-		// Per-server ingress policy, reported for the same reason: fail-open is
-		// only acceptable while the failing is visible, and a node's log is not
-		// where anyone looks for it.
 		enforced := dm.netPolicyImage != "" && !nodeExternal
 		applied, failures, lastReason, unpublished := dm.netPolicy.snapshot()
 		data["netPolicy"] = enforced
@@ -1618,7 +1577,6 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// key behind for good. The port and storage keys next to it were already
 		// released on this path; this one was missed.
 		forgetDiskLimit(ctx, rdb, cmd.Config.UUID)
-		dm.ReleaseTenant(cmd.Config.UUID)
 		log.Printf("Server %s data fully deleted", cmd.Config.UUID)
 
 	case "delete_sub_server":

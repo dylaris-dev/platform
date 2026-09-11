@@ -202,10 +202,10 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	// column - so on this endpoint those fields were whatever the zero value
 	// is, for every node, always.
 	//
-	// It went unnoticed while nothing on this screen displayed one. Isolation
-	// was the first, and it arrived reading `false` on every node in the fleet:
-	// the badge could only ever say "shared network", including about nodes
-	// that were isolating perfectly well. Enriched here, after the scope filter
+	// It went unnoticed while nothing on this screen displayed one. The first
+	// badge that did arrived reading `false` on every node in the fleet,
+	// including about nodes that reported the opposite. Enriched here, after the
+	// scope filter
 	// so the Redis reads cover only the nodes actually being returned.
 	//
 	// Shared with the infrastructure page and the metrics collector rather than

@@ -334,17 +334,24 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 	if res.LinkSecret != "" && res.LinkDiscoveryProof != "" {
 		setLinkCreds(res.LinkSecret, res.LinkDiscoveryProof, true)
 	}
-	if res.NodeSecret != "" {
+	var secret []byte
+	switch {
+	case res.NodeSecret != "":
 		raw, derr := hex.DecodeString(res.NodeSecret)
 		if derr != nil || len(raw) != 32 {
 			return nil, fmt.Errorf("bad node secret in auth result")
 		}
-		return raw, nil
+		secret = raw
+	case hasCached:
+		secret = cached // Core re-applied ACL for our existing secret
+	default:
+		return nil, fmt.Errorf("no secret returned and none cached")
 	}
-	if hasCached {
-		return cached, nil // Core re-applied ACL for our existing secret
-	}
-	return nil, fmt.Errorf("no secret returned and none cached")
+	// Core's Redis address rides on every auth result, this one included. It is
+	// validated with the secret Core just confirmed, which is the login the
+	// node's own client uses; at a boot that knew no address it is simply taken.
+	noteCoreRedisAddr(ctx, res.RedisAddr, secret)
+	return secret, nil
 }
 
 // redisACLWatchdog re-bootstraps the node's ACL over gRPC when Redis auth is

@@ -68,11 +68,6 @@ export interface Node {
     cpusetCpus?: string;
     publicIp?: string;
     privateIps?: string[];
-    // Per-tenant network isolation, live from the heartbeat. isolationNotice is
-    // set only when there is something to say: it is off and why, or it is on
-    // and servers went onto the shared network anyway.
-    isolation?: boolean;
-    isolationNotice?: string;
     // Per-server ingress policy: whether this node refuses server-to-server
     // traffic nothing allowed, how many of its servers currently carry the
     // rules, and the one sentence worth showing. Undefined means the node has

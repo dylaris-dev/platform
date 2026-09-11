@@ -31,14 +31,6 @@ func TestPickContainerIP(t *testing.T) {
 			want: "10.0.16.9",
 		},
 		{
-			name: "prefers a tenant network",
-			nets: map[string]*network.EndpointSettings{
-				"bridge":                   ep("172.17.0.2"),
-				"dylaris_tenant_owner-abc": ep("172.30.0.3"),
-			},
-			want: "172.30.0.3",
-		},
-		{
 			name: "skips a dylaris endpoint with no IP, uses the next with one",
 			nets: map[string]*network.EndpointSettings{
 				"dylaris_net": ep(""),

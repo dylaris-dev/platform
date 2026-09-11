@@ -324,24 +324,13 @@ type Node struct {
 	// of the node quietly binding ports the host firewall does not allow.
 	PortRange       string `json:"portRange,omitempty"`
 	PortRangeNotice string `json:"portRangeNotice,omitempty"`
-	// Isolation is whether this node puts each tenant's servers on their own
-	// Docker network, and IsolationNotice is the one sentence about it worth
-	// showing - off and why, or on but not holding. Live from the heartbeat,
-	// like everything above: it is a property of the running node, not a
-	// setting, so a persisted copy could only ever be out of date.
-	//
-	// A POINTER, and omitempty, because there are three answers and not two.
-	// nil is "nobody measured": a node from before this field existed, or one
-	// that is not reporting at all. A plain bool made that indistinguishable
-	// from "no isolation" - the panel guards on `=== undefined`, and a
-	// non-pointer bool ships `"isolation": false` for every silent node, so the
-	// guard could never fire and an offline node was labelled shared-network on
-	// the strength of nothing.
-	Isolation       *bool  `json:"isolation,omitempty"`
-	IsolationNotice string `json:"isolationNotice,omitempty"`
 	// NetPolicy is the per-server ingress rule state, live from the heartbeat
 	// exactly like the fields above. nil is "this node has not said", which an
 	// older node and an unreachable one both are.
+	//
+	// A POINTER, and omitempty, because there are three answers and not two: a
+	// plain bool ships `false` for every silent node, and the panel's
+	// `=== undefined` guard could then never fire.
 	NetPolicy        *bool  `json:"netPolicy,omitempty"`
 	NetPolicyServers int    `json:"netPolicyServers,omitempty"`
 	NetPolicyNotice  string `json:"netPolicyNotice,omitempty"`

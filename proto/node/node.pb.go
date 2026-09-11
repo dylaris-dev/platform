@@ -905,8 +905,17 @@ type AuthResult struct {
 	UpdateRequired         string `protobuf:"bytes,9,opt,name=update_required,json=updateRequired,proto3" json:"update_required,omitempty"`                            // human-readable warning, empty when none
 	UpdateRequiredVersion  string `protobuf:"bytes,10,opt,name=update_required_version,json=updateRequiredVersion,proto3" json:"update_required_version,omitempty"`    // the release the node must reach
 	UpdateRequiredDeadline string `protobuf:"bytes,11,opt,name=update_required_deadline,json=updateRequiredDeadline,proto3" json:"update_required_deadline,omitempty"` // RFC3339, empty when immediate
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// The Redis address this node should use: Core's own configured REDIS_ADDR,
+	// verbatim and never resolved to an IP, because the node and its containers
+	// sit on the same overlay as Core and a resolved address could belong to a
+	// network they are not on. Set on every successful auth.
+	//
+	// EMPTY MEANS "Core names none", never "nowhere": the node keeps the address
+	// it already has. Core leaves it empty for an owned (BYON) node, which reaches
+	// Redis through its warp proxy. Field 12 because 6 is taken by assigned_id.
+	RedisAddr     string `protobuf:"bytes,12,opt,name=redis_addr,json=redisAddr,proto3" json:"redis_addr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AuthResult) Reset() {
@@ -1012,6 +1021,13 @@ func (x *AuthResult) GetUpdateRequiredVersion() string {
 func (x *AuthResult) GetUpdateRequiredDeadline() string {
 	if x != nil {
 		return x.UpdateRequiredDeadline
+	}
+	return ""
+}
+
+func (x *AuthResult) GetRedisAddr() string {
+	if x != nil {
+		return x.RedisAddr
 	}
 	return ""
 }
@@ -3162,7 +3178,7 @@ const file_node_node_proto_rawDesc = "" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1b\n" +
 	"\tcpu_cores\x18\x02 \x01(\x05R\bcpuCores\x12\x1b\n" +
 	"\tcpu_model\x18\x03 \x01(\tR\bcpuModel\x12!\n" +
-	"\fmemory_bytes\x18\x04 \x01(\x03R\vmemoryBytes\"\xa0\x03\n" +
+	"\fmemory_bytes\x18\x04 \x01(\x03R\vmemoryBytes\"\xbf\x03\n" +
 	"\n" +
 	"AuthResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x17\n" +
@@ -3180,7 +3196,9 @@ const file_node_node_proto_rawDesc = "" +
 	"\x0fupdate_required\x18\t \x01(\tR\x0eupdateRequired\x126\n" +
 	"\x17update_required_version\x18\n" +
 	" \x01(\tR\x15updateRequiredVersion\x128\n" +
-	"\x18update_required_deadline\x18\v \x01(\tR\x16updateRequiredDeadline\"%\n" +
+	"\x18update_required_deadline\x18\v \x01(\tR\x16updateRequiredDeadline\x12\x1d\n" +
+	"\n" +
+	"redis_addr\x18\f \x01(\tR\tredisAddr\"%\n" +
 	"\rNodeChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"3\n" +
 	"\x15NodeChallengeResponse\x12\x1a\n" +

@@ -675,12 +675,12 @@ func main() {
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
-		GetByToken: func(token string) (int, error) {
+		GetByToken: func(token string) (int, bool, error) {
 			node, err := pgStore.GetNodeByToken(token)
 			if err != nil {
-				return 0, err
+				return 0, false, err
 			}
-			return node.ID, nil
+			return node.ID, node.Kind() == models.NodeKindBYON, nil
 		},
 	}
 	// Per-node Redis-ACL handshake. Runs on every node connect (Redis ACL is
@@ -778,7 +778,11 @@ func main() {
 		Forget:        pgStore.DeleteNodeJoinAttempt,
 		Authenticated: pgStore.SetNodeLastAuthPeerIP,
 	}
-	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret)
+	// Nodes are told the REDIS_ADDR Core was configured with, read raw rather
+	// than as cfg.RedisAddr: unset, that falls back to localhost, which names
+	// Core's own loopback and would send every node to itself. Unset here means
+	// Core names none, and a node keeps the address it has.
+	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret, strings.TrimSpace(os.Getenv("REDIS_ADDR")))
 	if err != nil {
 		log.Fatalf("gRPC server error: %v", err)
 	}

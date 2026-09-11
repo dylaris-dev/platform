@@ -52,10 +52,8 @@ var nodeHopByHop = map[string]bool{
 // loopback on a caller-chosen port, which is exactly the "never an arbitrary
 // host, no SSRF pivot" property the file header claims.
 //
-// This one name is enough in every deployment: without tenant isolation the
-// container sits on dylaris_net with the node, and WITH isolation
-// TenantNetworkManager.connectNode pins the node into each tenant net for
-// exactly this reason ("so mc_<uuid> DNS + RCON/stats work").
+// This one name is enough in every deployment: the container sits on
+// dylaris_net with the node.
 //
 // The address is resolved straight from the Docker daemon (resolveMCAddr ->
 // ResolveMCContainerIP), not Docker DNS, and guarded to a private/link-local IP.

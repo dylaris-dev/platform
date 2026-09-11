@@ -465,7 +465,7 @@ region whose edges are all offline is left untouched.
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `CLUSTER_SECRET` | *(empty)* | For in-cluster | Cluster proof + gRPC TLS pin for in-cluster nodes; must match Core when set. Optional now: a node authenticates to Redis via its gRPC-bootstrapped per-node secret. BYON nodes omit it. |
-| `REDIS_ADDR` | *(none — fatal in-cluster; `127.0.0.1:25571` on an external node)* | In-cluster | Redis/Valkey address. An **external** node with this empty uses warp's local proxy, which holds the real overlay address and refreshes it from Core — that is why the BYON deploy snippet no longer carries one. An in-cluster node still exits if it is missing: there is no warp there, and a silent loopback default would hide the misconfiguration. |
+| `REDIS_ADDR` | *(Core's answer on a node holding `CLUSTER_SECRET`; `127.0.0.1:25571` on an external node)* | Without `CLUSTER_SECRET`, unless external | A node holding `CLUSTER_SECRET` needs it only as an override: it is told Core's own `REDIS_ADDR` on every auth, caches it in `.redis_addr` in its first storage path and boots from that file when Core is unreachable. A different answer from Core is validated with the node's own credentials before it replaces the current address. Order at boot: the cached file, then this variable, then Core; an unreachable Core is retried, a missing `CORE_GRPC_ADDR` is fatal, and so is Core answering without an address. A node **without** `CLUSTER_SECRET` (BYON) never caches or follows Core: it uses this variable when set - the escape hatch for a port collision - and otherwise, on an **external** node, warp's local proxy, which holds the real overlay address and refreshes it from Core; with neither it exits. MC containers and the Link are given the node's address (or the per-network bridge gateway on the warp proxy). |
 | `NODE_ID` | *(hostname)* | No | Unique id for this Node. In Swarm, templated from the hostname. Falls back to OS hostname. |
 | `NODE_TAGS` | *(empty)* | No | Comma-separated placement tags (e.g. `eu,fast`). The tag `external` flags a home/external node. |
 | `NODE_REGION` | *(empty)* | No | Region this Node belongs to. |
@@ -478,8 +478,6 @@ region whose edges are all offline is left untouched.
 | `GRPC_TLS_FINGERPRINT` | *(empty)* | No | Pins the Core control-channel cert fingerprint for a BYON node that does NOT hold `CLUSTER_SECRET` (in-cluster nodes derive it from `CLUSTER_SECRET` and leave this empty). Public pinning material, delivered out-of-band at enroll time. |
 | `NODE_ENROLL_TOKEN` | *(empty)* | For BYON | One-time enroll token (minted in the panel) that binds a new BYON node to its tenant on first pairing. Not needed by a node that holds `CLUSTER_SECRET` — it self-enrolls via its cluster proof. |
 | `NODE_RECOVERY_TOKEN` | *(empty)* | For recovery | Single-use, admin-minted token (Settings → Nodes → Reset pairing) to re-pair a node under its EXISTING identity after its secret was reset. Not needed on a normal boot. |
-| `SIDECAR_REDIS_ADDR` | *(none - the node refuses to start without it, except on the warp proxy)* | **Yes** | Redis address handed to MC containers and the Link sidecar, which can't resolve Swarm overlay DNS. Set to the leader node's private IP in Swarm. It used to fall back to `REDIS_ADDR`, which is the node's own address and works right up until a container leaves the shared network - and it is also what decides whether per-tenant network isolation is available, so the setting that governs isolation was one nobody had to make. An IP or a dotted name makes isolation available; a bare single-label name keeps every server on the shared network, and Settings -> Nodes says which you got. On the warp proxy it stays optional and empty means "resolve per network": the node is host-networked and those containers are not, so `127.0.0.1` would be their own loopback. It then resolves to the bridge gateway of the network each container joins, where warp also listens (`PROXY_BIND_DOCKER_BRIDGES=true`). |
-| `SIDECAR_REDIS_DB` | *(falls back to `REDIS_DB`)* | No | Redis DB index for MC containers. |
 | `PORT_RANGE` | `25600-25699` | No | Host port range for MC servers (`ip_port`/`both`) as `START-END`. Validated: a malformed or inverted range falls back to the default in full (never half-applied) and the reason is shown on the node card in Infrastructure. Replaces the removed `PORT_RANGE_START`/`PORT_RANGE_END`. |
 | `SFTP_PORT` | `25520` | No | SFTP server port (file access `sftp`/`both`). |
 | `BEAM_GRPC_PORT` | `25521` | No | Beam file-transfer gRPC server port. |
@@ -498,8 +496,7 @@ region whose edges are all offline is left untouched.
 A node started with `--network host` (typical for a standalone BYON node with no
 Swarm overlay) behaves differently: it creates a LOCAL `dylaris_net` bridge for
 its MC containers when no overlay is found (a non-host-net node instead treats a
-missing overlay as a hard error), per-tenant network isolation is disabled (MC
-servers all stay on that shared local network), MC container addresses are
+missing overlay as a hard error), MC container addresses are
 resolved via Docker inspect instead of Docker DNS (which a host-net container
 cannot use), and disk quotas degrade to a `du`-based usage estimate instead of
 enforced project quotas.
@@ -510,10 +507,8 @@ A `STORAGE_PATHS` entry must be backed by a filesystem that belongs to exactly
 one node. Pointing several nodes at one NAS share or one host directory is an
 unsupported topology, and the reason is not that migrations are fragile:
 
-- **Node identity lives in the first storage path.** `.node_secret`, `.node_id`
-  and `.tenant_networks.json` all sit there, so two nodes overwrite each other's
-  identity. The tenant-network allocator writes the whole file without a lock and
-  will hand the same subnet to two different owners.
+- **Node identity lives in the first storage path.** `.node_secret` and
+  `.node_id` both sit there, so two nodes overwrite each other's identity.
 - **A migration between two such nodes destroys the server.** The target extracts
   the archive over the live directory, and the source's cleanup then deletes the
   running server's data. Open file descriptors keep it alive until the next

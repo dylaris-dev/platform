@@ -368,54 +368,6 @@ export function nodeActionClass(active: boolean, needsAttention: boolean): strin
     return `${base} text-(--base-06) hover:text-(--accent-light)`;
 }
 
-// ── Network isolation ─────────────────────────────────────────────────
-//
-// Whether this node puts each tenant's servers on their own Docker network.
-// It existed only as one line in the node's log at boot - on a machine whose
-// logs die with the container, answering a question that gets asked here.
-//
-// Three states, and the third is the reason this is a component rather than a
-// conditional badge: isolation can be ON and a server still be on the shared
-// network, because a full pool, the /24 ceiling, an unreadable allocator file
-// or any Docker error all fall back so the server still starts. "Enabled" and
-// "holding" are different facts and used to look identical.
-//
-// UNDEFINED is not "off". A node from before this release reports no isolation
-// field at all, and rendering that as "shared network" would state something
-// nobody measured. It renders nothing.
-function IsolationBadge({ node }: { node: Node }) {
-    if (node.isolation === undefined) return null;
-
-    if (node.isolation === false) {
-        return (
-            <span
-                className="badge badge-neutral inline-flex items-center gap-1"
-                title={node.isolationNotice || 'Servers on this node share one Docker network.'}
-            >
-                <Network size={11} />
-                Shared network
-            </span>
-        );
-    }
-    if (node.isolationNotice) {
-        return (
-            <span className="badge badge-warning inline-flex items-center gap-1" title={node.isolationNotice}>
-                <AlertTriangle size={11} />
-                Isolation not holding
-            </span>
-        );
-    }
-    return (
-        <span
-            className="badge badge-success inline-flex items-center gap-1"
-            title="Each tenant's servers are on their own Docker network."
-        >
-            <Network size={11} />
-            Isolated
-        </span>
-    );
-}
-
 // ── Per-server network policy ─────────────────────────────────────────
 //
 // Whether this node refuses traffic between two game servers that nothing
@@ -694,7 +646,6 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     {node.tags && node.tags.split(',').map(t => t.trim()).includes('external') && (
                         <span className="badge badge-accent" title="External / home node — forces gateway+beam">external</span>
                     )}
-                    <IsolationBadge node={node} />
                     <NetPolicyBadge node={node} />
                     {node.needsConfiguration && (
                         <span

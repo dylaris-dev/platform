@@ -18,11 +18,9 @@ import (
 // STORAGE_PATHS are backed by the same filesystem (a hoster putting five nodes
 // on one NAS share).
 //
-// It is not merely fragile there, it cannot work at all. `.node_secret`,
-// `.node_id` and `.tenant_networks.json` all live in the first storage path, so
-// two nodes overwrite each other's identity; the tenant allocator does a lockless
-// whole-file write and hands the same subnet to two owners; and the scheduler
-// counts one 10 TB share once per node. The migration guard already refuses the
+// It is not merely fragile there, it cannot work at all. `.node_secret` and
+// `.node_id` both live in the first storage path, so two nodes overwrite each
+// other's identity; and the scheduler counts one 10 TB share once per node. The migration guard already refuses the
 // data-destroying case (see migration_commands.go), but a refused migration is a
 // symptom. This says what is actually wrong, before anything is migrated.
 //

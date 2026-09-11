@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -72,4 +73,66 @@ func reservedSubnets(dockerSubnets []*net.IPNet, routeTable string, hostNet bool
 		used = append(used, parseCIDRs([]string{"10.0.0.0/8"})...)
 	}
 	return used
+}
+
+// privatePools are the private ranges nextFreeSubnet draws blocks from, in
+// order: 10/8 first (largest), then 172.16/12 and 192.168/16.
+func privatePools() []*net.IPNet {
+	out := make([]*net.IPNet, 0, 3)
+	for _, c := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		_, n, _ := net.ParseCIDR(c) // literals: err is always nil
+		out = append(out, n)
+	}
+	return out
+}
+
+// cidrsOverlap reports whether two IPv4 CIDR ranges share any address.
+func cidrsOverlap(a, b *net.IPNet) bool {
+	return a.Contains(b.IP) || b.Contains(a.IP)
+}
+
+// parseCIDRs parses CIDR strings, skipping empties and non-IPv4/unparseable
+// entries (a Docker network without an IPAM subnet yields "").
+func parseCIDRs(cidrs []string) []*net.IPNet {
+	out := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(c)
+		if err != nil || n.IP.To4() == nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// nextFreeSubnet scans privatePools in order and returns the first subnet of the
+// given prefix length not overlapping any subnet in used. Errors when exhausted.
+func nextFreeSubnet(used []*net.IPNet, prefixLen int) (*net.IPNet, error) {
+	step := uint32(1) << (32 - prefixLen)
+	mask := net.CIDRMask(prefixLen, 32)
+	for _, pool := range privatePools() {
+		poolStart := binary.BigEndian.Uint32(pool.IP.To4())
+		poolOnes, _ := pool.Mask.Size()
+		poolEnd := poolStart + (uint32(1) << (32 - poolOnes)) // exclusive
+		for base := poolStart; base >= poolStart && base+step <= poolEnd; base += step {
+			ipBytes := make(net.IP, 4)
+			binary.BigEndian.PutUint32(ipBytes, base)
+			cand := &net.IPNet{IP: ipBytes, Mask: mask}
+			overlap := false
+			for _, u := range used {
+				if cidrsOverlap(cand, u) {
+					overlap = true
+					break
+				}
+			}
+			if !overlap {
+				return cand, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no free /%d block in the private pools", prefixLen)
 }

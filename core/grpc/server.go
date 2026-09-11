@@ -154,19 +154,22 @@ func (f *JoinAttemptFuncs) RecordAuthenticated(id int, ip string) error {
 type Node struct {
 	ID    int
 	Token string
+	// Owned is a BYON node (owner_id set). It decides whether the node is told
+	// Core's Redis address: an owned node reaches Redis through its warp proxy.
+	Owned bool
 }
 
 // StoreAdapter wraps any store that has GetNodeByToken returning *models.Node.
 type StoreAdapter struct {
-	GetByToken func(token string) (id int, err error)
+	GetByToken func(token string) (id int, owned bool, err error)
 }
 
 func (a *StoreAdapter) GetNodeByToken(token string) (*Node, error) {
-	id, err := a.GetByToken(token)
+	id, owned, err := a.GetByToken(token)
 	if err != nil {
 		return nil, err
 	}
-	return &Node{ID: id, Token: token}, nil
+	return &Node{ID: id, Token: token, Owned: owned}, nil
 }
 
 // Server implements the NodeService gRPC server.
@@ -183,12 +186,30 @@ type Server struct {
 	// update. Set after construction rather than as an eighth positional
 	// argument; nil means neither, which is what every test wants.
 	updateGate *UpdateGate
+	// redisAddr is Core's own configured REDIS_ADDR, handed to every node that
+	// authenticates so the node no longer has to be configured with one. Empty
+	// names none, which a node reads as "keep what you have".
+	redisAddr string
 }
 
 // SetUpdateGate installs the mandatory-update policy. Separate from NewServer so
 // the seven-argument constructor does not grow an eighth, and so a test server
 // is silent about updates unless it asks not to be.
 func (s *Server) SetUpdateGate(g *UpdateGate) { s.updateGate = g }
+
+// SetRedisAddr installs the Redis address nodes are told. Separate from
+// NewServer for the same reason as SetUpdateGate.
+func (s *Server) SetRedisAddr(addr string) { s.redisAddr = addr }
+
+// redisAddrFor is the address a node is told. An owned node is told nothing: it
+// reaches Redis through its warp proxy, and an internal service name means
+// nothing on a customer's machine.
+func (s *Server) redisAddrFor(owned bool) string {
+	if owned {
+		return ""
+	}
+	return s.redisAddr
+}
 
 // NewServer creates a new gRPC server for Node connections.
 func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, joins JoinAttemptRecorder) *Server {
@@ -404,8 +425,12 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					log.Printf("acl: node %d (%s): consume one-shot join slot: %v", id, tokenPrefix(assignedID), cerr)
 				}
 			}
-			node = &Node{ID: id, Token: assignedID}
-			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID}
+			// The enroll token is the only door that produces an owned node (see
+			// the switch above); the cluster proof always produces a platform one.
+			owned := auth.EnrollToken != ""
+			node = &Node{ID: id, Token: assignedID, Owned: owned}
+			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID,
+				RedisAddr: s.redisAddrFor(owned)}
 			applyUpdateWarning(ar, verdict)
 			if s.linkCreds != nil {
 				ar.LinkSecret = s.linkCreds.LinkToken(assignedID)
@@ -496,7 +521,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail("acl provision failed")
 				return fmt.Errorf("acl: provision failed for node %d: %w", node.ID, perr)
 			}
-			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true}
+			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, RedisAddr: s.redisAddrFor(node.Owned)}
 			applyUpdateWarning(res, verdict)
 			if !hasSecret {
 				// First-time issue for this known node (feature newly enabled, or
@@ -577,7 +602,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 // stream was severed by process exit instead of drained. Bind errors are
 // returned synchronously rather than raised from inside a goroutine, so a port
 // clash now fails the caller's boot sequence at a defined point.
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, joins JoinAttemptRecorder, tlsEnabled bool, clusterSecret string) (*grpc.Server, error) {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, joins JoinAttemptRecorder, tlsEnabled bool, clusterSecret, redisAddr string) (*grpc.Server, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -622,6 +647,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 	// The mandatory-update policy is installed for the REAL server only. Tests
 	// construct Server directly and stay silent about updates unless they ask.
 	srv.SetUpdateGate(NewUpdateGate())
+	srv.SetRedisAddr(redisAddr)
 	pb.RegisterNodeServiceServer(grpcServer, srv)
 
 	log.Printf("gRPC: NodeService listening on :%d", port)

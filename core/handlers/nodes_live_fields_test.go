@@ -14,11 +14,11 @@ import (
 // so on any endpoint that does not enrich, every one of them is the zero value
 // for every node - and nothing errors, because a zero is a legal answer.
 //
-// It stayed invisible while no screen rendered one. The isolation badge was the
-// first, and it shipped reading `false` on every node in the fleet: Settings ->
-// Nodes calls GET /api/nodes, which returned rows straight from the database,
-// so the badge could only ever say "shared network" - including about nodes
-// that were isolating perfectly well.
+// It stayed invisible while no screen rendered one. The first badge that did
+// shipped reading `false` on every node in the fleet: Settings -> Nodes calls
+// GET /api/nodes, which returned rows straight from the database, so the badge
+// could only ever show the zero value - including about nodes that reported
+// the opposite.
 //
 // The test is on the SOURCE because the defect is a missing call, not a wrong
 // value: there is nothing to assert on the output of a handler that never asked
@@ -41,7 +41,7 @@ func TestEveryNodeListEndpointEnrichesFromTheHeartbeat(t *testing.T) {
 			}
 			if !strings.Contains(body, "EnrichNodesWithLiveStats") {
 				t.Errorf("%s returns nodes without enriching them: every heartbeat field "+
-					"(isolation, cpuUsage, ramTotal, linkCount, portRange, sharedStorage) "+
+					"(netPolicy, cpuUsage, ramTotal, linkCount, portRange, sharedStorage) "+
 					"reaches the panel as its zero value", site.fn)
 			}
 		})
@@ -66,32 +66,32 @@ func funcBody(t *testing.T, file, fn string) string {
 
 // nil is a third answer and has to stay absent on the wire.
 //
-// The panel guards on `node.isolation === undefined` so a node nobody has heard
-// from renders no badge at all. A non-pointer bool defeated that guard by
-// construction: encoding/json writes `"isolation": false` for every node
-// without a heartbeat, and the panel then stated "shared network" about a
+// The panel guards on `node.netPolicy === undefined` so a node nobody has heard
+// from renders no badge at all. A non-pointer bool defeats that guard by
+// construction: encoding/json writes `"netPolicy": false` for every node
+// without a heartbeat, and the panel would then state something about a
 // machine that had reported nothing.
-func TestUnmeasuredIsolationIsAbsentFromTheJSON(t *testing.T) {
+func TestUnmeasuredNetPolicyIsAbsentFromTheJSON(t *testing.T) {
 	silent, err := json.Marshal(models.Node{ID: 1, Name: "no-heartbeat"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(silent), "isolation") {
-		t.Errorf("a node with no heartbeat carries an isolation field: %s", silent)
+	if strings.Contains(string(silent), "netPolicy") {
+		t.Errorf("a node with no heartbeat carries a netPolicy field: %s", silent)
 	}
 
 	for _, measured := range []bool{true, false} {
-		b, err := json.Marshal(models.Node{ID: 1, Isolation: &measured})
+		b, err := json.Marshal(models.Node{ID: 1, NetPolicy: &measured})
 		if err != nil {
 			t.Fatal(err)
 		}
 		var back struct {
-			Isolation *bool `json:"isolation"`
+			NetPolicy *bool `json:"netPolicy"`
 		}
 		if err := json.Unmarshal(b, &back); err != nil {
 			t.Fatal(err)
 		}
-		if back.Isolation == nil || *back.Isolation != measured {
+		if back.NetPolicy == nil || *back.NetPolicy != measured {
 			t.Errorf("measured %v did not survive the round trip: %s", measured, b)
 		}
 	}

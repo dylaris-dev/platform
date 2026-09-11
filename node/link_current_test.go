@@ -123,13 +123,13 @@ func TestLinkIsCurrentRecreates(t *testing.T) {
 // compared, and a Link would keep running with a stale value of it - silently,
 // which is the failure mode this whole block is about.
 func TestLinkEnvKeysMatchBuildLinkEnv(t *testing.T) {
-	origMCRedisDB, origNodeSecret := mcRedisDB, nodeSecret
+	origRedisDB, origNodeSecret := redisDB, nodeSecret
 	origClusterSecret, origNodeExternal := clusterSecret, nodeExternal
 	t.Cleanup(func() {
-		mcRedisDB, nodeSecret = origMCRedisDB, origNodeSecret
+		redisDB, nodeSecret = origRedisDB, origNodeSecret
 		clusterSecret, nodeExternal = origClusterSecret, origNodeExternal
 	})
-	mcRedisDB = "0"
+	redisDB = 0
 	nodeSecret = []byte("unit-test-secret-for-link-env-keys")
 	clusterSecret = "unit-test-cluster-secret"
 	nodeExternal = false

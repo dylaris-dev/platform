@@ -302,6 +302,11 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	if authResult.LinkSecret != "" && authResult.LinkDiscoveryProof != "" {
 		setLinkCreds(authResult.LinkSecret, authResult.LinkDiscoveryProof, true)
 	}
+	// Core's Redis address rides on every auth result. Off this goroutine: a
+	// different answer is validated against Redis first, and the read loop below
+	// must not wait on that. Every Core replica sends it, and a repeat of the
+	// current address is a no-op.
+	go noteCoreRedisAddr(parentCtx, authResult.RedisAddr, getNodeSecret())
 
 	// Register connection
 	cc := &coreConnection{conn: conn, stream: stream, cancel: cancel, handler: m.handler}

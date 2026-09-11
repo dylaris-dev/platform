@@ -73,23 +73,14 @@ func TestResolveNodeAddrUsesTheGivenPort(t *testing.T) {
 // 127.0.0.1 is their own. This is the case that made the first design fail.
 func TestResolveSidecarRedisAddr(t *testing.T) {
 	tests := []struct {
-		name       string
-		sidecarEnv string
-		nodeAddr   string
-		viaProxy   bool
-		gateway    string
-		want       string
+		name     string
+		nodeAddr string
+		viaProxy bool
+		gateway  string
+		want     string
 	}{
 		{
-			name:       "explicit SIDECAR_REDIS_ADDR always wins",
-			sidecarEnv: "10.20.0.5:6379",
-			nodeAddr:   "127.0.0.1:25571",
-			viaProxy:   true,
-			gateway:    "172.18.0.1",
-			want:       "10.20.0.5:6379",
-		},
-		{
-			name:     "no proxy: unchanged fallback to the node's own address",
+			name:     "no proxy: the node's own address",
 			nodeAddr: "10.20.0.5:6379",
 			viaProxy: false,
 			want:     "10.20.0.5:6379",
@@ -113,24 +104,10 @@ func TestResolveSidecarRedisAddr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveSidecarRedisAddr(tt.sidecarEnv, tt.nodeAddr, tt.viaProxy, tt.gateway)
+			got := resolveSidecarRedisAddr(tt.nodeAddr, tt.viaProxy, tt.gateway)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-// Startup calls this with no gateway, so the global stays empty in proxy mode
-// and the per-network answer is resolved at container-create time instead.
-// tenantIsolationEnabled is derived from that same empty value, which is why
-// isolation cannot silently strand a container on the wrong address.
-func TestProxyModeLeavesTheStartupSidecarAddrEmpty(t *testing.T) {
-	got := resolveSidecarRedisAddr("", "127.0.0.1:25571", true, "")
-	if got != "" {
-		t.Fatalf("got %q, want empty", got)
-	}
-	if redisAddrIsolationSafe(got) {
-		t.Error("an empty address must not enable tenant isolation")
 	}
 }
