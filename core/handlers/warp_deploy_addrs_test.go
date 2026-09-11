@@ -1,12 +1,52 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"dylaris-core/services"
 )
+
+// Every node kit shown without a fresh enroll token reads Core's gRPC pin from
+// here. It follows GRPC_TLS_ENABLED exactly as the enroll-token answer does: the
+// pin while TLS is on, "" while the channel is plaintext - which the panel writes
+// as GRPC_TLS_ENABLED "false", so a pin shown while TLS is off would be as wrong
+// as none while it is on. The field is always present: the panel reads a missing
+// one as "not known", never as plaintext.
+func TestGetDeployConfigCarriesTheGRPCPinOnlyWhileTLSIsOn(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		want    string
+	}{
+		{"TLS on", true, "ab12cd34"},
+		{"TLS off", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewWarpHandler(&AppState{GRPCTLSEnabled: tc.enabled, GRPCTLSFingerprint: "ab12cd34"}, nil)
+			rec := httptest.NewRecorder()
+			h.GetDeployConfig(rec, httptest.NewRequest(http.MethodGet, "/api/warp/deploy-config", nil))
+
+			var body struct {
+				Config map[string]any `json:"config"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode %q: %v", rec.Body.String(), err)
+			}
+			got, ok := body.Config["grpcTlsFingerprint"]
+			if !ok {
+				t.Fatalf("the config carries no grpcTlsFingerprint: %s", rec.Body.String())
+			}
+			if got != tc.want {
+				t.Errorf("grpcTlsFingerprint = %v, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // The whole point of resolving Redis here is that a warp spoke has no DNS into
 // the cluster: handing it Core's own "redis:6379" produces a proxy that opens,

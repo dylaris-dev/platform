@@ -12,7 +12,7 @@ import {
 } from '@/lib/api/types';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS,
+    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
 } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -738,6 +738,7 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
         // The saved setting wins; Core's detected value is the fallback, so a
         // snippet is complete even before anyone visits Overlay Segmentation.
         tunnelSubnets: tunnelSubnets || config?.tunnelSubnets || '',
+        grpcTlsFingerprint: kitGrpcTlsFingerprint(undefined, config),
         nodeId: nodeIdFromLabel(name),
         platform,
     };

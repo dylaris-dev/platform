@@ -20,12 +20,22 @@ import (
 // "redis:6379" produces a proxy that never resolves anything.
 
 // DeployConfig is what a BYON or route-only deploy snippet still needs from
-// Core. Only the tunnel subnets: the two overlay addresses used to be here too,
-// and now go to the machine's warp instead, which proxies them. An empty field
-// means "could not be determined here" and the panel keeps showing its
-// placeholder rather than a plausible wrong value.
+// Core: the tunnel subnets and the pin for Core's control channel. The two
+// overlay addresses used to be here too, and now go to the machine's warp
+// instead, which proxies them. An empty TunnelSubnets means "could not be
+// determined here" and the panel keeps showing its placeholder rather than a
+// plausible wrong value.
 type DeployConfig struct {
 	TunnelSubnets string `json:"tunnelSubnets"`
+	// GRPCTLSFingerprint is Core's gRPC certificate fingerprint while
+	// GRPC_TLS_ENABLED is on and "" while the channel is plaintext - the same
+	// value, under the same rule, as the enroll-token answer. Every kit shown
+	// WITHOUT a fresh enroll token (Update this machine, Deploy file, a rolled
+	// key, the operator's deploy dialog) had nowhere else to read it, so it wrote
+	// GRPC_TLS_ENABLED "false" against a TLS Core and a node deployed from it
+	// lost its control channel. "" cannot mean "TLS on, pin unknown": the gRPC
+	// server derives the very certificate this hashes, or does not start.
+	GRPCTLSFingerprint string `json:"grpcTlsFingerprint"`
 	// There is deliberately no cnameTarget here any more. It carried
 	// gateway_cname_target verbatim, which is a LABEL ("route") and not a name,
 	// and its single reader printed it to the customer as the record to create.
@@ -148,9 +158,13 @@ func overlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
 	return coreAddr, redisAddr
 }
 
-// deployConfig answers with the tunnel subnets for a deploy snippet.
+// deployConfig answers with the tunnel subnets and the gRPC pin for a deploy
+// snippet.
 func (s *AppState) deployConfig() DeployConfig {
 	var out DeployConfig
+	if s != nil && s.GRPCTLSEnabled {
+		out.GRPCTLSFingerprint = s.GRPCTLSFingerprint
+	}
 	if s != nil && s.Store != nil {
 		v, _ := s.Store.GetSetting("warp_tunnel_subnets")
 		out.TunnelSubnets = strings.TrimSpace(v)
@@ -170,7 +184,9 @@ func (s *AppState) deployConfig() DeployConfig {
 // Deliberately not admin-only: the tenant who mints a BYON key on /nodes is the
 // one who needs this, and withholding it would only mean handing it over by
 // email instead. It is an RFC1918 CIDR for an overlay nobody reaches without
-// their own authenticated warp key, so it authorizes nothing on its own.
+// their own authenticated warp key, and the hash of a certificate every client
+// of the gRPC port is shown in its handshake, so it authorizes nothing on its
+// own.
 func (h *WarpHandler) GetDeployConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

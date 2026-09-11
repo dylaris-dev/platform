@@ -28,10 +28,11 @@ export type WarpDeployInput = {
     /** Single-use node enroll token, when the operator has one. */
     nodeEnrollToken?: string;
     /**
-     * Core's gRPC certificate fingerprint, returned when minting the enroll
-     * token. Core sends it ONLY when GRPC_TLS_ENABLED is on, so its presence is
-     * the signal to turn TLS on for the node too - the two must match or the
-     * node cannot reach Core at all.
+     * Core's gRPC certificate fingerprint, from the enroll-token answer or the
+     * deploy config (see kitGrpcTlsFingerprint). Core sends a value ONLY when
+     * GRPC_TLS_ENABLED is on, so a value turns TLS on for the node too and ""
+     * says plaintext - the two must match or the node cannot reach Core at all.
+     * undefined means not known yet, which is neither.
      */
     grpcTlsFingerprint?: string;
     /** Stable id for the machine. */
@@ -96,23 +97,35 @@ function or(value: string | undefined, placeholder: string): string {
 }
 
 /**
- * The node's half of the Core gRPC pin. ALWAYS emitted, in one of two shapes.
+ * The node's half of the Core gRPC pin. ALWAYS emitted, in one of three shapes.
  *
  * Core returns a fingerprint exclusively while GRPC_TLS_ENABLED is on, so a
  * value here means the control channel IS TLS and the node must match it. It
  * does not verify the hostname - it compares this fingerprint - which is also
  * why warp's local proxy in front of it changes nothing.
  *
- * The no-fingerprint case must be written out rather than left off, because the
+ * The plaintext case ("") must be written out rather than left off, because the
  * node now defaults GRPC_TLS_ENABLED to TRUE. Omitting the line used to mean
  * "plaintext, same as Core"; with the default flipped it means "TLS, and no pin
  * to verify it with", which is a boot-time fatal on a BYON machine that holds no
  * CLUSTER_SECRET. Saying false explicitly keeps the snippet a complete
  * description of what the node should do instead of one that leans on a default
  * that has since changed underneath it.
+ *
+ * Not known (undefined) is a placeholder, never false: false against a TLS Core
+ * is a node that dials plaintext and never reaches it. The placeholder is not a
+ * boolean, so a node started with it keeps its TLS default and stops at boot
+ * saying it has no pin - loud, where false fails quietly.
  */
 function grpcTlsLines(fingerprint: string | undefined): string {
-    const fp = (fingerprint ?? '').trim();
+    if (fingerprint === undefined) {
+        return `      # EDIT - this page could not load whether our control channel runs TLS.
+      # Reload it before you deploy; the file then fills this in.
+      GRPC_TLS_ENABLED: "<reload this page>"
+
+`;
+    }
+    const fp = fingerprint.trim();
     if (fp === '') {
         return `      # keep - this platform runs the control channel in plaintext, and the
       # node defaults to TLS, so the opt-out has to be explicit.
@@ -126,6 +139,20 @@ function grpcTlsLines(fingerprint: string | undefined): string {
       GRPC_TLS_FINGERPRINT: "${fp}"
 
 `;
+}
+
+/**
+ * The fingerprint a node kit is written with. One handed over with a fresh
+ * enroll token wins; every other kit (Update this machine, Deploy file, a rolled
+ * key, the operator's deploy dialog) reads Core's deploy config. Those kits used
+ * to get nothing at all and wrote plaintext against a TLS Core. undefined while
+ * the config has not loaded, which grpcTlsLines writes as a placeholder.
+ */
+export function kitGrpcTlsFingerprint(
+    explicit: string | undefined,
+    config: { grpcTlsFingerprint?: string } | null | undefined,
+): string | undefined {
+    return explicit ?? config?.grpcTlsFingerprint;
 }
 
 /**

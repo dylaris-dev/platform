@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon } from 'lucide-react';
 import {
     nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE,
+    DEPLOY_PORTAINER_NOTE, kitGrpcTlsFingerprint,
 } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -170,7 +170,7 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
         apiKey: warpKey ?? '<your-warp-key>',
         enrollUrl,
         nodeEnrollToken,
-        grpcTlsFingerprint,
+        grpcTlsFingerprint: kitGrpcTlsFingerprint(grpcTlsFingerprint, config),
         nodeId,
         platform,
         // Undetermined values stay undefined so the snippet keeps its

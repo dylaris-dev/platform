@@ -695,8 +695,9 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// First issuance, or re-pairing under the identity Core already
 				// has: a row with no secret yet, a key row whose key an operator
 				// rejected, or a key row the node now presents a DIFFERENT proven
-				// key for. The same row either way - the node keeps its id, its
-				// servers and its Redis users.
+				// key for (that last one only through an admission, see (1)). The
+				// same row either way - the node keeps its id, its servers and its
+				// Redis users.
 				if key != nil && len(presented) == 0 {
 					recordRefusal("this node logs in with a key and presented none: its image predates keys, or it could not read its .node_key")
 					sendFail("this node logs in with a key and presented none. Run a current image with its .node_key in place " +
@@ -730,7 +731,21 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// stored service secret and its server commands, and shut the real
 				// node out. An owned row re-pairs only through an admission armed in
 				// the panel.
-				clusterProof := !node.Owned && s.acl.VerifyClusterProof(node.Token, auth.ClusterProof)
+				//
+				// And it never overrides a live login credential. It counts only for
+				// a row that holds no key (Reset pairing, Roll key or an approval
+				// moved it aside) and, if the row never had one, no secret either -
+				// the rule from before keys, when a row holding a secret wanted the
+				// HMAC of it and the cluster proof counted only for a row without
+				// one. A node's token is close to public (hub:node-link:<token>,
+				// beam:node:<token>, GET /api/nodes), so a cluster proof that
+				// replaced a LIVE key would make CLUSTER_SECRET alone a login as
+				// every keyed platform node, handing out its stored service secret.
+				// A platform node that lost its .node_key therefore comes back
+				// through an operator: Roll key or Admit moves the key aside and
+				// keeps the secret, and the cluster proof then re-pairs it.
+				noLiveLogin := key == nil && (rejected != nil || !hasSecret)
+				clusterProof := !node.Owned && noLiveLogin && s.acl.VerifyClusterProof(node.Token, auth.ClusterProof)
 				if !clusterProof {
 					admitted := false
 					if s.joins != nil {
@@ -743,14 +758,20 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					}
 					if !admitted {
 						reason := "waiting to be admitted: no cluster secret and no approval"
+						fail := "this node is not admitted; approve it in Settings -> Nodes"
 						switch {
 						case node.Owned && auth.ClusterProof != "":
 							reason = "a cluster proof was presented for a customer's node, which re-pairs only through an admission"
+						case key != nil && !node.Owned:
+							reason = "the node presents a different key than the live one Core holds for it, and only an operator replaces a live key. " +
+								"If it lost its .node_key, use Roll key in Settings -> Nodes or Admit it here: it keeps its secret and its game servers"
+							fail = "this node presents a different key than the live one Core holds for it, and only an operator replaces a live key: " +
+								"Roll key in Settings -> Nodes, or Admit under Connection attempts"
 						case key != nil:
 							reason = "the node presents a different key than Core holds for it"
 						}
 						recordRefusal(reason)
-						sendFail("this node is not admitted; approve it in Settings -> Nodes")
+						sendFail(fail)
 						return fmt.Errorf("acl: node %d first-issuance without cluster proof or panel admission", node.ID)
 					}
 				}

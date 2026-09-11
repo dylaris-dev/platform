@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 
 	"dylaris-core/services/redisacl"
@@ -330,10 +331,12 @@ func TestAnOperatorActionDuringTheLoginWins(t *testing.T) {
 		}
 	})
 
-	// The same last check covers a key the re-pair branch has just stored.
+	// The same last check covers a key the re-pair branch has just stored. The
+	// row starts with its key moved aside: a live key is never re-paired by a
+	// cluster proof, so this is the only state that reaches the store.
 	t.Run("roll key right after a re-pair stored its key", func(t *testing.T) {
 		old, fresh := newKey(t), newKey(t)
-		acl := &keyedACL{secret: rowSecret, key: pubOf(old), clusterOK: true, afterStore: rollKey}
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(old), clusterOK: true, afterStore: rollKey}
 		n := nodeWith(pubOf(fresh), nil, fresh)
 		if err := dial(t, known, acl, &recordingJoins{}, n); err == nil {
 			t.Fatal("the re-pair survived the Roll")
@@ -565,33 +568,92 @@ func TestAKeyNodeWithoutItsSecretIsHandedTheStoredOne(t *testing.T) {
 	}
 }
 
-// Re-pairing under the existing identity: a platform node with a new key and
-// the cluster proof gets the key replaced on the row Core already has. No new
-// row, no new identity, the same secret.
-func TestAClusterProofReplacesTheKeyOnTheSameRow(t *testing.T) {
+// A cluster proof never overrides a live login credential. A node's token is
+// close to public, so a cluster proof that replaced a LIVE key would make
+// CLUSTER_SECRET alone a login as every keyed platform node - handed its stored
+// service secret and its server commands. The refusal is recorded and names the
+// remedy, because a platform node that lost its .node_key lands exactly here.
+func TestAClusterProofNeverReplacesALiveKey(t *testing.T) {
 	old, fresh := newKey(t), newKey(t)
 	acl := &keyedACL{secret: rowSecret, key: pubOf(old), clusterOK: true}
+	joins := &recordingJoins{}
 	n := nodeWith(pubOf(fresh), nil, fresh)
+	n.auth.ClusterProof = "a-valid-cluster-proof"
 
-	if err := dial(t, known, acl, &recordingJoins{}, n); err != nil {
-		t.Fatalf("refused: %v", err)
-	}
+	err := dial(t, known, acl, joins, n)
 	res := n.result()
-	if acl.platformEnrolls+acl.enrolls != 0 || res.AssignedId != "" {
-		t.Errorf("created %d row(s), assigned %q; want the existing row and identity", acl.platformEnrolls+acl.enrolls, res.AssignedId)
+	t.Logf("err=%v ok=%v handed=%q rowKeyNow=%x registered=%v", err, res.GetOk(), res.GetNodeSecret(), acl.key, n.registered)
+	if err == nil || res == nil || res.Ok {
+		t.Fatal("a cluster proof replaced a live key")
 	}
-	if len(acl.stored) != 1 || acl.storedFor[0] != 42 || !bytes.Equal(acl.key, pubOf(fresh)) {
-		t.Errorf("stored %v on %v, want the new key on node 42", acl.stored, acl.storedFor)
+	if res.NodeSecret != "" {
+		t.Errorf("handed out %q", res.NodeSecret)
 	}
-	if res.NodeSecret != hex.EncodeToString(rowSecret) {
-		t.Errorf("handed %q, want the stored secret", res.NodeSecret)
+	if len(acl.stored) != 0 || !bytes.Equal(acl.key, pubOf(old)) {
+		t.Errorf("stored %v, the row's key is now %x; want the live key untouched", acl.stored, acl.key)
+	}
+	if n.registered || len(joins.authenticated) != 0 {
+		t.Error("the caller was registered")
+	}
+	if len(joins.recorded) != 1 || !strings.Contains(joins.recorded[0].Reason, "Roll key") {
+		t.Errorf("recorded %+v, want one refusal that names Roll key", joins.recorded)
+	}
+	if !strings.Contains(res.Message, "Roll key") {
+		t.Errorf("the node was told %q, want the remedy", res.Message)
+	}
+}
+
+// Where no live login stands in the way, a platform node's cluster proof
+// re-pairs it on the row Core already has: no new row, no new identity. What it
+// is handed follows what the operator did - the stored secret after Roll key
+// (key aside, secret kept, so nothing restarts), a new one after Reset pairing.
+// A row that never had a key but holds a secret still wants the HMAC of it.
+func TestAClusterProofRePairsOnlyWithoutALiveLogin(t *testing.T) {
+	old, fresh := newKey(t), newKey(t)
+	for _, tc := range []struct {
+		name       string
+		act        func(*keyedACL)
+		wantSecret string
+	}{
+		{"after Roll key, with the stored secret", rollKey, hex.EncodeToString(rowSecret)},
+		{"after Reset pairing, with a new secret", resetPairing, hex.EncodeToString(bytes.Repeat([]byte{0x42}, 32))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			acl := &keyedACL{secret: rowSecret, key: pubOf(old), clusterOK: true}
+			tc.act(acl)
+			n := nodeWith(pubOf(fresh), nil, fresh)
+			n.auth.ClusterProof = "a-valid-cluster-proof"
+
+			if err := dial(t, known, acl, &recordingJoins{}, n); err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			res := n.result()
+			if acl.platformEnrolls+acl.enrolls != 0 || res.AssignedId != "" {
+				t.Errorf("created %d row(s), assigned %q; want the existing row and identity", acl.platformEnrolls+acl.enrolls, res.AssignedId)
+			}
+			if len(acl.stored) != 1 || acl.storedFor[0] != 42 || !bytes.Equal(acl.key, pubOf(fresh)) {
+				t.Errorf("stored %v on %v, want the new key on node 42", acl.stored, acl.storedFor)
+			}
+			if res.NodeSecret != tc.wantSecret {
+				t.Errorf("handed %q, want %q", res.NodeSecret, tc.wantSecret)
+			}
+			if !n.registered {
+				t.Error("the re-paired node was not registered")
+			}
+		})
 	}
 
-	t.Run("without a cluster proof or an admission it stays out", func(t *testing.T) {
-		acl := &keyedACL{secret: rowSecret, key: pubOf(old)}
+	t.Run("a never-keyed row with a secret still needs its HMAC", func(t *testing.T) {
+		acl := &keyedACL{secret: rowSecret, clusterOK: true}
 		joins := &recordingJoins{}
-		if err := dial(t, known, acl, joins, nodeWith(pubOf(fresh), rowSecret, fresh)); err == nil {
-			t.Fatal("a different key was accepted with nothing to authorise it")
+		n := nodeWith(pubOf(fresh), nil, fresh)
+		n.auth.ClusterProof = "a-valid-cluster-proof"
+
+		if err := dial(t, known, acl, joins, n); err == nil {
+			t.Fatal("a cluster proof stood in for the row's secret")
+		}
+		if res := n.result(); res == nil || res.Ok || res.NodeSecret != "" || n.registered {
+			t.Errorf("result %+v, registered %v; want a refusal that hands and registers nothing", res, n.registered)
 		}
 		if len(acl.stored) != 0 || len(joins.recorded) != 1 {
 			t.Errorf("stored %v, recorded %d; want nothing stored and the refusal recorded", acl.stored, len(joins.recorded))
@@ -695,8 +757,10 @@ func TestAReplacedKeyComesBackOnlyThroughAnAdmission(t *testing.T) {
 func TestAKeyRaceBetweenReplicas(t *testing.T) {
 	old, fresh, other := newKey(t), newKey(t), newKey(t)
 
+	// Both re-pairs start after Roll key (key aside, secret kept): the state a
+	// cluster proof re-pairs from.
 	t.Run("a re-pair that loses to the same key succeeds", func(t *testing.T) {
-		acl := &keyedACL{secret: rowSecret, key: pubOf(old), clusterOK: true, raceTo: pubOf(fresh)}
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(old), clusterOK: true, raceTo: pubOf(fresh)}
 		n := nodeWith(pubOf(fresh), nil, fresh)
 		if err := dial(t, known, acl, &recordingJoins{}, n); err != nil {
 			t.Fatalf("refused: %v", err)
@@ -706,7 +770,7 @@ func TestAKeyRaceBetweenReplicas(t *testing.T) {
 		}
 	})
 	t.Run("a re-pair that loses to a different key is refused", func(t *testing.T) {
-		acl := &keyedACL{secret: rowSecret, key: pubOf(old), clusterOK: true, raceTo: pubOf(other)}
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(old), clusterOK: true, raceTo: pubOf(other)}
 		n := nodeWith(pubOf(fresh), nil, fresh)
 		if err := dial(t, known, acl, &recordingJoins{}, n); err == nil {
 			t.Fatal("admitted on a key the row no longer holds")

@@ -634,8 +634,11 @@ func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) 
 		sendJSONError(w, "Failed to load the node's credentials", http.StatusInternalServerError)
 		return
 	}
+	// No secret has two causes as well: a new node still enrolling, and a node
+	// whose pairing was reset and that has not been let back in. The Link waits
+	// out both, so the message names both.
 	if !ok {
-		sendJSONError(w, "This machine has not finished enrolling yet. The Link retries until it has.", http.StatusConflict)
+		sendJSONError(w, "This key's node has not finished pairing: a new node is still enrolling, or its pairing was reset and it must be admitted again in the panel. The Link retries until it has.", http.StatusConflict)
 		return
 	}
 	log.Printf("link-boot: node key %s booted the Link of node %d", key.NodeID, node.ID)

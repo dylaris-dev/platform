@@ -216,14 +216,21 @@ func TestLinkBoot_NodeKeyOfAnotherOwnersMachineIsRefused(t *testing.T) {
 	}
 }
 
-// A node row with no secret has not finished enrolling; its Link credential
-// cannot be derived yet, so the Link waits rather than giving up.
+// A node row with no secret has not finished enrolling, or its pairing was
+// reset; its Link credential cannot be derived yet, so the Link waits rather
+// than giving up, and the message names both causes.
 func TestLinkBoot_NodeWithoutASecretYetIsAskedToRetry(t *testing.T) {
 	h, fs, _ := newNodeLinkHandler(t)
 	delete(fs.secrets, 7)
 
-	if rec := linkBootAs(h, *fs.keys["node-abc"]); rec.Code != http.StatusConflict {
+	rec := linkBootAs(h, *fs.keys["node-abc"])
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	for _, cause := range []string{"still enrolling", "pairing was reset"} {
+		if !strings.Contains(rec.Body.String(), cause) {
+			t.Errorf("the 409 does not name %q: %s", cause, rec.Body.String())
+		}
 	}
 }
 

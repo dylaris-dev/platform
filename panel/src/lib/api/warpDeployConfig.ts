@@ -11,6 +11,12 @@ export interface WarpDeployConfig {
     /** Stored overlay CIDR(s), or Core's detected value. "" = undetermined. */
     tunnelSubnets: string;
     /**
+     * Core's gRPC certificate fingerprint while its control channel runs TLS,
+     * "" while it runs plaintext. Absent from a Core that predates the field,
+     * which a kit reads as "not known" rather than as plaintext.
+     */
+    grpcTlsFingerprint?: string;
+    /**
      * The name a tenant points their OWN domain at, when the operator configured
      * one. Absent means custom domains have no published target and the panel
      * must not invent one - a wrong record is worse than no instruction.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
-    nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS,
+    nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
 } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
@@ -114,6 +114,7 @@ describe('nodeCompose', () => {
             tunnelSubnets: '10.20.0.0/16',
             nodeEnrollToken: 'TOK',
             nodeId: 'home-desktop',
+            grpcTlsFingerprint: '',
         });
         expect(out).toContain('NODE_ENROLL_TOKEN: "TOK"');
         expect(out).toContain('NODE_ID: "home-desktop"');
@@ -151,7 +152,7 @@ describe('nodeCompose', () => {
     // certificate pin available". Silence stopped being a safe way to say
     // "plaintext" the moment the default flipped; the opt-out has to be written.
     it('says plaintext out loud rather than leaning on the old default', () => {
-        const without = nodeCompose(base);
+        const without = nodeCompose({ ...base, grpcTlsFingerprint: '' });
         expect(without).toContain('GRPC_TLS_ENABLED: "false"');
         expect(without).not.toContain('GRPC_TLS_FINGERPRINT');
     });
@@ -410,7 +411,7 @@ describe('nodeCompose with the Link beside the node', () => {
 
     // Everything the node kit promised before still holds with the link in it.
     it('keeps every node setting and adds no fleet secret or overlay address', () => {
-        const out = kit({ tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK', nodeId: 'home-desktop' });
+        const out = kit({ tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK', nodeId: 'home-desktop', grpcTlsFingerprint: '' });
         for (const line of [
             'API_KEY: "KEY123"', 'PROXY_BIND_DOCKER_BRIDGES: "true"', 'NODE_EXTERNAL: "true"',
             'NODE_ID: "home-desktop"', 'NODE_ENROLL_TOKEN: "TOK"', 'BEAM_LAN_FASTPATH: "true"',
@@ -438,6 +439,48 @@ describe('nodeCompose with the Link beside the node', () => {
         expect(nodeCompose(base)).not.toContain('gateway-link');
         expect(nodeCompose(base)).not.toContain('NODE_MANAGES_LINK');
         expect(nodeCompose(base)).not.toContain('networks:');
+    });
+});
+
+// "Update this machine", "Deploy file" and a rolled key show a kit without a
+// fresh enroll token. The fingerprint rode only on the token, so those kits
+// wrote GRPC_TLS_ENABLED "false" against a TLS Core, and a node redeployed from
+// one dialled plaintext and lost its control channel. They read it from Core's
+// deploy config now, through the same helper the operator's dialog uses.
+describe('the TLS lines of a kit without a fresh enroll token', () => {
+    type Config = { tunnelSubnets: string; grpcTlsFingerprint?: string } | null;
+    const kitFor = (config: Config, explicit?: string) =>
+        nodeCompose({ ...base, linkBesideNode: true, grpcTlsFingerprint: kitGrpcTlsFingerprint(explicit, config) });
+
+    it('enables TLS and pins the fingerprint when Core runs TLS', () => {
+        const out = kitFor({ tunnelSubnets: '', grpcTlsFingerprint: 'ab12cd34' });
+        expect(out).toContain('GRPC_TLS_ENABLED: "true"');
+        expect(out).toContain('GRPC_TLS_FINGERPRINT: "ab12cd34"');
+        expect(out).not.toContain('GRPC_TLS_ENABLED: "false"');
+    });
+
+    it('says plaintext when Core says its channel is plaintext', () => {
+        const out = kitFor({ tunnelSubnets: '', grpcTlsFingerprint: '' });
+        expect(out).toContain('GRPC_TLS_ENABLED: "false"');
+        expect(out).not.toContain('GRPC_TLS_FINGERPRINT');
+    });
+
+    // Not loaded yet, failed to load, or a Core older than the field: a "false"
+    // here would be the same broken node against a TLS Core.
+    it('never writes plaintext while it does not know', () => {
+        for (const config of [null, { tunnelSubnets: '' }] as Config[]) {
+            const out = kitFor(config);
+            expect(out).not.toContain('GRPC_TLS_ENABLED: "false"');
+            expect(out).not.toContain('GRPC_TLS_ENABLED: "true"');
+            expect(out).toContain('GRPC_TLS_ENABLED: "<reload this page>"');
+        }
+    });
+
+    it('lets the fingerprint handed over with an enroll token win', () => {
+        const config = { tunnelSubnets: '', grpcTlsFingerprint: 'from-config' };
+        expect(kitGrpcTlsFingerprint('from-mint', config)).toBe('from-mint');
+        expect(kitGrpcTlsFingerprint('', config)).toBe('');
+        expect(kitGrpcTlsFingerprint(undefined, config)).toBe('from-config');
     });
 });
 
