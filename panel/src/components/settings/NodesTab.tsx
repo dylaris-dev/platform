@@ -28,6 +28,7 @@ import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import { regionFlag, regionLabelFrom } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
+import { linkMissing, LINK_MISSING_MESSAGE } from '@/lib/linkPresence';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
     Pencil, X, AlertTriangle, Cpu, KeyRound, Copy,
@@ -549,7 +550,7 @@ function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) 
 function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onRollSecret, rollingSecret, onOpenDeleteDialog, revealAddresses }: NodeCardProps) {
     // For the region label: the name an operator gave the region wins over the
     // built-in map, so renaming it in Settings -> Regions shows up here.
-    const { regions } = useAppData();
+    const { regions, gatewayEnabled } = useAppData();
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     const [saving, setSaving] = useState(false);
@@ -663,6 +664,12 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         >
                             <AlertTriangle size={11} />
                             No region
+                        </span>
+                    )}
+                    {linkMissing(gatewayEnabled, node) && (
+                        <span className="badge badge-warning inline-flex items-center gap-1" title={LINK_MISSING_MESSAGE}>
+                            <AlertTriangle size={11} />
+                            No Link
                         </span>
                     )}
                     {gatewayRequired && (

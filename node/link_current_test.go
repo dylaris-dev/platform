@@ -226,3 +226,100 @@ func TestIsLinkContainer(t *testing.T) {
 		})
 	}
 }
+
+// TestIsOwnLinkContainer pins what a node that stopped managing the Link may
+// remove at startup. Only the removal side is dangerous: the Link is the only
+// way in for a player, so a false "yes" disconnects everyone on the host from
+// a Link the node never owned, while a false "no" leaves one idle container.
+func TestIsOwnLinkContainer(t *testing.T) {
+	const published = "ghcr.io/dylaris-dev/gateway-link:latest"
+	tests := []struct {
+		name       string
+		cname      string
+		hostname   string
+		image      string
+		labels     map[string]string
+		configured string
+		want       bool
+	}{
+		{
+			name:       "the sidecar this node created, as on eu-node-00",
+			cname:      "/dylaris_link",
+			hostname:   "dylaris_link",
+			image:      published,
+			configured: published,
+			want:       true,
+		},
+		{
+			name:       "created on a private registry the node is still configured for",
+			cname:      "/dylaris_link",
+			hostname:   "dylaris_link",
+			image:      "registry.example.test/private/link:2026.09",
+			configured: "registry.example.test/private/link:2026.09",
+			want:       true,
+		},
+		{
+			name:       "created from the published image before LINK_IMAGE changed",
+			cname:      "/dylaris_link",
+			hostname:   "dylaris_link",
+			image:      "ghcr.io/dylaris-dev/gateway-link:sha-abc123",
+			configured: "registry.example.test/private/link:2026.09",
+			want:       true,
+		},
+		{
+			name:     "a stack task of the Link service",
+			cname:    "/dylaris-prod_link.x1y2z3.a4b5c6",
+			hostname: "3f9c2d1e0a7b",
+			image:    published,
+			labels: map[string]string{
+				"com.docker.swarm.service.id":   "svc1",
+				"com.docker.swarm.service.name": "dylaris-prod_link",
+			},
+			configured: published,
+			want:       false,
+		},
+		{
+			name:       "an operator's own docker run under the same name",
+			cname:      "/dylaris_link",
+			hostname:   "5a6b7c8d9e0f",
+			image:      published,
+			configured: published,
+			want:       false,
+		},
+		{
+			name:       "a compose container_name that also set the hostname",
+			cname:      "/dylaris_link",
+			hostname:   "dylaris_link",
+			image:      published,
+			labels:     map[string]string{"com.docker.compose.project": "gateway"},
+			configured: published,
+			want:       false,
+		},
+		{
+			name:       "a swarm task that somehow carries the name",
+			cname:      "/dylaris_link",
+			hostname:   "dylaris_link",
+			image:      published,
+			labels:     map[string]string{"com.docker.swarm.service.id": "svc1"},
+			configured: published,
+			want:       false,
+		},
+		{
+			name:       "the name reused for something that is not a Link",
+			cname:      "/dylaris_link",
+			hostname:   "dylaris_link",
+			image:      "nginx:alpine",
+			configured: published,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isOwnLinkContainer(tt.cname, tt.hostname, tt.image, tt.labels, tt.configured); got != tt.want {
+				t.Errorf("isOwnLinkContainer(%q, %q, %q, %v, %q) = %v, want %v",
+					tt.cname, tt.hostname, tt.image, tt.labels, tt.configured, got, tt.want)
+			}
+		})
+	}
+}

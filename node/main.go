@@ -460,7 +460,8 @@ func main() {
 	// archivePathFor serves only a staged archive produced by migrate_out.
 	go StartMigrationServer(ctx, rdb, nodeID, migrationArchivePathFor(storageMgr))
 
-	// Node-managed Link sidecar (no-op unless NODE_MANAGES_LINK).
+	// Node-managed Link sidecar; with NODE_MANAGES_LINK off it only removes the
+	// one this node spawned before.
 	go startLinkReconciler(ctx, dockerMgr)
 
 	c := make(chan os.Signal, 1)

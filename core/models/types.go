@@ -319,11 +319,14 @@ type Node struct {
 	TotalCPU           float64 `json:"totalCpu"`   // physical cores (cached from heartbeat)
 	TotalRAMMB         int64   `json:"totalRamMb"` // physical RAM in MB (cached from heartbeat)
 
-	// Live stats from heartbeat (not persisted, -1 = not available)
+	// Live stats from heartbeat (not persisted, -1 = not available).
+	// LinkCount is a POINTER, like NetPolicy below: nil is "no heartbeat to
+	// read", and the panel warns about a gateway node whose count is 0, so a
+	// silent node must not arrive as one.
 	CPUUsage  float64 `json:"cpuUsage"`
 	RAMFree   int64   `json:"ramFree"`
 	RAMTotal  uint64  `json:"ramTotal"`
-	LinkCount int     `json:"linkCount"`
+	LinkCount *int    `json:"linkCount,omitempty"`
 	// PortRange is the node's effective MC host-port range ("25600-25699").
 	// PortRangeNotice is set only when the node fell back to its default because
 	// PORT_RANGE was unset or unparseable - shown so a typo is visible instead

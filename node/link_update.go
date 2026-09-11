@@ -199,7 +199,10 @@ func checkLinkImage(dm *DockerManager, secret, proof string) {
 // told it interrupts active sessions.
 func TriggerLinkImageUpdate(dm *DockerManager) {
 	secret, proof := getLinkCreds()
-	if !linkWanted(getRoutingMode(), secret, proof, linkImage) {
+	// nodeManagesLink first: Core delivers link creds to every node, so without
+	// it this command would re-create the sidecar that a node which stopped
+	// managing the Link removed at startup.
+	if !nodeManagesLink || !linkWanted(getRoutingMode(), secret, proof, linkImage) {
 		log.Println("link: manual update requested but this node does not run a Link sidecar")
 		return
 	}

@@ -52,7 +52,9 @@ type NodeHeartbeat struct {
 	// LinkCount is how many link containers the node runs. The node has always
 	// written it (main.go); this struct did not declare it, so the panel handler
 	// read the same key through a private duplicate of this type just to see it.
-	LinkCount int `json:"linkCount"`
+	// A POINTER for the same reason as NetPolicy: a heartbeat without it is
+	// unknown, and the panel warns about a 0.
+	LinkCount *int `json:"linkCount,omitempty"`
 	// PortRange is the node's effective MC host-port range ("25600-25699") and
 	// PortRangeNotice is set only when the node fell back to its default because
 	// PORT_RANGE was unset or unparseable. Surfaced so an admin sees the ports

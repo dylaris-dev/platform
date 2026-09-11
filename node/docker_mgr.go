@@ -710,6 +710,57 @@ func (dm *DockerManager) StopLinkContainer() {
 	dm.cli.ContainerRemove(dm.ctx, linkContainerName, container.RemoveOptions{Force: true})
 }
 
+// isOwnLinkContainer reports whether an inspected container is the Link this
+// node created itself, and so the only Link it may ever remove.
+//
+// The node never labelled what it created, so it is recognised by what
+// ensureLinkContainer sets: the fixed name, the hostname set to that same name
+// (Docker, compose and Swarm all default a hostname to the container id, so a
+// hand-run `docker run --name dylaris_link` does not have it), and a Link
+// image. A Swarm or compose label means an orchestrator owns the container
+// whatever it is called: removing it would either be undone by that
+// orchestrator or take down a Link somebody deployed on purpose.
+//
+// configuredImage is the node's own LINK_IMAGE (or the default), which is what
+// recognises a Link on an operator's private registry; the published image
+// covers a LINK_IMAGE that has changed since the container was created.
+func isOwnLinkContainer(name, hostname, image string, labels map[string]string, configuredImage string) bool {
+	if strings.TrimPrefix(name, "/") != linkContainerName || hostname != linkContainerName {
+		return false
+	}
+	if labels["com.docker.swarm.service.id"] != "" || labels["com.docker.compose.project"] != "" {
+		return false
+	}
+	return image == configuredImage || strings.Contains(image, "gateway-link")
+}
+
+// RemoveOwnLinkContainer stops and removes the Link sidecar this node spawned
+// while it still managed one, and leaves every other container alone. One log
+// line whenever there was a container to decide about; a host that never had
+// one says nothing.
+func (dm *DockerManager) RemoveOwnLinkContainer(configuredImage string) {
+	c, err := dm.cli.ContainerInspect(dm.ctx, linkContainerName)
+	if err != nil {
+		if !client.IsErrNotFound(err) {
+			log.Printf("link: could not check for a Link sidecar left from NODE_MANAGES_LINK: %v", err)
+		}
+		return
+	}
+	if c.Config == nil || !isOwnLinkContainer(c.Name, c.Config.Hostname, c.Config.Image, c.Config.Labels, configuredImage) {
+		log.Printf("link: %s was not created by this node, left running", linkContainerName)
+		return
+	}
+	// By id: the name is the one thing another container could hold by the
+	// time the stop returns.
+	timeout := 15
+	dm.cli.ContainerStop(dm.ctx, c.ID, container.StopOptions{Timeout: &timeout})
+	if err := dm.cli.ContainerRemove(dm.ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+		log.Printf("link: failed to remove the Link sidecar this node used to manage: %v", err)
+		return
+	}
+	log.Printf("link: NODE_MANAGES_LINK is off, removed the Link sidecar this node used to manage (%s)", linkContainerName)
+}
+
 // ensureGlobalNetwork resolves the shared server network and returns BOTH its id
 // and its real name.
 //

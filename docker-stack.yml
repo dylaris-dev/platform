@@ -311,6 +311,15 @@ services:
       NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
       STORAGE_PATHS: "${STORAGE_PATHS:-}"
       DYLARIS_CPUSET_CPUS: "${DYLARIS_CPUSET_CPUS:-}"
+      # The Link is not this service's job in a Swarm: it runs as its own
+      # service from the gateway repository's stack files (`link`, mode: global
+      # on the hosts that run MC servers, on this same dylaris_net overlay).
+      # Explicit rather than left to the default, so a LINK_IMAGE added here
+      # later cannot make every node spawn a second Link beside it. A node that
+      # used to manage one removes the dylaris_link it created when it starts
+      # with this off. Settings -> Nodes warns about a gateway node reporting no
+      # Link, which is what a missing `link` service looks like.
+      NODE_MANAGES_LINK: "false"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data

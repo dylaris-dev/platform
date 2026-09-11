@@ -8,11 +8,15 @@ import (
 
 // startLinkReconciler manages the node's own Link sidecar. It (re)spawns Link when
 // this node is gateway-routed, self-manages Link, and has its Core-delivered creds;
-// it stops Link when those no longer hold. No-op unless NODE_MANAGES_LINK (creds are
-// only delivered on the ACL path). Runs on a 30s tick so late-arriving creds / a
-// routing-mode flip / a cred rotation are picked up without a restart.
+// it stops Link when those no longer hold. Runs on a 30s tick so late-arriving creds /
+// a routing-mode flip / a cred rotation are picked up without a restart.
 func startLinkReconciler(ctx context.Context, dm *DockerManager) {
 	if !nodeManagesLink {
+		// A node that stops managing the Link leaves the one it spawned behind,
+		// and nothing else ever removes it: it would run forever beside the Link
+		// that replaced it. Once, here, because the flag only changes with a
+		// restart. RemoveOwnLinkContainer decides what counts as its own.
+		dm.RemoveOwnLinkContainer(linkImage)
 		return
 	}
 	var last string // signature of the last-applied spawn; "" = not running

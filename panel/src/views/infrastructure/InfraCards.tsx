@@ -25,6 +25,7 @@ import { timeAgo } from '@/lib/time';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeLabel } from '@/lib/nodeLabel';
 import { isAttention, type FlatServiceError, type ServiceErrorEntry } from '@/lib/serviceErrors';
+import { linkMissing, LINK_MISSING_MESSAGE } from '@/lib/linkPresence';
 
 export interface StorageInfo {
   path: string;
@@ -275,6 +276,15 @@ export function NodeCard({
           </div>
         );
       })()}
+
+      {/* Directly under the link count it explains: a node with no Link looks
+          healthy everywhere else, while its servers cannot be reached. */}
+      {linkMissing(gatewayEnabled, node) && (
+        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
+          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+          <span>{LINK_MISSING_MESSAGE}</span>
+        </p>
+      )}
 
       {/* CPU */}
       {hasStats && node.cpuUsage !== undefined && (

@@ -85,6 +85,9 @@ export interface Node {
     cpuUsage?: number;
     ramFree?: number;
     ramTotal?: number;
+    // Link containers the node counted on its host. Undefined is unknown (no
+    // heartbeat), never zero - see lib/linkPresence.
+    linkCount?: number;
     // Adoption state. configured=true once an admin set name/region/tags in the
     // panel (DB then wins over the heartbeat env). needsConfiguration=true when
     // the node has no region yet (booted with only a CLUSTER_SECRET).
