@@ -626,13 +626,13 @@ func TestIntegrationCountPendingNodeEnrollTokens(t *testing.T) {
 	future := time.Now().Add(24 * time.Hour)
 	past := time.Now().Add(-1 * time.Hour)
 
-	if err := st.CreateNodeEnrollToken(f.user.ID, "live-1", "one", &future); err != nil {
+	if err := st.CreateNodeEnrollToken(f.user.ID, "live-1", "one", &future, ""); err != nil {
 		t.Fatalf("CreateNodeEnrollToken: %v", err)
 	}
-	if err := st.CreateNodeEnrollToken(f.user.ID, "live-2", "no expiry", nil); err != nil {
+	if err := st.CreateNodeEnrollToken(f.user.ID, "live-2", "no expiry", nil, ""); err != nil {
 		t.Fatalf("CreateNodeEnrollToken (no expiry): %v", err)
 	}
-	if err := st.CreateNodeEnrollToken(f.user.ID, "expired", "stale", &past); err != nil {
+	if err := st.CreateNodeEnrollToken(f.user.ID, "expired", "stale", &past, ""); err != nil {
 		t.Fatalf("CreateNodeEnrollToken (expired): %v", err)
 	}
 	if err := st.CreateRecoveryToken(f.user.ID, "recovery-1", f.node.Token, &future); err != nil {

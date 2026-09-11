@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 	"dylaris-pkg/validate"
 
@@ -511,18 +512,24 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LinkBoot POST /api/warp/link-boot - a route-only link presents its warp key and
-// receives its derived tunnel token plus a Redis credential scoped to its own keys.
-// WarpAPIKeyMiddleware has already rejected an unknown or revoked key. The response
-// is never logged.
+// LinkBoot POST /api/warp/link-boot - a Link presents its warp key and receives
+// its tunnel token plus a Redis credential scoped to its own keys. A route-only
+// link kit gets its own derived token and route-only ACL; a BYON node key gets
+// the Link of the node it is bound to (nodeLinkBoot). WarpAPIKeyMiddleware has
+// already rejected an unknown or revoked key. The response is never logged.
 func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
 	if !ok {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// A BYON node's warp key must never mint a link credential.
-	if !strings.HasPrefix(key.NodeID, "link-") {
+	// A BYON node's warp key must never mint a ROUTE-ONLY link credential: that
+	// ACL has none of the keys a node's servers need, and it would give the
+	// machine a second tunnel identity beside its node's. It gets its node's own
+	// Link instead. An owner-less key is a platform key with no BYON node behind
+	// it, and is refused like any other.
+	nodeKey := strings.HasPrefix(key.NodeID, "node-") && key.OwnerID != ""
+	if !nodeKey && !strings.HasPrefix(key.NodeID, "link-") {
 		sendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return
 	}
@@ -555,6 +562,10 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
+	if nodeKey {
+		h.nodeLinkBoot(w, key)
+		return
+	}
 	tunnelToken := h.state.Gateway.LinkToken(key.NodeID)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -572,6 +583,70 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		"redis_user": user,
 		"redis_pass": pass,
 		"redis_db":   h.state.Redis.Options().DB,
+	})
+}
+
+// byonLinkRedisAddr is the Redis address a kit-run BYON Link is told: warp's
+// local proxy on the customer's host. 25571 is the proxy port compiled into
+// gateway/warp/proxy.go, platform/node/warp_proxy.go and the panel's
+// warpDeploy.ts; host.docker.internal is the name the kit maps to the host with
+// extra_hosts host-gateway. Not 127.0.0.1: the kit runs this Link on a Docker
+// network, where loopback is its own container, and a Link pointed there
+// retries forever without saying why.
+const byonLinkRedisAddr = "host.docker.internal:25571"
+
+// nodeLinkBoot answers a BYON node key with the Link of the node it is bound to.
+//
+// Everything in the answer is what the node-managed Link on that machine already
+// runs on: the same derived tunnel token and node id, so routes do not move and
+// the Hub's discovered row stays the same, and the node-link Redis user Core
+// provisions for that node on every handshake (EnsureNodeACL), so nothing new is
+// provisioned here. The machine holding this key runs that node and can derive
+// the same login from its own secret - the answer hands it nothing it did not
+// already have, and CLUSTER_SECRET is only ever used to derive.
+func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) {
+	// 409, not a refusal: in a fresh kit the Link starts beside the node and asks
+	// before the node has enrolled, so "not yet" is the normal first answer and
+	// the Link waits it out.
+	if key.BoundNodeID == 0 {
+		sendJSONError(w, "This machine has not enrolled as a node yet. The Link retries until it has.", http.StatusConflict)
+		return
+	}
+	node, err := h.state.Store.GetNodeByID(key.BoundNodeID)
+	if err != nil {
+		log.Printf("link-boot: node %d bound to key %s could not be loaded: %v", key.BoundNodeID, key.NodeID, err)
+		sendJSONError(w, "Failed to load the node", http.StatusInternalServerError)
+		return
+	}
+	// The binding was owner-checked when it was made. Asked again on every boot
+	// because a node row's owner can change afterwards, and a key must never hand
+	// out the Link of a machine its owner no longer holds.
+	if node.OwnerID == nil || *node.OwnerID != key.OwnerID {
+		log.Printf("link-boot: key %s is bound to node %d, which its owner does not own; refused", key.NodeID, node.ID)
+		sendJSONError(w, "This key does not belong to that machine's owner", http.StatusForbidden)
+		return
+	}
+	secret, ok, err := redisacl.LoadNodeSecret(h.state.Store, h.state.ClusterSecret, node.ID)
+	if err != nil {
+		log.Printf("link-boot: loading the secret of node %d for key %s failed: %v", node.ID, key.NodeID, err)
+		sendJSONError(w, "Failed to load the node's credentials", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		sendJSONError(w, "This machine has not finished enrolling yet. The Link retries until it has.", http.StatusConflict)
+		return
+	}
+	log.Printf("link-boot: node key %s booted the Link of node %d", key.NodeID, node.ID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":              true,
+		"link_token":           h.state.Gateway.LinkToken(node.Token),
+		"node_id":              node.Token,
+		"link_discovery_proof": h.state.Gateway.DiscoveryProof(node.Token),
+		"redis_user":           redisacl.LinkUsername(node.Token),
+		"redis_pass":           redisacl.LinkPassword(secret, node.Token),
+		"redis_db":             h.state.Redis.Options().DB,
+		"redis_addr":           byonLinkRedisAddr,
 	})
 }
 
@@ -1026,13 +1101,15 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 		Name      string `json:"name"`
 		NodeID    string `json:"node_id"`
 		CreatedAt string `json:"created_at"`
+		// The machine the key belongs to; absent until it is bound.
+		BoundNodeID int `json:"bound_node_id,omitempty"`
 	}
 	out := make([]nodeKey, 0, len(keys))
 	for _, k := range keys {
 		if !strings.HasPrefix(k.NodeID, "node-") {
 			continue
 		}
-		out = append(out, nodeKey{ID: k.ID, Name: k.Name, NodeID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
+		out = append(out, nodeKey{ID: k.ID, Name: k.Name, NodeID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), BoundNodeID: k.BoundNodeID})
 	}
 	lim, _ := services.EffectiveLimits(h.state.Store, userID)
 	// Through the same counter the mint gates use, or the panel shows a number
@@ -1046,6 +1123,103 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 		"success": true, "keys": out,
 		"used": used, "limit": lim.MaxNodes,
 	})
+}
+
+// BindNodeWarpKey POST /api/warp/node-keys/{nodeID}/bind - owner only. Ties one
+// of the caller's BYON node keys to one of the caller's machines, for a machine
+// that enrolled before keys were bound at enrol. Once bound, link-boot answers
+// the key with that node's Link, so the machine's kit can run the Link beside
+// the node instead of inside it. Binding changes nothing on the machine until it
+// is redeployed with that kit.
+//
+// Owner-checked on BOTH ends, admins included: a key and a machine of two
+// different owners must never be joined. Operator machines (owner NULL) stay
+// node-managed - their keys are admin keys with no owner to check against, and
+// link-boot refuses an owner-less key.
+func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
+	if !byonActive(h.state, r) {
+		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		return
+	}
+	userID := byonCallerID(r)
+	if userID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Node int `json:"node"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Node <= 0 {
+		sendJSONError(w, "Choose the machine this key belongs to", http.StatusBadRequest)
+		return
+	}
+	key, status, msg := ownNodeKey(h.state.Store, mux.Vars(r)["nodeID"], userID)
+	if key == nil {
+		sendJSONError(w, msg, status)
+		return
+	}
+	// Same answer for "not yours" as for "does not exist", as for the key.
+	node, err := h.state.Store.GetNodeByID(req.Node)
+	if err != nil || node.OwnerID == nil || *node.OwnerID != userID {
+		sendJSONError(w, "Machine not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if key.BoundNodeID == node.ID {
+		// Already the answer; a second click is not an error.
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+		return
+	}
+	if key.BoundNodeID != 0 {
+		sendJSONError(w, "This key already belongs to another machine", http.StatusConflict)
+		return
+	}
+	// Asked before the write so the refusal can say why. The unique index on
+	// bound_node_id is what holds it under a race.
+	keys, err := h.state.Store.ListWarpAPIKeysByOwner(userID)
+	if err != nil {
+		sendJSONError(w, "Failed to load node keys", http.StatusInternalServerError)
+		return
+	}
+	for _, k := range keys {
+		if k.BoundNodeID == node.ID {
+			sendJSONError(w, "This machine already has a key for its Link", http.StatusConflict)
+			return
+		}
+	}
+	bound, err := h.state.Store.BindWarpAPIKey(key.ID, node.ID)
+	if errors.Is(err, store.ErrWarpKeyNodeTaken) {
+		sendJSONError(w, "This machine already has a key for its Link", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		log.Printf("bind node key %s to node %d: %v", key.NodeID, node.ID, err)
+		sendJSONError(w, "Failed to bind the key", http.StatusInternalServerError)
+		return
+	}
+	if !bound {
+		sendJSONError(w, "This key changed in the meantime. Reload and try again.", http.StatusConflict)
+		return
+	}
+	log.Printf("bind node key %s to node %d (owner %s)", key.NodeID, node.ID, userID)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// ownNodeKey resolves one of the caller's live BYON node keys by its identity, or
+// the status and message to refuse with. "Not yours" reads exactly like "does
+// not exist", so the answer never confirms that someone else's identity is real.
+func ownNodeKey(st store.Store, nodeID, userID string) (*store.WarpAPIKey, int, string) {
+	if !strings.HasPrefix(nodeID, "node-") {
+		return nil, http.StatusBadRequest, "Not a node key"
+	}
+	k, err := st.GetWarpAPIKeyByNodeID(nodeID)
+	if err != nil || k.OwnerID == "" || k.OwnerID != userID {
+		return nil, http.StatusNotFound, "Node key not found"
+	}
+	if k.RevokedAt != nil {
+		return nil, http.StatusConflict, "This node key has been revoked"
+	}
+	return k, 0, ""
 }
 
 // RevokeNodeWarpKey DELETE /api/warp/node-keys/{nodeID} - owner or admin.

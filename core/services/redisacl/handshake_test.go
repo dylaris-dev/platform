@@ -36,6 +36,12 @@ type fakeHandshakeStore struct {
 	nodeIDByTokenID    int
 	nodeIDByTokenFound bool
 	nodeIDByTokenErr   error
+
+	bindOK        bool
+	bindErr       error
+	bindCalls     int
+	lastBindToken string
+	lastBindNode  int
 }
 
 func newFakeHandshakeStore() *fakeHandshakeStore {
@@ -79,6 +85,11 @@ func (f *fakeHandshakeStore) CreatePlatformNode(token, address, displayName stri
 }
 func (f *fakeHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
 	return f.nodeIDByTokenID, f.nodeIDByTokenFound, f.nodeIDByTokenErr
+}
+func (f *fakeHandshakeStore) BindEnrollWarpKey(enrollToken string, nodeID int) (bool, error) {
+	f.bindCalls++
+	f.lastBindToken, f.lastBindNode = enrollToken, nodeID
+	return f.bindOK, f.bindErr
 }
 
 // newTestProvisioner points a Provisioner at miniredis. miniredis does NOT
@@ -386,5 +397,76 @@ func TestVerifyClusterProof(t *testing.T) {
 	wrongSecretProof := ClusterProof("a-different-cluster-secret", token)
 	if h.VerifyClusterProof(token, wrongSecretProof) {
 		t.Fatal("VerifyClusterProof must reject a proof built from a different cluster secret")
+	}
+}
+
+// happyEnrollStore is a store on which Enroll gets as far as creating node 42.
+func happyEnrollStore() *fakeHandshakeStore {
+	store := newFakeHandshakeStore()
+	store.resolveOK, store.resolveOwnerID = true, "owner-1"
+	store.consumeOK, store.consumeOwnerID = true, "owner-1"
+	store.createNodeID = 42
+	return store
+}
+
+// The enrol is the moment a node key learns which node it belongs to: it is
+// bound by the enroll token that was redeemed and the id of the node that token
+// just created. That pair is what link-boot later answers the key with.
+func TestEnroll_BindsTheOverlayKeyToTheNewNode(t *testing.T) {
+	store := happyEnrollStore()
+	store.bindOK = true
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+
+	_, _, _, _ = h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
+
+	if store.bindCalls != 1 || store.lastBindToken != "enroll-tok" || store.lastBindNode != 42 {
+		t.Fatalf("bind = %d call(s) with (%q, %d), want 1 with (enroll-tok, 42)",
+			store.bindCalls, store.lastBindToken, store.lastBindNode)
+	}
+}
+
+// A failed binding must not fail the enrol. The token is spent and the node row
+// exists by then, so refusing would strand both; the key simply stays unbound,
+// which link-boot answers with a retry and the owner can repair in the panel.
+func TestEnroll_BindFailureDoesNotStopTheEnrol(t *testing.T) {
+	store := happyEnrollStore()
+	bindErr := errNodeLookup("db blip")
+	store.bindErr = bindErr
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+
+	_, nodeID, _, err := h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
+
+	if err == bindErr {
+		t.Fatal("the binding error was returned as the enrol's error")
+	}
+	if nodeID != 42 {
+		t.Errorf("nodeID = %d, want 42", nodeID)
+	}
+	// ensure() mints the secret before it provisions the ACL: reaching it proves
+	// the enrol carried on past the failed bind.
+	if _, ok := store.secretEnc[42]; !ok {
+		t.Error("the enrol stopped at the binding instead of provisioning the node")
+	}
+}
+
+// A refused enrol creates no node, so there is nothing to bind a key to.
+func TestEnroll_RefusedEnrolBindsNothing(t *testing.T) {
+	for name, store := range map[string]*fakeHandshakeStore{
+		"invalid token": newFakeHandshakeStore(),
+		"lost consume race": func() *fakeHandshakeStore {
+			s := happyEnrollStore()
+			s.consumeOK = false
+			return s
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+			if _, _, _, err := h.Enroll(context.Background(), "host", "tok", "1.2.3.4"); err != ErrEnrollInvalid {
+				t.Fatalf("err = %v, want ErrEnrollInvalid", err)
+			}
+			if store.bindCalls != 0 {
+				t.Errorf("bind called %d time(s) for a refused enrol", store.bindCalls)
+			}
+		})
 	}
 }

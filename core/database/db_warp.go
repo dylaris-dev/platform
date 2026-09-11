@@ -40,6 +40,27 @@ func applyWarpSchema(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE warp_api_keys ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id) ON DELETE CASCADE`); err != nil {
 		return fmt.Errorf("warp: add warp_api_keys.owner_id: %w", err)
 	}
+	// bound_node_id is the node a BYON node key belongs to. The key's own node_id
+	// is an OVERLAY identity the panel invents at mint time, and nodes.token is
+	// chosen at the gRPC enrol afterwards, so nothing else connects the two - and
+	// link-boot needs exactly that connection to answer the key with its node's
+	// Link. Set when the node enrols with a token minted for this key, or by the
+	// owner for a machine that enrolled before this column existed.
+	//
+	// SET NULL rather than CASCADE: deleting a machine must not delete the key
+	// row, which still counts against the plan and is what the owner revokes.
+	// A key whose node is gone reads as unbound, which link-boot answers with a
+	// retry rather than with some other node's credentials.
+	if _, err := db.Exec(`ALTER TABLE warp_api_keys ADD COLUMN IF NOT EXISTS bound_node_id INTEGER REFERENCES nodes(id) ON DELETE SET NULL`); err != nil {
+		return fmt.Errorf("warp: add warp_api_keys.bound_node_id: %w", err)
+	}
+	// One live key per machine. Two would be two doors to the same Link
+	// credential, and revoking one would leave the other working. A revoked key
+	// drops out, so a machine whose key was replaced can be bound again.
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_warp_api_keys_bound_node
+		ON warp_api_keys(bound_node_id) WHERE bound_node_id IS NOT NULL AND revoked_at IS NULL`); err != nil {
+		return fmt.Errorf("warp: create warp_api_keys bound_node index: %w", err)
+	}
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS warp_regions (
 		region     TEXT PRIMARY KEY,

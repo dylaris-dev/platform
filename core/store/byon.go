@@ -18,11 +18,38 @@ type NodeEnrollToken struct {
 }
 
 // CreateNodeEnrollToken stores a new enroll token (hashed) for a user.
-func (s *PostgresStore) CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error {
+// warpKeyNodeID is the BYON node key minted for the same machine, "" for none;
+// redeeming the token binds that key to the node (BindWarpKeyFromEnrollToken).
+func (s *PostgresStore) CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time, warpKeyNodeID string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO node_enroll_tokens (user_id, token_hash, label, expires_at) VALUES ($1, $2, $3, $4)`,
-		userID, hashAuthToken(plaintext), label, expiresAt)
+		`INSERT INTO node_enroll_tokens (user_id, token_hash, label, expires_at, warp_key_node_id)
+		 VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
+		userID, hashAuthToken(plaintext), label, expiresAt, warpKeyNodeID)
 	return err
+}
+
+// BindWarpKeyFromEnrollToken binds the node key an enroll token was minted for
+// to the node that token just created. true when a key was bound; false (no
+// error) for a token minted without one, and for a key that was revoked, bound
+// elsewhere or never the token owner's since.
+//
+// Every condition is in the WHERE rather than read first, so the statement is
+// safe to repeat and safe under a race: a second run finds bound_node_id set
+// and changes nothing. The owner is checked on the key AND the node, so a token
+// can only ever bind its own owner's key to its own owner's machine.
+func (s *PostgresStore) BindWarpKeyFromEnrollToken(plaintext string, nodeID int) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE warp_api_keys k SET bound_node_id = $2
+		 FROM node_enroll_tokens t, nodes n
+		 WHERE t.token_hash = $1 AND t.warp_key_node_id = k.node_id
+		   AND k.owner_id = t.user_id AND n.id = $2 AND n.owner_id = t.user_id
+		   AND k.node_id LIKE 'node-%' AND k.bound_node_id IS NULL AND k.revoked_at IS NULL`,
+		hashAuthToken(plaintext), nodeID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // ResolveNodeEnrollToken returns the owning user id for a valid, unexpired,

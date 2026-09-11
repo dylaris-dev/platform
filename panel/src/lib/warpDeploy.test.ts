@@ -42,10 +42,21 @@ describe('routeOnlyCompose', () => {
 
     // Route-only runs the link with host networking, so warp's loopback
     // listener is already in its namespace and no bridge binding is needed.
-    it('points the link at the local proxy and binds no bridges', () => {
+    // The link defaults to that listener on its own, so the file no longer
+    // names an address a reader could get wrong.
+    it('leaves the proxy address to the link and binds no bridges', () => {
         const out = routeOnlyCompose(base);
-        expect(out).toContain('REDIS_ADDR: "127.0.0.1:25571"');
+        expect(out).not.toContain('REDIS_ADDR: "');
         expect(out).not.toContain('PROXY_BIND_DOCKER_BRIDGES');
+    });
+
+    // The link caches what it last got from Core under /data. Without a named
+    // volume that cache dies with the container, and a recreate while Core is
+    // unreachable does not come up.
+    it('keeps the link cache across a recreate', () => {
+        const out = routeOnlyCompose(base);
+        expect(out).toContain('- link_data:/data');
+        expect(out).toMatch(/\nvolumes:\n {2}link_data:\n/);
     });
 
     // LINK_ALLOWED_TARGETS is compared as an exact host string; a port never matches.
@@ -264,10 +275,11 @@ describe('compose annotations', () => {
     it('marks every env as keep or EDIT', () => {
         expect(annotated(routeOnlyCompose(base))).toBe(true);
         expect(annotated(nodeCompose(base))).toBe(true);
+        expect(annotated(nodeCompose({ ...base, linkBesideNode: true }))).toBe(true);
     });
 
     it('says up front what the two markers mean', () => {
-        for (const body of [routeOnlyCompose(base), nodeCompose(base)]) {
+        for (const body of [routeOnlyCompose(base), nodeCompose(base), nodeCompose({ ...base, linkBesideNode: true })]) {
             expect(body).toContain('Lines marked "keep"');
             expect(body).toContain('EDIT is yours to change');
         }
@@ -323,7 +335,8 @@ describe('routeOnlyCompose on Docker Desktop', () => {
     // on loopback - only the customer's own server sits outside it.
     it('keeps warp\'s local proxy on loopback', () => {
         const out = routeOnlyCompose({ ...base, platform: 'windows' });
-        expect(out).toContain('REDIS_ADDR: "127.0.0.1:25571"');
+        expect(out).not.toContain('REDIS_ADDR: "');
+        expect(out).toContain('127.0.0.1:25571');
         expect(out).toContain('LINK_PORT: "127.0.0.1:25540"');
     });
 
@@ -337,6 +350,94 @@ describe('routeOnlyCompose on Docker Desktop', () => {
         expect(defaultLocalTarget('linux')).toBe('127.0.0.1');
         expect(defaultLocalTarget('windows')).toBe('host.docker.internal');
         expect(routeOnlyCompose(base)).toContain('LOCAL_HOST: "127.0.0.1"');
+    });
+});
+
+// The BYON kit runs the Link beside the node instead of the node starting one
+// inside itself. Core answers the Link through the same warp key, so a customer
+// machine still holds no CLUSTER_SECRET and no second secret.
+describe('nodeCompose with the Link beside the node', () => {
+    const kit = (over: Partial<Parameters<typeof nodeCompose>[0]> = {}) =>
+        nodeCompose({ ...base, linkBesideNode: true, ...over });
+    const service = (out: string, name: string) => {
+        const start = out.indexOf(`\n  ${name}:\n`);
+        expect(start).toBeGreaterThan(-1);
+        const rest = out.slice(start + 1);
+        const end = rest.search(/\n(?: {2}[a-z_]+:\n|[a-z]+:\n)/);
+        return end === -1 ? rest : rest.slice(0, end + 1);
+    };
+
+    it('adds a link service that boots on the warp key', () => {
+        const link = service(kit(), 'link');
+        expect(link).toContain('image: ghcr.io/dylaris-dev/gateway-link:latest');
+        expect(link).toContain('restart: unless-stopped');
+        expect(link).toContain('CORE_URL: "https://api.example.com"');
+        expect(link).toContain('LINK_BOOT_KEY: "KEY123"');
+        expect(link).toContain('LINK_EXTERNAL: "true"');
+    });
+
+    // Exactly one Link per machine: two would fight over the same identity.
+    it('tells the node not to start its own', () => {
+        expect(service(kit(), 'node')).toContain('NODE_MANAGES_LINK: "false"');
+        expect(kit()).not.toContain('do not run link yourself');
+    });
+
+    // Inside a Docker network 127.0.0.1 is the link's own container. It reaches
+    // warp's proxy on the host through host-gateway, and Core tells it the
+    // address - so a wrong loopback line is not there to get wrong.
+    it('reaches the host through host-gateway, not loopback', () => {
+        const link = service(kit(), 'link');
+        expect(link).toContain('extra_hosts: ["host.docker.internal:host-gateway"]');
+        expect(link).not.toContain('REDIS_ADDR');
+        expect(link).not.toContain('network_mode: host');
+    });
+
+    // The node puts servers on the network named dylaris_net; a folder-prefixed
+    // name would be a second network beside the one servers already run on.
+    it('joins the servers\' network by its exact name, with no subnet pinned', () => {
+        const out = kit();
+        expect(service(out, 'link')).toContain('networks: [dylaris_net]');
+        expect(out).toMatch(/\nnetworks:\n(?: {2}#.*\n)* {2}dylaris_net:\n {4}name: dylaris_net\n/);
+        expect(out).not.toMatch(/^\s*(?:- )?subnet:/m);
+        expect(out).not.toMatch(/^\s*ipam:/m);
+    });
+
+    it('keeps the link cache in a named volume', () => {
+        const out = kit();
+        expect(service(out, 'link')).toContain('- link_data:/data');
+        expect(out).toMatch(/\nvolumes:\n {2}byon_data:\n {2}link_data:\n/);
+    });
+
+    // Everything the node kit promised before still holds with the link in it.
+    it('keeps every node setting and adds no fleet secret or overlay address', () => {
+        const out = kit({ tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK', nodeId: 'home-desktop' });
+        for (const line of [
+            'API_KEY: "KEY123"', 'PROXY_BIND_DOCKER_BRIDGES: "true"', 'NODE_EXTERNAL: "true"',
+            'NODE_ID: "home-desktop"', 'NODE_ENROLL_TOKEN: "TOK"', 'BEAM_LAN_FASTPATH: "true"',
+            'GRPC_TLS_ENABLED: "false"', '- byon_data:/app/dylaris_data',
+        ]) {
+            expect(out).toContain(line);
+        }
+        expect(out).not.toContain('CLUSTER_SECRET:');
+        expect(out).not.toContain('CORE_GRPC_ADDR: "');
+        expect(out).not.toContain('REDIS_ADDR: "');
+        expect(out).not.toContain('<');
+    });
+
+    // host-gateway on Docker Desktop is Windows, not the VM warp listens in, so
+    // that platform keeps the node-managed Link until the path is proven.
+    it('leaves Docker Desktop on the node-managed Link', () => {
+        const win = kit({ platform: 'windows' });
+        expect(win).toBe(nodeCompose({ ...base, platform: 'windows' }));
+        expect(win).not.toContain('NODE_MANAGES_LINK');
+    });
+
+    // Without the flag the file is exactly what it was: an operator key has no
+    // node Core could answer it with, so its kit must keep the node's own Link.
+    it('is opt-in', () => {
+        expect(nodeCompose(base)).not.toContain('gateway-link');
+        expect(nodeCompose(base)).not.toContain('NODE_MANAGES_LINK');
+        expect(nodeCompose(base)).not.toContain('networks:');
     });
 });
 
@@ -383,12 +484,14 @@ describe('emitted image paths', () => {
         const out = nodeCompose(base);
         expect(out).toContain('image: ghcr.io/dylaris-dev/gateway-warp:latest');
         expect(out).toContain('image: ghcr.io/dylaris-dev/platform-node:latest');
+        expect(nodeCompose({ ...base, linkBesideNode: true }))
+            .toContain('image: ghcr.io/dylaris-dev/gateway-link:latest');
     });
 
     // The old owner must not survive anywhere in a file a customer runs, and
     // neither must the doubled segment the move left behind.
     it('emits no legacy registry path', () => {
-        for (const out of [routeOnlyCompose(base), nodeCompose(base)]) {
+        for (const out of [routeOnlyCompose(base), nodeCompose(base), nodeCompose({ ...base, linkBesideNode: true })]) {
             expect(out).not.toContain('bartis-dev');
             expect(out).not.toContain('dylaris-dev/dylaris-');
         }

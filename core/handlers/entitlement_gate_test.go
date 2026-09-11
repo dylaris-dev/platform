@@ -45,7 +45,7 @@ func (f *entGateStore) CountPendingNodeEnrollTokens(string) (int, error) { retur
 // only the one this file is about would let the mint gate be tested against a
 // number the production gate never sees.
 func (f *entGateStore) CountNodeWarpKeysByOwner(string) (int, error) { return 0, nil }
-func (f *entGateStore) CreateNodeEnrollToken(string, string, string, *time.Time) error {
+func (f *entGateStore) CreateNodeEnrollToken(string, string, string, *time.Time, string) error {
 	return nil
 }
 

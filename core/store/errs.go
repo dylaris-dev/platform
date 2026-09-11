@@ -17,6 +17,10 @@ var (
 	// violation. Handlers map it to 409. It exists so they never have to echo
 	// the driver's message, which spells out the table and the constraint.
 	ErrNameTaken = errors.New("name already in use")
+
+	// ErrWarpKeyNodeTaken is returned by BindWarpAPIKey when the machine already
+	// has a live key bound (idx_warp_api_keys_bound_node). Handlers map it to 409.
+	ErrWarpKeyNodeTaken = errors.New("machine already has a live key bound")
 )
 
 // isUniqueViolation reports whether err is a Postgres unique-constraint

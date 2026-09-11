@@ -130,6 +130,10 @@ func (a *aclHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, 
 	return ownerID, ok, err
 }
 
+func (a *aclHandshakeStore) BindEnrollWarpKey(enrollToken string, nodeID int) (bool, error) {
+	return a.store.BindWarpKeyFromEnrollToken(enrollToken, nodeID)
+}
+
 func (a *aclHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
 	n, err := a.store.GetNodeByToken(token)
 	if err != nil {

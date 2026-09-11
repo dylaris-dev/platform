@@ -155,12 +155,14 @@ export async function dismissNodeJoinAttempt(nodeToken: string): Promise<{ succe
     }
 }
 
-export async function mintEnrollToken(payload: { label: string; expiresDays: number }): Promise<{ success: boolean; token?: string; grpcTlsFingerprint?: string; note?: string; message?: string }> {
+// warpKeyNodeId is the node key minted for the same machine: redeeming the token
+// binds that key to the node, which is what lets the kit run the Link beside it.
+export async function mintEnrollToken(payload: { label: string; expiresDays: number; warpKeyNodeId?: string }): Promise<{ success: boolean; token?: string; grpcTlsFingerprint?: string; note?: string; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/nodes/enroll-token`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label: payload.label, expiresDays: payload.expiresDays }),
+            body: JSON.stringify({ label: payload.label, expiresDays: payload.expiresDays, warpKeyNodeId: payload.warpKeyNodeId }),
         });
         return (await handleResponse(res)) as { success: boolean; token?: string; grpcTlsFingerprint?: string; note?: string; message?: string };
     } catch (err) {

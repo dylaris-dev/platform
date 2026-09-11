@@ -1255,6 +1255,8 @@ export interface NodeWarpKey {
     name: string;
     node_id: string;
     created_at: string;
+    /** The machine (nodes.id) this key belongs to; absent until it is bound. */
+    bound_node_id?: number;
 }
 export interface MintedNodeWarpKey {
     success: boolean;
@@ -1269,6 +1271,12 @@ export const mintNodeWarpKey = (name: string): Promise<MintedNodeWarpKey> =>
     fetchAPI('/warp/node-keys', { method: 'POST', body: JSON.stringify({ name }) });
 export const revokeNodeWarpKey = (nodeId: string): Promise<{ success: boolean }> =>
     fetchAPI(`/warp/node-keys/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+
+// Ties a key to the machine it runs on, for a machine that enrolled before keys
+// were bound at enrol. Only then can the machine's kit run the Link beside the
+// node: Core answers the key with that node's Link.
+export const bindNodeWarpKey = (nodeId: string, node: number): Promise<{ success: boolean; message?: string }> =>
+    fetchAPI(`/warp/node-keys/${encodeURIComponent(nodeId)}/bind`, { method: 'POST', body: JSON.stringify({ node }) });
 
 // Same in-place roll as rollLinkKit. The node_id and the location name do not
 // move, which is what keeps the tenant's servers pointing at the same machine:

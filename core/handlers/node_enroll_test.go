@@ -31,13 +31,24 @@ type nodeEnrollFakeStore struct {
 
 	createCalls []nodeEnrollCreateCall
 	createErr   error
+
+	// BYON node keys by identity, for the warpKeyNodeId validation.
+	warpKeys map[string]*store.WarpAPIKey
 }
 
 type nodeEnrollCreateCall struct {
-	userID    string
-	plaintext string
-	label     string
-	expiresAt *time.Time
+	userID        string
+	plaintext     string
+	label         string
+	expiresAt     *time.Time
+	warpKeyNodeID string
+}
+
+func (f *nodeEnrollFakeStore) GetWarpAPIKeyByNodeID(nodeID string) (*store.WarpAPIKey, error) {
+	if k, ok := f.warpKeys[nodeID]; ok {
+		return k, nil
+	}
+	return nil, errors.New("not found")
 }
 
 // The OTHER pending kind. A tenant can reach a node through a warp key just as
@@ -64,8 +75,8 @@ func (f *nodeEnrollFakeStore) CountPendingNodeEnrollTokens(userID string) (int, 
 	return f.pendingTokens, nil
 }
 
-func (f *nodeEnrollFakeStore) CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error {
-	f.createCalls = append(f.createCalls, nodeEnrollCreateCall{userID, plaintext, label, expiresAt})
+func (f *nodeEnrollFakeStore) CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time, warpKeyNodeID string) error {
+	f.createCalls = append(f.createCalls, nodeEnrollCreateCall{userID, plaintext, label, expiresAt, warpKeyNodeID})
 	return f.createErr
 }
 
@@ -375,5 +386,63 @@ func TestMintToken_HonorsTheNodeCap(t *testing.T) {
 				t.Errorf("createCalls = %d, want 1", len(fs.createCalls))
 			}
 		})
+	}
+}
+
+// warpKeyNodeId names the node key minted for the same machine, so redeeming the
+// token binds it to the node. Only the caller's own, live, unbound NODE key may
+// be named: a route-only key would tie a link kit to a node, a foreign key would
+// let a tenant claim someone else's overlay identity for their machine, and a
+// bound one already answers link-boot for another machine.
+func TestMintToken_WarpKeyNodeIdMustBeAnOwnFreeNodeKey(t *testing.T) {
+	revokedAt := time.Now()
+	keys := map[string]*store.WarpAPIKey{
+		"node-mine":    {ID: 1, NodeID: "node-mine", OwnerID: "u1"},
+		"node-foreign": {ID: 2, NodeID: "node-foreign", OwnerID: "u2"},
+		"node-bound":   {ID: 3, NodeID: "node-bound", OwnerID: "u1", BoundNodeID: 9},
+		"node-revoked": {ID: 4, NodeID: "node-revoked", OwnerID: "u1", RevokedAt: &revokedAt},
+		"link-mine":    {ID: 5, NodeID: "link-mine", OwnerID: "u1"},
+	}
+	tests := []struct {
+		name       string
+		keyID      string
+		wantStatus int
+	}{
+		{"no key named", "", http.StatusOK},
+		{"an own free node key", "node-mine", http.StatusOK},
+		{"someone else's node key", "node-foreign", http.StatusBadRequest},
+		{"an unknown key", "node-unknown", http.StatusBadRequest},
+		{"a route-only key", "link-mine", http.StatusBadRequest},
+		{"a key already bound to a machine", "node-bound", http.StatusBadRequest},
+		{"a revoked key", "node-revoked", http.StatusBadRequest},
+	}
+	bodies := map[string]string{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := &nodeEnrollFakeStore{warpKeys: keys}
+			h := NewNodeEnrollHandler(newNodeEnrollState(fs, true, false, ""))
+			rec := httptest.NewRecorder()
+
+			h.MintToken(rec, nodeEnrollMintReq("u1", map[string]interface{}{"warpKeyNodeId": tt.keyID}))
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			bodies[tt.keyID] = rec.Body.String()
+			if tt.wantStatus != http.StatusOK {
+				if len(fs.createCalls) != 0 {
+					t.Error("a refused key still minted a token")
+				}
+				return
+			}
+			if len(fs.createCalls) != 1 || fs.createCalls[0].warpKeyNodeID != tt.keyID {
+				t.Fatalf("createCalls = %+v, want one carrying %q", fs.createCalls, tt.keyID)
+			}
+		})
+	}
+	// Someone else's key must read exactly like one that does not exist.
+	if bodies["node-foreign"] != bodies["node-unknown"] {
+		t.Errorf("a foreign key answers %q, an unknown one %q: the difference confirms it exists",
+			bodies["node-foreign"], bodies["node-unknown"])
 	}
 }

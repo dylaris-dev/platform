@@ -14,8 +14,10 @@ type WarpAPIKey struct {
 	NodeID    string
 	Region    string // "" = auto-assign at enroll; else pin enrolls to this region
 	OwnerID   string // "" = admin-minted (platform); else the tenant the key/route-only kit belongs to
-	RevokedAt *time.Time
-	CreatedAt time.Time
+	// BoundNodeID is the nodes.id a BYON node key belongs to; 0 = not bound yet.
+	BoundNodeID int
+	RevokedAt   *time.Time
+	CreatedAt   time.Time
 }
 
 // WarpPeer is one enrolled client: pubkey -> allocated WG IP, pinned to a region.

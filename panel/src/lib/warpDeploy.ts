@@ -44,6 +44,15 @@ export type WarpDeployInput = {
      * defaultLocalTarget. Defaults to linux.
      */
     platform?: DeployPlatform;
+    /**
+     * BYON node kit only: run the Link as a service of this file instead of the
+     * node starting one inside itself. Only for a key Core can answer with a
+     * node's Link - a tenant's node key that is bound to its machine, or will be
+     * when the machine enrols with the token minted beside it. Core refuses any
+     * other key, and a node told not to manage its Link then has none at all,
+     * which is why this is opt-in rather than the default.
+     */
+    linkBesideNode?: boolean;
 };
 
 export type DeployPlatform = 'linux' | 'windows';
@@ -196,11 +205,8 @@ services:
       # no second secret has to travel with this file.
       LINK_BOOT_KEY: "${i.apiKey}"
 
-      # keep - warp's local proxy. warp holds the real address and refreshes it,
-      # so this line stays correct even when our platform moves.
-      REDIS_ADDR: "127.0.0.1:${WARP_PROXY_REDIS_PORT}"
-
-      # keep - the proxy is loopback, so there is no certificate to verify. The
+      # keep - link finds warp's local proxy on 127.0.0.1:${WARP_PROXY_REDIS_PORT} by itself.
+      # That proxy is loopback, so there is no certificate to verify, and the
       # path is already inside WireGuard.
       REDIS_USE_TLS: "false"
 
@@ -219,6 +225,13 @@ services:
       # their own and ignore this line; it stays because an older image does not.
       LINK_EXTERNAL: "true"
     network_mode: host
+    volumes:
+      # keep - what link last got from us, so a restart comes up even while
+      # our API cannot be reached.
+      - link_data:/data
+
+volumes:
+  link_data:
 `;
 }
 
@@ -229,10 +242,16 @@ services:
  * Two things here are load-bearing and easy to get wrong by hand: the node gets
  * NO CLUSTER_SECRET (it fetches a scoped Redis credential over gRPC after
  * enrolling, which is what keeps a customer machine from holding fleet
- * credentials), and it spawns its own link sidecar, so nobody should run link
- * separately.
+ * credentials), and exactly one Link runs: either the node spawns its own, or -
+ * with linkBesideNode - the file runs it and tells the node not to.
+ *
+ * The Link beside the node sits on a Docker network with the Minecraft servers,
+ * and reaches warp's proxy on the host through host-gateway. On Docker Desktop
+ * host-gateway is Windows, not the VM warp listens in, so there the node keeps
+ * starting its own Link until that path has been proven.
  */
 export function nodeCompose(i: WarpDeployInput): string {
+    const kitLink = i.linkBesideNode === true && i.platform !== 'windows';
     // Docker Desktop's "host" is the WSL2 VM, not Windows. That is the same
     // adaptation route-only already makes, and it is the whole difference: the
     // node, its warp tunnel and the Minecraft containers all sit inside that VM
@@ -245,10 +264,69 @@ export function nodeCompose(i: WarpDeployInput): string {
 # another normally - but the server files land in the VM unless you bind a
 # Windows path below.`
         : `# Kernel WireGuard needs host networking and NET_ADMIN.`;
+    const intro = kitLink
+        ? `# warp opens an outbound tunnel to us; the node runs your Minecraft servers on
+# this machine, and link carries your players to them.`
+        : `# warp opens an outbound tunnel to us; the node runs your Minecraft servers on
+# this machine. It starts its own link sidecar - do not run link yourself.`;
+    const manageLink = kitLink
+        ? `      # keep - link runs as its own service below, so the node must not start
+      # one as well. A node that started one before removes it.
+      NODE_MANAGES_LINK: "false"
+
+`
+        : '';
+    const linkService = kitLink
+        ? `
+  link:
+    image: ${REG}/gateway-link:latest
+    restart: unless-stopped
+    depends_on: [warp]
+    environment:
+      # keep - the same address as ENROLL_URL above.
+      CORE_URL: "${or(i.enrollUrl, '<core-url>')}"
+
+      # keep - the same key again. Once the node has enrolled, link trades it
+      # for this node's own Link credentials, so no second secret travels with
+      # this file. Until then it waits.
+      LINK_BOOT_KEY: "${i.apiKey}"
+
+      # keep - this machine is outside our network, so link reaches our edges
+      # over the internet. Through the tunnel instead, your players would share
+      # one connection with your own uploads.
+      LINK_EXTERNAL: "true"
+    # keep - how link reaches warp's proxy on this machine. On a Docker network
+    # 127.0.0.1 is link's own container, not this machine.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      # keep - what link last got from us, so a restart comes up even while
+      # our API cannot be reached.
+      - link_data:/data
+    # keep - the network the node starts your servers on; link reaches them there.
+    networks: [dylaris_net]
+`
+        : '';
+    const tail = kitLink
+        ? `volumes:
+  byon_data:
+  link_data:
+
+networks:
+  # keep - named exactly, without this folder's name in front: the node starts
+  # your servers on the network called dylaris_net, and on a machine that ran
+  # an earlier version of this file it already exists with your servers on it.
+  # Docker Compose then warns that it did not create that network and uses it
+  # anyway, which is what should happen. No subnet is set; Docker's own ranges
+  # stay clear of the tunnel's.
+  dylaris_net:
+    name: dylaris_net
+`
+        : `volumes:
+  byon_data:
+`;
     return `# byon-node.yml
 #
-# warp opens an outbound tunnel to us; the node runs your Minecraft servers on
-# this machine. It starts its own link sidecar - do not run link yourself.
+${intro}
 ${header}
 #
 # Lines marked "keep" are filled in for this node and must stay as they are.
@@ -282,7 +360,7 @@ services:
       # keep - this machine is yours, not ours.
       NODE_EXTERNAL: "true"
 
-      # EDIT only for a different name. It ends up in keys and in the
+${manageLink}      # EDIT only for a different name. It ends up in keys and in the
       # environment of every container, so letters, digits and dashes.
       NODE_ID: "${or(i.nodeId, '<stable-id-for-this-machine>')}"
 
@@ -307,10 +385,8 @@ ${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR, no REDIS_ADDR an
       - byon_data:/app/dylaris_data
     network_mode: host
     cap_add: [SYS_ADMIN]
-
-volumes:
-  byon_data:
-`;
+${linkService}
+${tail}`;
 }
 
 /** The compose file's name on disk, and the name every command refers to. */

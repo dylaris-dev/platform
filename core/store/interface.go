@@ -68,7 +68,7 @@ type Store interface {
 	DeleteMailTemplate(key string) error
 	SetNodeDisplayName(id int, name string) error
 	// --- BYON node enrollment ---
-	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time) error
+	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time, warpKeyNodeID string) error
 	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
 	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
@@ -358,6 +358,9 @@ type Store interface {
 	ListLinkKitsForACLTeardown(hardSuspendedBefore, overLimitBefore, revokedAfter time.Time) ([]WarpAPIKey, error)
 	GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error)
 	RevokeWarpAPIKeyByNodeID(nodeID string) error
+	// BindWarpAPIKey ties a live, unbound BYON node key to its node; false when
+	// the key was revoked or bound in the meantime.
+	BindWarpAPIKey(keyID, nodeID int) (bool, error)
 	RollWarpAPIKeyHash(nodeID, newHash string) error
 	InsertWarpPeer(p WarpPeer) (int, error)
 	GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error)

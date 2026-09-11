@@ -135,9 +135,9 @@ can still show what exists.
 
 ## At a glance
 
-- **530 routes** in 52 sections: 238 GET, 159 POST, 40 PUT, 37 PATCH, 57 DELETE.
+- **531 routes** in 52 sections: 238 GET, 160 POST, 40 PUT, 37 PATCH, 57 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **356** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **97** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **356** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -189,7 +189,7 @@ can still show what exists.
 - [/api/updates](#apiupdates) (1)
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (2)
-- [/api/warp](#apiwarp) (17)
+- [/api/warp](#apiwarp) (18)
 - [/healthz](#healthz) (1)
 - [/solder/api](#solderapi) (2)
 - [/solder/mirror](#soldermirror) (1)
@@ -942,7 +942,7 @@ can still show what exists.
 | POST | `/api/warp/enroll` | warp key | _no capability_ | - | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
 | POST | `/api/warp/leaders` | session | `topology.write` | - | `WarpHandler.UpsertLeader` | (admin) creates or updates a leader endpoint within a region. |
 | DELETE | `/api/warp/leaders/{leaderId}` | session | `topology.write` | - | `WarpHandler.DeleteLeader` | (admin) removes a leader endpoint. |
-| POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit | `WarpHandler.LinkBoot` | a route-only link presents its warp key and receives its derived tunnel token plus a Redis credential scoped to its own keys. |
+| POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit | `WarpHandler.LinkBoot` | a Link presents its warp key and receives its tunnel token plus a Redis credential scoped to its own keys. |
 | GET | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.ListLinkKits` | (tenant) returns the caller's route-only link kits (metadata only, no secrets). |
 | POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a warp enrollment key bound to the calling user plus an auto-generated link identity (node_id). |
 | DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
@@ -950,6 +950,7 @@ can still show what exists.
 | GET | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
 | POST | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
 | DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |
+| POST | `/api/warp/node-keys/{nodeID}/bind` | session | _no capability_ | - | `WarpHandler.BindNodeWarpKey` | owner only. |
 | POST | `/api/warp/node-keys/{nodeID}/roll` | session | _no capability_ | - | `WarpHandler.RollNodeWarpKey` | owner or admin. |
 | GET | `/api/warp/regions` | session | `topology.read` | - | `WarpHandler.ListRegions` | returns the full warp registry (regions + leaders + liveness + peer counts) for the admin panel. |
 | POST | `/api/warp/regions` | session | `topology.write` | - | `WarpHandler.UpsertRegion` | (admin) creates or updates a region's subnet + enabled flag. |

@@ -9,9 +9,10 @@ import {
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getNodes,
-    listNodeWarpKeys, mintNodeWarpKey, revokeNodeWarpKey, rollNodeWarpKey, type NodeWarpKey,
+    listNodeWarpKeys, mintNodeWarpKey, revokeNodeWarpKey, rollNodeWarpKey, bindNodeWarpKey, type NodeWarpKey,
 } from '@/lib/api';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import Select from '@/components/ui/Select';
 import { coreOrigin } from '@/lib/api/core';
 import { getStoreStatus } from '@/lib/api/store';
 import { getMyUsage } from '@/lib/api/usage';
@@ -131,9 +132,23 @@ function MyNodesInner() {
     // token is absent for a ROLL: the machine enrolled long ago and an enroll
     // token is first-pairing only, so minting one would hand out a credential
     // with nothing to pair.
-    const [revealedNode, setRevealedNode] = useState<{ token?: string; warpKey: string; label: string; grpcTlsFingerprint?: string; rolled?: boolean } | null>(null);
+    // linkBeside says whether the file shown with the keys may run the Link
+    // beside the node: always for a new machine (its key is bound when it
+    // enrols), and for a roll only when the key is bound already - a rolled key
+    // of a machine that enrolled before keys were bound would otherwise get a
+    // file whose Link Core cannot answer, on a node told not to start its own.
+    const [revealedNode, setRevealedNode] = useState<{ token?: string; warpKey: string; label: string; grpcTlsFingerprint?: string; rolled?: boolean; linkBeside?: boolean } | null>(null);
     const [rollingKey, setRollingKey] = useState('');
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
+    // Until the keys have been read every machine would look unbound, and its
+    // button would offer an update it does not need for a moment.
+    const [nodeKeysLoaded, setNodeKeysLoaded] = useState(false);
+    // The machine whose Link is being moved out of the node, and the key picked
+    // for it. A machine that enrolled before keys were bound at enrol has to be
+    // told which of the owner's keys is its own before its kit can run the Link.
+    const [linkFor, setLinkFor] = useState<OwnNode | null>(null);
+    const [bindKey, setBindKey] = useState('');
+    const [binding, setBinding] = useState(false);
     const [nodeUsage, setNodeUsage] = useState<{ used: number; limit?: number } | null>(null);
     // Which machine the removal dialog is open for, by id and by the label the
     // owner reads - the dialog names it back to them before it does anything.
@@ -244,6 +259,7 @@ function MyNodesInner() {
         if (res.success) {
             setNodeKeys(res.keys || []);
             setNodeUsage({ used: res.used ?? 0, limit: res.limit });
+            setNodeKeysLoaded(true);
         }
     }, [byonEnabled]);
 
@@ -271,7 +287,9 @@ function MyNodesInner() {
             setError(warp.message || 'Could not create the overlay key.');
             return;
         }
-        const res = await mintEnrollToken({ label: draft, expiresDays: 7 });
+        // The key's node_id rides along so the machine's enrol binds this key to
+        // it, which is what lets the kit below run the Link beside the node.
+        const res = await mintEnrollToken({ label: draft, expiresDays: 7, warpKeyNodeId: warp.node_id });
         setMinting(false);
         if (!res.success || !res.token) {
             setError(res.message || 'The overlay key was created but the enrollment key failed. Revoke the key below and try again.');
@@ -280,7 +298,7 @@ function MyNodesInner() {
         }
         // Core returns the fingerprint only while its gRPC channel is TLS, so it
         // travels with the enroll token and lands in the snippet unchanged.
-        setRevealedNode({ token: res.token, warpKey: warp.warp_key, label: draft, grpcTlsFingerprint: res.grpcTlsFingerprint });
+        setRevealedNode({ token: res.token, warpKey: warp.warp_key, label: draft, grpcTlsFingerprint: res.grpcTlsFingerprint, linkBeside: true });
         setNodeLabelDraft('');
         load();
         loadNodeKeys();
@@ -324,7 +342,38 @@ function MyNodesInner() {
             setError(res.message || 'Could not roll that key.');
             return;
         }
-        setRevealedNode({ warpKey: res.warp_key, label, rolled: true });
+        setRevealedNode({
+            warpKey: res.warp_key, label, rolled: true,
+            linkBeside: !!nodeKeys.find(k => k.node_id === nodeId)?.bound_node_id,
+        });
+        loadNodeKeys();
+    };
+
+    const keyBoundTo = (nodeId: number) => nodeKeys.find(k => k.bound_node_id === nodeId);
+    const freeKeys = nodeKeys.filter(k => !k.bound_node_id);
+
+    // Pre-selects the key created under this machine's location name - the node
+    // reports that name slugged, which is what nodeIdFromLabel produces from the
+    // key's name. Nothing is pre-selected when no name matches: the owner picks.
+    const openLinkSetup = (n: OwnNode) => {
+        const slug = nodeIdFromLabel(nodeLabel(n));
+        const match = freeKeys.find(k => nodeIdFromLabel(k.name) === slug);
+        setBindKey(match?.node_id ?? '');
+        setError('');
+        setLinkFor(n);
+    };
+
+    const handleBindKey = async () => {
+        if (!linkFor || !bindKey) return;
+        setBinding(true);
+        setError('');
+        const res = await bindNodeWarpKey(bindKey, linkFor.id);
+        setBinding(false);
+        if (!res.success) {
+            setError(res.message || 'Could not connect that key to this machine.');
+            return;
+        }
+        // The re-read is what flips the panel from the key picker to the new file.
         loadNodeKeys();
     };
 
@@ -608,19 +657,35 @@ function MyNodesInner() {
                                                     </div>
                                                 </div>
                                             </div>
-                                            {/* The way back out. Without it a machine could be added and
-                                                never removed, so the slot it held was gone for good and
-                                                the cap read as "buy more". */}
-                                            <button
-                                                type="button"
-                                                onClick={() => setRemoving({ id: n.id, label: nodeLabel(n) })}
-                                                title={`Remove ${nodeLabel(n)}`}
-                                                aria-label={`Remove ${nodeLabel(n)}`}
-                                                className="shrink-0 text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors
-                                                           focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                {/* A machine whose key is not bound still runs its Link inside
+                                                    the node; that is the one it has to act on. A bound one only
+                                                    ever needs its file again. */}
+                                                {nodeKeysLoaded && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openLinkSetup(n)}
+                                                        disabled={!!revealedNode}
+                                                        title={revealedNode ? 'Save the keys shown first' : undefined}
+                                                        className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    >
+                                                        {keyBoundTo(n.id) ? 'Deploy file' : 'Update this machine'}
+                                                    </button>
+                                                )}
+                                                {/* The way back out. Without it a machine could be added and
+                                                    never removed, so the slot it held was gone for good and
+                                                    the cap read as "buy more". */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setRemoving({ id: n.id, label: nodeLabel(n) })}
+                                                    title={`Remove ${nodeLabel(n)}`}
+                                                    aria-label={`Remove ${nodeLabel(n)}`}
+                                                    className="shrink-0 text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors
+                                                               focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
                                         </div>
                                     );
                                 })
@@ -630,10 +695,87 @@ function MyNodesInner() {
                 )}
             </section>
 
+            {/* One machine's Link, moved out of its node: pick its key if it has
+                none bound yet, then its file. */}
+            {byonAllowed && entitlementKnown && !revealedNode && linkFor && (
+                <aside className={`card p-5 space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
+                    <div className="text-sm font-medium text-(--base-09)">
+                        {nodeLabel(linkFor)}: the Link beside the node
+                    </div>
+                    <p className="text-xs text-(--base-07)">
+                        The Link carries your players to your servers. So far it has run inside the node. To run it
+                        beside the node instead, as a service of its own, we need to know which overlay key
+                        belongs to this machine.
+                    </p>
+                    {keyBoundTo(linkFor.id) ? (
+                        <>
+                            <p className="text-xs text-(--base-07)">
+                                This machine&apos;s key is connected. If it still runs an earlier file, redeploy it with
+                                the one below, keeping the values of <code className="font-mono">API_KEY</code>,{' '}
+                                <code className="font-mono">NODE_ID</code> and <code className="font-mono">NODE_ENROLL_TOKEN</code>{' '}
+                                from the file it runs now; <code className="font-mono">LINK_BOOT_KEY</code> takes the same
+                                key as <code className="font-mono">API_KEY</code>. Players connected at that moment
+                                reconnect once while the Link moves over.
+                            </p>
+                            <DeployKit
+                                kind="node"
+                                warpKey={null}
+                                enrollUrl={enrollUrl}
+                                nodeId={nodeIdFromLabel(nodeLabel(linkFor))}
+                                config={deployConfig}
+                                linkBesideNode
+                            />
+                        </>
+                    ) : freeKeys.length === 0 ? (
+                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <span>
+                                None of your overlay keys is free. This machine needs the key its warp service runs
+                                with; if that key is not under Overlay keys in use, it was revoked. The machine keeps
+                                running as it is.
+                            </span>
+                        </p>
+                    ) : (
+                        <div className="space-y-2">
+                            <span id="bind-key-label" className="input-label">Overlay key of this machine</span>
+                            <Select
+                                value={bindKey}
+                                onChange={setBindKey}
+                                options={freeKeys.map(k => ({ value: k.node_id, label: k.name }))}
+                                placeholder="Choose a key"
+                                ariaLabel="Overlay key of this machine"
+                                disabled={binding}
+                            />
+                            <p className="text-xs text-(--base-06)">
+                                It is the <code className="font-mono">API_KEY</code> in this machine&apos;s warp service,
+                                listed by the location name it was created with. Nothing changes on the machine until
+                                you redeploy it.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={handleBindKey}
+                                disabled={!bindKey || binding}
+                                className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {binding ? 'Saving…' : 'Use this key'}
+                            </button>
+                        </div>
+                    )}
+                    <button type="button" onClick={() => setLinkFor(null)} className="btn btn-secondary btn-sm">
+                        Close
+                    </button>
+                </aside>
+            )}
             {/* The keys are shown once. They are stored as hashes, so this is
                 the only moment they exist anywhere the reader can see them - the
-                copy has to say so before they close it. */}
-            {byonAllowed && entitlementKnown && !revealedNode && (
+                copy has to say so before they close it.
+
+                This generic file keeps the node-managed Link: it is shown to every
+                owner, including ones whose machine has no bound key yet, and for
+                those a file without that Link would leave the machine with none.
+                The Link-beside-the-node file appears only where the key is known
+                to be bound, or is about to be at enrol. */}
+            {byonAllowed && entitlementKnown && !revealedNode && !linkFor && (
                 <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
                     {(nodeKeys.length > 0 || tokens.length > 0) && (
                         <p className="text-xs text-(--base-06)">
@@ -683,6 +825,7 @@ function MyNodesInner() {
                         grpcTlsFingerprint={revealedNode.grpcTlsFingerprint}
                         nodeId={nodeIdFromLabel(revealedNode.label)}
                         config={deployConfig}
+                        linkBesideNode={revealedNode.linkBeside}
                     />
                     <button type="button" onClick={() => setRevealedNode(null)} className="btn btn-secondary btn-sm">
                         {revealedNode.rolled ? 'I saved it' : 'I saved them'}
@@ -698,6 +841,7 @@ function MyNodesInner() {
                     nodeLabel={removing.label}
                     onClose={() => setRemoving(null)}
                     onRemoved={() => {
+                        if (linkFor?.id === removing.id) setLinkFor(null);
                         setRemoving(null);
                         // Re-read rather than splicing the row out: the machine
                         // going away also frees a slot, and the cap message and

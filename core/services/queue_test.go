@@ -184,6 +184,7 @@ func (f *fakeACLHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
 	}
 	return 0, false, nil
 }
+func (f *fakeACLHandshakeStore) BindEnrollWarpKey(string, int) (bool, error) { return false, nil }
 
 func TestSendRawCommand_PublishesPayloadAsIs(t *testing.T) {
 	rdb := newQueueTestRedis(t)

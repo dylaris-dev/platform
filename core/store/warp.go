@@ -23,10 +23,10 @@ func (s *PostgresStore) GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error) {
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
 		FROM warp_api_keys WHERE key_hash = $1`, hash).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &ownerID, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &nodeID, &region, &ownerID, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func (s *PostgresStore) ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, er
 	rows, err := s.db.Query(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
 		FROM warp_api_keys
 		WHERE owner_id = $1::uuid AND revoked_at IS NULL
 		ORDER BY created_at DESC`, ownerID)
@@ -53,7 +53,7 @@ func (s *PostgresStore) ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, er
 		var k WarpAPIKey
 		var fixedIP, nodeID, region, owner sql.NullString
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
@@ -71,7 +71,7 @@ func (s *PostgresStore) ListWarpAPIKeys() ([]WarpAPIKey, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
 		FROM warp_api_keys
 		WHERE owner_id IS NULL
 		ORDER BY created_at DESC`)
@@ -84,7 +84,7 @@ func (s *PostgresStore) ListWarpAPIKeys() ([]WarpAPIKey, error) {
 		var k WarpAPIKey
 		var fixedIP, nodeID, region, owner sql.NullString
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
@@ -100,10 +100,10 @@ func (s *PostgresStore) GetWarpAPIKeyByID(id int) (*WarpAPIKey, error) {
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
 		FROM warp_api_keys WHERE id = $1`, id).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore, overLim
 	rows, err := s.db.Query(`
 		SELECT w.id, w.name, w.key_hash, w.policy, w.max_conns, w.on_new_conn,
 		       COALESCE(w.fixed_wg_ip,''), COALESCE(w.node_id,''), COALESCE(w.region,''),
-		       COALESCE(w.owner_id::text,''), w.revoked_at, w.created_at
+		       COALESCE(w.owner_id::text,''), COALESCE(w.bound_node_id, 0), w.revoked_at, w.created_at
 		FROM warp_api_keys w
 		LEFT JOIN user_billing ub ON ub.user_id = w.owner_id
 		WHERE w.node_id LIKE 'link-%' AND w.revoked_at IS NULL
@@ -208,7 +208,7 @@ func (s *PostgresStore) ListLinkKitsForACLReconcile(hardSuspendedBefore, overLim
 		var k WarpAPIKey
 		var fixedIP, nodeID, region, owner sql.NullString
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
@@ -243,7 +243,7 @@ func (s *PostgresStore) ListLinkKitsForACLTeardown(hardSuspendedBefore, overLimi
 	rows, err := s.db.Query(`
 		SELECT w.id, w.name, w.key_hash, w.policy, w.max_conns, w.on_new_conn,
 		       COALESCE(w.fixed_wg_ip,''), COALESCE(w.node_id,''), COALESCE(w.region,''),
-		       COALESCE(w.owner_id::text,''), w.revoked_at, w.created_at
+		       COALESCE(w.owner_id::text,''), COALESCE(w.bound_node_id, 0), w.revoked_at, w.created_at
 		FROM warp_api_keys w
 		LEFT JOIN user_billing ub ON ub.user_id = w.owner_id
 		WHERE w.node_id LIKE 'link-%'
@@ -261,7 +261,7 @@ func (s *PostgresStore) ListLinkKitsForACLTeardown(hardSuspendedBefore, overLimi
 		var k WarpAPIKey
 		var fixedIP, nodeID, region, owner sql.NullString
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.RevokedAt, &k.CreatedAt); err != nil {
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
@@ -587,15 +587,37 @@ func (s *PostgresStore) GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
 		FROM warp_api_keys WHERE node_id = $1`, nodeID).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &node, &region, &ownerID, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &node, &region, &ownerID, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, node.String, region.String, ownerID.String
 	return &k, nil
+}
+
+// BindWarpAPIKey ties a live, unbound key to a node. false (no error) when the
+// key was revoked or bound in the meantime: the handler checked both before
+// calling, and the WHERE is what makes that check hold under a race instead of
+// quietly moving a key that already belonged to another machine. A second live
+// key for the same node is refused by idx_warp_api_keys_bound_node and comes back
+// as ErrWarpKeyNodeTaken - the handler's pre-check cannot see every such key: it
+// lists the caller's own, so a key another owner bound before the machine changed
+// hands, or the enrol-time bind racing this one, only shows up here.
+func (s *PostgresStore) BindWarpAPIKey(keyID, nodeID int) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE warp_api_keys SET bound_node_id = $2
+		 WHERE id = $1 AND bound_node_id IS NULL AND revoked_at IS NULL`, keyID, nodeID)
+	if isUniqueViolation(err) {
+		return false, ErrWarpKeyNodeTaken
+	}
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // RevokeWarpAPIKeyByNodeID marks a link kit's warp key revoked (revoked_at = NOW),

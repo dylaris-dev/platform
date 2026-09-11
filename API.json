@@ -5176,7 +5176,7 @@
       "path": "/api/warp/link-boot",
       "auth": "warp key",
       "authorization": "no capability",
-      "description": "a route-only link presents its warp key and receives its derived tunnel token plus a Redis credential scoped to its own keys.",
+      "description": "a Link presents its warp key and receives its tunnel token plus a Redis credential scoped to its own keys.",
       "handler": "WarpHandler.LinkBoot",
       "group": "warp",
       "external": false
@@ -5253,6 +5253,16 @@
     },
     {
       "method": "POST",
+      "path": "/api/warp/node-keys/{nodeID}/bind",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "owner only.",
+      "handler": "WarpHandler.BindNodeWarpKey",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
       "path": "/api/warp/node-keys/{nodeID}/roll",
       "auth": "session",
       "authorization": "no capability",
@@ -5293,10 +5303,10 @@
     }
   ],
   "counts": {
-    "total": 531,
+    "total": 532,
     "byAuth": {
       "none": 38,
-      "session": 480,
+      "session": 481,
       "user API key": 10,
       "warp key": 3
     },
@@ -5349,7 +5359,7 @@
       "updates": 1,
       "users": 7,
       "versions": 2,
-      "warp": 17
+      "warp": 18
     },
     "external": 10
   }

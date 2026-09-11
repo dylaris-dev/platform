@@ -54,14 +54,35 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Label       string `json:"label"`
 		ExpiresDays int    `json:"expiresDays"`
+		// The BYON node key (node-<hex>) minted for the same machine. Redeeming
+		// the token binds that key to the node it creates, which is what lets the
+		// machine's kit run the Link beside the node. Optional: an operator
+		// minting a token by hand has no key to name.
+		WarpKeyNodeID string `json:"warpKeyNodeId"`
 	}
-	// io.EOF is fine: both fields are optional and an empty body means "mint one
+	// io.EOF is fine: every field is optional and an empty body means "mint one
 	// with the defaults". Anything else is a malformed body, and swallowing it
 	// meant a caller who sent `{"expiresDays": 30}` with a typo elsewhere in the
 	// JSON got a silent 7-day token back and no way to tell.
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
+	}
+	// Checked here, where a refusal can still be acted on: at the far end the
+	// binding is best-effort and the gRPC layer flattens every error anyway.
+	// Every refusal is a 400, someone else's key included, so the answer does
+	// not confirm that key exists.
+	warpKeyNodeID := strings.TrimSpace(req.WarpKeyNodeID)
+	if warpKeyNodeID != "" {
+		key, _, msg := ownNodeKey(h.state.Store, warpKeyNodeID, userID)
+		if key == nil {
+			sendJSONError(w, msg, http.StatusBadRequest)
+			return
+		}
+		if key.BoundNodeID != 0 {
+			sendJSONError(w, "This node key already belongs to a machine", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Enforce the tenant's node cap here, counting redeemable tokens as pending
@@ -119,7 +140,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	}
 	t := time.Now().AddDate(0, 0, days)
 	exp := &t
-	if err := h.state.Store.CreateNodeEnrollToken(userID, token, strings.TrimSpace(req.Label), exp); err != nil {
+	if err := h.state.Store.CreateNodeEnrollToken(userID, token, strings.TrimSpace(req.Label), exp, warpKeyNodeID); err != nil {
 		sendJSONError(w, "Failed to create token", http.StatusInternalServerError)
 		return
 	}

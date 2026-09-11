@@ -148,7 +148,7 @@ export function platformNote(kind: 'node' | 'route-only', platform: DeployPlatfo
         : 'Host networking on Docker Desktop joins the WSL2 VM, not Windows, so the snippet points the link at host.docker.internal. Your Minecraft server keeps running on Windows as it does now.';
 }
 
-export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId, config }: {
+export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId, config, linkBesideNode }: {
     kind: 'node' | 'route-only';
     warpKey: string | null;
     enrollUrl: string;
@@ -156,6 +156,8 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
     grpcTlsFingerprint?: string;
     nodeId?: string;
     config?: WarpDeployConfig | null;
+    /** See WarpDeployInput.linkBesideNode: only for a key bound (or about to be) to its machine. */
+    linkBesideNode?: boolean;
 }) {
     // Both kinds run on Docker Desktop. The node was Linux-only here for longer
     // than it needed to be: it drives the host's Docker socket, and on Docker
@@ -175,6 +177,7 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
         // placeholder: a blank tells the reader something is missing, an empty
         // string looks like a setting that was deliberately cleared.
         tunnelSubnets: config?.tunnelSubnets || undefined,
+        linkBesideNode,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
 
@@ -202,6 +205,13 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
                 ))}
             </div>
             <p className="text-xs text-(--base-06)">{platformNote(kind, platform)}</p>
+            {/* nodeCompose keeps the node-managed Link on Docker Desktop, so the
+                reader must not go looking for a link service that is not there. */}
+            {kind === 'node' && linkBesideNode && platform === 'windows' && (
+                <p className="text-xs text-(--base-06)">
+                    On Docker Desktop the node still starts the Link itself, so this file is the same as before.
+                </p>
+            )}
             <Snippet title={composeFileName(kind)} body={compose} />
             <Snippet title="Commands" body={deployCli(kind)} note={deployIntro(kind, platform)} />
             <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>

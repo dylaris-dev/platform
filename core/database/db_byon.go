@@ -30,6 +30,15 @@ func applyBYONSchema(db *sql.DB) error {
 	// P0b-5 recovery: a recovery token re-pairs an EXISTING node identity (nodes.token).
 	// Plain column, no FK (nodes.token is unique but not a foreign key); validated live at consume.
 	db.Exec(`ALTER TABLE node_enroll_tokens ADD COLUMN IF NOT EXISTS recovers_node_token TEXT`)
+	// The BYON node key (warp_api_keys.node_id) minted for the same machine as
+	// this token. When the token is redeemed, that key is bound to the node it
+	// created (store.BindWarpKeyFromEnrollToken). Plain column like the one above:
+	// the key row is re-checked at bind time, so a key revoked or bound in the
+	// meantime is simply not bound. Checked, unlike its neighbours: without it
+	// every mint's INSERT fails.
+	if _, err := db.Exec(`ALTER TABLE node_enroll_tokens ADD COLUMN IF NOT EXISTS warp_key_node_id TEXT`); err != nil {
+		return fmt.Errorf("byon: add node_enroll_tokens.warp_key_node_id: %w", err)
+	}
 
 	// P0b-5 admission: global-scope IP allowlist for NEW node registrations.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS node_admission_cidrs (
