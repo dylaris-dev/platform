@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -201,6 +202,7 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 	}
 	fromIP, err := h.state.Store.GetNodeLastAuthPeerIP(node.ID)
 	if err != nil {
+		log.Printf("roll-secret: node %d: read last auth address: %v", node.ID, err)
 		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
@@ -214,6 +216,7 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 	// whose secret Core still holds is answered with a challenge and never
 	// reaches the branch that consumes an admission.
 	if err := h.state.Store.SetNodeSecretEnc(node.ID, ""); err != nil {
+		log.Printf("roll-secret: node %d: clear secret: %v", node.ID, err)
 		sendJSONError(w, "Failed to reset secret", http.StatusInternalServerError)
 		return
 	}
@@ -231,12 +234,16 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 	}
 	armed, err := h.state.Store.ArmNodeJoinApproval(node.Token, fromIP, uid)
 	if err != nil || !armed {
+		// The secret is already gone by this point, so the node has changed
+		// state either way - log why arming failed, or this 500 explains
+		// nothing afterwards.
+		log.Printf("roll-secret: node %d: arm join approval failed (armed=%v): %v", node.ID, armed, err)
 		sendJSONError(w, "The node's secret is cleared, but its re-admission could not be armed. It will appear under Connection attempts, where you can admit it.", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"note":    "Key rolled. The node's Redis access is cut until it reconnects with a new secret, normally within a minute.",
+		"note":    "Key rolled. The node's Redis access is cut at once. The re-admission is armed for 15 minutes; a node that is online reconnects with a new secret well within that window.",
 	})
 }
 

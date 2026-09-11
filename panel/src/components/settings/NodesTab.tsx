@@ -357,6 +357,15 @@ interface NodeCardProps {
 // needsAttention is the separate, pre-existing highlight for a node that has
 // never been configured. Being open outranks it: the same button cannot be
 // telling you to look here and showing you are already here.
+// canRollKey: Roll key arms the node's re-admission for the same 15-minute
+// window an approval arms, bound to the address it last authenticated from.
+// Offline longer than that and it comes back refused, needing a manual admit
+// under Connection attempts - so the action is only useful, and only offered,
+// while the node is online to actually reconnect within the window.
+export function canRollKey(status: string): boolean {
+    return status === 'online';
+}
+
 export function nodeActionClass(active: boolean, needsAttention: boolean): string {
     const base = 'text-xs inline-flex items-center gap-1 rounded px-1.5 py-0.5 -mx-1.5 transition-colors';
     if (active) {
@@ -714,9 +723,11 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     </button>
                     <button
                         onClick={onRollSecret}
-                        disabled={rollingSecret}
+                        disabled={rollingSecret || !canRollKey(node.status)}
                         className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
-                        title="Replace this node's secret; it reconnects with a new one by itself"
+                        title={canRollKey(node.status)
+                            ? "Replace this node's secret; it reconnects with a new one by itself"
+                            : 'Roll key re-admits the node for 15 minutes; use it while the node is online, or use Reset pairing and admit it under Connection attempts'}
                     >
                         <RefreshCw size={11} />
                         {rollingSecret ? 'Rolling…' : 'Roll key'}

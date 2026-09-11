@@ -93,6 +93,11 @@ type NodeLinkLearner struct {
 	// routes point elsewhere. Rebuilt every pass, so a pass that does not name
 	// it breaks the chain.
 	seen map[string]string
+	// justSwitched is the token a node's routes were moved to on the PREVIOUS
+	// pass, one entry per node whose switch just completed. It triggers exactly
+	// one repeat push (see the comment above the push loop in apply) and is
+	// rebuilt every pass like seen, so it never survives a second pass.
+	justSwitched map[string]string
 }
 
 func NewNodeLinkLearner(s nodeLinkStore, g *RedisGateway) *NodeLinkLearner {
@@ -121,9 +126,13 @@ func (l *NodeLinkLearner) Start(ctx context.Context) {
 // RunOnce reads every answer the Hub published and applies it.
 func (l *NodeLinkLearner) RunOnce(ctx context.Context) {
 	// Taken before any early return, so a pass that is skipped or fails also
-	// breaks the "named twice in a row" chain rather than bridging it.
+	// breaks the "named twice in a row" chain rather than bridging it, and
+	// drops a pending repeat-push marker the same way - a leader change simply
+	// loses it.
 	prev := l.seen
 	l.seen = map[string]string{}
+	prevSwitched := l.justSwitched
+	l.justSwitched = map[string]string{}
 
 	if l.leader != nil && !l.leader.IsLeader() {
 		return
@@ -148,7 +157,7 @@ func (l *NodeLinkLearner) RunOnce(ctx context.Context) {
 		// A node with no answer keeps what it has; an answer for a node Core
 		// does not know is never looked at.
 		if a, ok := answers[n.Token]; ok {
-			l.apply(ctx, n, a, prev[n.Token])
+			l.apply(ctx, n, a, prev[n.Token], prevSwitched[n.Token])
 		}
 	}
 }
@@ -192,16 +201,23 @@ func (l *NodeLinkLearner) answers(ctx context.Context) (map[string]nodeLinkAnswe
 }
 
 // apply reconciles one node against the Hub's answer. seenBefore is what the
-// Hub named for this node on the previous pass, if its routes pointed elsewhere.
-func (l *NodeLinkLearner) apply(ctx context.Context, n models.Node, a nodeLinkAnswer, seenBefore string) {
+// Hub named for this node on the previous pass, if its routes pointed
+// elsewhere. justSwitchedTo is the token this node's routes were moved to on
+// the previous pass, if a switch completed then - it triggers one repeat push,
+// see the comment above the push loop below.
+func (l *NodeLinkLearner) apply(ctx context.Context, n models.Node, a nodeLinkAnswer, seenBefore, justSwitchedTo string) {
 	current := effectiveLinkToken(&n, l.gw.clusterSecret)
 	if a.Token == current {
 		// The routes already point here - every node whose answer is its own
-		// derived token. Only the column is filled; nothing moves.
+		// derived token, and the node this apply just switched last pass. Only
+		// the column is filled if it does not already agree.
 		if n.LinkToken != a.Token {
 			if err := l.store.SetNodeLinkToken(n.ID, a.Token); err != nil {
 				logErrf("node-link", "node %d (%s): store link: %v", n.ID, tokenPrefix(n.Token), err)
 			}
+		}
+		if justSwitchedTo == a.Token {
+			l.repush(n, a.Token)
 		}
 		return
 	}
@@ -230,8 +246,23 @@ func (l *NodeLinkLearner) apply(ctx context.Context, n models.Node, a nodeLinkAn
 	// column agreeing with the Hub while routes still point at the old link, and
 	// no later pass would see a difference to act on. This way a failure retries
 	// the whole node next pass; migrate_routes is idempotent.
-	// ponytail: a route created for this node in the milliseconds between the
-	// pushes and the store is bound to the old link; the next link change moves it.
+	//
+	// A route CreateServerRoute creates in the window between it reading the old
+	// link_token and SetNodeLinkToken landing below can reach the Hub with the
+	// old token AFTER this pass's migrate_routes, and stay bound to a link that
+	// may be gone: the column already agrees by then, so no later pass sees a
+	// difference to act on. Fixed by the justSwitchedTo check at the top of this
+	// function: the pass right after a switch re-pushes migrate_routes once more
+	// for the same node, which catches that straggler the same way the retry
+	// above catches a mid-push failure.
+	//
+	// What the repeat push cannot repair: the learner lists server S on node X,
+	// the migration orchestrator moves S to node Y and queues migrate(S, Y), then
+	// the learner queues migrate(S, X-new) for the link switch it is
+	// reconciling here. The Hub applies both in the order it receives them, so
+	// S's routes can end up on X's link while S actually runs on Y. That needs a
+	// node move and a link switch to land in the same moment; accepted
+	// knowingly, not fixed here.
 	for _, s := range servers {
 		if err := l.gw.pushToQueue(hubQueueMessage{
 			Action:       "migrate_routes",
@@ -246,6 +277,34 @@ func (l *NodeLinkLearner) apply(ctx context.Context, n models.Node, a nodeLinkAn
 		logErrf("node-link", "node %d (%s): store link: %v", n.ID, tokenPrefix(n.Token), err)
 		return
 	}
+	l.justSwitched[n.Token] = a.Token
 	log.Printf("[node-link] node %d (%s): routes moved from link %s to %s link %d (%s), %d server(s)",
 		n.ID, tokenPrefix(n.Token), tokenPrefix(current), a.Kind, a.LinkID, tokenPrefix(a.Token), len(servers))
+}
+
+// repush re-sends migrate_routes for every server on n, once, on the pass
+// right after n's routes were moved to token. It catches a route
+// CreateServerRoute created in the race described above the push loop in
+// apply. Best-effort: a failure here is logged and dropped rather than
+// retried, same as the routine push it repeats - there is no marker left to
+// retry from once this pass is done, and the case it exists for is rare
+// enough that the next genuine switch is the next chance.
+func (l *NodeLinkLearner) repush(n models.Node, token string) {
+	servers, err := l.store.ListServersByNode(n.ID)
+	if err != nil {
+		logErrf("node-link", "node %d (%s): re-push list servers: %v", n.ID, tokenPrefix(n.Token), err)
+		return
+	}
+	for _, s := range servers {
+		if err := l.gw.pushToQueue(hubQueueMessage{
+			Action:       "migrate_routes",
+			ServerUUID:   s.UUID,
+			NewLinkToken: token,
+		}); err != nil {
+			logErrf("node-link", "node %d (%s): re-push migrate routes of %s: %v", n.ID, tokenPrefix(n.Token), s.UUID, err)
+			return
+		}
+	}
+	log.Printf("[node-link] node %d (%s): re-pushed migrate_routes to %s link (%d server(s)), the pass after the switch",
+		n.ID, tokenPrefix(n.Token), tokenPrefix(token), len(servers))
 }

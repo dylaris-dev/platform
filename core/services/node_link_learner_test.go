@@ -146,9 +146,16 @@ func TestNodeLink_NewLink_OnlineAndNamedTwice_MovesEveryServer(t *testing.T) {
 		t.Errorf("link_token = %q, want generated", got)
 	}
 
+	// The pass right after the switch re-pushes once more, to catch a route
+	// created in the race window around it - see TestNodeLink_SwitchRepushesOnceOnTheNextPass.
 	l.RunOnce(context.Background())
-	if got := len(readHubQueueMessages(t, rdb)); got != 2 {
-		t.Errorf("a settled node queued more: %d messages in total, want still 2", got)
+	if got := len(readHubQueueMessages(t, rdb)); got != 4 {
+		t.Errorf("queued %d messages after the repeat pass, want 4 (2 + 2 repeated)", got)
+	}
+
+	l.RunOnce(context.Background())
+	if got := len(readHubQueueMessages(t, rdb)); got != 4 {
+		t.Errorf("a settled node queued more: %d messages in total, want still 4", got)
 	}
 }
 
@@ -261,6 +268,43 @@ func TestNodeLink_AbsentAnswerKeepsTheColumn(t *testing.T) {
 	}
 	if msgs := readHubQueueMessages(t, rdb); len(msgs) != 0 {
 		t.Errorf("queued %+v, want nothing", msgs)
+	}
+}
+
+// A route CreateServerRoute creates in the race window around a switch can
+// reach the Hub with the OLD token after the switch pass's migrate_routes, and
+// the column already agreeing means no later pass would normally see a
+// difference to act on. The repair: the pass right after a switch re-pushes
+// migrate_routes once more for every server on that node, then stops.
+func TestNodeLink_SwitchRepushesOnceOnTheNextPass(t *testing.T) {
+	l, st, mr, rdb := nodeLinkFixture(t)
+	hubNamesLink(mr, "node-a", "generated")
+	mr.Set("online_link:generated", "1")
+
+	l.RunOnce(context.Background()) // named once - nothing yet
+	l.RunOnce(context.Background()) // named twice in a row and online - switch
+	if got := len(readHubQueueMessages(t, rdb)); got != 2 {
+		t.Fatalf("switch pass queued %d, want one per server (2)", got)
+	}
+
+	l.RunOnce(context.Background()) // the pass right after the switch
+	msgs := readHubQueueMessages(t, rdb)
+	if len(msgs) != 4 {
+		t.Fatalf("after the repeat pass, queued %d in total, want 4 (2 + 2 repeated)", len(msgs))
+	}
+	for i, want := range []string{"srv-10", "srv-11"} {
+		m := msgs[2+i]
+		if m.Action != "migrate_routes" || m.ServerUUID != want || m.NewLinkToken != "generated" {
+			t.Errorf("repeat message %d = %+v, want migrate_routes %s -> generated", i, m, want)
+		}
+	}
+	if got := st.linkToken(1); got != "generated" {
+		t.Errorf("link_token = %q, want still generated", got)
+	}
+
+	l.RunOnce(context.Background()) // the pass after that - settled, no more
+	if got := len(readHubQueueMessages(t, rdb)); got != 4 {
+		t.Errorf("queued %d once settled, want still 4 (no further repeats)", got)
 	}
 }
 

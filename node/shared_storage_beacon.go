@@ -20,9 +20,10 @@ import (
 //
 // It is not merely fragile there, it cannot work at all. `.node_secret` and
 // `.node_id` both live in the first storage path, so two nodes overwrite each
-// other's identity; and the scheduler counts one 10 TB share once per node. The migration guard already refuses the
-// data-destroying case (see migration_commands.go), but a refused migration is a
-// symptom. This says what is actually wrong, before anything is migrated.
+// other's identity; and the scheduler counts one 10 TB share once per node.
+// The migration guard already refuses the data-destroying case (see
+// migration_commands.go), but a refused migration is a symptom. This says
+// what is actually wrong, before anything is migrated.
 //
 // The detection has to survive the very corruption it looks for. Node identity
 // itself collides on a shared mount, so two nodes can genuinely believe they are

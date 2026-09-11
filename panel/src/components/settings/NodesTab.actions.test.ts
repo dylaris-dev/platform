@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { nodeActionClass } from './NodesTab';
+import { nodeActionClass, canRollKey } from './NodesTab';
+
+// The armed re-admission a roll arms lapses after 15 minutes (same window an
+// approval arms). A node offline longer than that comes back refused and
+// needs a manual admit, so the copy shown while rolling ("restored ... within
+// a minute") is only ever true while the node is online - the action must not
+// be offered otherwise.
+describe('canRollKey', () => {
+    it('is offered only for an online node', () => {
+        expect(canRollKey('online')).toBe(true);
+        expect(canRollKey('offline')).toBe(false);
+        expect(canRollKey('')).toBe(false);
+    });
+});
 
 // The rule this decides: what a node action looks like once it has been used.
 //
