@@ -8,6 +8,35 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.11
+
+### Features
+- **An in-cluster node no longer needs a Redis address.** Core tells it where
+  Redis is when it connects, and the node keeps the answer on disk so it also
+  starts while Core is unreachable. `REDIS_ADDR` is only a fallback now. `core`
+  `node`
+- **Roll key.** Settings -> Nodes replaces an online node's secret in one step.
+  A node without the cluster secret re-pairs by itself within a minute instead
+  of waiting to be admitted. `core` `panel`
+- Core now learns from the hub which Link serves each node and binds routes to
+  it. Nothing changes yet; it lets a Link run as a cluster service. `core`
+
+### Breaking
+- **Tenant network isolation is removed, and `SIDECAR_REDIS_ADDR` with it.** The
+  per-server network policy is the isolation now; remove the variable. `node`
+- **A node that had isolation on restarts its servers once.** If
+  `SIDECAR_REDIS_ADDR` held an IP, the first start moves every running server to
+  `dylaris_net`; leftover `dylaris_tenant_*` networks can then be removed. `node`
+
+### Security
+- **A node no longer puts its enroll token into its Redis heartbeat.** Nothing
+  read it there. `node`
+
+### Fixes
+- **The stale-node sweep no longer deletes operator nodes that cannot re-pair
+  by themselves.** It now only removes nodes that were enrolled with the
+  cluster secret. `core`
+
 ## 2026.09.10.6
 
 ### Features
