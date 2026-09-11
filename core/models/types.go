@@ -291,6 +291,12 @@ type Node struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	LastSeenAt    *time.Time `json:"lastSeenAt"`
 
+	// LinkToken is the token of the link the Hub names for this node
+	// (nodes.link_token), empty until it has answered. Never serialised: it is
+	// that link's tunnel credential. Routes read it through the services
+	// effective-token helper, never directly.
+	LinkToken string `json:"-"`
+
 	Address string `json:"address"`
 	Status  string `json:"status"`
 	Tags    string `json:"tags"`

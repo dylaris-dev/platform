@@ -204,6 +204,11 @@ func migrateSchema(db *sql.DB) error {
 		// empty string = no secret yet.
 		{"nodes", "node_secret_enc", "TEXT NOT NULL DEFAULT ''"},
 		{"nodes", "display_name", "TEXT"},
+		// The token of the link the Hub says serves this node (hub:node-link:<nodes.token>,
+		// learned by services.NodeLinkLearner). '' = the Hub has not answered, and
+		// routes use the derived token. Deliberately NOT link_secret, which
+		// link_ownership.go reads with a different meaning.
+		{"nodes", "link_token", "TEXT NOT NULL DEFAULT ''"},
 		// NOTE: modversions.modrinth_download_url and server_mods.target_dir are
 		// deliberately NOT in this set. Their tables are created by later phases,
 		// so the ALTER here hits a table that does not exist yet - which is how

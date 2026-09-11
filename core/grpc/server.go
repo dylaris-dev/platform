@@ -433,6 +433,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				RedisAddr: s.redisAddrFor(owned)}
 			applyUpdateWarning(ar, verdict)
 			if s.linkCreds != nil {
+				// Derived, not nodes.link_token: this is the node-managed Link's own identity; only routes follow the Hub's answer.
 				ar.LinkSecret = s.linkCreds.LinkToken(assignedID)
 				ar.LinkDiscoveryProof = s.linkCreds.DiscoveryProof(assignedID)
 			}
@@ -529,6 +530,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				res.NodeSecret = secretHex
 			}
 			if s.linkCreds != nil {
+				// Derived, not nodes.link_token: this is the node-managed Link's own identity; only routes follow the Hub's answer.
 				res.LinkSecret = s.linkCreds.LinkToken(node.Token)
 				res.LinkDiscoveryProof = s.linkCreds.DiscoveryProof(node.Token)
 			}

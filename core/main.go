@@ -536,7 +536,16 @@ func main() {
 	}()
 
 	// Gateway always active — uses same Redis as Core
-	appState.Gateway = services.NewRedisGateway(redisClient, pgStore, cfg.ClusterSecret)
+	redisGateway := services.NewRedisGateway(redisClient, pgStore, cfg.ClusterSecret)
+	appState.Gateway = redisGateway
+
+	// Which link serves each node is the Hub's answer (hub:node-link:<node>), not
+	// a token Core derives: a self-enrolled Link carries a generated one, and the
+	// Hub drops a route whose token names no link. Leader-gated, every minute,
+	// beside the warp self-registration it is modelled on.
+	nodeLinks := services.NewNodeLinkLearner(pgStore, redisGateway)
+	nodeLinks.SetLeader(coreLeader)
+	nodeLinks.Start(bgCtx)
 
 	// Routing migration service for batch redeployment when mode changes
 	appState.RoutingMigration = services.NewRoutingMigrationService(pgStore, appState.Queue, redisClient)

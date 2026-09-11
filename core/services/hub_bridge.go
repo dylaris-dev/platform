@@ -243,12 +243,12 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 		return fmt.Errorf("server not found: %w", err)
 	}
 
-	// 2. Resolve node → derive link token
+	// 2. Resolve node → the token of the link that serves it
 	node, err := g.store.GetNodeByID(server.NodeID)
 	if err != nil {
 		return fmt.Errorf("node not found: %w", err)
 	}
-	linkToken := DeriveLinkToken(node.Token, g.clusterSecret)
+	linkToken := effectiveLinkToken(node, g.clusterSecret)
 
 	// 3. Port enable checks (limit counts skipped — Hub enforces uniqueness in its DB)
 	if port == 25565 {
@@ -454,7 +454,7 @@ func (g *RedisGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error 
 	if err != nil {
 		return fmt.Errorf("node not found: %w", err)
 	}
-	newToken := DeriveLinkToken(node.Token, g.clusterSecret)
+	newToken := effectiveLinkToken(node, g.clusterSecret)
 
 	return g.pushToQueue(hubQueueMessage{
 		Action:       "migrate_routes",

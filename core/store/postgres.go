@@ -561,7 +561,7 @@ const nodeSelectCols = `id, name, address, token, status, is_local, COALESCE(tag
 	COALESCE(public_ip, ''), COALESCE(private_ips::text, '[]'), last_seen_at,
 	COALESCE(cpu_overcommit_ratio, 1.0), COALESCE(ram_overcommit_ratio, 1.0),
 	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0), COALESCE(region, ''), COALESCE(configured, false), owner_id,
-	COALESCE(display_name, '')`
+	COALESCE(display_name, ''), link_token`
 
 func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	var n models.Node
@@ -570,7 +570,7 @@ func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	err := scan(&n.ID, &n.Name, &n.Address, &n.Token, &n.Status, &n.IsLocal, &n.Tags,
 		&n.LinkEnabled, &n.LinkInstances, &n.LinkSecret, &n.CpusetCpus, &n.CreatedAt, &n.PublicIP, &privateIPsJSON, &n.LastSeenAt,
 		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB, &n.Region, &n.Configured, &ownerID,
-		&n.DisplayName)
+		&n.DisplayName, &n.LinkToken)
 	if err != nil {
 		return nil, err
 	}
@@ -814,6 +814,13 @@ func (s *PostgresStore) GetNodeLastAuthPeerIP(id int) (string, error) {
 	var ip string
 	err := s.db.QueryRow(`SELECT last_auth_peer_ip FROM nodes WHERE id = $1`, id).Scan(&ip)
 	return ip, err
+}
+
+// SetNodeLinkToken records the token of the link the Hub names for a node.
+// services.NodeLinkLearner is its only writer.
+func (s *PostgresStore) SetNodeLinkToken(id int, token string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET link_token = $1 WHERE id = $2`, token, id)
+	return err
 }
 
 // DeleteStaleOfflineNodes sweeps PLATFORM nodes (owner_id IS NULL) that got

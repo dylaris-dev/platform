@@ -136,6 +136,7 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 		for _, s := range servers {
 			uuids = append(uuids, s.UUID)
 		}
+		// Derived, not nodes.link_token: this scopes the node-managed Link's OWN keys, and it runs with the derived token.
 		tunnelToken := redisacl.LinkTunnelToken(n.Token, r.clusterSecret)
 		if aerr := r.prov.EnsureNodeACLNoSave(ctx, n.Token, tunnelToken, secret, uuids); aerr != nil {
 			log.Printf("acl reconciler: node %d (%s): ensure ACL: %v", n.ID, tokenPrefix(n.Token), aerr)
@@ -159,6 +160,7 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 		log.Printf("acl reconciler: list link kits: %v", kerr)
 	} else {
 		for _, k := range kits {
+			// Derived on purpose: this is the route-only Link's own identity, the token its kit was issued.
 			tunnelToken := DeriveLinkToken(k.NodeID, r.clusterSecret)
 			if _, _, aerr := r.prov.EnsureRouteOnlyLinkACLNoSave(ctx, r.clusterSecret, k.NodeID, tunnelToken); aerr != nil {
 				log.Printf("acl reconciler: link %s: ensure ACL: %v", k.NodeID, aerr)

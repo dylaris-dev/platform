@@ -89,7 +89,7 @@ func TestListNodesReportsAnUnreadableRow(t *testing.T) {
 	}
 	defer db.Close()
 
-	// One column against a 23-column scan target: the scan fails on this row.
+	// One column against a 24-column scan target: the scan fails on this row.
 	mock.ExpectQuery(regexp.QuoteMeta("FROM nodes")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 

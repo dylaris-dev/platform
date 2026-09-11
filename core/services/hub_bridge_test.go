@@ -324,6 +324,39 @@ func TestMigrateServerRoutes_PushesQueueMessage(t *testing.T) {
 	}
 }
 
+// A node the Hub says is served by a self-enrolled Link: a route bound to the
+// derived token would be dropped by the Hub, because no link carries it.
+func TestCreateServerRoute_SendsTheLearnedLinkToken(t *testing.T) {
+	g, rdb, fs := newHubBridgeTestGateway(t)
+	fs.nodes[1] = models.Node{ID: 1, Token: "node-tok-1", LinkToken: "generated-1"}
+	fs.servers[10] = models.Server{ID: 10, UUID: "srv-uuid-10", NodeID: 1}
+
+	if err := g.CreateServerRoute(10, "owner-1", "sub.example.com", 25566); err != nil {
+		t.Fatalf("CreateServerRoute: %v", err)
+	}
+	msgs := readHubQueueMessages(t, rdb)
+	if len(msgs) != 1 || msgs[0].LinkToken != "generated-1" {
+		t.Fatalf("queued %+v, want one create_route with LinkToken generated-1", msgs)
+	}
+}
+
+// A server moving to a node served by a self-enrolled Link follows THAT link,
+// the destination node's, not a token derived from the node.
+func TestMigrateServerRoutes_SendsTheDestinationsLearnedLinkToken(t *testing.T) {
+	g, rdb, fs := newHubBridgeTestGateway(t)
+	fs.servers[20] = models.Server{ID: 20, UUID: "srv-uuid-20", NodeID: 1}
+	fs.nodes[1] = models.Node{ID: 1, Token: "node-tok-1", LinkToken: "generated-1"}
+	fs.nodes[2] = models.Node{ID: 2, Token: "node-tok-2", LinkToken: "generated-2"}
+
+	if err := g.MigrateServerRoutes(20, 2); err != nil {
+		t.Fatalf("MigrateServerRoutes: %v", err)
+	}
+	msgs := readHubQueueMessages(t, rdb)
+	if len(msgs) != 1 || msgs[0].NewLinkToken != "generated-2" {
+		t.Fatalf("queued %+v, want one migrate_routes with NewLinkToken generated-2", msgs)
+	}
+}
+
 func TestMigrateServerRoutes_ServerNotFound(t *testing.T) {
 	g, _, _ := newHubBridgeTestGateway(t)
 	if err := g.MigrateServerRoutes(999, 2); err == nil {

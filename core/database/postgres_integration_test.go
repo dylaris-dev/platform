@@ -515,6 +515,33 @@ func TestIntegrationNodeLastAuthPeerIPRoundTrip(t *testing.T) {
 	}
 }
 
+// The learned link token rides the shared node scan, so every read path that
+// feeds a route (GetNodeByID for CreateServerRoute, ListNodes for the learner)
+// sees it. Empty on a new row: the Hub has not answered, routes derive.
+func TestIntegrationNodeLinkTokenRoundTrip(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	if n, err := st.GetNodeByID(f.node.ID); err != nil || n.LinkToken != "" {
+		t.Fatalf("a new node reads link_token (%+v, %v), want ''", n, err)
+	}
+	if err := st.SetNodeLinkToken(f.node.ID, "generated-token"); err != nil {
+		t.Fatalf("SetNodeLinkToken: %v", err)
+	}
+	if n, err := st.GetNodeByID(f.node.ID); err != nil || n.LinkToken != "generated-token" {
+		t.Errorf("GetNodeByID read back (%v, %v), want generated-token", n, err)
+	}
+	nodes, err := st.ListNodes()
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+	for _, n := range nodes {
+		if n.ID == f.node.ID && n.LinkToken != "generated-token" {
+			t.Errorf("ListNodes read link_token %q, want generated-token", n.LinkToken)
+		}
+	}
+}
+
 // /auth/forgot-password sends mail on an anonymous request and REPLACES the
 // reset token every time. Its sibling /auth/resend-verification has enforced a
 // per-mailbox cooldown for exactly that reason ("a per-IP limit bounds one

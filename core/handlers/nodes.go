@@ -724,6 +724,7 @@ func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 		"success":            true,
 		"nodeId":             node.Token,
 		"grpcTlsFingerprint": fingerprint,
+		// Derived, not nodes.link_token: the bundle deploys the node-managed Link, whose identity is the derived token.
 		"linkSecret":         h.state.Gateway.LinkToken(node.Token),
 		"linkDiscoveryProof": h.state.Gateway.DiscoveryProof(node.Token),
 	})
