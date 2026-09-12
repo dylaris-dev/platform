@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.12
+
+### Features
+- **Deploy files now set how long a Link keeps its players when it is stopped.** It
+  finishes the sessions it has instead of dropping them, and the new file gives it
+  six hours. `panel`
+
+### Breaking
+- **A Link started from an older deploy file will not come up on the current image.**
+  `LINK_DRAIN_TIMEOUT` is required and has no default; regenerate the file or add the
+  line. `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.11.2
 
 ### Features

@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.12
+
+### Features
+- **Stopping or updating your link no longer kicks anyone.** It keeps the players
+  already on your servers until the last one leaves, takes no new ones meanwhile, and
+  only then shuts down.
+
+### Breaking
+- **Add one line to your deploy file before you update your link,** or it will not
+  start: `LINK_DRAIN_TIMEOUT: "6h"` in the link's environment. Redeploying the current
+  file from the panel does it for you.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.11.2
 
 ### Features

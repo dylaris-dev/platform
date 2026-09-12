@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -114,8 +115,8 @@ func TestBuildLinkEnv(t *testing.T) {
 	testNodeID := "nodeXYZ"
 	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1", addr)
 
-	if len(got) != 8 {
-		t.Fatalf("got %d env entries, want 8: %v", len(got), got)
+	if len(got) != 9 {
+		t.Fatalf("got %d env entries, want 9: %v", len(got), got)
 	}
 	m := envMap(t, got)
 
@@ -287,5 +288,55 @@ func TestShipperCredentialIsPerServer(t *testing.T) {
 	// And it must still be stable, or a container would lose Redis on restart.
 	if pA != aclShipperPassword(secret, node, "srv-a") {
 		t.Error("shipper password is not deterministic")
+	}
+}
+
+// The Link REQUIRES LINK_DRAIN_TIMEOUT and has no default: without it the
+// process refuses to start. A node-managed Link is built here and nowhere else,
+// so a missing key is a container that crash-loops and a machine no player can
+// join - and every machine already in the field was deployed before the setting
+// existed and has nothing to put in its node environment.
+func TestBuildLinkEnvAlwaysCarriesADrainTimeout(t *testing.T) {
+	restore := func(prev string, had bool) func() {
+		return func() {
+			if had {
+				os.Setenv("LINK_DRAIN_TIMEOUT", prev)
+				return
+			}
+			os.Unsetenv("LINK_DRAIN_TIMEOUT")
+		}
+	}
+	prev, had := os.LookupEnv("LINK_DRAIN_TIMEOUT")
+	t.Cleanup(restore(prev, had))
+
+	// nodeSecret is a package global, and leaving a different one behind makes a
+	// LATER test's setNodeSecret see a rotation and log.Fatal the whole binary.
+	origSecret := nodeSecret
+	t.Cleanup(func() { nodeSecret = origSecret })
+	nodeSecret = []byte("unit-test-node-secret")
+
+	for _, tc := range []struct {
+		name string
+		set  string
+		want string
+	}{
+		{"unset falls back", "", defaultLinkDrainTimeout},
+		// A set-but-EMPTY variable is what an unset compose interpolation
+		// expands to. Passing it through would hand the Link the one value it
+		// refuses to start on.
+		{"set but blank falls back", "   ", defaultLinkDrainTimeout},
+		{"the operator's own value wins", "45m", "45m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set == "" {
+				os.Unsetenv("LINK_DRAIN_TIMEOUT")
+			} else {
+				os.Setenv("LINK_DRAIN_TIMEOUT", tc.set)
+			}
+			m := envMap(t, buildLinkEnv("nodeXYZ", "s", "p", "10.0.0.10:6379"))
+			if m["LINK_DRAIN_TIMEOUT"] != tc.want {
+				t.Errorf("LINK_DRAIN_TIMEOUT = %q, want %q", m["LINK_DRAIN_TIMEOUT"], tc.want)
+			}
+		})
 	}
 }

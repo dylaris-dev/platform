@@ -472,7 +472,37 @@ func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr string) []
 		// WireGuard tunnel, sharing one leader with this node's own Redis
 		// traffic and Beam uploads.
 		fmt.Sprintf("LINK_EXTERNAL=%t", linkPrefersPublicEdge()),
+		// How long the Link keeps the players it already has after it is asked
+		// to stop. The Link itself REQUIRES this and has no default, on purpose:
+		// wherever an operator writes the Link's own config, the choice is worth
+		// making deliberately.
+		//
+		// Here there is no such file. The node builds this container, so an
+		// operator has nowhere to put the value except the NODE's environment -
+		// and every machine already in the field was deployed before the setting
+		// existed. Refusing to start their Link, or starting one that exits
+		// immediately, would lock every player out of those machines to enforce
+		// a preference. So the node passes its own value through and falls back
+		// to a documented one.
+		fmt.Sprintf("LINK_DRAIN_TIMEOUT=%s", linkDrainTimeout()),
 	}
+}
+
+// defaultLinkDrainTimeout is what a node-managed Link gets when the operator has
+// not said otherwise. Six hours covers almost every Minecraft session, and the
+// cost of a long one here is only that the old container lingers: it serves the
+// players it has and takes no new ones.
+const defaultLinkDrainTimeout = "6h"
+
+// linkDrainTimeout is LINK_DRAIN_TIMEOUT from the node's own environment, or the
+// default above. Not validated here - the Link parses it and refuses to start on
+// a value it cannot read, which is where the error belongs and where it names
+// the variable.
+func linkDrainTimeout() string {
+	if v := strings.TrimSpace(os.Getenv("LINK_DRAIN_TIMEOUT")); v != "" {
+		return v
+	}
+	return defaultLinkDrainTimeout
 }
 
 // linkEnvKeys are the variables buildLinkEnv owns.
@@ -493,6 +523,7 @@ var linkEnvKeys = []string{
 	"REDIS_PASS",
 	"REDIS_DB",
 	"LINK_EXTERNAL",
+	"LINK_DRAIN_TIMEOUT",
 }
 
 // runningLink is what the daemon reports about the Link container right now.

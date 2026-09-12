@@ -540,3 +540,33 @@ describe('emitted image paths', () => {
         }
     });
 });
+
+// LINK_DRAIN_TIMEOUT has no default and the link REFUSES TO START without it.
+// A kit that omits it is a file a customer deploys and a link that never comes
+// up, with every route pointing at it dead - and the kit is the only place most
+// customers ever get that line from.
+describe('every kit that ships a link sets its drain window', () => {
+    const withLink: Array<[string, string]> = [
+        ['route-only', routeOnlyCompose(base)],
+        ['node with the link beside it', nodeCompose({ ...base, linkBesideNode: true })],
+    ];
+
+    it.each(withLink)('%s sets LINK_DRAIN_TIMEOUT', (_name, out) => {
+        expect(out).toContain('LINK_DRAIN_TIMEOUT: "6h"');
+    });
+
+    // Without a stop timeout of its own the container is killed after ten
+    // seconds, and the drain is decoration: the players it was keeping drop
+    // exactly as they did before it existed.
+    it.each(withLink)('%s gives the link longer to drain than the drain itself', (_name, out) => {
+        expect(out).toContain('stop_grace_period: 6h10m');
+    });
+
+    // A node kit WITHOUT its own link runs no link at all, so the line would be
+    // an instruction about a container that is not there.
+    it('a node kit without a link says nothing about draining', () => {
+        const out = nodeCompose(base);
+        expect(out).not.toContain('LINK_DRAIN_TIMEOUT');
+        expect(out).not.toContain('stop_grace_period');
+    });
+});

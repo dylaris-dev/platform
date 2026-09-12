@@ -251,7 +251,16 @@ services:
       # which is why that route is not open. Current versions work this out on
       # their own and ignore this line; it stays because an older image does not.
       LINK_EXTERNAL: "true"
+
+      # EDIT if you want a shorter window. When you stop or update link, it keeps
+      # the players already on your server until the last one leaves, and only
+      # then shuts down - nobody is kicked. It takes no new players while it
+      # waits. This is how long it waits before giving up on whoever is left.
+      LINK_DRAIN_TIMEOUT: "6h"
     network_mode: host
+    # keep - a little longer than LINK_DRAIN_TIMEOUT, so link finishes on its own
+    # terms instead of being killed with players still on it.
+    stop_grace_period: 6h10m
     volumes:
       # keep - what link last got from us, so a restart comes up even while
       # our API cannot be reached.
@@ -322,6 +331,15 @@ export function nodeCompose(i: WarpDeployInput): string {
       # over the internet. Through the tunnel instead, your players would share
       # one connection with your own uploads.
       LINK_EXTERNAL: "true"
+
+      # EDIT if you want a shorter window. When you stop or update link, it keeps
+      # the players already on your servers until the last one leaves, and only
+      # then shuts down - nobody is kicked. It takes no new players while it
+      # waits. This is how long it waits before giving up on whoever is left.
+      LINK_DRAIN_TIMEOUT: "6h"
+    # keep - a little longer than LINK_DRAIN_TIMEOUT, so link finishes on its own
+    # terms instead of being killed with players still on it.
+    stop_grace_period: 6h10m
     # keep - how link reaches warp's proxy on this machine. On a Docker network
     # 127.0.0.1 is link's own container, not this machine.
     extra_hosts: ["host.docker.internal:host-gateway"]
