@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.12.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A node now recognises a Link whatever the container is called.** It reads the
+  `com.dylaris.role=link` label the Link image carries, so a Link from your own
+  registry under a generated name is no longer refused by every server. `node`
+- **A Link with no Docker address is reported instead of silently ignored.** A
+  host-networked one cannot appear in any rule, so every server on that host refused
+  it while nothing warned about it. `node`
+
 ## 2026.09.12
 
 ### Features

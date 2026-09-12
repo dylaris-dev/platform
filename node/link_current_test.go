@@ -10,10 +10,11 @@ import (
 // every node no matter how many Links ran.
 func TestIsLinkContainer(t *testing.T) {
 	tests := []struct {
-		name  string
-		names []string
-		image string
-		want  bool
+		name   string
+		names  []string
+		image  string
+		labels map[string]string
+		want   bool
 	}{
 		{
 			name:  "the node's built-in default image",
@@ -45,10 +46,42 @@ func TestIsLinkContainer(t *testing.T) {
 			want:  true,
 		},
 		{
+			// The label, and the only test that cannot be passed by the two
+			// above it: an operator who mirrors our image into their own
+			// registry and lets an orchestrator name the container matches
+			// neither the image string nor the legacy name. The label is set by
+			// the image itself (gateway's root Dockerfile) and survives a
+			// retag, so it is the one thing that travels with such a copy.
+			name:   "a mirrored image under an orchestrator-generated name",
+			names:  []string{"/prod_link.abc.xyz"},
+			image:  "registry.example.test/private/link:2026.09",
+			labels: map[string]string{"com.dylaris.role": "link"},
+			want:   true,
+		},
+		{
+			// Same container without the label, so the case above is pinned on
+			// the label rather than on the name happening to contain "link".
+			name:  "the same one with no label is not recognised",
+			names: []string{"/prod_link.abc.xyz"},
+			image: "registry.example.test/private/link:2026.09",
+			want:  false,
+		},
+		{
 			name:  "the edge is not a link",
 			names: []string{"/dylaris-splice"},
 			image: "ghcr.io/dylaris-dev/gateway-edge:splice-0.17.0",
 			want:  false,
+		},
+		{
+			// A future service built from the same shared Dockerfile: it takes
+			// the label with a role of its own (SERVICE_ROLE), and admitting it
+			// to every game server would be exactly the leak the ARG exists to
+			// prevent.
+			name:   "another service built from the shared Dockerfile",
+			names:  []string{"/prod_something.abc.xyz"},
+			image:  "ghcr.io/dylaris-dev/gateway-something:latest",
+			labels: map[string]string{"com.dylaris.role": "something"},
+			want:   false,
 		},
 		{
 			name:  "the node is not a link",
@@ -66,8 +99,8 @@ func TestIsLinkContainer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isLinkContainer(tt.names, tt.image); got != tt.want {
-				t.Errorf("isLinkContainer(%v, %q) = %v, want %v", tt.names, tt.image, got, tt.want)
+			if got := isLinkContainer(tt.names, tt.image, tt.labels); got != tt.want {
+				t.Errorf("isLinkContainer(%v, %q, %v) = %v, want %v", tt.names, tt.image, tt.labels, got, tt.want)
 			}
 		})
 	}

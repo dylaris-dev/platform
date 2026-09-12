@@ -217,9 +217,10 @@ func endpoints(byNetwork map[string]network.EndpointSettings) *container.Network
 // containers among them.
 func TestLinkContainerAddrs(t *testing.T) {
 	tests := []struct {
-		name       string
-		containers []container.Summary
-		want       []string
+		name         string
+		containers   []container.Summary
+		want         []string
+		wantAddrless int
 	}{
 		{
 			name: "the node-managed link",
@@ -293,13 +294,51 @@ func TestLinkContainerAddrs(t *testing.T) {
 			want: []string{"10.0.0.5", "2001:db8::5"},
 		},
 		{
+			// The case the label exists for. Neither test that came before it
+			// matches, and the failure is silent: every server drops this Link
+			// while the container itself looks healthy.
+			name: "a mirrored image under an orchestrator-generated name, found by the label",
+			containers: []container.Summary{{
+				Names:           []string{"/prod_link.abc.xyz"},
+				Image:           "registry.example.test/private/link:2026.09",
+				Labels:          map[string]string{"com.dylaris.role": "link"},
+				NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.13"}}),
+			}},
+			want: []string{"10.0.0.13"},
+		},
+		{
+			// The same container WITHOUT the label, to keep the case above
+			// honest: it must be the label doing the work and not the name.
+			name: "the same one with no label is still not a link",
+			containers: []container.Summary{{
+				Names:           []string{"/prod_link.abc.xyz"},
+				Image:           "registry.example.test/private/link:2026.09",
+				NetworkSettings: endpoints(map[string]network.EndpointSettings{"dylaris_net": {IPAddress: "10.0.0.13"}}),
+			}},
+			want: nil,
+		},
+		{
+			// A host-networked Link: recognised, but its endpoint carries no
+			// address, so it can never appear in a rule. Counted rather than
+			// skipped, because linkCount reports it as a working Link.
+			name: "a host-networked link is counted as address-less",
+			containers: []container.Summary{{
+				Names:           []string{"/dylaris_link"},
+				Image:           "ghcr.io/dylaris-dev/gateway-link:latest",
+				NetworkSettings: endpoints(map[string]network.EndpointSettings{"host": {}}),
+			}},
+			want:         nil,
+			wantAddrless: 1,
+		},
+		{
 			name: "empty NetworkSettings, no panic",
 			containers: []container.Summary{{
 				Names:           []string{"/dylaris_link"},
 				Image:           "ghcr.io/dylaris-dev/gateway-link:latest",
 				NetworkSettings: &container.NetworkSettingsSummary{},
 			}},
-			want: nil,
+			want:         nil,
+			wantAddrless: 1,
 		},
 		{
 			name: "nil NetworkSettings, no panic",
@@ -308,13 +347,17 @@ func TestLinkContainerAddrs(t *testing.T) {
 				Image:           "ghcr.io/dylaris-dev/gateway-link:latest",
 				NetworkSettings: nil,
 			}},
-			want: nil,
+			want:         nil,
+			wantAddrless: 1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := linkContainerAddrs(tt.containers)
+			got, addrless := linkContainerAddrs(tt.containers)
+			if addrless != tt.wantAddrless {
+				t.Fatalf("linkContainerAddrs addrless = %d, want %d", addrless, tt.wantAddrless)
+			}
 			sort.Strings(got)
 			want := append([]string(nil), tt.want...)
 			sort.Strings(want)

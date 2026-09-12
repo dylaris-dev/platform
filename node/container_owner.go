@@ -31,6 +31,19 @@ import (
 // onto a container the operator may also label for their own purposes.
 const ownerLabel = "com.dylaris.node"
 
+// roleLabel says WHAT a container is, where ownerLabel says whose it is. Set by
+// the image rather than by whoever deploys it (gateway's root Dockerfile), so a
+// copy of that image in somebody's own registry, under a name nothing here can
+// predict, is still recognisable - see isLinkContainer.
+//
+// Namespaced for the same reason ownerLabel is. The unnamespaced dylaris.role
+// this node puts on NETWORKS is a different object and stays as it is; renaming
+// it would strand the networks that already carry it.
+const (
+	roleLabel = "com.dylaris.role"
+	roleLink  = "link"
+)
+
 // nodeIdentity is the value written into the label on a NEW container.
 //
 // The server-assigned id when there is one, because that is the identity Core

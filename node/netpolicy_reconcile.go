@@ -137,7 +137,15 @@ func (dm *DockerManager) containerAddrs(name string) []string {
 
 // linkAddrs returns every network address held by every running Link
 // container on this host, found via isLinkContainer - see infraPeers for why
-// that is by image rather than by a fixed name, and why this is never cached.
+// that is by label and image rather than by a fixed name, and why this is
+// never cached.
+//
+// A Link that is recognised but holds no address is a host-networked one, and
+// it is warned about rather than passed over in silence: it counts as a Link
+// everywhere else (the heartbeat's linkCount reads 1, the panel shows no
+// warning) while contributing nothing here, so every server on the host drops
+// it and the only visible symptom is that nobody can join. Logged on the
+// transition into that state, not every pass - this loop runs every 15s.
 func (dm *DockerManager) linkAddrs() []string {
 	containers, err := dm.cli.ContainerList(dm.ctx, container.ListOptions{})
 	if err != nil {
@@ -147,21 +155,34 @@ func (dm *DockerManager) linkAddrs() []string {
 		log.Printf("netpolicy: cannot list containers to find the Link: %v", err)
 		return nil
 	}
-	return linkContainerAddrs(containers)
+	addrs, addrless := linkContainerAddrs(containers)
+	unreachable := addrless > 0
+	if dm.linkAddrless.Swap(unreachable) != unreachable && unreachable {
+		log.Printf("netpolicy: WARNING: %d Link container(s) on this host hold no Docker address (host networking?); every game server will refuse them and players cannot join. Run the Link on the same Docker network as the servers.", addrless)
+	}
+	return addrs
 }
 
 // linkContainerAddrs picks the Link containers out of a ContainerList result
-// and returns every address they hold. Pure, so the "which containers count"
-// question is tested without a Docker daemon.
-func linkContainerAddrs(containers []container.Summary) []string {
-	var out []string
+// and returns every address they hold, plus how many Links held none at all.
+// Pure, so the "which containers count" question is tested without a Docker
+// daemon.
+func linkContainerAddrs(containers []container.Summary) (addrs []string, addrless int) {
 	for _, c := range containers {
-		if !isLinkContainer(c.Names, c.Image) || c.NetworkSettings == nil {
+		if !isLinkContainer(c.Names, c.Image, c.Labels) {
 			continue
 		}
-		out = append(out, networkAddrs(c.NetworkSettings.Networks)...)
+		var got []string
+		if c.NetworkSettings != nil {
+			got = networkAddrs(c.NetworkSettings.Networks)
+		}
+		if len(got) == 0 {
+			addrless++
+			continue
+		}
+		addrs = append(addrs, got...)
 	}
-	return out
+	return addrs, addrless
 }
 
 // networkAddrs turns a container's per-network endpoints into every address it

@@ -38,6 +38,20 @@ func TestLinkContainerCount(t *testing.T) {
 			want: 2,
 		},
 		{
+			// Must agree with linkContainerAddrs: a Link the count misses is a
+			// Link the network policy also misses, and then nobody can join
+			// while the panel shows no Link at all.
+			name: "a mirrored image under an orchestrator-generated name",
+			containers: []container.Summary{
+				{
+					Names:  []string{"/prod_link.abc.xyz"},
+					Image:  "registry.example.test/private/link:2026.09",
+					Labels: map[string]string{"com.dylaris.role": "link"},
+				},
+			},
+			want: 1,
+		},
+		{
 			name: "an mc server and the node itself do not count",
 			containers: []container.Summary{
 				{Names: []string{"/mc_7f3a"}, Image: "itzg/minecraft-server:latest"},
