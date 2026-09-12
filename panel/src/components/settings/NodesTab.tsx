@@ -19,7 +19,6 @@ import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import StoragePlacement from '@/components/StoragePlacement';
-import LinkUpdatesPanel from '@/components/settings/LinkUpdatesPanel';
 import GuardedTabs from '@/components/settings/GuardedTabs';
 import { useTabParam } from '@/lib/useTabParam';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -36,13 +35,13 @@ import {
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
 
-// Shape of GET /nodes/{id}/deploy-bundle — the secret-free node + link deploy
-// ENV for an already-enrolled node (see WarpTab's mint+reveal pattern).
+// Shape of GET /nodes/{id}/deploy-bundle — the secret-free node deploy ENV for
+// an already-enrolled node (see WarpTab's mint+reveal pattern). The Link's own
+// credentials are no longer in it: a Link is its own service and fetches them
+// itself, so nothing about it has to travel in a value an operator copies.
 interface DeployBundle {
     nodeId: string;
     grpcTlsFingerprint: string;
-    linkSecret: string;
-    linkDiscoveryProof: string;
 }
 
 type SubTab = 'nodes' | 'external' | 'placement' | 'enrollment';
@@ -82,7 +81,6 @@ export default function NodesTab() {
                 {subTab === 'enrollment' && (
                     <div className="space-y-6">
                         <NodeEnrollmentPanel showToast={toast} />
-                        <LinkUpdatesPanel showToast={toast} />
                     </div>
                 )}
             </div>
@@ -153,8 +151,6 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
             setRevealed({
                 nodeId: res.nodeId,
                 grpcTlsFingerprint: res.grpcTlsFingerprint,
-                linkSecret: res.linkSecret,
-                linkDiscoveryProof: res.linkDiscoveryProof,
             });
         } else {
             showToast(res.message || res.error || 'Failed to load deploy bundle', false);
@@ -201,12 +197,7 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
         : 'GRPC_TLS_ENABLED=false';
     const nodeEnv = revealed ? `${grpcTlsEnv}
 NODE_ENROLL_TOKEN=<your enroll token>
-CORE_GRPC_ADDR=<core-host:25501>
-NODE_MANAGES_LINK=true
-LINK_IMAGE=<public link image, e.g. ghcr.io/dylaris-dev/gateway-link:latest>` : '';
-    const linkEnv = revealed ? `NODE_ID=${revealed.nodeId}
-LINK_SECRET=${revealed.linkSecret}
-LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
+CORE_GRPC_ADDR=<core-host:25501>` : '';
 
     // Both tabs poll the same 'fleet' request and split it here. One poll, and
     // the two tabs can never disagree about which machines exist. Customers'
@@ -303,14 +294,6 @@ LINK_DISCOVERY_PROOF=${revealed.linkDiscoveryProof}` : '';
                                 <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{nodeEnv}</pre>
                                 <button onClick={() => { navigator.clipboard.writeText(nodeEnv); showToast('Node deploy ENV copied.', true); }} className="btn btn-secondary btn-sm">
                                     <Copy size={12} /> Copy node ENV
-                                </button>
-                            </div>
-                            <div className="space-y-1">
-                                <label className="mono-label">Link deploy ENV (manual / DC only)</label>
-                                <p className="text-xs text-(--base-06)">A secret-free node auto-provisions its own Link sidecar (set LINK_IMAGE + NODE_MANAGES_LINK). Use this only for a manually deployed / DC Link.</p>
-                                <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{linkEnv}</pre>
-                                <button onClick={() => { navigator.clipboard.writeText(linkEnv); showToast('Link deploy ENV copied.', true); }} className="btn btn-secondary btn-sm">
-                                    <Copy size={12} /> Copy link ENV
                                 </button>
                             </div>
                         </div>

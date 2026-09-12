@@ -59,11 +59,6 @@ func globalReadKeys() []string {
 	return []string{
 		"%R~dylaris:routing_mode", "%R~dylaris:file_access_mode",
 		"%R~dylaris:placement:*",
-		// Link sidecar update policy + check interval. Core-authoritative, read
-		// by node/link_update.go via loadModesFromRedis and never written by the
-		// node. Without them the reads return NOPERM and every node silently
-		// falls back to the built-in default instead of the operator's setting.
-		"%R~dylaris:link_update_policy", "%R~dylaris:link_update_interval_min",
 		"%R~beam:bw_limit", "%R~beam:bw_up_internal", "%R~beam:bw_down_internal",
 		// Upload-limit config the node enforces on the beam + SFTP + SaveFileContent
 		// write paths. Read-only: these are the caps the node is SUBJECT to.

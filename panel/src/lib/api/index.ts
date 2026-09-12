@@ -6,5 +6,4 @@ export * from './orphans';
 export * from './regions';
 export * from './registration';
 export * from './nodeAdmission';
-export * from './linkUpdates';
 export * from './metrics';

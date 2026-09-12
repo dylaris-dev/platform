@@ -156,7 +156,7 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
     grpcTlsFingerprint?: string;
     nodeId?: string;
     config?: WarpDeployConfig | null;
-    /** See WarpDeployInput.linkBesideNode: only for a key bound (or about to be) to its machine. */
+    /** See WarpDeployInput.linkBesideNode: whether this key can boot a Link at all. */
     linkBesideNode?: boolean;
 }) {
     // Both kinds run on Docker Desktop. The node was Linux-only here for longer
@@ -177,7 +177,6 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
         // placeholder: a blank tells the reader something is missing, an empty
         // string looks like a setting that was deliberately cleared.
         tunnelSubnets: config?.tunnelSubnets || undefined,
-        linkBesideNode,
     };
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
 

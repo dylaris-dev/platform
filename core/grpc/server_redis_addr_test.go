@@ -87,7 +87,7 @@ func TestEverySuccessfulAuthResultCarriesCoresRedisAddr(t *testing.T) {
 			if tc.joins != nil {
 				joins = tc.joins
 			}
-			srv := NewServer(NewRegistry(), tc.lookup, "core-test", tc.acl, nil, nil, joins)
+			srv := NewServer(NewRegistry(), tc.lookup, "core-test", tc.acl, nil, joins)
 			srv.SetRedisAddr(coreRedis)
 			stream := &fakeNodeStream{ctx: ctx, recv: tc.msgs}
 			if err := srv.NodeConnect(stream); err != nil {

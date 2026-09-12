@@ -4,23 +4,24 @@ import "testing"
 
 // TestACLGoldenVectorsExtended MUST match
 // core/services/redisacl/derive_extra_test.go's TestGoldenVectorsExtended
-// exactly (link/challenge/heartbeat/cluster-proof). RouteOnlyLinkPassword
-// has no node-side equivalent (Core-only), so it is not cross-checked here
-// - see the Core test's doc comment. This file only ADDS vectors; the
-// original redisacl_test.go is untouched.
+// exactly. Core pins its own side of the same three values; a change to a domain
+// string on ONE side then turns exactly one of the two suites red. Without this
+// file both stay green while every node in the fleet fails to authenticate.
+//
+// The link vectors that used to be here are gone with the node-managed Link: the
+// node no longer derives a Link credential, and a golden vector for a derivation
+// that no longer exists pins nothing. RouteOnlyLinkPassword never had a
+// node-side equivalent (Core-only) - see the Core test's doc comment.
+//
+// What is left has nothing to do with the Link and is on the authentication path
+// of every node:
+//
+//   - aclChallengeResponse: the ACL watchdog's proof of the per-node secret
+//   - aclHeartbeatSig:      stamped on EVERY heartbeat, verified by Core
+//   - aclClusterProof:      the cluster proof on the gRPC auth path
 func TestACLGoldenVectorsExtended(t *testing.T) {
 	secret := []byte("0123456789abcdef0123456789abcdef")
 	const token = "node-a"
-
-	if got, want := aclLinkPassword(secret, token), "6245236664161e1d08ad351374d45c986a98c6737f103c3479645936773fa3de"; got != want {
-		t.Errorf("aclLinkPassword vector drift vs Core:\n got  %s\n want %s", got, want)
-	}
-	if got, want := aclLinkPassword(secret, "node-b"), "61980a19743ec48541a65d1b2d6b6f2a94b2370b90d6389ebd059b4795574415"; got != want {
-		t.Errorf("aclLinkPassword(node-b) vector drift vs Core:\n got  %s\n want %s", got, want)
-	}
-	if aclLinkUsername("x") != "node-x-link" {
-		t.Errorf("aclLinkUsername format must match Core: %s", aclLinkUsername("x"))
-	}
 
 	if got, want := aclChallengeResponse(secret, "test-nonce-1"), "d737f05576089d017677f16151a7b803c4adb9660a0bc6e2e045ec640414f34b"; got != want {
 		t.Errorf("aclChallengeResponse vector drift vs Core:\n got  %s\n want %s", got, want)

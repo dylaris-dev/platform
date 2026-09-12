@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -87,114 +86,6 @@ func TestBuildRedisEnv(t *testing.T) {
 			t.Errorf("SUB_SERVER should be absent when subServer is empty, got %v", got)
 		}
 	})
-}
-
-func TestBuildLinkEnv(t *testing.T) {
-	origRedisDB := redisDB
-	origNodeSecret := nodeSecret
-	origClusterSecret := clusterSecret
-	origNodeExternal := nodeExternal
-	t.Cleanup(func() {
-		redisDB = origRedisDB
-		nodeSecret = origNodeSecret
-		clusterSecret = origClusterSecret
-		nodeExternal = origNodeExternal
-	})
-
-	const addr = "10.9.9.9:6379"
-	redisDB = 5
-	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
-	// What makes this node in-cluster, and the only thing that does. Without it
-	// the node is BYON and the link belongs on the public address.
-	clusterSecret = "unit-test-cluster-secret"
-	nodeExternal = false
-
-	// buildLinkEnv takes nodeID as a PARAMETER (it shadows the package
-	// global inside the function body), so the package-global nodeID is
-	// deliberately left untouched by this test.
-	testNodeID := "nodeXYZ"
-	got := buildLinkEnv(testNodeID, "tunnel-secret-1", "discovery-proof-1", addr)
-
-	if len(got) != 9 {
-		t.Fatalf("got %d env entries, want 9: %v", len(got), got)
-	}
-	m := envMap(t, got)
-
-	wantUser := aclLinkUsername(testNodeID)
-	wantPass := aclLinkPassword(nodeSecret, testNodeID)
-
-	if m["NODE_ID"] != testNodeID {
-		t.Errorf("NODE_ID = %q, want %q", m["NODE_ID"], testNodeID)
-	}
-	if m["LINK_SECRET"] != "tunnel-secret-1" {
-		t.Errorf("LINK_SECRET = %q, want %q", m["LINK_SECRET"], "tunnel-secret-1")
-	}
-	if m["LINK_DISCOVERY_PROOF"] != "discovery-proof-1" {
-		t.Errorf("LINK_DISCOVERY_PROOF = %q, want %q", m["LINK_DISCOVERY_PROOF"], "discovery-proof-1")
-	}
-	if m["REDIS_ADDR"] != addr {
-		t.Errorf("REDIS_ADDR = %q, want %q", m["REDIS_ADDR"], addr)
-	}
-	if m["REDIS_USER"] != wantUser {
-		t.Errorf("REDIS_USER = %q, want %q (scoped link user, NOT plain node user)", m["REDIS_USER"], wantUser)
-	}
-	if m["REDIS_PASS"] != wantPass {
-		t.Errorf("REDIS_PASS = %q, want %q", m["REDIS_PASS"], wantPass)
-	}
-	if m["REDIS_DB"] != "5" {
-		t.Errorf("REDIS_DB = %q, want %q", m["REDIS_DB"], "5")
-	}
-	// A node in our own datacenter keeps the link on the private path, which is
-	// the direct one there.
-	if m["LINK_EXTERNAL"] != "false" {
-		t.Errorf("LINK_EXTERNAL = %q, want false for an in-cluster node", m["LINK_EXTERNAL"])
-	}
-}
-
-// On a customer machine the edge's private address is reachable too, because
-// warp routes the overlay - so the link's default preference SUCCEEDS and puts
-// every player's bytes through the WireGuard tunnel. The node is the only thing
-// that knows which kind of machine it is on, so it has to say so.
-func TestBuildLinkEnv_ExternalNodeTellsTheLink(t *testing.T) {
-	origExternal := nodeExternal
-	origSecret := nodeSecret
-	origCluster := clusterSecret
-	t.Cleanup(func() {
-		nodeExternal = origExternal
-		nodeSecret = origSecret
-		clusterSecret = origCluster
-	})
-	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
-	nodeExternal = true
-	// Set, so this asserts the FLAG rather than the no-cluster-secret fallback.
-	clusterSecret = "unit-test-cluster-secret"
-
-	m := envMap(t, buildLinkEnv("nodeXYZ", "s", "p", "10.9.9.9:6379"))
-	if m["LINK_EXTERNAL"] != "true" {
-		t.Errorf("LINK_EXTERNAL = %q, want true for an external node", m["LINK_EXTERNAL"])
-	}
-}
-
-// A BYON owner controls NODE_EXTERNAL and NODE_TAGS on their own machine, so
-// clearing both used to hand the link the private address - which warp answers.
-// Holding no CLUSTER_SECRET is the part they cannot clear their way out of.
-func TestBuildLinkEnv_ByonNodeIsExternalEvenWithEveryFlagCleared(t *testing.T) {
-	origExternal := nodeExternal
-	origSecret := nodeSecret
-	origCluster := clusterSecret
-	t.Cleanup(func() {
-		nodeExternal = origExternal
-		nodeSecret = origSecret
-		clusterSecret = origCluster
-	})
-	nodeSecret = []byte("unit-test-secret-value-buildlinkenv")
-	nodeExternal = false
-	clusterSecret = ""
-
-	m := envMap(t, buildLinkEnv("nodeXYZ", "s", "p", "10.9.9.9:6379"))
-	if m["LINK_EXTERNAL"] != "true" {
-		t.Errorf("LINK_EXTERNAL = %q, want true: a node holding no CLUSTER_SECRET is BYON, whatever it says about itself", m["LINK_EXTERNAL"])
-	}
 }
 
 func TestApplyPidsLimit(t *testing.T) {
@@ -288,55 +179,5 @@ func TestShipperCredentialIsPerServer(t *testing.T) {
 	// And it must still be stable, or a container would lose Redis on restart.
 	if pA != aclShipperPassword(secret, node, "srv-a") {
 		t.Error("shipper password is not deterministic")
-	}
-}
-
-// The Link REQUIRES LINK_DRAIN_TIMEOUT and has no default: without it the
-// process refuses to start. A node-managed Link is built here and nowhere else,
-// so a missing key is a container that crash-loops and a machine no player can
-// join - and every machine already in the field was deployed before the setting
-// existed and has nothing to put in its node environment.
-func TestBuildLinkEnvAlwaysCarriesADrainTimeout(t *testing.T) {
-	restore := func(prev string, had bool) func() {
-		return func() {
-			if had {
-				os.Setenv("LINK_DRAIN_TIMEOUT", prev)
-				return
-			}
-			os.Unsetenv("LINK_DRAIN_TIMEOUT")
-		}
-	}
-	prev, had := os.LookupEnv("LINK_DRAIN_TIMEOUT")
-	t.Cleanup(restore(prev, had))
-
-	// nodeSecret is a package global, and leaving a different one behind makes a
-	// LATER test's setNodeSecret see a rotation and log.Fatal the whole binary.
-	origSecret := nodeSecret
-	t.Cleanup(func() { nodeSecret = origSecret })
-	nodeSecret = []byte("unit-test-node-secret")
-
-	for _, tc := range []struct {
-		name string
-		set  string
-		want string
-	}{
-		{"unset falls back", "", defaultLinkDrainTimeout},
-		// A set-but-EMPTY variable is what an unset compose interpolation
-		// expands to. Passing it through would hand the Link the one value it
-		// refuses to start on.
-		{"set but blank falls back", "   ", defaultLinkDrainTimeout},
-		{"the operator's own value wins", "45m", "45m"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.set == "" {
-				os.Unsetenv("LINK_DRAIN_TIMEOUT")
-			} else {
-				os.Setenv("LINK_DRAIN_TIMEOUT", tc.set)
-			}
-			m := envMap(t, buildLinkEnv("nodeXYZ", "s", "p", "10.0.0.10:6379"))
-			if m["LINK_DRAIN_TIMEOUT"] != tc.want {
-				t.Errorf("LINK_DRAIN_TIMEOUT = %q, want %q", m["LINK_DRAIN_TIMEOUT"], tc.want)
-			}
-		})
 	}
 }

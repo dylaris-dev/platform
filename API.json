@@ -488,26 +488,6 @@
     },
     {
       "method": "GET",
-      "path": "/api/admin/settings/link-updates",
-      "auth": "session",
-      "authorization": "settings.read",
-      "description": "returns the current Link update policy and check interval.",
-      "handler": "SettingsHandler.GetLinkUpdateSettings",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "PUT",
-      "path": "/api/admin/settings/link-updates",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "persists the policy + interval and mirrors both into Redis, which is where nodes read them (node/main.go, loadModesFromRedis).",
-      "handler": "SettingsHandler.UpdateLinkUpdateSettings",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "GET",
       "path": "/api/admin/settings/metrics-db",
       "auth": "session",
       "authorization": "settings.read",
@@ -2692,26 +2672,6 @@
       "external": false
     },
     {
-      "method": "GET",
-      "path": "/api/nodes/link-updates",
-      "auth": "session",
-      "authorization": "nodes.read",
-      "description": "returns the per-node Link image status published by the discovery sweep.",
-      "handler": "NodeHandler.GetLinkUpdateStates",
-      "group": "nodes",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/nodes/link-updates",
-      "auth": "session",
-      "authorization": "nodes.write",
-      "description": "queues the node-level \"link_update\" command.",
-      "handler": "NodeHandler.TriggerLinkUpdate",
-      "group": "nodes",
-      "external": false
-    },
-    {
       "method": "DELETE",
       "path": "/api/nodes/{id:[0-9]+}",
       "auth": "session",
@@ -2746,7 +2706,7 @@
       "path": "/api/nodes/{id:[0-9]+}/deploy-bundle",
       "auth": "session",
       "authorization": "no capability",
-      "description": "returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it).",
+      "description": "returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint.",
       "handler": "NodeHandler.GetDeployBundle",
       "group": "nodes",
       "external": false
@@ -5303,15 +5263,15 @@
     }
   ],
   "counts": {
-    "total": 532,
+    "total": 528,
     "byAuth": {
       "none": 38,
-      "session": 481,
+      "session": 477,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 127,
+      "admin": 125,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,
@@ -5331,7 +5291,7 @@
       "me": 26,
       "modrinth": 6,
       "modules": 6,
-      "nodes": 16,
+      "nodes": 14,
       "notifications": 4,
       "packs": 29,
       "placement": 3,

@@ -41,12 +41,6 @@ var (
 	redisEnvAddr string
 	redisDB      int
 
-	// linkRedisAddr is the address the node-managed Link is created with: the
-	// one this process booted on, not the current one. The Link is reconciled by
-	// comparing its env, so following a live promote would recreate it under
-	// the players on it. It moves with the next node restart.
-	linkRedisAddr string
-
 	// redisViaWarpProxy: the node reached Redis through warp's LOCAL proxy
 	// rather than a configured address. Loopback is right for the node, which is
 	// host-networked, and wrong for anything in a container - those are resolved
@@ -92,13 +86,6 @@ var (
 	// Relative fair-share, not a hard cap; effective only with a blkio-weight
 	// scheduler (BFQ/CFQ).
 	ioWeight uint16
-
-	// linkImage is the image the node-managed Link sidecar runs (LINK_IMAGE).
-	linkImage string
-	// nodeManagesLink: when true, the node spawns + manages its own Link sidecar
-	// instead of relying on an operator-deployed one. Defaults to nodeExternal;
-	// NODE_MANAGES_LINK overrides.
-	nodeManagesLink bool
 )
 
 // nodeExternal is set at startup: an external/home node forces routing=gateway
@@ -301,7 +288,6 @@ func main() {
 	if redisAddrFollowsCore {
 		nodeRedis.persistIfNew()
 	}
-	linkRedisAddr = nodeRedis.current()
 
 	// Wired here, immediately after Redis authenticates and before the mesh
 	// starts, so the very first control-channel failure already has somewhere to
@@ -460,9 +446,13 @@ func main() {
 	// archivePathFor serves only a staged archive produced by migrate_out.
 	go StartMigrationServer(ctx, rdb, nodeID, migrationArchivePathFor(storageMgr))
 
-	// Node-managed Link sidecar; with NODE_MANAGES_LINK off it only removes the
-	// one this node spawned before.
-	go startLinkReconciler(ctx, dockerMgr)
+	// A Link this node started in an earlier version is removed once, here. The
+	// node no longer runs one: the Link is its own service, with its own
+	// identity and its own Redis login, and a leftover container would keep
+	// serving on a frozen image and a frozen credential with nothing left that
+	// could update or stop it.
+	go dockerMgr.RemoveOwnLinkContainer()
+	removeStaleLinkCreds(nodeSecretDir)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -627,14 +617,10 @@ func parseConfig() {
 		log.Println("WARNING: CORE_GRPC_ADDR is empty. A first-boot node cannot bootstrap its per-node secret without a reachable Core gRPC endpoint; a node with a cached secret can still run.")
 	}
 
-	linkImageEnv := os.Getenv("LINK_IMAGE")
-	// The RAW env decides whether this node manages a Link; the resolved value
-	// only decides WHICH image it runs. Feeding the resolved (never-empty) value
-	// back in would turn every node in the fleet into a Link manager.
-	nodeManagesLink = resolveNodeManagesLink(os.Getenv("NODE_MANAGES_LINK"), linkImageEnv, nodeExternal)
-	linkImage = resolveLinkImage(linkImageEnv)
-	if nodeManagesLink && linkImageEnv == "" {
-		log.Printf("LINK_IMAGE is unset; the node-managed Link sidecar uses the built-in default %s", linkImage)
+	// NODE_MANAGES_LINK and LINK_IMAGE are read and ignored, once, so a machine
+	// still carrying them in its deploy file learns why nothing happens.
+	if os.Getenv("NODE_MANAGES_LINK") != "" || os.Getenv("LINK_IMAGE") != "" {
+		log.Printf("NODE_MANAGES_LINK and LINK_IMAGE do nothing any more: the Link is its own service now. Remove them and run the Link beside this node (the deploy file in the panel does).")
 	}
 
 	// Parsed the way Core parses it, and defaulted the same way (ON). This flag
@@ -823,20 +809,6 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 	if v, err := rdb.Get(ctx, "dylaris:file_access_mode").Result(); err == nil && v != "" {
 		fileAccess = v
 	}
-	// Link sidecar update settings. Advisory: an external node forces "auto"
-	// regardless (resolveLinkUpdatePolicy), so a missing key is never unsafe.
-	linkPolicy := getLinkUpdatePolicySetting()
-	linkInterval := getLinkUpdateIntervalMinutes()
-	if v, err := rdb.Get(ctx, "dylaris:link_update_policy").Result(); err == nil && v != "" {
-		linkPolicy = v
-	}
-	if v, err := rdb.Get(ctx, "dylaris:link_update_interval_min").Result(); err == nil && v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			linkInterval = n
-		}
-	}
-	setLinkUpdateSettings(linkPolicy, linkInterval)
-
 	if v, err := rdb.Get(ctx, "dylaris:placement:port_mode").Result(); err == nil && (v == "sequential" || v == "random") {
 		port = v
 	}
@@ -1042,22 +1014,6 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	if v := nodeReleaseVersion(); !v.IsZero() {
 		data["releaseVersion"] = v.String()
 	}
-	// Link sidecar image state. Reported only when this node manages its own
-	// Link: on a node with an operator-deployed Link the panel must not offer an
-	// update button, because pressing it would do nothing.
-	if nodeManagesLink {
-		running, available, updateAvailable := GetLinkImageState()
-		data["linkManaged"] = true
-		if running != "" {
-			data["linkImageRunning"] = running
-		}
-		if available != "" {
-			data["linkImageAvailable"] = available
-		}
-		if updateAvailable {
-			data["linkUpdateAvailable"] = true
-		}
-	}
 	jsonData, _ := json.Marshal(data)
 	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {
 		log.Printf("Heartbeat warning: %v", err)
@@ -1218,14 +1174,6 @@ func commandIdentifiers(cmd NodeCommand) (uuid, subServer string) {
 func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
 
-	// Node-level actions carry no server UUID, so they are handled before any of
-	// the per-server setup below (mode reload, cpuset defaults, storage lookup)
-	// touches cmd.Config.
-	if cmd.Action == "link_update" {
-		TriggerLinkImageUpdate(dm)
-		return
-	}
-
 	// Whether a container gets a published host port depends on the routing
 	// mode, and Core queues the redeploy IMMEDIATELY after publishing a mode
 	// switch to Redis — far sooner than the 30s refresh ticker. Acting on the
@@ -1263,6 +1211,16 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	// is node-level and must happen on every pulled command, malformed ones
 	// included. Placed here rather than in the branches: one check covers every
 	// action, including the ones added after this comment.
+	// An older Core could still have a link_update queued when it was upgraded.
+	// Nothing queues one any more and nothing handles one, and it carries no
+	// server uuid - so without this it falls into the identifier check below and
+	// is refused as malformed, which reads like a bug rather than like a command
+	// from before the Link left the node.
+	if cmd.Action == "link_update" {
+		log.Printf("link_update: ignored, this node does not manage a Link any more")
+		return
+	}
+
 	cmdUUID, cmdSubServer := commandIdentifiers(cmd)
 	if problem := commandIdentifierProblem(cmdUUID, cmdSubServer); problem != "" {
 		log.Printf("%s: refusing this command, %s", cmd.Action, problem)

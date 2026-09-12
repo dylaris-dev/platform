@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **531 routes** in 52 sections: 238 GET, 160 POST, 40 PUT, 37 PATCH, 57 DELETE.
+- **527 routes** in 52 sections: 236 GET, 159 POST, 39 PUT, 37 PATCH, 57 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **356** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **352** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (127)
+- [/api/admin](#apiadmin) (125)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -161,7 +161,7 @@ can still show what exists.
 - [/api/me](#apime) (26)
 - [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
-- [/api/nodes](#apinodes) (16)
+- [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (4)
 - [/api/packs](#apipacks) (29)
 - [/api/placement](#apiplacement) (3)
@@ -248,8 +248,6 @@ can still show what exists.
 | PUT | `/api/admin/settings/demo-account` | session | `settings.write` | - | `ServerHandler.SetDemoAccount` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/settings/features` | session | `settings.read` | - | `FeatureSettingsHandler.Get` | current bundle of platform toggles. |
 | PUT | `/api/admin/settings/features` | session | `settings.write` | - | `FeatureSettingsHandler.Set` | write the bundle. |
-| GET | `/api/admin/settings/link-updates` | session | `settings.read` | - | `SettingsHandler.GetLinkUpdateSettings` | returns the current Link update policy and check interval. |
-| PUT | `/api/admin/settings/link-updates` | session | `settings.write` | - | `SettingsHandler.UpdateLinkUpdateSettings` | persists the policy + interval and mirrors both into Redis, which is where nodes read them (node/main.go, loadModesFromRedis). |
 | GET | `/api/admin/settings/metrics-db` | session | `settings.read` | - | `MetricsDBHandler.Get` | PANEL settings.read. |
 | PUT | `/api/admin/settings/metrics-db` | session | `settings.write` | - | `MetricsDBHandler.Set` | PANEL settings.write. |
 | POST | `/api/admin/settings/metrics-db/test` | session | `settings.write` | - | `MetricsDBHandler.Test` | probe without saving. |
@@ -562,12 +560,10 @@ can still show what exists.
 | GET | `/api/nodes/enroll-token` | session | _no capability_ | - | `NodeEnrollHandler.ListTokens` | the caller's tokens (metadata only). |
 | POST | `/api/nodes/enroll-token` | session | _no capability_ | - | `NodeEnrollHandler.MintToken` | generate a new enroll token for the calling user. |
 | DELETE | `/api/nodes/enroll-token/{id}` | session | _no capability_ | - | `NodeEnrollHandler.RevokeToken` | revoke one of the caller's tokens (scoped to owner). |
-| GET | `/api/nodes/link-updates` | session | `nodes.read` | - | `NodeHandler.GetLinkUpdateStates` | returns the per-node Link image status published by the discovery sweep. |
-| POST | `/api/nodes/link-updates` | session | `nodes.write` | - | `NodeHandler.TriggerLinkUpdate` | queues the node-level "link_update" command. |
 | PUT | `/api/nodes/{id:[0-9]+}` | session | `nodes.write` | - | `NodeHandler.UpdateNode` | edits a node. |
 | DELETE | `/api/nodes/{id:[0-9]+}` | session | `nodes.delete` | - | `NodeHandler.DeleteNode` | removes a node, then cleans up the Redis ACL user and keys that belong to it. |
 | GET | `/api/nodes/{id:[0-9]+}/cpu` | session | _no capability_ | - | `CPUPinningHandler.GetNodeCPU` | the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core). |
-| GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _no capability_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it). |
+| GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _no capability_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint. |
 | DELETE | `/api/nodes/{id:[0-9]+}/force` | session | `nodes.delete` | - | `NodeHandler.ForceDeleteNode` | deletes an offline node and all its servers |
 | PUT | `/api/nodes/{id:[0-9]+}/placement` | session | `nodes.write` | - | `PlacementHandler.SetNodePlacement` | PANEL nodes.write. |
 | GET | `/api/nodes/{id:[0-9]+}/servers` | session | _no capability_ | - | `NodeHandler.GetNodeServers` | returns all servers assigned to a node |

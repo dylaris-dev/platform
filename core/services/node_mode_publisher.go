@@ -102,8 +102,6 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 		"placement.container_port": "dylaris:placement:container_port",
 		"placement.pids_limit":     "dylaris:placement:pids_limit",
 		"placement.io_weight":      "dylaris:placement:io_weight",
-		"link_update_policy":       "dylaris:link_update_policy",
-		"link_update_interval_min": "dylaris:link_update_interval_min",
 	} {
 		if v, err := p.store.GetSetting(setting); err == nil && v != "" {
 			values[key] = v

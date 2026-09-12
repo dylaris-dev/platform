@@ -21,6 +21,9 @@ Newest release first. The format is fixed and checked in CI - see the
   machine. Choose "Update this machine" and redeploy to move to it. `node`
 
 ### Breaking
+- **BYON: redeploy the current file before you update your node.** The node no longer
+  starts the link itself, so a machine updated without it keeps running and nobody can
+  reach your servers. `node`
 - **Add one line to your deploy file before you update your link,** or it will not
   start: `LINK_DRAIN_TIMEOUT: "6h"` in the link's environment. Redeploying the current
   file from the panel does it for you.

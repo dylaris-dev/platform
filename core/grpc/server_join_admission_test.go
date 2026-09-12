@@ -81,7 +81,7 @@ func connectKnownNode(t *testing.T, joins JoinAttemptRecorder, fromIP string, au
 		ctx:  ctx,
 		recv: []*pb.NodeMessage{{Payload: &pb.NodeMessage_Auth{Auth: auth}}},
 	}
-	srv := NewServer(NewRegistry(), knownNodeLookup{token: auth.NodeToken}, "core-test", noSecretACL{}, nil, nil, joins)
+	srv := NewServer(NewRegistry(), knownNodeLookup{token: auth.NodeToken}, "core-test", noSecretACL{}, nil, joins)
 	return srv.NodeConnect(stream)
 }
 
@@ -177,7 +177,7 @@ func runConnect(t *testing.T, lookup NodeLookup, acl ACLHandshake, joins JoinAtt
 	ctx := peer.NewContext(context.Background(), &peer.Peer{
 		Addr: &net.TCPAddr{IP: net.ParseIP(fromIP), Port: 51234},
 	})
-	srv := NewServer(NewRegistry(), lookup, "core-test", acl, nil, nil, joins)
+	srv := NewServer(NewRegistry(), lookup, "core-test", acl, nil, joins)
 	return srv.NodeConnect(&fakeNodeStream{ctx: ctx, recv: msgs})
 }
 

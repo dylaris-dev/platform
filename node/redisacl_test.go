@@ -66,16 +66,11 @@ func TestFirstBootPersistsIntoAMissingDir(t *testing.T) {
 
 	secret := []byte("0123456789abcdef0123456789abcdef")
 	const id = "1f12fc89-2c39-49c4-a630-e2b6d406901b"
-	const linkSecret, linkProof = "link-secret-value", "link-proof-value"
-
 	if err := saveNodeSecret(dir, secret); err != nil {
 		t.Fatalf("saveNodeSecret into a missing dir: %v", err)
 	}
 	if err := saveNodeID(dir, id); err != nil {
 		t.Fatalf("saveNodeID into a missing dir: %v", err)
-	}
-	if err := saveLinkCreds(dir, linkSecret, linkProof); err != nil {
-		t.Fatalf("saveLinkCreds into a missing dir: %v", err)
 	}
 
 	// The point is not that the writes returned nil, it is that the NEXT boot
@@ -86,9 +81,6 @@ func TestFirstBootPersistsIntoAMissingDir(t *testing.T) {
 	}
 	if gotID, ok := loadNodeID(dir); !ok || gotID != id {
 		t.Errorf("node id did not survive: ok=%v got=%q", ok, gotID)
-	}
-	if s, p, ok := loadLinkCreds(dir); !ok || s != linkSecret || p != linkProof {
-		t.Errorf("link creds did not survive: ok=%v s=%q p=%q", ok, s, p)
 	}
 
 	// 0755, not 0700: the MC server subdirectories live under this path and

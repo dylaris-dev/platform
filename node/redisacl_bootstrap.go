@@ -25,16 +25,7 @@ import (
 // never this global directly.
 var nodeSecret []byte
 
-// linkSecret / linkDiscoveryProof are the Core-delivered Link tunnel credentials
-// (empty when this node isn't gateway-relevant, or until ensureNodeSecret
-// completes the bootstrap). Same multi-writer concern as nodeSecret: go
-// through getLinkCreds/setLinkCreds, never these globals directly.
-var (
-	linkSecret         string
-	linkDiscoveryProof string
-)
-
-// nodeSecretMu guards nodeSecret, linkSecret and linkDiscoveryProof. Before
+// nodeSecretMu guards nodeSecret. Before
 // this existed, grpc_mesh's per-reconnect handler wrote nodeSecret directly
 // with no synchronization AND with no change-detection, which could blind the
 // ACL watchdog: the watchdog's own "prev := nodeSecret" read would observe
@@ -76,14 +67,6 @@ func waitForNodeSecret(ctx context.Context, timeout time.Duration) ([]byte, bool
 	}
 }
 
-// getLinkCreds returns the current Link tunnel token + discovery proof. Safe
-// for concurrent use.
-func getLinkCreds() (secret, proof string) {
-	nodeSecretMu.Lock()
-	defer nodeSecretMu.Unlock()
-	return linkSecret, linkDiscoveryProof
-}
-
 // setNodeSecret installs a freshly obtained per-node secret. Applies the SAME
 // rule no matter which caller triggers it: the FIRST install (prev is nil,
 // e.g. the startup bootstrap or a cache load) never restarts; a genuine
@@ -109,22 +92,6 @@ func setNodeSecret(s []byte, persist bool) {
 		// unaffected by this process restarting; only the node management
 		// plane briefly blips.
 		log.Fatal("redisacl: per-node secret rotated; restarting node agent to adopt new Redis credentials")
-	}
-}
-
-// setLinkCreds installs freshly delivered Link tunnel credentials. No
-// change-detection/restart logic: unlike nodeSecret, a stale Link credential
-// does not leave any long-lived client with a wrong password baked in - the
-// link reconciler (link_reconciler.go) re-reads via getLinkCreds on its next
-// 30s tick and respawns the sidecar if the signature changed.
-func setLinkCreds(secret, proof string, persist bool) {
-	nodeSecretMu.Lock()
-	linkSecret, linkDiscoveryProof = secret, proof
-	nodeSecretMu.Unlock()
-	if persist {
-		if werr := saveLinkCreds(nodeSecretDir, secret, proof); werr != nil {
-			log.Printf("redisacl: WARN failed to persist link creds: %v", werr)
-		}
 	}
 }
 
@@ -157,9 +124,6 @@ func ensureNodeSecret(ctx context.Context) []byte {
 			"row holds no key, and refuses it once it does.", err)
 	} else {
 		setNodeKey(k)
-	}
-	if s, p, ok := loadLinkCreds(nodeSecretDir); ok {
-		setLinkCreds(s, p, false) // already on disk, no need to re-persist
 	}
 	if s, ok := loadNodeSecret(nodeSecretDir); ok {
 		setNodeSecret(s, false) // already on disk; first install, never restarts
@@ -360,9 +324,6 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 				"this happens when the cached secret is missing at boot.",
 				previous, res.AssignedId)
 		}
-	}
-	if res.LinkSecret != "" && res.LinkDiscoveryProof != "" {
-		setLinkCreds(res.LinkSecret, res.LinkDiscoveryProof, true)
 	}
 	var secret []byte
 	switch {

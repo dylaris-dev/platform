@@ -377,10 +377,12 @@ describe('nodeCompose with the Link beside the node', () => {
         expect(link).toContain('LINK_EXTERNAL: "true"');
     });
 
-    // Exactly one Link per machine: two would fight over the same identity.
+    // Exactly one Link per machine: two would fight over the same identity. A
+    // current node starts none either way, so this line is aimed at an OLDER
+    // node image - which is the one that WOULD start a second one.
     it('tells the node not to start its own', () => {
         expect(service(kit(), 'node')).toContain('NODE_MANAGES_LINK: "false"');
-        expect(kit()).not.toContain('do not run link yourself');
+        expect(kit()).not.toContain('THIS FILE RUNS NO LINK');
     });
 
     // Inside a Docker network 127.0.0.1 is the link's own container. A current
@@ -576,3 +578,33 @@ describe('every kit that ships a link sets its drain window', () => {
     });
 });
 
+
+// The failure this exists for.
+//
+// The node no longer starts a Link, so a node kit without one is a machine whose
+// servers nobody can reach: in gateway routing the Link is the only way in and an
+// MC container publishes no host port. A file written with a key Core cannot
+// answer (link-boot refuses anything not bound to a machine) therefore cannot be
+// completed - and it has to SAY so, rather than look like a finished file that
+// happens to omit a service.
+describe('a node kit that cannot boot a link says so', () => {
+    it('warns instead of quietly leaving the link out', () => {
+        const out = nodeCompose(base);
+        expect(out).not.toContain('gateway-link');
+        expect(out).toContain('THIS FILE RUNS NO LINK');
+        expect(out).toContain('nobody can reach the servers on this machine');
+    });
+
+    // The claim that replaced it must be gone with it: the node used to start
+    // one, and a file still saying so sends the reader looking for a container
+    // that will never exist.
+    it('no longer claims the node starts one itself', () => {
+        expect(nodeCompose(base)).not.toContain('starts its own link sidecar');
+    });
+
+    it('says nothing of the sort once the key can boot a link', () => {
+        const out = nodeCompose({ ...base, linkBesideNode: true });
+        expect(out).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
+        expect(out).not.toContain('THIS FILE RUNS NO LINK');
+    });
+});

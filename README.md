@@ -354,10 +354,10 @@ Still not forwarded, and why:
 - `BEAM_MANIFEST_URL` - a **Core** variable (see the Core table below), not a Node
   one. It is simply not forwarded in either `environment:` block, so Core falls back
   to its compiled-in manifest URL.
-- `NODE_MANAGES_LINK`, `LINK_IMAGE`, `DYLARIS_STATS_BUFFER_MAXLEN`,
-  `STATS_STREAM_MAXLEN` - these belong to the **Node**. Both shipped files *do*
-  deploy a Node (`docker-stack.yml` runs it as a `global` service); these four are
-  just absent from its `environment:` block and take their code defaults there. Add
+- `DYLARIS_STATS_BUFFER_MAXLEN`, `STATS_STREAM_MAXLEN` - these belong to the
+  **Node**. Both shipped files *do* deploy a Node (`docker-stack.yml` runs it as a
+  `global` service); these two are just absent from its `environment:` block and
+  take their code defaults there. Add
   them by hand if you need them, or use the panel-generated env block for a BYON node.
 - `BEAM_LAN_FASTPATH` - the same situation, and worth its own line because it is a
   listener rather than a tuning knob: leaving it out means `:25523` keeps serving
@@ -470,8 +470,8 @@ region whose edges are all offline is left untouched.
 | `NODE_TAGS` | *(empty)* | No | Comma-separated placement tags (e.g. `eu,fast`). The tag `external` flags a home/external node. |
 | `NODE_REGION` | *(empty)* | No | Region this Node belongs to. |
 | `NODE_EXTERNAL` | `false` | No | If `true` (or `NODE_TAGS` contains `external`), the Node forces `gateway` routing + `beam` file access locally (no host ports, no SFTP). |
-| `NODE_MANAGES_LINK` | *(on when `LINK_IMAGE` is set)* | No | Whether this Node spawns and reconciles its own Link sidecar (container `dylaris_link`). Setting `LINK_IMAGE` is the opt-in; set this to `false` where the Link is deployed separately, e.g. as the gateway stack's `link` service. With it off the Node removes, at startup, the `dylaris_link` it created itself, and never a stack task or a container it did not create. The panel warns about a gateway-routed Node that reports no running Link. A Link is needed per MC Node whenever routing is `gateway`/`both` - not only for BYON. |
-| `LINK_IMAGE` | *(empty)* | No | Container image for the Link sidecar this Node spawns. No built-in default: empty means no Link sidecar, only a log line. |
+| `NODE_MANAGES_LINK` | *(read, then ignored)* | No | **Does nothing.** A Node no longer runs a Link: the Link is its own service, deployed beside the Node (the gateway stack's `link` service, or the `link:` service in the deploy file the panel writes). A Node that still finds this variable, or `LINK_IMAGE`, says so once at startup. It also removes, once, a `dylaris_link` container an OLDER Node created - but only when another Link is already running on the host, because removing the only one would lock every player out. The panel warns about a gateway-routed Node reporting no running Link. A Link is needed per MC Node whenever routing is `gateway`/`both` - not only for BYON. |
+| `LINK_IMAGE` | *(read, then ignored)* | No | **Does nothing.** See `NODE_MANAGES_LINK`. |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `CORE_GRPC_ADDR` | *(empty; `127.0.0.1:25570` on an external node)* | For first boot | Core gRPC endpoint (`host:25501`). Needed for a first-boot node to bootstrap its per-node Redis secret over gRPC; a node with an already-cached secret can start without it (see the boot warning). Redis ACL is mandatory and there is no static-password fallback. Same rule as `REDIS_ADDR`: empty on an external node means warp's local proxy. |
 | `GRPC_TLS_ENABLED` | `true` | No | TLS + Core-cert fingerprint pinning on the Node ↔ Core gRPC control channel. **On by default**; set `false` to opt out. Must match Core's `GRPC_TLS_ENABLED`. With it on, the node needs a pin source at boot or it exits: `CLUSTER_SECRET` (in-cluster) or `GRPC_TLS_FINGERPRINT` (BYON). |

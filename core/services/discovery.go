@@ -85,15 +85,6 @@ type NodeHeartbeat struct {
 	// minimum in Redis, which cannot express "two of your three nodes are
 	// current" - the case an operator most needs to see.
 	ReleaseVersion string `json:"releaseVersion,omitempty"`
-	// Link sidecar image state, reported only by nodes that manage their own Link.
-	// LinkManaged distinguishes "this node has no Link to update" from "this node
-	// runs an operator-deployed Link", so the panel does not offer a button that
-	// would do nothing. Empty image ids mean unknown (no container yet, or the
-	// registry was unreachable) and must not be read as an update being available.
-	LinkManaged         bool   `json:"linkManaged,omitempty"`
-	LinkImageRunning    string `json:"linkImageRunning,omitempty"`
-	LinkImageAvailable  string `json:"linkImageAvailable,omitempty"`
-	LinkUpdateAvailable bool   `json:"linkUpdateAvailable,omitempty"`
 	// Timestamp (unix seconds) + Sig replace the raw-secret compare on the
 	// hardened path: Sig = HMAC(perNodeSecret, heartbeat-domain|token|ts).
 	Timestamp int64  `json:"timestamp"`
@@ -244,22 +235,6 @@ func (s *DiscoveryService) checkCPUTopologyChange(ctx context.Context, node *mod
 	s.redis.Set(ctx, sigKey, sig, 0)
 }
 
-// NodeLinkStateKey holds a nodeID -> NodeLinkState map for the nodes that manage
-// their own Link sidecar. Published by the discovery sweep so the panel can show
-// pending Link updates without a DB column: the value is live state with a TTL,
-// not something worth a migration.
-const NodeLinkStateKey = "dylaris:nodes:link_state"
-
-// NodeLinkState is one node's Link sidecar image status.
-type NodeLinkState struct {
-	// Managed is false for a node whose Link an operator deploys. The panel must
-	// not offer an update button there - Core cannot replace that container.
-	Managed         bool   `json:"managed"`
-	Running         string `json:"running,omitempty"`
-	Available       string `json:"available,omitempty"`
-	UpdateAvailable bool   `json:"updateAvailable"`
-}
-
 // applyHeartbeatRegion stores an auto-discovered node's NODE_REGION, but
 // only once it names a region that EXISTS - a region an operator has created
 // when an admin adopts a node by hand.
@@ -340,7 +315,6 @@ func (s *DiscoveryService) scanNodes() {
 	}
 
 	activeNodeTokens := make(map[string]bool)
-	linkStates := map[string]NodeLinkState{}
 
 	for _, key := range keys {
 		val, err := s.redis.Get(ctx, key).Result()
@@ -360,14 +334,6 @@ func (s *DiscoveryService) scanNodes() {
 
 		// 3. Find or create Node in DB
 		activeNodeTokens[hb.ID] = true
-		if hb.LinkManaged {
-			linkStates[hb.ID] = NodeLinkState{
-				Managed:         true,
-				Running:         hb.LinkImageRunning,
-				Available:       hb.LinkImageAvailable,
-				UpdateAvailable: hb.LinkUpdateAvailable,
-			}
-		}
 
 		node, err := s.store.GetNodeByToken(hb.ID)
 
@@ -460,12 +426,6 @@ func (s *DiscoveryService) scanNodes() {
 	// but it was indistinguishable from a healthy round in which every node
 	// answered - so an operator watching nodes flip had no way to tell the two
 	// apart. Say which one happened.
-	// Same short-TTL reasoning as the baseline above: a node that stopped
-	// reporting must stop claiming an update is pending for it, rather than leave
-	// the panel offering a button for a node that is not there.
-	if b, err := json.Marshal(linkStates); err == nil {
-		s.redis.Set(ctx, NodeLinkStateKey, b, 5*time.Minute)
-	}
 
 	dbNodes, err := s.store.ListNodes()
 	if err != nil {

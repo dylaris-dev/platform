@@ -16,9 +16,13 @@ Newest release first. The format is fixed and checked in CI - see the
   six hours. `panel`
 
 ### Breaking
+- **A node no longer starts a Link.** `NODE_MANAGES_LINK` and `LINK_IMAGE` do nothing;
+  deploy the Link beside the node, as the current deploy file does. `node` `core` `panel`
 - **A Link started from an older deploy file will not come up on the current image.**
   `LINK_DRAIN_TIMEOUT` is required and has no default; regenerate the file or add the
   line. `panel`
+- **A node deploy file written with a key that is not bound to a machine now carries a
+  warning instead of a Link,** because only a bound key can start one. `panel`
 
 ### Security
 - Nothing.

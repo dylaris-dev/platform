@@ -319,6 +319,9 @@ services:
       # used to manage one removes the dylaris_link it created when it starts
       # with this off. Settings -> Nodes warns about a gateway node reporting no
       # Link, which is what a missing `link` service looks like.
+      # A current node starts no Link either way and only logs that this line
+      # does nothing. It stays for an OLDER node image, which would run a
+      # second Link beside the dylaris-link service without it.
       NODE_MANAGES_LINK: "false"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

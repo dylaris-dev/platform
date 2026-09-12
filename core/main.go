@@ -808,7 +808,7 @@ func main() {
 	// than as cfg.RedisAddr: unset, that falls back to localhost, which names
 	// Core's own loopback and would send every node to itself. Unset here means
 	// Core names none, and a node keeps the address it has.
-	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, appState.Gateway, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret, strings.TrimSpace(os.Getenv("REDIS_ADDR")))
+	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret, strings.TrimSpace(os.Getenv("REDIS_ADDR")))
 	if err != nil {
 		log.Fatalf("gRPC server error: %v", err)
 	}

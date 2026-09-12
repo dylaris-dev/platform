@@ -110,7 +110,7 @@ func connectWithAuth(t *testing.T, auth *pb.NodeAuth) (logged string, sent []*pb
 		recv: []*pb.NodeMessage{{Payload: &pb.NodeMessage_Auth{Auth: auth}}},
 	}
 
-	srv := NewServer(NewRegistry(), rejectingLookup{}, "core-test", rejectingACL{}, nil, nil, nil)
+	srv := NewServer(NewRegistry(), rejectingLookup{}, "core-test", rejectingACL{}, nil, nil)
 	if err := srv.NodeConnect(stream); err == nil {
 		t.Fatal("NodeConnect accepted a node it should have rejected")
 	}
@@ -228,7 +228,7 @@ func TestAPairedNodeIsNeverReEnrolledUnderANewIdentity(t *testing.T) {
 		},
 	}}}}
 
-	srv := NewServer(NewRegistry(), rejectingLookup{}, "core-test", acl, nil, nil, nil)
+	srv := NewServer(NewRegistry(), rejectingLookup{}, "core-test", acl, nil, nil)
 	if err := srv.NodeConnect(stream); err == nil {
 		t.Fatal("a node claiming an unknown identity was accepted")
 	}

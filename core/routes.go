@@ -332,8 +332,6 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/users":                          "settings.read",
 	"/api/admin/settings/modpacks":                       "settings.read",
 	"/api/admin/settings/mod-cache":                      "settings.read",
-	"/api/admin/settings/link-updates":                   "settings.read",
-	"/api/nodes/link-updates":                            "nodes.read",
 	"/api/admin/settings/modpacks/delivery-capabilities": "settings.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag":   "settings.write",
 	"/api/admin/settings/permissions-mode":               "settings.write",
@@ -1326,13 +1324,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// is the boundary; gating it PANEL nodes.read would regress BYON owners out
 	// of their own node list, so it deliberately keeps bare AuthMiddleware.
 	api.HandleFunc("/nodes", authHandler.AuthMiddleware(nodeHandler.GetNodes)).Methods("GET")
-	// Link sidecar image updates. The node replaces its own Link container; these
-	// only carry the operator's preference and the manual trigger, and they are
-	// admin-only because most panel users never see a Link at all.
-	api.HandleFunc("/nodes/link-updates", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.read")(nodeHandler.GetLinkUpdateStates))).Methods("GET")
-	api.HandleFunc("/nodes/link-updates", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.TriggerLinkUpdate))).Methods("POST")
-	api.HandleFunc("/admin/settings/link-updates", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetLinkUpdateSettings))).Methods("GET")
-	api.HandleFunc("/admin/settings/link-updates", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.UpdateLinkUpdateSettings))).Methods("PUT")
 	api.HandleFunc("/nodes", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.CreateNode))).Methods("POST")
 	api.HandleFunc("/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.UpdateNode))).Methods("PUT")
 	// Adopt an auto-discovered node: admin sets name/region/tags (DB precedence).

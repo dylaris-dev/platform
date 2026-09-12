@@ -132,11 +132,6 @@ function MyNodesInner() {
     // token is absent for a ROLL: the machine enrolled long ago and an enroll
     // token is first-pairing only, so minting one would hand out a credential
     // with nothing to pair.
-    // linkBeside says whether the file shown with the keys may run the Link
-    // beside the node: always for a new machine (its key is bound when it
-    // enrols), and for a roll only when the key is bound already - a rolled key
-    // of a machine that enrolled before keys were bound would otherwise get a
-    // file whose Link Core cannot answer, on a node told not to start its own.
     const [revealedNode, setRevealedNode] = useState<{ token?: string; warpKey: string; label: string; grpcTlsFingerprint?: string; rolled?: boolean; linkBeside?: boolean } | null>(null);
     const [rollingKey, setRollingKey] = useState('');
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
@@ -344,6 +339,9 @@ function MyNodesInner() {
         }
         setRevealedNode({
             warpKey: res.warp_key, label, rolled: true,
+            // A rolled key keeps its binding, so the file it is shown with can
+            // still boot a Link. Without this the kit would carry the "no link"
+            // warning for a machine whose key is perfectly able to boot one.
             linkBeside: !!nodeKeys.find(k => k.node_id === nodeId)?.bound_node_id,
         });
         loadNodeKeys();
@@ -703,15 +701,16 @@ function MyNodesInner() {
                         {nodeLabel(linkFor)}: the Link beside the node
                     </div>
                     <p className="text-xs text-(--base-07)">
-                        The Link carries your players to your servers. So far it has run inside the node. To run it
-                        beside the node instead, as a service of its own, we need to know which overlay key
-                        belongs to this machine.
+                        The Link carries your players to your servers, and it runs as a service of its own beside
+                        the node - the node does not start one. To write this machine&apos;s file we need to know
+                        which overlay key belongs to it.
                     </p>
                     {keyBoundTo(linkFor.id) ? (
                         <>
                             <p className="text-xs text-(--base-07)">
-                                This machine&apos;s key is connected. If it still runs an earlier file, redeploy it with
-                                the one below, keeping the values of <code className="font-mono">API_KEY</code>,{' '}
+                                This machine&apos;s key is connected. If it still runs an earlier file, redeploy it
+                                with the one below - a node updated without it keeps running and serves nobody -
+                                keeping the values of <code className="font-mono">API_KEY</code>,{' '}
                                 <code className="font-mono">NODE_ID</code> and <code className="font-mono">NODE_ENROLL_TOKEN</code>{' '}
                                 from the file it runs now; <code className="font-mono">LINK_BOOT_KEY</code> takes the same
                                 key as <code className="font-mono">API_KEY</code>. Players connected at that moment

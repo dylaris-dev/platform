@@ -56,15 +56,6 @@ type ACLHandshake interface {
 	SetNodeKey(ctx context.Context, nodeID int, prevKey, prevRejected, key ed25519.PublicKey) (stored bool, err error)
 }
 
-// LinkCredSource supplies the per-node Link sidecar credentials (tunnel token +
-// discovery proof), derived by the gateway from the cluster secret. Delivered in
-// AuthResult so a secret-free node can spawn its Link sidecar without CLUSTER_SECRET.
-// Satisfied structurally by services.GatewayProvider.
-type LinkCredSource interface {
-	LinkToken(nodeID string) string
-	DiscoveryProof(nodeID string) string
-}
-
 // AdmissionChecker gates NEW node registrations (network + join) before enroll,
 // and consumes the one-shot join slot after a successful enroll. nil =
 // admission off. Satisfied structurally by *services.AdmissionGate.
@@ -195,7 +186,6 @@ type Server struct {
 	nodeLookup NodeLookup
 	coreID     string
 	acl        ACLHandshake
-	linkCreds  LinkCredSource
 	admission  AdmissionChecker
 	joins      JoinAttemptRecorder
 	// updateGate refuses or warns a node that has not applied a mandatory
@@ -228,13 +218,12 @@ func (s *Server) redisAddrFor(owned bool) string {
 }
 
 // NewServer creates a new gRPC server for Node connections.
-func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, joins JoinAttemptRecorder) *Server {
+func NewServer(registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, admission AdmissionChecker, joins JoinAttemptRecorder) *Server {
 	return &Server{
 		registry:   registry,
 		nodeLookup: lookup,
 		coreID:     coreID,
 		acl:        acl,
-		linkCreds:  linkCreds,
 		admission:  admission,
 		joins:      joins,
 	}
@@ -557,11 +546,6 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID,
 				RedisAddr: s.redisAddrFor(owned)}
 			applyUpdateWarning(ar, verdict)
-			if s.linkCreds != nil {
-				// Derived, not nodes.link_token: this is the node-managed Link's own identity; only routes follow the Hub's answer.
-				ar.LinkSecret = s.linkCreds.LinkToken(assignedID)
-				ar.LinkDiscoveryProof = s.linkCreds.DiscoveryProof(assignedID)
-			}
 			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: ar}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
 			}
@@ -826,11 +810,6 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// so in the second case this is the stored value, byte for byte.
 				res.NodeSecret = secretHex
 			}
-			if s.linkCreds != nil {
-				// Derived, not nodes.link_token: this is the node-managed Link's own identity; only routes follow the Hub's answer.
-				res.LinkSecret = s.linkCreds.LinkToken(node.Token)
-				res.LinkDiscoveryProof = s.linkCreds.DiscoveryProof(node.Token)
-			}
 			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: res}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
 			}
@@ -901,7 +880,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 // stream was severed by process exit instead of drained. Bind errors are
 // returned synchronously rather than raised from inside a goroutine, so a port
 // clash now fails the caller's boot sequence at a defined point.
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, linkCreds LinkCredSource, admission AdmissionChecker, joins JoinAttemptRecorder, tlsEnabled bool, clusterSecret, redisAddr string) (*grpc.Server, error) {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, admission AdmissionChecker, joins JoinAttemptRecorder, tlsEnabled bool, clusterSecret, redisAddr string) (*grpc.Server, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -942,7 +921,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 
 	grpcServer := grpc.NewServer(opts...)
 
-	srv := NewServer(registry, lookup, coreID, acl, linkCreds, admission, joins)
+	srv := NewServer(registry, lookup, coreID, acl, admission, joins)
 	// The mandatory-update policy is installed for the REAL server only. Tests
 	// construct Server directly and stay silent about updates unless they ask.
 	srv.SetUpdateGate(NewUpdateGate())

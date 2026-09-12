@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -431,354 +430,67 @@ func buildRedisEnv(uuid, subServer, sidecarAddr string) []string {
 
 const linkContainerName = "dylaris_link"
 
-// linkPrefersPublicEdge decides which of an edge's two addresses the
-// node-managed link tries first.
+// isOwnLinkContainer reports whether an inspected container is a Link an OLDER
+// version of this node created itself, and so the only Link it may ever remove.
 //
-// NODE_EXTERNAL and NODE_TAGS are node-local env on the customer's own machine,
-// so a BYON owner who clears them gets the private address preferred - and warp
-// masquerades, so that address ANSWERS and every player's bytes ride the
-// WireGuard tunnel. Holding no CLUSTER_SECRET is what makes a node BYON, and
-// that is not something a machine can claim its way out of: an in-cluster node
-// needs the secret for the cluster proof and the gRPC TLS pin, so clearing it
-// to look in-cluster only stops the node from starting.
+// The node no longer starts one, and this is the whole reason the name survives
+// its removal: a container created back then carries RestartPolicy
+// unless-stopped with a tunnel token and a Redis password baked in at create
+// time. Nothing else on the machine knows it exists. Left alone it would serve
+// forever on a frozen image and a frozen credential, with no code path able to
+// update or stop it.
 //
-// This is a preference, not the control. The warp leader's spoke allowlist is
-// what ENFORCES that player traffic stays off the overlay; deciding it here
-// only saves the link a dial timeout on the address it must not use anyway.
-func linkPrefersPublicEdge() bool {
-	return nodeExternal || clusterSecret == ""
-}
-
-// buildLinkEnv builds the env for a node-managed Link sidecar. Link authenticates
-// to Redis with its own per-node ACL user (derived from nodeSecret, provisioned by
-// Core), and presents the Core-delivered tunnel token + discovery proof. The Redis
-// address is resolved like an MC container's (sidecarRedisAddr).
-func buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr string) []string {
-	// Redis ACL is mandatory: Link always authenticates with its own per-node ACL
-	// user (nodeSecret guaranteed non-nil after the startup bootstrap).
-	user := aclLinkUsername(nodeID)
-	pass := aclLinkPassword(getNodeSecret(), nodeID)
-	return []string{
-		fmt.Sprintf("NODE_ID=%s", nodeID),
-		fmt.Sprintf("LINK_SECRET=%s", linkSecret),
-		fmt.Sprintf("LINK_DISCOVERY_PROOF=%s", linkDiscoveryProof),
-		fmt.Sprintf("REDIS_ADDR=%s", sidecarAddr),
-		fmt.Sprintf("REDIS_USER=%s", user),
-		fmt.Sprintf("REDIS_PASS=%s", pass),
-		fmt.Sprintf("REDIS_DB=%d", redisDB),
-		// Which of an edge's two addresses the link tries first. On an external
-		// machine the private one is reachable too - warp routes the overlay -
-		// so preferring it succeeds and puts every player's bytes through the
-		// WireGuard tunnel, sharing one leader with this node's own Redis
-		// traffic and Beam uploads.
-		fmt.Sprintf("LINK_EXTERNAL=%t", linkPrefersPublicEdge()),
-		// How long the Link keeps the players it already has after it is asked
-		// to stop. The Link itself REQUIRES this and has no default, on purpose:
-		// wherever an operator writes the Link's own config, the choice is worth
-		// making deliberately.
-		//
-		// Here there is no such file. The node builds this container, so an
-		// operator has nowhere to put the value except the NODE's environment -
-		// and every machine already in the field was deployed before the setting
-		// existed. Refusing to start their Link, or starting one that exits
-		// immediately, would lock every player out of those machines to enforce
-		// a preference. So the node passes its own value through and falls back
-		// to a documented one.
-		fmt.Sprintf("LINK_DRAIN_TIMEOUT=%s", linkDrainTimeout()),
-	}
-}
-
-// defaultLinkDrainTimeout is what a node-managed Link gets when the operator has
-// not said otherwise. Six hours covers almost every Minecraft session, and the
-// cost of a long one here is only that the old container lingers: it serves the
-// players it has and takes no new ones.
-const defaultLinkDrainTimeout = "6h"
-
-// linkDrainTimeout is LINK_DRAIN_TIMEOUT from the node's own environment, or the
-// default above. Not validated here - the Link parses it and refuses to start on
-// a value it cannot read, which is where the error belongs and where it names
-// the variable.
-func linkDrainTimeout() string {
-	if v := strings.TrimSpace(os.Getenv("LINK_DRAIN_TIMEOUT")); v != "" {
-		return v
-	}
-	return defaultLinkDrainTimeout
-}
-
-// linkEnvKeys are the variables buildLinkEnv owns.
-//
-// The list exists because a running container also carries the IMAGE's own
-// environment, so comparing the two slices wholesale would never match. It is
-// spelled out rather than derived from the wanted values so that a key REMOVED
-// from buildLinkEnv is still noticed: a key we no longer send but that is still
-// on the container is exactly the stale-config case a subset check misses.
-//
-// linkEnvKeysMatchBuilder in the tests keeps this list and buildLinkEnv in step.
-var linkEnvKeys = []string{
-	"NODE_ID",
-	"LINK_SECRET",
-	"LINK_DISCOVERY_PROOF",
-	"REDIS_ADDR",
-	"REDIS_USER",
-	"REDIS_PASS",
-	"REDIS_DB",
-	"LINK_EXTERNAL",
-	"LINK_DRAIN_TIMEOUT",
-}
-
-// runningLink is what the daemon reports about the Link container right now.
-type runningLink struct {
-	exists   bool
-	running  bool
-	imageID  string // the image the container was created FROM, not the tag
-	env      []string
-	networks []string
-}
-
-// envValueFor returns the value of key in a KEY=VALUE slice, and whether it was
-// present at all. Absent and empty are different answers here: a variable we
-// stopped sending is a config change, an empty one is a value.
-func envValueFor(env []string, key string) (string, bool) {
-	prefix := key + "="
-	for _, e := range env {
-		if v, ok := strings.CutPrefix(e, prefix); ok {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-// linkIsCurrent reports whether the running Link may be LEFT ALONE.
-//
-// This is the whole point of the function it guards. Destroying the Link ends
-// every player session on this host - the Link holds the tunnels and all the
-// session state, and resume only runs the other way round, for a dying edge
-// with a surviving Link - and it also cuts every Beam file transfer, which is
-// routed through the same process. Before this check, a node process start was
-// always treated as a change (the reconciler's signature lives in a variable
-// that is empty at boot), so a `docker stack deploy` of a mode:global node
-// service dropped every gateway-routed player on every host, whether or not
-// anything about the Link had changed.
-//
-// The comparison is against the CONTAINER ITSELF rather than a stored hash or a
-// label: the environment and the image id are already on the object, so there
-// is no second copy to keep in step and nothing to migrate the day the compared
-// set changes.
-//
-// wantImageID == "" means the configured reference did not resolve locally.
-// That is UNKNOWN, and unknown is deliberately not drift: a registry hiccup or
-// an image that is running but no longer tagged must not destroy a healthy
-// Link. The same rule is written on LinkImageStatus for the same reason.
-func linkIsCurrent(have runningLink, wantImageID string, wantEnv []string, wantNetwork string) bool {
-	if !have.exists || !have.running {
-		return false
-	}
-	for _, key := range linkEnvKeys {
-		want, wanted := envValueFor(wantEnv, key)
-		got, present := envValueFor(have.env, key)
-		if wanted != present || want != got {
-			return false
-		}
-	}
-	if !slices.Contains(have.networks, wantNetwork) {
-		return false
-	}
-	if wantImageID != "" && have.imageID != wantImageID {
-		return false
-	}
-	return true
-}
-
-// inspectLink reads the current Link container. A missing container is not an
-// error here, it is the answer.
-func (dm *DockerManager) inspectLink() runningLink {
-	c, err := dm.cli.ContainerInspect(dm.ctx, linkContainerName)
-	if err != nil {
-		return runningLink{}
-	}
-	out := runningLink{exists: true, imageID: c.Image}
-	if c.State != nil {
-		out.running = c.State.Running
-	}
-	if c.Config != nil {
-		out.env = c.Config.Env
-	}
-	if c.NetworkSettings != nil {
-		for name := range c.NetworkSettings.Networks {
-			out.networks = append(out.networks, name)
-		}
-	}
-	return out
-}
-
-// localImageID resolves a reference to the image id already present on this
-// host. Deliberately WITHOUT a pull: a moved tag is drift, and drift is decided
-// by the update policy on its own cadence (checkLinkImage), not by whatever
-// happens to run a reconcile. Pulling here is what made every node start pick
-// up a new :latest and rebuild the Link under the players on it.
-func (dm *DockerManager) localImageID(image string) string {
-	ins, _, err := dm.cli.ImageInspectWithRaw(dm.ctx, image)
-	if err != nil {
-		return ""
-	}
-	return ins.ID
-}
-
-// EnsureLinkContainer brings the node-managed Link sidecar to the wanted state
-// and LEAVES A CORRECT ONE ALONE. Reports whether it actually (re)created it.
-//
-// The splice sidecar has had this shape for longer, which is why a splice
-// survives an edge restart and a `docker compose up -d`
-// (gateway/edge/internal/sidecar/manager.go).
-func (dm *DockerManager) EnsureLinkContainer(image, nodeID, linkSecret, linkDiscoveryProof string) (bool, error) {
-	return dm.ensureLinkContainer(image, nodeID, linkSecret, linkDiscoveryProof, false)
-}
-
-// ReplaceLinkContainer recreates the Link unconditionally. It is the explicit
-// "apply the image now" path - the drift check that has already decided, and
-// the panel button whose copy says it interrupts sessions. Keeping it separate
-// is what lets EnsureLinkContainer be idempotent without changing what those
-// two do.
-func (dm *DockerManager) ReplaceLinkContainer(image, nodeID, linkSecret, linkDiscoveryProof string) error {
-	_, err := dm.ensureLinkContainer(image, nodeID, linkSecret, linkDiscoveryProof, true)
-	return err
-}
-
-func (dm *DockerManager) ensureLinkContainer(image, nodeID, linkSecret, linkDiscoveryProof string, force bool) (bool, error) {
-	netID, netName, err := dm.ensureGlobalNetwork()
-	if err != nil {
-		return false, err
-	}
-	// The address this process booted on, not the current one: a live promote
-	// must not look like env drift to linkIsCurrent, or the Link would be
-	// recreated under the players on it. See linkRedisAddr.
-	sidecarAddr, err := dm.sidecarRedisAddr(netID, linkRedisAddr)
-	if err != nil {
-		return false, err
-	}
-	env := buildLinkEnv(nodeID, linkSecret, linkDiscoveryProof, sidecarAddr)
-
-	if !force && linkIsCurrent(dm.inspectLink(), dm.localImageID(image), env, netName) {
-		return false, nil
-	}
-
-	// Only now: a create needs the image present, and this is the one path that
-	// creates. A pull on the checking path is what the comparison above exists
-	// to avoid.
-	dm.pullImage(image)
-	cc := &container.Config{
-		Image:    image,
-		Hostname: linkContainerName,
-		Env:      env,
-	}
-	// Unlike MC containers, the Link sidecar has no node-side liveness reconciler,
-	// so Docker's own restart policy is what keeps it alive across an internal crash.
-	// StopLinkContainer still does an explicit ContainerStop+ContainerRemove, which
-	// tears it down regardless of restart policy whenever the node wants it gone.
-	hc := &container.HostConfig{RestartPolicy: container.RestartPolicy{Name: "unless-stopped"}}
-	// Keyed by the resolved name, not the literal: see ensureGlobalNetwork.
-	nc := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			netName: {NetworkID: netID},
-		},
-	}
-	dm.cli.ContainerRemove(dm.ctx, linkContainerName, container.RemoveOptions{Force: true})
-	resp, err := dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, linkContainerName)
-	if err != nil {
-		return false, fmt.Errorf("link container create error: %v", err)
-	}
-	if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
-		return false, fmt.Errorf("link container start error: %v", err)
-	}
-	return true, nil
-}
-
-// LinkImageStatus refreshes the configured Link image reference and reports the
-// image the running container was created from alongside the image that
-// reference now resolves to. Either may be empty (no container, or the pull
-// failed and nothing is cached locally); a caller must treat "" as unknown and
-// not as drift, or a registry hiccup would recreate the Link on every tick.
-//
-// This mirrors what the edge already does for its splice sidecar
-// (gateway/edge/internal/sidecar/manager.go): pull, compare image IDs, recreate
-// on a real change. Comparing IDs rather than the tag string is the whole point
-// - a moving tag is invisible to a string comparison.
-func (dm *DockerManager) LinkImageStatus(image string) (running, available string) {
-	if c, err := dm.cli.ContainerInspect(dm.ctx, linkContainerName); err == nil {
-		running = c.Image
-	}
-	dm.pullImage(image)
-	if ins, _, err := dm.cli.ImageInspectWithRaw(dm.ctx, image); err == nil {
-		available = ins.ID
-	}
-	return running, available
-}
-
-// LinkEndpoint returns host:port for the Link's management server, resolved from
-// the container's own network settings.
-//
-// Deliberately not the container NAME: Docker DNS only resolves it for
-// containers attached to the same user-defined network, and a host-networked
-// node (every BYON node, and anything on Docker Desktop) is not. Asking the
-// Docker API works in every networking mode this node runs in.
-func (dm *DockerManager) LinkEndpoint() string {
-	c, err := dm.cli.ContainerInspect(dm.ctx, linkContainerName)
-	if err != nil || c.NetworkSettings == nil {
-		return ""
-	}
-	for _, ep := range c.NetworkSettings.Networks {
-		if ep.IPAddress != "" {
-			return fmt.Sprintf("%s:%d", ep.IPAddress, linkMgmtPort)
-		}
-	}
-	return ""
-}
-
-// StopLinkContainer stops + removes the node-managed Link sidecar (best-effort).
-func (dm *DockerManager) StopLinkContainer() {
-	timeout := 15
-	dm.cli.ContainerStop(dm.ctx, linkContainerName, container.StopOptions{Timeout: &timeout})
-	dm.cli.ContainerRemove(dm.ctx, linkContainerName, container.RemoveOptions{Force: true})
-}
-
-// isOwnLinkContainer reports whether an inspected container is the Link this
-// node created itself, and so the only Link it may ever remove.
-//
-// The node never labelled what it created, so it is recognised by what
-// ensureLinkContainer sets: the fixed name, the hostname set to that same name
-// (Docker, compose and Swarm all default a hostname to the container id, so a
-// hand-run `docker run --name dylaris_link` does not have it), and a Link
-// image. A Swarm or compose label means an orchestrator owns the container
-// whatever it is called: removing it would either be undone by that
-// orchestrator or take down a Link somebody deployed on purpose.
-//
-// configuredImage is the node's own LINK_IMAGE (or the default), which is what
-// recognises a Link on an operator's private registry; the published image
-// covers a LINK_IMAGE that has changed since the container was created.
-func isOwnLinkContainer(name, hostname, image string, labels map[string]string, configuredImage string) bool {
+// The node never labelled what it created, so it is recognised by what it set:
+// the fixed name, the hostname set to that same name (Docker, compose and Swarm
+// all default a hostname to the container id, so a hand-run `docker run --name
+// dylaris_link` does not have it), and a Link image. A Swarm or compose label
+// means an orchestrator owns the container whatever it is called: removing it
+// would either be undone by that orchestrator or take down the Link somebody
+// deployed on purpose - which, now, is every Link that should be running.
+func isOwnLinkContainer(name, hostname, image string, labels map[string]string) bool {
 	if strings.TrimPrefix(name, "/") != linkContainerName || hostname != linkContainerName {
 		return false
 	}
 	if labels["com.docker.swarm.service.id"] != "" || labels["com.docker.compose.project"] != "" {
 		return false
 	}
-	return image == configuredImage || strings.Contains(image, "gateway-link")
+	return strings.Contains(image, "gateway-link")
 }
 
-// RemoveOwnLinkContainer stops and removes the Link sidecar this node spawned
-// while it still managed one, and leaves every other container alone. One log
-// line whenever there was a container to decide about; a host that never had
-// one says nothing.
-func (dm *DockerManager) RemoveOwnLinkContainer(configuredImage string) {
+// RemoveOwnLinkContainer stops and removes such a container, once, and leaves
+// every other one alone. One log line whenever there was a container to decide
+// about; a host that never had one says nothing.
+//
+// It removes NOTHING unless another Link is already running on this host, and
+// that guard is the important half. A machine still on an older deploy file has
+// no Link service beside the node: removing the one it has would take the only
+// way in with it, and every player on every server here would be locked out by a
+// cleanup step. A stale container serving on a frozen image is a problem an
+// operator can fix in their own time; no container at all is an outage now.
+// keepSoleLink decides whether the container found must be KEPT rather than
+// removed. The count includes the one about to go, so anything under two means
+// it is the only Link on this host. A list error is "cannot tell", and cannot
+// tell keeps it: the cost of a wrong keep is a stale container, the cost of a
+// wrong removal is every player on the host.
+func keepSoleLink(links int, listOK bool) bool { return !listOK || links < 2 }
+
+func (dm *DockerManager) RemoveOwnLinkContainer() {
 	c, err := dm.cli.ContainerInspect(dm.ctx, linkContainerName)
 	if err != nil {
 		if !client.IsErrNotFound(err) {
-			log.Printf("link: could not check for a Link sidecar left from NODE_MANAGES_LINK: %v", err)
+			log.Printf("link: could not check for a Link container left by an older node: %v", err)
 		}
 		return
 	}
-	if c.Config == nil || !isOwnLinkContainer(c.Name, c.Config.Hostname, c.Config.Image, c.Config.Labels, configuredImage) {
-		log.Printf("link: %s was not recognised as this node's Link, left running", linkContainerName)
+	if c.Config == nil || !isOwnLinkContainer(c.Name, c.Config.Hostname, c.Config.Image, c.Config.Labels) {
+		log.Printf("link: %s was not recognised as a Link an older node started, left running", linkContainerName)
+		return
+	}
+	n, ok := dm.CountLinkContainers()
+	if keepSoleLink(n, ok) {
+		log.Printf("link: %s is the ONLY Link on this host, so it is kept even though this node no longer manages one. "+
+			"Players reach your servers through it and nothing else would. Deploy the Link beside the node (the deploy "+
+			"file in the panel contains it); this container is removed on the next start once that one is up.", linkContainerName)
 		return
 	}
 	// By id: the name is the one thing another container could hold by the
@@ -786,10 +498,10 @@ func (dm *DockerManager) RemoveOwnLinkContainer(configuredImage string) {
 	timeout := 15
 	dm.cli.ContainerStop(dm.ctx, c.ID, container.StopOptions{Timeout: &timeout})
 	if err := dm.cli.ContainerRemove(dm.ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-		log.Printf("link: failed to remove the Link sidecar this node used to manage: %v", err)
+		log.Printf("link: failed to remove the Link container an older node left behind: %v", err)
 		return
 	}
-	log.Printf("link: NODE_MANAGES_LINK is off, removed the Link sidecar this node used to manage (%s)", linkContainerName)
+	log.Printf("link: removed the Link container an older node started (%s); the Link is its own service now", linkContainerName)
 }
 
 // ensureGlobalNetwork resolves the shared server network and returns BOTH its id

@@ -278,8 +278,12 @@ volumes:
  * Two things here are load-bearing and easy to get wrong by hand: the node gets
  * NO CLUSTER_SECRET (it fetches a scoped Redis credential over gRPC after
  * enrolling, which is what keeps a customer machine from holding fleet
- * credentials), and exactly one Link runs: either the node spawns its own, or -
- * with linkBesideNode - the file runs it and tells the node not to.
+ * credentials), and the Link runs as a service of its own - the node starts none
+ * any more. linkBesideNode says whether the key this file is written with can
+ * actually BOOT one: Core answers link-boot only for a key bound to a machine,
+ * so a file written with any other key gets a warning in place of the link
+ * service rather than a container that cannot start. That is not an option to
+ * choose; it is whether this file can be complete at all.
  *
  * The Link beside the node sits on a Docker network with the Minecraft servers
  * and reaches warp's proxy at the gateway of that network, which it works out
@@ -309,7 +313,14 @@ export function nodeCompose(i: WarpDeployInput): string {
         ? `# warp opens an outbound tunnel to us; the node runs your Minecraft servers on
 # this machine, and link carries your players to them.`
         : `# warp opens an outbound tunnel to us; the node runs your Minecraft servers on
-# this machine. It starts its own link sidecar - do not run link yourself.`;
+# this machine.
+#
+# WARNING - THIS FILE RUNS NO LINK, AND THE NODE NO LONGER STARTS ONE EITHER.
+# Without a link, nobody can reach the servers on this machine: in gateway
+# routing the link is the only way in and a server publishes no port of its own.
+# A link needs an overlay key BOUND TO THIS MACHINE, which this key is not. Bind
+# one under the machine in the panel, then take the file offered there - it
+# contains the link.`;
     const manageLink = kitLink
         ? `      # keep - link runs as its own service below, so the node must not start
       # one as well. A node that started one before removes it.

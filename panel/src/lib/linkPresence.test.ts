@@ -21,8 +21,13 @@ describe('linkMissing', () => {
         expect(linkMissing(isGatewayRouting('gateway'), { linkCount: 1 })).toBe(false);
     });
 
-    it('warns for an operator external node, never for a customer machine', () => {
+    // A customer's machine used to be excluded, because its node always ran a
+    // Link inside itself and a zero could hardly happen. The node starts none any
+    // more, so zero on a BYON machine is what a customer gets by updating their
+    // node image without redeploying their file - the likeliest way this breaks,
+    // and the one the warning has to cover.
+    it('warns for any machine with no Link, customer machines included', () => {
         expect(linkMissing(true, { linkCount: 0, tags: 'external' })).toBe(true);
-        expect(linkMissing(true, { linkCount: 0, ownerId: 'tenant-1' })).toBe(false);
+        expect(linkMissing(true, { linkCount: 0, ownerId: 'tenant-1' })).toBe(true);
     });
 });

@@ -220,7 +220,7 @@ func dial(t *testing.T, lookup NodeLookup, acl ACLHandshake, joins JoinAttemptRe
 		Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 51234},
 	})
 	n.reg = NewRegistry()
-	return NewServer(n.reg, lookup, "core-test", acl, nil, nil, joins).NodeConnect(n)
+	return NewServer(n.reg, lookup, "core-test", acl, nil, joins).NodeConnect(n)
 }
 
 var (

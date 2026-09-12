@@ -697,8 +697,10 @@ func (h *NodeHandler) nodeStoragePaths(r *http.Request, nodeToken string) map[st
 }
 
 // GetDeployBundle GET /api/nodes/{id}/deploy-bundle returns the values a secret-free
-// BYON host needs: the gRPC-TLS pin fingerprint plus the node's Link tunnel token and
-// discovery proof (both Core-derived from CLUSTER_SECRET, so Link never holds it).
+// BYON host needs: the gRPC-TLS pin fingerprint. The Link's own credentials are
+// no longer among them - a Link is its own service now and fetches them itself
+// with the machine's warp key (link-boot), so nothing has to travel in a deploy
+// file a customer copies into a chat window.
 func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
@@ -724,9 +726,6 @@ func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 		"success":            true,
 		"nodeId":             node.Token,
 		"grpcTlsFingerprint": fingerprint,
-		// Derived, not nodes.link_token: the bundle deploys the node-managed Link, whose identity is the derived token.
-		"linkSecret":         h.state.Gateway.LinkToken(node.Token),
-		"linkDiscoveryProof": h.state.Gateway.DiscoveryProof(node.Token),
 	})
 }
 

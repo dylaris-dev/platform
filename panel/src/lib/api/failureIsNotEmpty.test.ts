@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getLinkUpdateStates } from './linkUpdates';
 import { listInstalledMods, getServerModpackContents } from './modrinth';
 import { getUnmanagedMods } from './modcompat';
 
@@ -14,30 +13,6 @@ function respond(status: number, body: unknown) {
         headers: { 'Content-Type': 'application/json' },
     })));
 }
-
-// getLinkUpdateStates answers with a BARE map on success, so the usual
-// `data.success` test is not available to it - the failure envelope is what has
-// to be recognised. The `|| {}` this replaced could never fire, because an
-// envelope is a perfectly truthy object: it was returned AS the state map, every
-// node lookup missed it, and the panel concluded that no node was reporting.
-describe('getLinkUpdateStates', () => {
-    it('raises rather than passing the failure envelope off as node states', async () => {
-        respond(403, { success: false, message: 'You may not read nodes' });
-        await expect(getLinkUpdateStates()).rejects.toThrow('You may not read nodes');
-    });
-
-    it('returns the map on success', async () => {
-        respond(200, { 'node-token': { managed: true, updateAvailable: true } });
-        const states = await getLinkUpdateStates();
-        expect(states['node-token']?.updateAvailable).toBe(true);
-    });
-
-    // No node has reported yet, which is a real state and the panel explains it.
-    it('an empty map is a state, not a failure', async () => {
-        respond(200, {});
-        await expect(getLinkUpdateStates()).resolves.toEqual({});
-    });
-});
 
 // The two mod lists are deliberately NOT alike, and this pins the difference so
 // that "make them consistent" cannot quietly remove it.
