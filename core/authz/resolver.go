@@ -218,6 +218,24 @@ func (r *Resolver) applyGrant(res *Resolution, g *store.ServerGrant) {
 	}
 }
 
+// HasAnyServerCap reports whether the resolution lets the principal do ANYTHING
+// on the server it was built for. It asks HasCap for every SERVER capability in
+// the catalog rather than looking at serverCaps, so the admin, owner and demo
+// rules are applied exactly once, in HasCap.
+//
+// This is the question a server LIST has to ask. A grant row existing is not
+// the same answer: an account-wide grant may carry only OWNER caps (modpacks,
+// backup storage), which reach no server at all, yet it matches every server
+// that owner has.
+func (res *Resolution) HasAnyServerCap() bool {
+	for _, c := range ByScope(ScopeServer) {
+		if res.HasCap(c.ID) {
+			return true
+		}
+	}
+	return false
+}
+
 // applyOverrides adds every Grant cap then removes every Deny cap.
 func applyOverrides(m map[string]bool, ov store.CapOverrides) {
 	for _, c := range ov.Grant {

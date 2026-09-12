@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
 func capSet(ids ...string) func(string) bool {
@@ -82,5 +85,90 @@ func TestTabPermissionCapsAreRealCapabilities(t *testing.T) {
 		if c.Scope != authz.ScopeServer {
 			t.Errorf("%q has scope %v, want ScopeServer - a tab is a per-server thing", m.cap, c.Scope)
 		}
+	}
+}
+
+// tabListAuthzStore is the resolver's store port, faked: grants per server id and
+// per owner, nothing else. Every server is owned by "owner-1".
+type tabListAuthzStore struct {
+	grants  map[int]*store.ServerGrant
+	account *store.ServerGrant
+	failOn  int
+}
+
+func (f tabListAuthzStore) GetServerByID(id int) (*models.Server, error) {
+	if id == f.failOn {
+		return nil, errors.New("connection refused")
+	}
+	return &models.Server{ID: id, OwnerID: "owner-1"}, nil
+}
+func (f tabListAuthzStore) GetServerByUUID(string) (*models.Server, error) { return nil, sql.ErrNoRows }
+func (f tabListAuthzStore) GetPanelRole(int) (*store.PanelRole, error)     { return nil, sql.ErrNoRows }
+func (f tabListAuthzStore) GetServerRole(int) (*store.ServerRole, error)   { return nil, sql.ErrNoRows }
+func (f tabListAuthzStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error) {
+	return nil, store.CapOverrides{}, nil
+}
+func (f tabListAuthzStore) GetServerGrant(serverID int, _ string) (*store.ServerGrant, error) {
+	if g, ok := f.grants[serverID]; ok {
+		return g, nil
+	}
+	return nil, sql.ErrNoRows
+}
+func (f tabListAuthzStore) GetAccountGrant(string, string) (*store.ServerGrant, error) {
+	if f.account == nil {
+		return nil, sql.ErrNoRows
+	}
+	return f.account, nil
+}
+
+// A grant ROW is not a permission. The list query selects every server a grant
+// points at; an account-wide grant holding only OWNER caps points at every server
+// its owner has and opens none of them. Before, each of those servers reached the
+// member's list - node address, ports, start command - with a 403 behind it.
+func TestServerListDropsInvitedServersTheResolverWillNotOpen(t *testing.T) {
+	st := tabListAuthzStore{
+		grants: map[int]*store.ServerGrant{
+			1: {CapOverrides: store.CapOverrides{Grant: []string{"console.read"}}},
+			// Every cap revoked, the row still there.
+			2: {CapOverrides: store.CapOverrides{}},
+		},
+		// Owner tools only: modpacks. No server capability at all.
+		account: &store.ServerGrant{CapOverrides: store.CapOverrides{Grant: []string{"modpack.read"}}},
+		failOn:  4,
+	}
+	state := &AppState{Authz: authz.NewResolver(st)}
+
+	servers := []models.Server{
+		{ID: 1, Role: "invited"},
+		{ID: 2, Role: "invited"},
+		{ID: 3, Role: "invited"}, // reached only through the owner-caps account grant
+		{ID: 4, Role: "inherited"},
+		{ID: 5, Role: "owner"}, // the caller's own: never resolved, never dropped
+	}
+	got := applyResolvedTabPermissions(state, servers, "friend-1", "friend")
+
+	kept := map[int]bool{}
+	for _, s := range got {
+		kept[s.ID] = true
+	}
+	if !kept[1] {
+		t.Error("server 1 carries console.read and was dropped")
+	}
+	if kept[2] {
+		t.Error("server 2 has a grant row with no capability and is still listed")
+	}
+	if kept[3] {
+		t.Error("server 3 is reachable only through an account-wide grant of owner caps and is still listed")
+	}
+	// A server the store cannot load resolves to nothing (Resolve denies rather
+	// than erroring), and nothing is not "may": this decides membership.
+	if kept[4] {
+		t.Error("server 4 could not be loaded and is still listed")
+	}
+	if !kept[5] {
+		t.Error("the caller's own server was dropped")
+	}
+	if len(got) != 2 {
+		t.Fatalf("kept %d servers, want 2: %+v", len(got), got)
 	}
 }

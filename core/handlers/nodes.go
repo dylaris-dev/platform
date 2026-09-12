@@ -42,18 +42,61 @@ func NewNodeHandler(state *AppState) *NodeHandler {
 	return &NodeHandler{state: state}
 }
 
-// nodeExists reports whether the node row is still there. The four orphan
-// endpoints below take a nodeId straight from the path and went on to the
-// gRPC call, so a node id that never existed came back as 502 "node N not
-// connected" - which sends an operator looking for a connectivity fault on a
-// node that was deleted, or never was. A missing row is a 404; "not
-// connected" stays reserved for a node that exists and is offline.
-func (h *NodeHandler) nodeExists(nodeID int) bool {
+// diskToolNode answers whether the disk tools (disk analysis, the orphan file
+// browser, inspect, adopt, delete) may work on this node, and is false for a
+// node that does not exist OR belongs to somebody else.
+//
+// A missing row is a 404 rather than whatever the gRPC call says: those
+// endpoints take a nodeId straight from the path, and a node id that never
+// existed used to come back as 502 "node N not connected" - which sends an
+// operator looking for a connectivity fault on a node that was deleted, or never
+// was. "Not connected" stays reserved for a node that exists and is offline.
+//
+// Those tools are capability-gated (nodes.read / nodes.write / nodes.delete),
+// and a panel capability is fleet-wide: it has no notion of whose machine it is
+// looking at. So an operator with nodes.read could list and read the files on a
+// customer's own disk. The same "Node not found" as a missing node, not a 403,
+// so the answer does not confirm that the machine exists.
+func (h *NodeHandler) diskToolNode(r *http.Request, nodeID int) bool {
 	if h.state.Store == nil {
 		return false
 	}
-	_, err := h.state.Store.GetNodeByID(nodeID)
-	return err == nil
+	node, err := h.state.Store.GetNodeByID(nodeID)
+	if err != nil || node == nil {
+		return false
+	}
+	return !ownedByOther(h.state, r, node)
+}
+
+// requireOrphan writes an error and returns false unless uuid has NO server row,
+// which is what makes a folder an orphan in the first place.
+//
+// The orphan file routes send the uuid straight to the node as the server whose
+// folder to read, and the node reads whatever folder that is. Without this, the
+// uuid of a LIVE server worked exactly as well as an orphan's, and nodes.read -
+// labelled "View nodes" - read every file of every server on every node, past
+// the per-server files.read that guards the same bytes on the normal route. The
+// panel only calls these for folders disk analysis listed as orphaned.
+//
+// One such listing is refused now: a stale copy a failed migration cleanup left
+// on the SOURCE node. Disk analysis compares only against servers on that node,
+// so it calls the copy orphaned, while the uuid has a row (the server lives on
+// the target). Refusing it is the conservative side - it is still that server's
+// data - and deleting it was already refused before.
+//
+// A database fault is not "no row": answering it as one would read or delete a
+// folder the store could not vouch for. Same distinction AssignOrphan makes.
+func (h *NodeHandler) requireOrphan(w http.ResponseWriter, uuid string) bool {
+	existing, err := h.state.Store.GetServerByUUID(uuid)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		sendJSONError(w, "database error checking existing server", 500)
+		return false
+	}
+	if existing != nil {
+		sendJSONError(w, "Server exists in database - use the server's own file manager", 400)
+		return false
+	}
+	return true
 }
 
 // The infrastructure page has one tab per KIND of machine, and these are the
@@ -315,7 +358,7 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 		// Collapsing it into a 500 left an admin with a button that does nothing
 		// and no hint that the servers have to go first.
 		if errors.Is(err, store.ErrNodeHasServers) {
-			sendJSONError(w, "This node still has servers on it. Move or delete them first, or use force-delete to remove the node and its servers together.", 409)
+			sendJSONError(w, "This node still has servers on it. Move or delete them first, or use force-delete to remove the node and its servers together (not available for a machine that belongs to a user).", 409)
 			return
 		}
 		sendJSONError(w, "Delete failed", 500)
@@ -395,8 +438,19 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(vars["id"])
 
 	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil {
+	if err != nil || node == nil {
 		sendJSONError(w, "Node not found", 404)
+		return
+	}
+
+	// Never on somebody's own machine, for anyone. This deletes every server on
+	// the node - of every owner - and then answers with their names, so on a
+	// customer's hardware it is the destruction of their worlds and a list of
+	// them in one call. Decommissioning a customer's machine is the plain
+	// DELETE /api/nodes/{id}, which is refused while servers remain and names
+	// none. Its owner removes their own through /api/me/nodes/{id}.
+	if node.OwnerID != nil && byonActive(h.state, r) {
+		sendJSONError(w, "This machine belongs to a user, and its servers are theirs. Remove the node once they are gone.", http.StatusConflict)
 		return
 	}
 
@@ -742,7 +796,8 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(vars["id"])
 
 	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil {
+	if err != nil || node == nil || ownedByOther(h.state, r, node) {
+		// Every server's name and owner is in this answer. See diskToolNode.
 		sendJSONError(w, "Node not found", 404)
 		return
 	}
@@ -841,15 +896,15 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
-	if !h.nodeExists(nodeID) {
+	if !h.diskToolNode(r, nodeID) {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
-	// Safety check: ensure it is NOT in the DB
-	srv, _ := h.state.Store.GetServerByUUID(orphanUUID)
-	if srv != nil {
-		sendJSONError(w, "Server exists in database — use normal delete", 400)
+	// Safety check: ensure it is NOT in the DB. It used to discard the error, so
+	// a store that could not answer read as "no such server" and the folder was
+	// deleted anyway.
+	if !h.requireOrphan(w, orphanUUID) {
 		return
 	}
 
@@ -890,8 +945,11 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
-	if !h.nodeExists(nodeID) {
+	if !h.diskToolNode(r, nodeID) {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
+	if !h.requireOrphan(w, orphanUUID) {
 		return
 	}
 
@@ -959,8 +1017,11 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
-	if !h.nodeExists(nodeID) {
+	if !h.diskToolNode(r, nodeID) {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
+	if !h.requireOrphan(w, orphanUUID) {
 		return
 	}
 
@@ -1113,8 +1174,13 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
-	if !h.nodeExists(nodeID) {
+	if !h.diskToolNode(r, nodeID) {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
+	// The route, not inspectOrphanOnNode: the sub-server switch reuses that
+	// function for a LIVE server on purpose, and must keep working.
+	if !h.requireOrphan(w, orphanUUID) {
 		return
 	}
 
@@ -1194,6 +1260,13 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.NodeID <= 0 {
 		sendJSONError(w, "node_id is required", 400)
+		return
+	}
+	// Adopting inspects the folder and writes a server row for whichever owner the
+	// body names, so on a customer's machine it is both a look inside and a
+	// placement onto hardware that is not the operator's.
+	if !h.diskToolNode(r, req.NodeID) {
+		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	// Exactly one owner source must be provided.

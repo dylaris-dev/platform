@@ -46,18 +46,44 @@ func applyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest)
 	req.OwnerScope = &uid
 }
 
-// canManageNode reports whether the caller may manage a specific node. Admins
-// (operators) always may. In BYON mode the node's owning tenant may manage their
-// own node. Outside BYON mode, node management stays admin-only (today's behavior).
+// ownedByOther reports whether node is somebody's own hardware and the caller is
+// not that somebody, while ownership is in force. It is the one question every
+// read of a machine's CONTENTS has to ask before anything else, admin or not.
+//
+// With BYON off an owner_id carries no tenancy meaning (see canPlaceOnNode), so
+// nothing is anybody else's and this answers false.
+func ownedByOther(state *AppState, r *http.Request, node *models.Node) bool {
+	if node == nil || node.OwnerID == nil || !byonActive(state, r) {
+		return false
+	}
+	uid := byonCallerID(r)
+	return uid == "" || *node.OwnerID != uid
+}
+
+// canManageNode reports whether the caller may read or configure what is ON a
+// node: its servers, its storage and storage placement, its deploy bundle, its
+// CPU topology.
+//
+// An OWNED node answers to its owner only, and being an admin does not change
+// that - the same rule canPlaceOnNode applies, for the same reason. It used to
+// short-circuit on admin first, so GET /api/nodes/{id}/servers handed every
+// operator the server list of a customer's machine while ListServersForUser
+// deliberately withheld the very same rows ("An operator runs the platform; they
+// do not run their customers' machines."). Two answers to one question.
+//
+// This is the owner's rule for the routes that come through here, not a claim
+// that an admin can no longer reach a customer's machine at all. Several routes
+// do not come through here and are recorded as still open in
+// roadmap/node-ownership-and-access.md: opening a server on it by URL (the
+// resolver's admin short-circuit), reset pairing and roll key, CPU pool and
+// placement settings, and moving or reassigning its servers. Decommissioning
+// (DELETE /api/nodes/{id}) does not come through here either, and that one is
+// meant to stay open.
 func canManageNode(state *AppState, r *http.Request, node *models.Node) bool {
-	if IsAdmin(r) {
-		return true
+	if node != nil && node.OwnerID != nil && byonActive(state, r) {
+		return !ownedByOther(state, r, node)
 	}
-	if byonActive(state, r) && node != nil && node.OwnerID != nil {
-		uid := byonCallerID(r)
-		return uid != "" && *node.OwnerID == uid
-	}
-	return false
+	return IsAdmin(r)
 }
 
 // canPlaceOnNode reports whether the caller may place a server on a node.

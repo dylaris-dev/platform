@@ -50,8 +50,8 @@ const (
 //
 // Takes the request rather than a bare context because the answer depends on WHO
 // is asking: an administrator is not a customer, and EffectiveEntitlement reads
-// that the same way canManageNode already does. Without it the owner of a hosted
-// install could not mint an enroll token for their own machine.
+// it that way. Without it the owner of a hosted install could not mint an enroll
+// token for their own machine.
 //
 // Returns true when the request may proceed. On false it has already written the
 // response.

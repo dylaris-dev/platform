@@ -43,10 +43,15 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
-	// Allowed: admins, the node's BYON owner, or users with resource-change rights.
+	// Allowed: the node's owner, an admin on a platform node, or a user whose
+	// CanChangeResources flag is set - on a node that is not somebody else's.
+	// That flag is per user (see ComputeEffectivePermissions) and every admin
+	// holds it too, so without the ownedByOther fence the admin would walk back
+	// in through this second arm exactly where canManageNode now refuses.
 	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
-	if !canManageNode(h.state, r, node) && !perms.CanChangeResources {
+	staffMay := perms.CanChangeResources && !ownedByOther(h.state, r, node)
+	if !canManageNode(h.state, r, node) && !staffMay {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}

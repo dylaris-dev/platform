@@ -79,11 +79,11 @@ func TestByonCallerID(t *testing.T) {
 	}
 }
 
-// TestCanManageNode pins the node-management authz gate (tenancy.go): admin
-// always passes; otherwise BYON must be active AND the caller must be the
-// node's owner. A shared/platform node (OwnerID == nil) is never manageable
-// by a non-admin, even with BYON active and even if the caller "would" be
-// the owner of some other node.
+// TestCanManageNode pins the gate on what is ON a node (tenancy.go). A platform
+// node is the operator's. An owned node, while BYON is active, answers to its
+// owner only - admin or not. With BYON off an owner_id carries no meaning and
+// the node is operator territory again (decision D6 is still open, so that is
+// deliberately unchanged).
 func TestCanManageNode(t *testing.T) {
 	const owner = "owner-1"
 	const other = "other-1"
@@ -96,8 +96,16 @@ func TestCanManageNode(t *testing.T) {
 		node    *models.Node
 		want    bool
 	}{
-		{"admin bypass regardless of BYON state or ownership", true, other, false, &models.Node{OwnerID: strPtrTenancy(owner)}, true},
-		{"admin bypass with nil node", true, other, false, nil, true},
+		{"admin, BYON off, owned node is operator territory", true, other, false, &models.Node{OwnerID: strPtrTenancy(owner)}, true},
+		{"admin with nil node", true, other, false, nil, true},
+		{"admin on a platform node, BYON on", true, other, true, &models.Node{OwnerID: nil}, true},
+
+		// The hole: GET /api/nodes/{id}/servers (and storage, deploy bundle,
+		// CPU) went through here and handed any operator the contents of a
+		// customer's machine, while ListServersForUser withheld the same rows.
+		{"admin may NOT look inside another user's node while BYON is active", true, other, true, &models.Node{OwnerID: strPtrTenancy(owner)}, false},
+		{"admin who owns the node may", true, owner, true, &models.Node{OwnerID: strPtrTenancy(owner)}, true},
+
 		{"BYON active, caller is the owner", false, owner, true, &models.Node{OwnerID: strPtrTenancy(owner)}, true},
 		{"BYON active, caller is not the owner", false, other, true, &models.Node{OwnerID: strPtrTenancy(owner)}, false},
 		{"BYON inactive denies even the real owner", false, owner, false, &models.Node{OwnerID: strPtrTenancy(owner)}, false},
@@ -116,10 +124,11 @@ func TestCanManageNode(t *testing.T) {
 	}
 }
 
-// TestCanPlaceOnNode mirrors TestCanManageNode: as of tenancy.go, the two
-// functions are byte-identical in logic. Pinning the same matrix here means
-// a future intentional divergence between "manage" and "place" is visible in
-// the diff instead of being masked by only one function having coverage.
+// TestCanPlaceOnNode mirrors TestCanManageNode. The two agree on an owned node
+// (its owner only) and differ on a nil node (manage: admin; place: nobody).
+// Pinning the same matrix here means a future divergence between "manage" and
+// "place" is visible in the diff instead of being masked by only one function
+// having coverage.
 func TestCanPlaceOnNode(t *testing.T) {
 	const owner = "owner-1"
 	const other = "other-1"

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +14,9 @@ import (
 )
 
 // orphanNodeFakeStore embeds store.Store (nil) so it satisfies the interface at
-// compile time; only GetNodeByID is reached, because a missing node must be
-// refused before anything else runs.
+// compile time. A missing node must be refused before anything else runs; a
+// known one then meets the orphan check, which asks whether the uuid has a
+// server row.
 type orphanNodeFakeStore struct {
 	store.Store
 	node *models.Node
@@ -26,6 +28,12 @@ func (f *orphanNodeFakeStore) GetNodeByID(int) (*models.Node, error) {
 		return nil, f.err
 	}
 	return f.node, nil
+}
+
+// No row: "some-orphan" really is one, so the known-node case below measures
+// the node check and not the orphan check.
+func (f *orphanNodeFakeStore) GetServerByUUID(string) (*models.Server, error) {
+	return nil, sql.ErrNoRows
 }
 
 func orphanReq(method, target string) *http.Request {

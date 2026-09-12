@@ -14,16 +14,43 @@ import (
 )
 
 // orphanAssignFakeStore embeds store.Store (nil) so it satisfies the interface
-// at compile time. Only GetServerByUUID is reached: every case below is
-// decided by the duplicate check, before any user or server is created.
+// at compile time. Only the node lookup and GetServerByUUID are reached: every
+// case below is decided by the node check or the duplicate check, before any
+// user or server is created. node_visibility_test.go reuses it.
 type orphanAssignFakeStore struct {
 	store.Store
 	server *models.Server
 	err    error
+	// node is what GetNodeByID answers; nil means a plain platform node, which
+	// is what the duplicate-check cases below need to get past the node check.
+	node *models.Node
+	user *models.User
 }
 
 func (f *orphanAssignFakeStore) GetServerByUUID(string) (*models.Server, error) {
 	return f.server, f.err
+}
+
+func (f *orphanAssignFakeStore) GetNodeByID(id int) (*models.Node, error) {
+	if f.node != nil {
+		return f.node, nil
+	}
+	return &models.Node{ID: id, Status: "online"}, nil
+}
+
+func (f *orphanAssignFakeStore) ListServersByNode(int) ([]models.Server, error) {
+	return nil, nil
+}
+
+func (f *orphanAssignFakeStore) GetUserByID(string) (*models.User, error) {
+	if f.user == nil {
+		return nil, sql.ErrNoRows
+	}
+	return f.user, nil
+}
+
+func (f *orphanAssignFakeStore) GetUserRegionIDs(string) ([]string, error) {
+	return nil, nil
 }
 
 func orphanAssignBody() []byte {

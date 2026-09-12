@@ -52,9 +52,10 @@ type nodeServerContents struct {
 
 // myNode resolves the node in the path and confirms the caller OWNS it.
 //
-// Ownership, not canManageNode: that helper answers yes for any admin, and on a
-// route called /me that would quietly mean "any node in the fleet". Here the
-// only question is whether this row belongs to the person asking.
+// Ownership, not canManageNode: that helper answers yes for an admin on every
+// PLATFORM node, and on a route called /me that would quietly mean "any node in
+// the fleet". Here the only question is whether this row belongs to the person
+// asking.
 func (h *NodeHandler) myNode(w http.ResponseWriter, r *http.Request) (*models.Node, bool) {
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)

@@ -1556,6 +1556,15 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 		// Three ways back in, all of them the admin's own business: the node is
 		// ours, the server is theirs, or they were invited to it like anyone
 		// else. Invitation is the normal route and stays the only one.
+		//
+		// Deliberately ONLY an invite naming this server, not the account-wide or
+		// inherited shapes the non-admin query below lists. For a non-admin the
+		// handler removes every row the resolver will not open
+		// (applyResolvedTabPermissions); for an admin it cannot, because the
+		// resolver grants an admin everything. An account-wide grant carrying only
+		// owner caps would then put every server of that customer - on their own
+		// machine - into the admin's list, which is the opposite of what this
+		// filter is for.
 		query := `SELECT ` + serverCols + ` ` + serverFrom + `
 			WHERE n.owner_id IS NULL
 				OR n.owner_id::text = $1
@@ -1582,6 +1591,25 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 		return servers, rows.Err()
 	}
 
+	// One arm per way the resolver (authz.Resolver.Resolve) lets a user at a
+	// server, and read off the SAME columns it reads. The list and the
+	// authorization answer one question; when they disagreed, a user could
+	// operate a server by URL that their own list did not show, or see one in the
+	// list that refused them.
+	//
+	// It used to disagree three ways, all measured against the resolver:
+	//   - An ACCOUNT-WIDE grant (server_id IS NULL) had no arm at all, so every
+	//     server it covered worked and none of them was listed.
+	//   - Inheritance was read off the legacy permissions blob. The grants path
+	//     (store/server_grants.go) writes only the inherit COLUMN and never the
+	//     blob, so a member granted inheritance there saw none of the children,
+	//     and one whose inheritance was switched off there kept seeing them.
+	//   - Inheritance crossed owners. The resolver refuses that ("the proxy must
+	//     belong to the SAME owner as the child"); the list did not ask.
+	//
+	// The legacy blob is still SELECTED for invited/inherited rows, but only as the
+	// base the tab bits are merged onto (applyResolvedTabPermissions); it no
+	// longer decides which rows exist.
 	query := `
 		SELECT ` + serverCols + `, 'owner' as role, NULL::jsonb as permissions
 		FROM servers s JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id
@@ -1591,13 +1619,21 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 		FROM server_invites si JOIN servers s ON si.server_id = s.id JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id
 		WHERE si.user_id = $1
 		UNION ALL
+		SELECT ` + serverCols + `, 'invited' as role, NULL::jsonb as permissions
+		FROM server_invites si JOIN servers s ON si.server_id IS NULL AND s.owner_id = si.owner_user_id
+		JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id
+		WHERE si.user_id = $1
+			AND s.owner_id != $1
+			AND NOT EXISTS (SELECT 1 FROM server_invites d WHERE d.server_id = s.id AND d.user_id = $1)
+		UNION ALL
 		SELECT ` + serverCols + `, 'inherited' as role, si.permissions
-		FROM servers s JOIN servers proxy ON s.proxy_id = proxy.id
+		FROM servers s JOIN servers proxy ON s.proxy_id = proxy.id AND proxy.owner_id = s.owner_id
 		JOIN server_invites si ON si.server_id = proxy.id AND si.user_id = $1
 		JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id
-		WHERE (si.permissions::jsonb->>'inherit')::boolean = true
+		WHERE si.inherit = true
 			AND s.owner_id != $1
 			AND NOT EXISTS (SELECT 1 FROM server_invites si2 WHERE si2.server_id = s.id AND si2.user_id = $1)
+			AND NOT EXISTS (SELECT 1 FROM server_invites a WHERE a.server_id IS NULL AND a.owner_user_id = s.owner_id AND a.user_id = $1)
 		ORDER BY id ASC
 	`
 	rows, err := s.db.Query(query, userID)

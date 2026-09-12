@@ -253,3 +253,34 @@ func TestFilterServersByRegionNeverHidesYourOwnServer(t *testing.T) {
 		}
 	})
 }
+
+// The same rule one step further out: an invitation is the owner saying "this
+// person may use my server", and a staff region set does not get a say in it.
+// The invitee could open the server by URL while their own list left it out.
+func TestFilterServersByRegionNeverHidesAServerYouWereInvitedTo(t *testing.T) {
+	servers := []models.Server{
+		{UUID: "invited", Region: "us", OwnerID: "owner-a", Role: "invited"},
+		{UUID: "inherited", Region: "us", OwnerID: "owner-a", Role: "inherited"},
+		// A row with no role came from somewhere other than this viewer's own
+		// list, and must be filtered exactly as before.
+		{UUID: "not-yours", Region: "us", OwnerID: "owner-b"},
+	}
+
+	got := FilterServersByRegion(servers, EffectivePermissions{AllowedRegions: []string{"eu"}}, "friend")
+	seen := map[string]bool{}
+	for _, s := range got {
+		seen[s.UUID] = true
+	}
+	if !seen["invited"] || !seen["inherited"] {
+		t.Fatalf("got %+v, want both the invited and the inherited server kept", got)
+	}
+	if seen["not-yours"] {
+		t.Fatalf("a server with no role leaked through the region filter: %+v", got)
+	}
+
+	t.Run("an anonymous viewer gets no invitation exemption either", func(t *testing.T) {
+		if got := FilterServersByRegion(servers, EffectivePermissions{}, ""); len(got) != 0 {
+			t.Fatalf("got %+v, want none", got)
+		}
+	})
+}

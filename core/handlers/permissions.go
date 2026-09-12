@@ -112,6 +112,13 @@ func (p EffectivePermissions) CanAccessRegion(regionID string) bool {
 // server ran, the admin could see it, and its owner could not. That is what BYON
 // testing hit.
 //
+// Nor does it hide a server the viewer was INVITED to, for the same reason one
+// step further out. An invitation is the owner saying "this person may use my
+// server"; a region set is the operator saying how far a member of staff may
+// look. Applying the second to the first dropped the invited server from the
+// list while RequireCap kept letting the invitee open it by URL - the list and
+// the authorization disagreeing, which is the defect, not the region set.
+//
 // viewerID is the caller. Empty means "no identity", which keeps the old
 // behaviour for any path that cannot name one rather than silently widening it.
 func FilterServersByRegion(servers []models.Server, p EffectivePermissions, viewerID string) []models.Server {
@@ -120,7 +127,8 @@ func FilterServersByRegion(servers []models.Server, p EffectivePermissions, view
 	}
 	out := make([]models.Server, 0, len(servers))
 	for _, s := range servers {
-		if (viewerID != "" && s.OwnerID == viewerID) || p.CanAccessRegion(s.Region) {
+		mine := viewerID != "" && (s.OwnerID == viewerID || s.Role == "invited" || s.Role == "inherited")
+		if mine || p.CanAccessRegion(s.Region) {
 			out = append(out, s)
 		}
 	}

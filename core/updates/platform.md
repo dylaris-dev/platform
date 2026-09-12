@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.12.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **With BYON on, a user's machine shows its node tools to its owner, not to admins.**
+  Server list, storage, CPU view and disk tools; its servers still open by URL. `core`
+- **Force-delete is refused for a machine that belongs to a user.** It deleted every
+  server on it, of every owner. `core`
+
+### Security
+- **"View nodes" no longer reads the files of live servers.** The orphan file browser
+  accepted any server's id, not only orphaned folders. `core`
+
+### Fixes
+- **A member's server list now matches what they can open.** Account-wide and inherited
+  access was missing, and a grant with no server rights still listed servers. `core`
+- **Region limits no longer hide a server a user was invited to.** `core`
+- **Deleting an orphaned folder stops when the database cannot answer.** It used to read
+  that as "no such server". `core`
+
 ## 2026.09.12.2
 
 ### Features
