@@ -589,10 +589,22 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 // byonLinkRedisAddr is the Redis address a kit-run BYON Link is told: warp's
 // local proxy on the customer's host. 25571 is the proxy port compiled into
 // gateway/warp/proxy.go, platform/node/warp_proxy.go and the panel's
-// warpDeploy.ts; host.docker.internal is the name the kit maps to the host with
-// extra_hosts host-gateway. Not 127.0.0.1: the kit runs this Link on a Docker
-// network, where loopback is its own container, and a Link pointed there
-// retries forever without saying why.
+// warpDeploy.ts.
+//
+// The name is a SENTINEL to the Link, which resolves it to the gateway of the
+// Docker network it is attached to instead of asking DNS - see hostGatewayHost
+// in gateway/link/cmd/standalone/hostgateway.go. Not 127.0.0.1: the kit runs
+// this Link on a Docker network, where loopback is its own container.
+//
+// The VALUE stays what it has always been, and that is a decision rather than
+// inertia. Docker's own mapping of this name is the DEFAULT bridge rather than
+// the network the container is on (measured 2026-09-12: 172.17.0.1 while warp
+// was listening on 172.19.0.1), and on Docker Desktop it is Windows - which is
+// why the Link stopped trusting it. But changing the string here would make
+// every OLDER Link fail, and fail in the worst way: one with a warm cache keeps
+// serving and then dies at the next password rotation, because redisboot
+// validates address, user and password as one candidate and would refuse them
+// all. A sentinel only the reader has to understand costs nothing.
 const byonLinkRedisAddr = "host.docker.internal:25571"
 
 // nodeLinkBoot answers a BYON node key with the Link of the node it is bound to.

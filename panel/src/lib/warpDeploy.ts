@@ -281,13 +281,18 @@ volumes:
  * credentials), and exactly one Link runs: either the node spawns its own, or -
  * with linkBesideNode - the file runs it and tells the node not to.
  *
- * The Link beside the node sits on a Docker network with the Minecraft servers,
- * and reaches warp's proxy on the host through host-gateway. On Docker Desktop
- * host-gateway is Windows, not the VM warp listens in, so there the node keeps
- * starting its own Link until that path has been proven.
+ * The Link beside the node sits on a Docker network with the Minecraft servers
+ * and reaches warp's proxy at the gateway of that network, which it works out
+ * from its own routing table rather than from the host-gateway mapping below -
+ * that names the DEFAULT bridge on Linux, and Windows itself on Docker Desktop,
+ * and warp is listening on neither in the case that matters. The mapping stays
+ * in the file because an older Link image still depends on it; a current one
+ * ignores it.
+ *
+ * Docker Desktop is therefore no longer an exception: it gets the same file.
  */
 export function nodeCompose(i: WarpDeployInput): string {
-    const kitLink = i.linkBesideNode === true && i.platform !== 'windows';
+    const kitLink = i.linkBesideNode === true;
     // Docker Desktop's "host" is the WSL2 VM, not Windows. That is the same
     // adaptation route-only already makes, and it is the whole difference: the
     // node, its warp tunnel and the Minecraft containers all sit inside that VM
@@ -340,8 +345,9 @@ export function nodeCompose(i: WarpDeployInput): string {
     # keep - a little longer than LINK_DRAIN_TIMEOUT, so link finishes on its own
     # terms instead of being killed with players still on it.
     stop_grace_period: 6h10m
-    # keep - how link reaches warp's proxy on this machine. On a Docker network
-    # 127.0.0.1 is link's own container, not this machine.
+    # keep - only an older link image uses this. A current one works the address
+    # out from the network it is on, which is the answer that is also right on
+    # Docker Desktop.
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       # keep - what link last got from us, so a restart comes up even while

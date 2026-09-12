@@ -205,13 +205,11 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
                 ))}
             </div>
             <p className="text-xs text-(--base-06)">{platformNote(kind, platform)}</p>
-            {/* nodeCompose keeps the node-managed Link on Docker Desktop, so the
-                reader must not go looking for a link service that is not there. */}
-            {kind === 'node' && linkBesideNode && platform === 'windows' && (
-                <p className="text-xs text-(--base-06)">
-                    On Docker Desktop the node still starts the Link itself, so this file is the same as before.
-                </p>
-            )}
+            {/* Docker Desktop used to be held back from this shape, and said so
+                here. It no longer is: the Link works the overlay proxy's address
+                out from the network it is on, which is inside the VM alongside
+                warp. Saying nothing beats saying the opposite of what the file
+                above now contains. */}
             <Snippet title={composeFileName(kind)} body={compose} />
             <Snippet title="Commands" body={deployCli(kind)} note={deployIntro(kind, platform)} />
             <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>

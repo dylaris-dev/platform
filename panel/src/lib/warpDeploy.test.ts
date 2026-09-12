@@ -383,10 +383,12 @@ describe('nodeCompose with the Link beside the node', () => {
         expect(kit()).not.toContain('do not run link yourself');
     });
 
-    // Inside a Docker network 127.0.0.1 is the link's own container. It reaches
-    // warp's proxy on the host through host-gateway, and Core tells it the
-    // address - so a wrong loopback line is not there to get wrong.
-    it('reaches the host through host-gateway, not loopback', () => {
+    // Inside a Docker network 127.0.0.1 is the link's own container. A current
+    // link works the host out from the network it is on; the host-gateway line
+    // stays only because an OLDER image still resolves that name, and dropping
+    // it would break exactly the pairing a customer produces by redeploying the
+    // file without pulling a new image.
+    it('keeps the host-gateway mapping for an older link image', () => {
         const link = service(kit(), 'link');
         expect(link).toContain('extra_hosts: ["host.docker.internal:host-gateway"]');
         expect(link).not.toContain('REDIS_ADDR');
@@ -425,12 +427,15 @@ describe('nodeCompose with the Link beside the node', () => {
         expect(out).not.toContain('<');
     });
 
-    // host-gateway on Docker Desktop is Windows, not the VM warp listens in, so
-    // that platform keeps the node-managed Link until the path is proven.
-    it('leaves Docker Desktop on the node-managed Link', () => {
+    // Docker Desktop was excluded while the link reached warp through Docker's
+    // host-gateway, which is Windows there. It now resolves the gateway of its
+    // own network, which is inside the VM alongside warp, so the platform no
+    // longer changes what this kit contains.
+    it('is the same file on Docker Desktop, link and all', () => {
         const win = kit({ platform: 'windows' });
-        expect(win).toBe(nodeCompose({ ...base, platform: 'windows' }));
-        expect(win).not.toContain('NODE_MANAGES_LINK');
+        expect(win).not.toBe(nodeCompose({ ...base, platform: 'windows' }));
+        expect(win).toContain('NODE_MANAGES_LINK: "false"');
+        expect(win).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
     });
 
     // Without the flag the file is exactly what it was: an operator key has no
@@ -570,3 +575,4 @@ describe('every kit that ships a link sets its drain window', () => {
         expect(out).not.toContain('stop_grace_period');
     });
 });
+

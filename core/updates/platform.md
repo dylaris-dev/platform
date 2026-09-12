@@ -24,7 +24,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Fixes
-- Nothing.
+- **Docker Desktop machines get the Link beside the node too.** It was held back
+  because the Link reached the overlay proxy through Docker's host gateway, which is
+  Windows there; it now uses its own network's gateway. `core` `panel`
 
 ## 2026.09.11.2
 

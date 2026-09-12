@@ -17,6 +17,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - **Stopping or updating your link no longer kicks anyone.** It keeps the players
   already on your servers until the last one leaves, takes no new ones meanwhile, and
   only then shuts down.
+- **BYON on Docker Desktop now gets the link beside the node,** like every other
+  machine. Choose "Update this machine" and redeploy to move to it. `node`
 
 ### Breaking
 - **Add one line to your deploy file before you update your link,** or it will not
