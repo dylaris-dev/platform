@@ -15,7 +15,6 @@ import (
 //   - new column on servers (region)
 //   - new columns on settings (updated_at, updated_by) for audit trail
 //   - seeds the 'default' region
-//   - backfills existing users with grandfathered email-verified + all-regions access
 //   - normalizes empty nodes.region values to 'default'
 //
 // All operations are idempotent — safe at every boot and after schema-heal.
@@ -89,16 +88,12 @@ func applyPhase0a1Schema(db *sql.DB) error {
 		SELECT 'default', 'Default Region', TRUE
 		WHERE NOT EXISTS (SELECT 1 FROM regions)`)
 
-	// ---- Backfill existing data ----
-	// Grandfather existing users as email-verified — there was no verification
-	// system before this migration, so requiring it now would lock everyone out.
-	db.Exec(`UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL`)
-	// Preserve implicit access: any user that has no explicit region rows yet
-	// gets all-regions access. New users created post-migration will get
-	// explicit rows via the user-create flow.
-	db.Exec(`UPDATE users SET all_regions_access = TRUE
-		WHERE all_regions_access = FALSE
-		  AND id NOT IN (SELECT user_id FROM user_regions)`)
+	// There used to be a one-time grandfathering backfill here (every user
+	// email-verified, every user without region rows given all regions). It ran
+	// on EVERY boot, so each Core restart verified any account still waiting on
+	// its mail and gave all regions back to a user an admin had limited to none.
+	// Accounts an admin creates are now stored verified at insert instead.
+	//
 	// Normalize blank node region (column predates the auth-foundation schema) to the seeded default.
 	db.Exec(`UPDATE nodes SET region = 'default' WHERE region IS NULL OR region = ''`)
 

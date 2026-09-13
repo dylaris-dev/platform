@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A Core restart no longer verifies accounts or grants regions.** Every boot marked
+  unconfirmed emails as verified and gave all regions to users limited to none. `core`
+
+### Fixes
+- **Accounts an admin creates are stored as verified.** They get no verification mail, and
+  used to depend on a restart to be allowed in. `core`
+
 ## 2026.09.12.3
 
 ### Features

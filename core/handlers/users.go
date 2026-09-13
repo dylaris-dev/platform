@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
@@ -126,6 +127,11 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// req.User, not req: CreateUser persists the embedded model, and the
 	// shadowing field above is only the wire's plaintext.
 	req.User.Password = string(hashed)
+	// The admin vouches for an account they create, and no verification mail is
+	// ever sent for it. Overwritten rather than trusted, since the body decodes
+	// into the model and could carry any timestamp.
+	verifiedAt := time.Now()
+	req.User.EmailVerifiedAt = &verifiedAt
 
 	if err := h.state.Store.CreateUser(&req.User); err != nil {
 		log.Printf("CreateUser failed for username=%q: %v", req.Username, err)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -74,6 +75,30 @@ func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(fake.created.Password), []byte(plaintext)); err != nil {
 		t.Fatalf("the stored hash does not verify the password that was sent: %v", err)
+	}
+}
+
+// An account an admin creates gets no verification mail, so it must reach the
+// store already verified or it can never log in once verification is required.
+// A timestamp in the body is replaced, not trusted.
+func TestCreateUserStoresTheAccountVerified(t *testing.T) {
+	fake := &createUserFakeStore{}
+	h := NewUserHandler(&AppState{Store: fake})
+
+	body := `{"username":"alice","password":"correct-horse-battery","emailVerifiedAt":"2001-01-01T00:00:00Z"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	before := time.Now()
+	h.CreateUser(rec, req)
+
+	if rec.Code != http.StatusOK || fake.created == nil {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.created.EmailVerifiedAt == nil {
+		t.Fatal("the admin-created account reached the store unverified")
+	}
+	if fake.created.EmailVerifiedAt.Before(before) {
+		t.Errorf("verified at %v: the timestamp from the request body was stored", fake.created.EmailVerifiedAt)
 	}
 }
 

@@ -1330,10 +1330,14 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to hash password", 500)
 			return
 		}
+		// Verified at creation: the admin vouches for it and it has no address a
+		// verification mail could reach.
+		verifiedAt := time.Now()
 		newUser := &models.User{
-			Username: req.NewUser.Username,
-			Password: string(hashed),
-			IsAdmin:  false,
+			Username:        req.NewUser.Username,
+			Password:        string(hashed),
+			IsAdmin:         false,
+			EmailVerifiedAt: &verifiedAt,
 		}
 		if err := h.state.Store.CreateUser(newUser); err != nil {
 			log.Printf("AssignOrphan: CreateUser failed for username=%q: %v", req.NewUser.Username, err)

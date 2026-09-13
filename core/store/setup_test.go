@@ -15,15 +15,15 @@ const createFirstAdminQ = `
 		WITH guard AS (
 			SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = true)
 		)
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at)
-		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW()
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
+		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW()
 		FROM guard
 		RETURNING id, username, is_admin, role, totp_secret, created_at
 	`
 
 const createAdditionalAdminQ = `
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at)
-		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, NOW())
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
+		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW())
 		RETURNING id, username, is_admin, role, totp_secret, created_at
 	`
 

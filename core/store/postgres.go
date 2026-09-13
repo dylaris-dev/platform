@@ -276,12 +276,14 @@ func (s *PostgresStore) CreateUser(u *models.User) error {
 	// DB DEFAULT TRUE from applyPhase16Schema covers new users so callers
 	// using the zero-value model still get the right default. Admin flips
 	// happen through SetUserCanCreateModpacks.
+	// email_verified_at is written in the same row so an account an admin creates
+	// is never, even briefly, a row the verification gate refuses.
 	query := `INSERT INTO users
 		(username, password, email, minecraft_username, is_admin, is_2fa_enabled,
-		 totp_secret, totp_backup_codes, permissions)
-		VALUES ($1, $2, $3, $4, $5, $6, '', '[]'::jsonb, $7)
+		 totp_secret, totp_backup_codes, permissions, email_verified_at)
+		VALUES ($1, $2, $3, $4, $5, $6, '', '[]'::jsonb, $7, $8)
 		RETURNING id`
-	return s.db.QueryRow(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions).Scan(&u.ID)
+	return s.db.QueryRow(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.EmailVerifiedAt).Scan(&u.ID)
 }
 
 // UpdateUser rewrites the user row. NOTE: any username change made via this
@@ -2638,8 +2640,8 @@ func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret stri
 		WITH guard AS (
 			SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = true)
 		)
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at)
-		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW()
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
+		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW()
 		FROM guard
 		RETURNING id, username, is_admin, role, totp_secret, created_at
 	`
@@ -2662,8 +2664,8 @@ func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret stri
 // ErrUsernameTaken so the handler answers 409 instead of a raw 500.
 func (s *PostgresStore) CreateAdditionalAdmin(username, passwordHash, totpSecret string) (*models.User, error) {
 	const q = `
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at)
-		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, NOW())
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
+		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW())
 		RETURNING id, username, is_admin, role, totp_secret, created_at
 	`
 	var u models.User
