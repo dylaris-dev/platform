@@ -35,6 +35,24 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		sendJSONError(w, "Invalid role (must be user, support, or admin)", 400)
 		return
 	}
+	target, err := h.state.Store.GetUserByID(id)
+	if err != nil || target == nil {
+		sendJSONError(w, "User not found", 404)
+		return
+	}
+	previousRole := target.Role
+	if previousRole == "" {
+		previousRole = "user"
+	}
+	// users.write is delegatable; promoting someone - yourself included - is not
+	// something a delegated right can do. "support" too: the boot backfill turns
+	// role 'support' into the seeded support PANEL role for any account without
+	// one, which hands a sock-puppet rights the caller never held. The role it
+	// already has is not a promotion: the panel re-sends it on every save.
+	if req.Role != "user" && req.Role != previousRole && !IsAdmin(r) {
+		sendJSONError(w, "Only an admin can give someone the admin or support role", http.StatusForbidden)
+		return
+	}
 
 	// Self-demotion guard: an admin demoting themselves is fine as long as
 	// at least one other admin remains. Otherwise refuse — the operator
@@ -54,14 +72,9 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	target, err := h.state.Store.GetUserByID(id)
-	if err != nil || target == nil {
-		sendJSONError(w, "User not found", 404)
+	if !mayManageAccount(h.state, r, target) {
+		sendJSONError(w, "You cannot change the role of an account with more rights than yours", http.StatusForbidden)
 		return
-	}
-	previousRole := target.Role
-	if previousRole == "" {
-		previousRole = "user"
 	}
 
 	if err := h.state.Store.SetUserRole(id, req.Role); err != nil {
@@ -119,6 +132,20 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	target, terr := h.state.Store.GetUserByID(id)
 	if terr != nil || target == nil || !(target.IsAdmin || target.Role == "admin") {
 		req.CanDeleteServers = false
+	}
+	if !IsAdmin(r) && (terr != nil || target == nil || !mayManageAccount(h.state, r, target)) {
+		sendJSONError(w, "You cannot change the permissions of an account with more rights than yours", http.StatusForbidden)
+		return
+	}
+	// Resource changes are a right of their own; a delegated users.write must
+	// not hand it out, to someone else or to the caller themselves. Only a
+	// change from off to on hands it out: the panel re-sends the current value.
+	if req.CanChangeResources && !IsAdmin(r) && !target.CanChangeResources {
+		actorID, _ := r.Context().Value("userID").(string)
+		if !LoadEffectivePermissions(h.state, actorID).CanChangeResources {
+			sendJSONError(w, "You cannot grant resource changes you do not hold", http.StatusForbidden)
+			return
+		}
 	}
 
 	if err := h.state.Store.SetUserPermissionFlags(id, req.CanDeleteServers, req.CanChangeResources, req.SupportTeam); err != nil {

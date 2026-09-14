@@ -113,6 +113,19 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Password is required", 400)
 		return
 	}
+	// There is no unique index on users.email, and a second account on an
+	// existing address makes that address's password reset pick either row.
+	if email := strings.TrimSpace(req.Email); email != "" {
+		if existing, eerr := h.state.Store.GetUserByEmail(email); eerr == nil && existing != nil {
+			sendJSONError(w, "Email is already in use", http.StatusConflict)
+			return
+		}
+	}
+	// The body decodes into models.User, whose isAdmin is written as sent.
+	if req.User.IsAdmin && !IsAdmin(r) {
+		sendJSONError(w, "Only an admin can create an admin", http.StatusForbidden)
+		return
+	}
 	// Enforce the same password-length policy the register + reset paths apply.
 	if min := LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
 		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
@@ -175,6 +188,10 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	if target, terr := h.state.Store.GetUserByID(id); terr != nil || target == nil || !mayManageAccount(h.state, r, target) {
+		sendJSONError(w, "You cannot change an account with more rights than yours", http.StatusForbidden)
+		return
+	}
 	if err := h.state.Store.CancelUserDeletion(id); err != nil {
 		sendJSONError(w, "Failed to cancel deletion", 500)
 		return
@@ -219,6 +236,10 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	if err == nil && userToDelete.Username == currentUser {
 		sendJSONError(w, "You cannot delete yourself", 403)
+		return
+	}
+	if !IsAdmin(r) && (err != nil || userToDelete == nil || !mayManageAccount(h.state, r, userToDelete)) {
+		sendJSONError(w, "You cannot delete an account with more rights than yours", 403)
 		return
 	}
 
@@ -297,6 +318,15 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Password is required", 400)
 		return
 	}
+	target, terr := h.state.Store.GetUserByID(id)
+	if terr != nil || target == nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !mayManageAccount(h.state, r, target) {
+		sendJSONError(w, "You cannot change the password of an account with more rights than yours", http.StatusForbidden)
+		return
+	}
 	if min := LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
 		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
@@ -358,6 +388,16 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	id := vars["id"]
 	scope := fmt.Sprintf("user:%s", id)
+	// A route limit is a quota. Nobody but an admin sets their own, and staff
+	// set it only on accounts they may manage.
+	if !IsAdmin(r) {
+		actorID, _ := r.Context().Value("userID").(string)
+		target, terr := h.state.Store.GetUserByID(id)
+		if actorID == id || terr != nil || target == nil || !mayManageAccount(h.state, r, target) {
+			sendJSONError(w, "You cannot change this account's route limit", http.StatusForbidden)
+			return
+		}
+	}
 
 	var req struct {
 		Mode      string `json:"mode"`

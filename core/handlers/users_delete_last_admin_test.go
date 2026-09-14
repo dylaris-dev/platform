@@ -40,6 +40,9 @@ func lastAdminRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodDelete, "/api/users/"+targetID, nil)
 	ctx := context.WithValue(req.Context(), "username", "someone-else")
 	ctx = context.WithValue(ctx, "userID", "actor-id")
+	// An admin: the last-admin rule is the question here. A non-admin may not
+	// delete an admin at all (account_guard_test.go).
+	ctx = context.WithValue(ctx, "isAdmin", true)
 	return mux.SetURLVars(req.WithContext(ctx), map[string]string{"id": targetID})
 }
 

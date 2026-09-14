@@ -79,6 +79,15 @@ func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Requ
 	}
 	// Uniqueness check
 	// Case-INSENSITIVE; the unique index on LOWER(username) is the real guard.
+	target, terr := h.state.Store.GetUserByID(targetID)
+	if terr != nil || target == nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !mayManageAccount(h.state, r, target) {
+		sendJSONError(w, "You cannot rename an account with more rights than yours", http.StatusForbidden)
+		return
+	}
 	if taken, _ := h.state.Store.UsernameTaken(req.Username, targetID); taken {
 		sendJSONError(w, "Username already taken", http.StatusConflict)
 		return

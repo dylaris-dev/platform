@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.14
+
+### Features
+- Nothing.
+
+### Breaking
+- **Only an admin can create an admin or give the admin or support role.** A role holding
+  the user rights could, including for itself. `core`
+
+### Security
+- **Staff can no longer take over an account with more panel rights than theirs.** Password,
+  2FA, email, name, role, limits and delete refuse those and admins. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.13
 
 ### Features

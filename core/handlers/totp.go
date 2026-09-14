@@ -346,6 +346,15 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	target, terr := h.state.Store.GetUserByID(id)
+	if terr != nil || target == nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if !mayManageAccount(h.state, r, target) {
+		sendJSONError(w, "You cannot reset 2FA on an account with more rights than yours", http.StatusForbidden)
+		return
+	}
 	if err := h.state.Store.DisableUserTOTP(id); err != nil {
 		sendJSONError(w, "Reset failed", http.StatusInternalServerError)
 		return

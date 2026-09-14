@@ -61,6 +61,12 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
+	// The address is where a password reset goes, so this is a password change
+	// by other means.
+	if !mayManageAccount(h.state, r, target) {
+		sendJSONError(w, "You cannot change the email of an account with more rights than yours", http.StatusForbidden)
+		return
+	}
 
 	// Unchanged is a no-op rather than a rewrite. Storing it again would clear
 	// email_verified_at, so a stray save on a screen that shows the current

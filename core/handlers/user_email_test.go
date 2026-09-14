@@ -56,7 +56,8 @@ func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.Response
 	h := NewUserEmailHandler(&AppState{Store: st})
 	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(body)))
 	r = mux.SetURLVars(r, map[string]string{"id": emailTestUserID})
-	r = r.WithContext(context.WithValue(r.Context(), "userID", "admin-1"))
+	ctx := context.WithValue(r.Context(), "userID", "admin-1")
+	r = r.WithContext(context.WithValue(ctx, "isAdmin", true))
 	w := httptest.NewRecorder()
 	h.SetEmail(w, r)
 	var out map[string]interface{}
