@@ -126,6 +126,16 @@ func createBackupTables(db *sql.DB) error {
 		// upload started by the one before it.
 		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS upload_id TEXT`,
 		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS part_size BIGINT`,
+		// The size Core measured when it completed that upload. NULL until then,
+		// and the only size a run on object storage is ever given: a node's
+		// reported size is a claim, and the quota is computed from this column's
+		// copy in size_bytes.
+		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS uploaded_bytes BIGINT`,
+		// When the node last asked for part URLs or completed its upload. The
+		// reaper measures a multipart run's silence from here rather than from
+		// started_at, so an archive still uploading over a slow link after six
+		// hours is not closed while it is visibly making progress.
+		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS transfer_activity_at TIMESTAMPTZ`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at DESC)`,
 		// One row per restore attempt. We keep history separate from
 		// backup_runs because a single archive can be restored many times

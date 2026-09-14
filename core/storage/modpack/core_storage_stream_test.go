@@ -62,6 +62,10 @@ func (*countingProvider) AbortMultipart(context.Context, string, string) error {
 	return backup.ErrMultipartUnsupported
 }
 
+func (*countingProvider) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, backup.ErrMultipartUnsupported
+}
+
 // TestCoreStorageStreamAcquiresOneSlotOnly is a deadlock guard, not a
 // behaviour test.
 //

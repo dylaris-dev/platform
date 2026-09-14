@@ -63,6 +63,10 @@ func (*probeFailProvider) AbortMultipart(context.Context, string, string) error 
 	return backupstorage.ErrMultipartUnsupported
 }
 
+func (*probeFailProvider) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	return backupstorage.MultipartUsage{}, backupstorage.ErrMultipartUnsupported
+}
+
 // reconnectingS3 returns an S3Resilience already in the reconnecting state,
 // carrying an error that names a host so the leak tests have something to look
 // for.

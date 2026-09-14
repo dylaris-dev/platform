@@ -819,7 +819,7 @@ func main() {
 		NodeStore:   pgStore,
 		CoreStorage: appState.CoreStorageBackupBuilder(),
 		Connection:  appState.ConnectionBackupBuilder(),
-	}).Register(grpcRegistry)
+	}, cfg.StoreEnabled).Register(grpcRegistry)
 	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret, strings.TrimSpace(os.Getenv("REDIS_ADDR")))
 	if err != nil {
 		log.Fatalf("gRPC server error: %v", err)

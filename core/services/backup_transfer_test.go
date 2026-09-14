@@ -39,6 +39,15 @@ type transferFakeStore struct {
 	// setUploadHook runs inside SetBackupRunUpload before the condition is
 	// evaluated, for tests that need to line up concurrent callers.
 	setUploadHook func()
+	// beforeUpdate runs inside UpdateBackupRunStatus, under the lock, before the
+	// status is written: what another request did between a caller's read and
+	// its write.
+	beforeUpdate func(r *models.BackupRun)
+	// quotaGB is the operator allowance (SettingBackupDefaultUserQuota), "" for
+	// none; usedBytes is what the owner already stores.
+	quotaGB   string
+	usedBytes int64
+	touches   int
 }
 
 func newTransferFakeStore() *transferFakeStore {
@@ -116,10 +125,38 @@ func (f *transferFakeStore) UpdateBackupRunStatus(id int, status, message string
 	defer f.mu.Unlock()
 	f.updates = append(f.updates, reapUpdate{id: id, status: status, message: message, size: size, key: key})
 	if r, ok := f.runs[id]; ok {
+		if f.beforeUpdate != nil {
+			f.beforeUpdate(r)
+		}
 		r.Status = status
 	}
 	return nil
 }
+
+// SetBackupRunUploaded and TouchBackupRunTransfer carry the SQL's condition.
+func (f *transferFakeStore) SetBackupRunUploaded(runID int, size int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.runs[runID]
+	if !ok || r.Status != "running" {
+		return false, nil
+	}
+	r.UploadedBytes = &size
+	return true, nil
+}
+
+func (f *transferFakeStore) TouchBackupRunTransfer(int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.touches++
+	return nil
+}
+
+func (f *transferFakeStore) GetUserByID(string) (*models.User, error) {
+	return nil, errors.New("no such user")
+}
+func (f *transferFakeStore) GetUserBilling(string) (*store.UserBilling, error) { return nil, nil }
+func (f *transferFakeStore) BackupBytesByOwner(string) (int64, error)          { return f.usedBytes, nil }
 
 // fakeMultipartStorage records the multipart calls. URLs encode what was signed,
 // so a test can read the upload id, part number and TTL back out of them.
@@ -132,8 +169,16 @@ type fakeMultipartStorage struct {
 	completes   int
 	completeErr error
 	objects     map[string]int64
+	deleted     []string
+	// usage is what ListMultipart reports; listErr fails it.
+	usage   backupstorage.MultipartUsage
+	listErr error
 	// createHook runs after an upload id is minted, outside the lock.
 	createHook func()
+	// completeHook runs as a completion starts, outside the lock; completeSize,
+	// when set, is the size the completion reports.
+	completeHook func()
+	completeSize int64
 }
 
 func (s *fakeMultipartStorage) CreateMultipart(_ context.Context, key string) (string, error) {
@@ -152,6 +197,9 @@ func (s *fakeMultipartStorage) UploadPartURL(_ context.Context, key, uploadID st
 }
 
 func (s *fakeMultipartStorage) CompleteMultipart(_ context.Context, key, uploadID string, partSize int64) (int64, error) {
+	if s.completeHook != nil {
+		s.completeHook()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.completes++
@@ -162,6 +210,9 @@ func (s *fakeMultipartStorage) CompleteMultipart(_ context.Context, key, uploadI
 		s.objects = map[string]int64{}
 	}
 	s.objects[key] = 3*partSize + 17
+	if s.completeSize > 0 {
+		s.objects[key] = s.completeSize
+	}
 	return s.objects[key], nil
 }
 
@@ -170,6 +221,26 @@ func (s *fakeMultipartStorage) AbortMultipart(_ context.Context, key, uploadID s
 	defer s.mu.Unlock()
 	s.aborted = append(s.aborted, uploadID)
 	return nil
+}
+
+func (s *fakeMultipartStorage) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.usage, s.listErr
+}
+
+func (s *fakeMultipartStorage) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleted = append(s.deleted, key)
+	delete(s.objects, key)
+	return nil
+}
+
+func (s *fakeMultipartStorage) deletes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.deleted...)
 }
 
 func (s *fakeMultipartStorage) Stat(_ context.Context, key string) (backupstorage.Object, error) {
@@ -188,7 +259,7 @@ func (s *fakeMultipartStorage) DownloadURL(_ context.Context, key string, ttl ti
 func newTestTransfer(st *transferFakeStore, prov *fakeMultipartStorage) *BackupTransfer {
 	return NewBackupTransfer(st, backupstorage.Deps{
 		Connection: func(int, string) (backupstorage.Storage, error) { return prov, nil },
-	})
+	}, false)
 }
 
 var hostingNode = nodegrpc.Node{ID: 5, Token: "node-hosting"}

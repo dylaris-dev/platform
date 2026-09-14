@@ -112,6 +112,10 @@ func (*blockingInner) AbortMultipart(context.Context, string, string) error {
 	return backup.ErrMultipartUnsupported
 }
 
+func (*blockingInner) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, backup.ErrMultipartUnsupported
+}
+
 // recordingCloser proves a ReadCloser was closed, which for the abandoned path
 // is the difference between a returned fd and a leaked one.
 type recordingCloser struct {

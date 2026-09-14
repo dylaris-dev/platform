@@ -87,6 +87,10 @@ type BackupRun struct {
 	// id is a handle on the bucket, and nobody reading the run list needs it.
 	UploadID string `json:"-"`
 	PartSize int64  `json:"-"`
+	// UploadedBytes is the size Core measured when it completed the upload, nil
+	// until then. On object storage it is the only size a run is given: the
+	// node's own report is a claim from a machine that may be a customer's.
+	UploadedBytes *int64 `json:"-"`
 }
 
 // BackupRestore records a restore attempt against an archived BackupRun.

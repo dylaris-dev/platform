@@ -14,8 +14,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.09.14.2
 
 ### Features
-- **Backups of your servers have no 5 GiB limit any more.** BYON: update your node to get
-  it; it also stops writing the whole archive to disk before uploading. `node`
+- **Backups of your servers can reach about 600 GiB, within your backup storage allowance.**
+  BYON: update your node to get it; it also stops staging the archive to disk. `node`
 
 ### Breaking
 - **BYON: update your node to keep backups working.** An older node's backups and restores
@@ -25,8 +25,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Fixes
-- **Large backups on slow connections no longer fail on an expired upload link.** BYON:
-  after updating your node. `node`
+- **Large backups on slow connections no longer fail on an expired upload link, or when the
+  upload runs past six hours.** BYON: after updating your node. `node`
 
 ## 2026.09.13
 

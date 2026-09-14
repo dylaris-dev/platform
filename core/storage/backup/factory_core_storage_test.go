@@ -55,6 +55,10 @@ func (*fakeCoreStorage) AbortMultipart(context.Context, string, string) error {
 	return ErrMultipartUnsupported
 }
 
+func (*fakeCoreStorage) ListMultipart(context.Context, string, string) (MultipartUsage, error) {
+	return MultipartUsage{}, ErrMultipartUnsupported
+}
+
 func TestOpen_CoreStorageUsesDepsBuilderAndSubPrefix(t *testing.T) {
 	got := &fakeCoreStorage{}
 	deps := Deps{

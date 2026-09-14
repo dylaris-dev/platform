@@ -76,6 +76,10 @@ func (*serveFakeProvider) AbortMultipart(context.Context, string, string) error 
 	return backupstorage.ErrMultipartUnsupported
 }
 
+func (*serveFakeProvider) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	return backupstorage.MultipartUsage{}, backupstorage.ErrMultipartUnsupported
+}
+
 func (f *serveFakeProvider) Put(context.Context, string, []byte) error { return nil }
 func (f *serveFakeProvider) PutStream(context.Context, string, io.Reader, int64) error {
 	return nil

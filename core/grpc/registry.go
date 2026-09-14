@@ -28,6 +28,11 @@ type Registry struct {
 	// nodeRequests maps a payload kind to the handler for requests nodes start;
 	// see node_request.go.
 	nodeRequests map[string]NodeRequestHandler
+
+	// requestBuckets rate-limits node-initiated requests per node ID; see
+	// allowNodeRequest. Its own lock, so the limiter never waits on mu.
+	limitMu        sync.Mutex
+	requestBuckets map[int]*requestBucket
 }
 
 func NewRegistry() *Registry {

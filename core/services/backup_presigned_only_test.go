@@ -55,8 +55,11 @@ func (f *transferFakeStore) SetBackupJobScheduled(int, time.Time, time.Time) err
 
 // Not node-local mode, so the per-server node-local cap stays out of the way.
 func (f *transferFakeStore) GetSetting(key string) (string, error) {
-	if key == "backup.mode" {
+	switch key {
+	case "backup.mode":
 		return "s3", nil
+	case SettingBackupDefaultUserQuota:
+		return f.quotaGB, nil
 	}
 	return "", nil
 }
@@ -188,6 +191,14 @@ func TestConsumeResults_AbortsTheUploadOfAFailedRun(t *testing.T) {
 	if got := st.aborts(prov); len(got) == 0 || got[0] != "upload-live" {
 		t.Fatalf("aborted = %v, want upload-live", got)
 	}
+	// The abort and the delete are one step; the delete follows it.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(prov.deletes()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := prov.deletes(); len(got) == 0 || got[0] != st.runs[1].StorageKey {
+		t.Fatalf("deleted = %v, want the run's own key %s: an archive Core completed before the failure report must not stay", got, st.runs[1].StorageKey)
+	}
 }
 
 // A run that succeeded stays succeeded: the failure a redelivered command
@@ -214,6 +225,12 @@ func TestReapAbandonedRuns_AbortsTheUpload(t *testing.T) {
 	if got := st.aborts(prov); len(got) != 1 || got[0] != "upload-stale" {
 		t.Fatalf("aborted = %v, want upload-stale", got)
 	}
+	if got := prov.deletes(); len(got) != 1 || got[0] != st.runs[1].StorageKey {
+		t.Fatalf("deleted = %v, want exactly the run's own key", got)
+	}
+	if st.updates[0].size != 0 || !strings.Contains(st.updates[0].message, "are deleted") {
+		t.Errorf("update = %+v, want size 0 and a message saying the upload was discarded", st.updates[0])
+	}
 }
 
 func TestReapAbandonedRuns_NoUploadNoAbort(t *testing.T) {
@@ -225,5 +242,29 @@ func TestReapAbandonedRuns_NoUploadNoAbort(t *testing.T) {
 
 	if got := st.aborts(prov); len(got) != 0 {
 		t.Fatalf("aborted = %v for a run that never started an upload", got)
+	}
+}
+
+// A run whose upload Core completed and measured, and whose node report was
+// lost (a Core rolling deploy drops Pub/Sub messages), is a good backup. The
+// reaper closes it as a success with Core's size and deletes nothing.
+func TestReapAbandonedRuns_KeepsAnUploadCoreCompleted(t *testing.T) {
+	st := newTransferFakeStore()
+	st.runs[1].StartedAt = time.Now().Add(-8 * time.Hour)
+	st.runs[1].UploadID, st.runs[1].PartSize = "upload-done", backupPartSize
+	size := int64(3 << 30)
+	st.runs[1].UploadedBytes = &size
+	prov := &fakeMultipartStorage{}
+
+	transferScheduler(st, prov, nil).reapAbandonedRuns(context.Background(), time.Now())
+
+	if len(st.updates) != 1 || st.updates[0].status != "success" || st.updates[0].size != size {
+		t.Fatalf("updates = %+v, want the run closed as success with Core's size", st.updates)
+	}
+	if got := st.aborts(prov); len(got) != 0 {
+		t.Errorf("aborted = %v: a completed upload was aborted", got)
+	}
+	if got := prov.deletes(); len(got) != 0 {
+		t.Errorf("deleted = %v: a completed backup was deleted", got)
 	}
 }

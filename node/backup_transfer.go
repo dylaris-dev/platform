@@ -3,13 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -350,11 +350,40 @@ func (u *partUploader) put(ctx context.Context, target string, data []byte) erro
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("put status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return storageStatusError("put", resp)
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil
+}
+
+// storageStatusError describes a refused presigned request by its HTTP status
+// and the S3 error code, and by nothing else from the response. The rest of an
+// S3 error body names the bucket and the key and at times the access key id,
+// and the error ends up in a run message the server's owner can read.
+func storageStatusError(op string, resp *http.Response) error {
+	var body struct {
+		Code string `xml:"Code"`
+	}
+	_ = xml.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
+	if isS3ErrorCode(body.Code) {
+		return fmt.Errorf("%s status %d (%s)", op, resp.StatusCode, body.Code)
+	}
+	return fmt.Errorf("%s status %d", op, resp.StatusCode)
+}
+
+// isS3ErrorCode accepts what an S3 error code looks like ("AccessDenied",
+// "SignatureDoesNotMatch"), so a backend answering with anything else in that
+// element cannot put free text into the message.
+func isS3ErrorCode(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for _, c := range code {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // withoutURL drops the request URL net/http puts into its errors. A presigned

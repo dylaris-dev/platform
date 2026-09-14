@@ -372,13 +372,17 @@ func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*m
 	var completed sql.NullTime
 	var storageID sql.NullInt64
 	var uploadID sql.NullString
-	var partSize sql.NullInt64
-	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage, &r.InstallSnapshot, &r.Manifest, &storageID, &uploadID, &partSize)
+	var partSize, uploaded sql.NullInt64
+	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage, &r.InstallSnapshot, &r.Manifest, &storageID, &uploadID, &partSize, &uploaded)
 	if err != nil {
 		return nil, err
 	}
 	r.UploadID = uploadID.String
 	r.PartSize = partSize.Int64
+	if uploaded.Valid {
+		v := uploaded.Int64
+		r.UploadedBytes = &v
+	}
 	if completed.Valid {
 		t := completed.Time
 		r.CompletedAt = &t
@@ -390,7 +394,7 @@ func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*m
 	return &r, nil
 }
 
-const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message, install_snapshot, manifest, storage_id, upload_id, part_size`
+const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message, install_snapshot, manifest, storage_id, upload_id, part_size, uploaded_bytes`
 
 func (s *PostgresStore) ListBackupRuns(jobID, limit int) ([]models.BackupRun, error) {
 	if limit <= 0 {
@@ -462,8 +466,36 @@ func (s *PostgresStore) SetBackupRunUpload(runID int, uploadID string, partSize 
 	return n == 1, nil
 }
 
-// ListAbandonedBackupRuns returns runs still marked "running" that started
-// before the cutoff, oldest first.
+// SetBackupRunUploaded records the size of the archive Core just completed for
+// a run, and reports whether the run was still running to take it. A run that
+// was closed while the completion was under way reports false, and the caller
+// deletes the object: whoever closed the run has already discarded its upload,
+// and an archive completed after that would be left with nothing pointing at it.
+func (s *PostgresStore) SetBackupRunUploaded(runID int, size int64) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE backup_runs SET uploaded_bytes = $1, transfer_activity_at = NOW() WHERE id = $2 AND status = 'running'`,
+		size, runID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// TouchBackupRunTransfer records that the node is still moving a run's archive.
+func (s *PostgresStore) TouchBackupRunTransfer(runID int) error {
+	_, err := s.db.Exec(`UPDATE backup_runs SET transfer_activity_at = NOW() WHERE id = $1 AND status = 'running'`, runID)
+	return err
+}
+
+// ListAbandonedBackupRuns returns runs still marked "running" whose last sign of
+// life - the start, or the node's latest part-URL request or completion - is
+// before the cutoff, oldest first. GREATEST ignores a NULL, so a run that never
+// reached its upload is measured from its start as before.
 //
 // A run is created and committed as "running" BEFORE the work is dispatched to
 // a node, and the only thing that ever moves it off "running" is a result
@@ -479,16 +511,16 @@ func (s *PostgresStore) SetBackupRunUpload(runID int, uploadID string, partSize 
 // The limit bounds one sweep. Reaping opens a storage connection per run to
 // find out whether an archive exists, and the first sweep after this ships may
 // find a long backlog; a cap keeps that off a single tick.
-func (s *PostgresStore) ListAbandonedBackupRuns(startedBefore time.Time, limit int) ([]models.BackupRun, error) {
+func (s *PostgresStore) ListAbandonedBackupRuns(quietSince time.Time, limit int) ([]models.BackupRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.Query(
 		`SELECT `+backupRunCols+` FROM backup_runs
-		 WHERE status = 'running' AND started_at < $1
+		 WHERE status = 'running' AND GREATEST(started_at, transfer_activity_at) < $1
 		 ORDER BY started_at ASC
 		 LIMIT $2`,
-		startedBefore, limit,
+		quietSince, limit,
 	)
 	if err != nil {
 		return nil, err

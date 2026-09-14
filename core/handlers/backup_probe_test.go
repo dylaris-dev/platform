@@ -93,6 +93,10 @@ func (*probeFakeStorage) AbortMultipart(context.Context, string, string) error {
 	return backupstorage.ErrMultipartUnsupported
 }
 
+func (*probeFakeStorage) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	return backupstorage.MultipartUsage{}, backupstorage.ErrMultipartUnsupported
+}
+
 func TestProbeBackupStorage_HappyPathDeletesProbe(t *testing.T) {
 	f := &probeFakeStorage{}
 	ok, msg := probeBackupStorage(context.Background(), f)

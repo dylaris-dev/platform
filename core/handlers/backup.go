@@ -992,7 +992,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		return 0, fmt.Errorf("node not found: %w", err)
 	}
 
-	storageKey := fmt.Sprintf("backups/%s/job-%d/%s.tar.gz", srv.UUID, job.ID, time.Now().UTC().Format("20060102-150405"))
+	storageKey := services.NewBackupStorageKey(srv.UUID, job.ID, time.Now())
 	runID, err := h.state.Store.CreateBackupRun(&models.BackupRun{
 		JobID:  job.ID,
 		Status: "running",

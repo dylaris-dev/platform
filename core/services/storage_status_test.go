@@ -77,6 +77,10 @@ func (*failingS3Inner) AbortMultipart(context.Context, string, string) error {
 	return backup.ErrMultipartUnsupported
 }
 
+func (*failingS3Inner) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, backup.ErrMultipartUnsupported
+}
+
 // storageEvent is the published payload, decoded.
 type storageEvent struct {
 	Backend string  `json:"backend"`

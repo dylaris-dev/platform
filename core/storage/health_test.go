@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"dylaris-core/storage/backup"
 )
 
 // testDeadline bounds every wait in this file. It is generous on purpose: the
@@ -442,6 +444,10 @@ func (f *fakeInner) AbortMultipart(context.Context, string, string) error {
 	return f.record("AbortMultipart")
 }
 
+func (f *fakeInner) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, f.record("ListMultipart")
+}
+
 // allProviderCalls drives every StorageProvider method through p.
 //
 // Named for the interface rather than a count, because the count is what went
@@ -469,6 +475,7 @@ func allProviderCalls(p StorageProvider) []struct {
 		{"UploadPartURL", func() error { _, err := p.UploadPartURL(ctx, "a", "upload-1", 1, time.Minute); return err }},
 		{"CompleteMultipart", func() error { _, err := p.CompleteMultipart(ctx, "a", "upload-1", 5<<20); return err }},
 		{"AbortMultipart", func() error { return p.AbortMultipart(ctx, "a", "upload-1") }},
+		{"ListMultipart", func() error { _, err := p.ListMultipart(ctx, "a", "upload-1"); return err }},
 	}
 }
 

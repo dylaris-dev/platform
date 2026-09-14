@@ -626,6 +626,10 @@ func (*fakeProbeProvider) CompleteMultipart(context.Context, string, string, int
 func (*fakeProbeProvider) AbortMultipart(context.Context, string, string) error {
 	return backupstorage.ErrMultipartUnsupported
 }
+
+func (*fakeProbeProvider) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	return backupstorage.MultipartUsage{}, backupstorage.ErrMultipartUnsupported
+}
 func (f *fakeProbeProvider) WriteFile(context.Context, string, io.Reader) error {
 	return f.writeErr
 }

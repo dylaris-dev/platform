@@ -338,9 +338,9 @@ func downloadPresigned(ctx context.Context, client *http.Client, url string) (io
 		return nil, fmt.Errorf("presigned get: %w", withoutURL(err))
 	}
 	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		err := storageStatusError("presigned get", resp)
 		resp.Body.Close()
-		return nil, fmt.Errorf("presigned get status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, err
 	}
 	return resp.Body, nil
 }

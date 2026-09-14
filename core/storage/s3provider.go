@@ -31,6 +31,7 @@ type objectStore interface {
 	UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error)
 	CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error)
 	AbortMultipart(ctx context.Context, key, uploadID string) error
+	ListMultipart(ctx context.Context, key, uploadID string) (backup.MultipartUsage, error)
 }
 
 // S3Provider implements StorageProvider against an S3-compatible object store.
@@ -201,6 +202,10 @@ func (p *S3Provider) CompleteMultipart(ctx context.Context, key, uploadID string
 
 func (p *S3Provider) AbortMultipart(ctx context.Context, key, uploadID string) error {
 	return p.os.AbortMultipart(ctx, p.key(key), uploadID)
+}
+
+func (p *S3Provider) ListMultipart(ctx context.Context, key, uploadID string) (backup.MultipartUsage, error) {
+	return p.os.ListMultipart(ctx, p.key(key), uploadID)
 }
 
 // ListFiles synthesizes one directory level from the flat key space: files are

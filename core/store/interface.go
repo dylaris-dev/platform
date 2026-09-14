@@ -279,11 +279,17 @@ type Store interface {
 	UpdateBackupRunStatus(id int, status, errorMsg string, sizeBytes int64, storageKey string, completed time.Time) error
 	DeleteBackupRun(id int) error
 	PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error)
-	ListAbandonedBackupRuns(startedBefore time.Time, limit int) ([]models.BackupRun, error)
+	ListAbandonedBackupRuns(quietSince time.Time, limit int) ([]models.BackupRun, error)
 	// SetBackupRunUpload stores a run's multipart upload id and part size only
 	// where none is stored yet and the run is still running, and reports whether
 	// this call's values were the ones stored.
 	SetBackupRunUpload(runID int, uploadID string, partSize int64) (bool, error)
+	// SetBackupRunUploaded records the size Core measured on completing a run's
+	// upload, only while the run is still running, and reports whether it did.
+	SetBackupRunUploaded(runID int, size int64) (bool, error)
+	// TouchBackupRunTransfer marks a running run's upload as active now, which
+	// ListAbandonedBackupRuns measures silence from.
+	TouchBackupRunTransfer(runID int) error
 
 	CreateBackupRestore(r *models.BackupRestore) (int, error)
 	GetBackupRestore(id int) (*models.BackupRestore, error)

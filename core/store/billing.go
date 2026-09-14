@@ -400,6 +400,12 @@ func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, e
 // the only failed rows with a size are those the reaper found an object for -
 // real bytes on the backend that would otherwise sit uncounted.
 //
+// A RUNNING run never counts, whatever its size says. Its size is the node's
+// progress report, a number a customer's machine chooses, and the upload it
+// describes is measured by Core itself before it may complete (see
+// services/backup_transfer.go). Counting it here too would charge that run
+// twice against the headroom its own completion is checked against.
+//
 // Archives on a storage the TENANT connected are excluded: the quota exists
 // because we pay for the space, and we pay nothing for their bucket. Billing
 // them for it would charge them for storage they already bought.
@@ -418,7 +424,7 @@ func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
 		LEFT JOIN backup_storages bst ON bst.id = br.storage_id
-		WHERE s.owner_id = $1 AND (br.status = 'success' OR br.size_bytes > 0)
+		WHERE s.owner_id = $1 AND (br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0))
 		  AND bst.owner_id IS NULL`, ownerID).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -438,7 +444,7 @@ func (s *PostgresStore) BackupBytesByOwnerOnOwnStorage(ownerID string) (int64, e
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
 		JOIN backup_storages bst ON bst.id = br.storage_id
-		WHERE s.owner_id = $1 AND (br.status = 'success' OR br.size_bytes > 0)
+		WHERE s.owner_id = $1 AND (br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0))
 		  AND bst.owner_id IS NOT NULL`, ownerID).Scan(&total)
 	if err != nil {
 		return 0, err

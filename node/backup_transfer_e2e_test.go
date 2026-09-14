@@ -70,6 +70,17 @@ func (s *e2eStore) SetBackupRunUpload(_ int, id string, size int64) (bool, error
 	s.run.UploadID, s.run.PartSize = id, size
 	return true, nil
 }
+func (s *e2eStore) SetBackupRunUploaded(_ int, size int64) (bool, error) {
+	s.run.UploadedBytes = &size
+	return true, nil
+}
+func (s *e2eStore) TouchBackupRunTransfer(int) error { return nil }
+
+// No allowance is configured, so the upload is not capped.
+func (s *e2eStore) GetUserByID(string) (*models.User, error)          { return nil, errors.New("no user") }
+func (s *e2eStore) GetUserBilling(string) (*store.UserBilling, error) { return nil, nil }
+func (s *e2eStore) GetSetting(string) (string, error)                 { return "", nil }
+func (s *e2eStore) BackupBytesByOwner(string) (int64, error)          { return 0, nil }
 
 // patternReader is a deterministic, incompressible byte source.
 func patternReader(n int64) io.Reader {
@@ -93,7 +104,7 @@ func TestE2EMultipartBackupAndRestoreThroughCoreHandlers(t *testing.T) {
 	storageRow := &models.BackupStorage{ID: 3, Name: "minio", Provider: "s3", Config: cfg}
 	key := "backups/srv/job-1/" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".tar.gz"
 	st := &e2eStore{run: models.BackupRun{ID: 1, JobID: 10, Status: "running", StorageKey: key}, storage: storageRow}
-	core := services.NewBackupTransfer(st, backupstorage.Deps{})
+	core := services.NewBackupTransfer(st, backupstorage.Deps{}, false)
 	prov, err := backupstorage.Open(ctx, storageRow, backupstorage.Deps{})
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +143,9 @@ func TestE2EMultipartBackupAndRestoreThroughCoreHandlers(t *testing.T) {
 	}
 	if st.run.PartSize != 64<<20 || st.run.UploadID == "" {
 		t.Fatalf("stored upload %q part size %d", st.run.UploadID, st.run.PartSize)
+	}
+	if st.run.UploadedBytes == nil || *st.run.UploadedBytes != size {
+		t.Fatalf("recorded size %v, want Core's measured %d", st.run.UploadedBytes, size)
 	}
 
 	obj, err := prov.Stat(ctx, key)

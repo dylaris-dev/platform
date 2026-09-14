@@ -133,6 +133,11 @@ func (f *multipartProbeFake) AbortMultipart(context.Context, string, string) err
 	return nil
 }
 
+func (f *multipartProbeFake) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	f.record("list")
+	return backupstorage.MultipartUsage{}, nil
+}
+
 func (f *multipartProbeFake) Stat(context.Context, string) (backupstorage.Object, error) {
 	f.record("stat")
 	if f.failAt == "stat" {

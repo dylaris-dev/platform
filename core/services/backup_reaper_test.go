@@ -54,6 +54,12 @@ func (f *reaperFakeStore) ListAbandonedBackupRuns(startedBefore time.Time, limit
 	return f.abandoned, f.listErr
 }
 
+// GetBackupRun is the reaper's re-read before discarding an upload. None of
+// these runs ever started one, which is what a missing row also answers.
+func (f *reaperFakeStore) GetBackupRun(int) (*models.BackupRun, error) {
+	return nil, errors.New("not tracked by this fake")
+}
+
 func (f *reaperFakeStore) UpdateBackupRunStatus(id int, status, message string, size int64, key string, _ time.Time) error {
 	f.updates = append(f.updates, reapUpdate{id: id, status: status, message: message, size: size, key: key})
 	return f.updateErr

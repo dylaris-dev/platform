@@ -244,6 +244,14 @@ func TestS3MultipartIntegration_RefusesUnequalPartsWithoutCompleting(t *testing.
 
 	id := uploadTwoParts(t, st, key, patterned(5*mib+1, 3), patterned(100, 9))
 
+	usage, err := st.ListMultipart(ctx, key, id)
+	if err != nil {
+		t.Fatalf("ListMultipart: %v", err)
+	}
+	if want := (MultipartUsage{Parts: 2, Bytes: 5*mib + 1 + 100, Largest: 5*mib + 1}); usage != want {
+		t.Errorf("ListMultipart = %+v, want %+v", usage, want)
+	}
+
 	if _, err := st.CompleteMultipart(ctx, key, id, 5*mib); err == nil {
 		t.Fatal("CompleteMultipart with a 5 MiB+1 middle part = nil, want the part-size refusal")
 	}

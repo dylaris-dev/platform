@@ -9,7 +9,7 @@ import (
 	"dylaris-core/storage/backup"
 )
 
-var multipartOps = []string{"CreateMultipart", "UploadPartURL", "CompleteMultipart", "AbortMultipart"}
+var multipartOps = []string{"CreateMultipart", "UploadPartURL", "CompleteMultipart", "AbortMultipart", "ListMultipart"}
 
 // callMultipart runs one multipart operation, by name, through p.
 func callMultipart(p StorageProvider, op, key string) error {
@@ -26,6 +26,9 @@ func callMultipart(p StorageProvider, op, key string) error {
 		return err
 	case "AbortMultipart":
 		return p.AbortMultipart(ctx, key, "upload-1")
+	case "ListMultipart":
+		_, err := p.ListMultipart(ctx, key, "upload-1")
+		return err
 	}
 	panic("unknown multipart op " + op)
 }
@@ -69,6 +72,9 @@ func TestCoreStorageBackupAdapter_MultipartPassesThrough(t *testing.T) {
 		if err := a.AbortMultipart(ctx, "srv-1/a.tar.gz", "upload-1"); err != nil {
 			t.Errorf("AbortMultipart = %v, want nil", err)
 		}
+		if _, err := a.ListMultipart(ctx, "srv-1/a.tar.gz", "upload-1"); err != nil {
+			t.Errorf("ListMultipart = %v, want nil", err)
+		}
 		for _, op := range multipartOps {
 			if fos.attempts[op] != 1 {
 				t.Errorf("%s reached the object store %d times, want 1", op, fos.attempts[op])
@@ -108,6 +114,7 @@ func TestS3Resilience_MultipartRetryDecisions(t *testing.T) {
 	}{
 		{"UploadPartURL", true},
 		{"AbortMultipart", true},
+		{"ListMultipart", true},
 		{"CreateMultipart", false},
 		{"CompleteMultipart", false},
 	}

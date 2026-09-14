@@ -84,6 +84,10 @@ func (*recordingProvider) AbortMultipart(context.Context, string, string) error 
 	return backupstorage.ErrMultipartUnsupported
 }
 
+func (*recordingProvider) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	return backupstorage.MultipartUsage{}, backupstorage.ErrMultipartUnsupported
+}
+
 // A content object is not owned by one modversion row. MigrateBuild's
 // copyUploadedContent creates a NEW row for the SAME storage key on purpose, so
 // that updating one build cannot rewrite the other's row. The delete used to be

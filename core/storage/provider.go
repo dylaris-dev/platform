@@ -72,11 +72,12 @@ type StorageProvider interface {
 	// The multipart operations, with the contract documented on backup.Storage.
 	// On this interface for the same reason as UploadURL: a wrapped s3 backend
 	// must still answer. A backend without object storage returns
-	// backup.ErrMultipartUnsupported from all four.
+	// backup.ErrMultipartUnsupported from all of them.
 	CreateMultipart(ctx context.Context, key string) (uploadID string, err error)
 	UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error)
 	CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error)
 	AbortMultipart(ctx context.Context, key, uploadID string) error
+	ListMultipart(ctx context.Context, key, uploadID string) (backup.MultipartUsage, error)
 }
 
 // ErrDeleteRoot is returned by DeletePath when the path addresses the scoped
@@ -403,6 +404,10 @@ func (p *LocalProvider) CompleteMultipart(context.Context, string, string, int64
 
 func (p *LocalProvider) AbortMultipart(context.Context, string, string) error {
 	return backup.ErrMultipartUnsupported
+}
+
+func (p *LocalProvider) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, backup.ErrMultipartUnsupported
 }
 
 // ==========================================

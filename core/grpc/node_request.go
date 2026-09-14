@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
+	"time"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -39,6 +41,50 @@ const (
 // start a goroutine, and whatever database work the handler does, per message.
 // A node that hits it gets NodeRequestBusy at once rather than waiting.
 const maxConcurrentNodeRequests = 16
+
+// nodeRequestRate and nodeRequestBurst bound how often one node may START a
+// request, which the per-stream bound above does not: a node that sends a
+// request and waits for its answer before the next never holds more than one
+// slot, and can still make Core list parts and query the database as fast as
+// Core answers. Keyed by node ID on the registry rather than held by the
+// stream, so reconnecting does not refill it.
+//
+// Far above what an upload needs: at 64 MiB parts in batches of four, even a
+// 10 Gbit/s link asks about five times a second.
+const (
+	nodeRequestRate  = 10.0 // requests per second, sustained
+	nodeRequestBurst = 40.0
+)
+
+// requestBucket is one node's token bucket; see nodeRequestRate.
+type requestBucket struct {
+	tokens float64
+	last   time.Time
+}
+
+// allowNodeRequest takes a token from nodeID's bucket, reporting false when
+// there is none.
+func (r *Registry) allowNodeRequest(nodeID int, now time.Time) bool {
+	r.limitMu.Lock()
+	defer r.limitMu.Unlock()
+	if r.requestBuckets == nil {
+		r.requestBuckets = make(map[int]*requestBucket)
+	}
+	b, ok := r.requestBuckets[nodeID]
+	if !ok {
+		b = &requestBucket{tokens: nodeRequestBurst, last: now}
+		r.requestBuckets[nodeID] = b
+	}
+	if elapsed := now.Sub(b.last); elapsed > 0 {
+		b.tokens = math.Min(nodeRequestBurst, b.tokens+elapsed.Seconds()*nodeRequestRate)
+		b.last = now
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
 
 // payloadOneof is the envelope's payload oneof, looked up once.
 var payloadOneof = (&pb.NodeMessage{}).ProtoReflect().Descriptor().Oneofs().ByName("payload")
@@ -85,6 +131,10 @@ func (r *Registry) nodeRequestHandler(kind string) NodeRequestHandler {
 // must not run on it, or every other exchange with that node would stall
 // behind it. slots is the per-stream bound; see maxConcurrentNodeRequests.
 func (r *Registry) serveNodeRequest(ctx context.Context, node Node, conn *NodeConnection, slots chan struct{}, msg *pb.NodeMessage) {
+	if !r.allowNodeRequest(node.ID, time.Now()) {
+		replyNodeRequest(conn, node, msg, nodeRequestError(NodeRequestBusy, "too many requests from this node"))
+		return
+	}
 	kind := payloadKind(msg)
 	h := r.nodeRequestHandler(kind)
 	if h == nil {

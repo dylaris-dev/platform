@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"dylaris-core/storage/backup"
 )
 
 // This file holds the watchdog for the host-path backend and the provider
@@ -495,4 +497,14 @@ func (p *gatedProvider) AbortMultipart(ctx context.Context, key, uploadID string
 	return p.observe(p.gate.Do(ctx, func() error {
 		return p.inner.AbortMultipart(ctx, key, uploadID)
 	}))
+}
+
+func (p *gatedProvider) ListMultipart(ctx context.Context, key, uploadID string) (backup.MultipartUsage, error) {
+	if err := p.blocked(); err != nil {
+		return backup.MultipartUsage{}, err
+	}
+	u, err := doValue(p.gate, ctx, func() (backup.MultipartUsage, error) {
+		return p.inner.ListMultipart(ctx, key, uploadID)
+	}, nil)
+	return u, p.observe(err)
 }

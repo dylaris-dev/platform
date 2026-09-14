@@ -189,6 +189,10 @@ func (*fakeBackupStorage) AbortMultipart(context.Context, string, string) error 
 	return backup.ErrMultipartUnsupported
 }
 
+func (*fakeBackupStorage) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, backup.ErrMultipartUnsupported
+}
+
 // errRawNoSuchKey stands in for the un-normalized S3 "NoSuchKey" that
 // backup.S3Storage.Get returns verbatim.
 var errRawNoSuchKey = errors.New("operation error S3: GetObject, api error NoSuchKey: The specified key does not exist.")

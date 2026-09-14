@@ -253,6 +253,10 @@ func (*NodeLocalStorage) AbortMultipart(context.Context, string, string) error {
 	return ErrMultipartUnsupported
 }
 
+func (*NodeLocalStorage) ListMultipart(context.Context, string, string) (MultipartUsage, error) {
+	return MultipartUsage{}, ErrMultipartUnsupported
+}
+
 // nodeLocalReader adapts the gRPC streaming channel into an io.ReadCloser.
 // Chunks arrive in order; we keep one in-memory buffer and copy out of it
 // as Read is called. The Node sends a final TransferDone with no Filename

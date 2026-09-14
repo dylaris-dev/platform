@@ -10,13 +10,14 @@ import (
 // These pin that the two backup-storage quota queries count an abandoned run's
 // confirmed archive, not only successes. A reaper-confirmed orphan is a failed
 // row with a nonzero size (the node always reports a failed backup as size 0),
-// so the WHERE clause must admit `size_bytes > 0`. sqlmock does not execute SQL,
-// so this verifies the query CARRIES that clause - a revert to success-only
-// stops matching and fails here.
+// so the WHERE clause must admit a failed row's `size_bytes > 0` - and only a
+// failed row's: a running row's size is the node's own progress report.
+// sqlmock does not execute SQL, so this verifies the query CARRIES that clause -
+// a revert to success-only stops matching and fails here.
 
 // orphanCountingClause is the fragment both quota queries must contain. Escaped
 // so sqlmock treats it as a literal, not a regexp.
-var orphanCountingClause = regexp.QuoteMeta("br.status = 'success' OR br.size_bytes > 0")
+var orphanCountingClause = regexp.QuoteMeta("br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0)")
 
 func TestBackupBytesByOwner_CountsConfirmedOrphans(t *testing.T) {
 	db, mock, err := sqlmock.New()

@@ -87,7 +87,7 @@ func TestIntegrationBackupRunUploadIsStoredOnce(t *testing.T) {
 // A fresh install gets both columns from the first boot.
 func TestIntegrationBackupRunUploadColumnsOnAFreshSchema(t *testing.T) {
 	db := freshSchemaDB(t)
-	for _, col := range []string{"upload_id", "part_size"} {
+	for _, col := range []string{"upload_id", "part_size", "uploaded_bytes", "transfer_activity_at"} {
 		var n int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'backup_runs' AND column_name = $1`, col).Scan(&n); err != nil {
 			t.Fatalf("query %s: %v", col, err)

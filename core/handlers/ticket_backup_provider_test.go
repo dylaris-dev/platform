@@ -81,6 +81,10 @@ func (*memProvider) AbortMultipart(context.Context, string, string) error {
 	return backupstorage.ErrMultipartUnsupported
 }
 
+func (*memProvider) ListMultipart(context.Context, string, string) (backupstorage.MultipartUsage, error) {
+	return backupstorage.MultipartUsage{}, backupstorage.ErrMultipartUnsupported
+}
+
 func TestBackupProvider_WriteListReadDelete(t *testing.T) {
 	p := newMemProvider()
 	if err := p.WriteFile(context.Background(), "tickets-20260718-101010.json", strings.NewReader(`{"ok":true}`)); err != nil {

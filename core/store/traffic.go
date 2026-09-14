@@ -69,7 +69,7 @@ func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
 		JOIN servers s ON s.id = bj.server_id
 		JOIN nodes n ON n.id = s.node_id
 		LEFT JOIN backup_storages bst ON bst.id = br.storage_id
-		WHERE n.owner_id IS NOT NULL AND (br.status = 'success' OR br.size_bytes > 0)
+		WHERE n.owner_id IS NOT NULL AND (br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0))
 		  AND bst.owner_id IS NULL
 		GROUP BY n.owner_id`)
 	if err != nil {

@@ -62,6 +62,10 @@ func (*walkFakeProvider) AbortMultipart(context.Context, string, string) error {
 	return backup.ErrMultipartUnsupported
 }
 
+func (*walkFakeProvider) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, backup.ErrMultipartUnsupported
+}
+
 func TestWalkProvider_RecursesEveryLevel(t *testing.T) {
 	// A single ListFiles call returns ONE level only (true of both
 	// LocalProvider and S3Provider), so a non-recursive implementation

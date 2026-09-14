@@ -157,6 +157,10 @@ func (f *fakeObjectStore) AbortMultipart(_ context.Context, key, _ string) error
 	return f.enterMultipart("AbortMultipart", key)
 }
 
+func (f *fakeObjectStore) ListMultipart(_ context.Context, key, _ string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, f.enterMultipart("ListMultipart", key)
+}
+
 func TestS3Provider_WriteGetDelete_AppliesPrefix(t *testing.T) {
 	fos := newFakeObjectStore()
 	p := &S3Provider{os: fos, prefix: "library"}

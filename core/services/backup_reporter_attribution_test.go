@@ -199,6 +199,13 @@ func (f *consumeFakeStore) GetBackupRun(id int) (*models.BackupRun, error) {
 func (f *consumeFakeStore) GetBackupJob(int) (*models.BackupJob, error) {
 	return &models.BackupJob{ID: 55, ServerID: 7, RetentionCount: 3}, nil
 }
+
+// A filesystem target, so a report is written as the node sent it; what a run on
+// object storage is given instead is pinned in backup_report_trust_test.go.
+func (f *consumeFakeStore) GetDefaultBackupStorage() (*models.BackupStorage, error) {
+	return &models.BackupStorage{ID: 1, Provider: "local"}, nil
+}
+
 func (f *consumeFakeStore) UpdateBackupRunStatus(id int, _, _ string, _ int64, _ string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

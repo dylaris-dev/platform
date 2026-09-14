@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"dylaris-core/storage/backup"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 )
@@ -533,6 +535,13 @@ func (p *s3ResilientProvider) AbortMultipart(ctx context.Context, key, uploadID 
 		return struct{}{}, p.inner.AbortMultipart(ctx, key, uploadID)
 	})
 	return err
+}
+
+// ListMultipart is retried: listing changes nothing.
+func (p *s3ResilientProvider) ListMultipart(ctx context.Context, key, uploadID string) (backup.MultipartUsage, error) {
+	return s3Retry(p.res, ctx, func() (backup.MultipartUsage, error) {
+		return p.inner.ListMultipart(ctx, key, uploadID)
+	})
 }
 
 // CreateMultipart waits but is never retried. A transport error does not prove

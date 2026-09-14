@@ -235,3 +235,7 @@ func (*LocalStorage) CompleteMultipart(context.Context, string, string, int64) (
 func (*LocalStorage) AbortMultipart(context.Context, string, string) error {
 	return ErrMultipartUnsupported
 }
+
+func (*LocalStorage) ListMultipart(context.Context, string, string) (MultipartUsage, error) {
+	return MultipartUsage{}, ErrMultipartUnsupported
+}

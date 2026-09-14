@@ -359,26 +359,18 @@ func (s *S3Storage) CompleteMultipart(ctx context.Context, key, uploadID string,
 		completed []types.CompletedPart
 		total     int64
 	)
-	pager := s3.NewListPartsPaginator(s.client, &s3.ListPartsInput{
-		Bucket:   aws.String(s.bucket),
-		Key:      aws.String(s.key(key)),
-		UploadId: aws.String(uploadID),
+	err := s.listParts(ctx, key, uploadID, func(p types.Part) {
+		infos = append(infos, partInfo{Number: aws.ToInt32(p.PartNumber), Size: aws.ToInt64(p.Size)})
+		completed = append(completed, types.CompletedPart{PartNumber: p.PartNumber, ETag: p.ETag})
+		total += aws.ToInt64(p.Size)
 	})
-	for pager.HasMorePages() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("s3 ListParts %s: %w", key, err)
-		}
-		for _, p := range page.Parts {
-			infos = append(infos, partInfo{Number: aws.ToInt32(p.PartNumber), Size: aws.ToInt64(p.Size)})
-			completed = append(completed, types.CompletedPart{PartNumber: p.PartNumber, ETag: p.ETag})
-			total += aws.ToInt64(p.Size)
-		}
+	if err != nil {
+		return 0, err
 	}
 	if err := validateParts(infos, partSize); err != nil {
 		return 0, fmt.Errorf("s3 CompleteMultipart %s: %w", key, err)
 	}
-	_, err := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+	_, err = s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(s.bucket),
 		Key:             aws.String(s.key(key)),
 		UploadId:        aws.String(uploadID),
@@ -388,6 +380,42 @@ func (s *S3Storage) CompleteMultipart(ctx context.Context, key, uploadID string,
 		return 0, fmt.Errorf("s3 CompleteMultipartUpload %s: %w", key, err)
 	}
 	return total, nil
+}
+
+func (s *S3Storage) ListMultipart(ctx context.Context, key, uploadID string) (MultipartUsage, error) {
+	if uploadID == "" {
+		return MultipartUsage{}, fmt.Errorf("s3 ListMultipart %s: empty upload id", key)
+	}
+	var u MultipartUsage
+	err := s.listParts(ctx, key, uploadID, func(p types.Part) {
+		size := aws.ToInt64(p.Size)
+		u.Parts++
+		u.Bytes += size
+		if size > u.Largest {
+			u.Largest = size
+		}
+	})
+	return u, err
+}
+
+// listParts calls each for every part of the upload, in the order S3 lists
+// them (ascending part number).
+func (s *S3Storage) listParts(ctx context.Context, key, uploadID string, each func(types.Part)) error {
+	pager := s3.NewListPartsPaginator(s.client, &s3.ListPartsInput{
+		Bucket:   aws.String(s.bucket),
+		Key:      aws.String(s.key(key)),
+		UploadId: aws.String(uploadID),
+	})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return fmt.Errorf("s3 ListParts %s: %w", key, err)
+		}
+		for _, p := range page.Parts {
+			each(p)
+		}
+	}
+	return nil
 }
 
 func (s *S3Storage) AbortMultipart(ctx context.Context, key, uploadID string) error {

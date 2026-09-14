@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -266,13 +268,26 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 			if !apply {
 				continue
 			}
-			b.store.UpdateBackupRunStatus(result.RunID, result.Status, result.Error, result.SizeBytes, run.StorageKey, completed)
-			if result.Status == "success" {
+			status, message, size := result.Status, result.Error, max(result.SizeBytes, 0)
+			if status != "running" {
+				objectStorage, err := b.runOnObjectStorage(run, job)
+				if err != nil {
+					logErrf("backup-scheduler", "backup result: run %d: cannot tell where its archive went, dropping the report: %v", run.ID, err)
+					continue
+				}
+				if objectStorage {
+					if apply, status, message, size = settleObjectStorageReport(status, message, run); !apply {
+						continue
+					}
+				}
+			}
+			b.store.UpdateBackupRunStatus(result.RunID, status, message, size, run.StorageKey, completed)
+			if status == "success" {
 				b.snapshotInstalls(result.RunID, job)
 				b.enforceRetention(ctx, run.JobID)
 			}
-			if result.Status == "failed" {
-				b.abortRunUpload(ctx, *run, job)
+			if status == "failed" {
+				b.discardRunUpload(ctx, run.ID, job)
 			}
 		}
 	}
@@ -310,6 +325,45 @@ func applyBackupReport(reportStatus, rowStatus string, now time.Time) (apply boo
 		return true, time.Time{}
 	}
 	return true, now
+}
+
+// runOnObjectStorage reports whether a run's archive goes to object storage,
+// where Core owns the upload and the node's report of it is only a claim.
+func (b *BackupScheduler) runOnObjectStorage(run *models.BackupRun, job *models.BackupJob) (bool, error) {
+	if run.UploadID != "" || run.PartSize > 0 {
+		return true, nil
+	}
+	bs, err := ResolveRunStorage(b.store, run, job.StorageID, BackupJobOwner(b.store, job.ServerID))
+	if err != nil {
+		return false, err
+	}
+	return !nodeResolvesProvider(bs.Provider), nil
+}
+
+// settleObjectStorageReport decides what a node's terminal report writes to a
+// run on object storage. The node is not trusted with the outcome: Core
+// completed the upload itself and recorded the size it measured, so
+//
+//   - success is written only for an upload Core completed, with Core's size;
+//     a node reporting a size of one byte for hundreds of GiB is thereby
+//     reporting nothing at all;
+//   - anything else is a failure of size 0, and the caller discards the upload
+//     and whatever it completed - a node that reports failure after Core
+//     completed its upload must not leave an archive no quota counts;
+//   - a run that is no longer running is left alone. Whoever closed it (the
+//     reaper, a refused completion) already discarded its upload, so a late
+//     success would point at an archive that is gone.
+func settleObjectStorageReport(status, message string, run *models.BackupRun) (apply bool, _ string, _ string, size int64) {
+	if run.Status != "running" {
+		return false, "", "", 0
+	}
+	if status != "success" {
+		return true, "failed", message, 0
+	}
+	if run.UploadedBytes == nil {
+		return true, "failed", "The node reported success, but Core never completed its upload.", 0
+	}
+	return true, "success", message, *run.UploadedBytes
 }
 
 // enforceRetention deletes successful runs that exceed the job's retention
@@ -408,10 +462,15 @@ func (b *BackupScheduler) tick(ctx context.Context) {
 // because the cost of being wrong is a scary "failed" against a backup that
 // was actually still working.
 //
-// Being wrong is also recoverable, which is what allows a single fixed number
-// here instead of something adaptive: consumeResults updates by run id without
-// checking the current status, so a result that finally arrives after the
-// reaper gave up overwrites the verdict with the truth, retention included.
+// On object storage the window is measured from the node's latest part-URL
+// request or completion rather than from the start (ListAbandonedBackupRuns),
+// so an archive still uploading over a slow link is not closed while it is
+// visibly moving. Being wrong there is NOT recoverable: the reaper discards the
+// upload and anything it completed, and a result arriving afterwards is
+// ignored (settleObjectStorageReport).
+//
+// On a filesystem target a late result still overwrites the verdict with the
+// truth, retention included: consumeResults applies it to a failed row.
 const backupRunAbandonedAfter = 6 * time.Hour
 
 // How many abandoned runs one tick will close. Each one may open a storage
@@ -431,6 +490,14 @@ const backupReapBatchSize = 25
 //
 // Nothing is deleted here for the same reason: an archive that may be a
 // complete backup is not something a cleanup routine should remove on a guess.
+//
+// A run on object storage is decided by Core's own record instead of a guess.
+// If Core completed the upload, it validated every part and measured the
+// archive, which is everything a node's success report would have added - so a
+// report lost on the way (a Core rolling deploy drops Pub/Sub messages) must not
+// cost a good backup: the run is closed as a success with Core's size. If Core
+// never completed it, its parts and any archive are discarded (discardRunUpload),
+// because they are bytes no quota counts.
 func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) {
 	runs, err := b.store.ListAbandonedBackupRuns(now.Add(-backupRunAbandonedAfter), backupReapBatchSize)
 	if err != nil {
@@ -438,7 +505,20 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 		return
 	}
 	for _, run := range runs {
-		size, detail := b.describeAbandonedRun(ctx, run)
+		if run.UploadID != "" && run.UploadedBytes != nil {
+			b.closeCompletedUnreportedRun(ctx, run, now)
+			continue
+		}
+		var size int64
+		var detail string
+		if run.UploadID != "" {
+			// Core's upload, which nobody will complete now: Core completes only
+			// a running run. Discarded below, together with an archive Core may
+			// have completed for a node that then never reported.
+			detail = fmt.Sprintf("Its upload was never confirmed, so the uploaded parts and any archive at %s are deleted.", run.StorageKey)
+		} else {
+			size, detail = b.describeAbandonedRun(ctx, run)
+		}
 		age := now.Sub(run.StartedAt).Round(time.Minute)
 		message := fmt.Sprintf("No result was received from the node within %s. %s", age, detail)
 		if err := b.store.UpdateBackupRunStatus(run.ID, "failed", message, size, run.StorageKey, now); err != nil {
@@ -446,40 +526,62 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 			continue
 		}
 		log.Printf("backup-scheduler: closed abandoned run %d (job %d, started %s ago): %s", run.ID, run.JobID, age, detail)
-		// Parts of an upload that never completed are not an archive, and
-		// nobody will complete them now: Core completes only a running run.
-		// Aborting frees them instead of leaving them to the bucket's
-		// incomplete-upload expiry. An archive that did complete is untouched;
-		// its upload is already gone.
-		if run.UploadID != "" {
-			if job, err := b.store.GetBackupJob(run.JobID); err == nil && job != nil {
-				b.abortRunUpload(ctx, run, job)
-			}
+		if job, err := b.store.GetBackupJob(run.JobID); err == nil && job != nil {
+			b.discardRunUpload(ctx, run.ID, job)
 		}
 	}
 }
 
-// abortRunUpload aborts the multipart upload of a run that will not complete.
-// Best effort by design: the run's state is already written, a failed abort is
-// logged, and the bucket's incomplete-upload expiry is the backstop.
-func (b *BackupScheduler) abortRunUpload(ctx context.Context, run models.BackupRun, job *models.BackupJob) {
-	if run.UploadID == "" {
+// closeCompletedUnreportedRun closes an object-storage run whose upload Core
+// completed and measured but whose result never arrived, as a success.
+func (b *BackupScheduler) closeCompletedUnreportedRun(ctx context.Context, run models.BackupRun, now time.Time) {
+	message := "The node's result never arrived, but Core had completed and verified the upload, so the backup is kept."
+	if err := b.store.UpdateBackupRunStatus(run.ID, "success", message, *run.UploadedBytes, run.StorageKey, now); err != nil {
+		logErrf("backup-scheduler", "could not close completed run %d: %v", run.ID, err)
 		return
 	}
-	bs, err := ResolveRunStorage(b.store, &run, job.StorageID, BackupJobOwner(b.store, job.ServerID))
+	log.Printf("backup-scheduler: run %d (job %d) closed as success from Core's completed upload of %d bytes; the node's report never arrived", run.ID, run.JobID, *run.UploadedBytes)
+	if job, err := b.store.GetBackupJob(run.JobID); err == nil && job != nil {
+		b.snapshotInstalls(run.ID, job)
+		b.enforceRetention(ctx, run.JobID)
+	}
+}
+
+// discardRunUpload aborts the multipart upload of a run that has just been
+// closed without success, and deletes the archive at the run's own key. Core
+// completes an upload before the node reports, so a node that reports failure
+// afterwards, or never reports, would otherwise leave a complete archive that
+// no successful run counts and retention never prunes.
+//
+// It reads the run again instead of taking the caller's copy. A node's first
+// part-URL request can store an upload id between the caller's read and its
+// write; SetBackupRunUpload refuses once the run is no longer running, so the
+// row read after the write holds the last upload id the run will ever have.
+//
+// Best effort by design: the run's state is already written, a failure is
+// logged, and the bucket's incomplete-upload expiry is the backstop for parts.
+func (b *BackupScheduler) discardRunUpload(ctx context.Context, runID int, job *models.BackupJob) {
+	run, err := b.store.GetBackupRun(runID)
+	if err != nil || run == nil || run.UploadID == "" || run.Status == "success" {
+		return
+	}
+	bs, err := ResolveRunStorage(b.store, run, job.StorageID, BackupJobOwner(b.store, job.ServerID))
 	if err != nil {
-		logErrf("backup-scheduler", "run %d: cannot resolve storage to abort its upload: %v", run.ID, err)
+		logErrf("backup-scheduler", "run %d: cannot resolve storage to discard its upload: %v", run.ID, err)
 		return
 	}
 	actx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	provider, err := backupstorage.Open(actx, bs, b.storageDeps())
 	if err != nil {
-		logErrf("backup-scheduler", "run %d: cannot open storage to abort its upload: %v", run.ID, err)
+		logErrf("backup-scheduler", "run %d: cannot open storage to discard its upload: %v", run.ID, err)
 		return
 	}
 	if err := provider.AbortMultipart(actx, run.StorageKey, run.UploadID); err != nil {
 		logErrf("backup-scheduler", "run %d: abort of the upload for %s failed: %v", run.ID, run.StorageKey, err)
+	}
+	if err := provider.Delete(actx, run.StorageKey); err != nil {
+		logErrf("backup-scheduler", "run %d: delete of %s failed: %v", run.ID, run.StorageKey, err)
 	}
 }
 
@@ -602,7 +704,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return nil
 	}
 
-	storageKey := fmt.Sprintf("backups/%s/job-%d/%s.tar.gz", srv.UUID, job.ID, time.Now().UTC().Format("20060102-150405"))
+	storageKey := NewBackupStorageKey(srv.UUID, job.ID, time.Now())
 	runID, err := b.store.CreateBackupRun(&models.BackupRun{
 		JobID:  job.ID,
 		Status: "running",
@@ -670,6 +772,21 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	}
 
 	return nil
+}
+
+// NewBackupStorageKey names the archive of a new run, for the manual and the
+// scheduled path alike.
+//
+// The random suffix is what keeps two runs of one job started in the same second
+// (a double click, a manual run beside the scheduled one) off one key. A run
+// that fails deletes the object at its key, and node-local storage keeps only
+// the file name, so a shared key let one run destroy or overwrite the other's
+// archive. Nothing parses a key: every reader takes it from the run row, so
+// existing keys without the suffix keep working.
+func NewBackupStorageKey(serverUUID string, jobID int, now time.Time) string {
+	var suffix [4]byte
+	_, _ = rand.Read(suffix[:]) // crypto/rand.Read never fails
+	return fmt.Sprintf("backups/%s/job-%d/%s-%s.tar.gz", serverUUID, jobID, now.UTC().Format("20060102-150405"), hex.EncodeToString(suffix[:]))
 }
 
 // ValidBackupSchedule reports whether a schedule string is one the scheduler can act

@@ -68,7 +68,7 @@ type Storage interface {
 	// node sends through presigned URLs, so the node never holds the bucket
 	// credentials and the single-PUT 5 GiB ceiling of UploadURL does not apply.
 	// Backends without object storage return ErrMultipartUnsupported from all
-	// four. Keys are namespaced exactly as UploadURL namespaces them, so an
+	// of them. Keys are namespaced exactly as UploadURL namespaces them, so an
 	// object completed here is the one Stat, Get, Delete and retention read.
 
 	// CreateMultipart starts a multipart upload for key and returns its upload id.
@@ -87,6 +87,18 @@ type Storage interface {
 	// AbortMultipart aborts the upload. An upload that no longer exists is not
 	// an error.
 	AbortMultipart(ctx context.Context, key, uploadID string) error
+
+	// ListMultipart reports the parts the upload holds so far. A presigned
+	// UploadPart does not sign its Content-Length, so this is the only place an
+	// upload in progress can be measured before it is completed.
+	ListMultipart(ctx context.Context, key, uploadID string) (MultipartUsage, error)
+}
+
+// MultipartUsage is what an unfinished multipart upload holds.
+type MultipartUsage struct {
+	Parts   int   // how many parts are uploaded
+	Bytes   int64 // their total size
+	Largest int64 // the size of the largest part
 }
 
 // ErrMultipartUnsupported is returned by every multipart operation of a

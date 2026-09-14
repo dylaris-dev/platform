@@ -272,14 +272,21 @@ func TestDeleteRun_AbortsTheUploadOfARunningRun(t *testing.T) {
 			if rw.Code != http.StatusOK {
 				t.Fatalf("status = %d (body %s)", rw.Code, rw.Body.String())
 			}
-			aborted := false
+			aborted, objectDeleted := false, false
 			for _, r := range rec.requests() {
 				if strings.HasPrefix(r, "DELETE ") && strings.Contains(r, "uploadId=upload-open") {
 					aborted = true
 				}
+				// The archive a completed upload left behind goes with the run.
+				if strings.HasPrefix(r, "DELETE ") && strings.Contains(r, "backups/k.tar.gz") && !strings.Contains(r, "uploadId=") {
+					objectDeleted = true
+				}
 			}
 			if aborted != tc.wantAbort {
 				t.Errorf("abort sent = %v, want %v (requests %v)", aborted, tc.wantAbort, rec.requests())
+			}
+			if !objectDeleted {
+				t.Errorf("the run's object was not deleted (requests %v)", rec.requests())
 			}
 			if len(fs.deleted) != 1 {
 				t.Errorf("row deleted %d times, want 1", len(fs.deleted))

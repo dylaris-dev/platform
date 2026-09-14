@@ -157,3 +157,7 @@ func (a *CoreStorageBackupAdapter) CompleteMultipart(ctx context.Context, key, u
 func (a *CoreStorageBackupAdapter) AbortMultipart(ctx context.Context, key, uploadID string) error {
 	return a.prov.AbortMultipart(ctx, key, uploadID)
 }
+
+func (a *CoreStorageBackupAdapter) ListMultipart(ctx context.Context, key, uploadID string) (backup.MultipartUsage, error) {
+	return a.prov.ListMultipart(ctx, key, uploadID)
+}

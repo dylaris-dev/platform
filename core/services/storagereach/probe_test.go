@@ -100,6 +100,10 @@ func (*probeFakeProvider) AbortMultipart(context.Context, string, string) error 
 	return backup.ErrMultipartUnsupported
 }
 
+func (*probeFakeProvider) ListMultipart(context.Context, string, string) (backup.MultipartUsage, error) {
+	return backup.MultipartUsage{}, backup.ErrMultipartUnsupported
+}
+
 var _ storage.StorageProvider = (*probeFakeProvider)(nil)
 
 // sharedRoot gives every Core in a test the SAME LocalProvider base path,
