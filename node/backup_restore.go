@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-pkg/queue"
@@ -31,13 +29,10 @@ type BackupRestoreCommand struct {
 	SubServer  string          `json:"subServer"`
 	StorageKey string          `json:"storageKey"`
 	Storage    json.RawMessage `json:"storage"`
-	// PresignedGetURL, when set, is a pre-signed S3/R2 GET URL the node downloads
-	// from instead of using bucket credentials (BYON tenant nodes). Empty = use
-	// Storage creds (operator nodes).
-	PresignedGetURL string `json:"presignedGetUrl"`
 	// Download "presigned" means the storage is object storage: no credentials
 	// and no URL in the command, the node asks Core for the URL. See
-	// backup_transfer.go.
+	// backup_transfer.go. Required for every provider this node does not handle
+	// itself (requireCoreTransfer).
 	Download string `json:"download"`
 }
 
@@ -90,6 +85,12 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	storage := storageInfo{}
 	if err := json.Unmarshal(cmd.Storage, &storage); err != nil {
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "invalid storage payload: "+err.Error())
+		return
+	}
+	// Refused before the server is touched: a command this node cannot carry out
+	// must not stop the server on its way to failing.
+	if err := requireCoreTransfer(storage.Provider, cmd.Download == modeDownloadPresigned); err != nil {
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", err.Error())
 		return
 	}
 
@@ -145,8 +146,6 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	switch {
 	case cmd.Download == modeDownloadPresigned:
 		body, err = openPresignedRestore(ctx, objectTransferClient, restoreURL, coreRestoreURL(cmd.RestoreID))
-	case cmd.PresignedGetURL != "":
-		body, err = downloadPresigned(ctx, http.DefaultClient, cmd.PresignedGetURL)
 	default:
 		body, err = downloadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
 	}
@@ -299,10 +298,11 @@ func carryArchivesAcrossSwap(stashedRoot, restoredRoot string) error {
 	return os.Rename(live, target)
 }
 
-// downloadBackup returns an io.ReadCloser streaming the archive from
-// whichever storage provider holds it. The caller is responsible for
-// closing. For the node-local mode the source is on the same disk we'll
-// extract into, so this is just a plain file open — no network hop.
+// downloadBackup opens the archive on a filesystem provider. The caller is
+// responsible for closing. For the node-local mode the source is on the same
+// disk we'll extract into, so this is just a plain file open. Object storage
+// never reaches here: its archive is fetched from a URL Core signs
+// (openPresignedRestore).
 func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, info storageInfo, key string) (io.ReadCloser, error) {
 	switch info.Provider {
 	case "local", "shared":
@@ -321,27 +321,13 @@ func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, 
 		full := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive)
 		return os.Open(full)
 
-	case "s3":
-		client, bucket, err := buildS3Client(ctx, info.Config)
-		if err != nil {
-			return nil, err
-		}
-		out, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			return nil, err
-		}
-		return out.Body, nil
-
 	default:
 		return nil, fmt.Errorf("unknown provider %s", info.Provider)
 	}
 }
 
-// downloadPresigned streams the archive from a pre-signed GET URL (BYON tenant
-// nodes, which never receive bucket credentials). Caller closes the body.
+// downloadPresigned streams the archive from a pre-signed GET URL. Caller closes
+// the body.
 func downloadPresigned(ctx context.Context, client *http.Client, url string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

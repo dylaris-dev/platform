@@ -383,7 +383,7 @@ can still show what exists.
 | POST | `/api/backup-storages` | session | `settings.write` | - | `BackupHandler.CreateStorage` | adds a backup target. |
 | PATCH | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.UpdateStorage` | edits a backup target; an unknown id is 404. |
 | DELETE | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.DeleteStorage` | removes a backup target. |
-| POST | `/api/backup-storages/{id:[0-9]+}/test` | session | `settings.write` | - | `BackupHandler.TestStorage` | round-trip put/get/delete a tiny object to confirm credentials and bucket access. |
+| POST | `/api/backup-storages/{id:[0-9]+}/test` | session | `settings.write` | - | `BackupHandler.TestStorage` | round-trip put/get/delete a tiny object to confirm credentials and bucket access, then, on object storage, a multipart upload through presigned part URLs, the way nodes upload. |
 
 ## /api/beam
 

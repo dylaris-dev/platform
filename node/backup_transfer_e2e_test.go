@@ -17,22 +17,21 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
@@ -85,19 +84,7 @@ func TestE2EMultipartBackupAndRestoreThroughCoreHandlers(t *testing.T) {
 	ctx := context.Background()
 	bucket := "dylaris-f3-e2e"
 
-	// Bucket setup with the SDK, the one thing the node never does itself.
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", "")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	admin := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint); o.UsePathStyle = true })
-	if _, err := admin.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)}); err != nil {
-		var owned *types.BucketAlreadyOwnedByYou
-		if !errors.As(err, &owned) {
-			t.Fatalf("create bucket: %v", err)
-		}
-	}
+	createTestBucket(t, endpoint, bucket)
 
 	cfg, _ := json.Marshal(map[string]interface{}{
 		"endpoint": endpoint, "bucket": bucket, "region": "us-east-1", "forcePathStyle": true,
@@ -177,4 +164,49 @@ func TestE2EMultipartBackupAndRestoreThroughCoreHandlers(t *testing.T) {
 		t.Fatalf("downloaded %d bytes with a different hash than the %d uploaded", n, size)
 	}
 	t.Logf("uploaded and restored %d bytes in 3 parts through Core-signed URLs, sha256 %x", size, want.Sum(nil))
+}
+
+// createTestBucket creates bucket on a MinIO at endpoint with the default
+// minioadmin credentials, signed by hand with SigV4. The node module no longer
+// depends on the AWS SDK, and a test is no reason to bring it back.
+func createTestBucket(t *testing.T, endpoint, bucket string) {
+	t.Helper()
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const region, secret, emptyHash = "us-east-1", "minioadmin", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	now := time.Now().UTC()
+	amzDate, day := now.Format("20060102T150405Z"), now.Format("20060102")
+	canonical := strings.Join([]string{"PUT", "/" + bucket, "", "host:" + u.Host,
+		"x-amz-content-sha256:" + emptyHash, "x-amz-date:" + amzDate, "",
+		"host;x-amz-content-sha256;x-amz-date", emptyHash}, "\n")
+	scope := day + "/" + region + "/s3/aws4_request"
+	sum := sha256.Sum256([]byte(canonical))
+	toSign := strings.Join([]string{"AWS4-HMAC-SHA256", amzDate, scope, hex.EncodeToString(sum[:])}, "\n")
+	mac := func(key []byte, data string) []byte {
+		h := hmac.New(sha256.New, key)
+		h.Write([]byte(data))
+		return h.Sum(nil)
+	}
+	key := mac(mac(mac(mac([]byte("AWS4"+secret), day), region), "s3"), "aws4_request")
+
+	req, err := http.NewRequest(http.MethodPut, endpoint+"/"+bucket, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("x-amz-date", amzDate)
+	req.Header.Set("x-amz-content-sha256", emptyHash)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=minioadmin/"+scope+
+		", SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature="+hex.EncodeToString(mac(key, toSign)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	// 409 is BucketAlreadyOwnedByYou from an earlier run.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
+		t.Fatalf("create bucket: status %d: %s", resp.StatusCode, body)
+	}
 }

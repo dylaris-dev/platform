@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.14.2
+
+### Features
+- **Backups of your servers have no 5 GiB limit any more.** BYON: update your node to get
+  it; it also stops writing the whole archive to disk before uploading. `node`
+
+### Breaking
+- **BYON: update your node to keep backups working.** An older node's backups and restores
+  now fail with "this node must be updated"; your servers keep running meanwhile. `node`
+
+### Security
+- Nothing.
+
+### Fixes
+- **Large backups on slow connections no longer fail on an expired upload link.** BYON:
+  after updating your node. `node`
+
 ## 2026.09.13
 
 ### Features

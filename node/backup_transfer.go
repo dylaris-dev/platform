@@ -424,3 +424,27 @@ func openPresignedRestore(ctx context.Context, client *http.Client, first string
 	}
 	return nil, lastErr
 }
+
+// nodeHandlesProvider mirrors Core's nodeResolvesProvider
+// (core/services/node_storage_access.go): the filesystem providers this node
+// reads and writes itself. Every other provider is object storage, reached only
+// through URLs Core signs.
+func nodeHandlesProvider(provider string) bool {
+	switch provider {
+	case "local", "shared", "node-local":
+		return true
+	}
+	return false
+}
+
+// requireCoreTransfer refuses a backup or restore on object storage whose
+// command does not route the transfer through Core. That is an older Core,
+// which sent credentials or a URL minted at dispatch, or a malformed command;
+// either way there is nothing this node could use, and saying so names the
+// fix instead of failing later on a missing credential.
+func requireCoreTransfer(provider string, throughCore bool) error {
+	if throughCore || nodeHandlesProvider(provider) {
+		return nil
+	}
+	return fmt.Errorf("backup storage %q is object storage and this command does not let Core sign the transfer: the Core that sent it is older than this node, or the command is invalid", provider)
+}

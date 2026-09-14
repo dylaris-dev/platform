@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.14.2
+
+### Features
+- **Backups on object storage have no 5 GiB limit any more.** The node uploads in parts
+  through URLs Core signs as it goes, and no longer stages the archive to disk. `core` `node`
+- **"Test" on a backup storage now also proves a multipart upload.** It sends two parts
+  from Core, completes, checks the size and deletes the object. `core`
+
+### Breaking
+- **Update core and node together.** A node older than this release cannot back up to or
+  restore from object storage; Core refuses it with a clear message. `core` `node`
+
+### Security
+- **No node receives object-storage credentials any more.** A node on an s3 storage got
+  the access key in its command stream; now every node gets signed URLs only. `core` `node`
+
+### Fixes
+- **A backup upload URL no longer expires while the backup waits or archives.** Its
+  lifetime counted from dispatch; URLs are now signed when each part starts. `core` `node`
+- **A failed backup no longer leaves an unfinished upload, and a refused restore no longer
+  stops the server first.** `core` `node`
+
 ## 2026.09.14
 
 ### Features

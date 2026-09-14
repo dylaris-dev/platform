@@ -226,7 +226,8 @@ func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 }
 
 // TestStorage POST /api/backup-storages/{id}/test — round-trip put/get/delete
-// a tiny object to confirm credentials and bucket access.
+// a tiny object to confirm credentials and bucket access, then, on object
+// storage, a multipart upload through presigned part URLs, the way nodes upload.
 func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
@@ -267,6 +268,16 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Not passed through ClassifyStorageFailure: the round trip above has just
+	// succeeded with the same credentials, so a 403 here is not a wrong key, and
+	// that function would say it is.
+	multipart := probeBackupMultipart(r.Context(), provider, multipartProbeClient)
+	if multipart.applicable && multipart.failedStep != "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false, "stage": services.StageRejected, "message": multipart.message(),
+		})
+		return
+	}
 	// A local/shared path on the container's own filesystem passes every probe
 	// yet loses every archive on the next container recreation. Report that as a
 	// warning riding along with success, never as a plain green result.
@@ -274,7 +285,9 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "warning": warning})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "message": "Connection OK: write, read and delete all succeeded. " + multipart.message(),
+	})
 }
 
 // ───────────── Jobs ─────────────

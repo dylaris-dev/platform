@@ -1587,7 +1587,7 @@
       "path": "/api/backup-storages/{id:[0-9]+}/test",
       "auth": "session",
       "authorization": "settings.write",
-      "description": "round-trip put/get/delete a tiny object to confirm credentials and bucket access.",
+      "description": "round-trip put/get/delete a tiny object to confirm credentials and bucket access, then, on object storage, a multipart upload through presigned part URLs, the way nodes upload.",
       "handler": "BackupHandler.TestStorage",
       "group": "backup-storages",
       "external": false

@@ -466,6 +466,9 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	log.Printf("migrate_pull_r2 %s: transferred into %s", serverUUID, targetDir)
 }
 
+// presignedPutMaxSize is the S3/R2 single-PUT object limit.
+const presignedPutMaxSize = 5 * 1024 * 1024 * 1024 // 5 GiB
+
 // putFilePresigned uploads a local file to a pre-signed PUT URL. The file is
 // already on disk so its size is known up front (no temp re-staging like the
 // backup path). The single-PUT 5 GiB cap (S3/R2 limit) is enforced clearly

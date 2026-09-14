@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,11 +17,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-pkg/queue"
@@ -39,13 +33,10 @@ type BackupRunCommand struct {
 	ExcludePatterns []string        `json:"excludePatterns"`
 	StorageKey      string          `json:"storageKey"`
 	Storage         json.RawMessage `json:"storage"`
-	// PresignedPutURL, when set, is a pre-signed S3/R2 PUT URL the node uploads
-	// to instead of using bucket credentials (BYON tenant nodes never receive
-	// the operator's creds). Empty = use Storage creds (operator nodes).
-	PresignedPutURL string `json:"presignedPutUrl"`
 	// Upload "multipart" means the storage is object storage and Core drives the
 	// upload: Storage carries no credentials and there is no URL, the node asks
-	// Core for part URLs as it goes. See backup_transfer.go.
+	// Core for part URLs as it goes. See backup_transfer.go. Required for every
+	// provider this node does not handle itself (requireCoreTransfer).
 	Upload string `json:"upload"`
 	// Manifest is Core's description of what this archive contains: loader,
 	// versions, installer origin, the installed-mod rows. It is written into the
@@ -115,15 +106,6 @@ type storageInfo struct {
 
 type localCfg struct {
 	BasePath string `json:"basePath"`
-}
-
-type s3Cfg struct {
-	Endpoint        string `json:"endpoint"`
-	Region          string `json:"region"`
-	Bucket          string `json:"bucket"`
-	AccessKeyID     string `json:"accessKeyId"`
-	SecretAccessKey string `json:"secretAccessKey"`
-	ForcePathStyle  bool   `json:"forcePathStyle"`
 }
 
 // isBackupStoreEntry reports whether a walk-relative path is the archive store
@@ -234,6 +216,10 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		reportBackup(ctx, rdb, cmd.RunID, "failed", "invalid storage payload: "+err.Error(), 0)
 		return
 	}
+	if err := requireCoreTransfer(storage.Provider, cmd.Upload == modeUploadMultipart); err != nil {
+		reportBackup(ctx, rdb, cmd.RunID, "failed", err.Error(), 0)
+		return
+	}
 
 	serverRoot := resolveServerRoot(sm, cmd.ServerUUID)
 	rootDir := serverRoot
@@ -290,8 +276,8 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	}()
 
 	// Upload reads from the pipe. Returns once EOF (or pipe error) reached.
-	// A BYON tenant node gets a pre-signed PUT URL and never sees bucket creds;
-	// it stages the archive to a temp file first (PUT needs Content-Length).
+	// Object storage goes through Core's multipart upload; the filesystem
+	// providers are written by this node directly.
 	var upErr error
 	multipartSize := int64(-1)
 	switch {
@@ -305,8 +291,6 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			}
 			return nil
 		})
-	case cmd.PresignedPutURL != "":
-		upErr = uploadBackupPresigned(ctx, cmd.PresignedPutURL, pr)
 	default:
 		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pr)
 	}
@@ -337,9 +321,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		//
 		// Safe to call unconditionally - the key belongs to this run alone, so
 		// there is no other archive it could remove, and deleteBackup is
-		// best-effort on a key that was never written (a BYON node holds no
-		// bucket credentials, so its S3 branch returns without doing anything;
-		// its own staged temp file is already removed by uploadBackupPresigned).
+		// best-effort on a key that was never written.
 		//
 		// Not for a multipart upload: this node has nothing to delete there, and
 		// Core aborts the parts when it reads the failed report.
@@ -476,14 +458,12 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 
 func (c *countingWriter) Total() int64 { return c.n.Load() }
 
-// uploadBackup streams the body to whatever provider the storage config
-// names. For local/shared that's a simple io.Copy to disk; for S3 we use
-// the SDK manager.Uploader which transparently switches to multipart
-// upload when the body exceeds the part-size threshold, so we never have
-// to know the final archive size up front. For node-local the archive
-// lands inside the server's own .dylaris-backups/ folder on this Node's
-// disk — the storage key's tail filename is taken as the archive name and
-// the directory is created on demand.
+// uploadBackup streams the body to a filesystem provider. For local/shared
+// that's a simple io.Copy to disk. For node-local the archive lands inside the
+// server's own .dylaris-backups/ folder on this Node's disk - the storage key's
+// tail filename is taken as the archive name and the directory is created on
+// demand. Object storage never reaches here: it is uploaded through Core
+// (uploadMultipart), and this node holds no credentials for it.
 func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, info storageInfo, key string, r io.Reader) error {
 	switch info.Provider {
 	case "local", "shared":
@@ -538,70 +518,9 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		_, err = io.Copy(f, r)
 		return err
 
-	case "s3":
-		client, bucket, err := buildS3Client(ctx, info.Config)
-		if err != nil {
-			return err
-		}
-		uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-			u.PartSize = 16 * 1024 * 1024 // 16 MiB per part — balances RAM vs. PUT count
-			u.Concurrency = 3             // 3 in-flight parts, ~48 MiB peak window
-		})
-		_, err = uploader.Upload(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-			Body:   r,
-		})
-		return err
-
 	default:
 		return fmt.Errorf("unknown provider %s", info.Provider)
 	}
-}
-
-// presignedPutMaxSize is the S3/R2 single-PUT object limit. Larger BYON backups
-// would need multipart-presigned (a follow-up); we fail clearly rather than
-// silently truncate.
-const presignedPutMaxSize = 5 * 1024 * 1024 * 1024 // 5 GiB
-
-// uploadBackupPresigned uploads the archive to a pre-signed PUT URL. The PUT
-// needs a Content-Length, but the archive is produced as an unbounded stream, so
-// it is staged to a temp file first to learn the size. Used only for BYON tenant
-// nodes (which must never receive bucket credentials).
-func uploadBackupPresigned(ctx context.Context, url string, r io.Reader) error {
-	tmp, err := os.CreateTemp("", "dylaris-backup-*.tar.gz")
-	if err != nil {
-		return fmt.Errorf("temp file: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-
-	size, err := io.Copy(tmp, r)
-	if err != nil {
-		return fmt.Errorf("stage archive: %w", err)
-	}
-	if size > presignedPutMaxSize {
-		return fmt.Errorf("archive %d bytes exceeds the 5 GiB single-upload limit for tenant nodes", size)
-	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, tmp)
-	if err != nil {
-		return err
-	}
-	req.ContentLength = size
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("presigned put: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("presigned put status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return nil
 }
 
 // nodeLocalArchiveName collapses a storage key into its leaf filename so
@@ -627,42 +546,7 @@ func deleteBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 	case "node-local":
 		archive := nodeLocalArchiveName(key)
 		os.Remove(filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive))
-	case "s3":
-		client, bucket, err := buildS3Client(ctx, info.Config)
-		if err != nil {
-			return
-		}
-		client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
 	}
-}
-
-// buildS3Client centralises the SDK setup so the streaming upload and the
-// best-effort delete share the same credential / endpoint resolution.
-func buildS3Client(ctx context.Context, raw json.RawMessage) (*s3.Client, string, error) {
-	var cfg s3Cfg
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return nil, "", fmt.Errorf("invalid s3 cfg: %w", err)
-	}
-	if cfg.Region == "" {
-		cfg.Region = "us-east-1"
-	}
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion(cfg.Region),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, "")),
-	)
-	if err != nil {
-		return nil, "", err
-	}
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		if cfg.Endpoint != "" {
-			o.BaseEndpoint = aws.String(cfg.Endpoint)
-		}
-		o.UsePathStyle = cfg.ForcePathStyle
-	})
-	return client, cfg.Bucket, nil
 }
 
 // matchAny returns true when `path` (slash-separated, relative to the
