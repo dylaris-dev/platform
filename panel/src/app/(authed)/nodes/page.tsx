@@ -769,11 +769,11 @@ function MyNodesInner() {
                 the only moment they exist anywhere the reader can see them - the
                 copy has to say so before they close it.
 
-                This generic file keeps the node-managed Link: it is shown to every
-                owner, including ones whose machine has no bound key yet, and for
-                those a file without that Link would leave the machine with none.
-                The Link-beside-the-node file appears only where the key is known
-                to be bound, or is about to be at enrol. */}
+                This generic file runs no Link and says so: it is shown to every
+                owner, including ones whose machine has no bound key yet, and Core
+                can only answer a bound key with a Link. The Link-beside-the-node
+                file appears only where the key is known to be bound, or is about
+                to be at enrol. */}
             {byonAllowed && entitlementKnown && !revealedNode && !linkFor && (
                 <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
                     {(nodeKeys.length > 0 || tokens.length > 0) && (

@@ -3,7 +3,7 @@
  *
  * The panel used to show four ENV lines plus a bare `docker swarm join`, which
  * is not enough to bring a machine up: the operator still had to know that warp
- * must start before the node, that the node spawns its own link sidecar, that
+ * must start before the node, that the Link is a service of its own, that
  * the node must NOT get a CLUSTER_SECRET, and which addresses are reachable only
  * over the overlay. All of that is encoded here instead.
  *
@@ -14,8 +14,9 @@
  * complete deploy is a copy-paste rather than a scavenger hunt.
  *
  * Lines whose value equals the image default are deliberately absent: LEADER is
- * false unless set, and an external node manages its own Link with the built-in
- * image. Every line left here is one the reader has to be able to justify.
+ * false unless set. The node starts no Link (since 2026.09.12), so a file that
+ * should run one says so itself. Every line left here is one the reader has to
+ * be able to justify.
  */
 
 export type WarpDeployInput = {
@@ -46,12 +47,11 @@ export type WarpDeployInput = {
      */
     platform?: DeployPlatform;
     /**
-     * BYON node kit only: run the Link as a service of this file instead of the
-     * node starting one inside itself. Only for a key Core can answer with a
+     * BYON node kit only: run the Link as a service of this file. The node starts
+     * no Link itself (since 2026.09.12). Only for a key Core can answer with a
      * node's Link - a tenant's node key that is bound to its machine, or will be
      * when the machine enrols with the token minted beside it. Core refuses any
-     * other key, and a node told not to manage its Link then has none at all,
-     * which is why this is opt-in rather than the default.
+     * other key, which is why this is opt-in rather than the default.
      */
     linkBesideNode?: boolean;
 };
@@ -184,8 +184,7 @@ export function nodeIdFromLabel(label: string | undefined): string | undefined {
  * reader), and its /health is unauthenticated.
  *
  * The link is what makes this route-only rather than plain overlay access, and
- * nothing deploys it implicitly: a managed node starts its own link, but here
- * the customer runs it. It fetches its tunnel token and a scoped Redis
+ * nothing deploys it implicitly: the customer runs it. It fetches its tunnel token and a scoped Redis
  * credential from Core at boot, authenticated by the same warp key, so no
  * second secret has to be handed out and nothing secret lands on disk.
  */

@@ -180,8 +180,8 @@ export default function BillingTab() {
                 </SettingsGroup>
 
                 <SettingsGroup
-                    title="Presigned URL lifetime"
-                    description="How long a backup upload or download link stays valid."
+                    title="Migration link lifetime"
+                    description="How long the link for moving a server between networks stays valid. Backups and restores sign short links as they go and do not use these values."
                 >
                     <div className="grid grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
