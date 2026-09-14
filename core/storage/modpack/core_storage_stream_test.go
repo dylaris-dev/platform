@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dylaris-core/storage"
+	"dylaris-core/storage/backup"
 )
 
 // countingProvider records which StorageProvider methods the adapter reaches.
@@ -43,6 +44,22 @@ func (c *countingProvider) DownloadURL(context.Context, string, time.Duration) (
 
 func (c *countingProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*countingProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*countingProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*countingProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backup.ErrMultipartUnsupported
+}
+
+func (*countingProvider) AbortMultipart(context.Context, string, string) error {
+	return backup.ErrMultipartUnsupported
 }
 
 // TestCoreStorageStreamAcquiresOneSlotOnly is a deadlock guard, not a

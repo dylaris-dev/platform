@@ -138,3 +138,22 @@ func (a *CoreStorageBackupAdapter) DownloadURL(ctx context.Context, key string, 
 func (a *CoreStorageBackupAdapter) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	return a.prov.UploadURL(ctx, key, ttl)
 }
+
+// The multipart operations pass straight through as well: the s3 provider
+// underneath answers them, the path provider refuses with
+// backup.ErrMultipartUnsupported.
+func (a *CoreStorageBackupAdapter) CreateMultipart(ctx context.Context, key string) (string, error) {
+	return a.prov.CreateMultipart(ctx, key)
+}
+
+func (a *CoreStorageBackupAdapter) UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error) {
+	return a.prov.UploadPartURL(ctx, key, uploadID, partNumber, ttl)
+}
+
+func (a *CoreStorageBackupAdapter) CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error) {
+	return a.prov.CompleteMultipart(ctx, key, uploadID, partSize)
+}
+
+func (a *CoreStorageBackupAdapter) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	return a.prov.AbortMultipart(ctx, key, uploadID)
+}

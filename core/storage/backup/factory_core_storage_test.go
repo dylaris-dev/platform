@@ -39,6 +39,22 @@ func (f *fakeCoreStorage) UploadURL(context.Context, string, time.Duration) (str
 	return "", ErrUploadURLUnsupported
 }
 
+func (*fakeCoreStorage) CreateMultipart(context.Context, string) (string, error) {
+	return "", ErrMultipartUnsupported
+}
+
+func (*fakeCoreStorage) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", ErrMultipartUnsupported
+}
+
+func (*fakeCoreStorage) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, ErrMultipartUnsupported
+}
+
+func (*fakeCoreStorage) AbortMultipart(context.Context, string, string) error {
+	return ErrMultipartUnsupported
+}
+
 func TestOpen_CoreStorageUsesDepsBuilderAndSubPrefix(t *testing.T) {
 	got := &fakeCoreStorage{}
 	deps := Deps{

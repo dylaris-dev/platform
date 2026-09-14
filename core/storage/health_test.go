@@ -426,6 +426,22 @@ func (f *fakeInner) UploadURL(context.Context, string, time.Duration) (string, e
 	return f.url, f.record("UploadURL")
 }
 
+func (f *fakeInner) CreateMultipart(context.Context, string) (string, error) {
+	return "upload-1", f.record("CreateMultipart")
+}
+
+func (f *fakeInner) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return f.url, f.record("UploadPartURL")
+}
+
+func (f *fakeInner) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 42, f.record("CompleteMultipart")
+}
+
+func (f *fakeInner) AbortMultipart(context.Context, string, string) error {
+	return f.record("AbortMultipart")
+}
+
 // allProviderCalls drives every StorageProvider method through p.
 //
 // Named for the interface rather than a count, because the count is what went
@@ -449,6 +465,10 @@ func allProviderCalls(p StorageProvider) []struct {
 		{"WriteFile", func() error { return p.WriteFile(ctx, "a", strings.NewReader("x")) }},
 		{"DownloadURL", func() error { _, err := p.DownloadURL(ctx, "a", time.Minute); return err }},
 		{"UploadURL", func() error { _, err := p.UploadURL(ctx, "a", time.Minute); return err }},
+		{"CreateMultipart", func() error { _, err := p.CreateMultipart(ctx, "a"); return err }},
+		{"UploadPartURL", func() error { _, err := p.UploadPartURL(ctx, "a", "upload-1", 1, time.Minute); return err }},
+		{"CompleteMultipart", func() error { _, err := p.CompleteMultipart(ctx, "a", "upload-1", 5<<20); return err }},
+		{"AbortMultipart", func() error { return p.AbortMultipart(ctx, "a", "upload-1") }},
 	}
 }
 

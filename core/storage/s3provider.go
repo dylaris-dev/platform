@@ -27,6 +27,10 @@ type objectStore interface {
 	List(ctx context.Context, prefix string) ([]backup.Object, error)
 	DownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 	UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+	CreateMultipart(ctx context.Context, key string) (string, error)
+	UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error)
+	CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error)
+	AbortMultipart(ctx context.Context, key, uploadID string) error
 }
 
 // S3Provider implements StorageProvider against an S3-compatible object store.
@@ -178,6 +182,25 @@ func (p *S3Provider) DownloadURL(ctx context.Context, key string, ttl time.Durat
 // own s3 config has no prefix field at all.
 func (p *S3Provider) UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	return p.os.UploadURL(ctx, p.key(key), ttl)
+}
+
+// The multipart operations go through p.key for the reason UploadURL does: the
+// object a node assembles part by part must land on the namespaced key that
+// GetFile, ListFiles and DeletePath read.
+func (p *S3Provider) CreateMultipart(ctx context.Context, key string) (string, error) {
+	return p.os.CreateMultipart(ctx, p.key(key))
+}
+
+func (p *S3Provider) UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error) {
+	return p.os.UploadPartURL(ctx, p.key(key), uploadID, partNumber, ttl)
+}
+
+func (p *S3Provider) CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error) {
+	return p.os.CompleteMultipart(ctx, p.key(key), uploadID, partSize)
+}
+
+func (p *S3Provider) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	return p.os.AbortMultipart(ctx, p.key(key), uploadID)
 }
 
 // ListFiles synthesizes one directory level from the flat key space: files are

@@ -17,6 +17,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/storage"
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -62,6 +63,22 @@ func (p *memProvider) DownloadURL(context.Context, string, time.Duration) (strin
 
 func (p *memProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*memProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*memProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*memProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backupstorage.ErrMultipartUnsupported
+}
+
+func (*memProvider) AbortMultipart(context.Context, string, string) error {
+	return backupstorage.ErrMultipartUnsupported
 }
 
 func TestBackupProvider_WriteListReadDelete(t *testing.T) {

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -261,4 +263,160 @@ func (s *S3Storage) UploadURL(ctx context.Context, key string, ttl time.Duration
 		return "", err
 	}
 	return out.URL, nil
+}
+
+// Part-size limits every supported backend accepts. R2 is the strictest: 5 MiB
+// to 5 GiB per part, and all parts but the last of EQUAL size. AWS S3 does not
+// require equal parts, but choosing a fixed size is what works everywhere.
+const (
+	MultipartMinPartSize int64 = 5 << 20
+	MultipartMaxPartSize int64 = 5 << 30
+	multipartMaxParts          = 10000
+)
+
+func (s *S3Storage) CreateMultipart(ctx context.Context, key string) (string, error) {
+	out, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(key)),
+	})
+	if err != nil {
+		return "", err
+	}
+	id := aws.ToString(out.UploadId)
+	if id == "" {
+		return "", fmt.Errorf("s3 CreateMultipartUpload %s: backend returned no upload id", key)
+	}
+	return id, nil
+}
+
+// UploadPartURL presigns one part the same way UploadURL presigns a whole
+// object: only bucket, key, part number and upload id are signed, so a node can
+// PUT the part with nothing but a Content-Length.
+func (s *S3Storage) UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error) {
+	if partNumber < 1 || partNumber > multipartMaxParts {
+		return "", fmt.Errorf("s3 UploadPartURL %s: part number %d outside 1..%d", key, partNumber, multipartMaxParts)
+	}
+	if uploadID == "" {
+		return "", fmt.Errorf("s3 UploadPartURL %s: empty upload id", key)
+	}
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	presigner := s3.NewPresignClient(s.client)
+	out, err := presigner.PresignUploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(s.bucket),
+		Key:        aws.String(s.key(key)),
+		PartNumber: aws.Int32(partNumber),
+		UploadId:   aws.String(uploadID),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+// partInfo is what CompleteMultipart needs to know about one uploaded part.
+type partInfo struct {
+	Number int32
+	Size   int64
+}
+
+// validateParts checks a part list, in the order ListParts returned it (S3
+// lists ascending), against the fixed part size of the upload.
+//
+// It runs before CompleteMultipartUpload on purpose. R2 rejects unequal parts
+// only at Complete, and a part that is LARGER than agreed means the uploader
+// did not cut the archive the way Core told it to, so neither is left for the
+// backend to discover.
+func validateParts(parts []partInfo, partSize int64) error {
+	if partSize < MultipartMinPartSize || partSize > MultipartMaxPartSize {
+		return fmt.Errorf("part size %d outside %d..%d bytes", partSize, MultipartMinPartSize, MultipartMaxPartSize)
+	}
+	if len(parts) == 0 {
+		return errors.New("no parts uploaded")
+	}
+	for i, p := range parts {
+		if p.Number != int32(i+1) {
+			return fmt.Errorf("part %d found where part %d was expected: parts must be numbered 1..N without gaps", p.Number, i+1)
+		}
+		last := i == len(parts)-1
+		if !last && p.Size != partSize {
+			return fmt.Errorf("part %d is %d bytes, want exactly %d: every part but the last must be the agreed size", p.Number, p.Size, partSize)
+		}
+		if last && p.Size > partSize {
+			return fmt.Errorf("last part %d is %d bytes, larger than the agreed part size %d", p.Number, p.Size, partSize)
+		}
+	}
+	return nil
+}
+
+func (s *S3Storage) CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error) {
+	if uploadID == "" {
+		return 0, fmt.Errorf("s3 CompleteMultipart %s: empty upload id", key)
+	}
+	var (
+		infos     []partInfo
+		completed []types.CompletedPart
+		total     int64
+	)
+	pager := s3.NewListPartsPaginator(s.client, &s3.ListPartsInput{
+		Bucket:   aws.String(s.bucket),
+		Key:      aws.String(s.key(key)),
+		UploadId: aws.String(uploadID),
+	})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("s3 ListParts %s: %w", key, err)
+		}
+		for _, p := range page.Parts {
+			infos = append(infos, partInfo{Number: aws.ToInt32(p.PartNumber), Size: aws.ToInt64(p.Size)})
+			completed = append(completed, types.CompletedPart{PartNumber: p.PartNumber, ETag: p.ETag})
+			total += aws.ToInt64(p.Size)
+		}
+	}
+	if err := validateParts(infos, partSize); err != nil {
+		return 0, fmt.Errorf("s3 CompleteMultipart %s: %w", key, err)
+	}
+	_, err := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(s.bucket),
+		Key:             aws.String(s.key(key)),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("s3 CompleteMultipartUpload %s: %w", key, err)
+	}
+	return total, nil
+}
+
+func (s *S3Storage) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	if uploadID == "" {
+		return fmt.Errorf("s3 AbortMultipart %s: empty upload id", key)
+	}
+	_, err := s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(s.bucket),
+		Key:      aws.String(s.key(key)),
+		UploadId: aws.String(uploadID),
+	})
+	if err != nil && !isNoSuchUpload(err) {
+		return err
+	}
+	return nil
+}
+
+// isNoSuchUpload reports whether err says the upload is already gone (aborted,
+// completed, or expired by the bucket's lifecycle), which for an abort is the
+// outcome that was asked for.
+func isNoSuchUpload(err error) bool {
+	var nsu *types.NoSuchUpload
+	if errors.As(err, &nsu) {
+		return true
+	}
+	var ae smithy.APIError
+	if errors.As(err, &ae) && ae.ErrorCode() == "NoSuchUpload" {
+		return true
+	}
+	var re *awshttp.ResponseError
+	return errors.As(err, &re) && re.HTTPStatusCode() == http.StatusNotFound
 }

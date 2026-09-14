@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/storage/modpack"
 )
 
@@ -57,6 +58,22 @@ func (f *serveFakeProvider) DownloadURL(context.Context, string, time.Duration) 
 
 func (f *serveFakeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*serveFakeProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*serveFakeProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*serveFakeProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backupstorage.ErrMultipartUnsupported
+}
+
+func (*serveFakeProvider) AbortMultipart(context.Context, string, string) error {
+	return backupstorage.ErrMultipartUnsupported
 }
 
 func (f *serveFakeProvider) Put(context.Context, string, []byte) error { return nil }

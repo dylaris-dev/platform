@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"dylaris-core/storage/backup"
 )
 
 // walkFakeProvider serves a fixed one-level-per-call directory listing so the
@@ -42,6 +44,22 @@ func (f *walkFakeProvider) DownloadURL(context.Context, string, time.Duration) (
 
 func (f *walkFakeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*walkFakeProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*walkFakeProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*walkFakeProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backup.ErrMultipartUnsupported
+}
+
+func (*walkFakeProvider) AbortMultipart(context.Context, string, string) error {
+	return backup.ErrMultipartUnsupported
 }
 
 func TestWalkProvider_RecursesEveryLevel(t *testing.T) {

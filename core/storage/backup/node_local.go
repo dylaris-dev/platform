@@ -237,6 +237,22 @@ func (n *NodeLocalStorage) UploadURL(_ context.Context, _ string, _ time.Duratio
 	return "", nil
 }
 
+func (*NodeLocalStorage) CreateMultipart(context.Context, string) (string, error) {
+	return "", ErrMultipartUnsupported
+}
+
+func (*NodeLocalStorage) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", ErrMultipartUnsupported
+}
+
+func (*NodeLocalStorage) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, ErrMultipartUnsupported
+}
+
+func (*NodeLocalStorage) AbortMultipart(context.Context, string, string) error {
+	return ErrMultipartUnsupported
+}
+
 // nodeLocalReader adapts the gRPC streaming channel into an io.ReadCloser.
 // Chunks arrive in order; we keep one in-memory buffer and copy out of it
 // as Read is called. The Node sends a final TransferDone with no Filename

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dylaris-core/storage"
+	"dylaris-core/storage/backup"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -58,6 +59,22 @@ func (f *failingS3Inner) DownloadURL(context.Context, string, time.Duration) (st
 
 func (f *failingS3Inner) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*failingS3Inner) CreateMultipart(context.Context, string) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*failingS3Inner) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*failingS3Inner) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backup.ErrMultipartUnsupported
+}
+
+func (*failingS3Inner) AbortMultipart(context.Context, string, string) error {
+	return backup.ErrMultipartUnsupported
 }
 
 // storageEvent is the published payload, decoded.

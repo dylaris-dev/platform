@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/storage"
+	"dylaris-core/storage/backup"
 )
 
 // probeFakeProvider wraps a real LocalProvider rooted at a temp dir so the
@@ -81,6 +82,22 @@ func (p *probeFakeProvider) DownloadURL(ctx context.Context, key string, ttl tim
 
 func (p *probeFakeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*probeFakeProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*probeFakeProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*probeFakeProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backup.ErrMultipartUnsupported
+}
+
+func (*probeFakeProvider) AbortMultipart(context.Context, string, string) error {
+	return backup.ErrMultipartUnsupported
 }
 
 var _ storage.StorageProvider = (*probeFakeProvider)(nil)

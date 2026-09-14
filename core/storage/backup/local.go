@@ -219,3 +219,19 @@ func (l *LocalStorage) UploadURL(_ context.Context, _ string, _ time.Duration) (
 	// LocalStorage has no pre-signed URL.
 	return "", nil
 }
+
+func (*LocalStorage) CreateMultipart(context.Context, string) (string, error) {
+	return "", ErrMultipartUnsupported
+}
+
+func (*LocalStorage) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", ErrMultipartUnsupported
+}
+
+func (*LocalStorage) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, ErrMultipartUnsupported
+}
+
+func (*LocalStorage) AbortMultipart(context.Context, string, string) error {
+	return ErrMultipartUnsupported
+}

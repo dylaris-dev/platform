@@ -518,6 +518,61 @@ func (p *s3ResilientProvider) UploadURL(ctx context.Context, key string, ttl tim
 	})
 }
 
+// UploadPartURL is retried for the same reason as UploadURL: presigning a part
+// is a local signature over key, upload id and part number.
+func (p *s3ResilientProvider) UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error) {
+	return s3Retry(p.res, ctx, func() (string, error) {
+		return p.inner.UploadPartURL(ctx, key, uploadID, partNumber, ttl)
+	})
+}
+
+// AbortMultipart is retried: aborting twice ends in the same state as aborting
+// once, because an upload that is already gone is reported as success.
+func (p *s3ResilientProvider) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	_, err := s3Retry(p.res, ctx, func() (struct{}, error) {
+		return struct{}{}, p.inner.AbortMultipart(ctx, key, uploadID)
+	})
+	return err
+}
+
+// CreateMultipart waits but is never retried. A transport error does not prove
+// the backend did not start the upload, so a second attempt could open another
+// one that nobody holds the id of. It would only be cleaned up by the bucket's
+// incomplete-upload expiry, and the caller cannot tell it happened.
+func (p *s3ResilientProvider) CreateMultipart(ctx context.Context, key string) (string, error) {
+	return s3WaitThenOnce(p.res, ctx, func() (string, error) {
+		return p.inner.CreateMultipart(ctx, key)
+	})
+}
+
+// CompleteMultipart waits but is never retried. If the first attempt completed
+// the upload and only the reply was lost, a retry lists the parts of an upload
+// that no longer exists and fails with an error that reads like the upload was
+// lost, for an object that is in fact complete. The caller has to decide that
+// case by looking at the object, not this layer by repeating the call.
+func (p *s3ResilientProvider) CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error) {
+	return s3WaitThenOnce(p.res, ctx, func() (int64, error) {
+		return p.inner.CompleteMultipart(ctx, key, uploadID, partSize)
+	})
+}
+
+// s3WaitThenOnce is WriteFile's shape for an operation that returns a value:
+// wait for a reconnecting backend before starting, run exactly once, and record
+// the outcome without retrying it.
+func s3WaitThenOnce[T any](r *S3Resilience, ctx context.Context, fn func() (T, error)) (T, error) {
+	if err := r.waitUntilOK(ctx); err != nil {
+		var zero T
+		return zero, err
+	}
+	val, err := fn()
+	if err != nil {
+		r.report(err)
+		return val, err
+	}
+	r.recovered()
+	return val, nil
+}
+
 // WriteFile waits for a reconnecting backend to come back BEFORE it starts, and
 // is then run exactly once. It is never retried, and that is a correctness
 // requirement rather than a tuning choice.

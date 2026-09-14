@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"dylaris-core/storage/backup"
 )
 
 // FileInfo represents a file or directory in the storage
@@ -66,6 +68,15 @@ type StorageProvider interface {
 	// well - the same silent-wrapper failure this file's own history is full
 	// of. On the interface, the compiler asks every wrapper the question.
 	UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+
+	// The multipart operations, with the contract documented on backup.Storage.
+	// On this interface for the same reason as UploadURL: a wrapped s3 backend
+	// must still answer. A backend without object storage returns
+	// backup.ErrMultipartUnsupported from all four.
+	CreateMultipart(ctx context.Context, key string) (uploadID string, err error)
+	UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error)
+	CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error)
+	AbortMultipart(ctx context.Context, key, uploadID string) error
 }
 
 // ErrDeleteRoot is returned by DeletePath when the path addresses the scoped
@@ -375,6 +386,23 @@ func (p *LocalProvider) UploadURL(ctx context.Context, key string, ttl time.Dura
 		return "", err
 	}
 	return "", nil
+}
+
+// A filesystem has no multipart upload a node could send parts to.
+func (p *LocalProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (p *LocalProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (p *LocalProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backup.ErrMultipartUnsupported
+}
+
+func (p *LocalProvider) AbortMultipart(context.Context, string, string) error {
+	return backup.ErrMultipartUnsupported
 }
 
 // ==========================================

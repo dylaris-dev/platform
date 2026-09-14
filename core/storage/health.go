@@ -455,3 +455,44 @@ func (p *gatedProvider) UploadURL(ctx context.Context, key string, ttl time.Dura
 	}, nil)
 	return url, p.observe(err)
 }
+
+// The multipart operations follow UploadURL: fail fast behind an unhealthy
+// gate, run under the concurrency bound, report the outcome.
+func (p *gatedProvider) CreateMultipart(ctx context.Context, key string) (string, error) {
+	if err := p.blocked(); err != nil {
+		return "", err
+	}
+	id, err := doValue(p.gate, ctx, func() (string, error) {
+		return p.inner.CreateMultipart(ctx, key)
+	}, nil)
+	return id, p.observe(err)
+}
+
+func (p *gatedProvider) UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error) {
+	if err := p.blocked(); err != nil {
+		return "", err
+	}
+	url, err := doValue(p.gate, ctx, func() (string, error) {
+		return p.inner.UploadPartURL(ctx, key, uploadID, partNumber, ttl)
+	}, nil)
+	return url, p.observe(err)
+}
+
+func (p *gatedProvider) CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error) {
+	if err := p.blocked(); err != nil {
+		return 0, err
+	}
+	size, err := doValue(p.gate, ctx, func() (int64, error) {
+		return p.inner.CompleteMultipart(ctx, key, uploadID, partSize)
+	}, nil)
+	return size, p.observe(err)
+}
+
+func (p *gatedProvider) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	if err := p.blocked(); err != nil {
+		return err
+	}
+	return p.observe(p.gate.Do(ctx, func() error {
+		return p.inner.AbortMultipart(ctx, key, uploadID)
+	}))
+}

@@ -35,6 +35,10 @@ type fakeObjectStore struct {
 	// attempts counts entries per operation name, so a test can assert that a
 	// call was made exactly once rather than merely that it returned an error.
 	attempts map[string]int
+
+	// multipartKeys records the object key each multipart operation last
+	// received, so a test can see the prefix a wrapper applied.
+	multipartKeys map[string]string
 }
 
 func newFakeObjectStore() *fakeObjectStore {
@@ -118,6 +122,39 @@ func (f *fakeObjectStore) UploadURL(_ context.Context, key string, _ time.Durati
 		return "", err
 	}
 	return "https://signed-put.example/" + key, nil
+}
+
+func (f *fakeObjectStore) enterMultipart(op, key string) error {
+	if f.multipartKeys == nil {
+		f.multipartKeys = map[string]string{}
+	}
+	f.multipartKeys[op] = key
+	return f.enter(op)
+}
+
+func (f *fakeObjectStore) CreateMultipart(_ context.Context, key string) (string, error) {
+	if err := f.enterMultipart("CreateMultipart", key); err != nil {
+		return "", err
+	}
+	return "upload-1", nil
+}
+
+func (f *fakeObjectStore) UploadPartURL(_ context.Context, key, uploadID string, partNumber int32, _ time.Duration) (string, error) {
+	if err := f.enterMultipart("UploadPartURL", key); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("https://signed-part.example/%s?partNumber=%d&uploadId=%s", key, partNumber, uploadID), nil
+}
+
+func (f *fakeObjectStore) CompleteMultipart(_ context.Context, key, _ string, _ int64) (int64, error) {
+	if err := f.enterMultipart("CompleteMultipart", key); err != nil {
+		return 0, err
+	}
+	return 42, nil
+}
+
+func (f *fakeObjectStore) AbortMultipart(_ context.Context, key, _ string) error {
+	return f.enterMultipart("AbortMultipart", key)
 }
 
 func TestS3Provider_WriteGetDelete_AppliesPrefix(t *testing.T) {

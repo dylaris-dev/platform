@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 )
 
@@ -65,6 +66,22 @@ func (p *recordingProvider) DownloadURL(context.Context, string, time.Duration) 
 
 func (p *recordingProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*recordingProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*recordingProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*recordingProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backupstorage.ErrMultipartUnsupported
+}
+
+func (*recordingProvider) AbortMultipart(context.Context, string, string) error {
+	return backupstorage.ErrMultipartUnsupported
 }
 
 // A content object is not owned by one modversion row. MigrateBuild's

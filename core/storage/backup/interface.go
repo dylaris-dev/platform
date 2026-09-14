@@ -17,8 +17,8 @@ type Object struct {
 // Storage is the interface that any backup backend must satisfy.
 // Implementations are kept narrow — the worker streams a single tar.gz per
 // run, the panel/handler streams it back out, and the cron job lists keys
-// for retention. Anything more elaborate (multipart uploads, checksums,
-// encryption) belongs in v2.
+// for retention. Multipart exists only so Core can drive a node's upload
+// through presigned part URLs; checksums and encryption are not here.
 type Storage interface {
 	// Provider returns the textual provider name, e.g. "local" or "s3".
 	Provider() string
@@ -63,7 +63,36 @@ type Storage interface {
 	// backup WITHOUT ever receiving the bucket credentials. Non-S3 providers
 	// return ("", nil).
 	UploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+
+	// The four multipart operations below let Core own an upload whose parts a
+	// node sends through presigned URLs, so the node never holds the bucket
+	// credentials and the single-PUT 5 GiB ceiling of UploadURL does not apply.
+	// Backends without object storage return ErrMultipartUnsupported from all
+	// four. Keys are namespaced exactly as UploadURL namespaces them, so an
+	// object completed here is the one Stat, Get, Delete and retention read.
+
+	// CreateMultipart starts a multipart upload for key and returns its upload id.
+	CreateMultipart(ctx context.Context, key string) (uploadID string, err error)
+
+	// UploadPartURL presigns one UploadPart (partNumber 1..10000) of that upload.
+	UploadPartURL(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error)
+
+	// CompleteMultipart lists the uploaded parts itself and never trusts ETags
+	// reported by the uploader. It refuses unless the parts are numbered 1..N
+	// without gaps and every part but the last is exactly partSize bytes (the
+	// last may be smaller, never larger), then completes the upload and returns
+	// the object's total size.
+	CompleteMultipart(ctx context.Context, key, uploadID string, partSize int64) (int64, error)
+
+	// AbortMultipart aborts the upload. An upload that no longer exists is not
+	// an error.
+	AbortMultipart(ctx context.Context, key, uploadID string) error
 }
+
+// ErrMultipartUnsupported is returned by every multipart operation of a
+// backend that has no object storage behind it (a filesystem path, a node's
+// local disk).
+var ErrMultipartUnsupported = errors.New("backup storage: multipart upload not supported for this backend")
 
 // ErrUploadURLUnsupported is returned by backends that cannot presign an
 // upload. Callers MUST already have gated on Provider()=="s3" before asking:

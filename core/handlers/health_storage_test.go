@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/storage"
+	backupstorage "dylaris-core/storage/backup"
 )
 
 // These cover core storage's appearance in the two health endpoints, and the
@@ -44,6 +45,22 @@ func (p *probeFailProvider) DownloadURL(context.Context, string, time.Duration) 
 
 func (p *probeFailProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*probeFailProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*probeFailProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*probeFailProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backupstorage.ErrMultipartUnsupported
+}
+
+func (*probeFailProvider) AbortMultipart(context.Context, string, string) error {
+	return backupstorage.ErrMultipartUnsupported
 }
 
 // reconnectingS3 returns an S3Resilience already in the reconnecting state,

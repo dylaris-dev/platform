@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"dylaris-core/storage/backup"
 )
 
 // blockWindow is how long a test waits before concluding that something which
@@ -92,6 +94,22 @@ func (b *blockingInner) DownloadURL(context.Context, string, time.Duration) (str
 
 func (b *blockingInner) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*blockingInner) CreateMultipart(context.Context, string) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*blockingInner) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backup.ErrMultipartUnsupported
+}
+
+func (*blockingInner) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backup.ErrMultipartUnsupported
+}
+
+func (*blockingInner) AbortMultipart(context.Context, string, string) error {
+	return backup.ErrMultipartUnsupported
 }
 
 // recordingCloser proves a ReadCloser was closed, which for the abandoned path

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dylaris-core/storage"
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 )
 
@@ -608,6 +609,22 @@ func (f *fakeProbeProvider) DownloadURL(context.Context, string, time.Duration) 
 
 func (f *fakeProbeProvider) UploadURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+func (*fakeProbeProvider) CreateMultipart(context.Context, string) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*fakeProbeProvider) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*fakeProbeProvider) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backupstorage.ErrMultipartUnsupported
+}
+
+func (*fakeProbeProvider) AbortMultipart(context.Context, string, string) error {
+	return backupstorage.ErrMultipartUnsupported
 }
 func (f *fakeProbeProvider) WriteFile(context.Context, string, io.Reader) error {
 	return f.writeErr

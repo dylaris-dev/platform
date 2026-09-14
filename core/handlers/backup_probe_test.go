@@ -77,6 +77,22 @@ func (f *probeFakeStorage) UploadURL(context.Context, string, time.Duration) (st
 	return "", nil
 }
 
+func (*probeFakeStorage) CreateMultipart(context.Context, string) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*probeFakeStorage) UploadPartURL(context.Context, string, string, int32, time.Duration) (string, error) {
+	return "", backupstorage.ErrMultipartUnsupported
+}
+
+func (*probeFakeStorage) CompleteMultipart(context.Context, string, string, int64) (int64, error) {
+	return 0, backupstorage.ErrMultipartUnsupported
+}
+
+func (*probeFakeStorage) AbortMultipart(context.Context, string, string) error {
+	return backupstorage.ErrMultipartUnsupported
+}
+
 func TestProbeBackupStorage_HappyPathDeletesProbe(t *testing.T) {
 	f := &probeFakeStorage{}
 	ok, msg := probeBackupStorage(context.Background(), f)
