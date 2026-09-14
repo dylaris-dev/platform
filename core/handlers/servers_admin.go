@@ -72,6 +72,15 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Handing a server to a new owner hands them the resolver's owner
+	// short-circuit, so on a customer's machine this was a staff member taking
+	// the customer's world for themselves.
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil || srv == nil || foreignToCaller(h.state, r, srv.NodeID) {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
+
 	if _, err := h.state.Store.GetUserByID(req.UserID); err != nil {
 		sendJSONError(w, "User not found", 404)
 		return

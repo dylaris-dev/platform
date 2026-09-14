@@ -271,6 +271,7 @@ func main() {
 	// Demo showcase read access flows through the resolver so the RequireCap
 	// chokepoint covers console/stats/overview reads on demo servers.
 	appState.Authz.SetDemoRead(appState.IsDemoServerID)
+	appState.Authz.SetForeignNode(appState.NodeOwnedByOther)
 
 	// Precompute the cluster-wide gRPC-TLS fingerprint once so handlers can hand it
 	// to BYON operators without re-deriving. Non-secret; safe to expose.

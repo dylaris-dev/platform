@@ -74,8 +74,9 @@ func (h *ServerHandler) CancelMigration(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Invalid server ID", 400)
 		return
 	}
+	// A customer's own transfer is theirs to cancel, not staff's.
 	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
+	if err != nil || srv == nil || foreignToCaller(h.state, r, srv.NodeID) {
 		sendJSONError(w, "Server not found", 404)
 		return
 	}

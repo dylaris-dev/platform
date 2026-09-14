@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Staff tools no longer reach the servers on your own machine.** Opening or changing them,
+  or rolling your node keys, now needs your invite; nothing to update on your side.
+
+### Fixes
+- **Only you can transfer your servers.** People you invite with settings rights could move
+  them to another machine; nothing to update on your side.
+
 ## 2026.09.12.3
 
 ### Features

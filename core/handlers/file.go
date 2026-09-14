@@ -173,9 +173,9 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, req
 	username, _ := r.Context().Value("username").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
-	if isAdmin {
-		return uuid, false, nil
-	}
+	// No admin short-circuit here: the resolver already opens everything to an
+	// admin except a server on somebody else's machine, and this route answering
+	// before it asked was how an admin read and wrote a customer's files anyway.
 	srv, err := h.state.Store.GetServerByUUID(uuid)
 	if err != nil {
 		return "", false, fmt.Errorf("server not found")

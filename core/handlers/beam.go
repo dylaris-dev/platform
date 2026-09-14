@@ -195,8 +195,9 @@ func NewBeamHandler(state *AppState, jwtSecret, clusterSecret string) *BeamHandl
 // files.read + files.write.
 const beamAccessCap = "sftp.access"
 
-// canBeam resolves beamAccessCap for the caller on one server. Admins pass;
-// owners pass through the resolver's own owner short-circuit.
+// canBeam resolves beamAccessCap for the caller on one server. Admins and owners
+// pass through the resolver's own short-circuits; an admin used to pass before
+// it, which put a customer's machine inside every admin's beam ticket.
 //
 // Fail-closed on a missing resolver: this is the only gate between a panel
 // member and unrestricted write access to a server's files.
@@ -207,9 +208,6 @@ const beamAccessCap = "sftp.access"
 // capability in the ticket to check" - about the field this now fills in.
 func (h *BeamHandler) canBeam(r *http.Request, serverID int) (bool, fileperms.Perms) {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	if isAdmin {
-		return true, fileperms.Full()
-	}
 	if h.state == nil || h.state.Authz == nil {
 		return false, fileperms.Perms{}
 	}

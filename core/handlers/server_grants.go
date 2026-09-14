@@ -114,8 +114,12 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Owner/admin bypass the delegation cap. Account-wide is always the acting
-	// user's own realm, so they are the owner by construction.
-	isOwnerOrAdmin := idn.IsAdmin || req.ServerID == nil || (srv != nil && srv.OwnerID == idn.UserID)
+	// user's own realm, so they are the owner by construction. An admin does not
+	// bypass it on a customer's machine: roles.write is an OWNER capability, so
+	// the route resolved them as admin, and the grant is written in the
+	// customer's name - an admin could invite themselves or anyone else in.
+	adminHere := idn.IsAdmin && (srv == nil || !h.state.NodeOwnedByOther(srv.NodeID, idn.UserID))
+	isOwnerOrAdmin := adminHere || req.ServerID == nil || (srv != nil && srv.OwnerID == idn.UserID)
 	if req.ServerID != nil && !isOwnerOrAdmin {
 		res, rerr := h.state.Authz.Resolve(idn, *req.ServerID)
 		if rerr != nil {
@@ -223,7 +227,9 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		ownerUserID = srv.OwnerID
-		if !(idn.IsAdmin || srv.OwnerID == idn.UserID) {
+		// The customer's invitations on their own machine are theirs to remove.
+		adminHere := idn.IsAdmin && !h.state.NodeOwnedByOther(srv.NodeID, idn.UserID)
+		if !(adminHere || srv.OwnerID == idn.UserID) {
 			res, rerr := h.state.Authz.Resolve(idn, *req.ServerID)
 			if rerr != nil {
 				sendJSONError(w, "Authorization check failed", 500)

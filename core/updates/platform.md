@@ -14,15 +14,26 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Breaking
-- Nothing.
+- **With BYON on, admins no longer reach a user's servers directly.** Files, beam, console
+  and grants need that user's invite; resetting their password still works. `core`
+- **An External node is only its enrolling admin's for now.** Other admins no longer open its
+  servers or change it; its token makes that admin the owner. `core`
+- **Only a server's owner can transfer it.** A member holding the settings right could move
+  it onto their own machine. `core`
 
 ### Security
 - **A Core restart no longer verifies accounts or grants regions.** Every boot marked
   unconfirmed emails as verified and gave all regions to users limited to none. `core`
+- **Staff can no longer change a user's machine, its servers or its warp keys.** Reassign,
+  move, demo flag, pairing, CPU pool, overcommit, key rolls and key ids went unchecked. `core`
+- **Ownership checks fail closed.** A settings or server read that fails no longer opens a
+  user's machine to admins. `core`
 
 ### Fixes
 - **Accounts an admin creates are stored as verified.** They get no verification mail, and
   used to depend on a restart to be allowed in. `core`
+- **Deleting a route from a server's page deletes only that server's route.** For an admin
+  it deleted any route by name. `core`
 
 ## 2026.09.12.3
 

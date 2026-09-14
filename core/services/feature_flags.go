@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +66,35 @@ func (f *FeatureFlags) Get(_ context.Context, key string, defaultV bool) bool {
 	}
 	f.cache[key] = cachedFlag{value: b, at: time.Now()}
 	return b
+}
+
+// GetFailClosed is Get for a flag whose OFF state opens something. A setting
+// that was never saved still reads as defaultV, but a settings table that cannot
+// be read answers true and is not cached, so a database fault never switches a
+// fence off for the next minute.
+func (f *FeatureFlags) GetFailClosed(_ context.Context, key string, defaultV bool) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if cf, ok := f.cache[key]; ok && time.Since(cf.at) < f.cacheTTL {
+		return cf.value
+	}
+	v, err := f.store.GetSetting(key)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	b, parseErr := strconv.ParseBool(strings.TrimSpace(v))
+	if err != nil || v == "" || parseErr != nil {
+		b = defaultV
+	}
+	f.cache[key] = cachedFlag{value: b, at: time.Now()}
+	return b
+}
+
+// BYONOwnershipInForce is IsBYONEnabled for the node-ownership fences, failing
+// closed: while the flag cannot be read, a customer's machine stays theirs.
+// Feature gates that OPEN something for tenants keep using IsBYONEnabled.
+func (f *FeatureFlags) BYONOwnershipInForce(ctx context.Context) bool {
+	return f.GetFailClosed(ctx, "feature_byon_enabled", false)
 }
 
 // GetInt returns the integer value for key, defaulting to defaultV when the

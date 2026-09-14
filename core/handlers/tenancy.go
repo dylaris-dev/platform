@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"dylaris-core/models"
@@ -20,6 +21,17 @@ func byonActive(state *AppState, r *http.Request) bool {
 	return state != nil && state.FeatureFlags != nil && state.FeatureFlags.IsBYONEnabled(r.Context())
 }
 
+// ownershipInForce is byonActive for the ownership fences below, failing closed:
+// a flag that cannot be read keeps a customer's machine theirs. byonActive stays
+// for the gates that OPEN tenant features, where failing closed would do the
+// opposite. The two agree whenever the settings table answers.
+func ownershipInForce(state *AppState, r *http.Request) bool {
+	if state == nil || state.FeatureFlags == nil {
+		return false // no flags wired: a bare test or tool state, BYON cannot be on
+	}
+	return state.FeatureFlags.BYONOwnershipInForce(r.Context())
+}
+
 // applyPlacementScope decides how an AUTOMATIC placement is scoped, which is a
 // different question from "may this caller use that node". Nobody named a
 // machine here, so the scheduler is about to choose one, and it must choose one
@@ -35,7 +47,7 @@ func byonActive(state *AppState, r *http.Request) bool {
 // the DECISION. Testing the scheduler with the flag already set proves the flag
 // works, not that anything sets it.
 func applyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest) {
-	if !byonActive(state, r) {
+	if !ownershipInForce(state, r) {
 		return // no node has an owner; nothing to scope
 	}
 	if IsAdmin(r) {
@@ -53,11 +65,51 @@ func applyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest)
 // With BYON off an owner_id carries no tenancy meaning (see canPlaceOnNode), so
 // nothing is anybody else's and this answers false.
 func ownedByOther(state *AppState, r *http.Request, node *models.Node) bool {
-	if node == nil || node.OwnerID == nil || !byonActive(state, r) {
+	if node == nil || node.OwnerID == nil || !ownershipInForce(state, r) {
 		return false
 	}
 	uid := byonCallerID(r)
 	return uid == "" || *node.OwnerID != uid
+}
+
+// NodeOwnedByOther is ownedByOther by node id and user, for the resolver, which
+// has no request. main installs it with SetForeignNode.
+//
+// A node it cannot read counts as foreign, and so does a flag (see
+// ownershipInForce): the cost is an admin refused during a database fault, not
+// a customer's world handed to every operator. The flag is only asked once the
+// node turned out to have an owner, which platform servers never do.
+func (s *AppState) NodeOwnedByOther(nodeID int, userID string) bool {
+	if s == nil || s.Store == nil {
+		return true
+	}
+	node, err := s.Store.GetNodeByID(nodeID)
+	if err != nil || node == nil {
+		return true
+	}
+	return s.userOwnedByOther(node.OwnerID, userID)
+}
+
+// userOwnedByOther is the same question for anything that carries its owner's
+// id directly, such as a warp node key or link kit: owned by somebody who is not
+// userID, while ownership is in force. nil or empty means the platform's.
+func (s *AppState) userOwnedByOther(ownerID *string, userID string) bool {
+	if ownerID == nil || *ownerID == "" || (userID != "" && *ownerID == userID) {
+		return false
+	}
+	if s.FeatureFlags == nil {
+		return true
+	}
+	return s.FeatureFlags.BYONOwnershipInForce(context.Background())
+}
+
+// foreignToCaller is NodeOwnedByOther for the caller of r. It guards the admin
+// and staff WRITES on a machine or on a server by the machine it runs on - move,
+// reassign, re-pair, CPU pool, overcommit, demo flag - which are capability-gated
+// and so fleet-wide by construction. Callers answer with "not found", like
+// diskToolNode, so the refusal does not confirm what exists.
+func foreignToCaller(state *AppState, r *http.Request, nodeID int) bool {
+	return state.NodeOwnedByOther(nodeID, byonCallerID(r))
 }
 
 // canManageNode reports whether the caller may read or configure what is ON a
@@ -71,16 +123,13 @@ func ownedByOther(state *AppState, r *http.Request, node *models.Node) bool {
 // deliberately withheld the very same rows ("An operator runs the platform; they
 // do not run their customers' machines."). Two answers to one question.
 //
-// This is the owner's rule for the routes that come through here, not a claim
-// that an admin can no longer reach a customer's machine at all. Several routes
-// do not come through here and are recorded as still open in
-// roadmap/node-ownership-and-access.md: opening a server on it by URL (the
-// resolver's admin short-circuit), reset pairing and roll key, CPU pool and
-// placement settings, and moving or reassigning its servers. Decommissioning
-// (DELETE /api/nodes/{id}) does not come through here either, and that one is
-// meant to stay open.
+// The other doors onto a customer's machine ask foreignToCaller or the resolver
+// (SetForeignNode) instead: opening its servers, their files and beam, reset
+// pairing and roll key, CPU pool and overcommit, moving, transferring and
+// reassigning its servers, the demo flag. Decommissioning (DELETE
+// /api/nodes/{id}) goes through none of them, and that one is meant to stay open.
 func canManageNode(state *AppState, r *http.Request, node *models.Node) bool {
-	if node != nil && node.OwnerID != nil && byonActive(state, r) {
+	if node != nil && node.OwnerID != nil && ownershipInForce(state, r) {
 		return !ownedByOther(state, r, node)
 	}
 	return IsAdmin(r)
@@ -105,7 +154,7 @@ func canPlaceOnNode(state *AppState, r *http.Request, node *models.Node) bool {
 	if node == nil {
 		return false
 	}
-	if node.OwnerID != nil && byonActive(state, r) {
+	if node.OwnerID != nil && ownershipInForce(state, r) {
 		// Somebody's own hardware. Only that somebody, admin or not.
 		uid := byonCallerID(r)
 		return uid != "" && *node.OwnerID == uid

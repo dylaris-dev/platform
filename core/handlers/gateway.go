@@ -597,7 +597,6 @@ func (h *GatewayHandler) loadBlockedRoutePrefixes() map[string]bool {
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {
 	serverID := mustAtoi(mux.Vars(r)["id"])
 	domain := mux.Vars(r)["domain"]
-	isAdmin := r.Context().Value("isAdmin").(bool)
 
 	if domain == "" {
 		http.Error(w, "domain required", http.StatusBadRequest)
@@ -605,21 +604,26 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Ownership is enforced at the route via RequireCap(network.write) (Phase 4
-	// Task 11); this only validates the route belongs to this server.
-	if !isAdmin {
-		server, _ := h.state.Store.GetServerByID(serverID)
-		all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
-		found := false
-		for _, rt := range all {
-			if rt.Domain == domain && rt.ServerUUID == server.UUID {
-				found = true
-				break
-			}
+	// Task 11); this only validates the route belongs to this server. For admins
+	// too: the capability was resolved against {id}, so skipping this let a
+	// platform server's id delete any route, a customer's included. Deleting any
+	// route by name is DELETE /api/gateway/routes/{domain} (topology.write).
+	server, serr := h.state.Store.GetServerByID(serverID)
+	if serr != nil || server == nil {
+		http.Error(w, "server not found", http.StatusNotFound)
+		return
+	}
+	all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
+	found := false
+	for _, rt := range all {
+		if rt.Domain == domain && rt.ServerUUID == server.UUID {
+			found = true
+			break
 		}
-		if !found {
-			http.Error(w, "Route not found for this server", http.StatusNotFound)
-			return
-		}
+	}
+	if !found {
+		http.Error(w, "Route not found for this server", http.StatusNotFound)
+		return
 	}
 
 	if err := h.state.Gateway.DeleteRoute(domain); err != nil {

@@ -2,6 +2,8 @@ package authz
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	"dylaris-core/store"
 )
@@ -34,8 +36,9 @@ func IdentityFromContext(ctx context.Context) Identity {
 // authorization chokepoint that subsumes the legacy checkServerAccess / inline
 // IsAdmin / EffectivePermissions paths (wired into routes in phase 2).
 type Resolver struct {
-	store    Store
-	demoRead func(serverID int) bool // optional; StoreEnabled-gated by the caller
+	store       Store
+	demoRead    func(serverID int) bool // optional; StoreEnabled-gated by the caller
+	foreignNode func(nodeID int, userID string) bool
 }
 
 func NewResolver(st Store) *Resolver {
@@ -46,11 +49,19 @@ func NewResolver(st Store) *Resolver {
 // admin-flagged public read-only showcase. nil-safe: unset means no demo access.
 func (r *Resolver) SetDemoRead(fn func(serverID int) bool) { r.demoRead = fn }
 
+// SetForeignNode installs the predicate that reports whether a node is somebody
+// else's hardware for this user, while node ownership is in force. An admin gets
+// no server rights there beyond what that somebody granted them. It is a hook
+// rather than a store call because the answer also depends on the BYON flag,
+// which lives in services, and services imports authz.
+func (r *Resolver) SetForeignNode(fn func(nodeID int, userID string) bool) { r.foreignNode = fn }
+
 // Resolution is the materialized decision context for one (identity, scope).
 // It is deny-by-default: a capability is granted only when a short-circuit or
 // an explicit resolved cap covers it. HasCap answers individual checks.
 type Resolution struct {
 	admin      bool            // panel admin: holds every capability
+	adminPanel bool            // panel admin on a server on somebody else's node: every PANEL cap, server rights only by grant
 	ownerSelf  bool            // owns the realm in scope (own server, or serverID==0 self-realm)
 	demoRead   bool            // server is an admin-flagged demo showcase: grant SERVER read caps to any authed principal
 	panelCaps  map[string]bool // PANEL caps from panel role + per-user overrides
@@ -92,6 +103,9 @@ func (res *Resolution) HasCap(capID string) bool {
 	if res.admin {
 		return true
 	}
+	if res.adminPanel && c.Scope == ScopePanel {
+		return true
+	}
 	// Demo showcase: any authenticated viewer may READ a demo server's operational
 	// state (overview, console, stats, config, mods, tabs, schedule, ...).
 	// network.read, members.read, and files.read stay denied (see demoReadDeny) so
@@ -123,7 +137,24 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 	}
 	if id.IsAdmin {
 		res.admin = true
-		return res, nil
+		if serverID == 0 || r.foreignNode == nil {
+			return res, nil
+		}
+		// An operator runs the platform, not their customers' machines. Server ids
+		// are sequential, so this has to be decided here, where every server route
+		// arrives, and not by hiding the server from a list. A server that does not
+		// exist keeps the short-circuit, it grants nothing that exists; one that
+		// cannot be READ does not, or a database fault would open whatever it is.
+		srv, serr := r.store.GetServerByID(serverID)
+		if errors.Is(serr, sql.ErrNoRows) {
+			return res, nil
+		}
+		if serr == nil && srv != nil && !r.foreignNode(srv.NodeID, id.UserID) {
+			return res, nil
+		}
+		res.admin = false
+		res.adminPanel = true
+		// Fall through: the owner's invite still works, with its own scope.
 	}
 	if id.UserID == "" {
 		return res, nil // no identity: deny-by-default

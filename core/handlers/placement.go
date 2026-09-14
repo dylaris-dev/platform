@@ -361,6 +361,12 @@ func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Invalid node id", http.StatusBadRequest)
 		return
 	}
+	// Overcommit on a customer's machine decides how much of their hardware the
+	// scheduler hands out; that is theirs to set.
+	if foreignToCaller(h.state, r, id) {
+		sendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
 	var req SetNodePlacementRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

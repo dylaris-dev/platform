@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/authz"
+	"dylaris-core/models"
 	"dylaris-pkg/beam/quota"
 
 	"github.com/alicebob/miniredis/v2"
@@ -18,9 +20,9 @@ import (
 // These tests pin that the browser HTTP upload path enforces the same beam
 // upload limits the node enforces on the tunnel path, so the quota cannot be
 // evaded by uploading through a browser. Both rejections must fire BEFORE the
-// handler resolves/contacts the node, so a nil Authz/GRPCRegistry never runs.
-// The admin context short-circuits ownership resolution (file.go:115), so a
-// fake store that only answers GetSetting is enough.
+// handler contacts the node, so a nil GRPCRegistry never runs. An admin still
+// goes through the resolver, whose admin short-circuit needs nothing from the
+// store beyond the server row, so a fake answering GetSetting and that is enough.
 
 func newQuotaHTTPRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	t.Helper()
@@ -51,7 +53,7 @@ func newUploadRequest(t *testing.T, serverUUID string, fileSize int) *http.Reque
 	req := httptest.NewRequest(http.MethodPost, "/api/files/upload", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	ctx := context.WithValue(req.Context(), "username", "u")
-	ctx = context.WithValue(ctx, "isAdmin", true) // short-circuits ownership resolution
+	ctx = context.WithValue(ctx, "isAdmin", true) // the resolver's admin short-circuit
 	return req.WithContext(ctx)
 }
 
@@ -60,7 +62,7 @@ func TestUploadFileHandler_DailyQuotaRejects(t *testing.T) {
 	mr.Set(quota.DailyUploadBytesKey, "1000")
 	mr.Set(quota.DailyKey("u", time.Now()), "900")
 
-	h := &FileHandler{state: &AppState{Redis: rdb, Store: newCoreStorageHTTPFakeStore()}}
+	h := &FileHandler{state: quotaHTTPState(rdb)}
 	rw := httptest.NewRecorder()
 	h.UploadFileHandler(rw, newUploadRequest(t, "s1", 200)) // 900 + 200 > 1000
 
@@ -77,11 +79,24 @@ func TestUploadFileHandler_SizeCapRejects(t *testing.T) {
 	rdb, mr := newQuotaHTTPRedis(t)
 	mr.Set(quota.MaxUploadBytesKey, "100")
 
-	h := &FileHandler{state: &AppState{Redis: rdb, Store: newCoreStorageHTTPFakeStore()}}
+	h := &FileHandler{state: quotaHTTPState(rdb)}
 	rw := httptest.NewRecorder()
 	h.UploadFileHandler(rw, newUploadRequest(t, "s1", 200)) // single 200-byte file > 100 cap
 
 	if rw.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413 (%s)", rw.Code, rw.Body.String())
 	}
+}
+
+type quotaHTTPFakeStore struct {
+	*coreStorageHTTPFakeStore
+}
+
+func (f quotaHTTPFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
+	return &models.Server{ID: 1, UUID: uuid, OwnerID: "someone-else"}, nil
+}
+
+func quotaHTTPState(rdb *redis.Client) *AppState {
+	st := quotaHTTPFakeStore{newCoreStorageHTTPFakeStore()}
+	return &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}
 }

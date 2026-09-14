@@ -229,6 +229,14 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
+	// link- and node- are the ids of a customer's link kit and node key, always
+	// minted with their owner (api_keys.go). node_id is not unique, so an admin
+	// key carrying one was a second, owner-less row for the customer's id - which
+	// link-boot answered with that customer's tunnel token and Redis login.
+	if strings.HasPrefix(req.NodeID, "link-") || strings.HasPrefix(req.NodeID, "node-") {
+		sendJSONError(w, "node_id prefixes link- and node- are reserved for customer keys", http.StatusBadRequest)
+		return
+	}
 	if req.Policy != "fixed" && req.Policy != "general" {
 		req.Policy = "general"
 	}
@@ -529,7 +537,10 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	// Link instead. An owner-less key is a platform key with no BYON node behind
 	// it, and is refused like any other.
 	nodeKey := strings.HasPrefix(key.NodeID, "node-") && key.OwnerID != ""
-	if !nodeKey && !strings.HasPrefix(key.NodeID, "link-") {
+	// A route-only kit always has an owner too; an owner-less link- key is not a
+	// kit, and answering it would hand out whichever link that id names.
+	linkKey := strings.HasPrefix(key.NodeID, "link-") && key.OwnerID != ""
+	if !nodeKey && !linkKey {
 		sendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return
 	}
@@ -733,7 +744,7 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
-	if !isAdmin && key.OwnerID != userID {
+	if key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID)) {
 		sendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
@@ -805,8 +816,10 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 		return "", false
 	}
 	// Same message for "not yours" as for "does not exist", so a reply cannot
-	// confirm that an id belongs to someone.
-	if !isAdmin && key.OwnerID != userID {
+	// confirm that an id belongs to someone. An admin is no exception for a
+	// customer's key: a roll hands back the new plaintext, which boots warp or
+	// link AS the customer's machine. Abuse goes through suspension instead.
+	if key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID)) {
 		sendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
@@ -1292,7 +1305,7 @@ func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) 
 	}
 	// Same message for "not yours" as for "does not exist": a different one would
 	// confirm the id belongs to someone.
-	if !isAdmin && key.OwnerID != userID {
+	if key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID)) {
 		sendJSONError(w, "Node key not found", http.StatusNotFound)
 		return
 	}

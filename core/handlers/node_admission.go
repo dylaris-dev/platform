@@ -192,7 +192,9 @@ func (h *NodeAdmissionHandler) revokeNodeLogin(nodeID int, rotate bool) error {
 func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil {
+	// A customer re-pairs their own machine (scope=own); resetting it from the
+	// fleet routes restarts their game servers.
+	if err != nil || node == nil || foreignToCaller(h.state, r, node.ID) {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
@@ -248,7 +250,7 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil {
+	if err != nil || node == nil || foreignToCaller(h.state, r, node.ID) {
 		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}

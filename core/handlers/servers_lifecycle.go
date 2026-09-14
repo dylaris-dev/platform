@@ -85,8 +85,9 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// BYON placement scoping: a tenant may only deploy on their OWN node. Gated by
 	// feature_byon_enabled, so with BYON off this is a no-op and placement behaves
 	// as today. Auto-placement is already owner-scoped above; this gate covers the
-	// explicit-nodeId path and is belt-and-suspenders.
-	if byonActive(h.state, r) && !canPlaceOnNode(h.state, r, node) {
+	// explicit-nodeId path and is belt-and-suspenders. ownershipInForce rather
+	// than byonActive: an unreadable flag must not skip the ownership check.
+	if ownershipInForce(h.state, r) && !canPlaceOnNode(h.state, r, node) {
 		sendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
 		return
 	}
@@ -1449,8 +1450,15 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", 400)
 		return
 	}
+	// Oversight moves between the platform's own machines. Either end on a
+	// customer's machine is their world leaving their hardware, or ours landing
+	// on a box they have root on.
+	if foreignToCaller(h.state, r, srv.NodeID) {
+		sendJSONError(w, "Server not found", 404)
+		return
+	}
 	target, err := h.state.Store.GetNodeByID(req.TargetNodeID)
-	if err != nil {
+	if err != nil || target == nil || foreignToCaller(h.state, r, target.ID) {
 		sendJSONError(w, "Target node not found", 404)
 		return
 	}
@@ -1501,8 +1509,17 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Target node not found", 404)
 		return
 	}
+	// server.settings.write is also something an owner can GRANT, and the target
+	// check below only asks where the caller may place. So an invitee could move
+	// the owner's world onto the invitee's own machine, and an admin invited on a
+	// customer's machine could pull the server onto ours. A transfer is the
+	// owner's decision; oversight moves between platform machines are MoveServer.
+	if foreignToCaller(h.state, r, srv.NodeID) || (!IsAdmin(r) && srv.OwnerID != byonCallerID(r)) {
+		sendJSONError(w, "Only the server's owner can transfer it", 403)
+		return
+	}
 	// Placement authz: the caller must be allowed to place on the target node
-	// (their own BYON node, or a platform node in BYON mode). Admins always may.
+	// (their own BYON node, or a platform node for an admin).
 	if !canPlaceOnNode(h.state, r, target) {
 		sendJSONError(w, "You cannot place servers on the target node", 403)
 		return

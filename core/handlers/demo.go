@@ -124,8 +124,10 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
+	// A demo server is readable by every signed-in account, so flagging one on a
+	// customer's machine published their console and stats to everyone.
 	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil {
+	if err != nil || srv == nil || foreignToCaller(h.state, r, srv.NodeID) {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}

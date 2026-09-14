@@ -22,6 +22,20 @@ type capFakeStore struct {
 	serverGrant  *store.ServerGrant
 	accountGrant *store.ServerGrant
 	role         *store.ServerRole
+	node         *models.Node // nil: a platform node
+}
+
+func (f *capFakeStore) GetNodeByID(id int) (*models.Node, error) {
+	if f.node != nil {
+		return f.node, nil
+	}
+	return &models.Node{ID: id}, nil
+}
+func (f *capFakeStore) GetSetting(key string) (string, error) {
+	if key == "feature_byon_enabled" {
+		return "true", nil
+	}
+	return "", nil
 }
 
 func (f *capFakeStore) GetServerByID(int) (*models.Server, error) {
@@ -141,6 +155,35 @@ func TestTheOwnerAndAnAdminAreNotCapped(t *testing.T) {
 				t.Errorf("%s: %s = %v, want %v", c.name, k, got[k], v)
 			}
 		}
+	}
+}
+
+// An admin reaches members.write on a customer's machine only through that
+// customer's invite, so the invite caps what they may hand on. The admin flag
+// used to return the request uncapped here, before the resolver was asked.
+func TestAnAdminOnACustomersMachineIsCappedToTheInvite(t *testing.T) {
+	sid := capServer
+	owner := capOwner
+	fs := &capFakeStore{
+		server: &models.Server{ID: capServer, OwnerID: capOwner, NodeID: 3},
+		node:   &models.Node{ID: 3, OwnerID: &owner},
+		serverGrant: &store.ServerGrant{
+			ServerID:     &sid,
+			UserID:       capFriend,
+			CapOverrides: store.CapOverrides{Grant: store.MapLegacyInviteCaps(models.TabPermissions{Console: true, Members: true})},
+		},
+	}
+	h := capHandler(fs)
+	h.state.Authz.SetForeignNode(h.state.NodeOwnedByOther)
+
+	got := h.capPermissions(capRequest(capFriend, true), capServer, map[string]bool{
+		"console": true, "files": true,
+	})
+	if !got["console"] {
+		t.Error("console was capped away, but the invite grants it")
+	}
+	if got["files"] {
+		t.Error("an admin on a customer's machine delegated files, which the customer never granted them")
 	}
 }
 

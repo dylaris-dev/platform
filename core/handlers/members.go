@@ -56,7 +56,9 @@ func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[
 	// matching the resolver's rule (see authz/resolver.go). The route itself is
 	// already gated by RequireCap("members.write"); this only caps HOW MUCH an
 	// invited non-owner may delegate onward.
-	if isAdmin || srv.OwnerID == userID {
+	// An admin on a customer's machine got here through that customer's invite,
+	// so the invite, not the admin flag, caps what they may hand on.
+	if srv.OwnerID == userID || (isAdmin && !h.state.NodeOwnedByOther(srv.NodeID, userID)) {
 		return perms
 	}
 	if h.state.Authz == nil {

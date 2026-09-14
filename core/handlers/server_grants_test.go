@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -29,6 +30,8 @@ type grantFakeStore struct {
 	deleteErr   error
 	grants      []store.OwnerGrant
 	mode        string
+	node        *models.Node // the server's node; nil = a platform node
+	byon        string       // feature_byon_enabled; "" = never saved
 
 	auditEnabled     bool
 	auditEnableCalls int
@@ -36,7 +39,10 @@ type grantFakeStore struct {
 	identityAudit    []models.AuditEventIdentity
 }
 
-func (f *grantFakeStore) GetSetting(string) (string, error) {
+func (f *grantFakeStore) GetSetting(key string) (string, error) {
+	if key == "feature_byon_enabled" {
+		return f.byon, nil
+	}
 	return f.mode, nil
 }
 
@@ -55,6 +61,15 @@ func (f *grantFakeStore) GetUserByUsername(string) (*models.User, error) {
 	}
 	return f.target, nil
 }
+
+// GetNodeByID answers node, or a platform node when node is nil.
+func (f *grantFakeStore) GetNodeByID(id int) (*models.Node, error) {
+	if f.node != nil {
+		return f.node, nil
+	}
+	return &models.Node{ID: id}, nil
+}
+
 func (f *grantFakeStore) GetServerByID(int) (*models.Server, error) {
 	if f.server == nil {
 		return nil, sql.ErrNoRows
@@ -512,4 +527,53 @@ func TestRevokeGrant_IsAudited(t *testing.T) {
 			t.Fatalf("identity audit = %+v, want one %s", fs.identityAudit, AuditEventAccountGrantRevoked)
 		}
 	})
+}
+
+// An admin writes grants in a customer's name, so on a customer's machine the
+// admin flag must not skip the delegation cap: roles.write resolved them as an
+// admin (it is an OWNER capability, asked with no server), and with the bypass
+// an admin could invite themselves or a throwaway account onto any server.
+func TestAGrantOnACustomersMachineIsNotAnAdminBypass(t *testing.T) {
+	owner := ownerA
+	customerNode := &models.Node{ID: 9, OwnerID: &owner}
+	for _, c := range []struct {
+		name    string
+		byon    string
+		refused bool
+	}{
+		{"BYON on", "true", true},
+		// With BYON off an owner_id carries no tenancy meaning (decision D6 is
+		// open), so the admin bypass stays, as for every other fence.
+		{"BYON never saved", "", false},
+	} {
+		t.Run("assign/"+c.name, func(t *testing.T) {
+			fs := &grantFakeStore{target: &models.User{ID: friendC, Username: "friend"}, server: serverOwnedBy(ownerA), node: customerNode, byon: c.byon}
+			rec := httptest.NewRecorder()
+			NewServerRolesHandler(fencedGrantState(fs)).AssignGrant(rec, grantReq("POST", actorB, true, map[string]interface{}{
+				"username": "friend", "serverId": 42, "grantCaps": []string{"files.read"},
+			}))
+			if refused := rec.Code == http.StatusForbidden && len(fs.upserts) == 0; refused != c.refused {
+				t.Fatalf("refused = %v, want %v (status %d, upserts %d)", refused, c.refused, rec.Code, len(fs.upserts))
+			}
+		})
+		t.Run("revoke/"+c.name, func(t *testing.T) {
+			fs := &grantFakeStore{target: &models.User{ID: friendC, Username: "friend"}, server: serverOwnedBy(ownerA), node: customerNode, byon: c.byon}
+			rec := httptest.NewRecorder()
+			NewServerRolesHandler(fencedGrantState(fs)).RevokeGrant(rec, grantReq("DELETE", actorB, true, map[string]interface{}{
+				"username": "friend", "serverId": 42,
+			}))
+			if refused := rec.Code == http.StatusForbidden && fs.deleteCalls == 0; refused != c.refused {
+				t.Fatalf("refused = %v, want %v (status %d, deletes %d)", refused, c.refused, rec.Code, fs.deleteCalls)
+			}
+		})
+	}
+}
+
+// fencedGrantState wires the resolver the way main does, so an admin who falls
+// back to the delegation cap is resolved with the same fence.
+func fencedGrantState(fs *grantFakeStore) *AppState {
+	st := grantState(fs)
+	st.FeatureFlags = services.NewFeatureFlags(fs)
+	st.Authz.SetForeignNode(st.NodeOwnedByOther)
+	return st
 }

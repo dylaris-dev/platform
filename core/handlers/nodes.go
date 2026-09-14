@@ -319,6 +319,11 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
+	// The CPU pool of a customer's machine is theirs to set.
+	if foreignToCaller(h.state, r, id) {
+		sendJSONError(w, "Node not found", 404)
+		return
+	}
 
 	var req struct {
 		CpusetCpus *string `json:"cpusetCpus"`
@@ -449,7 +454,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// them in one call. Decommissioning a customer's machine is the plain
 	// DELETE /api/nodes/{id}, which is refused while servers remain and names
 	// none. Its owner removes their own through /api/me/nodes/{id}.
-	if node.OwnerID != nil && byonActive(h.state, r) {
+	if node.OwnerID != nil && ownershipInForce(h.state, r) {
 		sendJSONError(w, "This machine belongs to a user, and its servers are theirs. Remove the node once they are gone.", http.StatusConflict)
 		return
 	}
