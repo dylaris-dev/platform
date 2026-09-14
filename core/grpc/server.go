@@ -846,6 +846,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	}()
 
 	// Step 5: Read loop — route incoming messages to waiting handlers
+	nodeRequestSlots := make(chan struct{}, maxConcurrentNodeRequests)
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
@@ -853,6 +854,15 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		}
 		if err != nil {
 			return fmt.Errorf("node %d stream error: %w", node.ID, err)
+		}
+
+		// A request the node started. Decided by the flag and nothing else, so it
+		// can never be mistaken for a reply to one of Core's own requests, and
+		// answered off this loop. The identity handed on is the one this stream
+		// authenticated above.
+		if msg.NodeRequest {
+			s.registry.serveNodeRequest(ctx, *node, conn, nodeRequestSlots, msg)
+			continue
 		}
 
 		// Route response to the handler waiting on this request_id

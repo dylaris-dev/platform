@@ -37,6 +37,11 @@ type coreConnection struct {
 	cancel  context.CancelFunc
 	handler *StreamHandler
 	sendMu  sync.Mutex // serializes stream.Send across the read loop + WS pumps
+
+	// pending maps the request_id of a node-initiated request (Request) to its
+	// waiter; nil once the connection is gone. See node_request.go.
+	pending   map[string]chan *pb.NodeMessage
+	pendingMu sync.Mutex
 }
 
 // send serializes all writes to this Core stream. gRPC streams are not safe
@@ -314,7 +319,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	go noteCoreRedisAddr(parentCtx, authResult.RedisAddr, getNodeSecret())
 
 	// Register connection
-	cc := &coreConnection{conn: conn, stream: stream, cancel: cancel, handler: m.handler}
+	cc := &coreConnection{conn: conn, stream: stream, cancel: cancel, handler: m.handler, pending: make(map[string]chan *pb.NodeMessage)}
 	m.mu.Lock()
 	m.connections[info.ID] = cc
 	m.mu.Unlock()
@@ -332,6 +337,14 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 			break
 		}
 
+		// Core's answer to a request this node started. Never a request for the
+		// handler: without this check it would reach Handle's default branch and
+		// be answered with "unknown request type".
+		if msg.NodeRequest {
+			cc.routeNodeResponse(msg)
+			continue
+		}
+
 		// Handled on the read loop to preserve per-request_id ordering
 		// (WriteReq -> Chunks -> TransferDone; WsFrame delivery). handleRequest
 		// dispatches only the two blocking container dials (HttpProxyReq's Do,
@@ -344,6 +357,9 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	m.mu.Lock()
 	delete(m.connections, info.ID)
 	m.mu.Unlock()
+	// After the map delete, so a new Request cannot pick this connection; one
+	// that already did finds pending nil and moves on to another Core.
+	cc.closePending()
 	cancel()
 	conn.Close()
 	// WS5 I1: tear down every WS bridge this dying connection owned instead

@@ -13,6 +13,17 @@ service NodeService {
 message NodeMessage {
   string request_id = 1;
   string server_uuid = 2;
+  // Set on a request the NODE starts and on Core's answer to it. Every other
+  // exchange on this stream is Core-initiated, and without this flag Core could
+  // only tell a node's request from a node's response by failing to find the
+  // request_id among its own pending requests - which is also what a late or
+  // duplicated response looks like. It is a flag rather than a list of payload
+  // kinds so a Core can recognise, and refuse with an explicit error, a request
+  // kind newer than itself: an unknown oneof field decodes to no payload at all.
+  //
+  // An old Core ignores the field and logs the request as unroutable without
+  // answering, so the node bounds every request with a timeout.
+  bool node_request = 3;
 
   oneof payload {
     // Auth (Node→Core, first message after Connect)
@@ -89,6 +100,18 @@ message NodeMessage {
     // database row saying which Modrinth project they are.
     HashFilesReq      hash_files_req      = 117;
     HashFilesResp     hash_files_resp     = 118;
+
+    // Node-initiated requests (node_request = true), each answered by Core on
+    // the same stream with the same request_id. Used by backups and restores so
+    // a node never holds object-storage credentials: Core presigns every URL
+    // and drives the multipart upload itself. The node's identity is the
+    // authenticated stream, never a field in these messages.
+    UploadPartUrlsRequest  upload_part_urls_request  = 119;
+    UploadPartUrlsResponse upload_part_urls_response = 120;
+    CompleteUploadRequest  complete_upload_request   = 121;
+    CompleteUploadResponse complete_upload_response  = 122;
+    RestoreUrlRequest      restore_url_request       = 123;
+    RestoreUrlResponse     restore_url_response      = 124;
 
     // Generic result / error
     OpResult          result        = 90;
@@ -371,6 +394,45 @@ message OpResult {
 message OpError {
   int32 code = 1;
   string message = 2;
+}
+
+// ─── Node-initiated requests (Document F) ───────────────────────────
+// A failure a handler could reach is the error field of its response; OpError
+// (501 unsupported, 503 busy, 500 handler failure) is reserved for the request
+// never having been served.
+message UploadPartUrlsRequest {
+  string run_id = 1;
+  repeated int32 part_numbers = 2;
+}
+
+message PartUrl {
+  int32 part_number = 1;
+  string url = 2;   // presigned UploadPart PUT
+}
+
+message UploadPartUrlsResponse {
+  string upload_id = 1;
+  int64 part_size = 2;   // every part except the last must be exactly this size
+  repeated PartUrl urls = 3;
+  string error = 4;
+}
+
+message CompleteUploadRequest {
+  string run_id = 1;
+}
+
+message CompleteUploadResponse {
+  int64 size_bytes = 1;
+  string error = 2;
+}
+
+message RestoreUrlRequest {
+  string restore_id = 1;
+}
+
+message RestoreUrlResponse {
+  string url = 1;   // presigned GET
+  string error = 2;
 }
 
 // ─── RCON (Phase 9) ──────────────────────────────────────────────────

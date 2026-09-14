@@ -25,6 +25,9 @@ type NodeConnection struct {
 type Registry struct {
 	connections map[int]*NodeConnection
 	mu          sync.RWMutex
+	// nodeRequests maps a payload kind to the handler for requests nodes start;
+	// see node_request.go.
+	nodeRequests map[string]NodeRequestHandler
 }
 
 func NewRegistry() *Registry {
