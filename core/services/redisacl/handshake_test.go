@@ -18,10 +18,11 @@ type fakeHandshakeStore struct {
 	secretEnc   map[int]string
 	uuidsByNode map[int][]string
 
-	resolveOwnerID string
-	resolveOK      bool
-	resolveErr     error
-	resolveCalls   int
+	resolveOwnerID  string
+	resolvePlatform bool
+	resolveOK       bool
+	resolveErr      error
+	resolveCalls    int
 
 	consumeOwnerID string
 	consumeOK      bool
@@ -29,10 +30,12 @@ type fakeHandshakeStore struct {
 	consumeCalls   int
 
 	nodeLimitReached bool
+	nodeLimitCalls   int
 
 	createNodeID                                                                 int
 	createErr                                                                    error
 	createCalls                                                                  int
+	byonCreateCalls, platformTokenCreateCalls                                    int
 	lastCreateToken, lastCreateAddress, lastCreateOwnerID, lastCreateDisplayName string
 
 	nodeIDByTokenID    int
@@ -79,17 +82,21 @@ func (f *fakeHandshakeStore) SetNodeSecretEncIfUnchanged(id int, prev, next stri
 func (f *fakeHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) {
 	return f.uuidsByNode[nodeID], nil
 }
-func (f *fakeHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, error) {
+func (f *fakeHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, bool, error) {
 	f.resolveCalls++
-	return f.resolveOwnerID, f.resolveOK, f.resolveErr
+	return f.resolveOwnerID, f.resolvePlatform, f.resolveOK, f.resolveErr
 }
 func (f *fakeHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, error) {
 	f.consumeCalls++
 	return f.consumeOwnerID, f.consumeOK, f.consumeErr
 }
-func (f *fakeHandshakeStore) NodeLimitReached(ownerID string) bool { return f.nodeLimitReached }
+func (f *fakeHandshakeStore) NodeLimitReached(ownerID string) bool {
+	f.nodeLimitCalls++
+	return f.nodeLimitReached
+}
 func (f *fakeHandshakeStore) CreateBYONNode(token, address, ownerID, displayName string) (int, error) {
 	f.createCalls++
+	f.byonCreateCalls++
 	f.lastCreateToken, f.lastCreateAddress, f.lastCreateOwnerID, f.lastCreateDisplayName = token, address, ownerID, displayName
 	return f.createNodeID, f.createErr
 }
@@ -97,6 +104,13 @@ func (f *fakeHandshakeStore) CreatePlatformNode(token, address, displayName stri
 	f.createCalls++
 	f.lastCreateToken, f.lastCreateAddress, f.lastCreateDisplayName = token, address, displayName
 	f.lastCreateOwnerID = "" // a platform node has no owner
+	return f.createNodeID, f.createErr
+}
+func (f *fakeHandshakeStore) CreatePlatformTokenNode(token, address, displayName string) (int, error) {
+	f.createCalls++
+	f.platformTokenCreateCalls++
+	f.lastCreateToken, f.lastCreateAddress, f.lastCreateDisplayName = token, address, displayName
+	f.lastCreateOwnerID = ""
 	return f.createNodeID, f.createErr
 }
 func (f *fakeHandshakeStore) NodeIDByToken(token string) (int, bool, error) {
@@ -180,7 +194,7 @@ func TestEnroll_InvalidToken_NoSideEffects(t *testing.T) {
 	store.resolveOK = false
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, _, _, err := h.Enroll(context.Background(), "hostname", "bad-enroll-token", "1.2.3.4")
+	_, _, _, _, err := h.Enroll(context.Background(), "hostname", "bad-enroll-token", "1.2.3.4")
 	if err != ErrEnrollInvalid {
 		t.Fatalf("err = %v, want ErrEnrollInvalid", err)
 	}
@@ -198,7 +212,7 @@ func TestEnroll_ResolveError_PropagatesRawError(t *testing.T) {
 	store.resolveErr = wantErr
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
+	_, _, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
 	if err != wantErr {
 		t.Fatalf("err = %v, want the raw resolve error %v (not ErrEnrollInvalid)", err, wantErr)
 	}
@@ -211,7 +225,7 @@ func TestEnroll_NodeLimitReached_DoesNotConsumeToken(t *testing.T) {
 	store.nodeLimitReached = true
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
+	_, _, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
 	if err != ErrNodeLimit {
 		t.Fatalf("err = %v, want ErrNodeLimit", err)
 	}
@@ -232,7 +246,7 @@ func TestEnroll_ConcurrentConsumeRace_ReturnsInvalid(t *testing.T) {
 	store.consumeOK = false
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
+	_, _, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
 	if err != ErrEnrollInvalid {
 		t.Fatalf("err = %v, want ErrEnrollInvalid on a lost consume race", err)
 	}
@@ -248,7 +262,7 @@ func TestEnroll_ConsumeError_Propagates(t *testing.T) {
 	store.consumeErr = wantErr
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
+	_, _, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
 	if err != wantErr {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -264,7 +278,7 @@ func TestEnroll_CreateBYONNodeError_Propagates(t *testing.T) {
 	store.createErr = wantErr
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, _, _, err := h.Enroll(context.Background(), "my-hostname", "tok", "1.2.3.4")
+	_, _, _, _, err := h.Enroll(context.Background(), "my-hostname", "tok", "1.2.3.4")
 	if err != wantErr {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -282,10 +296,16 @@ func TestEnroll_HappyPath_UsesConsumedOwnerAndReachesProvisioning(t *testing.T) 
 	store.createNodeID = 42
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	assignedID, nodeID, _, err := h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
+	assignedID, nodeID, _, owned, err := h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
 
-	if store.createCalls != 1 {
-		t.Fatalf("CreateBYONNode calls = %d, want 1", store.createCalls)
+	if store.byonCreateCalls != 1 || store.platformTokenCreateCalls != 0 {
+		t.Fatalf("CreateBYONNode calls = %d, CreatePlatformTokenNode calls = %d, want 1 and 0", store.byonCreateCalls, store.platformTokenCreateCalls)
+	}
+	if !owned {
+		t.Error("a tenant's token reported an unowned node")
+	}
+	if store.nodeLimitCalls != 1 {
+		t.Errorf("NodeLimitReached calls = %d, want 1: a tenant's token counts against their plan", store.nodeLimitCalls)
 	}
 	if store.lastCreateOwnerID != "owner-from-consume" {
 		t.Errorf("CreateBYONNode owner = %q, want owner-from-consume (the CONSUMED owner)", store.lastCreateOwnerID)
@@ -470,7 +490,7 @@ func TestEnroll_BindsTheOverlayKeyToTheNewNode(t *testing.T) {
 	store.bindOK = true
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, _, _, _ = h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
+	_, _, _, _, _ = h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
 
 	if store.bindCalls != 1 || store.lastBindToken != "enroll-tok" || store.lastBindNode != 42 {
 		t.Fatalf("bind = %d call(s) with (%q, %d), want 1 with (enroll-tok, 42)",
@@ -487,7 +507,7 @@ func TestEnroll_BindFailureDoesNotStopTheEnrol(t *testing.T) {
 	store.bindErr = bindErr
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	_, nodeID, _, err := h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
+	_, nodeID, _, _, err := h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
 
 	if err == bindErr {
 		t.Fatal("the binding error was returned as the enrol's error")
@@ -514,12 +534,71 @@ func TestEnroll_RefusedEnrolBindsNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
-			if _, _, _, err := h.Enroll(context.Background(), "host", "tok", "1.2.3.4"); err != ErrEnrollInvalid {
+			if _, _, _, _, err := h.Enroll(context.Background(), "host", "tok", "1.2.3.4"); err != ErrEnrollInvalid {
 				t.Fatalf("err = %v, want ErrEnrollInvalid", err)
 			}
 			if store.bindCalls != 0 {
 				t.Errorf("bind called %d time(s) for a refused enrol", store.bindCalls)
 			}
 		})
+	}
+}
+
+// A platform token is an admin's External node: the machine is the platform's,
+// not the minting admin's. So it is born unowned, through the row method that
+// does not mark it cluster-proof enrolled, and the minting admin's plan is never
+// asked - that admin's id is on the token only as who minted it.
+func TestEnroll_PlatformTokenCreatesAnUnownedNodeWithoutTheNodeLimit(t *testing.T) {
+	store := happyEnrollStore()
+	store.resolvePlatform = true
+	// A limit that would refuse a tenant must not be consulted at all.
+	store.nodeLimitReached = true
+	store.bindOK = true
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+
+	assignedID, nodeID, _, owned, err := h.Enroll(context.Background(), "ext-box", "platform-tok", "1.2.3.4")
+
+	if err == ErrNodeLimit {
+		t.Fatal("a platform token was refused on the minting admin's node limit")
+	}
+	if store.nodeLimitCalls != 0 {
+		t.Errorf("NodeLimitReached calls = %d, want 0", store.nodeLimitCalls)
+	}
+	if store.platformTokenCreateCalls != 1 || store.byonCreateCalls != 0 {
+		t.Fatalf("CreatePlatformTokenNode calls = %d, CreateBYONNode calls = %d, want 1 and 0",
+			store.platformTokenCreateCalls, store.byonCreateCalls)
+	}
+	if owned {
+		t.Error("a platform token reported an owned node")
+	}
+	if store.consumeCalls != 1 {
+		t.Errorf("ConsumeEnrollToken calls = %d, want 1: a platform token is single-use too", store.consumeCalls)
+	}
+	if assignedID == "" || assignedID == "ext-box" || assignedID != store.lastCreateToken {
+		t.Errorf("assignedID = %q, want the Core-minted identity the row was created with (%q)", assignedID, store.lastCreateToken)
+	}
+	if nodeID != 42 {
+		t.Errorf("nodeID = %d, want 42", nodeID)
+	}
+	// Its node key is bound exactly as a tenant's is; the store decides which
+	// ownership shape may bind.
+	if store.bindCalls != 1 || store.lastBindNode != 42 {
+		t.Errorf("bind = %d call(s) to node %d, want 1 to 42", store.bindCalls, store.lastBindNode)
+	}
+}
+
+// The platform flag never rescues a token the store refused: an invalid or
+// already-spent platform token creates nothing.
+func TestEnroll_RefusedPlatformTokenCreatesNothing(t *testing.T) {
+	store := happyEnrollStore()
+	store.resolvePlatform = true
+	store.consumeOK = false
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+
+	if _, _, _, _, err := h.Enroll(context.Background(), "ext-box", "platform-tok", "1.2.3.4"); err != ErrEnrollInvalid {
+		t.Fatalf("err = %v, want ErrEnrollInvalid", err)
+	}
+	if store.createCalls != 0 {
+		t.Errorf("create calls = %d, want 0", store.createCalls)
 	}
 }

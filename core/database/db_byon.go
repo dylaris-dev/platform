@@ -39,6 +39,15 @@ func applyBYONSchema(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE node_enroll_tokens ADD COLUMN IF NOT EXISTS warp_key_node_id TEXT`); err != nil {
 		return fmt.Errorf("byon: add node_enroll_tokens.warp_key_node_id: %w", err)
 	}
+	// platform marks a token an admin minted for an External node: the machine
+	// it enrols is born UNOWNED, and user_id then only says who minted it. An
+	// explicit flag rather than "user_id NULL means platform", so a missing value
+	// can never produce a platform machine by accident; the default keeps every
+	// existing token what it was. Checked, like warp_key_node_id: without it the
+	// admin mint's INSERT and every enrol's read fail.
+	if _, err := db.Exec(`ALTER TABLE node_enroll_tokens ADD COLUMN IF NOT EXISTS platform BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
+		return fmt.Errorf("byon: add node_enroll_tokens.platform: %w", err)
+	}
 
 	// P0b-5 admission: global-scope IP allowlist for NEW node registrations.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS node_admission_cidrs (

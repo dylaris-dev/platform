@@ -794,6 +794,13 @@ func (s *PostgresStore) DeleteServersByNode(nodeID int) error {
 // acts on: such a node re-pairs by itself, so deleting its row costs nothing.
 const NodeEnrolledViaClusterProof = "cluster_proof"
 
+// NodeEnrolledViaPlatformToken is the nodes.enrolled_via value for an External
+// node: an unowned row created by an admin's platform enroll token. Such a
+// machine holds no CLUSTER_SECRET, so a cluster proof for it is by definition
+// not that machine, and the node login refuses one exactly as for an owned row.
+// The stale sweep acts only on NodeEnrolledViaClusterProof and spares it.
+const NodeEnrolledViaPlatformToken = "platform_token"
+
 // SetNodeEnrolledVia records how a node row came to exist. See
 // NodeEnrolledViaClusterProof.
 func (s *PostgresStore) SetNodeEnrolledVia(id int, via string) error {
@@ -808,6 +815,65 @@ func (s *PostgresStore) SetNodeEnrolledVia(id int, via string) error {
 func (s *PostgresStore) SetNodeLastAuthPeerIP(id int, ip string) error {
 	_, err := s.db.Exec(`UPDATE nodes SET last_auth_peer_ip = $1 WHERE id = $2`, ip, id)
 	return err
+}
+
+// GetNodeEnrolledVia returns what SetNodeEnrolledVia last wrote, empty for a row
+// that never had it set (every row from before the column, admin-created and
+// BYON rows).
+func (s *PostgresStore) GetNodeEnrolledVia(id int) (string, error) {
+	var via string
+	err := s.db.QueryRow(`SELECT enrolled_via FROM nodes WHERE id = $1`, id).Scan(&via)
+	return via, err
+}
+
+// CreatePlatformTokenNode is the row of an External node: a machine the platform
+// runs outside the datacenter, enrolled with an admin's platform token. It is a
+// BYON row without the owner, and a cluster-proof row without that marker, and
+// both omissions are the point.
+//
+// No owner, because the machine is the platform's and not the minting admin's;
+// that is what files it as External instead of as that admin's BYON node.
+//
+// enrolled_via is platform_token, never cluster_proof. The stale sweep takes
+// only cluster_proof rows, because only such a node re-pairs by itself with
+// CLUSTER_SECRET; this one holds no CLUSTER_SECRET and its token is single-use,
+// so a swept row would lock it out until someone cleared its cached identity on
+// the machine by hand. And the marker is what the node login reads to refuse a
+// cluster proof for the row (NodeLoginFacts): without it the row looks like any
+// unowned platform node, which re-pairs on one. So a failure to write it fails
+// the enrol rather than leaving a row that would accept a cluster proof.
+func (s *PostgresStore) CreatePlatformTokenNode(token, address, displayName string) (int, error) {
+	n := &models.Node{Name: token, Token: token, Address: address, Status: "offline"}
+	if err := s.CreateNode(n); err != nil {
+		return 0, err
+	}
+	if err := s.SetNodeEnrolledVia(n.ID, NodeEnrolledViaPlatformToken); err != nil {
+		return 0, fmt.Errorf("mark node %d as platform-token enrolled: %w", n.ID, err)
+	}
+	if displayName != "" {
+		if err := s.SetNodeDisplayName(n.ID, displayName); err != nil {
+			return 0, err
+		}
+	}
+	return n.ID, nil
+}
+
+// NodeLoginFacts is what the gRPC node login needs to know about a row, by its
+// token: its id, whether it is a customer's (owned), and whether it is an
+// External node (enrolled with a platform token). sql.ErrNoRows for a token with
+// no row, which the caller turns into "not found"; every other error is a
+// failure to KNOW, and must never be read as "not an External node" - that
+// answer opens the cluster-proof door.
+func (s *PostgresStore) NodeLoginFacts(token string) (id int, owned, platformToken bool, err error) {
+	node, err := s.GetNodeByToken(token)
+	if err != nil {
+		return 0, false, false, err
+	}
+	via, err := s.GetNodeEnrolledVia(node.ID)
+	if err != nil {
+		return 0, false, false, fmt.Errorf("read enrolled_via of node %d: %w", node.ID, err)
+	}
+	return node.ID, node.Kind() == models.NodeKindBYON, via == NodeEnrolledViaPlatformToken, nil
 }
 
 // GetNodeLastAuthPeerIP returns what SetNodeLastAuthPeerIP last wrote, empty

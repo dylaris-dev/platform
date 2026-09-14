@@ -285,14 +285,45 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 			}
 		})
 
+		// An External source, so the External boundary (pinned below) does not
+		// exclude the target and only the routing mode decides.
+		extSrc := &models.Node{ID: 1, Status: "online", Tags: "external"}
+		extNodes := []models.Node{*extSrc, ext}
+
 		t.Run("routing_mode=gateway (gateway on)", func(t *testing.T) {
 			fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": "gateway"}}
 			w := &RebalanceWorker{store: fs}
-			got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
+			got := w.pickTarget(context.Background(), srv, extSrc, extNodes, loads, nil, 85)
 			if got == nil || got.ID != 2 {
 				t.Errorf("expected node 2 (external only excluded when gateway is off), got %+v", got)
 			}
 		})
+	})
+
+	// Both kinds of unowned node pass the ownership rule, so the External
+	// boundary is its own check: the rebalancer never moves a server out of the
+	// datacenter onto an External node, or back in. The node on the wrong side
+	// is the least loaded each time, so only the boundary can exclude it.
+	t.Run("never crosses the External boundary", func(t *testing.T) {
+		fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": "gateway"}}
+		w := &RebalanceWorker{store: fs}
+		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
+		inside := models.Node{ID: 2, Status: "online", TotalRAMMB: 8192, RAMOvercommitRatio: 1.0}
+		outside := models.Node{ID: 3, Status: "online", Tags: "external", TotalRAMMB: 8192, RAMOvercommitRatio: 1.0}
+
+		platformSrc := &models.Node{ID: 1, Status: "online"}
+		got := w.pickTarget(context.Background(), srv, platformSrc, []models.Node{*platformSrc, inside, outside}, map[int]float64{2: 50, 3: 5}, nil, 85)
+		if got == nil || got.ID != 2 {
+			t.Errorf("platform source: expected node 2 (inside), got %+v", got)
+		}
+		externalSrc := &models.Node{ID: 1, Status: "online", Tags: "external"}
+		got = w.pickTarget(context.Background(), srv, externalSrc, []models.Node{*externalSrc, inside, outside}, map[int]float64{2: 5, 3: 50}, nil, 85)
+		if got == nil || got.ID != 3 {
+			t.Errorf("External source: expected node 3 (another External node), got %+v", got)
+		}
+		if got := w.pickTarget(context.Background(), srv, platformSrc, []models.Node{*platformSrc, outside}, map[int]float64{3: 5}, nil, 85); got != nil {
+			t.Errorf("platform source with only an External node: expected no target, got node %d", got.ID)
+		}
 	})
 
 	// BYON isolation (BC6): a tenant-owned source only ever lands on that

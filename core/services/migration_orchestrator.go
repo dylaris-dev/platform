@@ -432,13 +432,8 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	}
 	// sourceNodeID is the node ID as a string — the target resolves the pull
 	// endpoint via dylaris:migration:endpoint:<sourceNodeID>.
-	// For BYON transfers (either node owned), also hand the target the source's
-	// LAN IPs so a same-LAN move pulls directly instead of hairpinning the warp
-	// overlay. Platform<->platform stays overlay-only (empty list).
-	var sourcePrivateIPs []string
-	if sourceNode.OwnerID != nil || targetNode.OwnerID != nil {
-		sourcePrivateIPs = sourceNode.PrivateIPs
-	}
+	// See migrationSourceLANIPs for who is handed the source's LAN addresses.
+	sourcePrivateIPs := migrationSourceLANIPs(sourceNode, targetNode)
 	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256, meta.Size, sourcePrivateIPs); err != nil {
 		log.Printf("migration %s: migrate_in queue failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
@@ -1017,4 +1012,24 @@ func (o *MigrationOrchestrator) writeStatus(ctx context.Context, serverUUID, pha
 	if err := o.redis.Set(ctx, key, data, orchestrationStatusTTL).Err(); err != nil {
 		log.Printf("migration %s: failed to write orchestration status: %v", serverUUID, err)
 	}
+}
+
+// migrationSourceLANIPs is what a migrate_in is told about the source's LAN.
+//
+// A move where either end sits outside the datacenter - a customer's machine
+// (owned) or an External node - gets the source's LAN addresses, so a same-LAN
+// move pulls directly and any other one answers need_remote and falls back to
+// the object-storage transfer. Such a machine is reached only through a
+// WireGuard spoke, and the overlay endpoint the node publishes for the pull is
+// not reachable across it: with an empty list the target would try that
+// endpoint, fail, and the move would roll back every time.
+//
+// Platform to platform stays overlay-only (nil). IsExternal reads a tag the node
+// reports itself, which is acceptable here: it only chooses a transport, and a
+// wrong answer costs a failed move, never access.
+func migrationSourceLANIPs(source, target *models.Node) []string {
+	if source.OwnerID != nil || target.OwnerID != nil || source.IsExternal() || target.IsExternal() {
+		return source.PrivateIPs
+	}
+	return nil
 }

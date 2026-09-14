@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"dylaris-core/models"
 	"dylaris-pkg/queue"
 	"encoding/json"
 	"testing"
@@ -247,5 +248,37 @@ func TestMigrationOrchestrator_EnqueueMigration(t *testing.T) {
 	}
 	if payload["requestedBy"] != "system" {
 		t.Errorf("requestedBy = %v, want system", payload["requestedBy"])
+	}
+}
+
+// A move with either end outside the datacenter needs the source's LAN
+// addresses: that is what makes the target answer need_remote and take the
+// object-storage transfer instead of an overlay pull it cannot reach. An
+// External node is unowned, so the owner check alone handed it nothing.
+func TestMigrationSourceLANIPs(t *testing.T) {
+	lan := []string{"192.168.1.10"}
+	owner := "tenant-a"
+	platform := func() *models.Node { return &models.Node{PrivateIPs: lan} }
+	external := func() *models.Node { return &models.Node{PrivateIPs: lan, Tags: "ssd, external"} }
+	owned := func() *models.Node { return &models.Node{PrivateIPs: lan, OwnerID: &owner} }
+	tests := []struct {
+		name           string
+		source, target *models.Node
+		want           bool
+	}{
+		{"platform to platform stays on the overlay", platform(), platform(), false},
+		{"platform to External", platform(), external(), true},
+		{"External to platform", external(), platform(), true},
+		{"External to External", external(), external(), true},
+		{"platform to a customer's machine", platform(), owned(), true},
+		{"a customer's machine to platform", owned(), platform(), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := migrationSourceLANIPs(tt.source, tt.target)
+			if (got != nil) != tt.want {
+				t.Errorf("LAN IPs = %v, want handed over: %v", got, tt.want)
+			}
+		})
 	}
 }

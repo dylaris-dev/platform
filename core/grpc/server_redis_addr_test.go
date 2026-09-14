@@ -10,12 +10,16 @@ import (
 	pb "dylaris-proto/node"
 )
 
-// acceptingEnrollACL takes the enroll-token door, which is the one that
-// produces an owned (BYON) node.
-type acceptingEnrollACL struct{ rejectingACL }
+// acceptingEnrollACL takes the enroll-token door. A tenant's token produces an
+// owned (BYON) node; platform makes it an admin's External node token, whose
+// row is born unowned.
+type acceptingEnrollACL struct {
+	rejectingACL
+	platform bool
+}
 
-func (acceptingEnrollACL) Enroll(context.Context, string, string, string) (string, int, string, error) {
-	return "owned-uuid", 9, "aabb", nil
+func (a acceptingEnrollACL) Enroll(context.Context, string, string, string) (string, int, string, bool, error) {
+	return "enrolled-uuid", 9, "aabb", !a.platform, nil
 }
 
 // The node no longer carries a Redis address of its own; it is told one here.
@@ -61,11 +65,21 @@ func TestEverySuccessfulAuthResultCarriesCoresRedisAddr(t *testing.T) {
 			want:   coreRedis,
 		},
 		{
-			name:   "new enrolment through an enroll token is an owned node",
+			name:   "new enrolment through a tenant's enroll token is an owned node",
 			lookup: rejectingLookup{},
 			acl:    acceptingEnrollACL{},
 			msgs:   []*pb.NodeMessage{authMsg(enroll)},
 			want:   "",
+		},
+		{
+			// Told what its reconnects will be told, since the row it gets is
+			// unowned. Harmless on that machine: a node follows Core's address
+			// only when it holds CLUSTER_SECRET (node/redis_addr.go).
+			name:   "new enrolment through a platform token is an unowned node",
+			lookup: rejectingLookup{},
+			acl:    acceptingEnrollACL{platform: true},
+			msgs:   []*pb.NodeMessage{authMsg(enroll)},
+			want:   coreRedis,
 		},
 		{
 			name:   "reconnect of an owned node",

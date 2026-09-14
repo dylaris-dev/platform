@@ -602,9 +602,60 @@ describe('a node kit that cannot boot a link says so', () => {
         expect(nodeCompose(base)).not.toContain('starts its own link sidecar');
     });
 
+    // Two readers get this file without a link, and only one of them can bind a
+    // key: a tenant, under the machine. An admin's legacy key can never be bound
+    // to anything, so pointing its reader at the tenant's way out sends them to
+    // a button that does not exist for them.
+    it('tells a tenant to bind a key under the machine', () => {
+        expect(nodeCompose(base)).toContain('Bind\n# one under the machine in the panel');
+    });
+
+    it('tells an admin with a legacy key to mint an External node key instead', () => {
+        const out = nodeCompose({ ...base, legacyAdminKey: true });
+        expect(out).toContain('THIS FILE RUNS NO LINK');
+        expect(out).toContain('it can never boot a link');
+        expect(out).toContain('Settings -> Warp -> External Nodes');
+        expect(out).not.toContain('under the machine in the panel');
+        expect(out).not.toContain('gateway-link');
+    });
+
     it('says nothing of the sort once the key can boot a link', () => {
         const out = nodeCompose({ ...base, linkBesideNode: true });
         expect(out).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
         expect(out).not.toContain('THIS FILE RUNS NO LINK');
+    });
+});
+
+// The admin's External node kit speaks to an operator about a machine that
+// belongs to nobody, so it must not tell the reader the machine is theirs, and
+// must say where the node really shows up. A tenant's kit is the same file it
+// always was: externalNode is the only switch, and it is off unless the admin
+// Warp dialog sets it.
+describe('the External node kit', () => {
+    const tenantKits = [
+        nodeCompose(base),
+        nodeCompose({ ...base, linkBesideNode: true }),
+        nodeCompose({ ...base, linkBesideNode: true, platform: 'windows' }),
+    ];
+
+    it('does not call the machine the reader\'s own', () => {
+        const out = nodeCompose({ ...base, linkBesideNode: true, externalNode: true });
+        expect(out).not.toContain('this machine is yours, not ours');
+        expect(out).toContain('# keep - this machine runs outside our datacenter, reached through warp.\n      NODE_EXTERNAL: "true"');
+    });
+
+    it('names where the node appears', () => {
+        expect(deployCli('node', true)).toContain('it appears in the panel under My infrastructure -> External nodes within ~30s.');
+        expect(deployCli('node', true)).not.toContain('under Nodes within');
+    });
+
+    it('leaves the tenant kit exactly as it was', () => {
+        for (const out of tenantKits) {
+            expect(out).toContain('# keep - this machine is yours, not ours.\n      NODE_EXTERNAL: "true"');
+            expect(out).not.toContain('outside our datacenter');
+        }
+        expect(nodeCompose({ ...base, linkBesideNode: true, externalNode: false })).toBe(tenantKits[1]);
+        expect(deployCli('node')).toContain('it appears in the panel under Nodes within ~30s.');
+        expect(deployCli('node', false)).toBe(deployCli('node'));
     });
 });

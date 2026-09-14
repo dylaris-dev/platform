@@ -1266,6 +1266,24 @@ func TestCap_WarpRegionsTopologyPanel(t *testing.T) {
 	if c := doAs(t, srv, "POST", "/api/admin/warp/keys", testIdentity{UserID: "tw-id", Username: "tw"}); c == 403 {
 		t.Error("topology.write holder must not be 403 minting a warp key")
 	}
+	// The External node mint hands out an overlay key AND a node enroll token,
+	// so it sits behind the same write capability as the key mint, and a reader
+	// or an ordinary user is refused at the route. Unlike the key mint it is
+	// ALSO admin-only: an unowned node receives other customers' servers, and
+	// topology.write can be delegated to someone who is not an admin.
+	if c := doAs(t, srv, "POST", "/api/admin/warp/external-nodes", testIdentity{UserID: "tw-id", Username: "tw"}); c != 403 {
+		t.Errorf("topology.write holder who is not an admin must be 403 minting an External node key, got %d", c)
+	}
+	admin := fs.addUser("admin-id", "root", true)
+	if c := doAs(t, srv, "POST", "/api/admin/warp/external-nodes", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("an admin must not be 403 minting an External node key")
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/warp/external-nodes", testIdentity{UserID: "tp-id", Username: "tp"}); c != 403 {
+		t.Errorf("topology.read-only holder must be 403 minting an External node key, got %d", c)
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/warp/external-nodes", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+		t.Errorf("ordinary user must be 403 minting an External node key, got %d", c)
+	}
 	if c := doAs(t, srv, "GET", "/api/warp/regions", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
 		t.Errorf("ordinary user must be 403 on warp regions, got %d", c)
 	}

@@ -165,8 +165,8 @@ func (f *fakeACLHandshakeStore) SetNodeSecretEncIfUnchanged(id int, prev, next s
 	return true, nil
 }
 func (f *fakeACLHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) { return nil, nil }
-func (f *fakeACLHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, error) {
-	return "", false, nil
+func (f *fakeACLHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, bool, error) {
+	return "", false, false, nil
 }
 func (f *fakeACLHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, error) {
 	return "", false, nil
@@ -176,6 +176,9 @@ func (f *fakeACLHandshakeStore) CreateBYONNode(token, address, ownerID, displayN
 	return 0, nil
 }
 func (f *fakeACLHandshakeStore) CreatePlatformNode(token, address, displayName string) (int, error) {
+	return 0, nil
+}
+func (f *fakeACLHandshakeStore) CreatePlatformTokenNode(token, address, displayName string) (int, error) {
 	return 0, nil
 }
 func (f *fakeACLHandshakeStore) NodeIDByToken(token string) (int, bool, error) {

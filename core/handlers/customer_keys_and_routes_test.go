@@ -49,17 +49,33 @@ func TestAnAdminCannotRollOrRevokeACustomersWarpKeys(t *testing.T) {
 		})
 	}
 
-	// The platform twin: an admin-minted key has no owner and stays the operator's.
-	t.Run("revoke a platform node key", func(t *testing.T) {
-		h, fs := newRevokeTestHandler(t)
-		fs.settings["feature_byon_enabled"] = "true"
-		fs.keysByNodeID["node-ours"] = &store.WarpAPIKey{ID: 8, NodeID: "node-ours"}
-		rec := httptest.NewRecorder()
-		h.RevokeNodeWarpKey(rec, revokeReq(t, "/x", "nodeID", "node-ours", "admin-1", true))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d; an admin lost a platform key (%s)", rec.Code, rec.Body.String())
-		}
-	})
+	// The platform twin. An owner-less node- key is an External node's, and a
+	// rolled one boots that machine's Link. These tenant endpoints carry no
+	// capability, so "any admin" would be their whole gate: they answer it like a
+	// key that does not exist, and the operator acts on it through RevokeAPIKey /
+	// DeleteAPIKey under /api/admin/warp/keys, which require topology.write.
+	for name, call := range map[string]func(h *WarpHandler, w http.ResponseWriter){
+		"revoke an External node key": func(h *WarpHandler, w http.ResponseWriter) {
+			h.RevokeNodeWarpKey(w, revokeReq(t, "/x", "nodeID", "node-ours", "admin-1", true))
+		},
+		"roll an External node key": func(h *WarpHandler, w http.ResponseWriter) {
+			h.RollNodeWarpKey(w, revokeReq(t, "/x", "nodeID", "node-ours", "admin-1", true))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, fs := newRevokeTestHandler(t)
+			fs.settings["feature_byon_enabled"] = "true"
+			fs.keysByNodeID["node-ours"] = &store.WarpAPIKey{ID: 8, NodeID: "node-ours"}
+			rec := httptest.NewRecorder()
+			call(h, rec)
+			if rec.Code != http.StatusNotFound || len(fs.revoked) != 0 || strings.Contains(rec.Body.String(), "warp_key") {
+				t.Fatalf("status = %d, revoked = %v; a tenant endpoint reached an External node key (%s)", rec.Code, fs.revoked, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "Node key not found") {
+				t.Errorf("body = %s, want the same answer as a key that does not exist", rec.Body.String())
+			}
+		})
+	}
 }
 
 // DELETE /api/servers/{id}/routes/{domain} checks network.write against {id},

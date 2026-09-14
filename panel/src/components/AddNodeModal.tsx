@@ -17,9 +17,12 @@ import { isWails } from '@/lib/adapters';
 // Two shapes, and which ones exist depends on the install:
 //   - Fleet node: a machine the operator owns, joined to the Swarm/compose
 //     stack. Always available.
-//   - External node: a machine reached over the warp overlay (a customer's or a
-//     remote box). Only meaningful once the gateway subsystem is routing, so
-//     that tab appears only then.
+//   - External node: a machine the platform runs outside the datacenter,
+//     reached over the warp overlay. Added under Settings -> Warp, which mints
+//     its key and enroll token together; the node belongs to nobody. Only
+//     meaningful once the gateway subsystem is routing, so that tab appears only
+//     then. A customer's machine is not added here at all: the customer adds it
+//     under My infrastructure, and an admin token would make it the admin's.
 // ---------------------------------------------------------------------------
 
 const enrollUrl = coreOrigin();
@@ -32,12 +35,12 @@ services:
     restart: unless-stopped
     environment:
       NODE_ID: "<stable-id-for-this-machine>"
-      # Single-use, first boot only. Mint it under Settings -> Nodes.
-      NODE_ENROLL_TOKEN: "<enroll-token-from-panel>"
+      # The same value Core runs with. A fleet host is trusted infrastructure:
+      # it pairs by proving this secret, so no enroll token is involved.
+      CLUSTER_SECRET: "\${CLUSTER_SECRET}"
       CORE_GRPC_ADDR: "core:25501"
-      REDIS_ADDR: "redis:6379"
-      # No CLUSTER_SECRET: the node fetches a scoped Redis credential over gRPC
-      # once it has enrolled. Handing it fleet credentials undoes that.
+      # No REDIS_ADDR: Core tells the node its own address on every login, and
+      # the node fetches a Redis credential scoped to itself.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /dev:/dev:ro
@@ -57,7 +60,7 @@ docker stack deploy -c docker-stack.yml dylaris
 #    ...or with compose on a single host:
 docker compose up -d node
 
-# 2. Watch it enroll. The token is consumed on first success.
+# 2. Watch it pair. It proves CLUSTER_SECRET and Core gives it its identity.
 docker compose logs -f node
 
 # 3. It appears under Settings -> Nodes within ~30s.`;
@@ -111,7 +114,7 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                             Add a node
                         </h3>
                         <p className="text-xs text-(--base-07) mt-1">
-                            A node is added on the machine itself. The panel mints the token and shows the result.
+                            A node is added on the machine itself; the panel shows the result.
                         </p>
                     </div>
                     <button onClick={onClose} className="p-1 text-(--base-06) hover:text-(--base-09) transition-colors">
@@ -174,51 +177,55 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                             <div className="alert alert-info text-xs">
                                 <Info size={13} className="shrink-0 mt-0.5" />
                                 <span>
-                                    Mint the single-use enrollment token first under{' '}
+                                    A fleet host joins with <code>CLUSTER_SECRET</code>, the same value Core runs
+                                    with: it proves the secret (a cluster proof) and Core pairs it, with no enroll
+                                    token. Do not mint one for it - an enroll token makes the machine the minting
+                                    account&apos;s own node. A host that cannot pair appears under{' '}
                                     <a href="/settings/nodes" className="text-(--accent-light) hover:underline">
                                         Settings &rarr; Nodes
                                     </a>
-                                    , then paste it into <code>NODE_ENROLL_TOKEN</code> below. It is consumed on the
-                                    node&apos;s first successful connect.
+                                    {' '}as a connection attempt to admit.
                                 </span>
                             </div>
                             <CodeBlock label="Stack service" code={FLEET_COMPOSE} />
                             <CodeBlock label="Deploy" code={FLEET_STEPS} />
                             <p className="text-xs text-(--base-06)">
                                 Core is reachable at <code className="text-(--base-08)">{enrollUrl}</code>. If the new
-                                host is not on the same overlay network, it is an external node — see the other tab.
+                                host is not on the same overlay network, it is an External node - see the other tab.
                             </p>
                         </>
                     ) : (
                         <>
                             <p className="text-sm text-(--base-07)">
-                                A machine anywhere else — a remote box or a customer&apos;s. It joins the warp overlay
-                                with a mint-once key and dials Core through the tunnel, so it needs no public IP and no
-                                port forwarding.
+                                A machine the platform runs outside the datacenter. It joins the warp overlay and dials
+                                Core through the tunnel, so it needs no public IP and no port forwarding, and it never
+                                holds <code>CLUSTER_SECRET</code>. The node belongs to nobody, not to the admin who adds it.
                             </p>
                             <div className="alert alert-info text-xs">
                                 <Info size={13} className="shrink-0 mt-0.5" />
                                 <span>
-                                    The full kit — the warp key, the overlay addresses and the ready-made compose file
-                                    with everything filled in — is generated under{' '}
+                                    The compose file - warp, the node and its Link, with the key and the enroll token
+                                    filled in - is generated under{' '}
                                     <a href="/settings/warp" className="text-(--accent-light) hover:underline inline-flex items-center gap-1">
-                                        Settings &rarr; Warp &rarr; External nodes <ExternalLink size={10} />
+                                        Settings &rarr; Warp &rarr; External Nodes <ExternalLink size={10} />
                                     </a>
-                                    . It cannot be shown here because the key is revealed exactly once, at mint time.
+                                    . It cannot be shown here because both are revealed exactly once, when they are minted.
+                                    A customer&apos;s machine is not added here: the customer adds it under My infrastructure.
                                 </span>
                             </div>
                             <ol className="text-sm text-(--base-07) space-y-2 list-decimal pl-5">
                                 <li>
-                                    In <span className="text-(--base-09)">Settings &rarr; Warp &rarr; External nodes</span>,
-                                    mint a warp key for the region the machine should belong to.
+                                    In <span className="text-(--base-09)">Settings &rarr; Warp &rarr; External Nodes</span>,
+                                    name the location and add the External node.
                                 </li>
+                                <li>Copy the compose file shown there onto the machine and start it.</li>
                                 <li>
-                                    Choose the kit: <span className="text-(--base-09)">Node</span> to run Minecraft
-                                    servers on that machine, or <span className="text-(--base-09)">Route-only</span> to
-                                    give an already-running server a protected address without hosting it.
+                                    The node enrols itself and appears under{' '}
+                                    <a href="/nodes?tab=external" className="text-(--accent-light) hover:underline">
+                                        My infrastructure &rarr; External nodes
+                                    </a>
+                                    {' '}within ~30s. Its Link starts once the node has enrolled.
                                 </li>
-                                <li>Copy the generated compose file onto the machine and start it.</li>
-                                <li>The node registers itself and appears under Settings &rarr; Nodes within ~30s.</li>
                             </ol>
                             <a href="/settings/warp" className="btn btn-primary btn-sm inline-flex w-fit">
                                 Open Warp settings <ExternalLink size={12} />

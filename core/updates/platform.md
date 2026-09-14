@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.15
+
+### Features
+- **An External node now gets a deploy file that includes its Link.** Settings -> Warp adds
+  the machine in one step, and it joins as a platform node instead of the admin's own. `core` `panel`
+
+### Breaking
+- **The Warp deploy dialog offers External nodes only.** Its BYON and route-only files could
+  never start a Link; customers get working ones on their own pages. `panel`
+- **External nodes added before this release keep their old key and owner.** Their key
+  cannot start a Link; add the machine again to move it to the new setup. `core` `panel`
+
+### Security
+- **Only an admin can add an External node, and customer node-key actions no longer reach
+  its key.** A platform node receives other customers' servers. `core`
+- **An External node re-pairs only through an admission in the panel,** never through the
+  cluster secret, like a customer's machine. `core`
+
+### Fixes
+- **Automatic rebalancing no longer moves servers between the datacenter and External
+  nodes,** and a manual move there takes the same transfer path as a customer machine. `core`
+- **Stale labels corrected:** the Billing setting is now "Migration link lifetime", since
+  backups and restores no longer use it. `panel`
+
 ## 2026.09.14.2
 
 ### Features

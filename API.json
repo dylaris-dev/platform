@@ -1183,6 +1183,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/admin/warp/external-nodes",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "everything an External node needs, in one call: an owner-less node- warp key and the platform enroll token bound to it.",
+      "handler": "WarpHandler.MintExternalNodeKey",
+      "group": "admin",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/admin/warp/keys",
       "auth": "session",
@@ -5263,15 +5273,15 @@
     }
   ],
   "counts": {
-    "total": 528,
+    "total": 529,
     "byAuth": {
       "none": 38,
-      "session": 477,
+      "session": 478,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 125,
+      "admin": 126,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

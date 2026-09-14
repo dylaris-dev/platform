@@ -17,18 +17,18 @@ func TestResolveNodeEnrollToken_Valid(t *testing.T) {
 	defer db.Close()
 	s := NewPostgresStore(db)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT user_id FROM node_enroll_tokens
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT user_id, platform FROM node_enroll_tokens
 			 WHERE token_hash = $1 AND consumed_at IS NULL AND recovers_node_token IS NULL
 			   AND (expires_at IS NULL OR expires_at > NOW())`)).
 		WithArgs(hashAuthToken("plain-token")).
-		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("user-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "platform"}).AddRow("user-1", false))
 
-	userID, ok, err := s.ResolveNodeEnrollToken("plain-token")
+	userID, platform, ok, err := s.ResolveNodeEnrollToken("plain-token")
 	if err != nil {
 		t.Fatalf("ResolveNodeEnrollToken: %v", err)
 	}
-	if !ok || userID != "user-1" {
-		t.Fatalf("got (%q, %v), want (user-1, true)", userID, ok)
+	if !ok || userID != "user-1" || platform {
+		t.Fatalf("got (%q, %v, %v), want (user-1, false, true)", userID, platform, ok)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet sqlmock expectations: %v", err)
@@ -48,13 +48,13 @@ func TestResolveNodeEnrollToken_UnknownExpiredOrRecovery(t *testing.T) {
 	defer db.Close()
 	s := NewPostgresStore(db)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT user_id FROM node_enroll_tokens
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT user_id, platform FROM node_enroll_tokens
 			 WHERE token_hash = $1 AND consumed_at IS NULL AND recovers_node_token IS NULL
 			   AND (expires_at IS NULL OR expires_at > NOW())`)).
 		WithArgs(hashAuthToken("bad-token")).
 		WillReturnError(sql.ErrNoRows)
 
-	userID, ok, err := s.ResolveNodeEnrollToken("bad-token")
+	userID, _, ok, err := s.ResolveNodeEnrollToken("bad-token")
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -75,13 +75,13 @@ func TestResolveNodeEnrollToken_QueryError(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	boom := errors.New("connection reset")
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT user_id FROM node_enroll_tokens
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT user_id, platform FROM node_enroll_tokens
 			 WHERE token_hash = $1 AND consumed_at IS NULL AND recovers_node_token IS NULL
 			   AND (expires_at IS NULL OR expires_at > NOW())`)).
 		WithArgs(hashAuthToken("some-token")).
 		WillReturnError(boom)
 
-	_, ok, err := s.ResolveNodeEnrollToken("some-token")
+	_, _, ok, err := s.ResolveNodeEnrollToken("some-token")
 	if ok {
 		t.Fatalf("expected ok=false on error")
 	}
@@ -103,6 +103,9 @@ func TestConsumeNodeEnrollToken_ValidEnrollToken(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE node_enroll_tokens SET consumed_at = NOW()
 			 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
+			   AND (NOT platform OR EXISTS (SELECT 1 FROM warp_api_keys k
+			        WHERE k.node_id = node_enroll_tokens.warp_key_node_id
+			          AND k.owner_id IS NULL AND k.revoked_at IS NULL))
 			 RETURNING user_id, COALESCE(recovers_node_token, '')`)).
 		WithArgs(hashAuthToken("plain-token")).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "recovers_node_token"}).AddRow("user-1", ""))
@@ -129,6 +132,9 @@ func TestConsumeNodeEnrollToken_ValidRecoveryToken(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE node_enroll_tokens SET consumed_at = NOW()
 			 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
+			   AND (NOT platform OR EXISTS (SELECT 1 FROM warp_api_keys k
+			        WHERE k.node_id = node_enroll_tokens.warp_key_node_id
+			          AND k.owner_id IS NULL AND k.revoked_at IS NULL))
 			 RETURNING user_id, COALESCE(recovers_node_token, '')`)).
 		WithArgs(hashAuthToken("recovery-token")).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "recovers_node_token"}).AddRow("user-1", "node-tok-abc"))
@@ -155,6 +161,9 @@ func TestConsumeNodeEnrollToken_AlreadyConsumedOrExpired(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE node_enroll_tokens SET consumed_at = NOW()
 			 WHERE token_hash = $1 AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
+			   AND (NOT platform OR EXISTS (SELECT 1 FROM warp_api_keys k
+			        WHERE k.node_id = node_enroll_tokens.warp_key_node_id
+			          AND k.owner_id IS NULL AND k.revoked_at IS NULL))
 			 RETURNING user_id, COALESCE(recovers_node_token, '')`)).
 		WithArgs(hashAuthToken("used-token")).
 		WillReturnError(sql.ErrNoRows)

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -291,6 +293,119 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// externalNodeTokenDays is how long an External node's enroll token stays
+// redeemable, the default a tenant's token gets (MintToken).
+const externalNodeTokenDays = 7
+
+// MintExternalNodeKey POST /api/admin/warp/external-nodes - everything an
+// External node needs, in one call: an owner-less node- warp key and the
+// platform enroll token bound to it. An External node is a machine the PLATFORM
+// runs outside the datacenter, so the node it enrols is born unowned.
+//
+// This replaced minting a plain admin key for the purpose, which could never
+// work: that key had no node- identity, so link-boot refused it and the kit
+// carried no Link, and an admin enroll token made the machine the minting
+// admin's own BYON node. The shape is the tenant's (MintNodeWarpKey plus
+// MintToken): one machine per key, kill_old so a restart re-enrols cleanly.
+//
+// Not gated on the BYON flag: the machine belongs to nobody, so the tenant
+// feature has nothing to say about it. Gateway routing is required, as for
+// every overlay key - there is no overlay to join without it.
+//
+// Admins only, on top of the route's topology.write. That capability can be
+// delegated to someone who is not an admin, and an unowned node is not a
+// topology detail: automatic placement and the rebalancer put other customers'
+// servers on it, so whoever adds one decides where those servers run.
+//
+// The token names the key rather than the other way round, and a platform token
+// is redeemable only while that key is live (ConsumeNodeEnrollToken). So the
+// key is the one thing an admin has to revoke, and a failure between the two
+// inserts removes the key again: an owner-less node key with no token could
+// still join the overlay, and would sit in the list as a machine that never
+// arrives.
+func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Only an admin can add an External node", http.StatusForbidden)
+		return
+	}
+	if !h.state.gatewayEnabled() || h.state.Gateway == nil {
+		sendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
+		return
+	}
+	minterID := byonCallerID(r)
+	if minterID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	// Same rule as a tenant's machine: the name is slugged into NODE_ID by the
+	// deploy file, so it has to be safe there.
+	name := strings.TrimSpace(req.Name)
+	if !validate.IsLocationName(name) {
+		sendJSONError(w, "Name this location: 4 to 20 characters, letters, digits and hyphens, not starting or ending with a hyphen.", http.StatusBadRequest)
+		return
+	}
+	nodeID, err := generateNodeWarpIdentity()
+	if err != nil {
+		sendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
+		return
+	}
+	plaintext, err := generatePlaintextKey()
+	if err != nil {
+		sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		return
+	}
+	tb := make([]byte, 32)
+	if _, err := rand.Read(tb); err != nil {
+		sendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+	token := hex.EncodeToString(tb)
+
+	id, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
+		Name:      name,
+		KeyHash:   HashAPIKey(plaintext),
+		Policy:    "general",
+		MaxConns:  1,
+		OnNewConn: "kill_old",
+		NodeID:    nodeID,
+	})
+	if err != nil {
+		sendJSONError(w, "Failed to create the node key", http.StatusInternalServerError)
+		return
+	}
+	exp := time.Now().AddDate(0, 0, externalNodeTokenDays)
+	if err := h.state.Store.CreatePlatformNodeEnrollToken(minterID, token, name, &exp, nodeID); err != nil {
+		log.Printf("warp: external node %s: storing its enroll token failed, removing its key %d: %v", nodeID, id, err)
+		if derr := h.state.Store.DeleteWarpAPIKeyByID(id); derr != nil {
+			log.Printf("warp: external node %s: removing key %d failed too; revoke it from the Warp key list: %v", nodeID, id, derr)
+		}
+		sendJSONError(w, "Failed to create the enroll token", http.StatusInternalServerError)
+		return
+	}
+	// Only while TLS is on, for the reason MintToken gives.
+	fingerprint := ""
+	if h.state.GRPCTLSEnabled {
+		fingerprint = h.state.GRPCTLSFingerprint
+	}
+	log.Printf("warp: admin %s minted external node key %d (%s)", minterID, id, nodeID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":              true,
+		"id":                   id,
+		"node_id":              nodeID,
+		"warp_key":             plaintext,
+		"enroll_token":         token,
+		"grpc_tls_fingerprint": fingerprint,
+	})
+}
+
 // ListAPIKeys GET /api/admin/warp/keys - the external-node inventory.
 //
 // Every admin-minted enrollment key with its live peers, so an operator can see
@@ -358,6 +473,14 @@ func (h *WarpHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 // WireGuard tunnel carries no memory of the key that created it and would keep
 // forwarding indefinitely. So the peers are dropped from every leader of their
 // region as well, which is what makes this an actual kill switch.
+//
+// An External node's key takes its enroll token with it when the machine has
+// not redeemed it yet: a platform token is redeemable only while its key is
+// live (store.ConsumeNodeEnrollToken), so there is nothing else to revoke.
+// Purging the key below does the same. Only a token not yet consumed is
+// affected: one already redeemed is spent, and the node it enrolled is removed
+// separately. Deleting the admin who minted the token also removes an
+// unredeemed one (user_id ON DELETE CASCADE), while this key stays.
 func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
@@ -522,8 +645,9 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 
 // LinkBoot POST /api/warp/link-boot - a Link presents its warp key and receives
 // its tunnel token plus a Redis credential scoped to its own keys. A route-only
-// link kit gets its own derived token and route-only ACL; a BYON node key gets
-// the Link of the node it is bound to (nodeLinkBoot). WarpAPIKeyMiddleware has
+// link kit gets its own derived token and route-only ACL; a node key (a BYON
+// machine's or an External node's) gets the Link of the node it is bound to
+// (nodeLinkBoot). WarpAPIKeyMiddleware has
 // already rejected an unknown or revoked key. The response is never logged.
 func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
@@ -531,12 +655,16 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// A BYON node's warp key must never mint a ROUTE-ONLY link credential: that
-	// ACL has none of the keys a node's servers need, and it would give the
-	// machine a second tunnel identity beside its node's. It gets its node's own
-	// Link instead. An owner-less key is a platform key with no BYON node behind
-	// it, and is refused like any other.
-	nodeKey := strings.HasPrefix(key.NodeID, "node-") && key.OwnerID != ""
+	// A node's warp key must never mint a ROUTE-ONLY link credential: that ACL
+	// has none of the keys a node's servers need, and it would give the machine a
+	// second tunnel identity beside its node's. It gets its node's own Link
+	// instead.
+	//
+	// Owned or not. An owner-less node- key is an admin's External node key
+	// (MintExternalNodeKey); admin keys cannot carry the prefix any other way
+	// (MintAPIKey refuses it). Whether it may boot anything is decided by the
+	// node it is bound to, in nodeLinkBoot: only an owner-less node answers it.
+	nodeKey := strings.HasPrefix(key.NodeID, "node-")
 	// A route-only kit always has an owner too; an owner-less link- key is not a
 	// kit, and answering it would hand out whichever link that id names.
 	linkKey := strings.HasPrefix(key.NodeID, "link-") && key.OwnerID != ""
@@ -554,12 +682,19 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	// paying tenants on reconnect, but it must be visible: the suspension gate is
 	// silently degraded for that window. Within the grace a suspended tenant still
 	// boots, consistent with the soft-enforcement posture.
-	b, berr := h.state.Store.GetUserBilling(key.OwnerID)
-	if berr != nil {
-		log.Printf("link-boot: billing lookup for %s failed, suspension gate skipped: %v", key.NodeID, berr)
-	} else if store.OwnerCutOff(b, h.state.SuspendGrace, services.OverLimitGrace, time.Now()) {
-		sendJSONError(w, "Account suspended", http.StatusForbidden)
-		return
+	//
+	// Only for a key with an owner. An External node key has nobody to suspend,
+	// and asking with an empty id only ever failed and logged that the gate was
+	// skipped - which read like a degraded gate on every boot of a machine that
+	// never had one.
+	if key.OwnerID != "" {
+		b, berr := h.state.Store.GetUserBilling(key.OwnerID)
+		if berr != nil {
+			log.Printf("link-boot: billing lookup for %s failed, suspension gate skipped: %v", key.NodeID, berr)
+		} else if store.OwnerCutOff(b, h.state.SuspendGrace, services.OverLimitGrace, time.Now()) {
+			sendJSONError(w, "Account suspended", http.StatusForbidden)
+			return
+		}
 	}
 	// Re-check revoked_at with a fresh read immediately before provisioning, to
 	// shrink the TOCTOU window against a concurrent RevokeLinkKit: the middleware
@@ -646,7 +781,17 @@ func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) 
 	// The binding was owner-checked when it was made. Asked again on every boot
 	// because a node row's owner can change afterwards, and a key must never hand
 	// out the Link of a machine its owner no longer holds.
-	if node.OwnerID == nil || *node.OwnerID != key.OwnerID {
+	//
+	// Two shapes pass: key and node owned by the same user, or both unowned (an
+	// External node and the key minted with its platform token). A tenant's key
+	// on a node that became unowned is refused, and so is an owner-less key on a
+	// node that became someone's: either way the key would hand out the Link of
+	// a machine that is no longer what it was minted for.
+	nodeOwner := ""
+	if node.OwnerID != nil {
+		nodeOwner = *node.OwnerID
+	}
+	if nodeOwner != key.OwnerID {
 		log.Printf("link-boot: key %s is bound to node %d, which its owner does not own; refused", key.NodeID, node.ID)
 		sendJSONError(w, "This key does not belong to that machine's owner", http.StatusForbidden)
 		return
@@ -819,7 +964,12 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 	// confirm that an id belongs to someone. An admin is no exception for a
 	// customer's key: a roll hands back the new plaintext, which boots warp or
 	// link AS the customer's machine. Abuse goes through suspension instead.
-	if key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID)) {
+	//
+	// Nor for an owner-less key, which is an External node's. These endpoints
+	// carry no capability, so "any admin" would be the whole gate, and a rolled
+	// External node key boots that machine's Link. The admin way to act on one
+	// is RevokeAPIKey / DeleteAPIKey under /api/admin/warp/keys.
+	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID))) {
 		sendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
@@ -1163,9 +1313,9 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 // is redeployed with that kit.
 //
 // Owner-checked on BOTH ends, admins included: a key and a machine of two
-// different owners must never be joined. Operator machines (owner NULL) stay
-// node-managed - their keys are admin keys with no owner to check against, and
-// link-boot refuses an owner-less key.
+// different owners must never be joined. Owner-less keys and machines are not
+// this endpoint's: an External node's key is bound once, at its enrolment, by
+// the platform token minted with it (store.BindWarpKeyFromEnrollToken).
 func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	if !byonActive(h.state, r) {
 		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
@@ -1304,8 +1454,10 @@ func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// Same message for "not yours" as for "does not exist": a different one would
-	// confirm the id belongs to someone.
-	if key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID)) {
+	// confirm the id belongs to someone. An owner-less key is an External node's
+	// and is answered the same way: this endpoint has no capability, and the
+	// admin kill switch for that key is RevokeAPIKey under /api/admin/warp/keys.
+	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID))) {
 		sendJSONError(w, "Node key not found", http.StatusNotFound)
 		return
 	}

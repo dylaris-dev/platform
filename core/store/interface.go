@@ -75,7 +75,10 @@ type Store interface {
 	SetNodeDisplayName(id int, name string) error
 	// --- BYON node enrollment ---
 	CreateNodeEnrollToken(userID, plaintext, label string, expiresAt *time.Time, warpKeyNodeID string) error
-	ResolveNodeEnrollToken(plaintext string) (userID string, ok bool, err error)
+	// CreatePlatformNodeEnrollToken: an External node's token, whose machine is
+	// born unowned. Only the admin External node mint calls it.
+	CreatePlatformNodeEnrollToken(minterID, plaintext, label string, expiresAt *time.Time, warpKeyNodeID string) error
+	ResolveNodeEnrollToken(plaintext string) (userID string, platform bool, ok bool, err error)
 	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	CountPendingNodeEnrollTokens(userID string) (int, error)

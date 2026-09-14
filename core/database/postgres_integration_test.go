@@ -420,6 +420,16 @@ func TestIntegrationStaleNodeSweepSparesNodesThatCannotRePair(t *testing.T) {
 	byon := mkNode("byon_", &f.user.ID, store.NodeEnrolledViaClusterProof)
 	adminCreated := mkNode("admin_", nil, "")
 	clusterMinted := mkNode("plat_", nil, store.NodeEnrolledViaClusterProof)
+	// An External node: unowned like clusterMinted, and differing from it only
+	// in the marker, so this pins that the sweep reads the marker as an exact
+	// value rather than "anything set".
+	external := mkNode("ext_", nil, store.NodeEnrolledViaPlatformToken)
+	if via, err := st.GetNodeEnrolledVia(external.ID); err != nil || via != store.NodeEnrolledViaPlatformToken {
+		t.Fatalf("GetNodeEnrolledVia = (%q, %v), want %q", via, err, store.NodeEnrolledViaPlatformToken)
+	}
+	if via, err := st.GetNodeEnrolledVia(adminCreated.ID); err != nil || via != "" {
+		t.Errorf("GetNodeEnrolledVia on an unmarked row = (%q, %v), want empty", via, err)
+	}
 
 	if _, err := st.DeleteStaleOfflineNodes(time.Now().Add(-24 * time.Hour)); err != nil {
 		t.Fatalf("DeleteStaleOfflineNodes: %v", err)
@@ -430,6 +440,9 @@ func TestIntegrationStaleNodeSweepSparesNodesThatCannotRePair(t *testing.T) {
 	}
 	if got, err := st.GetNodeByID(adminCreated.ID); err != nil || got == nil {
 		t.Errorf("an admin-created node was swept: it cannot re-pair by itself (err=%v)", err)
+	}
+	if got, err := st.GetNodeByID(external.ID); err != nil || got == nil {
+		t.Errorf("an External node was swept: it holds no cluster secret and cannot re-pair by itself (err=%v)", err)
 	}
 	// A cluster-minted node that went away is exactly the churn the sweep
 	// exists for, so sparing everything would be the opposite mistake.

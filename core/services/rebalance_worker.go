@@ -272,6 +272,16 @@ func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, sr
 		if !sameNodeOwner(src, t) {
 			continue
 		}
+		// Nor across the External boundary. Both kinds of unowned node pass the
+		// ownership check above, but an External node sits outside the
+		// datacenter behind a WireGuard spoke: moving a server there relocates it
+		// out of the building by nobody's decision, and a move in or out needs
+		// the object-storage transfer rather than the overlay pull. An admin who
+		// wants that moves the server by hand. The tag is self-reported, which
+		// can only make a node attract or refuse moves among its own kind.
+		if t.IsExternal() != src.IsExternal() {
+			continue
+		}
 		// Keep the server in the same region + match the source's tags so a move
 		// doesn't silently relocate a server across a placement boundary.
 		if src.Region != "" && !equalRegion(t.Region, src.Region) {

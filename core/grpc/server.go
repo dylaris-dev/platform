@@ -42,7 +42,9 @@ type NodeLookup interface {
 // Implemented by *redisacl.Handshake, wired from main (always non-nil).
 type ACLHandshake interface {
 	EnsureExisting(ctx context.Context, nodeID int, token string) (secretHex string, err error)
-	Enroll(ctx context.Context, token, enrollToken, address string) (assignedID string, nodeID int, secretHex string, err error)
+	// Enroll redeems an enroll token. owned is false for a platform token (an
+	// admin's External node), whose row is born unowned.
+	Enroll(ctx context.Context, token, enrollToken, address string) (assignedID string, nodeID int, secretHex string, owned bool, err error)
 	EnrollPlatform(ctx context.Context, token, address string) (assignedID string, nodeID int, secretHex string, err error)
 	VerifyProof(ctx context.Context, nodeID int, token, proof string) (ok bool, err error)
 	VerifyChallenge(ctx context.Context, nodeID int, nonce, response string) (ok bool, err error)
@@ -164,19 +166,23 @@ type Node struct {
 	// Owned is a BYON node (owner_id set). It decides whether the node is told
 	// Core's Redis address: an owned node reaches Redis through its warp proxy.
 	Owned bool
+	// PlatformToken is an External node: unowned, enrolled with an admin's
+	// platform token (nodes.enrolled_via = platform_token). It holds no
+	// CLUSTER_SECRET, so like an owned row it never re-pairs on a cluster proof.
+	PlatformToken bool
 }
 
 // StoreAdapter wraps any store that has GetNodeByToken returning *models.Node.
 type StoreAdapter struct {
-	GetByToken func(token string) (id int, owned bool, err error)
+	GetByToken func(token string) (id int, owned, platformToken bool, err error)
 }
 
 func (a *StoreAdapter) GetNodeByToken(token string) (*Node, error) {
-	id, owned, err := a.GetByToken(token)
+	id, owned, platformToken, err := a.GetByToken(token)
 	if err != nil {
 		return nil, err
 	}
-	return &Node{ID: id, Token: token, Owned: owned}, nil
+	return &Node{ID: id, Token: token, Owned: owned, PlatformToken: platformToken}, nil
 }
 
 // Server implements the NodeService gRPC server.
@@ -431,8 +437,12 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				}
 			}
 			// Unknown node. Exactly two ways in, tried in this order:
-			//  (1) a single-use enroll token -> BYON node, bound to that token's
-			//      owner. This is the ONLY path that can produce an owned node.
+			//  (1) a single-use enroll token -> the node that token was minted
+			//      for: a BYON node bound to the token's owner, or, for a platform
+			//      token an admin minted for an External node, an unowned one.
+			//      The token row decides which, never the node. This is the ONLY
+			//      path that can produce an owned node, and the only way an
+			//      unowned node joins without CLUSTER_SECRET.
 			//  (2) a valid cluster_proof -> operator-owned platform node
 			//      (owner_id NULL), no token needed. This is the pairing spec's
 			//      "for platform nodes without an enroll token, a cluster_proof":
@@ -443,7 +453,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			//      fleet. A BYON node never holds CLUSTER_SECRET, so (1) stays
 			//      the only door for tenants and ownership binding is unchanged.
 			// The enroll token wins when both are present: setting it is an
-			// explicit request for an owned node.
+			// explicit request for the node that token was minted for.
 			// A node that already HOLDS an identity is never a new node.
 			//
 			// secret_proof is only ever sent by a node with a cached secret, so
@@ -493,9 +503,10 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			}
 			var assignedID, secretHex string
 			var id int
+			var owned bool
 			var eerr error
 			if enroll {
-				assignedID, id, secretHex, eerr = s.acl.Enroll(ctx, auth.NodeToken, auth.EnrollToken, address)
+				assignedID, id, secretHex, owned, eerr = s.acl.Enroll(ctx, auth.NodeToken, auth.EnrollToken, address)
 			} else {
 				assignedID, id, secretHex, eerr = s.acl.EnrollPlatform(ctx, auth.NodeToken, address)
 			}
@@ -539,10 +550,13 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					return fmt.Errorf("acl: node %d: its pairing changed during its enrolment (re-read error: %v)", id, cerr)
 				}
 			}
-			// The enroll token is the only door that produces an owned node (see
-			// the door check above); the cluster proof always produces a platform one.
-			owned := auth.EnrollToken != ""
-			node = &Node{ID: id, Token: assignedID, Owned: owned}
+			// Owned as the enrolment created the row, not as the door was knocked
+			// on: an enroll token produces an owned node only when it is a
+			// tenant's, and the cluster proof always produces a platform one. The
+			// same answer the reconnect branch reads off the row later, so a node
+			// is told the same Redis address on its first connect as on every
+			// one after.
+			node = &Node{ID: id, Token: assignedID, Owned: owned, PlatformToken: enroll && !owned}
 			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID,
 				RedisAddr: s.redisAddrFor(owned)}
 			applyUpdateWarning(ar, verdict)
@@ -716,6 +730,11 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// node out. An owned row re-pairs only through an admission armed in
 				// the panel.
 				//
+				// An External node's row is closed the same way, for the same reason:
+				// it is unowned, but it enrolled with a platform token and holds no
+				// CLUSTER_SECRET, so a cluster proof for it is not that machine either.
+				// Legacy unowned rows (cluster_proof or no marker) keep the door.
+				//
 				// And it never overrides a live login credential. It counts only for
 				// a row that holds no key (Reset pairing, Roll key or an approval
 				// moved it aside) and, if the row never had one, no secret either -
@@ -729,7 +748,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				// through an operator: Roll key or Admit moves the key aside and
 				// keeps the secret, and the cluster proof then re-pairs it.
 				noLiveLogin := key == nil && (rejected != nil || !hasSecret)
-				clusterProof := !node.Owned && noLiveLogin && s.acl.VerifyClusterProof(node.Token, auth.ClusterProof)
+				clusterProof := !node.Owned && !node.PlatformToken && noLiveLogin && s.acl.VerifyClusterProof(node.Token, auth.ClusterProof)
 				if !clusterProof {
 					admitted := false
 					if s.joins != nil {
@@ -746,6 +765,8 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 						switch {
 						case node.Owned && auth.ClusterProof != "":
 							reason = "a cluster proof was presented for a customer's node, which re-pairs only through an admission"
+						case node.PlatformToken && auth.ClusterProof != "":
+							reason = "a cluster proof was presented for an External node, which holds no cluster secret and re-pairs only through an admission"
 						case key != nil && !node.Owned:
 							reason = "the node presents a different key than the live one Core holds for it, and only an operator replaces a live key. " +
 								"If it lost its .node_key, use Roll key in Settings -> Nodes or Admit it here: it keeps its secret and its game servers"

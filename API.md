@@ -135,14 +135,14 @@ can still show what exists.
 
 ## At a glance
 
-- **527 routes** in 52 sections: 236 GET, 159 POST, 39 PUT, 37 PATCH, 57 DELETE.
+- **528 routes** in 52 sections: 236 GET, 160 POST, 39 PUT, 37 PATCH, 57 DELETE.
 - **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **352** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **353** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (125)
+- [/api/admin](#apiadmin) (126)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -318,6 +318,7 @@ can still show what exists.
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/role` | session | `users.write` | - | `UserHandler.SetUserRoleHandler` | SetUserRole PUT /api/admin/users/{id}/role Valid roles: "user", "support", "admin". |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/username` | session | `users.write` | - | `UsernameHistoryHandler.AdminRename` | Body: {"username": "newname"} — bypasses cooldown + platform toggle. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/username-history` | session | `users.read` | - | `UsernameHistoryHandler.Admin` | Gated at the route with RequireCap("users.read"); admin short-circuits. |
+| POST | `/api/admin/warp/external-nodes` | session | `topology.write` | - | `WarpHandler.MintExternalNodeKey` | everything an External node needs, in one call: an owner-less node- warp key and the platform enroll token bound to it. |
 | GET | `/api/admin/warp/keys` | session | `topology.read` | - | `WarpHandler.ListAPIKeys` | the external-node inventory. |
 | POST | `/api/admin/warp/keys` | session | `topology.write` | - | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
 | DELETE | `/api/admin/warp/keys/{id:[0-9]+}` | session | `topology.write` | - | `WarpHandler.RevokeAPIKey` | revoke an enrollment key AND disconnect whatever it already enrolled. |

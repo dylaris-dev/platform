@@ -106,9 +106,9 @@ func (a *keyedACL) EnrollPlatform(context.Context, string, string) (string, int,
 	return "brand-new-uuid", 7, "aabb", nil
 }
 
-func (a *keyedACL) Enroll(context.Context, string, string, string) (string, int, string, error) {
+func (a *keyedACL) Enroll(context.Context, string, string, string) (string, int, string, bool, error) {
 	a.enrolls++
-	return "owned-uuid", 9, "aabb", nil
+	return "owned-uuid", 9, "aabb", true, nil
 }
 
 // fakeNode plays a node over the stream: it sends its auth first and answers a
@@ -834,4 +834,62 @@ func TestAnUnusableKeyIsRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An External node's row is unowned, but it enrolled with an admin's platform
+// token and its machine holds no CLUSTER_SECRET, so a cluster proof for it is
+// not that machine. It is closed exactly like a customer's row, with a reason of
+// its own, and an admission still re-pairs it. A legacy unowned row - one that
+// enrolled through the cluster proof, or an admin-created one with no marker -
+// keeps the door, which is how the operator's own fleet recovers by itself.
+func TestAClusterProofNeverRePairsAnExternalNode(t *testing.T) {
+	external := knownNodeLookup{token: "node-abc", platformToken: true}
+	legit, attacker := newKey(t), newKey(t)
+
+	t.Run("refused", func(t *testing.T) {
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(legit), clusterOK: true}
+		joins := &recordingJoins{}
+		n := nodeWith(pubOf(attacker), nil, attacker)
+		n.auth.ClusterProof = "a-valid-cluster-proof"
+
+		err := dial(t, external, acl, joins, n)
+		res := n.result()
+		if err == nil || res == nil || res.Ok {
+			t.Fatal("a cluster proof re-paired an External node")
+		}
+		if res.NodeSecret != "" || len(acl.stored) != 0 || acl.key != nil {
+			t.Errorf("handed %q, stored %v, key %x; want nothing", res.NodeSecret, acl.stored, acl.key)
+		}
+		if len(joins.recorded) != 1 || !strings.Contains(joins.recorded[0].Reason, "External node, which holds no cluster secret") {
+			t.Errorf("recorded %+v, want one refusal naming the External node", joins.recorded)
+		}
+	})
+
+	t.Run("an admission armed in the panel still re-pairs it", func(t *testing.T) {
+		fresh := newKey(t)
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(legit)}
+		joins := &recordingJoins{admitIP: "203.0.113.7"}
+		if err := dial(t, external, acl, joins, nodeWith(pubOf(fresh), nil, fresh)); err != nil {
+			t.Fatalf("refused: %v", err)
+		}
+		if joins.consumed != 1 || !bytes.Equal(acl.key, pubOf(fresh)) {
+			t.Errorf("consumed=%d key=%x, want the admission spent on the new key", joins.consumed, acl.key)
+		}
+	})
+
+	// known is an unowned row without the marker: what a cluster_proof row and
+	// a legacy '' row both look like to this layer.
+	t.Run("a legacy unowned row still re-pairs on a cluster proof", func(t *testing.T) {
+		fresh := newKey(t)
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(legit), clusterOK: true}
+		joins := &recordingJoins{}
+		n := nodeWith(pubOf(fresh), nil, fresh)
+		n.auth.ClusterProof = "a-valid-cluster-proof"
+		if err := dial(t, known, acl, joins, n); err != nil {
+			t.Fatalf("a platform node's cluster proof was refused: %v", err)
+		}
+		if joins.consumed != 0 || !bytes.Equal(acl.key, pubOf(fresh)) {
+			t.Errorf("consumed=%d key=%x, want the cluster proof, not an admission, to store the new key", joins.consumed, acl.key)
+		}
+	})
 }

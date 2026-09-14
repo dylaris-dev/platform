@@ -34,13 +34,15 @@ type nodeLinkFakeStore struct {
 	nodes    map[int]*models.Node
 	secrets  map[int]string
 
-	nodeLookups int
-	binds       [][2]int
-	bindErr     error
+	nodeLookups    int
+	billingLookups int
+	binds          [][2]int
+	bindErr        error
 }
 
 func (f *nodeLinkFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
 func (f *nodeLinkFakeStore) GetUserBilling(string) (*store.UserBilling, error) {
+	f.billingLookups++
 	return f.billing, nil
 }
 func (f *nodeLinkFakeStore) GetWarpAPIKeyByNodeID(id string) (*store.WarpAPIKey, error) {
@@ -251,12 +253,17 @@ func TestLinkBoot_RouteOnlyKeyKeepsItsOwnPath(t *testing.T) {
 	}
 }
 
-// Every key that is neither a route-only kit nor a tenant's node key is refused
-// as it always was. The owner-less node key is the one that matters: a platform
-// key has no BYON node behind it, whatever its identity looks like.
+// Every key that is neither a route-only kit nor a node key is refused as it
+// always was. The owner-less link key is the one that matters: a route-only kit
+// always has an owner, so an owner-less link- identity is not a kit, and
+// answering it would hand out whichever link that id names.
+//
+// An owner-less NODE key is no longer in this list. It is an External node's
+// key, and whether it boots is decided by the node it is bound to - see
+// TestLinkBoot_ExternalNodeKey.
 func TestLinkBoot_OtherKeysAreRefused(t *testing.T) {
 	for name, key := range map[string]store.WarpAPIKey{
-		"owner-less node key": {ID: 11, NodeID: "node-platform"},
+		"owner-less link key": {ID: 11, NodeID: "link-platform"},
 		"platform key":        {ID: 12},
 		"some other identity": {ID: 13, NodeID: "edge-1", OwnerID: "owner-1"},
 	} {
@@ -296,6 +303,10 @@ func TestBindNodeWarpKey_OwnerChecks(t *testing.T) {
 		{name: "someone else's key", key: store.WarpAPIKey{ID: 20, NodeID: "node-free", OwnerID: other}, node: 8, wantStatus: http.StatusNotFound},
 		{name: "someone else's machine", key: store.WarpAPIKey{ID: 20, NodeID: "node-free", OwnerID: owner}, node: 9, wantStatus: http.StatusNotFound},
 		{name: "an operator machine", key: store.WarpAPIKey{ID: 20, NodeID: "node-free", OwnerID: owner}, node: 10, wantStatus: http.StatusNotFound},
+		// An External node's key binds only at its enrolment, through its
+		// platform token. This endpoint is the tenant's, and must not reach it -
+		// not even onto an operator machine, where both ends are owner-less.
+		{name: "an owner-less key", key: store.WarpAPIKey{ID: 20, NodeID: "node-free"}, node: 10, wantStatus: http.StatusNotFound},
 		{name: "a machine that does not exist", key: store.WarpAPIKey{ID: 20, NodeID: "node-free", OwnerID: owner}, node: 99, wantStatus: http.StatusNotFound},
 		{name: "a key bound to another machine", key: store.WarpAPIKey{ID: 20, NodeID: "node-free", OwnerID: owner, BoundNodeID: 7}, node: 8, wantStatus: http.StatusConflict},
 		{
@@ -367,5 +378,97 @@ func TestBindNodeWarpKey_RefusedWithBYONOff(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden || len(fs.binds) != 0 {
 		t.Fatalf("status = %d, binds = %v; want 403 and none", rec.Code, fs.binds)
+	}
+}
+
+// An External node's key is owner-less and is answered only by an owner-less
+// node. The two cross cases are the guards: an owner-less key must never boot
+// a customer's machine, and a customer's key must never boot a machine that is
+// no longer theirs, including one that became the platform's.
+func TestLinkBoot_ExternalNodeKey(t *testing.T) {
+	owner := "owner-1"
+	tests := []struct {
+		name       string
+		key        store.WarpAPIKey
+		nodeOwner  *string
+		wantStatus int
+	}{
+		{name: "owner-less key bound to an owner-less node", key: store.WarpAPIKey{ID: 30, NodeID: "node-ext", BoundNodeID: 7}, wantStatus: http.StatusOK},
+		{name: "owner-less key bound to an owned node", key: store.WarpAPIKey{ID: 30, NodeID: "node-ext", BoundNodeID: 7}, nodeOwner: &owner, wantStatus: http.StatusForbidden},
+		{name: "owned key bound to an owner-less node", key: store.WarpAPIKey{ID: 30, NodeID: "node-ext", OwnerID: owner, BoundNodeID: 7}, wantStatus: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, fs, secret := newNodeLinkHandler(t)
+			fs.nodes[7].OwnerID = tt.nodeOwner
+			key := tt.key
+			fs.keys[key.NodeID] = &key
+
+			rec := linkBootAs(h, key)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantStatus != http.StatusOK {
+				if strings.Contains(rec.Body.String(), "redis_pass") {
+					t.Error("a refusal carried a credential")
+				}
+				return
+			}
+			// The same node Link a BYON key gets, derived from the node.
+			var got map[string]interface{}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			const token = "5f0c-node-uuid"
+			if got["node_id"] != token || got["redis_pass"] != redisacl.LinkPassword(secret, token) ||
+				got["link_token"] != services.DeriveLinkToken(token, nodeLinkClusterSecret) {
+				t.Errorf("answer = %v, want the Link of node %s", got, token)
+			}
+		})
+	}
+}
+
+// Unbound is the normal first answer for an External node's key too: its Link
+// starts before the node has enrolled.
+func TestLinkBoot_UnboundExternalNodeKeyIsAskedToRetry(t *testing.T) {
+	h, fs, _ := newNodeLinkHandler(t)
+	key := store.WarpAPIKey{ID: 31, NodeID: "node-ext"}
+	fs.keys[key.NodeID] = &key
+
+	rec := linkBootAs(h, key)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if fs.nodeLookups != 0 {
+		t.Error("an unbound key looked a node up")
+	}
+}
+
+// An owner-less key has nobody to suspend. It used to be looked up anyway with
+// an empty id, which fails and logs that the gate was skipped on every boot.
+// A billing row that would cut a tenant off must not reach it either.
+func TestLinkBoot_ExternalNodeKeyAsksNoBilling(t *testing.T) {
+	h, fs, _ := newNodeLinkHandler(t)
+	fs.nodes[7].OwnerID = nil
+	at := time.Now().Add(-49 * time.Hour)
+	fs.billing = &store.UserBilling{Status: "suspended", SuspendedAt: &at}
+	key := store.WarpAPIKey{ID: 30, NodeID: "node-ext", BoundNodeID: 7}
+	fs.keys[key.NodeID] = &key
+
+	rec := linkBootAs(h, key)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if fs.billingLookups != 0 {
+		t.Errorf("billing lookups = %d, want 0 for a key with no owner", fs.billingLookups)
+	}
+	// And a tenant's key still asks.
+	fs.billing = nil
+	linkBootAs(h, *fs.keys["node-abc"])
+	if fs.billingLookups != 1 {
+		t.Errorf("billing lookups after a tenant's boot = %d, want 1", fs.billingLookups)
 	}
 }

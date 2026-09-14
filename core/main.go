@@ -124,7 +124,7 @@ func (a *aclHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) {
 	return uuids, nil
 }
 
-func (a *aclHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, error) {
+func (a *aclHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, bool, error) {
 	return a.store.ResolveNodeEnrollToken(plaintext)
 }
 
@@ -194,6 +194,12 @@ func (a *aclHandshakeStore) CreatePlatformNode(token, address, displayName strin
 		}
 	}
 	return n.ID, nil
+}
+
+// CreatePlatformTokenNode: the unowned, platform_token-marked row of an External
+// node. In the store so the database integration tests reach it; see there.
+func (a *aclHandshakeStore) CreatePlatformTokenNode(token, address, displayName string) (int, error) {
+	return a.store.CreatePlatformTokenNode(token, address, displayName)
 }
 
 func (a *aclHandshakeStore) CreateBYONNode(token, address, ownerID, displayName string) (int, error) {
@@ -700,15 +706,12 @@ func main() {
 
 	// gRPC Server for Node connections (NodeService)
 	grpcLookup := &nodegrpc.StoreAdapter{
-		GetByToken: func(token string) (int, bool, error) {
-			node, err := pgStore.GetNodeByToken(token)
+		GetByToken: func(token string) (int, bool, bool, error) {
+			id, owned, platformToken, err := pgStore.NodeLoginFacts(token)
 			if errors.Is(err, sql.ErrNoRows) {
-				return 0, false, nodegrpc.ErrNodeNotFound
+				return 0, false, false, nodegrpc.ErrNodeNotFound
 			}
-			if err != nil {
-				return 0, false, err
-			}
-			return node.ID, node.Kind() == models.NodeKindBYON, nil
+			return id, owned, platformToken, err
 		},
 	}
 	// Per-node Redis-ACL handshake. Runs on every node connect (Redis ACL is

@@ -5,13 +5,13 @@ import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Server, Circle, Shi
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getWarpRegions, upsertWarpRegion, deleteWarpRegion,
-    upsertWarpLeader, deleteWarpLeader, mintWarpKey,
+    upsertWarpLeader, deleteWarpLeader, mintExternalNodeKey,
     getWarpFirewallSettings, saveWarpFirewallSettings,
     listWarpKeys, revokeWarpKey, deleteWarpKey,
     type WarpRegionView, type WarpKeyView,
 } from '@/lib/api/types';
 import {
-    routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
+    nodeCompose, deployCli, deployIntro, composeFileName,
     DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
 } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
@@ -19,21 +19,31 @@ import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeploy
 import { coreOrigin } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import HelpTip from '@/components/ui/HelpTip';
+import { platformNote } from '@/components/infra/DeployKit';
+import { isLocationName } from '@/lib/validation';
 
 const enrollUrl = coreOrigin();
+
+// The same rule Core applies (validate.IsLocationName): the name is slugged into
+// the node's NODE_ID by the deploy file.
+const EXTERNAL_NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
 
 type WarpSubTab = 'settings' | 'nodes';
 
 export default function WarpTab() {
-    const { routingMode, fileAccessMode, featureFlags } = useAppData();
+    const { gatewayEnabled, fileAccessMode } = useAppData();
     const [subTab, setSubTab] = useState<WarpSubTab>('settings');
-    // External nodes only make sense on a hosted platform: BYON and route-only
-    // are the tenant-facing offering, and a self-hoster has no tenants. Gate on
-    // the same signals the rest of the BYON UI uses - store wiring (STORE_URL +
-    // STORE_SHARED_KEY) or the BYON flag - so an open-core install shows only
-    // the overlay settings it can actually use.
-    const externalNodesVisible = featureFlags.store || featureFlags.byon;
-    const gateOpen = routingMode === 'gateway' && fileAccessMode === 'beam';
+    // The External Nodes sub-tab used to show only with store wiring or the BYON
+    // flag, because it minted keys for customer machines as well. It now adds
+    // only the platform's own External nodes, and Core deliberately does not
+    // gate that on BYON: a self-hoster can run a machine outside their
+    // datacenter too. Customer machines and protected addresses stay behind
+    // BYON on the customer's own pages, not here.
+    //
+    // gatewayEnabled is routing gateway OR both, the same test Core's mint and
+    // warp enrol apply. Beam file access stays required: without it the
+    // servers on such a machine have no file access path.
+    const gateOpen = gatewayEnabled && fileAccessMode === 'beam';
 
     const [regions, setRegions] = useState<WarpRegionView[]>([]);
     const [loading, setLoading] = useState(true);
@@ -42,10 +52,13 @@ export default function WarpTab() {
     const [newRegion, setNewRegion] = useState({ region: '', subnet: '' });
     const [addingRegion, setAddingRegion] = useState(false);
 
-    const [form, setForm] = useState<{ name: string; policy: 'fixed' | 'general'; max_conns: number; on_new_conn: 'kill_old' | 'block'; region: string }>(
-        { name: '', policy: 'general', max_conns: 5, on_new_conn: 'block', region: '' });
+    const [extName, setExtName] = useState('');
+    const extNameValid = isLocationName(extName.trim());
     const [minting, setMinting] = useState(false);
-    const [revealed, setRevealed] = useState<{ name: string; apiKey: string } | null>(null);
+    // Both secrets of a freshly minted External node, shown once.
+    const [revealed, setRevealed] = useState<{
+        name: string; nodeId: string; apiKey: string; enrollToken: string; grpcTlsFingerprint: string;
+    } | null>(null);
     const [keys, setKeys] = useState<WarpKeyView[]>([]);
     const [keysLoading, setKeysLoading] = useState(true);
     // Deploy instructions for an already-minted key: same panel as the reveal
@@ -113,8 +126,8 @@ export default function WarpTab() {
         const ok = await confirmDialog({
             title: `Revoke "${k.name}"?`,
             message: live > 0
-                ? `${live} connected ${live === 1 ? 'node is' : 'nodes are'} using this key. Revoking blocks future enrolments AND disconnects ${live === 1 ? 'it' : 'them'} from the overlay immediately. The key cannot be restored - you would have to mint a new one and redeploy.`
-                : 'This key has no connected nodes. Revoking blocks any future enrolment with it. It cannot be restored.',
+                ? `${live} connected ${live === 1 ? 'node is' : 'nodes are'} using this key. Revoking blocks future enrolments AND disconnects ${live === 1 ? 'it' : 'them'} from the overlay immediately. The key cannot be restored - you would have to mint a new one and redeploy.${unusedTokenNote(k)}`
+                : `This key has no connected nodes. Revoking blocks any future enrolment with it. It cannot be restored.${unusedTokenNote(k)}`,
             confirmLabel: 'Revoke',
             destructive: true,
         });
@@ -133,8 +146,8 @@ export default function WarpTab() {
         const ok = await confirmDialog({
             title: `Delete "${k.name}"?`,
             message: live > 0
-                ? `Removes the key and its history for good, and disconnects ${live} connected ${live === 1 ? 'node' : 'nodes'} from the overlay. Revoke instead if you want the record kept.`
-                : 'Removes the key and its history for good. Revoke instead if you want the record kept.',
+                ? `Removes the key and its history for good, and disconnects ${live} connected ${live === 1 ? 'node' : 'nodes'} from the overlay. Revoke instead if you want the record kept.${unusedTokenNote(k)}`
+                : `Removes the key and its history for good. Revoke instead if you want the record kept.${unusedTokenNote(k)}`,
             confirmLabel: 'Delete',
             destructive: true,
         });
@@ -199,22 +212,25 @@ export default function WarpTab() {
     };
 
     const handleMint = async () => {
-        if (!form.name.trim()) { showToast('Name required', false); return; }
+        const name = extName.trim();
+        if (!isLocationName(name)) { showToast(`Location name: ${EXTERNAL_NAME_RULE}`, false); return; }
         setMinting(true);
-        const res = await mintWarpKey({
-            name: form.name.trim(), policy: form.policy,
-            // A fixed key is enforced at 1 at enrol regardless. Sending the form
-            // value stored a row that disagreed with what actually happens.
-            max_conns: form.policy === 'fixed' ? 1 : form.max_conns,
-            on_new_conn: form.on_new_conn, region: form.region,
-        });
-        setMinting(false);
-        if (res.success && res.api_key) {
-            setRevealed({ name: form.name.trim(), apiKey: res.api_key });
-            setForm({ name: '', policy: 'general', max_conns: 5, on_new_conn: 'block', region: '' });
-            loadKeys();
-        } else {
-            showToast(res.message || res.error || 'Mint failed', false);
+        try {
+            const res = await mintExternalNodeKey(name);
+            if (res.success && res.warp_key && res.enroll_token && res.node_id) {
+                setRevealed({
+                    name, nodeId: res.node_id, apiKey: res.warp_key, enrollToken: res.enroll_token,
+                    grpcTlsFingerprint: res.grpc_tls_fingerprint ?? '',
+                });
+                setExtName('');
+                loadKeys();
+            } else {
+                showToast(res.message || res.error || 'Mint failed', false);
+            }
+        } catch {
+            showToast('Mint failed: Core could not be reached.', false);
+        } finally {
+            setMinting(false);
         }
     };
 
@@ -238,13 +254,12 @@ export default function WarpTab() {
                 <AlertTriangle size={15} className={`mt-0.5 shrink-0 ${gateOpen ? 'text-(--success-light)' : 'text-(--warning-light)'}`} />
                 <p className="text-xs text-(--base-07)">
                     {gateOpen
-                        ? 'Gateway routing + Beam files are active — external/home nodes are supported. Each region is one WG identity (subnet + key); its leaders are interchangeable endpoints clients fail over between without changing IP.'
-                        : 'External nodes require routing_mode=gateway AND file_access=beam (set in the Gateway tab). Until then, connecting external nodes is disabled — their servers could not receive player traffic or file access.'}
+                        ? 'Gateway routing + Beam files are active - external/home nodes are supported. Each region is one WG identity (subnet + key); its leaders are interchangeable endpoints clients fail over between without changing IP.'
+                        : 'External nodes require routing_mode=gateway or both, AND file_access=beam (set in the Gateway tab). Until then, connecting external nodes is disabled - their servers could not receive player traffic or file access.'}
                 </p>
             </div>
 
-            {externalNodesVisible && (
-                <div className="flex gap-1 border-b border-(--base-03)">
+            <div className="flex gap-1 border-b border-(--base-03)">
                     {([
                         { id: 'settings' as const, label: 'Overlay Settings', icon: Shield },
                         { id: 'nodes' as const, label: 'External Nodes', icon: Server },
@@ -262,10 +277,9 @@ export default function WarpTab() {
                             {label}
                         </button>
                     ))}
-                </div>
-            )}
+            </div>
 
-            {(!externalNodesVisible || subTab === 'settings') && (<>
+            {subTab === 'settings' && (<>
             {/* Regions + leaders */}
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Regions & Hubs</h3>
@@ -373,141 +387,52 @@ export default function WarpTab() {
 
             </>)}
 
-            {externalNodesVisible && subTab === 'nodes' && (<>
-            {/* Mint enrollment key */}
+            {subTab === 'nodes' && (<>
+            {/* Mint an External node */}
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Connect External Node</h3>
-                {/* Says what this tab is NOT, because the overlap with
-                    Infrastructure -> Nodes is the part people get wrong: a warp
-                    peer is a machine on the overlay, a node is a host running the
-                    agent, and route-only customers never become one. */}
+                {/* This card mints exactly one kind of key. It used to mint a
+                    plain admin key and offer three deploy files for it, and two
+                    of them could never work: link-boot answers only a key made
+                    for one machine, and an admin key was never that. */}
                 <p className="text-xs text-(--base-06)">
-                    This is the overlay side: an enrollment key lets a machine join the tunnel. A BYON host
-                    that runs the node agent then also shows up under Infrastructure -&gt; Nodes; a route-only
-                    customer stays here and never becomes a node. Each machine needs its own warp client,
-                    so a key with several connections means several machines, not one machine sharing its tunnel.
+                    An External node is a machine the platform runs outside the datacenter. Minting gives it an
+                    overlay key and a single-use enroll token together. The node it enrols belongs to nobody - not
+                    to you - and appears under{' '}
+                    <a href="/nodes?tab=external" className="text-(--accent-light) hover:underline rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">My infrastructure -&gt; External nodes</a>.
+                    The file offered next runs warp, the node and its Link.
                 </p>
-                <fieldset disabled={!gateOpen} className="space-y-4 disabled:opacity-50">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Name</label>
-                            <input className="input-field" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="home-desktop" />
+                <p className="text-xs text-(--base-06)">
+                    Customer machines and protected addresses are not set up here, because a key an admin mints
+                    can never boot their Link. The customer adds a machine under{' '}
+                    <a href="/nodes?tab=machines" className="text-(--accent-light) hover:underline rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">My infrastructure -&gt; Bring your own node</a>{' '}
+                    and a protected address under{' '}
+                    <a href="/nodes?tab=routes" className="text-(--accent-light) hover:underline rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">My infrastructure -&gt; Protected addresses</a>,
+                    and gets the working deploy file there.
+                </p>
+                <fieldset disabled={!gateOpen} className="space-y-2 disabled:opacity-50">
+                    <div className="flex flex-col md:flex-row gap-3 md:items-end">
+                        <div className="flex-1 flex flex-col gap-[5px]">
+                            <label className="input-label" htmlFor="external-node-name">Location name</label>
+                            <input
+                                id="external-node-name"
+                                className="input-field"
+                                value={extName}
+                                onChange={e => setExtName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter' && extNameValid && !minting) handleMint(); }}
+                                placeholder="ext-frankfurt"
+                                maxLength={20}
+                                aria-invalid={extName !== '' && !extNameValid}
+                                aria-describedby="external-node-name-rule"
+                            />
                         </div>
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Region</label>
-                            <select className="input-field" value={form.region} onChange={e => setForm(f => ({ ...f, region: e.target.value }))}>
-                                <option value="">Auto (least-loaded live region)</option>
-                                {regions.map(r => <option key={r.region} value={r.region}>{r.region}</option>)}
-                            </select>
-                        </div>
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label flex items-center gap-1.5">
-                                Policy
-                                <HelpTip label="About the enrollment policy">
-                                    <p className="mb-2">
-                                        This decides <strong>where the ceiling is</strong>, and nothing else.
-                                    </p>
-                                    <p className="mb-2">
-                                        <strong>Fixed</strong> is a hard limit of one machine that cannot be
-                                        raised later - to allow a second, mint a new key.
-                                        <strong> General</strong> uses the number in Max connections, and it
-                                        can be edited afterwards.
-                                    </p>
-                                    <p>
-                                        What happens once the ceiling is reached is the separate setting
-                                        beside it, and it applies to both.
-                                    </p>
-                                </HelpTip>
-                            </label>
-                            {/* The description used to promise that a fixed key
-                                "can be pinned to a fixed overlay IP". Core does
-                                accept fixed_wg_ip at mint, but this form has
-                                never sent it and there is no field for it, so
-                                the one advertised reason to choose Fixed was
-                                unreachable. Fixed is a hard limit of 1; that is
-                                the whole of it. */}
-                            <select className="input-field" value={form.policy} onChange={e => setForm(f => ({ ...f, policy: e.target.value as 'fixed' | 'general', max_conns: e.target.value === 'fixed' ? 1 : f.max_conns }))}>
-                                <option value="general">General (several machines)</option>
-                                <option value="fixed">Fixed (exactly one machine)</option>
-                            </select>
-                            <p className="text-[11px] text-(--base-06)">
-                                {form.policy === 'fixed'
-                                    ? 'A hard limit of one machine that cannot be raised later. To allow a second, mint another key.'
-                                    : 'Several machines may join with this one key, each running its own warp client. A machine cannot share its tunnel with others, so one slot = one machine.'}
-                            </p>
-                        </div>
-                        {form.policy === 'general' && (
-                            <div className="flex flex-col gap-[5px]">
-                                <label className="input-label flex items-center gap-1.5">
-                                    Max connections
-                                    <HelpTip label="About max connections">
-                                        <p className="mb-2">
-                                            The number of <strong>enrolled machines</strong> this one key may
-                                            hold at once - one per WireGuard public key. Not tunnels, not
-                                            servers, and not a per-node number: it belongs to the key.
-                                        </p>
-                                        <p className="mb-2">
-                                            Re-enrolling a machine that is already here costs nothing; it
-                                            keeps the slot it has.
-                                        </p>
-                                        <p>
-                                            Checked at the moment a machine joins, under a cluster-wide lock,
-                                            so two machines joining at the same instant cannot both slip past
-                                            the last free slot.
-                                        </p>
-                                    </HelpTip>
-                                </label>
-                                <input type="number" min={1} className="input-field" value={form.max_conns} onChange={e => setForm(f => ({ ...f, max_conns: parseInt(e.target.value) || 1 }))} />
-                                <p className="text-[11px] text-(--base-06)">
-                                    How many machines (WireGuard keys) may be enrolled on this key at the same time.
-                                </p>
-                            </div>
-                        )}
-                        {/* Shown for BOTH policies: the backend applies
-                            on_new_conn whenever the limit is reached, and fixed
-                            has a limit of 1, so it is just as relevant there.
-                            It used to render only for fixed, which made a
-                            general key with kill_old impossible to create. */}
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label flex items-center gap-1.5">
-                                When the limit is reached
-                                <HelpTip label="About the limit behaviour">
-                                    <p className="mb-2">
-                                        This decides <strong>what happens at the ceiling</strong>, and applies
-                                        to both policies.
-                                    </p>
-                                    <p className="mb-2">
-                                        <strong>Refuse</strong> turns the new machine away with an error it
-                                        can read, and everything already connected keeps running.
-                                    </p>
-                                    <p>
-                                        <strong>Disconnect the first</strong> removes the machine that
-                                        enrolled EARLIEST from every leader and gives the new one its slot.
-                                        Order of enrolment, not activity - the evicted machine may be the
-                                        busy one.
-                                    </p>
-                                </HelpTip>
-                            </label>
-                            <select className="input-field" value={form.on_new_conn} onChange={e => setForm(f => ({ ...f, on_new_conn: e.target.value as 'kill_old' | 'block' }))}>
-                                <option value="block">Refuse the new machine</option>
-                                <option value="kill_old">Disconnect the first machine that joined</option>
-                            </select>
-                            {/* The old wording promised "the longest-idle
-                                machine". The eviction is ORDER BY id, i.e. the
-                                earliest enrolled, and warp_peers records no
-                                last-seen time to sort by instead. Saying which
-                                one actually goes matters: it can be the machine
-                                someone is playing on. */}
-                            <p className="text-[11px] text-(--base-06)">
-                                {form.on_new_conn === 'block'
-                                    ? 'A further machine is turned away and the existing ones keep running.'
-                                    : 'The machine that enrolled first is removed from every leader and the new one takes its slot. That is by join order, not by how busy it is.'}
-                            </p>
-                        </div>
+                        <button onClick={handleMint} disabled={minting || !gateOpen || !extNameValid} className="btn btn-primary disabled:opacity-40">
+                            <Plus size={14} /> {minting ? 'Minting...' : 'Mint External node key'}
+                        </button>
                     </div>
-                    <button onClick={handleMint} disabled={minting || !gateOpen} className="btn btn-primary disabled:opacity-40">
-                        <Plus size={14} /> Mint Enrollment Key
-                    </button>
+                    <p id="external-node-name-rule" className={`text-[11px] ${extName !== '' && !extNameValid ? 'text-(--error-light)' : 'text-(--base-06)'}`}>
+                        {EXTERNAL_NAME_RULE} It becomes the node&apos;s NODE_ID in the file.
+                    </p>
                 </fieldset>
             </div>
 
@@ -541,6 +466,24 @@ export default function WarpTab() {
                                                 : k.peers.length > 0
                                                     ? <span className="badge badge-success">{k.peers.length} connected</span>
                                                     : <span className="badge badge-neutral">Not used yet</span>}
+                                            {isExternalNodeKey(k)
+                                                ? <span className="badge badge-accent">External node</span>
+                                                : (
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <span className="badge badge-neutral">Legacy key</span>
+                                                        <HelpTip label="About legacy keys">
+                                                            <p className="mb-2">
+                                                                Minted before External node keys existed. It is not made for
+                                                                one machine, so it can <strong>never boot a Link</strong>, and a
+                                                                node deployed with it cannot be reached by players.
+                                                            </p>
+                                                            <p>
+                                                                Add a new External node for that machine instead, then revoke
+                                                                this key.
+                                                            </p>
+                                                        </HelpTip>
+                                                    </span>
+                                                )}
                                             <span className="badge badge-neutral">{k.policy === 'fixed' ? 'Fixed (1)' : `General (max ${k.max_conns})`}</span>
                                             {k.region && <span className="badge badge-accent">{k.region}</span>}
                                         </div>
@@ -587,7 +530,10 @@ export default function WarpTab() {
             {(revealed || showDeploy) && (
                 <DeployModal
                     name={revealed ? revealed.name : (showDeploy!.name || `key-${showDeploy!.id}`)}
+                    keyNodeId={revealed ? revealed.nodeId : showDeploy!.node_id}
                     apiKey={revealed ? revealed.apiKey : null}
+                    enrollToken={revealed ? revealed.enrollToken : null}
+                    grpcTlsFingerprint={revealed ? revealed.grpcTlsFingerprint : undefined}
                     enrollUrl={enrollUrl}
                     tunnelSubnets={fwSubnets}
                     config={deployConfig}
@@ -599,6 +545,18 @@ export default function WarpTab() {
             {toast && <div className={`fixed bottom-4 right-4 px-4 py-2 rounded-md text-sm font-medium ${toast.ok ? 'bg-(--success)/20 text-(--success-light) border border-(--success)/40' : 'bg-(--error)/20 text-(--error-light) border border-(--error)/40'}`}>{toast.msg}</div>}
         </div>
     );
+}
+
+// An External node key carries a node- identity; admin keys could not have one
+// any other way (Core refuses the prefix on the plain mint).
+function isExternalNodeKey(k: WarpKeyView): boolean {
+    return (k.node_id || '').startsWith('node-');
+}
+
+// Core accepts an External node's enroll token only while its key is live, so
+// revoking or deleting the key retires a token the machine has not used yet.
+function unusedTokenNote(k: WarpKeyView): string {
+    return isExternalNodeKey(k) ? ' Its enroll token stops working too, if the machine has not used it yet.' : '';
 }
 
 function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDeleteLeader }: {
@@ -690,30 +648,28 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
 /**
  * DeployModal is the "how do I actually connect this machine" panel.
  *
- * Two entry points, one component: right after minting (apiKey present, shown
- * once and never again) and later from the inventory (apiKey null, because only
- * its hash is stored). Everything except the secret is reproducible, so the
- * second case still gives a complete stack with a placeholder where the key
- * goes - which is far more useful than the old modal, which was only reachable
- * at mint time and stopped at four ENV lines.
+ * Two entry points, one component: right after minting (the key and the enroll
+ * token present, each shown once and never again) and later from the inventory
+ * (both null, because only hashes are stored). Everything except the secrets is
+ * reproducible, so the second case still gives a complete stack with
+ * placeholders where they go.
+ *
+ * It is locked to one target, the External node. It used to offer BYON and
+ * route-only files for the same admin key as well, and neither could work:
+ * link-boot answers only a key made for one machine, which an admin key never
+ * was. Which file a key gets is decided by the key itself - a node- identity is
+ * an External node key and gets its Link, anything else is a key minted before
+ * those existed and gets a file that says it cannot have one.
  */
-/**
- * The three things an operator mints a key FOR. External node and BYON deploy
- * the same stack - the difference is whose machine it is, and therefore whether
- * a customer has to be entitled to it - so they are two targets rather than one
- * ambiguous "node".
- */
-type DeployTarget = 'external' | 'byon' | 'route-only';
-
-const DEPLOY_TARGETS: { id: DeployTarget; label: string }[] = [
-    { id: 'external', label: 'External node' },
-    { id: 'byon', label: 'BYON — customer machine' },
-    { id: 'route-only', label: 'Route-only — protected address' },
-];
-
-function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, showToast }: {
+function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint, enrollUrl, tunnelSubnets, config, onClose, showToast }: {
     name: string;
+    /** The key's node_id. "node-..." is an External node key; "" or anything else a legacy admin key. */
+    keyNodeId: string;
     apiKey: string | null;
+    /** The platform enroll token minted with the key; null once it can no longer be shown. */
+    enrollToken: string | null;
+    /** From the mint answer. undefined falls back to Core's deploy config. */
+    grpcTlsFingerprint?: string;
     enrollUrl: string;
     /** From the Overlay Segmentation setting; "" leaves a placeholder in the snippet. */
     tunnelSubnets: string;
@@ -722,28 +678,27 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
     onClose: () => void;
     showToast: (msg: string, ok?: boolean) => void;
 }) {
-    // External node is the default because it is what THIS screen mints: an
-    // admin-owned key. A BYON machine is normally enrolled by the customer on
-    // their own /nodes page.
-    const [target, setTarget] = useState<DeployTarget>('external');
+    const external = keyNodeId.startsWith('node-');
     const [copied, setCopied] = useState<string | null>(null);
-    // Route-only is the only kind that runs on Docker Desktop; a managed node
-    // drives the host's Docker socket, which is not covered there.
     const [platform, setPlatform] = useState<DeployPlatform>('linux');
 
-    const kind: 'node' | 'route-only' = target === 'route-only' ? 'route-only' : 'node';
-    const input = {
+    const compose = nodeCompose({
         apiKey: apiKey ?? '<your-warp-key>',
         enrollUrl,
         // The saved setting wins; Core's detected value is the fallback, so a
         // snippet is complete even before anyone visits Overlay Segmentation.
         tunnelSubnets: tunnelSubnets || config?.tunnelSubnets || '',
-        grpcTlsFingerprint: kitGrpcTlsFingerprint(undefined, config),
+        grpcTlsFingerprint: kitGrpcTlsFingerprint(grpcTlsFingerprint, config),
         nodeId: nodeIdFromLabel(name),
+        nodeEnrollToken: enrollToken ?? undefined,
         platform,
-    };
-    const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
-    const cli = deployCli(kind);
+        linkBesideNode: external,
+        legacyAdminKey: !external,
+        // Every key in this dialog is the platform's, a legacy one included:
+        // the machine is not the reader's own.
+        externalNode: true,
+    });
+    const cli = deployCli('node', true);
 
     const copy = (what: string, text: string) => {
         navigator.clipboard.writeText(text).then(() => {
@@ -757,105 +712,83 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
             <div className="modal-panel max-w-3xl" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h3 className="modal-title text-(--accent-light)">{name} — deploy</h3>
+                    <h3 className="modal-title text-(--accent-light)">{name} - deploy</h3>
                 </div>
                 <div className="modal-body space-y-4 max-h-[70vh] overflow-y-auto">
                     {apiKey ? (
                         <div className="flex items-start gap-2 p-2.5 rounded-md bg-(--warning)/5 border border-(--warning)/20">
                             <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
                             <div className="text-xs text-(--base-07) space-y-1.5 min-w-0 flex-1">
-                                <p>This key is shown <strong>once</strong>. It is stored only as a hash, so it cannot be displayed again.</p>
+                                <p>
+                                    The key and the enroll token are shown <strong>once</strong>. Both are stored only as
+                                    hashes, so they cannot be displayed again. The file below already contains them.
+                                </p>
                                 <div className="flex items-center gap-2">
                                     <code className="font-mono text-xs bg-(--base-02) px-2 py-1 rounded truncate flex-1">{apiKey}</code>
                                     <button onClick={() => copy('key', apiKey)} className="btn btn-secondary btn-sm shrink-0">
                                         {copied === 'key' ? <Check size={12} /> : <Copy size={12} />} Copy key
                                     </button>
                                 </div>
+                                {enrollToken && (
+                                    <div className="flex items-center gap-2">
+                                        <code className="font-mono text-xs bg-(--base-02) px-2 py-1 rounded truncate flex-1">{enrollToken}</code>
+                                        <button onClick={() => copy('token', enrollToken)} className="btn btn-secondary btn-sm shrink-0">
+                                            {copied === 'token' ? <Check size={12} /> : <Copy size={12} />} Copy token
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
-                    ) : (
+                    ) : external ? (
                         <p className="text-xs text-(--base-06)">
-                            The key itself cannot be shown again — only its hash is stored. Paste the key you saved at
-                            mint time where the snippet says <code className="font-mono">&lt;your-warp-key&gt;</code>,
-                            or revoke this key and mint a new one.
+                            The key and its enroll token cannot be shown again - only their hashes are stored. Paste
+                            what you saved at mint time where the file says <code className="font-mono">&lt;your-warp-key&gt;</code>{' '}
+                            and <code className="font-mono">&lt;enroll-token-from-panel&gt;</code>. A machine that has
+                            already enrolled no longer needs the token. If it has not and the token is lost, revoke this
+                            key and mint a new one: revoking retires the unused token with it.
+                        </p>
+                    ) : (
+                        <div className="flex items-start gap-2 p-2.5 rounded-md bg-(--warning)/5 border border-(--warning)/40">
+                            <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
+                            <p className="text-xs text-(--base-07)">
+                                This key was minted before External node keys existed. It is not made for one machine,
+                                so it can never boot a Link, and the file below runs none - nobody could reach the
+                                servers on that machine. Mint a new External node key for it instead. The key itself
+                                cannot be shown again either; the file has a placeholder where it goes.
+                            </p>
+                        </div>
+                    )}
+
+                    {external && (
+                        <p className="text-xs text-(--base-06)">
+                            A machine the platform runs outside the datacenter. warp joins the overlay first; the node
+                            then enrols with the token in this file and belongs to nobody, and the link service carries
+                            players to its servers once the node has enrolled - until then it waits and retries. The
+                            machine never holds CLUSTER_SECRET.
                         </p>
                     )}
 
-                    <div className="flex flex-wrap gap-2">
-                        {DEPLOY_TARGETS.map(t => (
-                            <button
-                                key={t.id}
-                                onClick={() => setTarget(t.id)}
-                                className={`btn btn-sm ${target === t.id ? 'btn-primary' : 'btn-secondary'}`}
-                            >
-                                {t.label}
-                            </button>
-                        ))}
-                    </div>
-                    <div className="text-xs text-(--base-06) space-y-1.5">
-                        {target === 'external' ? (
-                            <p>
-                                Your own machine outside the datacenter. warp joins the overlay first; the node then
-                                reaches Redis and Core over it and starts its own link sidecar - do not run link
-                                yourself.
-                            </p>
-                        ) : target === 'byon' ? (
-                            <>
-                                <p>
-                                    The same stack on a CUSTOMER machine. Identical compose file; what differs is that
-                                    the customer has to be entitled to it, which is a billing decision and not this
-                                    dialog: grant it under{' '}
-                                    <a href="/admin/users" className="text-(--accent-light) hover:underline">Admin -&gt; Users</a>,
-                                    then the user&apos;s Billing button.
-                                </p>
-                                <p>
-                                    An entitled customer can also enrol the machine themselves under My machines,
-                                    which mints their own keys and is the normal path. Use this one when you are
-                                    setting the machine up on their behalf.
-                                </p>
-                            </>
-                        ) : (
-                            <>
-                                <p>
-                                    The customer runs the Minecraft server themselves and gets a protected Dylaris
-                                    address for it. warp joins the overlay, link tunnels the local server out to the
-                                    edges. No node, no swarm join, no published ports - only outbound connections.
-                                </p>
-                                <p>
-                                    Afterwards create the route(s) in the panel and point them at this link. How many
-                                    a customer may create is capped by their plan (route limit and link limit), so
-                                    billing controls it - not this dialog.
-                                </p>
-                                <p className="text-(--warning-light)">
-                                    Linux only: the kit uses kernel WireGuard, which needs host networking and
-                                    NET_ADMIN. There is no Windows or macOS path.
-                                </p>
-                            </>
-                        )}
-                    </div>
-
                     <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                            <label className="font-mono text-sm font-medium text-(--base-09)">{composeFileName(kind)}</label>
-                            {kind === 'route-only' && (
-                                <div className="flex items-center gap-1" role="group" aria-label="Target machine">
-                                    {(['linux', 'windows'] as const).map((p) => (
-                                        <button
-                                            key={p}
-                                            type="button"
-                                            onClick={() => setPlatform(p)}
-                                            aria-pressed={platform === p}
-                                            className={`rounded-md px-2 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${platform === p ? 'bg-(--accent) text-(--base-00)' : 'bg-(--base-02) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'}`}
-                                        >
-                                            {p === 'linux' ? 'Linux' : 'Docker Desktop'}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <label className="font-mono text-sm font-medium text-(--base-09)">{composeFileName('node')}</label>
+                            <div className="flex items-center gap-1" role="group" aria-label="Target machine">
+                                {(['linux', 'windows'] as const).map((p) => (
+                                    <button
+                                        key={p}
+                                        type="button"
+                                        onClick={() => setPlatform(p)}
+                                        aria-pressed={platform === p}
+                                        className={`rounded-md px-2 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${platform === p ? 'bg-(--accent) text-(--base-00)' : 'bg-(--base-02) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'}`}
+                                    >
+                                        {p === 'linux' ? 'Linux' : 'Docker Desktop'}
+                                    </button>
+                                ))}
+                            </div>
                             <button onClick={() => copy('compose', compose)} className="btn btn-secondary btn-sm">
                                 {copied === 'compose' ? <Check size={12} /> : <Copy size={12} />} Copy
                             </button>
                         </div>
+                        <p className="text-xs text-(--base-06)">{platformNote('node', platform)}</p>
                         <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre overflow-x-auto">{compose}</pre>
                     </div>
 
@@ -866,27 +799,25 @@ function DeployModal({ name, apiKey, enrollUrl, tunnelSubnets, config, onClose, 
                                 {copied === 'cli' ? <Check size={12} /> : <Copy size={12} />} Copy
                             </button>
                         </div>
-                        <p className="text-xs text-(--base-07)">{deployIntro(kind, platform)}</p>
+                        <p className="text-xs text-(--base-07)">{deployIntro('node', platform)}</p>
                         <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre overflow-x-auto">{cli}</pre>
                         <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>
                     </div>
 
-                    {kind === 'node' && (
-                        <div className="p-2.5 rounded-md bg-(--base-02) border border-(--base-04) space-y-1.5">
-                            <p className="text-xs text-(--base-07)">
-                                <strong>This machine will bind these ports.</strong> <code className="font-mono">NODE_EXTERNAL</code> only
-                                changes the advertised routing and file-access mode — it does not close listeners.
-                                Firewall them if the host is exposed.
-                            </p>
-                            {EXTERNAL_NODE_PORTS.map(p => (
-                                <div key={p.port} className="flex items-center gap-2 text-xs">
-                                    <code className="font-mono text-(--accent-light)">{p.port}</code>
-                                    <span className="text-(--base-08)">{p.what}</span>
-                                    <span className="text-(--base-06)">{p.note}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                    <div className="p-2.5 rounded-md bg-(--base-02) border border-(--base-04) space-y-1.5">
+                        <p className="text-xs text-(--base-07)">
+                            <strong>This machine will bind these ports.</strong> <code className="font-mono">NODE_EXTERNAL</code> only
+                            changes the advertised routing and file-access mode - it does not close listeners.
+                            Firewall them if the host is exposed.
+                        </p>
+                        {EXTERNAL_NODE_PORTS.map(p => (
+                            <div key={p.port} className="flex items-center gap-2 text-xs">
+                                <code className="font-mono text-(--accent-light)">{p.port}</code>
+                                <span className="text-(--base-08)">{p.what}</span>
+                                <span className="text-(--base-06)">{p.note}</span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
                 <div className="modal-footer">
                     <button onClick={onClose} className="btn btn-primary"><EyeOff size={12} /> Done</button>

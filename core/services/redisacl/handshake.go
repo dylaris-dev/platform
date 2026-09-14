@@ -26,13 +26,20 @@ type HandshakeStore interface {
 	SetNodeSecretEnc(id int, enc string) error
 	SetNodeSecretEncIfUnchanged(id int, prev, next string) (bool, error)
 	ServerUUIDsByNode(nodeID int) ([]string, error)
-	ResolveEnrollToken(plaintext string) (ownerID string, ok bool, err error)
+	// ResolveEnrollToken reads the token without spending it. platform is true
+	// for an admin's External node token, whose machine is born unowned; ownerID
+	// is then only who minted it.
+	ResolveEnrollToken(plaintext string) (ownerID string, platform bool, ok bool, err error)
 	ConsumeEnrollToken(plaintext string) (ownerID string, ok bool, err error)
 	NodeLimitReached(ownerID string) bool
 	CreateBYONNode(token, address, ownerID, displayName string) (id int, err error)
 	// CreatePlatformNode creates an operator-owned node row (owner_id stays
 	// NULL). Same Core-minted identity as the BYON path, no owner binding.
 	CreatePlatformNode(token, address, displayName string) (id int, err error)
+	// CreatePlatformTokenNode creates the unowned row of a node that enrolled
+	// with a platform token. Unlike CreatePlatformNode it is not marked as
+	// cluster-proof enrolled; see the adapter in main.go.
+	CreatePlatformTokenNode(token, address, displayName string) (id int, err error)
 	NodeIDByToken(token string) (id int, found bool, err error)
 	// BindEnrollWarpKey binds the BYON node key an enroll token was minted for
 	// to the node that token created. bound=false for a token minted without one.
@@ -90,34 +97,48 @@ func (h *Handshake) EnsureForToken(ctx context.Context, token string) error {
 	return err
 }
 
-// Enroll creates a BYON node row bound to the enroll token's owner with a
+// Enroll creates the node row an enroll token was minted for, with a
 // Core-minted, unguessable identity, then provisions its ACL. The node-supplied
 // token (its hostname) is kept only as a cosmetic display name. Returns the
-// assigned id + new node id + secret hex.
-func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address string) (string, int, string, error) {
-	ownerID, ok, err := h.store.ResolveEnrollToken(enrollToken)
+// assigned id + new node id + secret hex, and whether the row is owned.
+//
+// A tenant's token produces a BYON node bound to the token's owner. A platform
+// token (an admin's External node) produces an UNOWNED node: the admin who
+// minted it is recorded on the token and nowhere else, so the machine is the
+// platform's rather than that admin's. The flag comes off the token row and is
+// never inferred from anything the node sends.
+func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address string) (string, int, string, bool, error) {
+	ownerID, platform, ok, err := h.store.ResolveEnrollToken(enrollToken)
 	if err != nil {
-		return "", 0, "", err
+		return "", 0, "", false, err
 	}
 	if !ok {
-		return "", 0, "", ErrEnrollInvalid
+		return "", 0, "", false, ErrEnrollInvalid
 	}
-	if h.store.NodeLimitReached(ownerID) {
-		return "", 0, "", ErrNodeLimit
+	// The node cap is a tenant's plan. A platform token's user is the admin who
+	// minted it, and the machine will not be theirs, so it has nothing to count
+	// against.
+	if !platform && h.store.NodeLimitReached(ownerID) {
+		return "", 0, "", false, ErrNodeLimit
 	}
 	// Single-use: atomically consume now. If a concurrent connect (or the
 	// discovery path) already consumed it, this returns ok=false and we reject.
 	consumedOwner, cok, cerr := h.store.ConsumeEnrollToken(enrollToken)
 	if cerr != nil {
-		return "", 0, "", cerr
+		return "", 0, "", false, cerr
 	}
 	if !cok {
-		return "", 0, "", ErrEnrollInvalid
+		return "", 0, "", false, ErrEnrollInvalid
 	}
 	assignedID := uuid.New().String()
-	id, err := h.store.CreateBYONNode(assignedID, address, consumedOwner, token)
+	var id int
+	if platform {
+		id, err = h.store.CreatePlatformTokenNode(assignedID, address, token)
+	} else {
+		id, err = h.store.CreateBYONNode(assignedID, address, consumedOwner, token)
+	}
 	if err != nil {
-		return "", 0, "", err
+		return "", 0, "", false, err
 	}
 	// The node key minted beside this token now belongs to this node, which is
 	// what lets link-boot answer that key with this node's Link.
@@ -125,16 +146,18 @@ func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address stri
 	// Right after the node exists rather than inside its creation: the statement
 	// re-checks every condition itself and changes nothing when run twice, so
 	// there is no half-state to roll back. A failure leaves the key unbound,
-	// which link-boot answers with a retry and the owner can repair from the
-	// panel - whereas failing the enrol for it would strand a node row whose
-	// single-use token is already spent.
+	// which link-boot answers with a retry. For a tenant's key the owner can
+	// repair that from the panel (BindNodeWarpKey). An External node's key has
+	// no such repair: that endpoint refuses owner-less keys, so the way back is
+	// a new External node key and a fresh enrolment. Failing the enrol for it
+	// instead would strand a node row whose single-use token is already spent.
 	if bound, berr := h.store.BindEnrollWarpKey(enrollToken, id); berr != nil {
 		log.Printf("redisacl: node %d enrolled, but binding its overlay key failed: %v", id, berr)
 	} else if bound {
 		log.Printf("redisacl: node %d enrolled; its overlay key is bound for a kit-run Link", id)
 	}
 	secretHex, err := h.ensure(ctx, id, assignedID)
-	return assignedID, id, secretHex, err
+	return assignedID, id, secretHex, !platform, err
 }
 
 // EnrollPlatform creates an OPERATOR-owned node row (owner_id stays NULL) for a

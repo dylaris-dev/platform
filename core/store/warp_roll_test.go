@@ -75,7 +75,7 @@ func TestListNodeEnrollTokens_ExcludesConsumedAndExpired(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(
 		`SELECT id, user_id, label, created_at, expires_at, consumed_at
 		 FROM node_enroll_tokens
-		 WHERE user_id = $1 AND consumed_at IS NULL
+		 WHERE user_id = $1 AND NOT platform AND consumed_at IS NULL
 		   AND (expires_at IS NULL OR expires_at > NOW())
 		 ORDER BY created_at DESC`)).
 		WithArgs("user-1").

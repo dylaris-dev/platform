@@ -60,8 +60,8 @@ func (rejectingACL) EnsureExisting(context.Context, int, string) (string, error)
 	return "", errors.New("not used")
 }
 
-func (rejectingACL) Enroll(context.Context, string, string, string) (string, int, string, error) {
-	return "", 0, "", errors.New("enroll token not found")
+func (rejectingACL) Enroll(context.Context, string, string, string) (string, int, string, bool, error) {
+	return "", 0, "", false, errors.New("enroll token not found")
 }
 
 func (rejectingACL) EnrollPlatform(context.Context, string, string) (string, int, string, error) {

@@ -1092,13 +1092,6 @@ export interface WarpRegionView {
     peerCount: number;
     leaders: WarpLeaderView[] | null;
 }
-export interface MintWarpKeyInput {
-    name: string;
-    policy: 'fixed' | 'general';
-    max_conns: number;
-    on_new_conn: 'kill_old' | 'block';
-    region?: string; // "" = auto-assign at enroll (least-loaded live region)
-}
 export const getWarpRegions = () => fetchAPI('/warp/regions');
 export const upsertWarpRegion = (data: { region: string; subnet: string; enabled: boolean }) =>
     fetchAPI('/warp/regions', { method: 'POST', body: JSON.stringify(data) });
@@ -1108,8 +1101,23 @@ export const upsertWarpLeader = (data: { leaderId: string; region: string; endpo
     fetchAPI('/warp/leaders', { method: 'POST', body: JSON.stringify(data) });
 export const deleteWarpLeader = (leaderId: string) =>
     fetchAPI(`/warp/leaders/${encodeURIComponent(leaderId)}`, { method: 'DELETE' });
-export const mintWarpKey = (data: MintWarpKeyInput) =>
-    fetchAPI('/admin/warp/keys', { method: 'POST', body: JSON.stringify(data) });
+// Everything an External node needs, minted together: an owner-less node- key
+// and the single-use platform enroll token bound to it. The machine it enrols is
+// born unowned - the platform's, not the minting admin's - and its Link boots
+// from the same key. Both secrets are shown once.
+export interface MintedExternalNode {
+    success: boolean;
+    id?: number;
+    node_id?: string;
+    warp_key?: string;
+    enroll_token?: string;
+    /** "" while Core's control channel runs plaintext. */
+    grpc_tls_fingerprint?: string;
+    message?: string;
+    error?: string;
+}
+export const mintExternalNodeKey = (name: string): Promise<MintedExternalNode> =>
+    fetchAPI('/admin/warp/external-nodes', { method: 'POST', body: JSON.stringify({ name }) });
 
 // One enrolled client of a key. A key with no peers was minted but never used.
 export interface WarpKeyPeer {

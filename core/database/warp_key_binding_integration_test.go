@@ -143,6 +143,65 @@ func TestIntegrationWarpKeyBinding(t *testing.T) {
 		t.Error("the owner's key list does not carry the binding")
 	}
 
+	// An External node: an owner-less key, a platform token naming it, and the
+	// owner-less machine that token enrols. user_id on the token is the admin
+	// who minted it, and plays no part in the binding.
+	unownedNode := func() *models.Node {
+		n := &models.Node{Name: uniqueName("n_"), Address: "127.0.0.1", Token: uniqueName("t_"), Status: "online"}
+		if err := st.CreateNode(n); err != nil {
+			t.Fatalf("CreateNode: %v", err)
+		}
+		return n
+	}
+	platformTokenFor := func(keyNodeID string) string {
+		tok := uniqueName("ptok_")
+		if err := st.CreatePlatformNodeEnrollToken(f.user.ID, tok, "ext", nil, keyNodeID); err != nil {
+			t.Fatalf("CreatePlatformNodeEnrollToken: %v", err)
+		}
+		return tok
+	}
+	extKey := newKey("")
+	extNode := unownedNode()
+	extTok := platformTokenFor(extKey.NodeID)
+	if bound, err := st.BindWarpKeyFromEnrollToken(extTok, extNode.ID); err != nil || !bound {
+		t.Fatalf("platform token, owner-less key, owner-less machine: bound=%v err=%v, want true, nil", bound, err)
+	}
+	if got := boundTo(extKey); got != extNode.ID {
+		t.Fatalf("External node key bound to %d, want %d", got, extNode.ID)
+	}
+	if bound, err := st.BindWarpKeyFromEnrollToken(extTok, extNode.ID); err != nil || bound {
+		t.Errorf("platform token, a second run: bound=%v err=%v, want false, nil", bound, err)
+	}
+
+	// Every cross case binds nothing.
+	cross := []struct {
+		name     string
+		tok      func(string) string
+		keyOwner string
+		node     func() *models.Node
+	}{
+		// A platform token must not hand a tenant's key to any machine...
+		{"platform token naming a tenant's key, owner-less machine", platformTokenFor, f.user.ID, unownedNode},
+		{"platform token naming a tenant's key, the tenant's machine", platformTokenFor, f.user.ID, newNode},
+		// ...nor put an owner-less key on a customer's machine.
+		{"platform token naming an owner-less key, a tenant's machine", platformTokenFor, "", newNode},
+		// A tenant's token must not bind an owner-less key anywhere, even onto
+		// an owner-less machine where both sides are equally without an owner.
+		{"tenant token naming an owner-less key, owner-less machine", tokenFor, "", unownedNode},
+		{"tenant token naming an owner-less key, the tenant's machine", tokenFor, "", newNode},
+		{"tenant token naming the tenant's key, owner-less machine", tokenFor, f.user.ID, unownedNode},
+	}
+	for _, c := range cross {
+		k := newKey(c.keyOwner)
+		n := c.node()
+		if bound, err := st.BindWarpKeyFromEnrollToken(c.tok(k.NodeID), n.ID); err != nil || bound {
+			t.Errorf("%s: bound=%v err=%v, want false, nil", c.name, bound, err)
+		}
+		if got := boundTo(k); got != 0 {
+			t.Errorf("%s: key bound to %d", c.name, got)
+		}
+	}
+
 	// Removing a machine keeps its key row - it still counts and is what the
 	// owner revokes - and leaves it unbound.
 	gone := newNode()

@@ -13,15 +13,16 @@ import (
 // knownNodeLookup is the other half of rejectingLookup: a node Core DOES have a
 // row for, which is the only kind that can be admitted from the panel.
 type knownNodeLookup struct {
-	token string
-	owned bool
+	token         string
+	owned         bool
+	platformToken bool
 }
 
 func (k knownNodeLookup) GetNodeByToken(t string) (*Node, error) {
 	if t != k.token {
 		return nil, ErrNodeNotFound
 	}
-	return &Node{ID: 42, Token: k.token, Owned: k.owned}, nil
+	return &Node{ID: 42, Token: k.token, Owned: k.owned, PlatformToken: k.platformToken}, nil
 }
 
 // noSecretACL is a known node whose secret has been cleared - the state reset

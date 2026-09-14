@@ -47,13 +47,30 @@ export type WarpDeployInput = {
      */
     platform?: DeployPlatform;
     /**
-     * BYON node kit only: run the Link as a service of this file. The node starts
-     * no Link itself (since 2026.09.12). Only for a key Core can answer with a
-     * node's Link - a tenant's node key that is bound to its machine, or will be
-     * when the machine enrols with the token minted beside it. Core refuses any
-     * other key, which is why this is opt-in rather than the default.
+     * Node kit only: run the Link as a service of this file. The node starts no
+     * Link itself (since 2026.09.12). Only for a key Core can answer with a
+     * node's Link - a node- key that is bound to its machine, or will be when the
+     * machine enrols with the token minted beside it: a tenant's node key, or an
+     * admin's External node key. Core refuses any other key, which is why this
+     * is opt-in rather than the default.
      */
     linkBesideNode?: boolean;
+    /**
+     * Node kit without a Link only: the key is an admin key minted before
+     * External node keys existed. It changes only what the warning tells the
+     * reader to do, because such a key can never be bound to a machine - the
+     * tenant's way out ("bind one under the machine") does not exist for it.
+     */
+    legacyAdminKey?: boolean;
+    /**
+     * Node kit only: the file is an admin's, for an External node - a machine
+     * the PLATFORM runs outside the datacenter. Set only by the admin Warp
+     * dialog, never derived from the other fields. It changes the wording that
+     * speaks to the reader as the machine's owner, because here the reader is
+     * an operator and the machine belongs to nobody. Unset, the file is
+     * byte-for-byte the tenant's.
+     */
+    externalNode?: boolean;
 };
 
 export type DeployPlatform = 'linux' | 'windows';
@@ -317,9 +334,14 @@ export function nodeCompose(i: WarpDeployInput): string {
 # WARNING - THIS FILE RUNS NO LINK, AND THE NODE NO LONGER STARTS ONE EITHER.
 # Without a link, nobody can reach the servers on this machine: in gateway
 # routing the link is the only way in and a server publishes no port of its own.
-# A link needs an overlay key BOUND TO THIS MACHINE, which this key is not. Bind
+${i.legacyAdminKey
+            ? `# A link needs an overlay key made for one machine, and this key cannot be one:
+# it was minted before External node keys existed, and it can never boot a link.
+# Mint a new External node key under Settings -> Warp -> External Nodes, then
+# deploy the file offered there - it contains the link.`
+            : `# A link needs an overlay key BOUND TO THIS MACHINE, which this key is not. Bind
 # one under the machine in the panel, then take the file offered there - it
-# contains the link.`;
+# contains the link.`}`;
     const manageLink = kitLink
         ? `      # keep - link runs as its own service below, so the node must not start
       # one as well. A node that started one before removes it.
@@ -418,7 +440,9 @@ services:
     restart: unless-stopped
     depends_on: [warp]
     environment:
-      # keep - this machine is yours, not ours.
+      # keep - ${i.externalNode
+          ? 'this machine runs outside our datacenter, reached through warp.'
+          : 'this machine is yours, not ours.'}
       NODE_EXTERNAL: "true"
 
 ${manageLink}      # EDIT only for a different name. It ends up in keys and in the
@@ -478,8 +502,12 @@ export function deployIntro(kind: 'route-only' | 'node', platform: DeployPlatfor
 export const DEPLOY_PORTAINER_NOTE =
     'Using Portainer instead? Stacks, Add stack, Web editor, paste the same file, Deploy. Nothing in it changes.';
 
-/** What to run once the file is on the machine, and what to check afterwards. */
-export function deployCli(kind: 'route-only' | 'node'): string {
+/**
+ * What to run once the file is on the machine, and what to check afterwards.
+ * externalNode is WarpDeployInput.externalNode: the admin's External node kit,
+ * which appears somewhere else in the panel than a tenant's machine.
+ */
+export function deployCli(kind: 'route-only' | 'node', externalNode = false): string {
     const file = composeFileName(kind);
     return `# 1. Start it. Pull first: the tunnel agent is what supplies the internal
 #    addresses, so a stale cached image would leave the rest of the stack
@@ -494,7 +522,9 @@ docker compose -f ${file} logs -f warp
 docker compose -f ${file} exec warp wg show
 ${kind === 'node'
             ? `
-# 4. The node registers itself; it appears in the panel under Nodes within ~30s.
+# 4. The node registers itself; it appears in the panel under ${externalNode
+                ? 'My infrastructure -> External nodes'
+                : 'Nodes'} within ~30s.
 docker compose -f ${file} logs -f node`
             : `
 # 4. The link registers its tunnel; then create the route(s) in the panel.
