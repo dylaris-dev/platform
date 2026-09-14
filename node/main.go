@@ -412,6 +412,12 @@ func main() {
 	globalSharedStorage = newSharedStorageDetector(nodeID, storageMgr.Paths)
 	globalSharedStorage.Run(ctx.Done())
 
+	// Built before the command listener starts, so a backup or restore that is
+	// already queued can ask Core for its URLs; Run connects further down.
+	streamHandler := NewStreamHandler(storageMgr)
+	meshMgr := NewMeshManager(nodeID, rdb, streamHandler)
+	coreRequest = meshMgr.Request
+
 	go startDiscoveryLoop(ctx, rdb, nodeID, nodeTags, nodeRegion, mon, dockerMgr)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
@@ -421,8 +427,6 @@ func main() {
 	StartRestoreCleanup(ctx, storageMgr)
 
 	// gRPC Mesh: connect outbound to all Cores
-	streamHandler := NewStreamHandler(storageMgr)
-	meshMgr := NewMeshManager(nodeID, rdb, streamHandler)
 	go meshMgr.Run(ctx)
 
 	// Beam: file transfer gRPC server (BEAM_GRPC_PORT, default :25521).

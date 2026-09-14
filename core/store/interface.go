@@ -280,6 +280,10 @@ type Store interface {
 	DeleteBackupRun(id int) error
 	PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error)
 	ListAbandonedBackupRuns(startedBefore time.Time, limit int) ([]models.BackupRun, error)
+	// SetBackupRunUpload stores a run's multipart upload id and part size only
+	// where none is stored yet and the run is still running, and reports whether
+	// this call's values were the ones stored.
+	SetBackupRunUpload(runID int, uploadID string, partSize int64) (bool, error)
 
 	CreateBackupRestore(r *models.BackupRestore) (int, error)
 	GetBackupRestore(id int) (*models.BackupRestore, error)

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/models"
 	backupstorage "dylaris-core/storage/backup"
@@ -29,6 +31,8 @@ func (f *storageFakeStore) GetSetting(key string) (string, error) {
 	return v, nil
 }
 
+// presignTTL no longer reaches backups or restores (their URLs are minted when
+// the transfer starts), but the cross-LAN migration still presigns with it.
 func TestPresignTTL(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -62,42 +66,76 @@ func s3Storage(config string) *models.BackupStorage {
 
 func byonNode() *models.Node {
 	owner := "owner-1"
-	return &models.Node{ID: 1, OwnerID: &owner}
+	return &models.Node{ID: 1, Token: "node-current", OwnerID: &owner}
 }
 
 func operatorNode() *models.Node {
-	return &models.Node{ID: 1, OwnerID: nil}
+	return &models.Node{ID: 1, Token: "node-current", OwnerID: nil}
 }
 
-func TestPrepareNodeStorage_OperatorNode_ReturnsFullBlobNoURL(t *testing.T) {
-	storage := s3Storage(`{"bucket":"b","region":"us-east-1","accessKeyId":"AKIA","secretAccessKey":"secret"}`)
-	st := &storageFakeStore{}
-
-	blob, presigned, err := PrepareNodeStorage(context.Background(), st, storage, operatorNode(), "key", "get", noDeps())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+// heartbeatRedis is a Redis holding one node heartbeat per token, reporting the
+// given release version (empty: a heartbeat that names none).
+func heartbeatRedis(t *testing.T, versions map[string]string) *redis.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	for token, v := range versions {
+		hb, _ := json.Marshal(NodeHeartbeat{ID: token, ReleaseVersion: v})
+		mr.Set("dylaris:discovery:"+token, string(hb))
 	}
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	return rdb
+}
 
-	if presigned != "" {
-		t.Errorf("presignedURL = %q, want empty for an operator node", presigned)
-	}
-	want, _ := json.Marshal(storage)
-	if string(blob) != string(want) {
-		t.Errorf("blob = %s, want the full unstripped storage blob %s", blob, want)
+// currentNodes is a Redis in which "node-current" runs the first release that
+// takes presigned-only transfers.
+func currentNodes(t *testing.T) *redis.Client {
+	return heartbeatRedis(t, map[string]string{"node-current": presignedMultipartSince})
+}
+
+// FLIPPED (document F), formerly _OperatorNode_ReturnsFullBlobNoURL and
+// _BYONS3_StripsCredentials. An operator node on a plain s3 row used to receive
+// the full blob, secret access key included, in its command stream; only a BYON
+// node had it stripped. Now no node holds object-storage credentials.
+func TestPrepareNodeStorage_EveryNodeOnS3_GetsNoCredentials(t *testing.T) {
+	storage := s3Storage(`{"bucket":"b","region":"us-east-1","accessKeyId":"AKIA_SECRET_KEY","secretAccessKey":"very-secret"}`)
+
+	for _, node := range []*models.Node{operatorNode(), byonNode()} {
+		owned := node.OwnerID != nil
+		blob, objectStorage, err := PrepareNodeStorage(context.Background(), currentNodes(t), storage, node, noDeps())
+		if err != nil {
+			t.Fatalf("owned=%v: unexpected error: %v", owned, err)
+		}
+		if !objectStorage {
+			t.Errorf("owned=%v: objectStorage = false, want true for an s3 row", owned)
+		}
+		if strings.Contains(string(blob), "AKIA_SECRET_KEY") || strings.Contains(string(blob), "very-secret") {
+			t.Errorf("owned=%v: blob carries credentials: %s", owned, blob)
+		}
+		var stripped models.BackupStorage
+		if err := json.Unmarshal(blob, &stripped); err != nil {
+			t.Fatalf("unmarshal stripped blob: %v", err)
+		}
+		if string(stripped.Config) != "{}" {
+			t.Errorf("owned=%v: stripped config = %s, want {}", owned, stripped.Config)
+		}
+		if stripped.Provider != "s3" || stripped.ID != storage.ID {
+			t.Errorf("owned=%v: stripped blob lost non-credential fields: %+v", owned, stripped)
+		}
 	}
 }
 
 func TestPrepareNodeStorage_BYONNonS3Provider_ReturnsFullBlobNoURL(t *testing.T) {
 	storage := &models.BackupStorage{ID: 2, Provider: "local", Config: json.RawMessage(`{"path":"/data/backups"}`)}
-	st := &storageFakeStore{}
 
-	blob, presigned, err := PrepareNodeStorage(context.Background(), st, storage, byonNode(), "key", "get", noDeps())
+	// No heartbeat at all: a filesystem target involves no object storage, so
+	// the version gate must not apply to it.
+	blob, objectStorage, err := PrepareNodeStorage(context.Background(), heartbeatRedis(t, nil), storage, byonNode(), noDeps())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	if presigned != "" {
-		t.Errorf("presignedURL = %q, want empty for a non-s3 provider", presigned)
+	if objectStorage {
+		t.Error("objectStorage = true, want false for a local provider")
 	}
 	want, _ := json.Marshal(storage)
 	if string(blob) != string(want) {
@@ -106,105 +144,77 @@ func TestPrepareNodeStorage_BYONNonS3Provider_ReturnsFullBlobNoURL(t *testing.T)
 }
 
 func TestPrepareNodeStorage_NilStorage_BYON_ReturnsNullNoURL(t *testing.T) {
-	st := &storageFakeStore{}
-
-	blob, presigned, err := PrepareNodeStorage(context.Background(), st, nil, byonNode(), "key", "get", noDeps())
+	blob, objectStorage, err := PrepareNodeStorage(context.Background(), nil, nil, byonNode(), noDeps())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	if presigned != "" {
-		t.Errorf("presignedURL = %q, want empty for nil storage", presigned)
+	if objectStorage {
+		t.Error("objectStorage = true for nil storage")
 	}
 	if string(blob) != "null" {
 		t.Errorf("blob = %s, want null", blob)
 	}
 }
 
-func TestPrepareNodeStorage_BYONS3_StripsCredentials(t *testing.T) {
-	storage := s3Storage(`{"bucket":"b","region":"us-east-1","accessKeyId":"AKIA_SECRET_KEY","secretAccessKey":"very-secret"}`)
-	st := &storageFakeStore{}
-
-	blob, presigned, err := PrepareNodeStorage(context.Background(), st, storage, byonNode(), "backups/x.tar.gz", "get", noDeps())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	var stripped models.BackupStorage
-	if err := json.Unmarshal(blob, &stripped); err != nil {
-		t.Fatalf("unmarshal stripped blob: %v", err)
-	}
-	if string(stripped.Config) != "{}" {
-		t.Errorf("stripped config = %s, want {} (credential-stripped)", stripped.Config)
-	}
-	if stripped.Provider != "s3" || stripped.ID != storage.ID {
-		t.Errorf("stripped blob lost non-credential fields: %+v", stripped)
-	}
-	if presigned == "" {
-		t.Fatal("expected a non-empty presigned URL for a valid BYON s3 request")
-	}
-}
-
-func TestPrepareNodeStorage_BYONS3_OpSelectsGetVsPutSignature(t *testing.T) {
-	storage := s3Storage(`{"bucket":"b","region":"us-east-1","accessKeyId":"AKIA","secretAccessKey":"secret"}`)
-	st := &storageFakeStore{}
-
-	_, getURL, _ := PrepareNodeStorage(context.Background(), st, storage, byonNode(), "k", "get", noDeps())
-	_, putURL, _ := PrepareNodeStorage(context.Background(), st, storage, byonNode(), "k", "put", noDeps())
-
-	getQ := parsePresignedQuery(t, getURL)
-	putQ := parsePresignedQuery(t, putURL)
-
-	if getQ.Get("x-id") != "GetObject" {
-		t.Errorf("op=get produced x-id=%q, want GetObject", getQ.Get("x-id"))
-	}
-	if putQ.Get("x-id") != "PutObject" {
-		t.Errorf("op=put produced x-id=%q, want PutObject", putQ.Get("x-id"))
-	}
-}
-
-func TestPrepareNodeStorage_TTLThreadedFromSettings(t *testing.T) {
-	storage := s3Storage(`{"bucket":"b","region":"us-east-1","accessKeyId":"AKIA","secretAccessKey":"secret"}`)
-	st := &storageFakeStore{settings: map[string]string{"r2.presign_ttl_byon_minutes": "15"}}
-
-	_, presigned, _ := PrepareNodeStorage(context.Background(), st, storage, byonNode(), "k", "get", noDeps())
-
-	q := parsePresignedQuery(t, presigned)
-	if got := q.Get("X-Amz-Expires"); got != "900" {
-		t.Errorf("X-Amz-Expires = %s, want 900 (15 minutes)", got)
-	}
-}
-
-func TestPrepareNodeStorage_S3OpenFails_StripsCredsButNoURL(t *testing.T) {
-	// Missing "bucket" -> backupstorage.NewS3 returns an error; PrepareNodeStorage's
-	// fail-safe must still strip creds but leave the URL empty rather than error out.
+// FLIPPED (document F), formerly _S3OpenFails_StripsCredsButNoURL. A BYON s3 row
+// Core could not open was a silent fail-safe: stripped blob, empty URL,
+// dispatched anyway to fail on the node. With no credential path left there is
+// nothing to fall back to, for any node, so it is an error the run is failed
+// with before dispatch. Still stripped.
+func TestPrepareNodeStorage_S3OpenFails_IsAnErrorAndStillStripped(t *testing.T) {
+	// Missing "bucket" -> backupstorage.NewS3 returns an error.
 	storage := s3Storage(`{"accessKeyId":"AKIA","secretAccessKey":"secret"}`)
-	st := &storageFakeStore{}
 
-	blob, presigned, err := PrepareNodeStorage(context.Background(), st, storage, byonNode(), "k", "get", noDeps())
-	if err != nil {
-		t.Fatalf("a BYON s3 open failure must stay a silent fail-safe, got %v", err)
+	blob, _, err := PrepareNodeStorage(context.Background(), currentNodes(t), storage, byonNode(), noDeps())
+	if err == nil {
+		t.Fatal("no error: a run would be dispatched against a target Core cannot open")
 	}
-
-	if presigned != "" {
-		t.Errorf("presignedURL = %q, want empty when the storage provider fails to open", presigned)
-	}
-	var stripped models.BackupStorage
-	if err := json.Unmarshal(blob, &stripped); err != nil {
-		t.Fatalf("unmarshal stripped blob: %v", err)
-	}
-	if string(stripped.Config) != "{}" {
-		t.Errorf("stripped config = %s, want {} even when presign fails (fail-safe: never leak creds)", stripped.Config)
+	if strings.Contains(string(blob), "secret") {
+		t.Errorf("blob = %s, want credentials stripped even on failure", blob)
 	}
 }
 
-func parsePresignedQuery(t *testing.T, rawURL string) url.Values {
-	t.Helper()
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		t.Fatalf("parse presigned url %q: %v", rawURL, err)
+// The version gate. Older, unparseable and silent nodes are refused for object
+// storage; the first release with the presigned-only path, anything newer, and
+// an unstamped development build pass.
+// Replaces _BYONS3_OpSelectsGetVsPutSignature and _TTLThreadedFromSettings: no
+// URL is signed at dispatch any more, so there is no signature or TTL left to
+// pin here (the TTLs of the URLs a node asks for are pinned in
+// backup_transfer_test.go).
+func TestPrepareNodeStorage_RefusesANodeTooOldForPresignedTransfers(t *testing.T) {
+	storage := s3Storage(`{"bucket":"b","region":"us-east-1","accessKeyId":"AKIA","secretAccessKey":"secret"}`)
+	rdb := heartbeatRedis(t, map[string]string{
+		"node-old":        "2026.09.14",
+		"node-since":      presignedMultipartSince,
+		"node-newer":      "2026.09.15",
+		"node-no-version": "",
+		"node-garbage":    "dev",
+	})
+	cases := []struct {
+		token string
+		want  bool
+	}{
+		{"node-old", false},
+		{"node-since", true},
+		{"node-newer", true},
+		{"node-no-version", true}, // an unstamped development build
+		{"node-garbage", false},
+		{"node-no-heartbeat", false},
 	}
-	return u.Query()
+	for _, c := range cases {
+		t.Run(c.token, func(t *testing.T) {
+			_, objectStorage, err := PrepareNodeStorage(context.Background(), rdb, storage, &models.Node{ID: 1, Token: c.token}, noDeps())
+			if !objectStorage {
+				t.Error("objectStorage = false, want true")
+			}
+			if c.want && err != nil {
+				t.Errorf("err = %v, want the node accepted", err)
+			}
+			if !c.want && !errors.Is(err, ErrNodeUpdateRequired) {
+				t.Errorf("err = %v, want ErrNodeUpdateRequired", err)
+			}
+		})
+	}
 }
 
 // noDeps is the zero Deps: enough for s3/local, and deliberately missing the
@@ -219,29 +229,31 @@ func connectionStorage() *models.BackupStorage {
 	}
 }
 
-// The node implements exactly four providers (backup_worker.go / backup_restore.go).
-// Anything Core adds beyond them is an indirection Core must resolve BEFORE
-// dispatch, and this list is what decides that. Adding a provider here without
-// teaching the node about it sends a row the node answers with
-// "unknown provider <x>" — which is exactly how "connection" shipped broken.
+// The node handles exactly three providers itself, all filesystem ones. FLIPPED
+// (document F): "s3" moved to the object-storage side, where Core drives the
+// transfer instead of handing the node the row's credentials. Adding a provider
+// to the first list without teaching the node about it sends a row the node
+// answers with "unknown provider <x>" - which is how "connection" shipped broken.
 func TestNodeResolvesProviderMatchesTheNodeSwitch(t *testing.T) {
-	for _, p := range []string{"local", "shared", "node-local", "s3"} {
+	for _, p := range []string{"local", "shared", "node-local"} {
 		if !nodeResolvesProvider(p) {
-			t.Errorf("nodeResolvesProvider(%q) = false, want true — the node implements it", p)
+			t.Errorf("nodeResolvesProvider(%q) = false, want true - the node implements it", p)
 		}
 	}
-	for _, p := range []string{"connection", "core-storage", "", "ftp"} {
+	for _, p := range []string{"s3", "connection", "core-storage", "", "ftp"} {
 		if nodeResolvesProvider(p) {
-			t.Errorf("nodeResolvesProvider(%q) = true, want false — the node has no case for it", p)
+			t.Errorf("nodeResolvesProvider(%q) = true, want false - Core drives the transfer", p)
 		}
 	}
 }
 
 // The reported failure: an operator node got the "connection" row verbatim and
-// answered "upload failed: unknown provider connection". Core resolves it and
-// presigns instead, for EVERY node, because the node cannot dereference the row
-// and cannot know the connection's key prefix either.
-func TestPrepareNodeStorage_ConnectionProvider_PresignsForOperatorNode(t *testing.T) {
+// answered "upload failed: unknown provider connection". Core resolves it for
+// EVERY node. FLIPPED (document F), formerly _PresignsForOperatorNode: Core used
+// to presign a PUT here at dispatch; now it proves it can open the target, and
+// the node asks for URLs when the upload starts, so nothing in the command can
+// expire while it waits in a queue.
+func TestPrepareNodeStorage_ConnectionProvider_ResolvedForOperatorNode(t *testing.T) {
 	target, err := backupstorage.NewS3(context.Background(),
 		json.RawMessage(`{"bucket":"b","region":"us-east-1","accessKeyId":"AKIA","secretAccessKey":"secret"}`))
 	if err != nil {
@@ -256,33 +268,28 @@ func TestPrepareNodeStorage_ConnectionProvider_PresignsForOperatorNode(t *testin
 		},
 	}
 
-	blob, presigned, err := PrepareNodeStorage(context.Background(), &storageFakeStore{},
-		connectionStorage(), operatorNode(), "backups/x.tar.gz", "put", deps)
+	blob, objectStorage, err := PrepareNodeStorage(context.Background(), currentNodes(t),
+		connectionStorage(), operatorNode(), deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if presigned == "" {
-		t.Fatal("no presigned URL: the node would fall back to the storage blob and fail on the provider name")
+	if !objectStorage {
+		t.Fatal("objectStorage = false: the node would fall back to the storage blob and fail on the provider name")
 	}
 	if gotID != 3 || gotPrefix != "server-backups" {
 		t.Errorf("resolved connection %d prefix %q, want 3 / server-backups", gotID, gotPrefix)
-	}
-	if q := parsePresignedQuery(t, presigned); q.Get("x-id") != "PutObject" {
-		t.Errorf("x-id = %q, want PutObject", q.Get("x-id"))
 	}
 	var stripped models.BackupStorage
 	if err := json.Unmarshal(blob, &stripped); err != nil {
 		t.Fatalf("unmarshal blob: %v", err)
 	}
 	if string(stripped.Config) != "{}" {
-		t.Errorf("config = %s, want {} — the node has no use for it once a URL is signed", stripped.Config)
+		t.Errorf("config = %s, want {} - the node has no use for it", stripped.Config)
 	}
 }
 
 // An unresolvable indirection has no node-side fallback, so it must surface as
-// an error the caller can fail the run with. Returning a blob and empty URL (the
-// BYON fail-safe) would dispatch a command that can only fail on the node, with
-// the reason two hops from the cause.
+// an error the caller can fail the run with, naming the storage row.
 func TestPrepareNodeStorage_IndirectProviderWithoutBuilder_Errors(t *testing.T) {
 	for _, tc := range []struct{ name, provider string }{
 		{"connection", "connection"},
@@ -291,13 +298,10 @@ func TestPrepareNodeStorage_IndirectProviderWithoutBuilder_Errors(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			s := connectionStorage()
 			s.Provider = tc.provider
-			_, presigned, err := PrepareNodeStorage(context.Background(), &storageFakeStore{},
-				s, operatorNode(), "k", "put", noDeps())
+			_, _, err := PrepareNodeStorage(context.Background(), currentNodes(t),
+				s, operatorNode(), noDeps())
 			if err == nil {
 				t.Fatal("no error: a run would be dispatched that the node cannot execute")
-			}
-			if presigned != "" {
-				t.Errorf("presignedURL = %q, want empty", presigned)
 			}
 			if !strings.Contains(err.Error(), "R2 main") || !strings.Contains(err.Error(), tc.provider) {
 				t.Errorf("error %q names neither the storage row nor the provider", err)

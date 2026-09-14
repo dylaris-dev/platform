@@ -73,25 +73,26 @@ func TestEveryCoreDispatchShapePassesTheIdentifierGuard(t *testing.T) {
 		payload string
 	}{
 		{
-			// core/handlers/backup.go, queueBackupRun; identical in
-			// core/services/backup_scheduler.go, dispatchRun.
+			// core/handlers/backup.go, startBackupRun; identical in
+			// core/services/backup_scheduler.go, dispatch. Object storage since
+			// document F: a stripped row and upload=multipart, no URL.
 			name: "backup_run (flat, SendRawCommand)",
 			payload: `{"action":"backup_run","runId":7,"jobId":3,"serverUuid":"` + testUUID + `",
 			  "subServer":"survival","includePatterns":["world/**"],"excludePatterns":[],
-			  "storageKey":"backups/x.tar.gz","storage":{"id":1,"provider":"s3"},"presignedPutUrl":""}`,
+			  "storageKey":"backups/x.tar.gz","storage":{"id":1,"provider":"s3","config":{}},"upload":"multipart"}`,
 		},
 		{
 			// A whole-server job has sub_server NULL, which Core sends as "".
 			name: "backup_run for the whole container",
 			payload: `{"action":"backup_run","runId":7,"jobId":3,"serverUuid":"` + testUUID + `",
-			  "subServer":"","storageKey":"backups/x.tar.gz","storage":{},"presignedPutUrl":""}`,
+			  "subServer":"","storageKey":"backups/x.tar.gz","storage":{}}`,
 		},
 		{
 			// core/handlers/backup.go, RestoreBackupRun.
 			name: "backup_restore (flat, SendRawCommand)",
 			payload: `{"action":"backup_restore","runId":7,"restoreId":2,"jobId":3,
 			  "serverUuid":"` + testUUID + `","subServer":"survival",
-			  "storageKey":"backups/x.tar.gz","storage":{},"presignedGetUrl":""}`,
+			  "storageKey":"backups/x.tar.gz","storage":{"id":1,"provider":"connection","config":{}},"download":"presigned"}`,
 		},
 		{
 			// core/handlers/server_mods.go, InstallServerMod (SendCommand).

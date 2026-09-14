@@ -112,6 +112,20 @@ func createBackupTables(db *sql.DB) error {
 		// storage is gone": both are read as ours, which is the safe direction
 		// for a quota (it counts rather than silently exempting).
 		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS storage_id INTEGER REFERENCES backup_storages(id) ON DELETE SET NULL`,
+		// The multipart upload Core started for this run's archive on object
+		// storage, and the fixed part size it was started with. A node never holds
+		// the bucket credentials: it asks Core for presigned part URLs, and Core
+		// creates the upload on the first ask, completes it, or aborts it.
+		//
+		// Both NULL until that first ask, and that NULL is load-bearing: the
+		// create is a conditional write "WHERE upload_id IS NULL", so a node that
+		// retries its request on a second Core replica reuses the upload instead
+		// of starting another one. The part size is stored rather than read from
+		// a constant because every part but the last must be exactly that size,
+		// and a Core released with a different constant must still complete an
+		// upload started by the one before it.
+		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS upload_id TEXT`,
+		`ALTER TABLE backup_runs ADD COLUMN IF NOT EXISTS part_size BIGINT`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_runs_job ON backup_runs(job_id, started_at DESC)`,
 		// One row per restore attempt. We keep history separate from
 		// backup_runs because a single archive can be restored many times

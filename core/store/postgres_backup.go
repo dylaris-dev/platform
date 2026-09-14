@@ -371,10 +371,14 @@ func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*m
 	var r models.BackupRun
 	var completed sql.NullTime
 	var storageID sql.NullInt64
-	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage, &r.InstallSnapshot, &r.Manifest, &storageID)
+	var uploadID sql.NullString
+	var partSize sql.NullInt64
+	err := row.Scan(&r.ID, &r.JobID, &r.StartedAt, &completed, &r.Status, &r.SizeBytes, &r.StorageKey, &r.ErrorMessage, &r.InstallSnapshot, &r.Manifest, &storageID, &uploadID, &partSize)
 	if err != nil {
 		return nil, err
 	}
+	r.UploadID = uploadID.String
+	r.PartSize = partSize.Int64
 	if completed.Valid {
 		t := completed.Time
 		r.CompletedAt = &t
@@ -386,7 +390,7 @@ func (s *PostgresStore) scanRun(row interface{ Scan(...interface{}) error }) (*m
 	return &r, nil
 }
 
-const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message, install_snapshot, manifest, storage_id`
+const backupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, error_message, install_snapshot, manifest, storage_id, upload_id, part_size`
 
 func (s *PostgresStore) ListBackupRuns(jobID, limit int) ([]models.BackupRun, error) {
 	if limit <= 0 {
@@ -432,6 +436,30 @@ func (s *PostgresStore) UpdateBackupRunStatus(id int, status, errorMsg string, s
 		status, errorMsg, sizeBytes, storageKey, completedArg, id,
 	)
 	return err
+}
+
+// SetBackupRunUpload records the multipart upload Core started for a run, but
+// only while the run is still running and has no upload yet. It reports whether
+// this call's upload is the one stored.
+//
+// Conditional because the node retries a part-URL request on another Core
+// replica, so two replicas can each create an upload for the same run at the
+// same moment. Exactly one write lands; the other caller aborts the upload it
+// created and uses the stored one. The status condition keeps an upload from
+// being attached to a run the reaper or a delete has already closed.
+func (s *PostgresStore) SetBackupRunUpload(runID int, uploadID string, partSize int64) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE backup_runs SET upload_id = $1, part_size = $2 WHERE id = $3 AND upload_id IS NULL AND status = 'running'`,
+		uploadID, partSize, runID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // ListAbandonedBackupRuns returns runs still marked "running" that started

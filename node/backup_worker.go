@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -42,6 +43,10 @@ type BackupRunCommand struct {
 	// to instead of using bucket credentials (BYON tenant nodes never receive
 	// the operator's creds). Empty = use Storage creds (operator nodes).
 	PresignedPutURL string `json:"presignedPutUrl"`
+	// Upload "multipart" means the storage is object storage and Core drives the
+	// upload: Storage carries no credentials and there is no URL, the node asks
+	// Core for part URLs as it goes. See backup_transfer.go.
+	Upload string `json:"upload"`
 	// Manifest is Core's description of what this archive contains: loader,
 	// versions, installer origin, the installed-mod rows. It is written into the
 	// archive VERBATIM and never parsed here.
@@ -288,10 +293,26 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	// A BYON tenant node gets a pre-signed PUT URL and never sees bucket creds;
 	// it stages the archive to a temp file first (PUT needs Content-Length).
 	var upErr error
-	if cmd.PresignedPutURL != "" {
+	multipartSize := int64(-1)
+	switch {
+	case cmd.Upload == modeUploadMultipart:
+		// Checked before Complete, which is the point: an archive that matched
+		// nothing is never completed, so there is no object to clean up and
+		// Core aborts the parts when the run is reported failed.
+		multipartSize, upErr = uploadMultipart(ctx, coreMultipartAPI(cmd.RunID), objectTransferClient, pr, func() error {
+			if !addedAny {
+				return errNothingArchived
+			}
+			return nil
+		})
+	case cmd.PresignedPutURL != "":
 		upErr = uploadBackupPresigned(ctx, cmd.PresignedPutURL, pr)
-	} else {
+	default:
 		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pr)
+	}
+	if errors.Is(upErr, errNothingArchived) {
+		reportBackup(ctx, rdb, cmd.RunID, "failed", upErr.Error(), 0)
+		return
 	}
 	if upErr != nil {
 		// Drain any remaining bytes so the writer goroutine doesn't block on
@@ -319,12 +340,22 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		// best-effort on a key that was never written (a BYON node holds no
 		// bucket credentials, so its S3 branch returns without doing anything;
 		// its own staged temp file is already removed by uploadBackupPresigned).
-		deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
+		//
+		// Not for a multipart upload: this node has nothing to delete there, and
+		// Core aborts the parts when it reads the failed report.
+		if cmd.Upload != modeUploadMultipart {
+			deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
+		}
 		reportBackup(ctx, rdb, cmd.RunID, "failed", "upload failed: "+upErr.Error(), 0)
 		return
 	}
 
 	size := counter.Total()
+	if multipartSize >= 0 {
+		// The completed object's size as Core read it, which is the number the
+		// quota and the run list should carry.
+		size = multipartSize
+	}
 	if !addedAny {
 		// We still uploaded a 0-file archive; clean up storage and surface
 		// the friendlier error so the UI doesn't show a zero-byte success.

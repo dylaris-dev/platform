@@ -6,12 +6,19 @@ import (
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
+
+	"dylaris-pkg/release"
+
+	"github.com/redis/go-redis/v9"
 )
 
-// Presigned-URL TTLs for node backup transfer. Two knobs because a BYON tenant's
+// Presigned-URL TTLs for the cross-LAN migration transfer (migration_orchestrator.go).
+// Backups and restores no longer use them: their URLs are minted when the node
+// starts the transfer, not at dispatch. Two knobs because a BYON tenant's
 // home uplink can be much slower than an operator DC node, so its presigned URL
 // must stay valid long enough to finish a multi-GB transfer.
 const (
@@ -35,85 +42,103 @@ func presignTTL(st store.Store, isBYON bool) time.Duration {
 	return time.Duration(mins) * time.Minute
 }
 
-// nodeResolvesProvider reports whether the NODE can act on a backup provider by
-// itself. The list mirrors the switch in platform/node/backup_worker.go
-// (uploadBackup) and backup_restore.go (downloadBackup) — nothing else exists
-// there.
+// nodeResolvesProvider reports whether the NODE handles a backup provider by
+// itself. The list mirrors the filesystem cases of the switch in
+// platform/node/backup_worker.go (uploadBackup) and backup_restore.go
+// (downloadBackup).
 //
-// Everything Core added later ("connection", "core-storage") is an INDIRECTION:
-// the row names a target instead of describing one, and only Core can resolve
-// it. Handing such a row to a node verbatim is what made every backup to a saved
-// storage connection fail with "upload failed: unknown provider connection" —
-// the panel offered the target, Core accepted it, and the failure surfaced two
-// hops away with no hint that Core was supposed to resolve it first.
+// Everything else is object storage reached through Core. "s3" used to be on
+// this list, which is how an operator node came to receive a bucket's
+// credentials in its command; "connection" and "core-storage" are indirections
+// the node could never resolve at all. For all of them Core now drives the
+// transfer and the node only ever sees presigned URLs, asked for when the
+// transfer starts (see backup_transfer.go).
 func nodeResolvesProvider(provider string) bool {
 	switch provider {
-	case "local", "shared", "node-local", "s3":
+	case "local", "shared", "node-local":
 		return true
 	}
 	return false
 }
 
-// PrepareNodeStorage decides how a node receives storage access for a backup
-// upload (op "put") or restore download (op "get").
+// presignedMultipartSince is the release in which the node learned to upload a
+// backup as presigned multipart parts and to ask Core for a restore URL. An
+// older node would read a command without a URL or credentials as an unknown
+// or unusable provider - and a restore stops the server before it finds out.
 //
-//   - Operator node on a provider the node implements: returns the full storage
-//     blob (with creds) + empty URL — exactly today's behavior.
-//   - BYON tenant node on S3/R2: mints a presigned URL scoped to the single
-//     object key + returns a CREDENTIAL-STRIPPED storage blob, so the tenant's
-//     machine never receives the operator's bucket keys.
-//   - ANY node on an indirection provider ("connection", "core-storage"): Core
-//     resolves it here and presigns, because the node cannot. The presigned URL
-//     also carries the resolved target's key prefix, which the node has no way
-//     to reconstruct from the storage key alone.
-//
-// Fail-safe: if presigning fails for a BYON node on a plain s3 row, creds are
-// STILL stripped and the URL is empty (the run fails rather than leaking
-// credentials). For an indirection provider a presign failure is returned as an
-// error instead: there is no fallback the node could take, so the caller must
-// fail the run with a real reason rather than dispatch a doomed command.
-func PrepareNodeStorage(ctx context.Context, st store.Store, storage *models.BackupStorage, node *models.Node, key, op string, deps backupstorage.Deps) (storageJSON []byte, presignedURL string, err error) {
-	full, _ := json.Marshal(storage)
-	if storage == nil {
-		return full, "", nil
-	}
-	isBYON := node != nil && node.OwnerID != nil
-	indirect := !nodeResolvesProvider(storage.Provider)
+// A constant rather than the running Core's own RELEASE_VERSION, for the reason
+// modReportingSince gives: a development build carries no version.
+const presignedMultipartSince = "2026.09.14.2"
 
-	// Node can resolve it and may hold the credentials: unchanged path.
-	if !indirect && (!isBYON || storage.Provider != "s3") {
-		return full, "", nil
+// ErrNodeUpdateRequired refuses a backup or restore on object storage for a node
+// older than presignedMultipartSince, or one whose version is unknown. There is
+// no fallback on purpose: the only one would be handing the node credentials.
+var ErrNodeUpdateRequired = errors.New("this node must be updated before it can back up to or restore from object storage")
+
+// nodeTakesPresignedTransfers reports whether the node's heartbeat names a
+// release that can take a presigned-only backup or restore. No heartbeat, an
+// unparseable version or an older one counts as old, the safe direction:
+// refusing costs one clear failure, guessing wrong costs a restore that stops a
+// server and cannot continue.
+//
+// A heartbeat that names no version at all is a development build (the testbed,
+// a local build), which is built from the source it runs against and is let
+// through. Every image CI builds is stamped, so no production node reports "".
+func nodeTakesPresignedTransfers(ctx context.Context, rdb *redis.Client, nodeToken string) bool {
+	hb := LoadHeartbeat(ctx, rdb, nodeToken)
+	if hb == nil {
+		return false
+	}
+	if hb.ReleaseVersion == "" {
+		return true
+	}
+	have, err := release.ParseVersion(hb.ReleaseVersion)
+	if err != nil {
+		return false
+	}
+	since, err := release.ParseVersion(presignedMultipartSince)
+	if err != nil {
+		return false
+	}
+	return have.Compare(since) >= 0
+}
+
+// PrepareNodeStorage decides what a node receives for a backup upload or a
+// restore download, and whether the transfer goes through Core-presigned URLs.
+//
+//   - A filesystem provider the node handles itself (local, shared, node-local):
+//     the full storage blob, which holds a path and no secret. objectStorage is
+//     false.
+//   - Anything else is object storage: a CREDENTIAL-STRIPPED blob and
+//     objectStorage true. The command then carries no URL and no credentials;
+//     the node asks Core for part URLs or a restore URL when it starts, for
+//     every node, owned or not.
+//
+// For object storage it also refuses, with an error the caller fails the run
+// with, when Core cannot open the target (the row names a connection that is
+// gone, a builder is missing) or when the node is too old to take a
+// presigned-only transfer (ErrNodeUpdateRequired). Both are decided BEFORE
+// anything is dispatched: a restore stops the server first, so a refusal that
+// only surfaced on the node would take the server down for nothing.
+func PrepareNodeStorage(ctx context.Context, rdb *redis.Client, storage *models.BackupStorage, node *models.Node, deps backupstorage.Deps) (storageJSON []byte, objectStorage bool, err error) {
+	full, _ := json.Marshal(storage)
+	if storage == nil || nodeResolvesProvider(storage.Provider) {
+		return full, false, nil
 	}
 
 	stripped := *storage
 	stripped.Config = json.RawMessage(`{}`)
 	strippedJSON, _ := json.Marshal(&stripped)
 
-	// fail reports a hard error for an indirection provider and the historical
-	// silent fail-safe for a BYON s3 row.
-	fail := func(cause error) ([]byte, string, error) {
-		if indirect {
-			return strippedJSON, "", fmt.Errorf("backup target %q (%s) cannot be reached by a node: %w", storage.Name, storage.Provider, cause)
-		}
-		return strippedJSON, "", nil
+	if _, err := backupstorage.Open(ctx, storage, deps); err != nil {
+		return strippedJSON, true, fmt.Errorf("backup target %q (%s) cannot be reached by a node: %w", storage.Name, storage.Provider, err)
 	}
-
-	prov, err := backupstorage.Open(ctx, storage, deps)
-	if err != nil {
-		return fail(err)
+	token := ""
+	if node != nil {
+		token = node.Token
 	}
-	ttl := presignTTL(st, isBYON)
-	var url string
-	if op == "get" {
-		url, err = prov.DownloadURL(ctx, key, ttl)
-	} else {
-		url, err = prov.UploadURL(ctx, key, ttl)
+	if !nodeTakesPresignedTransfers(ctx, rdb, token) {
+		return strippedJSON, true, ErrNodeUpdateRequired
 	}
-	if err != nil {
-		return fail(err)
-	}
-	if url == "" {
-		return fail(fmt.Errorf("the target did not return a pre-signed URL (only S3-compatible storage can)"))
-	}
-	return strippedJSON, url, nil
+	return strippedJSON, true, nil
 }

@@ -271,6 +271,9 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 				b.snapshotInstalls(result.RunID, job)
 				b.enforceRetention(ctx, run.JobID)
 			}
+			if result.Status == "failed" {
+				b.abortRunUpload(ctx, *run, job)
+			}
 		}
 	}
 }
@@ -290,7 +293,16 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 //     before every one of RunBackup's exits.
 //   - completed_at must stay NULL while the run is going. The store writes NULL
 //     for a zero time, so a zero time is what "not finished" looks like.
+//
+// A run that SUCCEEDED stays succeeded. A node reports success only after Core
+// completed its upload, so a later report for the same run comes from a
+// redelivered command running the backup again: Core refuses it part URLs, the
+// run no longer being running, and the node reports that as a failure. Writing
+// it would mark a good archive failed.
 func applyBackupReport(reportStatus, rowStatus string, now time.Time) (apply bool, completed time.Time) {
+	if rowStatus == "success" {
+		return false, time.Time{}
+	}
 	if reportStatus == "running" {
 		if rowStatus != "running" {
 			return false, time.Time{}
@@ -434,6 +446,40 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 			continue
 		}
 		log.Printf("backup-scheduler: closed abandoned run %d (job %d, started %s ago): %s", run.ID, run.JobID, age, detail)
+		// Parts of an upload that never completed are not an archive, and
+		// nobody will complete them now: Core completes only a running run.
+		// Aborting frees them instead of leaving them to the bucket's
+		// incomplete-upload expiry. An archive that did complete is untouched;
+		// its upload is already gone.
+		if run.UploadID != "" {
+			if job, err := b.store.GetBackupJob(run.JobID); err == nil && job != nil {
+				b.abortRunUpload(ctx, run, job)
+			}
+		}
+	}
+}
+
+// abortRunUpload aborts the multipart upload of a run that will not complete.
+// Best effort by design: the run's state is already written, a failed abort is
+// logged, and the bucket's incomplete-upload expiry is the backstop.
+func (b *BackupScheduler) abortRunUpload(ctx context.Context, run models.BackupRun, job *models.BackupJob) {
+	if run.UploadID == "" {
+		return
+	}
+	bs, err := ResolveRunStorage(b.store, &run, job.StorageID, BackupJobOwner(b.store, job.ServerID))
+	if err != nil {
+		logErrf("backup-scheduler", "run %d: cannot resolve storage to abort its upload: %v", run.ID, err)
+		return
+	}
+	actx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	provider, err := backupstorage.Open(actx, bs, b.storageDeps())
+	if err != nil {
+		logErrf("backup-scheduler", "run %d: cannot open storage to abort its upload: %v", run.ID, err)
+		return
+	}
+	if err := provider.AbortMultipart(actx, run.StorageKey, run.UploadID); err != nil {
+		logErrf("backup-scheduler", "run %d: abort of the upload for %s failed: %v", run.ID, run.StorageKey, err)
 	}
 }
 
@@ -574,12 +620,20 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return fmt.Errorf("queue unavailable")
 	}
 
-	storageCfgJSON, presignedPut, err := PrepareNodeStorage(ctx, b.store, storage, node, storageKey, "put", b.storageDeps())
+	storageCfgJSON, objectStorage, err := PrepareNodeStorage(ctx, b.redis, storage, node, b.storageDeps())
 	if err != nil {
-		// An indirection target Core could not resolve. Failing here names the
-		// storage row; dispatching anyway would surface as the node's opaque
-		// "unknown provider" two hops later.
+		// A target Core could not open, or a node too old for a presigned-only
+		// upload. Failing here names the reason; dispatching anyway would
+		// surface as the node's opaque "unknown provider" two hops later.
 		b.store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
+		// Advanced like a quota skip. A node that stays un-updated would
+		// otherwise get a new failed run on every one-minute tick instead of
+		// one per scheduled interval.
+		if errors.Is(err, ErrNodeUpdateRequired) {
+			if next := ComputeBackupNextRun(job.Schedule, time.Now()); next != nil {
+				b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
+			}
+		}
 		return err
 	}
 	subServer := ""
@@ -596,7 +650,9 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		"excludePatterns": job.ExcludePatterns,
 		"storageKey":      storageKey,
 		"storage":         json.RawMessage(storageCfgJSON),
-		"presignedPutUrl": presignedPut,
+	}
+	if objectStorage {
+		payload["upload"] = BackupUploadMultipart
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.

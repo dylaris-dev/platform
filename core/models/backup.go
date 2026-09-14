@@ -81,6 +81,12 @@ type BackupRun struct {
 	// rows alone, which is the honest answer when nobody wrote down what was
 	// there.
 	Manifest string `json:"-"`
+	// UploadID and PartSize describe the multipart upload Core started for this
+	// run on object storage; empty and 0 until the node first asked for part
+	// URLs, and always empty for filesystem targets. Not serialized: an upload
+	// id is a handle on the bucket, and nobody reading the run list needs it.
+	UploadID string `json:"-"`
+	PartSize int64  `json:"-"`
 }
 
 // BackupRestore records a restore attempt against an archived BackupRun.

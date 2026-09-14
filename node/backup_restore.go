@@ -35,6 +35,10 @@ type BackupRestoreCommand struct {
 	// from instead of using bucket credentials (BYON tenant nodes). Empty = use
 	// Storage creds (operator nodes).
 	PresignedGetURL string `json:"presignedGetUrl"`
+	// Download "presigned" means the storage is object storage: no credentials
+	// and no URL in the command, the node asks Core for the URL. See
+	// backup_transfer.go.
+	Download string `json:"download"`
 }
 
 // createStageDir makes the directory a restore extracts into, beside targetDir
@@ -114,6 +118,20 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// previous targetDir instead.
 	stageCleanup := func() { os.RemoveAll(stageDir) }
 
+	// Asked for BEFORE the container stops: a restore Core refuses, or a Core
+	// this node cannot reach, must not take the server down on its way to
+	// failing. The URL outlives the stop (30 minutes against a stop of well
+	// under one), and a retry below asks for a fresh one anyway.
+	var restoreURL string
+	if cmd.Download == modeDownloadPresigned {
+		restoreURL, err = coreRestoreURL(cmd.RestoreID)(ctx)
+		if err != nil {
+			stageCleanup()
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "download failed: "+err.Error())
+			return
+		}
+	}
+
 	// Stop the container before touching disk. The CL is mainly for
 	// sub-server restores too — a single container hosts every sub-server,
 	// so a Minecraft server with an open world file is racing us either
@@ -124,9 +142,12 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	}
 
 	var body io.ReadCloser
-	if cmd.PresignedGetURL != "" {
-		body, err = downloadPresigned(ctx, cmd.PresignedGetURL)
-	} else {
+	switch {
+	case cmd.Download == modeDownloadPresigned:
+		body, err = openPresignedRestore(ctx, objectTransferClient, restoreURL, coreRestoreURL(cmd.RestoreID))
+	case cmd.PresignedGetURL != "":
+		body, err = downloadPresigned(ctx, http.DefaultClient, cmd.PresignedGetURL)
+	default:
 		body, err = downloadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
 	}
 	if err != nil {
@@ -321,14 +342,14 @@ func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, 
 
 // downloadPresigned streams the archive from a pre-signed GET URL (BYON tenant
 // nodes, which never receive bucket credentials). Caller closes the body.
-func downloadPresigned(ctx context.Context, url string) (io.ReadCloser, error) {
+func downloadPresigned(ctx context.Context, client *http.Client, url string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, withoutURL(err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("presigned get: %w", err)
+		return nil, fmt.Errorf("presigned get: %w", withoutURL(err))
 	}
 	if resp.StatusCode/100 != 2 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))

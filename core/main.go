@@ -30,6 +30,7 @@ import (
 	"dylaris-core/services/redisacl"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/errlog"
@@ -809,6 +810,16 @@ func main() {
 	// than as cfg.RedisAddr: unset, that falls back to localhost, which names
 	// Core's own loopback and would send every node to itself. Unset here means
 	// Core names none, and a node keeps the address it has.
+	// Node-initiated backup transfer requests (part URLs, complete, restore URL).
+	// Registered before the server starts, so no node's first request is
+	// answered "unsupported". Not leader-gated: a node asks whichever replica
+	// it is connected to, and the handlers are safe on several at once.
+	services.NewBackupTransfer(pgStore, backupstorage.Deps{
+		Registry:    grpcRegistry,
+		NodeStore:   pgStore,
+		CoreStorage: appState.CoreStorageBackupBuilder(),
+		Connection:  appState.ConnectionBackupBuilder(),
+	}).Register(grpcRegistry)
 	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret, strings.TrimSpace(os.Getenv("REDIS_ADDR")))
 	if err != nil {
 		log.Fatalf("gRPC server error: %v", err)

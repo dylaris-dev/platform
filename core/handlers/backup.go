@@ -471,7 +471,7 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 		// A quota refusal is the system working, not failing. Answering 500 put
 		// a policy decision in the same bucket as a broken queue, which is what
 		// an operator's alerting and any API client both key off.
-		if errors.Is(err, errBackupQuotaReached) {
+		if errors.Is(err, errBackupQuotaReached) || errors.Is(err, services.ErrNodeUpdateRequired) {
 			sendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -640,10 +640,16 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storageCfgJSON, presignedGet, err := services.PrepareNodeStorage(r.Context(), h.state.Store, storage, node, run.StorageKey, "get", h.backupDeps())
+	// Refuses a node too old for a presigned-only restore here, before the node
+	// is told anything: a restore stops the server before it downloads.
+	storageCfgJSON, objectStorage, err := services.PrepareNodeStorage(r.Context(), h.state.Redis, storage, node, h.backupDeps())
 	if err != nil {
 		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", err.Error(), time.Now())
-		sendJSONError(w, err.Error(), 500)
+		status := 500
+		if errors.Is(err, services.ErrNodeUpdateRequired) {
+			status = http.StatusConflict
+		}
+		sendJSONError(w, err.Error(), status)
 		return
 	}
 	subServer := ""
@@ -651,15 +657,17 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		subServer = *job.SubServer
 	}
 	payload := map[string]interface{}{
-		"action":          "backup_restore",
-		"runId":           run.ID,
-		"restoreId":       restoreID,
-		"jobId":           job.ID,
-		"serverUuid":      srv.UUID,
-		"subServer":       subServer,
-		"storageKey":      run.StorageKey,
-		"storage":         json.RawMessage(storageCfgJSON),
-		"presignedGetUrl": presignedGet,
+		"action":     "backup_restore",
+		"runId":      run.ID,
+		"restoreId":  restoreID,
+		"jobId":      job.ID,
+		"serverUuid": srv.UUID,
+		"subServer":  subServer,
+		"storageKey": run.StorageKey,
+		"storage":    json.RawMessage(storageCfgJSON),
+	}
+	if objectStorage {
+		payload["download"] = services.BackupDownloadPresigned
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
@@ -731,6 +739,14 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	if bs, sErr := services.ResolveRunStorage(h.state.Store, run, job.StorageID,
 		services.BackupJobOwner(h.state.Store, job.ServerID)); sErr == nil {
 		if provider, pErr := backupstorage.Open(r.Context(), bs, h.backupDeps()); pErr == nil {
+			// A run still uploading holds parts that are not an archive yet, and
+			// deleting the row leaves nothing that would ever complete or abort
+			// them. The node's next part request is refused once the row is gone.
+			if run.Status == "running" && run.UploadID != "" {
+				if aErr := provider.AbortMultipart(r.Context(), run.StorageKey, run.UploadID); aErr != nil {
+					log.Printf("DeleteBackupRun: run %d upload for %s not aborted: %v", runID, run.StorageKey, aErr)
+				}
+			}
 			if dErr := provider.Delete(r.Context(), run.StorageKey); dErr != nil {
 				log.Printf("DeleteBackupRun: run %d object %s not deleted: %v — the row is removed anyway, so this archive is now untracked",
 					runID, run.StorageKey, dErr)
@@ -986,9 +1002,9 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	if h.state.Queue == nil {
 		return runID, fmt.Errorf("queue unavailable")
 	}
-	// BYON nodes get a presigned PUT URL + creds-stripped storage so the tenant's
-	// machine never receives the bucket credentials. Operator nodes are unchanged.
-	storageCfgJSON, presignedPut, err := services.PrepareNodeStorage(ctx, h.state.Store, storage, node, storageKey, "put", h.backupDeps())
+	// No node receives bucket credentials or a URL here: on object storage the
+	// node asks Core for part URLs as it uploads. See services/backup_transfer.go.
+	storageCfgJSON, objectStorage, err := services.PrepareNodeStorage(ctx, h.state.Redis, storage, node, h.backupDeps())
 	if err != nil {
 		h.state.Store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
 		return runID, err
@@ -1020,7 +1036,9 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		"excludePatterns": job.ExcludePatterns,
 		"storageKey":      storageKey,
 		"storage":         json.RawMessage(storageCfgJSON),
-		"presignedPutUrl": presignedPut,
+	}
+	if objectStorage {
+		payload["upload"] = services.BackupUploadMultipart
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
