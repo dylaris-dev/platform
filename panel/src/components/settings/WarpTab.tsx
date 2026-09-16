@@ -12,7 +12,7 @@ import {
 } from '@/lib/api/types';
 import {
     nodeCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
+    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitInput,
 } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -682,13 +682,16 @@ function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint,
     const [copied, setCopied] = useState<string | null>(null);
     const [platform, setPlatform] = useState<DeployPlatform>('linux');
 
-    const compose = nodeCompose({
-        apiKey: apiKey ?? '<your-warp-key>',
+    // Through kitInput like every other kit: an object assembled by hand here
+    // is the shape that shipped a file without its link service once already.
+    const compose = nodeCompose(kitInput({
+        warpKey: apiKey,
         enrollUrl,
         // The saved setting wins; Core's detected value is the fallback, so a
         // snippet is complete even before anyone visits Overlay Segmentation.
-        tunnelSubnets: tunnelSubnets || config?.tunnelSubnets || '',
-        grpcTlsFingerprint: kitGrpcTlsFingerprint(grpcTlsFingerprint, config),
+        tunnelSubnets,
+        config,
+        grpcTlsFingerprint,
         nodeId: nodeIdFromLabel(name),
         nodeEnrollToken: enrollToken ?? undefined,
         platform,
@@ -697,7 +700,7 @@ function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint,
         // Every key in this dialog is the platform's, a legacy one included:
         // the machine is not the reader's own.
         externalNode: true,
-    });
+    }));
     const cli = deployCli('node', true);
 
     const copy = (what: string, text: string) => {

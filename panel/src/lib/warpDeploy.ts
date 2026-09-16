@@ -206,7 +206,21 @@ export function nodeIdFromLabel(label: string | undefined): string | undefined {
  * second secret has to be handed out and nothing secret lands on disk.
  */
 export function routeOnlyCompose(i: WarpDeployInput): string {
-    const target = or(i.localTarget, defaultLocalTarget(i.platform));
+    // The two lines below are not the same knob, and writing one value into
+    // both breaks Docker Desktop.
+    //
+    // LINK_ALLOWED_TARGETS is the allow list for a target that is NOT loopback:
+    // the link always accepts 127.0.0.1 (gateway/link/session.go
+    // isAllowedDialTarget), so this line only matters for a customer whose
+    // server sits on another machine - which is why it takes the address their
+    // routes point at.
+    //
+    // LOCAL_HOST is what 127.0.0.1 is REWRITTEN to before dialling, and nothing
+    // else (session.go). On Docker Desktop that rewrite is the only reason a
+    // server running on Windows is reachable at all, so it stays the platform's
+    // own answer and must never follow a route target.
+    const allowedTarget = or(i.localTarget, defaultLocalTarget(i.platform));
+    const localHost = defaultLocalTarget(i.platform);
     const header = i.platform === 'windows'
         ? `# On Docker Desktop, host networking is the WSL2 VM's rather than Windows',
 # so your own server is reached at host.docker.internal.`
@@ -255,8 +269,10 @@ services:
 
       # EDIT if your server is not on this machine. Host only, NO port: it is
       # compared as an exact string, so a "host:25565" here never matches.
-      LINK_ALLOWED_TARGETS: "${target}"
-      LOCAL_HOST: "${target}"
+      LINK_ALLOWED_TARGETS: "${allowedTarget}"
+
+      # keep - where this link looks for a server you told us runs "here".
+      LOCAL_HOST: "${localHost}"
 
       # keep - loopback, so this unauthenticated status port stays off your LAN.
       LINK_PORT: "127.0.0.1:25540"
@@ -482,7 +498,7 @@ ${tail}`;
  * tested directly and stayed green the whole time, because the defect was in
  * the hand-off, not in them. A pure function is the seam a test can hold.
  */
-export function kitInput(p: {
+export type KitInputProps = {
     warpKey: string | null;
     enrollUrl: string;
     nodeEnrollToken?: string;
@@ -490,10 +506,22 @@ export function kitInput(p: {
     nodeId?: string;
     platform: DeployPlatform;
     config?: { tunnelSubnets?: string; grpcTlsFingerprint?: string } | null;
+    /** An explicitly saved overlay CIDR, which wins over the detected one. */
+    tunnelSubnets?: string;
     linkBesideNode?: boolean;
     localTarget?: string;
     externalNode?: boolean;
-}): WarpDeployInput {
+    legacyAdminKey?: boolean;
+};
+
+/**
+ * What a caller passes to a kit component, which picks the platform itself.
+ * Spread it rather than listing the fields again: a field listed by hand is a
+ * field that can be forgotten, which is the defect this file exists to prevent.
+ */
+export type KitProps = Omit<KitInputProps, 'platform'>;
+
+export function kitInput(p: KitInputProps): WarpDeployInput {
     return {
         apiKey: p.warpKey ?? '<your-warp-key>',
         enrollUrl: p.enrollUrl,
@@ -504,10 +532,11 @@ export function kitInput(p: {
         // Undetermined values stay undefined so the snippet keeps its
         // placeholder: a blank tells the reader something is missing, an empty
         // string looks like a setting that was deliberately cleared.
-        tunnelSubnets: p.config?.tunnelSubnets || undefined,
+        tunnelSubnets: p.tunnelSubnets || p.config?.tunnelSubnets || undefined,
         linkBesideNode: p.linkBesideNode,
         localTarget: p.localTarget,
         externalNode: p.externalNode,
+        legacyAdminKey: p.legacyAdminKey,
     };
 }
 

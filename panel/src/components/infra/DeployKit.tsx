@@ -7,8 +7,8 @@ import {
     nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
     DEPLOY_PORTAINER_NOTE, kitInput,
 } from '@/lib/warpDeploy';
+import type { KitProps } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
-import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
 // Shared by both halves of "my infrastructure". They used to be two pages with
 // their own copies, which is how route-only ended up with a mint flow on each
@@ -148,23 +148,7 @@ export function platformNote(kind: 'node' | 'route-only', platform: DeployPlatfo
         : 'Host networking on Docker Desktop joins the WSL2 VM, not Windows, so the snippet points the link at host.docker.internal. Your Minecraft server keeps running on Windows as it does now.';
 }
 
-export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId, config, linkBesideNode, localTarget }: {
-    kind: 'node' | 'route-only';
-    warpKey: string | null;
-    enrollUrl: string;
-    nodeEnrollToken?: string;
-    grpcTlsFingerprint?: string;
-    nodeId?: string;
-    config?: WarpDeployConfig | null;
-    /** See WarpDeployInput.linkBesideNode: whether this key can boot a Link at all. */
-    linkBesideNode?: boolean;
-    /**
-     * Route-only: the local address this customer's routes already point at, so
-     * the file's LINK_ALLOWED_TARGETS matches what Core was told. Undefined
-     * leaves the placeholder the reader edits.
-     */
-    localTarget?: string;
-}) {
+export function DeployKit({ kind, ...props }: { kind: 'node' | 'route-only' } & KitProps) {
     // Both kinds run on Docker Desktop. The node was Linux-only here for longer
     // than it needed to be: it drives the host's Docker socket, and on Docker
     // Desktop that socket, the tunnel and the Minecraft containers are all
@@ -172,13 +156,11 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
     // What genuinely differs is where the server FILES land, which the snippet
     // says in the place it matters, at the bind mount.
     const [platform, setPlatform] = useState<DeployPlatform>('linux');
-    // Built by kitInput rather than here: assembling it inline is how
-    // linkBesideNode went missing and every customer file came out without the
-    // link service. See kitInput.
-    const input = kitInput({
-        warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId,
-        platform, config, linkBesideNode, localTarget,
-    });
+    // Spread, never field by field: listing the props here by hand is exactly
+    // how linkBesideNode went missing and every customer file came out without
+    // its link service. KitProps is kitInput's own parameter type, so a new
+    // field cannot be forgotten on the way in. See kitInput.
+    const input = kitInput({ ...props, platform });
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
 
     return (

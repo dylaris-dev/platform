@@ -10,7 +10,7 @@ import {
 } from '@/lib/api';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
-import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded } from '@/components/infra/DeployKit';
+import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded, usageLabel } from '@/components/infra/DeployKit';
 import { routeSubmitRequest } from '@/lib/routeSubmit';
 import { singleLocalTarget } from '@/lib/warpDeploy';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -46,7 +46,10 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
 }) {
     const [kits, setKits] = useState<LinkKit[]>([]);
     const [used, setUsed] = useState(0);
-    const [limit, setLimit] = useState(0);
+    // null is Core's "no cap at all" and 0 is a cap of NONE (the platform's
+    // limits convention). Collapsing them into 0 showed a tenant entitled to no
+    // link that they had unlimited ones, and the refusal arrived as a 403.
+    const [limit, setLimit] = useState<number | null | undefined>(undefined);
     const [routes, setRoutes] = useState<LinkRoute[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -85,7 +88,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             const kitList = k?.kits ?? [];
             setKits(kitList);
             setUsed(k?.used ?? kitList.length);
-            setLimit(k?.limit ?? 0);
+            setLimit(k?.limit);
             setRoutes(Array.isArray(r) ? r : []);
             // Default the route form to the first link if none chosen yet.
             setLinkId(prev => prev || (kitList[0]?.link_id ?? ''));
@@ -267,7 +270,9 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                 {kits.length > 0 && (
                     <div className="space-y-2">
                         <p className="text-xs text-(--base-06) font-mono">
-                            {limit > 0 ? `${used} of ${limit} links used` : `${used} link${used === 1 ? '' : 's'} used`}
+                            {/* The same wording the machines tab uses, from the same
+                                helper, so one convention is read one way on both. */}
+                            {usageLabel(used, limit)}
                         </p>
                         {kits.map(k => (
                             <div key={k.id} className="flex items-center gap-3 px-3 py-2 rounded-md bg-(--base-01)">

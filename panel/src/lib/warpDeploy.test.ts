@@ -342,9 +342,14 @@ describe('routeOnlyCompose on Docker Desktop', () => {
         expect(out).toContain('LINK_PORT: "127.0.0.1:25540"');
     });
 
-    it('still lets an explicit target win', () => {
+    // An explicit target is the ALLOW list, never LOCAL_HOST: the link rewrites
+    // 127.0.0.1 to LOCAL_HOST and nothing else, and on Docker Desktop that
+    // rewrite is the only way a server running on Windows is reached.
+    it('lets an explicit target into the allow list, and leaves the rewrite alone', () => {
         const out = routeOnlyCompose({ ...base, platform: 'windows', localTarget: '192.168.1.50' });
-        expect(out).toContain('LOCAL_HOST: "192.168.1.50"');
+        expect(out).toContain('LINK_ALLOWED_TARGETS: "192.168.1.50"');
+        expect(out).toContain('LOCAL_HOST: "host.docker.internal"');
+        expect(out).not.toContain('LOCAL_HOST: "192.168.1.50"');
     });
 
     it('defaults to the linux target when no platform is given', () => {
@@ -700,7 +705,6 @@ describe('kitInput', () => {
         });
         const out = routeOnlyCompose(i);
         expect(out).toContain('LINK_ALLOWED_TARGETS: "192.168.1.10"');
-        expect(out).toContain('LOCAL_HOST: "192.168.1.10"');
     });
 
     it('leaves an unknown key and unknown subnets as placeholders', () => {
@@ -729,5 +733,60 @@ describe('the node kit and inert settings', () => {
     it('sets no NODE_MANAGES_LINK', () => {
         expect(nodeCompose({ ...base, linkBesideNode: true })).not.toContain('NODE_MANAGES_LINK');
         expect(nodeCompose(base)).not.toContain('NODE_MANAGES_LINK');
+    });
+});
+
+// LINK_ALLOWED_TARGETS and LOCAL_HOST look alike and are not the same knob. The
+// link always accepts 127.0.0.1 and rewrites exactly that address to LOCAL_HOST
+// before dialling (gateway/link/session.go). So the allow list is for a server
+// on ANOTHER machine, while LOCAL_HOST is the platform's own answer to "here" -
+// and on Docker Desktop it is the only reason a server running on Windows is
+// reachable at all. Writing one value into both broke that.
+describe('the two target lines of a route-only file', () => {
+    const line = (out: string, key: string) =>
+        out.split(String.fromCharCode(10)).find(l => l.trim().startsWith(key + ':'))?.trim();
+
+    it('keeps Docker Desktop pointing at Windows even when the routes say 127.0.0.1', () => {
+        const out = routeOnlyCompose({ ...base, platform: 'windows', localTarget: '127.0.0.1' });
+        expect(line(out, 'LOCAL_HOST')).toBe('LOCAL_HOST: "host.docker.internal"');
+        expect(line(out, 'LINK_ALLOWED_TARGETS')).toBe('LINK_ALLOWED_TARGETS: "127.0.0.1"');
+    });
+
+    it('allows the machine the routes point at, and leaves LOCAL_HOST alone', () => {
+        const out = routeOnlyCompose({ ...base, localTarget: '192.168.1.10' });
+        expect(line(out, 'LINK_ALLOWED_TARGETS')).toBe('LINK_ALLOWED_TARGETS: "192.168.1.10"');
+        expect(line(out, 'LOCAL_HOST')).toBe('LOCAL_HOST: "127.0.0.1"');
+    });
+
+    it('falls back to the platform default when no route says otherwise', () => {
+        expect(line(routeOnlyCompose(base), 'LINK_ALLOWED_TARGETS')).toBe('LINK_ALLOWED_TARGETS: "127.0.0.1"');
+        expect(line(routeOnlyCompose({ ...base, platform: 'windows' }), 'LINK_ALLOWED_TARGETS'))
+            .toBe('LINK_ALLOWED_TARGETS: "host.docker.internal"');
+    });
+});
+
+// kitInput is the ONE place a kit input is built, so the admin dialog goes
+// through it too: an object assembled by hand beside it is the shape that
+// shipped a file without its link service.
+describe('kitInput for the admin External node dialog', () => {
+    const props = {
+        warpKey: 'KEY123',
+        enrollUrl: 'https://api.example.com',
+        platform: 'linux' as const,
+        config: { tunnelSubnets: '10.20.0.0/16', grpcTlsFingerprint: 'ab:cd' },
+    };
+
+    it('prefers an explicitly saved overlay CIDR over the detected one', () => {
+        expect(kitInput({ ...props, tunnelSubnets: '10.30.0.0/16' }).tunnelSubnets).toBe('10.30.0.0/16');
+        expect(kitInput({ ...props, tunnelSubnets: '' }).tunnelSubnets).toBe('10.20.0.0/16');
+    });
+
+    it('carries the External and legacy switches through', () => {
+        const ext = kitInput({ ...props, linkBesideNode: true, externalNode: true });
+        expect(nodeCompose(ext)).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
+        expect(nodeCompose(ext)).toContain('outside our datacenter');
+        const legacy = kitInput({ ...props, legacyAdminKey: true, externalNode: true });
+        expect(nodeCompose(legacy)).toContain('THIS FILE RUNS NO LINK');
+        expect(nodeCompose(legacy)).toContain('Mint a new External node key');
     });
 });
