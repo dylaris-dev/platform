@@ -102,6 +102,14 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     // Only fetch once the caller is allowed to have any of this: an unentitled
     // tenant would otherwise fire two requests to render a refusal.
     useEffect(() => { if (allowed) load(); }, [allowed, load]);
+    // Same reason as the machines tab: the liveness key behind the badge lives
+    // 15 seconds, so a single read on mount goes stale while the reader watches
+    // it and waits for their link to come up.
+    useEffect(() => {
+        if (!allowed) return;
+        const t = setInterval(() => { load(); }, 20000);
+        return () => clearInterval(t);
+    }, [allowed, load]);
 
     const flashToast = (msg: string) => {
         setToast(msg);
@@ -282,7 +290,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                     row used to carry a green shield whether the link had
                                     ever booted or not, so a customer whose machine never
                                     came up saw the same picture as one serving players. */}
-                                <LinkBadge state={linkState(k.online)} />
+                                <LinkBadge state={linkState(k.online, suspended)} />
                                 <span className="text-sm text-(--base-09) truncate">{k.name}</span>
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
                                 <button

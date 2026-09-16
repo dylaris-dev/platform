@@ -77,10 +77,11 @@ func TestGetNodes_CarriesTheStateOfTheLinkThatServesEachNode(t *testing.T) {
 	mr.Set("online_link:"+derived, "1")
 	mr.Set("online_link:hub-named", "1")
 
+	owner := "alice"
 	got := listNodesFor(t, rdb, []models.Node{
-		{ID: 1, Token: "node-derived", Status: "online"},
+		{ID: 1, Token: "node-derived", Status: "online", OwnerID: &owner},
 		{ID: 2, Token: "node-hubnamed", Status: "online", LinkToken: "hub-named"},
-		{ID: 3, Token: "node-dark", Status: "online"},
+		{ID: 3, Token: "node-dark", Status: "online", OwnerID: &owner},
 	})
 
 	for token, want := range map[string]bool{"node-derived": true, "node-hubnamed": true, "node-dark": false} {
@@ -88,6 +89,22 @@ func TestGetNodes_CarriesTheStateOfTheLinkThatServesEachNode(t *testing.T) {
 		if v == nil || *v != want {
 			t.Errorf("%s linkOnline = %v, want %v", token, v, want)
 		}
+	}
+}
+
+// An in-cluster machine whose Link enrolled itself at the Hub runs under a
+// token the Hub generated, and nothing derives it. Until the learner has named
+// that link, the honest answer is nothing at all: a red badge on a machine that
+// is serving players is worse than no badge.
+func TestGetNodes_SaysNothingAboutAPlatformNodeWithNoNamedLink(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	got := listNodesFor(t, rdb, []models.Node{{ID: 1, Token: "platform-node", Status: "online"}})
+
+	if v := got["platform-node"]; v != nil {
+		t.Fatalf("linkOnline = %v, want absent for a platform node with no named link", *v)
 	}
 }
 

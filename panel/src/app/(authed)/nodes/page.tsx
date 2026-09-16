@@ -199,6 +199,14 @@ function MyNodesInner() {
     }, [byonEnabled]);
 
     useEffect(() => { load(); }, [load]);
+    // The link's liveness key lives 15 seconds, so a list read once on mount
+    // says what was true when the page opened and nothing after. This page is
+    // opened while setting a machine up and then left open, which is exactly
+    // when the answer changes.
+    useEffect(() => {
+        const t = setInterval(() => { load(); }, 20000);
+        return () => clearInterval(t);
+    }, [load]);
 
     // Only an admin may ask for this scope; Core answers 403 to anyone else, so
     // there is no point spending the request.
@@ -666,7 +674,7 @@ function MyNodesInner() {
                                                             that is online while its Link is not looks healthy on
                                                             every other line of this row and serves nobody: in
                                                             gateway routing the Link is the only way in. */}
-                                                        <LinkBadge state={nodeLinkState(n.status === 'online', n.linkOnline)} />
+                                                        <LinkBadge state={nodeLinkState(tier === 'ok', n.linkOnline, suspended)} />
                                                     </div>
                                                     <div className="mono-label">
                                                         {n.status}

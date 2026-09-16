@@ -11,11 +11,12 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
-## 2026.09.17
+## 2026.09.16.2
 
 ### Features
-- **You can see whether your machine's link is connected.** A machine that is online
-  while its link is not cannot be joined, and the panel now says so and what to do.
+- **You can see whether your link is connected,** for a protected address and for your
+  own machine. A machine that is online while its link is not cannot be joined, and the
+  panel now says so and what to do about it.
 
 ### Breaking
 - Nothing.

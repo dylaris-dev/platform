@@ -265,14 +265,33 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	//
 	// One round trip for the whole list, after the scope filter, so it covers
 	// exactly the rows being returned.
+	//
+	// Only where the answer can be trusted: a machine whose Link the Hub has
+	// named, and a customer's machine, whose Link boots with the token Core
+	// derives (link-boot hands it out). An in-cluster machine served by a
+	// self-enrolled Link runs under a Hub-GENERATED token, so asking about the
+	// derived one would report it as not connected for as long as the learner
+	// has no answer - a red badge on a machine that is serving players.
 	if len(nodes) > 0 {
+		askFor := func(n *models.Node) string {
+			if n.LinkToken == "" && !isBYONNode(*n) {
+				return ""
+			}
+			return services.EffectiveLinkToken(n, h.state.ClusterSecret)
+		}
 		tokens := make([]string, 0, len(nodes))
 		for i := range nodes {
-			tokens = append(tokens, services.EffectiveLinkToken(&nodes[i], h.state.ClusterSecret))
+			if t := askFor(&nodes[i]); t != "" {
+				tokens = append(tokens, t)
+			}
 		}
 		if online := services.LinkOnline(r.Context(), h.state.Redis, tokens); online != nil {
 			for i := range nodes {
-				if v, ok := online[services.EffectiveLinkToken(&nodes[i], h.state.ClusterSecret)]; ok {
+				t := askFor(&nodes[i])
+				if t == "" {
+					continue
+				}
+				if v, ok := online[t]; ok {
 					nodes[i].LinkOnline = &v
 				}
 			}

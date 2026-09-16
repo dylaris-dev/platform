@@ -23,7 +23,7 @@ export type LinkState = {
     hint: string;
 };
 
-export function linkState(online: boolean | undefined | null): LinkState {
+export function linkState(online: boolean | undefined | null, suspended = false): LinkState {
     if (online === undefined || online === null) {
         return {
             tone: 'unknown',
@@ -38,10 +38,23 @@ export function linkState(online: boolean | undefined | null): LinkState {
             hint: 'The link is holding its tunnel to us, so players can reach what it points at.',
         };
     }
+    // Suspension is OUR doing: billing drops the link's credential, so it stops
+    // holding its tunnel. Telling that customer to go and start something would
+    // send them to debug a machine we switched off.
+    if (suspended) {
+        return {
+            tone: 'bad',
+            label: 'Not connected',
+            hint: 'Your account is suspended, so we stopped this link. It comes back when the account is active again.',
+        };
+    }
+    // Rolling the key is deliberately NOT named here: a roll replaces only the
+    // warp key, while the tunnel token derives from the link id, so a link that
+    // was not redeployed keeps running and reads as connected.
     return {
         tone: 'bad',
         label: 'Not connected',
-        hint: 'Nobody can reach your server through this address. Start the file on your machine, or redeploy it if you rolled the key.',
+        hint: 'Nobody can reach your server through this address. Start the file on your machine. A link that just started takes a few seconds to show up here.',
     };
 }
 
@@ -53,7 +66,7 @@ export function linkState(online: boolean | undefined | null): LinkState {
  * is ONLINE while its Link is not that needs the sentence, because nothing else
  * on the screen says why nobody can join.
  */
-export function nodeLinkState(nodeOnline: boolean, online: boolean | undefined | null): LinkState {
+export function nodeLinkState(nodeOnline: boolean, online: boolean | undefined | null, suspended = false): LinkState {
     if (!nodeOnline) {
         return {
             tone: 'unknown',
@@ -61,12 +74,16 @@ export function nodeLinkState(nodeOnline: boolean, online: boolean | undefined |
             hint: 'The machine itself is not connected, so we cannot say anything about its link.',
         };
     }
-    const s = linkState(online);
+    const s = linkState(online, suspended);
     if (s.tone === 'bad') {
         return {
             tone: 'bad',
             label: 'Link not connected',
-            hint: 'The machine is online but its link is not, so nobody can join the servers on it. Take this machine\'s deploy file again and redeploy it.',
+            // A suspended account keeps the sentence it already has: we stopped
+            // this link, so sending them to redeploy it would be a lie.
+            hint: suspended
+                ? s.hint
+                : 'The machine is online but its link is not, so nobody can join the servers on it. Take this machine\'s deploy file again and redeploy it. A link that just started takes a few seconds to show up here.',
         };
     }
     if (s.tone === 'ok') return { ...s, label: 'Link connected' };

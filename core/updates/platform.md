@@ -8,11 +8,11 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
-## 2026.09.17
+## 2026.09.16.2
 
 ### Features
-- **My infrastructure says whether a Link is actually connected.** Each protected address
-  and each customer machine shows it, with a sentence saying what to do. `core` `panel`
+- **A customer sees whether their Link is connected.** My infrastructure shows it per
+  protected address and per customer machine, with a sentence saying what to do. `core` `panel`
 
 ### Breaking
 - Nothing.
