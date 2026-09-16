@@ -20,7 +20,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Security
-- Nothing.
+- **Update your node when What's New says it is behind.** It carries a fix for an
+  advisory in the library it serves its own connections with. `node`
 
 ### Fixes
 - **If you added your own machine since 12 September, take its file again and redeploy

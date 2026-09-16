@@ -17,7 +17,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Security
-- Nothing.
+- **gRPC updated for an advisory (GO-2026-6443).** A request with no authority or Host
+  header could crash a gRPC server; Core and the node both serve one. `core` `node`
 
 ### Fixes
 - **A customer's node file carries its Link again.** Since 2026.09.12 the file the panel
