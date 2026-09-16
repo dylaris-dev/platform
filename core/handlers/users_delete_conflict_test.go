@@ -32,6 +32,9 @@ func (f *deleteUserFakeStore) CountServersByOwner(string) (int, error) { return 
 func (f *deleteUserFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
 	return nil, nil
 }
+func (f *deleteUserFakeStore) ListAllWarpAPIKeysByOwner(o string) ([]store.WarpAPIKey, error) {
+	return f.ListWarpAPIKeysByOwner(o)
+}
 func (f *deleteUserFakeStore) ListNodesByOwner(string) ([]models.Node, error)     { return nil, nil }
 func (f *deleteUserFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return nil, nil }
 

@@ -542,6 +542,17 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	pgStore, _ := appState.Store.(*store.PostgresStore)
 	warpService := services.NewWarpService(pgStore, appState.Redis, cfg.ClusterSecret)
 	warpHandler := handlers.NewWarpHandler(appState, warpService)
+	// Published on the state as well: the account delete needs it to drop a
+	// departing tenant's overlay peers, and it lives nowhere else.
+	//
+	// Only when the assertion above actually found the concrete store. A nil
+	// *PostgresStore inside the interface is not nil to a nil check, so every
+	// caller that guards on `state.Warp != nil` would call straight into a nil
+	// receiver - and unlike the warp routes, which a fake-store state never
+	// exercises, the account delete is reachable from one.
+	if pgStore != nil {
+		appState.WarpPeers = warpService
+	}
 
 	placementHandler := handlers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)

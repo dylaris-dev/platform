@@ -768,6 +768,7 @@ func main() {
 	// an account's link kit holds a Redis credential and a tunnel key that
 	// nothing else will ever clean up once its row is gone.
 	autoDelete.SetLinkACL(appState.Gateway, redisClient, aclProvisioner)
+	autoDelete.SetWarpPeers(extras.warpService)
 	autoDelete.Start(bgCtx)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},

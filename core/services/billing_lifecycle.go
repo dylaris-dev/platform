@@ -223,7 +223,7 @@ type BillingLifecycleService struct {
 	// warpPeers drops a tenant's warp tunnels at the hard cutoff. Wired after the
 	// warp service exists (SetWarpPeers); nil where there is no overlay, in which
 	// case there is no tunnel to drop either.
-	warpPeers warpPeerDisconnector
+	warpPeers WarpPeerDisconnector
 
 	// suspendGrace defers the hard cutoff until suspended_at + suspendGrace has
 	// elapsed (see enforceSuspensions). Threaded from cfg.SuspendGrace at
@@ -231,10 +231,14 @@ type BillingLifecycleService struct {
 	suspendGrace time.Duration
 }
 
-// warpPeerDisconnector is the narrow slice of WarpService the lifecycle needs:
-// remove every WireGuard peer enrolled under one key, at every leader of its
-// region, and delete the rows.
-type warpPeerDisconnector interface {
+// WarpPeerDisconnector is the narrow slice of WarpService its users need: remove
+// every WireGuard peer enrolled under one key, at every leader of its region,
+// and delete the rows.
+//
+// Exported because the API layer holds one too (AppState.WarpPeers, for the
+// account delete), and an unexported type there would mean no test could inject
+// a stand-in - which is exactly how a wiring line goes missing unnoticed.
+type WarpPeerDisconnector interface {
 	DisconnectKeyPeers(ctx context.Context, keyID int) int
 }
 
@@ -247,7 +251,7 @@ func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }
 // SetWarpPeers wires the tunnel teardown used at the hard cutoff. Called once at
 // startup after the warp service exists. Without it, enforcement still stops
 // servers and drops link credentials - it just leaves the tunnel up.
-func (s *BillingLifecycleService) SetWarpPeers(w warpPeerDisconnector) { s.warpPeers = w }
+func (s *BillingLifecycleService) SetWarpPeers(w WarpPeerDisconnector) { s.warpPeers = w }
 
 // SetLinkACL wires the route-only link teardown/restore hooks. Called once at
 // startup after the ACL provisioner and gateway exist. When any dependency is nil

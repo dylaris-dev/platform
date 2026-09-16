@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.16.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Removing your machine together with its servers now takes their addresses with
+  it.** Before, the address kept answering and sent players to a server that was gone.
+  Nothing on your side to update.
+
 ## 2026.09.16.2
 
 ### Features

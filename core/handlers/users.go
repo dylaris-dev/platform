@@ -276,7 +276,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// and the operator can retry: deleting the user first would strand all of it
 	// with no owner to look it up by.
 	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
-		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), id); err != nil {
+		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), h.state.WarpPeers, id); err != nil {
 		log.Printf("delete user %s: teardown: %v", id, err)
 		sendJSONError(w, "Could not remove what this account still holds. Nothing was deleted.", 500)
 		return

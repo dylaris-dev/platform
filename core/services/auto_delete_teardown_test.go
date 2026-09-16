@@ -39,6 +39,9 @@ func (f *autoDeleteFakeStore) ListUsersDueForDeletion(time.Time) ([]string, erro
 func (f *autoDeleteFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
 	return f.keys, nil
 }
+func (f *autoDeleteFakeStore) ListAllWarpAPIKeysByOwner(o string) ([]store.WarpAPIKey, error) {
+	return f.ListWarpAPIKeysByOwner(o)
+}
 func (f *autoDeleteFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
 	return f.rows, nil
 }
@@ -118,8 +121,18 @@ func TestAutoDeleteTearsDownWhatTheAccountRan(t *testing.T) {
 			svc.SetLinkACL(gw, rdb, redisacl.NewProvisioner(rdb))
 			svc.processExecutions(context.Background(), policySnapshot{Mode: mode})
 
-			if len(fs.revokedKits) != 1 || fs.revokedKits[0] != "link-1" {
-				t.Errorf("link kit not revoked (%v); its Redis credential and tunnel key outlive the account, and the reconciler's self-heal enumerates ROWS, so once the row cascades away nothing can ever find them", fs.revokedKits)
+			// Which identities, not how many calls: the teardown revokes every key
+			// of the account up front so nothing can re-enrol while its peers are
+			// being dropped, and the kit teardown then revokes the same identity
+			// again. In SQL the second one matches no row (revoked_at IS NULL) and
+			// changes nothing.
+			if len(fs.revokedKits) == 0 {
+				t.Errorf("link kit not revoked; its Redis credential and tunnel key outlive the account, and the reconciler's self-heal enumerates ROWS, so once the row cascades away nothing can ever find them")
+			}
+			for _, id := range fs.revokedKits {
+				if id != "link-1" {
+					t.Errorf("revoked %q, which is not this account's kit (%v)", id, fs.revokedKits)
+				}
 			}
 			if len(gw.deleted) != 1 || gw.deleted[0] != "a.example.com" {
 				t.Errorf("addresses not removed exactly once (%v); the republisher writes every stored row back into Redis every 60 seconds", gw.deleted)

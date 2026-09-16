@@ -47,6 +47,9 @@ func (f *deleteRoutesFakeStore) ListNodesByOwner(string) ([]models.Node, error) 
 func (f *deleteRoutesFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
 	return nil, nil
 }
+func (f *deleteRoutesFakeStore) ListAllWarpAPIKeysByOwner(o string) ([]store.WarpAPIKey, error) {
+	return f.ListWarpAPIKeysByOwner(o)
+}
 
 func (g *deleteRoutesFakeGateway) DeleteCoreOwnedRoute(domain string) error {
 	if g.err != nil {

@@ -362,6 +362,7 @@ type Store interface {
 	CreateWarpAPIKey(k WarpAPIKey) (int, error)
 	GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error)
 	ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, error)
+	ListAllWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, error)
 	ListWarpAPIKeys() ([]WarpAPIKey, error)
 	GetWarpAPIKeyByID(id int) (*WarpAPIKey, error)
 	RevokeWarpAPIKeyByID(id int) error

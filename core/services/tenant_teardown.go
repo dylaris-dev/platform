@@ -43,7 +43,7 @@ import (
 // A non-nil error means something DURABLE failed and the account must not be
 // removed yet. Everything best-effort is logged and carries on, so one
 // unreachable route does not strand the rest.
-func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw GatewayProvider, rdb *redis.Client, prov *redisacl.Provisioner, userID string) error {
+func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw GatewayProvider, rdb *redis.Client, prov *redisacl.Provisioner, warpPeers WarpPeerDisconnector, userID string) error {
 	if st == nil || userID == "" {
 		return nil
 	}
@@ -62,7 +62,68 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 		return fmt.Errorf("this account still owns %d server(s); move or delete them first", n)
 	}
 
-	// Link kits first: RevokeLinkKitTeardown also removes the routes that belong
+	// INCLUDING the revoked keys, which is the difference between this working
+	// and not working on the path that produces most account deletions.
+	//
+	// Revoking a key blocks the next enrol and leaves the WireGuard peers an
+	// established tunnel already has - two paths revoke without removing them on
+	// purpose (the suspension cutoff preserves the grace, RevokeLinkKitTeardown
+	// leaves the call to its caller). So a tenant who was suspended and deleted
+	// weeks later has peers on the leader hanging off keys that are already
+	// revoked, and the tenant-facing listing cannot see one of them.
+	keys, err := st.ListAllWarpAPIKeysByOwner(userID)
+	if err != nil {
+		return fmt.Errorf("list the overlay keys of this account: %w", err)
+	}
+
+	// Revoke every key BEFORE dropping the peers, so nothing can re-enrol into
+	// the gap between the two.
+	//
+	// The link kits are revoked again inside RevokeLinkKitTeardown below and the
+	// second call is a no-op, which is the cheap price of one rule for all of
+	// them. The `node-` keys have no other revoker here at all, and that matters
+	// most in the DEFAULT delete mode: "anonymize" KEEPS the user row, so nothing
+	// cascades, and a live key plus a machine that re-enrols on its own ten
+	// minute timer puts the customer's hardware straight back on the overlay.
+	for _, k := range keys {
+		if k.RevokedAt != nil {
+			continue
+		}
+		if rerr := st.RevokeWarpAPIKeyByNodeID(k.NodeID); rerr != nil {
+			return fmt.Errorf("revoke overlay key %s: %w", k.NodeID, rerr)
+		}
+	}
+
+	// Now the overlay membership itself, and it has to happen while the rows are
+	// still here.
+	//
+	// warp_api_keys.owner_id is ON DELETE CASCADE and warp_peers.api_key_id
+	// cascades from there, so removing the account erases the peer ROWS - and a
+	// row is the only thing that names a peer. The leader is never told, and its
+	// resync rebuilds the peer set from rows that no longer exist, so the
+	// WireGuard peer stays configured on the leader with nothing left anywhere
+	// that can address it. The account is gone and its machine is still a member
+	// of our overlay, permanently, with no surface that can see it.
+	//
+	// Every key, not just the link kits: a BYON machine holds a `node-` key, and
+	// that is the one carrying the tunnel a departing customer's hardware sits on.
+	//
+	// Unlike RevokeLinkKitTeardown, which leaves this to its caller so the
+	// suspension grace is not cut short, there is no grace to preserve here. The
+	// account is being deleted.
+	if warpPeers != nil {
+		peers := 0
+		for _, k := range keys {
+			peers += warpPeers.DisconnectKeyPeers(ctx, k.ID)
+		}
+		if peers > 0 {
+			log.Printf("tenant teardown for %s: dropped %d overlay peer(s)", userID, peers)
+		}
+	} else {
+		log.Printf("tenant teardown for %s: warp not wired, overlay peers are NOT removed", userID)
+	}
+
+	// Link kits next: RevokeLinkKitTeardown also removes the routes that belong
 	// to each kit's tunnel, so the sweep below is left with whatever is not tied
 	// to a link.
 	//
@@ -70,10 +131,6 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 	// an install with no gateway there are no kits, but a MISSING dependency
 	// where there should be one would otherwise look identical to that.
 	if gw != nil && rdb != nil && prov != nil {
-		keys, err := st.ListWarpAPIKeysByOwner(userID)
-		if err != nil {
-			return fmt.Errorf("list link kits: %w", err)
-		}
 		for _, k := range keys {
 			if !strings.HasPrefix(k.NodeID, "link-") {
 				continue

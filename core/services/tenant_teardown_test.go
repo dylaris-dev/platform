@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
@@ -19,6 +20,8 @@ type teardownFakeStore struct {
 	keysErr     error
 	rows        []store.CoreLinkRoute
 	revokeCalls []string
+
+	usedLiveOnlyListing bool
 
 	ownedServers  int
 	nodes         []models.Node
@@ -37,6 +40,12 @@ func (f *teardownFakeStore) DeleteNode(id int) error {
 }
 
 func (f *teardownFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
+	// The teardown must not use this one: it hides revoked keys, and a revoked
+	// key is exactly where an orphaned peer hangs. Fail loudly if it does.
+	f.usedLiveOnlyListing = true
+	return f.keys, f.keysErr
+}
+func (f *teardownFakeStore) ListAllWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
 	return f.keys, f.keysErr
 }
 func (f *teardownFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
@@ -45,6 +54,16 @@ func (f *teardownFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) 
 func (f *teardownFakeStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {
 	f.revokeCalls = append(f.revokeCalls, nodeID)
 	return nil
+}
+
+// peerRecorder stands in for the warp service: TeardownTenantInfrastructure only
+// ever asks it to drop the peers of one key, and what matters is WHICH keys it
+// is asked about.
+type peerRecorder struct{ keyIDs []int }
+
+func (p *peerRecorder) DisconnectKeyPeers(_ context.Context, keyID int) int {
+	p.keyIDs = append(p.keyIDs, keyID)
+	return 1
 }
 
 // Removing an account has to remove what the account RAN.
@@ -63,8 +82,10 @@ func TestTeardownRemovesTheLinkKitAndTheAddresses(t *testing.T) {
 	fs := &teardownFakeStore{
 		keys: []store.WarpAPIKey{
 			{NodeID: "link-1", OwnerID: "owner-1"},
-			// A node enroll key is not a link kit and must be left alone: it is
-			// removed by the cascade and has no Redis credential of this shape.
+			// A node enroll key is not a link KIT: the kit revoke must leave it
+			// alone (it has no Redis credential of this shape and the cascade
+			// removes the row). Its overlay peers are a separate matter and are
+			// dropped below.
 			{NodeID: "node-abc", OwnerID: "owner-1"},
 		},
 		rows: []store.CoreLinkRoute{
@@ -79,12 +100,16 @@ func TestTeardownRemovesTheLinkKitAndTheAddresses(t *testing.T) {
 	}
 	gw := &linkRevokeFakeGateway{tunnelToken: tunnelToken, deleteErrFor: map[string]error{}}
 
-	if err := TeardownTenantInfrastructure(ctx, fs, gw, rdb, redisacl.NewProvisioner(rdb), "owner-1"); err != nil {
+	peers := &peerRecorder{}
+	if err := TeardownTenantInfrastructure(ctx, fs, gw, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1"); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
 
-	if len(fs.revokeCalls) != 1 || fs.revokeCalls[0] != "link-1" {
-		t.Errorf("revoked %v, want exactly [link-1] - a node enroll key is not a link kit", fs.revokeCalls)
+	// The KIT teardown - ACL user, tunnel key, routes - belongs to link kits only.
+	// Every key of the account is REVOKED (see the revoke tests below); this is
+	// about which ones get the rest of the treatment.
+	if len(gw.tokenedFor) != 1 || gw.tokenedFor[0] != "link-1" {
+		t.Errorf("ran the kit teardown for %v, want exactly [link-1] - a node enroll key is not a link kit", gw.tokenedFor)
 	}
 	deleted := strings.Join(gw.deletedDomains, ",")
 	for _, want := range []string{"a.example.com", "c.example.com"} {
@@ -105,7 +130,8 @@ func TestTeardownRefusesWhenItCannotSeeWhatTheAccountHolds(t *testing.T) {
 	fs := &teardownFakeStore{keysErr: errors.New("db down")}
 	gw := &linkRevokeFakeGateway{tunnelToken: "t", deleteErrFor: map[string]error{}}
 
-	err := TeardownTenantInfrastructure(context.Background(), fs, gw, rdb, redisacl.NewProvisioner(rdb), "owner-1")
+	peers := &peerRecorder{}
+	err := TeardownTenantInfrastructure(context.Background(), fs, gw, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1")
 	if err == nil {
 		t.Fatal("expected an error when the link kits cannot be listed - the caller would otherwise delete the account and orphan them")
 	}
@@ -123,7 +149,8 @@ func TestTeardownRefusesWhenAnAddressCannotBeRemoved(t *testing.T) {
 		deleteErrFor: map[string]error{"a.example.com": errors.New("hub unreachable")},
 	}
 
-	err := TeardownTenantInfrastructure(context.Background(), fs, gw, rdb, redisacl.NewProvisioner(rdb), "owner-1")
+	peers := &peerRecorder{}
+	err := TeardownTenantInfrastructure(context.Background(), fs, gw, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1")
 	if err == nil {
 		t.Fatal("expected an error when an address cannot be removed")
 	}
@@ -155,7 +182,8 @@ func TestTeardownRemovesTheNodesTheTenantBrought(t *testing.T) {
 	other := NodeRedisKeys("someone-else")[0]
 	rdb.Set(ctx, other, "x", 0)
 
-	if err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), "owner-1"); err != nil {
+	peers := &peerRecorder{}
+	if err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1"); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
 
@@ -186,7 +214,8 @@ func TestTeardownStopsWhenANodeCannotBeRemoved(t *testing.T) {
 		nodes:         []models.Node{{ID: 7, Name: "kitchen-box", Token: "node-token-7"}},
 		deleteNodeErr: errors.New("still has servers on it"),
 	}
-	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), "owner-1")
+	peers := &peerRecorder{}
+	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1")
 	if err == nil {
 		t.Fatal("teardown reported success while the node stayed")
 	}
@@ -209,7 +238,8 @@ func TestTeardownRefusesBeforeItDestroysAnything(t *testing.T) {
 		keys:         []store.WarpAPIKey{{NodeID: "link-1", OwnerID: "owner-1"}},
 		nodes:        []models.Node{{ID: 7, Name: "kitchen-box", Token: "node-token-7"}},
 	}
-	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), "owner-1")
+	peers := &peerRecorder{}
+	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1")
 	if err == nil {
 		t.Fatal("teardown succeeded for an account that cannot be deleted")
 	}
@@ -221,5 +251,133 @@ func TestTeardownRefusesBeforeItDestroysAnything(t *testing.T) {
 	}
 	if len(fs.deletedNodes) != 0 {
 		t.Errorf("deleted nodes %v before refusing", fs.deletedNodes)
+	}
+}
+
+// The overlay membership, which is the half nothing could ever repair.
+//
+// warp_api_keys.owner_id cascades and warp_peers.api_key_id cascades from it,
+// so removing the account erases the peer ROWS - and a row is the only thing
+// that names a peer. The leader is never told, and its resync rebuilds the peer
+// set from rows that are gone, so the WireGuard peer stays configured with
+// nothing left anywhere that can address it.
+//
+// Every key, not just the link kits: a BYON machine holds a node- key, and that
+// is the one carrying the tunnel the departing customer's hardware sits on.
+func TestTeardownDropsTheOverlayPeersOfEveryKeyTheAccountHolds(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+	fs := &teardownFakeStore{
+		keys: []store.WarpAPIKey{
+			{ID: 7, NodeID: "link-1", OwnerID: "owner-1"},
+			{ID: 9, NodeID: "node-abc", OwnerID: "owner-1"},
+		},
+	}
+	gw := &linkRevokeFakeGateway{tunnelToken: "t", deleteErrFor: map[string]error{}}
+	peers := &peerRecorder{}
+
+	if err := TeardownTenantInfrastructure(ctx, fs, gw, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1"); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+
+	if len(peers.keyIDs) != 2 {
+		t.Fatalf("disconnected peers of keys %v, want both 7 and 9 - the node key is the customer's own machine", peers.keyIDs)
+	}
+	seen := map[int]bool{}
+	for _, id := range peers.keyIDs {
+		seen[id] = true
+	}
+	for _, want := range []int{7, 9} {
+		if !seen[want] {
+			t.Errorf("key %d kept its overlay peers; after the cascade nothing can name them again", want)
+		}
+	}
+}
+
+// Wiring is optional and its absence must not be a panic: an install with no
+// overlay has no peers to drop, and the account still has to be removable.
+func TestTeardownRunsWithoutTheOverlayWired(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	fs := &teardownFakeStore{keys: []store.WarpAPIKey{{ID: 1, NodeID: "link-1", OwnerID: "owner-1"}}}
+	gw := &linkRevokeFakeGateway{tunnelToken: "t", deleteErrFor: map[string]error{}}
+
+	if err := TeardownTenantInfrastructure(context.Background(), fs, gw, rdb, redisacl.NewProvisioner(rdb), nil, "owner-1"); err != nil {
+		t.Fatalf("teardown without warp: %v", err)
+	}
+}
+
+// A nil *WarpService reaches the teardown as a NON-nil interface, which is the
+// oldest trap in Go and would be a panic in the account delete rather than a
+// skipped step. Reachable from any state built without the route wiring.
+func TestTeardownSurvivesANilWarpService(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	fs := &teardownFakeStore{keys: []store.WarpAPIKey{{ID: 1, NodeID: "link-1", OwnerID: "owner-1"}}}
+	gw := &linkRevokeFakeGateway{tunnelToken: "t", deleteErrFor: map[string]error{}}
+	var svc *WarpService
+
+	if err := TeardownTenantInfrastructure(context.Background(), fs, gw, rdb, redisacl.NewProvisioner(rdb), svc, "owner-1"); err != nil {
+		t.Fatalf("teardown with a nil warp service: %v", err)
+	}
+}
+
+// The peers that are hardest to see are the ones whose key is already revoked.
+//
+// Revoking blocks the next enrol and leaves an established tunnel's peers alone,
+// and two paths do that deliberately: the suspension cutoff keeps the grace, and
+// the shared link teardown leaves the call to its caller. So the ordinary
+// sequence - suspend an abusive tenant, delete the account weeks later - reaches
+// this function with every peer hanging off a revoked key. Listing only the live
+// keys finds nothing to disconnect and the peers outlive the account.
+func TestTeardownDropsThePeersOfAlreadyRevokedKeys(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+	revoked := time.Now().Add(-72 * time.Hour)
+	fs := &teardownFakeStore{
+		keys: []store.WarpAPIKey{{ID: 4, NodeID: "link-suspended", OwnerID: "owner-1", RevokedAt: &revoked}},
+	}
+	gw := &linkRevokeFakeGateway{tunnelToken: "t", deleteErrFor: map[string]error{}}
+	peers := &peerRecorder{}
+
+	if err := TeardownTenantInfrastructure(ctx, fs, gw, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1"); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+
+	if fs.usedLiveOnlyListing {
+		t.Error("the teardown asked for the live keys only, which cannot see a suspended tenant's peers at all")
+	}
+	if len(peers.keyIDs) != 1 || peers.keyIDs[0] != 4 {
+		t.Fatalf("disconnected %v, want [4] - a revoked key still holds live WireGuard peers", peers.keyIDs)
+	}
+}
+
+// Deleting an account does not always delete its row. "anonymize" is the DEFAULT
+// mode of the sweep that removes accounts in practice, and it KEEPS the row - so
+// nothing cascades, and a key left live is a customer machine that re-enrols on
+// its own ten minute timer and is back on the overlay.
+func TestTeardownRevokesTheKeysTheCascadeWouldNotTakeAway(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+	fs := &teardownFakeStore{
+		keys: []store.WarpAPIKey{
+			{ID: 1, NodeID: "link-1", OwnerID: "owner-1"},
+			{ID: 2, NodeID: "node-abc", OwnerID: "owner-1"},
+		},
+	}
+	gw := &linkRevokeFakeGateway{tunnelToken: "t", deleteErrFor: map[string]error{}}
+	peers := &peerRecorder{}
+
+	if err := TeardownTenantInfrastructure(ctx, fs, gw, rdb, redisacl.NewProvisioner(rdb), peers, "owner-1"); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+
+	revoked := map[string]bool{}
+	for _, id := range fs.revokeCalls {
+		revoked[id] = true
+	}
+	if !revoked["node-abc"] {
+		t.Errorf("revoked %v; the node key was left live, so the machine re-enrols within ten minutes", fs.revokeCalls)
+	}
+	if !revoked["link-1"] {
+		t.Errorf("revoked %v; the link kit was left live", fs.revokeCalls)
 	}
 }

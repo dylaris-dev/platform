@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.16.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Deleting an account now removes its overlay tunnels.** The WireGuard peers of a
+  deleted account stayed configured on the leader with no row left to name them, so the
+  machine kept its place in the overlay for good. Revoked keys are included, which is
+  where a suspended tenant's peers live. `core`
+- **Deleting an account revokes every overlay key it holds.** In the default
+  "anonymize" mode the account row survives, so nothing cascaded and the machine
+  re-enrolled into the overlay on its own timer. `core`
+
+### Fixes
+- **Deleting a machine removes the addresses and Redis keys of the servers on it.**
+  Only the single-server delete did this, so a force-delete or a customer removing
+  their own machine left both behind. `core`
+- **Deleting a route from the admin screen clears its cached entry.** The address kept
+  resolving at the edge until a background sweep happened to notice. `core`
+- **Force-deleting a machine removes its Redis user and keys.** It was the only
+  delete path that left both behind, and neither expires. `core`
+
 ## 2026.09.16.2
 
 ### Features

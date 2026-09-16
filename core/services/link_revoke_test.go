@@ -39,9 +39,16 @@ type linkRevokeFakeGateway struct {
 	tunnelToken    string
 	deleteErrFor   map[string]error
 	deletedDomains []string
+	// tokenedFor records which identities the KIT teardown was run for. The
+	// revoke alone no longer tells them apart: the account teardown revokes every
+	// key of the owner, and only a link kit gets the ACL/tunnel/route treatment.
+	tokenedFor []string
 }
 
-func (g *linkRevokeFakeGateway) LinkToken(nodeID string) string { return g.tunnelToken }
+func (g *linkRevokeFakeGateway) LinkToken(nodeID string) string {
+	g.tokenedFor = append(g.tokenedFor, nodeID)
+	return g.tunnelToken
+}
 
 func (g *linkRevokeFakeGateway) DeleteCoreOwnedRoute(domain string) error {
 	g.deletedDomains = append(g.deletedDomains, domain)

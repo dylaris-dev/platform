@@ -616,7 +616,10 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 	all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
 	found := false
 	for _, rt := range all {
-		if rt.Domain == domain && rt.ServerUUID == server.UUID {
+		// The shared predicate, not a narrower copy: a route written before
+		// server_uuid was persisted carries only target_ip, and checking one
+		// field answered "not found" for a route that is plainly this server's.
+		if rt.Domain == domain && services.RouteBelongsToServer(rt, server.UUID) {
 			found = true
 			break
 		}

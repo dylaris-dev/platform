@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -506,7 +507,12 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	servers, _ := h.state.Store.ListServersByNode(id)
+	// The uuids are what names the routes and keys of these servers once the rows
+	// are gone, so a failed read here is a silent leak, not a cosmetic one.
+	servers, err := h.state.Store.ListServersByNode(id)
+	if err != nil {
+		log.Printf("ForceDeleteNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", id, err)
+	}
 
 	// Delete all servers on this node first (FK constraint)
 	if err := h.state.Store.DeleteServersByNode(id); err != nil {
@@ -518,6 +524,18 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to delete node", 500)
 		return
 	}
+
+	// What SQL does not take with the rows. DeleteServersByNode is raw bulk SQL,
+	// so none of the per-server cleanup the single delete does had ever run here:
+	// the addresses of every server on the machine kept answering and their Redis
+	// keys stayed for good, and the node's own Redis user and keys outlived the
+	// node itself.
+	//
+	// Background, not the request context: an operator who hung up must not be
+	// the reason a deleted machine's addresses keep resolving.
+	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
+	log.Printf("ForceDeleteNode: node %d — cleaned up %d route(s) across %d server(s)", id, matched, len(servers))
+	h.cleanupDeletedNode(r, node.Token)
 
 	deletedNames := make([]string, 0, len(servers))
 	for _, s := range servers {

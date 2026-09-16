@@ -552,6 +552,13 @@ func (s *WarpService) Assignment(ctx context.Context, key store.WarpAPIKey, pubk
 // but converges on its next resync, which rebuilds the peer set from the DB
 // rows this function has already deleted. Returns how many peers were removed.
 func (s *WarpService) DisconnectKeyPeers(ctx context.Context, keyID int) int {
+	// A nil service is a state callers legitimately hold (no overlay wired), and
+	// they hand it over as an INTERFACE - where a nil pointer is not nil to a nil
+	// check. Guarding here rather than at each call site is what keeps that from
+	// being a panic in the account delete.
+	if s == nil || s.warp == nil {
+		return 0
+	}
 	peers, err := s.warp.ListWarpPeersByKey(keyID)
 	if err != nil {
 		log.Printf("warp: list peers for key %d: %v", keyID, err)

@@ -53,6 +53,9 @@ func (f *lastAdminFakeStore) ListNodesByOwner(string) ([]models.Node, error) { r
 func (f *lastAdminFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
 	return nil, nil
 }
+func (f *lastAdminFakeStore) ListAllWarpAPIKeysByOwner(o string) ([]store.WarpAPIKey, error) {
+	return f.ListWarpAPIKeysByOwner(o)
+}
 func (f *lastAdminFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return nil, nil }
 
 // "You cannot delete yourself" does NOT keep an admin in the system:

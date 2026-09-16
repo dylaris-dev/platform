@@ -32,7 +32,16 @@ type AutoDeleteService struct {
 	gateway     GatewayProvider
 	redis       *redis.Client
 	provisioner *redisacl.Provisioner
+	// warpPeers drops a departing account's overlay peers. Wired separately
+	// (SetWarpPeers) because the warp service is built after this one; nil where
+	// there is no overlay, and then the peers are left behind.
+	warpPeers WarpPeerDisconnector
 }
+
+// SetWarpPeers wires the overlay teardown this sweep needs. Same shape and same
+// name as the billing lifecycle's, for the same reason: the warp service does
+// not exist yet when this one is constructed.
+func (s *AutoDeleteService) SetWarpPeers(w WarpPeerDisconnector) { s.warpPeers = w }
 
 // SetLeader wires the leader-election gate. Without it the service runs
 // on every tick (single-Core dev mode).
@@ -211,7 +220,7 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 		// A failure here skips the account entirely rather than removing it
 		// anyway. Leaving a dormant row for another day is recoverable; removing
 		// the only record of who owned a live credential is not.
-		if err := TeardownTenantInfrastructure(ctx, s.store, s.gateway, s.redis, s.provisioner, userID); err != nil {
+		if err := TeardownTenantInfrastructure(ctx, s.store, s.gateway, s.redis, s.provisioner, s.warpPeers, userID); err != nil {
 			logErrf("auto-delete", "teardown for userID=%s failed, leaving the account in place: %v", userID, err)
 			continue
 		}

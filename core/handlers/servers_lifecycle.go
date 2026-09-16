@@ -231,57 +231,6 @@ func resolveJavaImage(requested, stored string) string {
 }
 
 // SetupServer (Step 2): User configures the server
-// cleanupDeletedServerKeys removes the per-server Redis keys a deleted server
-// leaves behind. The node-side counterpart is cleanupDeletedNode (nodes.go),
-// added for exactly this reason; servers were never given the same treatment.
-//
-// Most of the per-server keys carry a TTL and expire on their own. Two do not:
-// the log stream dylaris:server:<uuid>:logs[:<sub>] and the stats buffer are
-// Redis STREAMS, and while each is length-capped, nothing ever removes them -
-// so the COUNT of orphaned streams grew by two per deleted server, forever.
-// Measured on a deleted server: 5 of 7 keys had a TTL, both streams had -1.
-//
-// Scanning by the uuid prefix rather than listing key names keeps this correct
-// as keys are added, and covers one log stream per sub-server without having to
-// know their names after the rows are gone. The prefix is exact, so the sweep
-// cannot reach another server's keys.
-//
-// Best-effort, like cleanupDeletedNode: the row is already gone and the request
-// has succeeded, so a Redis hiccup here must not turn a completed delete into a
-// 500. Core runs this rather than the node because the node's Redis ACL is
-// scoped to the servers it currently owns - by delete time that grant is on its
-// way out, and the node may be offline entirely (the delete proceeds with a
-// warning in that case, and these keys still need to go).
-func (h *ServerHandler) cleanupDeletedServerKeys(ctx context.Context, uuid string) {
-	if h.state.Redis == nil || strings.TrimSpace(uuid) == "" {
-		return
-	}
-	pattern := "dylaris:server:" + uuid + ":*"
-	var cursor uint64
-	removed := 0
-	for {
-		keys, next, err := h.state.Redis.Scan(ctx, cursor, pattern, 200).Result()
-		if err != nil {
-			log.Printf("DeleteServer: scanning leftover Redis keys for %s failed: %v", uuid, err)
-			return
-		}
-		if len(keys) > 0 {
-			if err := h.state.Redis.Del(ctx, keys...).Err(); err != nil {
-				log.Printf("DeleteServer: removing leftover Redis keys for %s failed: %v", uuid, err)
-				return
-			}
-			removed += len(keys)
-		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
-	}
-	if removed > 0 {
-		log.Printf("DeleteServer: server %s — removed %d leftover Redis key(s)", uuid, removed)
-	}
-}
-
 // validateInstallerRequest rejects a setup the node cannot possibly complete.
 // Returns "" when the request is acceptable.
 //
@@ -1842,39 +1791,14 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.state.Redis != nil {
-		ctx := context.Background()
-		routes := services.GetRoutesFromRedis(ctx, h.state.Redis)
-		matched := 0
-		targetIP := fmt.Sprintf("mc_%s", srv.UUID)
-		for _, rt := range routes {
-			// Match on either field. Older routes (pre `server_uuid`
-			// column being persisted) only have target_ip = "mc_<uuid>";
-			// newer ones have both. Match-or means the cleanup catches
-			// every shape we've ever written.
-			if rt.ServerUUID != srv.UUID && rt.TargetIP != targetIP {
-				continue
-			}
-			matched++
-			// Tell Hub to hard-delete the row (source of truth).
-			if h.state.Gateway != nil {
-				if delErr := h.state.Gateway.DeleteRoute(rt.Domain); delErr != nil {
-					log.Printf("DeleteServer: gateway DeleteRoute %s for %s failed: %v", rt.Domain, srv.UUID, delErr)
-				}
-			}
-			// Drop the Redis cache entry immediately so the route stops
-			// resolving while Hub processes the queue message.
-			pipe := h.state.Redis.Pipeline()
-			pipe.Del(ctx, "route:"+rt.Domain)
-			pipe.SRem(ctx, "sys:index:routes", rt.Domain)
-			if _, err := pipe.Exec(ctx); err != nil {
-				log.Printf("DeleteServer: redis cache drop for route %s failed: %v", rt.Domain, err)
-			}
-		}
-		log.Printf("DeleteServer: server %s — cleaned up %d route(s)", srv.UUID, matched)
-	}
-
-	h.cleanupDeletedServerKeys(r.Context(), srv.UUID)
+	// Shared with the two node-delete paths, which used to do none of this: the
+	// same cleanup has to run whether one server goes or every server on a
+	// machine does.
+	//
+	// Background, not the request context: the rows are already gone, and a
+	// caller who hung up must not leave the address answering.
+	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, []string{srv.UUID})
+	log.Printf("DeleteServer: server %s — cleaned up %d route(s)", srv.UUID, matched)
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 

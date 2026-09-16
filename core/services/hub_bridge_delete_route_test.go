@@ -98,3 +98,39 @@ func TestDeleteRouteFailsLoudlyWhenTheStoreCannotAnswer(t *testing.T) {
 		t.Error("DeleteRoute reported success while it could not tell whether a row existed")
 	}
 }
+
+// The cache entry of a route the HUB owns. Nothing else clears it.
+//
+// The queue message removes the hub's DB ROW; the hub's sync only ever WRITES
+// keys, and the one thing that clears an orphan is a leader-only sweep. So a
+// route deleted from the admin screen kept its `route:` key and kept answering
+// at the edge. Found on production weeks after the delete, on an address whose
+// node had been removed.
+func TestDeleteRouteDropsTheCacheEntryOfAHubOwnedRoute(t *testing.T) {
+	g, rdb, _ := newHubBridgeTestGateway(t)
+	ctx := context.Background()
+
+	const domain = "hub-owned.example.com"
+	if err := rdb.Set(ctx, "route:"+domain, "{}", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.SAdd(ctx, "sys:index:routes", domain).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.DeleteRoute(domain); err != nil {
+		t.Fatalf("DeleteRoute: %v", err)
+	}
+
+	if n, _ := rdb.Exists(ctx, "route:"+domain).Result(); n != 0 {
+		t.Error("the live routing entry survived, so the address keeps answering at the edge until a leader sweep happens to notice")
+	}
+	if member, _ := rdb.SIsMember(ctx, "sys:index:routes", domain).Result(); member {
+		t.Error("the route index still lists the domain")
+	}
+	// Still durable: the cache drop is on top of the queue message, never
+	// instead of it. Without the message the hub's next sync writes the key back.
+	if n, _ := rdb.LLen(ctx, hubQueueKey).Result(); n != 1 {
+		t.Errorf("hub queue holds %d messages, want 1", n)
+	}
+}

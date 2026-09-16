@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"dylaris-core/store"
@@ -262,9 +263,7 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 	// route-only entry has no row there - so the create would succeed, and the
 	// hub's next sync would SET route:{domain} straight over the tenant's.
 	// Managed-vs-managed needs no check here: that collision hits the hub's
-	// unique index, which keeps the first route. Adding one would misfire
-	// anyway, because a deleted managed route's Redis key survives until the
-	// leader's next sweep.
+	// unique index, which keeps the first route.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, coreOwned, ok := g.coreOwnedRouteHolder(ctx, domain); ok && coreOwned {
@@ -424,6 +423,9 @@ func (g *RedisGateway) DeleteCoreOwnedRoute(domain string) error {
 //     deleted. Row first makes the worst case a stale cache entry.
 //   - Then the queue message, for a route the HUB owns. Harmless for one it does
 //     not: DeleteRouteByDomain deletes zero rows without erroring and re-syncs.
+//   - Then, for a hub-owned route only, the cache entry. The queue message is
+//     durable but not immediate, and nothing else clears an orphaned key except a
+//     leader-only sweep - see the comment at that step.
 //
 // A caller that knows the route is Core's should still use DeleteCoreOwnedRoute -
 // it skips a queue round trip that cannot apply. This one is for the paths that
@@ -438,10 +440,36 @@ func (g *RedisGateway) DeleteRoute(domain string) error {
 			return err
 		}
 	}
-	return g.pushToQueue(hubQueueMessage{
+	if err := g.pushToQueue(hubQueueMessage{
 		Action: "delete_route",
 		Domain: domain,
-	})
+	}); err != nil {
+		return err
+	}
+	if stored != nil {
+		return nil
+	}
+	// A route the HUB owns: the queue message is the source of truth, and this
+	// drops the cache entry so the address stops resolving while the hub catches
+	// up. Without it the key survived the delete entirely - the hub's own
+	// delete_route removes its DB ROW, its sync only ever WRITES keys, and the
+	// one thing that clears an orphan is a leader-only sweep. Measured on
+	// production: a route deleted from the admin screen, its row gone and its
+	// `route:` key still there weeks later, still answering at the edge.
+	//
+	// Best-effort on purpose. The durable half has already succeeded, so a Redis
+	// hiccup here must not report the delete as failed - and if the hub's sync
+	// republishes the key before it processes the queue, the next sweep or the
+	// next delete clears it, exactly as for the per-server cleanup.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pipe := g.redis.Pipeline()
+	pipe.Del(ctx, "route:"+domain)
+	pipe.SRem(ctx, "sys:index:routes", domain)
+	if _, perr := pipe.Exec(ctx); perr != nil {
+		log.Printf("delete route %s: cache drop failed, the hub sweep has to clear it: %v", domain, perr)
+	}
+	return nil
 }
 
 func (g *RedisGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error {

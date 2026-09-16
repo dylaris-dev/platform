@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -147,7 +149,15 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	}
 	withServers := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("servers")), "delete")
 
+	// Read before the delete: afterwards there is no row left to name the
+	// addresses and Redis keys of these servers. A failed read is a silent leak,
+	// so it is logged rather than dropped.
+	var servers []models.Server
 	if withServers {
+		var lerr error
+		if servers, lerr = h.state.Store.ListServersByNode(node.ID); lerr != nil {
+			log.Printf("DeleteMyNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", node.ID, lerr)
+		}
 		if err := h.state.Store.DeleteServersByNode(node.ID); err != nil {
 			sendJSONError(w, "Failed to delete the servers on this machine", 500)
 			return
@@ -162,6 +172,15 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Delete failed", 500)
 		return
 	}
+
+	// What went with the machine. Nothing else removes it - DeleteServersByNode is
+	// raw SQL and the hub keeps its own copy of the routes - so the customer's own
+	// address kept answering after they removed the machine it pointed at.
+	//
+	// Background, not the request context: a browser that timed out must not be
+	// the reason an address outlives the machine behind it.
+	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
+	log.Printf("DeleteMyNode: node %d — cleaned up %d route(s) across %d server(s)", node.ID, matched, len(servers))
 
 	// The Redis ACL user and the node's keys are all keyed by its token, which
 	// is why the row was read first. Best-effort, and logged rather than

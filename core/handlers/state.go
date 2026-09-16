@@ -25,11 +25,16 @@ type AppState struct {
 	// because a statistics store is never a reason for anything else to fail.
 	Metrics *metrics.Manager
 
-	Store            store.Store
-	Redis            *redis.Client
-	Queue            *services.QueueService
-	GRPCRegistry     *nodegrpc.Registry
-	Gateway          services.GatewayProvider
+	Store        store.Store
+	Redis        *redis.Client
+	Queue        *services.QueueService
+	GRPCRegistry *nodegrpc.Registry
+	Gateway      services.GatewayProvider
+	// WarpPeers drops the WireGuard peers of one overlay key. Held here, and not
+	// only by the warp handler, because removing an account has to drop that
+	// account's peers before its rows cascade away and nothing can name them any
+	// more. nil where there is no overlay; every reader must cope.
+	WarpPeers        services.WarpPeerDisconnector
 	RoutingMigration *services.RoutingMigrationService
 	// Admission evaluates the node-admission NETWORK gate on the warp enrol,
 	// which is the only place that sees a BYON customer's real IP (the gRPC

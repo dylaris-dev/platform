@@ -37,12 +37,35 @@ func (s *PostgresStore) GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error) {
 // ListWarpAPIKeysByOwner returns the non-revoked warp keys minted for a tenant —
 // the link/route-only kits they own. Used by the panel to list "my links".
 func (s *PostgresStore) ListWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, error) {
+	return s.warpAPIKeysByOwner(ownerID, false)
+}
+
+// ListAllWarpAPIKeysByOwner returns them INCLUDING the revoked ones.
+//
+// Revoking a key blocks the next enrol; it does not remove the WireGuard peers
+// an established tunnel already has, and two paths revoke without removing them
+// on purpose (the suspension cutoff keeps the grace, the shared link teardown
+// leaves the decision to its caller). So by the time an account is deleted, the
+// peers still on the leader are frequently hanging off keys that are already
+// revoked - and the non-revoked listing cannot see a single one of them.
+//
+// Only the account teardown wants this shape. Everything tenant-facing means
+// "the keys they can still use", which is the other one.
+func (s *PostgresStore) ListAllWarpAPIKeysByOwner(ownerID string) ([]WarpAPIKey, error) {
+	return s.warpAPIKeysByOwner(ownerID, true)
+}
+
+func (s *PostgresStore) warpAPIKeysByOwner(ownerID string, includeRevoked bool) ([]WarpAPIKey, error) {
+	where := "owner_id = $1::uuid AND revoked_at IS NULL"
+	if includeRevoked {
+		where = "owner_id = $1::uuid"
+	}
 	rows, err := s.db.Query(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
 		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
 		FROM warp_api_keys
-		WHERE owner_id = $1::uuid AND revoked_at IS NULL
+		WHERE `+where+`
 		ORDER BY created_at DESC`, ownerID)
 	if err != nil {
 		return nil, err
