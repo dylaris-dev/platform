@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, ShieldCheck, Pencil, X, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, Pencil, X, RefreshCw } from 'lucide-react';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 import {
     CreateRouteRequest, LinkRoute, LinkKit, MintedLinkKit,
@@ -13,6 +13,8 @@ import { SkeletonCard } from '@/components/Skeleton';
 import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded, usageLabel } from '@/components/infra/DeployKit';
 import { routeSubmitRequest } from '@/lib/routeSubmit';
 import { singleLocalTarget } from '@/lib/warpDeploy';
+import { linkState } from '@/lib/linkState';
+import LinkBadge from '@/components/infra/LinkBadge';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
 // Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
@@ -276,7 +278,11 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                         </p>
                         {kits.map(k => (
                             <div key={k.id} className="flex items-center gap-3 px-3 py-2 rounded-md bg-(--base-01)">
-                                <ShieldCheck size={14} className="text-(--success-light) shrink-0" />
+                                {/* The state of the link itself, not a decoration. This
+                                    row used to carry a green shield whether the link had
+                                    ever booted or not, so a customer whose machine never
+                                    came up saw the same picture as one serving players. */}
+                                <LinkBadge state={linkState(k.online)} />
                                 <span className="text-sm text-(--base-09) truncate">{k.name}</span>
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
                                 <button

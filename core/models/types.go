@@ -327,6 +327,19 @@ type Node struct {
 	RAMFree   int64   `json:"ramFree"`
 	RAMTotal  uint64  `json:"ramTotal"`
 	LinkCount *int    `json:"linkCount,omitempty"`
+	// LinkOnline is whether the Link that serves this node's routes is keeping
+	// its liveness key alive right now (services.LinkOnline). Derived at
+	// response time, never persisted.
+	//
+	// It is NOT LinkCount: that one is how many Link containers the node sees on
+	// its own host, which is true even while that Link reaches no edge. In
+	// gateway routing the Link is the only way in, so "node online, Link not
+	// connected" is the state that looks healthy and serves nobody - and it is
+	// the one a customer has to be able to see.
+	//
+	// A pointer, like LinkCount: nil is "Core could not ask", which must not be
+	// shown as not connected.
+	LinkOnline *bool `json:"linkOnline,omitempty"`
 	// PortRange is the node's effective MC host-port range ("25600-25699").
 	// PortRangeNotice is set only when the node fell back to its default because
 	// PORT_RANGE was unset or unparseable - shown so a typo is visible instead

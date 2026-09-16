@@ -20,6 +20,8 @@ import { mintEnrollToken, listEnrollTokens, revokeEnrollToken } from '@/lib/api/
 import type { NodeEnrollToken } from '@/lib/api/types';
 import { nodeLabel } from '@/lib/nodeLabel';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
+import { nodeLinkState } from '@/lib/linkState';
+import LinkBadge from '@/components/infra/LinkBadge';
 import { nodeIdFromLabel } from '@/lib/warpDeploy';
 import { isLocationName } from '@/lib/validation';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -70,6 +72,13 @@ interface OwnNode {
     lastSeenAt?: string;
     serverCount?: number;
     region?: string;
+    /**
+     * Whether the Link that carries this machine's players is connected right
+     * now. ABSENT means Core could not ask; it is not "no". Distinct from the
+     * heartbeat's link count, which says how many Link containers the machine
+     * can see on its own host and stays 1 while that Link reaches no edge.
+     */
+    linkOnline?: boolean;
 }
 
 const NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
@@ -651,7 +660,14 @@ function MyNodesInner() {
                                             <div className="flex items-center gap-2.5 min-w-0">
                                                 <div className={`w-2 h-2 rounded-full shrink-0 ${dotFor(tier, 'bg-(--success-light)')}`} />
                                                 <div className="min-w-0">
-                                                    <div className="text-sm text-(--base-09) truncate">{nodeLabel(n)}</div>
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                        <span className="text-sm text-(--base-09) truncate">{nodeLabel(n)}</span>
+                                                        {/* The Link, said separately from the machine. A machine
+                                                            that is online while its Link is not looks healthy on
+                                                            every other line of this row and serves nobody: in
+                                                            gateway routing the Link is the only way in. */}
+                                                        <LinkBadge state={nodeLinkState(n.status === 'online', n.linkOnline)} />
+                                                    </div>
                                                     <div className="mono-label">
                                                         {n.status}
                                                         {typeof n.serverCount === 'number' && ` · ${n.serverCount} server${n.serverCount === 1 ? '' : 's'}`}

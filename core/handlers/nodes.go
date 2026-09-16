@@ -256,6 +256,29 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	// already drifted.
 	services.EnrichNodesWithLiveStats(r.Context(), h.state.Store, h.state.Redis, nodes)
 
+	// Is the Link that carries this node's players actually connected? The
+	// heartbeat's linkCount says how many Link containers the node sees on its
+	// own host, which stays 1 while that Link reaches no edge and nobody can
+	// join. This asks the Link itself, through the key it refreshes, about the
+	// token this node's ROUTES use - the Hub-named one where there is one, so a
+	// machine served by a self-enrolled Link is not reported as dead.
+	//
+	// One round trip for the whole list, after the scope filter, so it covers
+	// exactly the rows being returned.
+	if len(nodes) > 0 {
+		tokens := make([]string, 0, len(nodes))
+		for i := range nodes {
+			tokens = append(tokens, services.EffectiveLinkToken(&nodes[i], h.state.ClusterSecret))
+		}
+		if online := services.LinkOnline(r.Context(), h.state.Redis, tokens); online != nil {
+			for i := range nodes {
+				if v, ok := online[services.EffectiveLinkToken(&nodes[i], h.state.ClusterSecret)]; ok {
+					nodes[i].LinkOnline = &v
+				}
+			}
+		}
+	}
+
 	// Derive the unusable flag at response time (no DB column needed): an
 	// external/home node only routes via gateway+beam, so while the platform
 	// is in ip_port mode it has no reachable path. Panel uses this to show a

@@ -1232,6 +1232,11 @@ export interface LinkKit {
     name: string;
     link_id: string;
     created_at: string;
+    /**
+     * Whether this kit's link is holding its tunnel right now. ABSENT means Core
+     * could not ask, which is not the same as false - see lib/linkState.
+     */
+    online?: boolean;
 }
 export interface MintedLinkKit {
     success: boolean;

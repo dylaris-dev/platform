@@ -846,6 +846,12 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		Name      string `json:"name"`
 		LinkID    string `json:"link_id"`
 		CreatedAt string `json:"created_at"`
+		// Online is whether this kit's Link is keeping its liveness key alive
+		// right now. Absent means Core could not ask (no Redis, a failed read),
+		// which the panel must show as "no answer" rather than as not connected:
+		// a wrong "not connected" sends a customer to debug a machine that is
+		// fine. Until this existed the row rendered a green shield either way.
+		Online *bool `json:"online,omitempty"`
 	}
 	// warp_api_keys also holds this tenant's BYON node keys. They are a different
 	// product with a different cap, so listing them here would show a node as a
@@ -857,6 +863,23 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
 	}
+	// One round trip for every kit on the page: the token a route-only Link runs
+	// with is the one LinkBoot derives from the kit's id, so Core can ask about
+	// it without the Link having told anyone anything.
+	if h.state.Gateway != nil {
+		tokens := make([]string, 0, len(out))
+		for _, k := range out {
+			tokens = append(tokens, h.state.Gateway.LinkToken(k.LinkID))
+		}
+		if online := services.LinkOnline(r.Context(), h.state.Redis, tokens); online != nil {
+			for i := range out {
+				if v, ok := online[h.state.Gateway.LinkToken(out[i].LinkID)]; ok {
+					out[i].Online = &v
+				}
+			}
+		}
+	}
+
 	// Surface the effective link cap + current link-kit count so the panel can show
 	// "X of Y links used". 0 limit means unlimited.
 	lim, _ := services.EffectiveLimits(h.state.Store, userID)
