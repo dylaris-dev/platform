@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.16
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A customer's node file carries its Link again.** Since 2026.09.12 the file the panel
+  wrote left the Link out, so no player could reach a server on that machine. `panel`
+- **A route-only file now allows the address the routes point at,** instead of always
+  127.0.0.1, when every route of that customer agrees on one. `panel`
+- **A limit of zero machines no longer reads as unlimited** in My infrastructure, and the
+  node file no longer sets NODE_MANAGES_LINK, which nodes ignore. `panel`
+
 ## 2026.09.15
 
 ### Features

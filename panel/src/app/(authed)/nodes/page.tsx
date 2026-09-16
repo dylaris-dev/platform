@@ -405,7 +405,10 @@ function MyNodesInner() {
     // a different number would make the refusal look arbitrary the moment it hits.
     const nodesUsed = nodeUsage?.used ?? nodes.length;
     const effectiveNodeLimit = nodeUsage?.limit ?? nodeLimit;
-    const nodesAtCap = typeof effectiveNodeLimit === 'number' && effectiveNodeLimit > 0 && nodesUsed >= effectiveNodeLimit;
+    // 0 is a cap of NONE, not "no cap" (the platform's limits convention). Read
+    // as "no cap", a tenant entitled to zero machines got an enabled button and
+    // a 403 the moment they used it.
+    const nodesAtCap = typeof effectiveNodeLimit === 'number' && effectiveNodeLimit >= 0 && nodesUsed >= effectiveNodeLimit;
 
     const TABS: { id: InfraTab; label: string; icon: typeof HardDrive }[] = [
         { id: 'external', label: 'External nodes', icon: Server },

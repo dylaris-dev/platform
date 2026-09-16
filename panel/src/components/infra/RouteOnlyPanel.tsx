@@ -12,6 +12,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
 import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded } from '@/components/infra/DeployKit';
 import { routeSubmitRequest } from '@/lib/routeSubmit';
+import { singleLocalTarget } from '@/lib/warpDeploy';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 
 // Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
@@ -458,6 +459,12 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                     warpKey={minted?.warp_key ?? null}
                     enrollUrl={enrollUrl}
                     config={config}
+                    // What their routes already dial, so the file allows exactly
+                    // that. Core accepts any local address in the route form, and
+                    // the link compares LINK_ALLOWED_TARGETS as an exact string,
+                    // so a file stuck on 127.0.0.1 refuses every player of a
+                    // server that runs on another machine, silently.
+                    localTarget={singleLocalTarget(routes.map(rt => rt.target_ip))}
                 />
             </aside>
             </div>

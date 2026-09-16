@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon } from 'lucide-react';
 import {
     nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, kitGrpcTlsFingerprint,
+    DEPLOY_PORTAINER_NOTE, kitInput,
 } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -148,7 +148,7 @@ export function platformNote(kind: 'node' | 'route-only', platform: DeployPlatfo
         : 'Host networking on Docker Desktop joins the WSL2 VM, not Windows, so the snippet points the link at host.docker.internal. Your Minecraft server keeps running on Windows as it does now.';
 }
 
-export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId, config, linkBesideNode }: {
+export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId, config, linkBesideNode, localTarget }: {
     kind: 'node' | 'route-only';
     warpKey: string | null;
     enrollUrl: string;
@@ -158,6 +158,12 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
     config?: WarpDeployConfig | null;
     /** See WarpDeployInput.linkBesideNode: whether this key can boot a Link at all. */
     linkBesideNode?: boolean;
+    /**
+     * Route-only: the local address this customer's routes already point at, so
+     * the file's LINK_ALLOWED_TARGETS matches what Core was told. Undefined
+     * leaves the placeholder the reader edits.
+     */
+    localTarget?: string;
 }) {
     // Both kinds run on Docker Desktop. The node was Linux-only here for longer
     // than it needed to be: it drives the host's Docker socket, and on Docker
@@ -166,18 +172,13 @@ export function DeployKit({ kind, warpKey, enrollUrl, nodeEnrollToken, grpcTlsFi
     // What genuinely differs is where the server FILES land, which the snippet
     // says in the place it matters, at the bind mount.
     const [platform, setPlatform] = useState<DeployPlatform>('linux');
-    const input = {
-        apiKey: warpKey ?? '<your-warp-key>',
-        enrollUrl,
-        nodeEnrollToken,
-        grpcTlsFingerprint: kitGrpcTlsFingerprint(grpcTlsFingerprint, config),
-        nodeId,
-        platform,
-        // Undetermined values stay undefined so the snippet keeps its
-        // placeholder: a blank tells the reader something is missing, an empty
-        // string looks like a setting that was deliberately cleared.
-        tunnelSubnets: config?.tunnelSubnets || undefined,
-    };
+    // Built by kitInput rather than here: assembling it inline is how
+    // linkBesideNode went missing and every customer file came out without the
+    // link service. See kitInput.
+    const input = kitInput({
+        warpKey, enrollUrl, nodeEnrollToken, grpcTlsFingerprint, nodeId,
+        platform, config, linkBesideNode, localTarget,
+    });
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
 
     return (
@@ -260,8 +261,16 @@ export function NotIncluded({ what, storeUrl, suspended, storeLinked }: {
     );
 }
 
-/** "3 of 5 in use", or "3 in use" when the plan sets no cap (limit <= 0). */
-export function usageLabel(used: number, limit: number | undefined): string {
-    if (limit === undefined || limit <= 0) return `${used} in use`;
+/**
+ * "3 of 5 in use", "3 in use" when there is no cap, "none allowed" at a cap of 0.
+ *
+ * The platform's limits convention: nothing (null / undefined) is no cap at all,
+ * 0 is none, n is the cap - see services.Limits. This used to read `limit <= 0`
+ * as "no cap", so the one number an operator can type to say "none" was shown to
+ * the customer as unlimited, and the refusal arrived only as a 403 afterwards.
+ */
+export function usageLabel(used: number, limit: number | undefined | null): string {
+    if (limit === undefined || limit === null || limit < 0) return `${used} in use`;
+    if (limit === 0) return 'none allowed';
     return `${used} of ${limit} in use`;
 }

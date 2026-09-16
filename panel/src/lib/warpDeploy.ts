@@ -342,13 +342,11 @@ ${i.legacyAdminKey
             : `# A link needs an overlay key BOUND TO THIS MACHINE, which this key is not. Bind
 # one under the machine in the panel, then take the file offered there - it
 # contains the link.`}`;
-    const manageLink = kitLink
-        ? `      # keep - link runs as its own service below, so the node must not start
-      # one as well. A node that started one before removes it.
-      NODE_MANAGES_LINK: "false"
-
-`
-        : '';
+    // No NODE_MANAGES_LINK: a current node reads it, ignores it and logs that it
+    // does nothing, so a line marked "keep" beside that log line only makes the
+    // reader doubt one of the two. The node has started no Link since 2026.09.12
+    // and a fresh kit pulls a current image.
+    const manageLink = '';
     const linkService = kitLink
         ? `
   link:
@@ -472,6 +470,58 @@ ${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR, no REDIS_ADDR an
     cap_add: [SYS_ADMIN]
 ${linkService}
 ${tail}`;
+}
+
+/**
+ * The input a deploy kit is rendered from, built in ONE place.
+ *
+ * It exists because the component used to assemble this object inline and
+ * dropped `linkBesideNode` on the way: every customer file then came out
+ * without the link service, which in gateway routing is the only way in, so no
+ * player could reach any server on that machine. The compose functions were
+ * tested directly and stayed green the whole time, because the defect was in
+ * the hand-off, not in them. A pure function is the seam a test can hold.
+ */
+export function kitInput(p: {
+    warpKey: string | null;
+    enrollUrl: string;
+    nodeEnrollToken?: string;
+    grpcTlsFingerprint?: string;
+    nodeId?: string;
+    platform: DeployPlatform;
+    config?: { tunnelSubnets?: string; grpcTlsFingerprint?: string } | null;
+    linkBesideNode?: boolean;
+    localTarget?: string;
+    externalNode?: boolean;
+}): WarpDeployInput {
+    return {
+        apiKey: p.warpKey ?? '<your-warp-key>',
+        enrollUrl: p.enrollUrl,
+        nodeEnrollToken: p.nodeEnrollToken,
+        grpcTlsFingerprint: kitGrpcTlsFingerprint(p.grpcTlsFingerprint, p.config),
+        nodeId: p.nodeId,
+        platform: p.platform,
+        // Undetermined values stay undefined so the snippet keeps its
+        // placeholder: a blank tells the reader something is missing, an empty
+        // string looks like a setting that was deliberately cleared.
+        tunnelSubnets: p.config?.tunnelSubnets || undefined,
+        linkBesideNode: p.linkBesideNode,
+        localTarget: p.localTarget,
+        externalNode: p.externalNode,
+    };
+}
+
+/**
+ * The one local address a route-only file can fill in for the reader: the
+ * target every existing route of theirs already points at.
+ *
+ * Only when they agree. LINK_ALLOWED_TARGETS is compared as an exact string, so
+ * guessing one of several would hand the reader a file that refuses the others
+ * with nothing shown anywhere - worse than the placeholder they have to edit.
+ */
+export function singleLocalTarget(targets: string[]): string | undefined {
+    const seen = [...new Set(targets.map(t => t.trim()).filter(t => t !== ''))];
+    return seen.length === 1 ? seen[0] : undefined;
 }
 
 /** The compose file's name on disk, and the name every command refers to. */

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.16
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **If you added your own machine since 12 September, take its file again and redeploy
+  it.** The file was missing the link, so nobody could join your servers.
+- **If your server runs on another machine than the tunnel,** the file now allows that
+  address by itself when all your addresses point at it.
+
 ## 2026.09.14.2
 
 ### Features

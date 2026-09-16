@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
     nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
+    kitInput, singleLocalTarget,
 } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
@@ -377,11 +378,13 @@ describe('nodeCompose with the Link beside the node', () => {
         expect(link).toContain('LINK_EXTERNAL: "true"');
     });
 
-    // Exactly one Link per machine: two would fight over the same identity. A
-    // current node starts none either way, so this line is aimed at an OLDER
-    // node image - which is the one that WOULD start a second one.
-    it('tells the node not to start its own', () => {
-        expect(service(kit(), 'node')).toContain('NODE_MANAGES_LINK: "false"');
+    // Exactly one Link per machine: two would fight over the same identity. The
+    // node starts none since 2026.09.12 and says so in its own log at every
+    // boot, so the file no longer carries NODE_MANAGES_LINK at all - a line
+    // marked "keep" beside that log line only makes the reader doubt one of the
+    // two. See "the node kit and inert settings" below.
+    it('carries the link service and no warning', () => {
+        expect(service(kit(), 'link')).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
         expect(kit()).not.toContain('THIS FILE RUNS NO LINK');
     });
 
@@ -436,7 +439,6 @@ describe('nodeCompose with the Link beside the node', () => {
     it('is the same file on Docker Desktop, link and all', () => {
         const win = kit({ platform: 'windows' });
         expect(win).not.toBe(nodeCompose({ ...base, platform: 'windows' }));
-        expect(win).toContain('NODE_MANAGES_LINK: "false"');
         expect(win).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
     });
 
@@ -657,5 +659,75 @@ describe('the External node kit', () => {
         expect(nodeCompose({ ...base, linkBesideNode: true, externalNode: false })).toBe(tenantKits[1]);
         expect(deployCli('node')).toContain('it appears in the panel under Nodes within ~30s.');
         expect(deployCli('node', false)).toBe(deployCli('node'));
+    });
+});
+
+// What the panel hands the compose functions. This is where the file lost its
+// link service: DeployKit built this object by hand and left linkBesideNode
+// out, so every customer kit came out with the "RUNS NO LINK" warning while
+// nodeCompose itself, and every test of it, stayed correct. Test the hand-off,
+// not only the thing it hands to.
+describe('kitInput', () => {
+    const props = {
+        warpKey: 'KEY123',
+        enrollUrl: 'https://api.example.com',
+        platform: 'linux' as const,
+        config: { tunnelSubnets: '10.20.0.0/16', grpcTlsFingerprint: 'ab:cd' },
+    };
+
+    it('carries linkBesideNode through, so a bound machine gets its link', () => {
+        expect(kitInput({ ...props, linkBesideNode: true }).linkBesideNode).toBe(true);
+        const out = nodeCompose(kitInput({ ...props, linkBesideNode: true }));
+        expect(out).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
+        expect(out).not.toContain('THIS FILE RUNS NO LINK');
+    });
+
+    it('keeps the warning for a key that cannot boot a link', () => {
+        expect(nodeCompose(kitInput(props))).toContain('THIS FILE RUNS NO LINK');
+    });
+
+    it('carries every value the file cannot be written without', () => {
+        const i = kitInput({ ...props, nodeEnrollToken: 'TOK', nodeId: 'n1', localTarget: '192.168.1.10' });
+        expect(i).toMatchObject({
+            apiKey: 'KEY123',
+            enrollUrl: 'https://api.example.com',
+            nodeEnrollToken: 'TOK',
+            nodeId: 'n1',
+            tunnelSubnets: '10.20.0.0/16',
+            grpcTlsFingerprint: 'ab:cd',
+            localTarget: '192.168.1.10',
+            platform: 'linux',
+        });
+        const out = routeOnlyCompose(i);
+        expect(out).toContain('LINK_ALLOWED_TARGETS: "192.168.1.10"');
+        expect(out).toContain('LOCAL_HOST: "192.168.1.10"');
+    });
+
+    it('leaves an unknown key and unknown subnets as placeholders', () => {
+        const i = kitInput({ ...props, warpKey: null, config: null });
+        expect(i.apiKey).toBe('<your-warp-key>');
+        expect(i.tunnelSubnets).toBeUndefined();
+        expect(routeOnlyCompose(i)).toContain('<overlay-cidr e.g. 10.20.0.0/16>');
+    });
+});
+
+// The one local address the panel may fill in for the reader. The link compares
+// LINK_ALLOWED_TARGETS as an exact string, so a guess among several is a file
+// that refuses players with nothing shown anywhere.
+describe('singleLocalTarget', () => {
+    it('answers only when every route agrees', () => {
+        expect(singleLocalTarget(['192.168.1.10', '192.168.1.10'])).toBe('192.168.1.10');
+        expect(singleLocalTarget(['192.168.1.10', '10.0.0.5'])).toBeUndefined();
+        expect(singleLocalTarget([])).toBeUndefined();
+        expect(singleLocalTarget(['  ', ''])).toBeUndefined();
+    });
+});
+
+// A node that no longer reads a line must not be told to keep it: the node logs
+// "NODE_MANAGES_LINK and LINK_IMAGE do nothing any more" at every boot.
+describe('the node kit and inert settings', () => {
+    it('sets no NODE_MANAGES_LINK', () => {
+        expect(nodeCompose({ ...base, linkBesideNode: true })).not.toContain('NODE_MANAGES_LINK');
+        expect(nodeCompose(base)).not.toContain('NODE_MANAGES_LINK');
     });
 });
