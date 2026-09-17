@@ -553,6 +553,34 @@ export function singleLocalTarget(targets: string[]): string | undefined {
     return seen.length === 1 ? seen[0] : undefined;
 }
 
+/**
+ * Whether the generic node file - the one that runs NO Link - still says
+ * anything true to this reader.
+ *
+ * That file warns, loudly, that nothing can reach the servers on the machine
+ * without a Link, and tells the reader to bind an overlay key under the machine.
+ * Correct for someone with no machine yet, or with one whose key is not bound.
+ * Wrong, and alarming, for an owner whose machines are all set up: it sits under
+ * a list of green machines that are serving players and tells them to do
+ * something they have already done. Their file is the per-machine one, which
+ * does contain the Link.
+ *
+ * `keysLoaded` is part of the answer rather than a caller's job: without it the
+ * warning appears for one render while the keys are still arriving, which is the
+ * moment it is least deserved and most visible.
+ *
+ * A function, and tested, because it is a VISIBILITY rule over three states and
+ * the panel has no render-level tests to catch it being inverted.
+ */
+export function genericNodeKitApplies(
+    keysLoaded: boolean,
+    machines: { boundKey: boolean }[],
+): boolean {
+    if (!keysLoaded) return true;
+    if (machines.length === 0) return true;
+    return !machines.every(m => m.boundKey);
+}
+
 /** The compose file's name on disk, and the name every command refers to. */
 export function composeFileName(kind: 'route-only' | 'node'): string {
     return kind === 'route-only' ? 'route-only.yml' : 'byon-node.yml';

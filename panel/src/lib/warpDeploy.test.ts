@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
     nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
-    kitInput, singleLocalTarget,
+    kitInput, singleLocalTarget, genericNodeKitApplies
 } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
@@ -788,5 +788,35 @@ describe('kitInput for the admin External node dialog', () => {
         const legacy = kitInput({ ...props, legacyAdminKey: true, externalNode: true });
         expect(nodeCompose(legacy)).toContain('THIS FILE RUNS NO LINK');
         expect(nodeCompose(legacy)).toContain('Mint a new External node key');
+    });
+});
+
+describe('genericNodeKitApplies', () => {
+    // The generic file runs no Link and says so in capitals. It belongs to
+    // someone who has nothing set up yet.
+    it('applies to an owner with no machine at all', () => {
+        expect(genericNodeKitApplies(true, [])).toBe(true);
+    });
+
+    it('applies while a machine still has no key bound', () => {
+        expect(genericNodeKitApplies(true, [{ boundKey: false }])).toBe(true);
+        expect(genericNodeKitApplies(true, [{ boundKey: true }, { boundKey: false }])).toBe(true);
+    });
+
+    // The case this exists for: every machine is set up and serving players, and
+    // the page was still showing them a file warning that nothing can reach
+    // their servers and telling them to bind a key they already bound.
+    it('does NOT apply once every machine has its key', () => {
+        expect(genericNodeKitApplies(true, [{ boundKey: true }])).toBe(false);
+        expect(genericNodeKitApplies(true, [{ boundKey: true }, { boundKey: true }])).toBe(false);
+    });
+
+    // Before the keys arrive, every machine looks unbound. Answering from that
+    // would show the warning for one render, to exactly the reader it is wrong
+    // for. Leaning the other way would hide the file from someone who needs it,
+    // which is the recoverable mistake: it appears a moment later.
+    it('waits for the keys instead of reading "not loaded" as "not bound"', () => {
+        expect(genericNodeKitApplies(false, [{ boundKey: false }])).toBe(true);
+        expect(genericNodeKitApplies(false, [{ boundKey: true }])).toBe(true);
     });
 });

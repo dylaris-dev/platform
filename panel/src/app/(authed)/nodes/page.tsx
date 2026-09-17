@@ -22,7 +22,7 @@ import { nodeLabel } from '@/lib/nodeLabel';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeLinkState } from '@/lib/linkState';
 import LinkBadge from '@/components/infra/LinkBadge';
-import { nodeIdFromLabel } from '@/lib/warpDeploy';
+import { nodeIdFromLabel, genericNodeKitApplies } from '@/lib/warpDeploy';
 import { isLocationName } from '@/lib/validation';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
@@ -365,6 +365,21 @@ function MyNodesInner() {
     };
 
     const keyBoundTo = (nodeId: number) => nodeKeys.find(k => k.bound_node_id === nodeId);
+    // Whether the generic file below still says anything true to this reader.
+    //
+    // That file runs no Link and warns, loudly, that nothing can reach the
+    // servers without one - which is the right thing to tell someone who has no
+    // machine yet, or one whose key is not bound. To an owner whose machines are
+    // all set up it is simply wrong: it sits under a list of green machines that
+    // are serving players and tells them to go and bind a key they already bound.
+    // Their file is the one behind "Deploy file" on the machine itself.
+    //
+    // Gated on nodeKeysLoaded so the warning does not flash while the keys are
+    // still arriving.
+    const showGenericKit = genericNodeKitApplies(
+        nodeKeysLoaded,
+        nodes.map(n => ({ boundKey: !!keyBoundTo(n.id) })),
+    );
     const freeKeys = nodeKeys.filter(k => !k.bound_node_id);
 
     // Pre-selects the key created under this machine's location name - the node
@@ -802,14 +817,26 @@ function MyNodesInner() {
                 file appears only where the key is known to be bound, or is about
                 to be at enrol. */}
             {byonAllowed && entitlementKnown && !revealedNode && !linkFor && (
-                <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
-                    {(nodeKeys.length > 0 || tokens.length > 0) && (
-                        <p className="text-xs text-(--base-06)">
-                            The keys cannot be shown again — only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.
+                !showGenericKit ? (
+                    <aside className={`card p-5 space-y-2 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
+                        <div className="text-sm font-medium text-(--base-09)">Your machines are set up</div>
+                        <p className="text-xs text-(--base-07)">
+                            Each of your machines has its own file, with its Link in it. Open{' '}
+                            <span className="font-medium text-(--base-09)">Deploy file</span> on the machine above to
+                            get the one that belongs to it. The keys themselves cannot be shown again — paste the ones
+                            you saved where the file says <code className="font-mono">&lt;...&gt;</code>.
                         </p>
-                    )}
-                    <DeployKit kind="node" warpKey={null} enrollUrl={enrollUrl} config={deployConfig} />
-                </aside>
+                    </aside>
+                ) : (
+                    <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
+                        {(nodeKeys.length > 0 || tokens.length > 0) && (
+                            <p className="text-xs text-(--base-06)">
+                                The keys cannot be shown again — only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.
+                            </p>
+                        )}
+                        <DeployKit kind="node" warpKey={null} enrollUrl={enrollUrl} config={deployConfig} />
+                    </aside>
+                )
             )}
             {revealedNode && (
                 <aside className={`card p-5 space-y-3 border-(--accent-border) bg-(--accent-ghost) ${DEPLOY_ASIDE_STICKY}`}>

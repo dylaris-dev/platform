@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.16.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **My infrastructure no longer warns you about a missing link once your machines are
+  set up.** The general example file runs no link and says so; it now gives way to a
+  pointer at each machine's own file, which contains one. Nothing on your side to
+  update.
+
 ## 2026.09.16.3
 
 ### Features

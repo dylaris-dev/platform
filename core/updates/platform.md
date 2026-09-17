@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.16.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The "this file runs no Link" warning no longer shows to owners whose machines are
+  all set up.** It sat under a list of connected machines and told them to bind a key
+  they had already bound; their own file is the one behind "Deploy file". `core` `panel`
+
 ## 2026.09.16.3
 
 ### Features
