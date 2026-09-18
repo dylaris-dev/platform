@@ -35,15 +35,15 @@ type uploadError struct {
 
 func upErr(status int, msg string) *uploadError { return &uploadError{status: status, msg: msg} }
 
-// storeUploadedContent turns a multipart upload into a stored Solder object and
+// storeUploadedContent turns a multipart upload into a stored content zip and
 // returns its metadata. It splits by the largest case:
 //
-//   - a pre-built Solder .zip is STORED AS-IS, and that is the case that can be
+//   - a pre-built content .zip is STORED AS-IS, and that is the case that can be
 //     large, so it is validated over the seekable upload, hashed by streaming,
 //     and streamed to storage - never read into memory. Its stored hashes ARE
 //     the raw hashes (the object is the upload), so one pass yields all four.
 //   - a raw .jar or a single config/resourcepack file is WRAPPED into a small
-//     Solder zip. These are single files, so they take the simple buffered path
+//     content zip. These are single files, so they take the simple buffered path
 //     and are handed to the same streaming Put via a bytes.Reader.
 func (h *PacksHandler) storeUploadedContent(
 	ctx context.Context,
@@ -66,12 +66,12 @@ func (h *PacksHandler) storeUploadedContent(
 	}
 	var zipBytes []byte
 	if strings.HasSuffix(lower, ".jar") {
-		zipBytes, err = modpack.WrapJarAsSolderZip(fileName, data)
+		zipBytes, err = modpack.WrapJarAsContentZip(fileName, data)
 		if err != nil {
 			return storedUpload{}, upErr(http.StatusInternalServerError, "Failed to wrap jar")
 		}
 	} else {
-		zipBytes, err = modpack.BuildSolderContentZip(targetPathFor(contentType, fileName), data)
+		zipBytes, err = modpack.BuildContentZip(targetPathFor(contentType, fileName), data)
 		if err != nil {
 			return storedUpload{}, upErr(http.StatusInternalServerError, "Failed to wrap file")
 		}
@@ -88,7 +88,7 @@ func (h *PacksHandler) storeUploadedContent(
 	}, nil
 }
 
-// streamStoredZip validates, hashes and stores a pre-built Solder zip without
+// streamStoredZip validates, hashes and stores a pre-built content zip without
 // ever holding it in memory. The upload is seekable (a multipart.File spills to
 // disk past the small parse buffer), so it is read three times - validate, hash,
 // store - at a fixed memory cost regardless of size.

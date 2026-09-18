@@ -373,7 +373,7 @@ export default function FeaturesTab() {
                 <SettingsGroup title="Modpacks">
                     <SwitchRow
                         label="Modpacks"
-                        description={<>Turns on the modpack builder, storage and Solder endpoints for <strong>admins</strong>. When off, modpack write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable.</>}
+                        description={<>Turns on the modpack builder and its storage for <strong>admins</strong>. When off, modpack write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable.</>}
                         checked={!!platformFlags.modpacks}
                         onChange={v => editPlatformFlag('modpacks', v)}
                     />

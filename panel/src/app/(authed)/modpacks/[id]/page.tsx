@@ -3,17 +3,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
 import Link from 'next/link';
-import { Package, ArrowLeft, Plus, Trash2, ExternalLink, RefreshCw, CircleAlert, X, Edit, ChevronRight, Layers, Settings, UserX, UserCheck, Lock } from 'lucide-react';
+import { Package, ArrowLeft, Plus, Trash2, ExternalLink, RefreshCw, CircleAlert, X, ChevronRight, Layers } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     getPack, listBuilds, createBuild, deleteBuild,
     type Pack, type PackBuild,
 } from '@/lib/api/packs';
-import { setSolderConfig } from '@/lib/api/solderPublish';
-import {
-    listPackClients, listClients, addPackClient, removePackClient,
-    type SolderClient,
-} from '@/lib/api/solderAccess';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
@@ -23,17 +18,8 @@ import { useRouteId } from '@/lib/routeParams';
 
 // Pack detail. Shows pack metadata + its builds. Each build pins a
 // Minecraft version + loader and links to the per-build content editor at
-// /modpacks/<id>/builds/<buildId>. Publish-target chips (solder/modrinth) are
-// simple text badges for now.
-
-// Solder config modal state
-interface SolderConfigForm {
-    solderDisplayName: string;
-    solderSlug: string;
-    private: boolean;
-    recommendedBuild: string;
-    latestBuild: string;
-}
+// /modpacks/<id>/builds/<buildId>. The publish-target chip (modrinth) is a
+// simple text badge for now.
 
 export default function PackDetailPage() {
     const paramId = useRouteId('modpacks');
@@ -49,19 +35,6 @@ export default function PackDetailPage() {
         versionString: string; minecraft: string; loader: string; loaderVersion: string;
     } | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<PackBuild | null>(null);
-
-    // Solder config modal
-    const [editingConfig, setEditingConfig] = useState(false);
-    const [configForm, setConfigForm] = useState<SolderConfigForm | null>(null);
-    const [configError, setConfigError] = useState('');
-    const [configSaving, setConfigSaving] = useState(false);
-
-    // Pack-client whitelist
-    const [assignedClients, setAssignedClients] = useState<SolderClient[]>([]);
-    const [allClients, setAllClients] = useState<SolderClient[]>([]);
-    const [clientsLoading, setClientsLoading] = useState(false);
-    const [selectedClientId, setSelectedClientId] = useState<number | ''>('');
-    const [clientsError, setClientsError] = useState('');
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
@@ -82,24 +55,6 @@ export default function PackDetailPage() {
         const unsubP = systemEvents.on('packs.changed', () => { refresh(); });
         return () => { unsubB(); unsubP(); };
     }, [packId, refresh]);
-
-    // Fetch client whitelist + all owner clients
-    const refreshClients = useCallback(async () => {
-        setClientsLoading(true);
-        setClientsError('');
-        try {
-            const [assigned, all] = await Promise.all([
-                listPackClients(packId).catch(() => { setClientsError('Failed to load assigned clients'); return [] as SolderClient[]; }),
-                listClients().catch(() => [] as SolderClient[]),
-            ]);
-            setAssignedClients(assigned);
-            setAllClients(all);
-        } finally {
-            setClientsLoading(false);
-        }
-    }, [packId]);
-
-    useEffect(() => { refreshClients(); }, [refreshClients]);
 
     const handleCreate = async () => {
         if (!creating) return;
@@ -130,70 +85,6 @@ export default function PackDetailPage() {
             showToast(res.message || 'Delete failed', false);
         }
     };
-
-    // Open the Solder config modal pre-filled from current pack data
-    const openConfigModal = () => {
-        if (!pack) return;
-        setConfigForm({
-            solderDisplayName: pack.solderDisplayName,
-            solderSlug: pack.solderSlug,
-            private: pack.private,
-            recommendedBuild: pack.recommendedBuild,
-            latestBuild: pack.latestBuild,
-        });
-        setConfigError('');
-        setEditingConfig(true);
-    };
-
-    const handleSaveConfig = async () => {
-        if (!configForm) return;
-        setConfigSaving(true);
-        setConfigError('');
-        const res = await setSolderConfig(packId, {
-            solderSlug: configForm.solderSlug,
-            solderDisplayName: configForm.solderDisplayName,
-            recommendedBuild: configForm.recommendedBuild || undefined,
-            latestBuild: configForm.latestBuild || undefined,
-            private: configForm.private,
-        });
-        setConfigSaving(false);
-        if (res.success) {
-            setEditingConfig(false);
-            showToast('Solder config saved.', true);
-            refresh();
-        } else {
-            setConfigError(res.message || 'Failed to save Solder config');
-        }
-    };
-
-    // Add a client to the pack whitelist
-    const handleAddClient = async () => {
-        if (!selectedClientId) return;
-        const res = await addPackClient(packId, Number(selectedClientId));
-        if (res.success) {
-            setSelectedClientId('');
-            await refreshClients();
-        } else {
-            showToast('Failed to add client', false);
-        }
-    };
-
-    // Remove a client from the pack whitelist
-    const handleRemoveClient = async (clientId: number) => {
-        const res = await removePackClient(packId, clientId);
-        if (res.success) {
-            await refreshClients();
-        } else {
-            showToast('Failed to remove client', false);
-        }
-    };
-
-    // Builds that are Solder-published (for recommended/latest dropdowns)
-    const solderBuilds = builds.filter(b => b.solderPublished);
-
-    // Clients available to add (not yet assigned)
-    const assignedIds = new Set(assignedClients.map(c => c.id));
-    const availableClients = allClients.filter(c => !assignedIds.has(c.id));
 
     if (loading) {
         return (
@@ -253,24 +144,10 @@ export default function PackDetailPage() {
                     <div className="text-xs text-(--base-06) font-mono">/{pack.internalSlug}</div>
                     {pack.summary && <p className="text-sm text-(--base-07) mt-1">{pack.summary}</p>}
                 </div>
-                <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={openConfigModal}
-                    title="Edit Solder config"
-                >
-                    <Edit size={12} />
-                    Edit
-                </button>
             </header>
 
             <div className="flex items-center gap-2 flex-wrap mb-4">
-                {pack.solderDisplayName && (
-                    <Badge variant="neutral">solder: {pack.solderDisplayName}</Badge>
-                )}
-                {/* Named for its axis: this is the Modrinth publish visibility,
-                    not the Solder one. Unqualified it read as a contradiction
-                    next to the whitelist card, which says "this pack is public"
-                    off pack.private - a different flag entirely. */}
+                {/* Named for its axis: this is the Modrinth publish visibility. */}
                 <Badge variant="neutral">modrinth visibility: {pack.modrinthVisibility}</Badge>
                 {pack.modrinthProjectId ? (
                     <a
@@ -283,7 +160,6 @@ export default function PackDetailPage() {
                 ) : (
                     <Badge variant="neutral">local only</Badge>
                 )}
-                {pack.private && <Badge variant="accent" icon={<Lock size={8} />}>private</Badge>}
             </div>
 
             <section>
@@ -324,7 +200,6 @@ export default function PackDetailPage() {
                                     </div>
                                     <div className="text-xs text-(--base-06) mt-0.5 flex items-center gap-2 flex-wrap">
                                         <span>Created {new Date(b.createdAt).toLocaleString()}</span>
-                                        <Badge variant={b.solderPublished ? 'success' : 'neutral'}>solder: {b.solderPublished ? 'published' : 'not published'}</Badge>
                                         <Badge variant={b.modrinthPublished ? 'success' : 'neutral'}>modrinth: {b.modrinthPublished ? 'published' : 'not published'}</Badge>
                                         {b.frozen && <Badge variant="warning">frozen</Badge>}
                                     </div>
@@ -346,115 +221,6 @@ export default function PackDetailPage() {
                                 </button>
                             </article>
                         ))}
-                    </div>
-                )}
-            </section>
-
-            {/* Pack-client whitelist section */}
-            <section className="mt-6">
-                <div className="flex items-center gap-2 mb-3">
-                    <UserCheck size={16} className="text-(--accent-light)" />
-                    <h2 className="text-sm font-medium text-(--base-09)">Solder Access (private packs)</h2>
-                </div>
-
-                {!pack.private ? (
-                    <div className="card p-3 mb-3 text-xs text-(--base-06) flex items-start gap-2">
-                        <CircleAlert size={14} className="text-(--base-05) shrink-0 mt-0.5" />
-                        <span>
-                            This pack is public; the whitelist is only enforced for private packs.
-                            Set the pack to private via <button onClick={openConfigModal} className="underline hover:text-(--base-09) cursor-pointer">Edit</button> to hide it from launchers that are not on the list.
-                        </span>
-                    </div>
-                ) : (
-                    // Said out loud because the old copy promised "restrict
-                    // launcher access", and the limit was measured: a private
-                    // pack answers 404 on the Solder API, while its mod zips
-                    // came back 200 with no credential. The Technic protocol
-                    // downloads mods anonymously, so an artifact URL is a
-                    // capability - the whitelist gates discovery, not download.
-                    <div className="card p-3 mb-3 text-xs text-(--base-06) flex items-start gap-2">
-                        <CircleAlert size={14} className="text-(--base-05) shrink-0 mt-0.5" />
-                        <span>
-                            Only whitelisted clients can find this pack through the launcher API.
-                            Downloads themselves carry no credential (the Technic protocol has no
-                            way to authenticate them), so anyone who already has a mod URL from this
-                            pack can keep fetching it. Treat the pack as unlisted, not secret.
-                        </span>
-                    </div>
-                )}
-
-                {clientsError && (
-                    <div className="card p-3 mb-3 text-xs text-(--error-light) flex items-start gap-2">
-                        <CircleAlert size={14} className="shrink-0 mt-0.5" />
-                        {clientsError}
-                    </div>
-                )}
-
-                {allClients.length === 0 && !clientsLoading ? (
-                    <div className="card p-6 flex flex-col items-center text-center gap-2">
-                        <UserX size={24} className="text-(--base-05)" />
-                        <p className="text-sm text-(--base-07)">No Solder clients yet.</p>
-                        <p className="text-xs text-(--base-06)">
-                            <Link href="/account/solder-clients" className="underline hover:text-(--base-09)">Create a client</Link>
-                            {' '}to control who can access this pack via the Technic Launcher.
-                        </p>
-                    </div>
-                ) : (
-                    <div className="card p-4 space-y-4">
-                        {/* Add client */}
-                        {availableClients.length > 0 && (
-                            <div className="flex items-center gap-2">
-                                <select
-                                    className="input-field flex-1"
-                                    value={selectedClientId}
-                                    onChange={e => setSelectedClientId(e.target.value ? Number(e.target.value) : '')}
-                                >
-                                    <option value="">Select a client to add…</option>
-                                    {availableClients.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
-                                </select>
-                                <button
-                                    className="btn btn-primary btn-sm"
-                                    onClick={handleAddClient}
-                                    disabled={!selectedClientId}
-                                >
-                                    <Plus size={12} />
-                                    Add
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Assigned clients */}
-                        {clientsLoading ? (
-                            <SkeletonList rows={2} />
-                        ) : assignedClients.length === 0 ? (
-                            <p className="text-xs text-(--base-06) text-center py-2">
-                                No clients whitelisted yet.
-                                {availableClients.length === 0 && allClients.length > 0 && ' All your clients are already assigned.'}
-                            </p>
-                        ) : (
-                            <div className="space-y-2">
-                                {assignedClients.map(c => (
-                                    <article key={c.id} className="flex items-center gap-3 py-1">
-                                        <UserCheck size={14} className="text-(--accent-light) shrink-0" />
-                                        <div className="min-w-0 flex-1">
-                                            <span className="text-sm text-(--base-09) font-medium">{c.name}</span>
-                                            <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm ml-2">
-                                                {c.uuid.slice(0, 8)}…
-                                            </span>
-                                        </div>
-                                        <button
-                                            onClick={() => handleRemoveClient(c.id)}
-                                            className="btn btn-icon btn-ghost"
-                                            title="Remove client"
-                                        >
-                                            <Trash2 size={13} className="text-(--error)" />
-                                        </button>
-                                    </article>
-                                ))}
-                            </div>
-                        )}
                     </div>
                 )}
             </section>
@@ -545,94 +311,6 @@ export default function PackDetailPage() {
                     </div>
                 </div>
             )}
-
-            {/* Solder config modal */}
-            {editingConfig && configForm && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setEditingConfig(false)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2">
-                                <Settings size={16} />
-                                Solder config
-                            </h3>
-                            <button onClick={() => setEditingConfig(false)} className="text-(--base-06)"><X size={16} /></button>
-                        </div>
-                        <div className="modal-body space-y-4">
-                            <div>
-                                <label className="input-label">Display name</label>
-                                <input
-                                    type="text"
-                                    value={configForm.solderDisplayName}
-                                    onChange={e => setConfigForm({ ...configForm, solderDisplayName: e.target.value })}
-                                    className="input-field w-full"
-                                    placeholder="My Modpack"
-                                    maxLength={128}
-                                />
-                            </div>
-                            <div>
-                                <label className="input-label">Solder slug</label>
-                                <input
-                                    type="text"
-                                    value={configForm.solderSlug}
-                                    onChange={e => setConfigForm({ ...configForm, solderSlug: e.target.value })}
-                                    className="input-mono w-full"
-                                    placeholder="my-modpack"
-                                    maxLength={64}
-                                />
-                                <p className="text-xs text-(--base-06) mt-1">Lowercase, <code className="font-mono">a-z 0-9 _ -</code>. This is the launcher slug.</p>
-                            </div>
-                            <div>
-                                <label className="input-label">Recommended build</label>
-                                <select
-                                    className="input-field w-full"
-                                    value={configForm.recommendedBuild}
-                                    onChange={e => setConfigForm({ ...configForm, recommendedBuild: e.target.value })}
-                                >
-                                    <option value="">(none)</option>
-                                    {solderBuilds.map(b => (
-                                        <option key={b.id} value={b.versionString}>{b.versionString}</option>
-                                    ))}
-                                </select>
-                                {solderBuilds.length === 0 && (
-                                    <p className="text-xs text-(--base-06) mt-1">No Solder-published builds yet — publish a build first.</p>
-                                )}
-                            </div>
-                            <div>
-                                <label className="input-label">Latest build</label>
-                                <select
-                                    className="input-field w-full"
-                                    value={configForm.latestBuild}
-                                    onChange={e => setConfigForm({ ...configForm, latestBuild: e.target.value })}
-                                >
-                                    <option value="">(none)</option>
-                                    {solderBuilds.map(b => (
-                                        <option key={b.id} value={b.versionString}>{b.versionString}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <label className="flex items-center gap-2 cursor-pointer select-none">
-                                <input
-                                    type="checkbox"
-                                    checked={configForm.private}
-                                    onChange={e => setConfigForm({ ...configForm, private: e.target.checked })}
-                                    className="checkbox"
-                                />
-                                <span className="text-sm text-(--base-09)">Private (require client whitelist)</span>
-                            </label>
-                            {configError && (
-                                <p className="text-xs text-(--error-light)">{configError}</p>
-                            )}
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setEditingConfig(false)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={handleSaveConfig} className="btn btn-primary" disabled={configSaving}>
-                                {configSaving ? 'Saving…' : 'Save'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
         </main>
     );
 }

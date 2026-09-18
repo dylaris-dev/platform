@@ -77,8 +77,8 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
 
     // Servers & content
     { page: 'servers', label: 'Sub-server limits', where: 'Servers & Content', keywords: ['sub-server', 'limit', 'max servers'] },
-    { page: 'modpacks', label: 'Modpack storage', where: 'Servers & Content → Modpacks', keywords: ['modpack', 'storage', 'paths', 's3', 'solder', 'archive'] },
-    { page: 'modpacks', label: 'Solder delivery mode', where: 'Servers & Content → Modpacks', keywords: ['solder', 'delivery', 'presigned', 'mirror', 'public', 'technic'] },
+    { page: 'modpacks', label: 'Modpack storage', where: 'Servers & Content → Modpacks', keywords: ['modpack', 'storage', 'paths', 's3', 'archive'] },
+    { page: 'modpacks', label: 'Pack download address', where: 'Servers & Content → Modpacks', keywords: ['core public url', 'mirror', 'download', 'address', 'install'] },
     { page: 'modpacks', label: 'Mod metadata cache', where: 'Servers & Content → Modpacks', keywords: ['redis', 'cache', 'modrinth', 'valkey', 'memory', 'metadata', 'separate redis'] },
     { page: 'filemanager', label: 'File manager transfer limits', where: 'Servers & Content', keywords: ['file', 'upload', 'download', 'limit', 'size'] },
 

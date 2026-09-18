@@ -8,8 +8,6 @@ import { listPacks, createPack, deletePack, type Pack } from '@/lib/api/packs';
 import UnlinkedContentWarning from '@/components/mods/UnlinkedContentWarning';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
-import ImportSolderDialog from '@/components/modpacks/ImportSolderDialog';
-import { DownloadCloud } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
@@ -31,9 +29,8 @@ export default function PacksListPage() {
     const [creatingPack, runCreate] = useBusy();
     const [deletingPack, runDelete] = useBusy();
     const [creating, setCreating] = useState<{
-        internalName: string; solderDisplayName: string; slug: string; summary: string;
+        internalName: string; slug: string; summary: string;
     } | null>(null);
-    const [importOpen, setImportOpen] = useState(false);
     const [deletePrompt, setDeletePrompt] = useState<Pack | null>(null);
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
@@ -58,7 +55,6 @@ export default function PacksListPage() {
             name: creating.internalName.trim(),
             slug: creating.slug.trim() || undefined,
             summary: creating.summary.trim() || undefined,
-            solderDisplayName: creating.solderDisplayName.trim() || undefined,
         });
         if (res.success && res.pack) {
             setCreating(null);
@@ -91,16 +87,7 @@ export default function PacksListPage() {
                         <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
                     </button>
                     <button
-                        onClick={() => setImportOpen(true)}
-                        className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={cannotAuthor}
-                        title={modpacksDisabled ? 'Modpack authoring is disabled' : noStorage ? 'Modpack storage is not configured' : 'Import a modpack from a Solder instance'}
-                    >
-                        <DownloadCloud size={13} />
-                        Import
-                    </button>
-                    <button
-                        onClick={() => setCreating({ internalName: '', solderDisplayName: '', slug: '', summary: '' })}
+                        onClick={() => setCreating({ internalName: '', slug: '', summary: '' })}
                         className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         disabled={cannotAuthor}
                         title={modpacksDisabled ? 'Modpack authoring is disabled' : noStorage ? 'Modpack storage is not configured' : undefined}
@@ -146,8 +133,8 @@ export default function PacksListPage() {
                     <Link href="/account/modrinth" className="text-(--accent-light) inline-flex items-center gap-1">
                         connect your PAT <ExternalLink size={9} />
                     </Link>
-                    ) or Solder. Each build pins a Minecraft version + loader and carries
-                    its own content list.
+                    ), export them as an .mrpack, or install them on a server. Each build
+                    pins a Minecraft version + loader and carries its own content list.
                 </div>
             </div>
 
@@ -186,9 +173,6 @@ export default function PacksListPage() {
                             </div>
                             {p.summary && <p className="text-xs text-(--base-07) line-clamp-2 mt-2">{p.summary}</p>}
                             <div className="mt-3 flex items-center gap-2 flex-wrap">
-                                {p.solderDisplayName && (
-                                    <Badge variant="neutral">solder: {p.solderDisplayName}</Badge>
-                                )}
                                 {p.modrinthProjectId
                                     ? <Badge variant="success">on modrinth</Badge>
                                     : <Badge variant="neutral">local only</Badge>
@@ -239,17 +223,6 @@ export default function PacksListPage() {
                                 <p className="text-xs text-(--base-06) mt-1">Lowercase, 2-64 chars: letters, digits, - or _</p>
                             </div>
                             <div>
-                                <label className="input-label">Solder display name (optional)</label>
-                                <input
-                                    type="text"
-                                    value={creating.solderDisplayName}
-                                    onChange={e => setCreating({ ...creating, solderDisplayName: e.target.value })}
-                                    className="input-field w-full"
-                                    placeholder="Name shown in the Technic/Solder launcher"
-                                    maxLength={128}
-                                />
-                            </div>
-                            <div>
                                 <label className="input-label">Summary (optional)</label>
                                 <input
                                     type="text"
@@ -294,17 +267,6 @@ export default function PacksListPage() {
                 </div>
             )}
 
-
-            {importOpen && (
-                <ImportSolderDialog
-                    onClose={() => setImportOpen(false)}
-                    onImported={(_packId, imported, builds) => {
-                        setImportOpen(false);
-                        showToast(`Imported ${imported} mods across ${builds} builds.`, true);
-                        refresh();
-                    }}
-                />
-            )}
         </main>
     );
 }

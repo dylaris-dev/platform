@@ -19,38 +19,19 @@ export interface ModpackSettings {
     s3SecretKey?: string;
     updateCheckIntervalHours: number;
     shareLinksEnabled: boolean;
-    // Public base a Solder client downloads artifacts from. corePublicUrl is
-    // used for local/core-storage (Core serves /solder/mirror/ itself),
-    // solderMirrorUrl for s3. Whichever applies must be set or the public
-    // Solder pack list answers 500.
+    // Core's own public origin. A node installing a pack built here downloads it
+    // from {corePublicUrl}/mirror/, so an unset one means such a pack cannot be
+    // installed on a server.
     corePublicUrl: string;
-    solderMirrorUrl: string;
     // References a saved storage connection. When set (> 0), modpack storage is
     // built from that connection and the inline s3 fields are ignored.
     connectionId?: number;
-    solderDeliveryMode: 'core' | 'presigned' | 'public';
     // The origin the settings request itself arrived on, offered as a one-click
     // suggestion for corePublicUrl. Read-only: sending it back changes nothing,
     // and Core never persists it on its own (see requestOrigin in Core - the
     // Host header is client-controlled, so it is a suggestion an admin accepts,
     // not a value that writes itself).
     detectedCorePublicUrl?: string;
-}
-
-// Capabilities the backend can actually serve a Solder build through, used to
-// grey out delivery modes the current storage config can't satisfy instead of
-// letting the admin pick one that 500s at download time.
-export interface DeliveryCapabilities {
-    // Whether modpack storage resolves to a real provider at all. The same
-    // predicate every write path checks before answering 424.
-    storageConfigured: boolean;
-    canPresign: boolean;
-    publicConfigured: boolean;
-    publicReachable: boolean | null;
-    // How many Solder-capable packs are private/hidden; public mode would place
-    // their files in a publicly readable bucket, so the panel warns.
-    privatePackCount: number;
-    notes: { presigned?: string; public?: string; storage?: string };
 }
 
 export interface GetModpackSettingsResponse {
@@ -74,13 +55,6 @@ export async function setModpackSettings(s: ModpackSettings): Promise<{ success:
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify(s),
         });
-        return (await handleResponse(res)) as any;
-    } catch (err) { return handleError(err) as any; }
-}
-
-export async function getModpackDeliveryCapabilities(): Promise<{ success: boolean; capabilities?: DeliveryCapabilities; message?: string }> {
-    try {
-        const res = await fetch(`${API_URL}/admin/settings/modpacks/delivery-capabilities`, { headers: getAuthHeader() });
         return (await handleResponse(res)) as any;
     } catch (err) { return handleError(err) as any; }
 }

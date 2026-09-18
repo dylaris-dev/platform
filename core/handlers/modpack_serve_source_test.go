@@ -28,7 +28,7 @@ func TestPublicPackRoutesNeverCallGet(t *testing.T) {
 		path  string
 		route string
 	}{
-		{path: "solder_mirror.go", route: "GET /solder/mirror/{rest} (unauthenticated)"},
+		{path: "modpack_mirror.go", route: "GET /mirror/{rest} (unauthenticated)"},
 		{path: "packs_share.go", route: "GET /api/share/{token} (unauthenticated)"},
 	}
 

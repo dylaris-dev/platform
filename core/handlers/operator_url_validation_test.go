@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// Two operator-set URLs were stored with no check at all while three siblings
-// (core public URL, solder mirror URL, custom tab URL) all validated scheme and
+// Two operator-set URLs were stored with no check at all while their siblings
+// (core public URL, custom tab URL) validated scheme and
 // host:
 //
 //   - beam.download_link is a URL Core GETs server-side and streams to the

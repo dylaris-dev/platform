@@ -92,7 +92,7 @@ func (f *serveFakeProvider) Stat(context.Context, string) (int64, bool, error) {
 func serveRequest(t *testing.T, prov modpack.ModpackStorageProvider, mode modpackDelivery) (*httptest.ResponseRecorder, error) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/solder/mirror/modpacks/pack.mrpack", nil)
+	req := httptest.NewRequest(http.MethodGet, "/mirror/modpacks/pack.mrpack", nil)
 	err := serveModpackObject(rec, req, prov, "modpacks/pack.mrpack", mode, "application/zip", "pack.mrpack")
 	return rec, err
 }
@@ -132,11 +132,11 @@ func TestServeModpackObject_StreamsInsteadOfBuffering(t *testing.T) {
 	}
 }
 
-// TestServeModpackObject_StreamModeNeverRedirects pins the Solder mirror's
-// deliberate limit. That route serves the Technic launcher, whose redirect
-// behaviour this codebase cannot verify, so deliverStream must not quietly
-// start handing out 302s just because the backend gained the ability to
-// presign.
+// TestServeModpackObject_StreamModeNeverRedirects pins the pack mirror's
+// deliberate limit. A node downloads from it against a host allowlist
+// (MODPACK_MIRROR_HOSTS), and a redirect to the storage bucket would step
+// outside that list, so deliverStream must not quietly start handing out 302s
+// just because the backend gained the ability to presign.
 func TestServeModpackObject_StreamModeNeverRedirects(t *testing.T) {
 	f := &serveFakeProvider{t: t, body: "pack-bytes", size: 10, presignURL: "https://objects.example/pack"}
 

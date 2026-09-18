@@ -1332,15 +1332,18 @@ func TestCap_ModuleMutationsPanel(t *testing.T) {
 	}
 }
 
-// TestCap_ModpackSolderOwnerChokepointOpen documents the F2 design for Phase 4
-// Task 20's OWNER-scope modpack.* routes: the modpack builder (/me/packs,
-// /packs/{id}/...) and the session-authed solder client/key management
-// (/solder/clients, /solder/keys, /packs/{id}/clients) all carry no server
-// {id}/{uuid}, so RequireCap resolves serverID==0 -> ownerSelf and passes the
-// chokepoint for ANY authenticated user. The real per-realm boundary is
-// packsHandler.ownsPack / solder_manage.go's solderCaller+ownsPackAndClient
-// (both keyed on owner_user_id), which is untouched by this batch.
-func TestCap_ModpackSolderOwnerChokepointOpen(t *testing.T) {
+// TestCap_ModpackOwnerChokepointOpen documents the F2 design for Phase 4 Task
+// 20's OWNER-scope modpack.* routes: the pack builder (/me/packs,
+// /packs/{id}/...) carries no server {id}/{uuid}, so RequireCap resolves
+// serverID==0 -> ownerSelf and passes the chokepoint for ANY authenticated
+// user. The real per-realm boundary is packsHandler.ownsPack (keyed on the
+// pack's owner), which is untouched by this batch.
+//
+// It used to assert the same for /api/solder/clients and /api/solder/keys.
+// Those routes are gone with Solder, and an unregistered path does not answer
+// 403 either - so those two assertions would have gone on passing while
+// testing nothing. Removed rather than left green.
+func TestCap_ModpackOwnerChokepointOpen(t *testing.T) {
 	fs := &authzFakeStore{}
 	fs.addUser("owner-id", "owner", false)
 	srv := newAuthzTestServer(t, fs)
@@ -1353,12 +1356,6 @@ func TestCap_ModpackSolderOwnerChokepointOpen(t *testing.T) {
 	}
 	if c := doAs(t, srv, "GET", "/api/me/modrinth-pat", id); c == 403 {
 		t.Error("OWNER modpack.read (modrinth PAT) must not 403 at the chokepoint for an authed user")
-	}
-	if c := doAs(t, srv, "GET", "/api/solder/clients", id); c == 403 {
-		t.Error("OWNER modpack.read (solder clients, session-authed) must not 403 at the chokepoint for an authed user")
-	}
-	if c := doAs(t, srv, "GET", "/api/solder/keys", id); c == 403 {
-		t.Error("OWNER modpack.read (solder keys, session-authed) must not 403 at the chokepoint for an authed user")
 	}
 }
 

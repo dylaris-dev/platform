@@ -33,8 +33,8 @@ func (w walkedRoute) keys() []string {
 // asks the built router what it actually serves and demands the two agree.
 //
 // The only permitted difference is a subrouter's own mount point - mux reports
-// "/api" and "/solder" as routes because a subrouter is attached as one, but
-// neither serves anything itself, and it is the nil handler that says so. A
+// "/api" as a route because a subrouter is attached as one, but it serves
+// nothing itself, and it is the nil handler that says so. A
 // path test would not do: "/api/tabproxy/{token}" is a real route that also
 // carries no methods and also has a longer sibling below it.
 func TestAPIDocCoversEveryRegisteredRoute(t *testing.T) {

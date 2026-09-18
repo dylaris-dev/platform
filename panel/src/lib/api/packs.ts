@@ -9,12 +9,6 @@ export interface Pack {
     internalName: string;
     internalSlug: string;
     summary: string;
-    solderDisplayName: string;
-    solderSlug: string;
-    hidden: boolean;
-    private: boolean;
-    recommendedBuild: string;
-    latestBuild: string;
     modrinthProjectId: string;
     modrinthProjectName: string;
     modrinthVisibility: string;
@@ -31,7 +25,6 @@ export interface PackBuild {
     loaderVersion: string;
     channel: string;
     frozen: boolean;
-    solderPublished: boolean;
     modrinthPublished: boolean;
     // Storage key of the rendered .mrpack once persisted (beta/release publish).
     // Empty on drafts — those are still installable, Core renders on the fly.
@@ -76,7 +69,7 @@ async function send(path: string, method: string, body?: unknown) {
 }
 
 export const listPacks = () => get<Pack[]>('/me/packs', [], 'packs');
-export const createPack = (input: { name: string; slug?: string; summary?: string; solderDisplayName?: string; solderSlug?: string }) => send('/me/packs', 'POST', input);
+export const createPack = (input: { name: string; slug?: string; summary?: string }) => send('/me/packs', 'POST', input);
 export const getPack = (id: number) => get<Pack | null>(`/packs/${id}`, null, 'pack');
 export const updatePack = (id: number, input: Partial<Pack>) => send(`/packs/${id}`, 'PATCH', input);
 export const deletePack = (id: number) => send(`/packs/${id}`, 'DELETE');

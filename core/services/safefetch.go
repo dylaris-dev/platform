@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// importFetchUA identifies our import fetcher to upstream servers.
-const importFetchUA = "Dylaris/1.0 (dylaris solder import)"
+// importFetchUA identifies this fetcher to upstream servers. It was written for
+// the Solder import, which is gone; the modpack snapshot is what uses it now.
+const importFetchUA = "Dylaris/1.0 (modpack fetch)"
 
 // isDisallowedIP reports whether an IP must never be dialed by the import
 // fetcher. It blocks loopback, private (RFC1918 / IPv6 ULA), link-local

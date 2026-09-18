@@ -3,7 +3,6 @@ package modpack
 import (
 	"archive/zip"
 	"bytes"
-	"io"
 	"testing"
 )
 
@@ -60,50 +59,6 @@ func TestIsUnsafeEntryPath(t *testing.T) {
 	}
 }
 
-func TestHasUnsafeZipEntry(t *testing.T) {
-	t.Run("all safe entries", func(t *testing.T) {
-		zipBytes := buildZip(t, map[string][]byte{
-			"mods/example.jar": []byte("jar-bytes"),
-			"config/x.txt":     []byte("config"),
-		})
-		if HasUnsafeZipEntry(zipBytes) {
-			t.Error("expected a fully safe archive to report no unsafe entry")
-		}
-	})
-
-	t.Run("one traversal entry among safe ones", func(t *testing.T) {
-		zipBytes := buildZip(t, map[string][]byte{
-			"mods/example.jar": []byte("jar-bytes"),
-			"../../evil.jar":   []byte("evil"),
-		})
-		if !HasUnsafeZipEntry(zipBytes) {
-			t.Error("expected the traversal entry to be detected")
-		}
-	})
-
-	t.Run("absolute path entry", func(t *testing.T) {
-		zipBytes := buildZip(t, map[string][]byte{
-			"/etc/passwd": []byte("evil"),
-		})
-		if !HasUnsafeZipEntry(zipBytes) {
-			t.Error("expected the absolute-path entry to be detected")
-		}
-	})
-
-	t.Run("empty archive is safe", func(t *testing.T) {
-		zipBytes := buildZip(t, map[string][]byte{})
-		if HasUnsafeZipEntry(zipBytes) {
-			t.Error("expected an empty archive to report no unsafe entry")
-		}
-	})
-
-	t.Run("unreadable bytes are treated as unsafe", func(t *testing.T) {
-		if !HasUnsafeZipEntry([]byte("not a zip file")) {
-			t.Error("expected unreadable zip bytes to be treated as unsafe")
-		}
-	})
-}
-
 func TestReadZipEntry(t *testing.T) {
 	content := bytes.Repeat([]byte("x"), 100)
 	zipBytes := buildZip(t, map[string][]byte{
@@ -154,90 +109,4 @@ func TestReadZipEntry(t *testing.T) {
 			t.Error("expected ok=false for unreadable zip bytes")
 		}
 	})
-}
-
-func TestFirstInnerJar(t *testing.T) {
-	t.Run("finds the jar, skipping non-jar files", func(t *testing.T) {
-		zipBytes := buildZip(t, map[string][]byte{
-			"config/readme.txt": []byte("not a jar"),
-			"mods/example.jar":  []byte("jar-content"),
-		})
-		name, data, ok := FirstInnerJar(zipBytes)
-		if !ok {
-			t.Fatal("expected ok=true")
-		}
-		if name != "example.jar" {
-			t.Errorf("name = %q, want %q", name, "example.jar")
-		}
-		if string(data) != "jar-content" {
-			t.Errorf("data = %q, want %q", data, "jar-content")
-		}
-	})
-
-	t.Run("case-insensitive .jar suffix match", func(t *testing.T) {
-		zipBytes := buildZip(t, map[string][]byte{
-			"mods/Example.JAR": []byte("jar-content"),
-		})
-		name, _, ok := FirstInnerJar(zipBytes)
-		if !ok || name != "Example.JAR" {
-			t.Errorf("expected the .JAR entry to match, got name=%q ok=%v", name, ok)
-		}
-	})
-
-	t.Run("no jar entry present", func(t *testing.T) {
-		zipBytes := buildZip(t, map[string][]byte{
-			"config/readme.txt": []byte("not a jar"),
-		})
-		_, _, ok := FirstInnerJar(zipBytes)
-		if ok {
-			t.Error("expected ok=false when the archive has no .jar entry")
-		}
-	})
-
-	t.Run("unreadable zip bytes", func(t *testing.T) {
-		_, _, ok := FirstInnerJar([]byte("not a zip"))
-		if ok {
-			t.Error("expected ok=false for unreadable zip bytes")
-		}
-	})
-
-	t.Run("decompression-bomb cap rejects an oversize jar entry", func(t *testing.T) {
-		// Builds a REAL zip whose single entry decompresses to
-		// maxInnerJarBytes+1 (512 MiB + 1 byte). All-zero content is highly
-		// compressible, so the zip itself stays ~500KiB and this subtest
-		// finishes in about a second - the only way to exercise the real cap
-		// without touching production code: maxInnerJarBytes is an
-		// unexported const, and unlike ReadZipEntry, FirstInnerJar does not
-		// pre-check declared size before reading, so only actually exceeding
-		// the cap while reading trips the ok=false branch.
-		var buf bytes.Buffer
-		zw := zip.NewWriter(&buf)
-		w, err := zw.Create("mods/bomb.jar")
-		if err != nil {
-			t.Fatalf("create bomb entry: %v", err)
-		}
-		if _, err := io.CopyN(w, zeroReader{}, maxInnerJarBytes+1); err != nil {
-			t.Fatalf("write bomb entry: %v", err)
-		}
-		if err := zw.Close(); err != nil {
-			t.Fatalf("close zip writer: %v", err)
-		}
-		_, _, ok := FirstInnerJar(buf.Bytes())
-		if ok {
-			t.Error("expected ok=false for a jar entry exceeding maxInnerJarBytes")
-		}
-	})
-}
-
-// zeroReader streams an unbounded run of zero bytes without materializing
-// the whole payload in memory, so the bomb-cap test above can cheaply build
-// a >512MiB decompressed entry. io.CopyN wraps it in an io.LimitReader, so
-// zeroReader itself never needs to signal EOF.
-type zeroReader struct{}
-
-func (zeroReader) Read(p []byte) (int, error) {
-	for i := range p {
-		p[i] = 0
-	}
-	return len(p), nil
 }

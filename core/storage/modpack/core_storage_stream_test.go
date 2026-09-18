@@ -76,7 +76,7 @@ func (*countingProvider) ListMultipart(context.Context, string, string) (backup.
 // queueing for a second, and acquireFS deliberately never times out: with
 // enough concurrent streams every slot ends up held by a reader whose owner is
 // waiting for a slot that can never free, and every filesystem operation in
-// Core stops. The public Solder mirror is one of the callers.
+// Core stops. The public pack mirror is one of the callers.
 //
 // The assertion is therefore "exactly one acquisition", expressed as the call
 // counts, because the deadlock itself only appears under concurrency and a

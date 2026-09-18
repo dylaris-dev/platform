@@ -784,7 +784,7 @@ type Store interface {
 	GetModrinthPAT(userID string) (*models.ModrinthPAT, error)
 	ClearModrinthPAT(userID string) error
 
-	// --- Unified packs (Solder + Modrinth) ---
+	// --- Packs (the pack builder) ---
 	CreatePack(p *models.Pack) (int, error)
 	UpdatePack(p *models.Pack) error
 	DeletePack(id int, ownerID string) error
@@ -795,57 +795,12 @@ type Store interface {
 	DeletePackBuild(id, packID int) error
 	GetPackBuild(id int) (*models.PackBuild, error)
 	ListPackBuilds(packID int) ([]models.PackBuild, error)
-	// Public Solder lookups (addressed by SolderSlug + version string, not numeric ID).
-	GetPackBySolderSlug(slug string) (*models.Pack, error)
-	// Per-account Solder addressing. Slugs are unique per OWNER, so a bare slug
-	// is only an address once the account is known.
-	GetPackBySolderSlugForOwner(ownerID, slug string) (*models.Pack, error)
-	ListPublicSolderPacksByOwner(ownerID string) ([]models.Pack, error)
-	GetUserIDBySolderHandle(handle string) (string, error)
-	GetSolderHandle(userID string) (string, error)
-	SetSolderHandle(userID, handle string) error
-	GetPackBuildByVersion(packID int, versionString string) (*models.PackBuild, error)
-	ListSolderPublishedBuilds(packID int) ([]models.PackBuild, error)
-	ListPublicSolderPacks() ([]models.Pack, error)
-	// CountPrivateSolderPacks counts Solder-capable packs (have a solder_slug)
-	// that are private or hidden - used to warn before enabling public delivery.
-	CountPrivateSolderPacks() (int, error)
-	// AnyPublishedSolderModKey returns one storage key reachable through a
-	// published Solder build, or "" when there is none - the public-delivery
-	// probe needs a real object to ask a definitive question.
-	AnyPublishedSolderModKey() (string, error)
-	// Access-controlled Solder pack listings (Phase 3c).
-	ListAllSolderPacks(ownerID string) ([]models.Pack, error)
-	ListSolderPacksForClient(clientID int) ([]models.Pack, error)
-
-	// Solder clients (per-owner Technic Launcher identities for pack whitelisting).
-	CreateSolderClient(name, ownerID string) (*SolderClient, error)
-	ListSolderClientsByOwner(ownerID string) ([]SolderClient, error)
-	GetSolderClient(id int, ownerID string) (*SolderClient, error)
-	DeleteSolderClient(id int, ownerID string) error
-	GetSolderClientByUUID(uuid string) (*SolderClient, error)
-
-	// Pack-client whitelist.
-	AddPackClient(packID, clientID int) error
-	RemovePackClient(packID, clientID int) error
-	ListPackClients(packID int) ([]SolderClient, error)
-	IsPackClient(packID, clientID int) (bool, error)
-
-	// Solder keys (global API keys; only the sha256 hash is stored).
-	CreateSolderKey(name, ownerID, keyHash string) (*SolderKey, error)
-	ListSolderKeysByOwner(ownerID string) ([]SolderKey, error)
-	DeleteSolderKey(id int, ownerID string) error
-	GetSolderKeyByHash(keyHash string) (*SolderKey, error)
 
 	// --- Share links (tokenized build download links) ---
 	CreateShareLink(l *models.ShareLink) (int, error)
 	GetShareLinkByToken(token string) (*models.ShareLink, error)
 	ListShareLinksByBuild(buildID int) ([]models.ShareLink, error)
 	RevokeShareLink(id int, createdBy string) error
-
-	GetLoader(minecraft, loader, loaderVersion string) (*models.Loader, error)
-	UpsertLoader(l *models.Loader) (int, error)
-	UpdateLoaderStatus(minecraft, loader, loaderVersion, status, buildError string) error
 
 	UpsertMod(m *models.Mod) (int, error)
 	GetModBySlug(ownerID, slug string) (*models.Mod, error)

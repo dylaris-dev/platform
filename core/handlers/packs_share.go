@@ -99,7 +99,7 @@ func (h *PacksHandler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeShare GET /api/share/{token} is PUBLIC, unauthenticated. Registered on the
-// root router as a sibling of /solder so it bypasses setup-lock, maintenance, and
+// root router as a sibling of /mirror so it bypasses setup-lock, maintenance, and
 // auth (the token is the credential). The modpacks feature is gated in-handler.
 func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 	// Uniform 404 for every negative case (feature off, unknown/revoked/expired
@@ -142,8 +142,10 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Storage unavailable", http.StatusInternalServerError)
 			return
 		}
-		// deliverRedirect is safe here where it is not on the Solder mirror:
-		// this link is opened by a browser, and browsers follow a 302. On an
+		// deliverRedirect is safe here where the pack mirror streams instead:
+		// this link is opened by a browser, and browsers follow a 302, while a
+		// node downloads from the mirror against a host allowlist that a
+		// storage-bucket redirect would step outside of. On an
 		// S3-backed modpack storage the pack then never enters this process
 		// at all.
 		filename := pack.InternalSlug + "-" + build.VersionString + ".mrpack"

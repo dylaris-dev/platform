@@ -86,7 +86,7 @@ func (h *DNSHandler) buildDNSCheckConfig() services.DNSCheckConfig {
 	// reporting a missing record.
 	//
 	// It used to read core_public_url, which answers a different question (the
-	// absolute base for Solder mod URLs) and is unset on a platform that serves
+	// base a node downloads a built pack from) and is unset on a platform that serves
 	// no modpacks. That produced a permanent "no API address is set" against a
 	// panel whose API was working.
 	if host, dial := hostAndDialTarget(h.state.PanelAPIURL); host != "" && !strings.EqualFold(host, cfg.PanelHost) {

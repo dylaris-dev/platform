@@ -62,8 +62,8 @@ type DNSCheckConfig struct {
 	// browser calls /api on the origin it was loaded from.
 	//
 	// It used to be read from core_public_url, which is a different question
-	// with a different answer: that setting builds absolute mod URLs for Solder
-	// clients. An operator who had never touched it was told no API address was
+	// with a different answer: that setting is the base a node downloads a built
+	// pack from. An operator who had never touched it was told no API address was
 	// set, while the panel it was supposedly breaking worked fine.
 	APIHost       string
 	APIDialTarget string

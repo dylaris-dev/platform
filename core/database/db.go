@@ -287,7 +287,7 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 		return err
 	}
 
-	if err := applySolderTenancySchema(db); err != nil {
+	if err := applySolderRemoval(db); err != nil {
 		return err
 	}
 

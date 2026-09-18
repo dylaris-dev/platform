@@ -166,14 +166,19 @@ func (s *PostgresStore) DeleteStorageManifest(id int) error {
 }
 
 // modpackStorageKeysSQL is the union query behind ListModpackStorageKeys.
-// Exposed as a function so a test can assert all three sources are covered
-// without a live database.
+// Exposed as a function so a test can assert both sources are covered without
+// a live database.
 //
 // The modpacks key space is NOT enumerable from the provider:
 // ModpackStorageProvider has no List, and adding one is meaningless for
 // LocalProvider (which mirrors across N paths, so "the" key space is
-// ambiguous). The keys therefore come from the three DB columns that point at
-// storage. Blank values are skipped - all three columns DEFAULT ”.
+// ambiguous). The keys therefore come from the two DB columns that point at
+// storage. Blank values are skipped - both columns DEFAULT ”.
+//
+// There used to be a third source, the Solder loader zips (loaders.client_storage_key).
+// Solder is gone and so is that table; any loaders/ objects still in a bucket are
+// orphans that no row points at, which is exactly what the CONSEQUENCE below says
+// this check cannot see.
 //
 // CONSEQUENCE, surfaced in the panel: verification of the modpacks data set is
 // authoritative for REFERENCED objects only. An orphan in storage that no DB
@@ -181,9 +186,7 @@ func (s *PostgresStore) DeleteStorageManifest(id int) error {
 func modpackStorageKeysSQL() string {
 	return `SELECT storage_key FROM modversions WHERE storage_key <> ''
 UNION
-SELECT mrpack_storage_key FROM pack_builds WHERE mrpack_storage_key <> ''
-UNION
-SELECT client_storage_key FROM loaders WHERE client_storage_key <> ''`
+SELECT mrpack_storage_key FROM pack_builds WHERE mrpack_storage_key <> ''`
 }
 
 // ListModpackStorageKeys returns the deduplicated union of every modpack
@@ -209,13 +212,12 @@ func (s *PostgresStore) ListModpackStorageKeys() ([]string, error) {
 }
 
 // ListModversionSHA512ByStorageKey maps a modversion's storage key to the
-// Modrinth/Solder-supplied SHA-512 recorded for that mod file, skipping rows
+// Modrinth-supplied SHA-512 recorded for that mod file, skipping rows
 // with no key or no hash.
 //
 // This is an OPPORTUNISTIC integrity signal about pre-existing data, never a
 // manifest source of truth: the hashes are third-party-supplied, they exist
-// only for modversions (not for mrpack_storage_key or client_storage_key
-// objects), and nothing verifies them against storage today. The manifest's
+// only for modversions (not for mrpack_storage_key objects), and nothing verifies them against storage today. The manifest's
 // checksum column is always the freshly computed SHA-256.
 func (s *PostgresStore) ListModversionSHA512ByStorageKey() (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT storage_key, sha512 FROM modversions WHERE storage_key <> '' AND sha512 <> ''`)

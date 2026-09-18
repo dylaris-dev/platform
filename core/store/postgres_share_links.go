@@ -38,8 +38,8 @@ func (s *PostgresStore) CreateShareLink(l *models.ShareLink) (int, error) {
 	return id, err
 }
 
-// GetShareLinkByToken returns nil,nil when no row matches (public lookup style,
-// same as GetPackBySolderSlug) so the caller can 404 uniformly.
+// GetShareLinkByToken returns nil,nil when no row matches so the caller
+// can 404 uniformly.
 func (s *PostgresStore) GetShareLinkByToken(token string) (*models.ShareLink, error) {
 	row := s.db.QueryRow(`SELECT `+shareLinkCols+`
 		FROM share_links WHERE token=$1`, token)

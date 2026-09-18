@@ -126,8 +126,8 @@ func normalizeSide(side string) string {
 
 // fetchMrpackForSnapshot pulls an external .mrpack for the snapshot through the
 // hardened services.SafeFetch (SSRF-safe, size-capped, timeout-bounded). The
-// host is pre-restricted to cdn.modrinth.com or the platform's own Solder-mirror
-// host; every other host is refused.
+// host is pre-restricted to cdn.modrinth.com or this Core's own pack mirror host;
+// every other host is refused.
 func (h *ServerHandler) fetchMrpackForSnapshot(rawURL string) ([]byte, error) {
 	if !h.isSnapshotFetchHostAllowed(rawURL) {
 		return nil, fmt.Errorf("host not allowlisted for snapshot fetch: %q", rawURL)
@@ -135,8 +135,8 @@ func (h *ServerHandler) fetchMrpackForSnapshot(rawURL string) ([]byte, error) {
 	return services.SafeFetch(context.Background(), rawURL, mrpackSnapshotMaxBytes, 30*time.Second)
 }
 
-// isSnapshotFetchHostAllowed permits cdn.modrinth.com and the platform's own
-// Solder-mirror host (a rendered pack .mrpack lives there).
+// isSnapshotFetchHostAllowed permits cdn.modrinth.com and this Core's own pack
+// mirror host (a rendered pack .mrpack lives there).
 func (h *ServerHandler) isSnapshotFetchHostAllowed(rawURL string) bool {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -146,7 +146,7 @@ func (h *ServerHandler) isSnapshotFetchHostAllowed(rawURL string) bool {
 	if host == "cdn.modrinth.com" {
 		return true
 	}
-	if base, err := solderMirrorBase(h.state.Store.GetSetting); err == nil {
+	if base, err := modpackMirrorBase(h.state.Store.GetSetting); err == nil {
 		if mu, err := url.Parse(base); err == nil && strings.EqualFold(mu.Hostname(), host) {
 			return true
 		}

@@ -49,8 +49,8 @@ by a customer's warp client, not by a user.
 Check the Gates column and the description: `/api/store/*` authenticates with a
 shared `X-Store-Key` header inside the handler, and the four tab-proxy routes
 trust only the host-only `dyl_tabproxy` ticket cookie. Genuinely public are the
-health probe, the Solder API the Technic launcher calls, share links, and the
-login, registration, password-reset and setup-wizard endpoints.
+health probe, the pack mirror a node installs a built pack from, share links,
+and the login, registration, password-reset and setup-wizard endpoints.
 
 ## Authorization (the Capability column)
 
@@ -70,8 +70,8 @@ The italic values say why a route declares none:
   helpers that any authenticated caller may use. Which one it is, is in the
   Notes.
 - **_public_** - no credential and no capability. These are the login,
-  registration and reset endpoints, the health probe, the Solder API the
-  Technic launcher calls, share links, and the tab proxy, which authenticates
+  registration and reset endpoints, the health probe, the pack mirror, share
+  links, and the tab proxy, which authenticates
   itself with a ticket cookie inside the handler.
 - **_uncapped method_** - this method carries no capability, but its path
   template does, guarding a different method on the same path. Five `GET`s sit
@@ -99,15 +99,13 @@ Two pieces of middleware run before any per-route handling:
    maintenance back off.
 
 Routes registered on the root router bypass both by design: `/healthz` (infra
-probes must answer during setup and maintenance), the whole `/solder` subtree
-(the Technic launcher must keep reaching published packs), `/api/share/{token}`,
+probes must answer during setup and maintenance), `/mirror/{rest}` (a node
+installing a built pack must reach it whatever the panel's state), `/api/share/{token}`,
 and the four tab-proxy routes.
 
 ## Errors and limits
 
 Errors are `{"success": false, "message": "..."}` with the matching HTTP status.
-The Solder subtree is the exception: it answers `{"error": "..."}` because the
-launcher expects that shape.
 
 `Limit` in the Gates column is a per-client-IP request budget per minute; over
 it, the answer is `429` with `Retry-After: 60`. `LimitBody` caps the request

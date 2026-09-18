@@ -98,19 +98,11 @@ var ExemptRoutes = map[string]bool{
 	"/api/external/servers/{uuid}/backup-jobs":                        true,
 	"/api/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger": true,
 
-	// Public Solder API (Technic Launcher) - registered on the ROOT router
-	// with no setup-lock/maintenance/auth middleware, including its own
-	// subrouter mount point.
-	"/solder":                                       true,
-	"/solder/u/{handle}/api":                        true,
-	"/solder/u/{handle}/api/":                       true,
-	"/solder/u/{handle}/api/modpack":                true,
-	"/solder/u/{handle}/api/modpack/{slug}":         true,
-	"/solder/u/{handle}/api/modpack/{slug}/{build}": true,
-	"/solder/u/{handle}/api/verify/{key}":           true,
-	"/solder/api":                                   true,
-	"/solder/api/":                                  true,
-	"/solder/mirror/{rest:.*}":                      true,
+	// The pack mirror a node downloads a panel-built pack from - registered on
+	// the ROOT router with no setup-lock/maintenance/auth middleware. The
+	// storage key carries an HMAC of CLUSTER_SECRET, which is the credential;
+	// the handler serves modpacks/ keys only, and the route is rate limited.
+	"/mirror/{rest:.*}": true,
 
 	// --- AUTHED-EXEMPT (AuthMiddleware only; in-handler filter / self / helper) ---
 

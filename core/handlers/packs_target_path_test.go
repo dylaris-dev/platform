@@ -27,10 +27,9 @@ func modrinthEntry(targetPath string) models.BuildContentEntry {
 // files[].path is a path the LAUNCHER writes to, so a traversal-bearing target
 // path in the manifest is the manifest's version of a zip slip.
 //
-// renderServerPack's streamModrinthContent and the Solder render both already
-// refuse this exact field - the Solder one says so in a comment naming the
-// other. buildMrpackIndex was the third reader and the one with no check, and
-// an exported .mrpack is a file that leaves the platform.
+// renderServerPack's streamModrinthContent already refuses this exact field.
+// buildMrpackIndex was a reader with no check, and an exported .mrpack is a file
+// that leaves the platform.
 func TestTheMrpackManifestRefusesATraversalTargetPath(t *testing.T) {
 	pack := &models.Pack{InternalName: "p", InternalSlug: "p"}
 	build := &models.PackBuild{VersionString: "1.0", Minecraft: "1.21", Loader: "fabric"}

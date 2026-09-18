@@ -57,9 +57,9 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "The target Minecraft version is the one this build already uses", http.StatusBadRequest)
 		return
 	}
-	// VersionString feeds storage keys (mrpack + solder manifest) and a download
-	// filename, the same constraint CreateBuild enforces.
-	if !safeSolderKeyComponent(req.VersionString) {
+	// VersionString feeds the download filename and the node-side install paths:
+	// the same constraint CreateBuild enforces.
+	if !safeKeyComponent(req.VersionString) {
 		sendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 		return
 	}
@@ -144,7 +144,6 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		copiedUploads = append(copiedUploads, migratedItem{ModversionID: mvID, Title: e.PrettyName, Version: e.Version})
 	}
 
-	go h.EnsureLoader(target.Minecraft, target.Loader, target.LoaderVersion)
 	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": source.PackID})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{

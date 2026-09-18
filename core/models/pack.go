@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// Content types (what a mods row represents inside a Solder-style pack).
+// Content types (what a mods row represents inside a pack).
 const (
 	ContentTypeMod          = "mod"
 	ContentTypeResourcepack = "resourcepack"
@@ -11,7 +11,7 @@ const (
 	ContentTypeOther        = "other"
 )
 
-// Per-build side (maps to Solder inclusion and mrpack env).
+// Per-build side (maps to the mrpack env and server-pack inclusion).
 const (
 	SideClient = "client"
 	SideServer = "server"
@@ -45,26 +45,14 @@ type ModrinthPAT struct {
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
-// Pack is a modpack. It carries separate Solder and Modrinth identities so the
-// same pack can be published to either launcher with its own name/link.
+// Pack is a modpack, with its own Modrinth identity so it can be published there
+// under its own name and link.
 type Pack struct {
 	ID                  int       `json:"id"`
 	OwnerID             string    `json:"ownerId"`
 	InternalName        string    `json:"internalName"`
 	InternalSlug        string    `json:"internalSlug"`
 	Summary             string    `json:"summary"`
-	SolderDisplayName   string    `json:"solderDisplayName"`
-	SolderSlug          string    `json:"solderSlug"`
-	Hidden              bool      `json:"hidden"`
-	Private             bool      `json:"private"`
-	RecommendedBuild    string    `json:"recommendedBuild"`
-	LatestBuild         string    `json:"latestBuild"`
-	IconURL             string    `json:"iconUrl"`
-	LogoURL             string    `json:"logoUrl"`
-	BackgroundURL       string    `json:"backgroundUrl"`
-	IconMD5             string    `json:"iconMd5"`
-	LogoMD5             string    `json:"logoMd5"`
-	BackgroundMD5       string    `json:"backgroundMd5"`
 	ModrinthProjectID   string    `json:"modrinthProjectId"`
 	ModrinthProjectName string    `json:"modrinthProjectName"`
 	ModrinthVisibility  string    `json:"modrinthVisibility"`
@@ -86,8 +74,6 @@ type PackBuild struct {
 	Changelog         string     `json:"changelog"`
 	Channel           string     `json:"channel"`
 	Frozen            bool       `json:"frozen"`
-	SolderPublished   bool       `json:"solderPublished"`
-	SolderPrivate     bool       `json:"solderPrivate"`
 	ModrinthPublished bool       `json:"modrinthPublished"`
 	ModrinthVersionID string     `json:"modrinthVersionId"`
 	MrpackStorageKey  string     `json:"mrpackStorageKey"`
@@ -96,8 +82,8 @@ type PackBuild struct {
 	PublishedAt       *time.Time `json:"publishedAt,omitempty"`
 }
 
-// Mod is an owner-scoped content catalog entry (the Solder "mod" unit; also
-// holds resourcepacks/shaders/config bundles via ContentType).
+// Mod is an owner-scoped content catalog entry (a mod, or a resourcepack, shader
+// or config bundle via ContentType).
 type Mod struct {
 	ID          int    `json:"id"`
 	OwnerID     string `json:"ownerId"`
@@ -119,7 +105,6 @@ type Modversion struct {
 	MD5                     string     `json:"md5"`
 	SHA1                    string     `json:"sha1"`
 	SHA512                  string     `json:"sha512"`
-	URLOverride             string     `json:"urlOverride"`
 	Source                  string     `json:"source"`
 	TargetPath              string     `json:"targetPath"`
 	ModrinthProjectID       string     `json:"modrinthProjectId"`

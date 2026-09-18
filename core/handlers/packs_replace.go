@@ -103,7 +103,7 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	if fileName == "" {
 		fileName = mv.TargetPath[strings.LastIndex(mv.TargetPath, "/")+1:]
 	}
-	zipBytes, err := modpack.WrapJarAsSolderZip(fileName, jar)
+	zipBytes, err := modpack.WrapJarAsContentZip(fileName, jar)
 	if err != nil {
 		return fmt.Errorf("wrap failed: %w", err)
 	}
@@ -114,9 +114,9 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	}
 	slug := slugify(strings.TrimSuffix(fileName, ".jar"))
 	// Remote text must never reach a storage key. version_number is whatever the
-	// project author typed on Modrinth, and it went into the key raw; the Solder
-	// import path slugifies for exactly this reason and keeps the raw string only
-	// for the display field (mv.Version below). The md5 suffix is what keeps two
+	// project author typed on Modrinth, and it went into the key raw. It is
+	// slugified for the key and kept raw only for the display field (mv.Version
+	// below). The md5 suffix is what keeps two
 	// different artifacts from colliding once the slug has flattened them.
 	keyVersion := slugify(v.VersionNum)
 	if keyVersion == "" {
@@ -137,7 +137,6 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	mv.SHA1 = file.Hashes["sha1"]
 	mv.SHA512 = file.Hashes["sha512"]
 	mv.ModrinthDownloadURL = file.URL
-	mv.URLOverride = ""
 	mv.Source = models.SourceModrinth
 	mv.ModrinthProjectID = v.ProjectID
 	mv.ModrinthVersionID = v.ID

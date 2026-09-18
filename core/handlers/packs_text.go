@@ -75,7 +75,7 @@ type setContentTextRequest struct {
 }
 
 // SetContentText overwrites a stored text content entry with edited bytes,
-// re-wrapping into the Solder zip at the same key and re-hashing. Editing an
+// re-wrapping into the content zip at the same key and re-hashing. Editing an
 // entry that was Modrinth-linked unlinks it (the file now diverges from the
 // upstream version).
 func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +117,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Text too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	zipBytes, err := modpack.BuildSolderContentZip(mv.TargetPath, newBytes)
+	zipBytes, err := modpack.BuildContentZip(mv.TargetPath, newBytes)
 	if err != nil {
 		sendJSONError(w, "Failed to wrap content", http.StatusInternalServerError)
 		return
@@ -150,7 +150,6 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	mv.SHA512 = innerSha512
 	// An edited file diverges from its upstream Modrinth version -> unlink.
 	mv.Source = models.SourceUpload
-	mv.URLOverride = ""
 	mv.ModrinthProjectID = ""
 	mv.ModrinthVersionID = ""
 	mv.ModrinthVersionNumber = ""

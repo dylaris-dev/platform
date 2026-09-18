@@ -58,10 +58,7 @@ func (h *PacksHandler) createModrinthProject(r *http.Request, mc *services.Modri
 	if body == "" {
 		body = title + " — published from Dylaris"
 	}
-	slug := pack.SolderSlug
-	if slug == "" {
-		slug = pack.InternalSlug
-	}
+	slug := pack.InternalSlug
 	return mc.CreateProject(r.Context(), services.CreateProjectRequest{
 		Slug:        slug,
 		Title:       title,

@@ -128,8 +128,8 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 }
 
 // addModrinthVersion upserts the mod catalog row + a linked modversion and
-// attaches it to the build. The Solder wrapped-zip is materialized lazily on
-// publish (Phase 3); Phase 1 stores the Modrinth reference only.
+// attaches it to the build. Only the Modrinth reference is stored; the jar is
+// fetched from cdn.modrinth.com when a pack is rendered.
 func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v *services.ModrinthVersion, side, contentType string) error {
 	if contentType == "" {
 		contentType = models.ContentTypeMod
@@ -148,7 +148,6 @@ func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v
 		Filesize:              file.Size,
 		SHA1:                  file.Hashes["sha1"],
 		SHA512:                file.Hashes["sha512"],
-		URLOverride:           "",
 		ModrinthDownloadURL:   file.URL,
 		Source:                models.SourceModrinth,
 		TargetPath:            targetPathFor(contentType, file.Filename),
@@ -368,8 +367,7 @@ func atoiVar(r *http.Request, key string) int { n, _ := strconv.Atoi(mux.Vars(r)
 // read back as a path by three different renderers, so the sanitizing happens
 // here rather than in each caller.
 //
-// The upload and Solder-import callers already hand over a base name. The
-// Modrinth one does not: addModrinthVersion passes the filename the MODRINTH
+// The upload caller already hands over a base name. The Modrinth one does not: addModrinthVersion passes the filename the MODRINTH
 // API reported, which is third-party text that never touched a check on the way
 // in.
 func targetPathFor(contentType, fileName string) string {

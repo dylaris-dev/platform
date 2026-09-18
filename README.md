@@ -54,7 +54,7 @@ It runs one server on a PC under a desk or a fleet across several data centres, 
 
 Said plainly, because it is the first question anyone asks:
 
-- **vs Pterodactyl / Pelican** - those are general game panels with a large ecosystem of eggs, themes and addons, and that ecosystem is far bigger than this project's. They treat Minecraft as one game among many. DYLARIS goes the other way: fewer games, much deeper Minecraft support (modpack pipeline, sub-servers, Spark, Solder), and an optional ingress layer no panel bundles.
+- **vs Pterodactyl / Pelican** - those are general game panels with a large ecosystem of eggs, themes and addons, and that ecosystem is far bigger than this project's. They treat Minecraft as one game among many. DYLARIS goes the other way: fewer games, much deeper Minecraft support (modpack pipeline, sub-servers, Spark), and an optional ingress layer no panel bundles.
 - **vs Crafty Controller** - Crafty is easier to stand up and manages one machine. DYLARIS needs Docker and is built for several nodes, tenants and regions from the start.
 - **On billing** - there is none, and that is deliberate. A self-hosted install has no billing plane at all; every limit is yours to set and nothing is metered. If you sell hosting, pair it with a billing system the way you would with any other panel.
 
@@ -68,14 +68,13 @@ Everything is self-hosted: your servers, your data, your infrastructure.
 
 ## Features
 
-The first five are where DYLARIS differs most from a general game panel; the rest is
+The first four are where DYLARIS differs most from a general game panel; the rest is
 what any serious panel needs.
 
 - **Modpack-as-a-server** — deploy a `.mrpack` modpack directly as a runnable server.
 - **Modrinth integration** — in-panel mod browser, install mods into a server, plus a modpack **builder + publisher** (publish your own modpacks to Modrinth).
 - **Sub-servers** — several installs on one server slot, switched from the panel. Keep a vanilla world, a modded world and next season's pack side by side without a second slot.
 - **Spark profiler** — start/stop profiling and capture results from the panel, so a lagging world is diagnosed where it runs.
-- **Solder API** — serve your packs to the Technic Launcher directly from Core ([details below](#solder-api-technic-launcher)).
 - **Server lifecycle** — create, start/stop/kill, restart, delete.
 - **RCON & player management** — gRPC-backed RCON console, player list, ban/kick/op, plus an external API-key surface for automation.
 - **File access** — in-panel file browser, plus pluggable file transport: **Beam** (overlay gRPC, no exposed IP) or **SFTP**.
@@ -87,27 +86,6 @@ what any serious panel needs.
 - **First-run setup wizard** — browser-driven first-admin creation, plus lost-admin recovery.
 - **Warp** - pull external/home nodes behind NAT into the swarm over an encrypted WireGuard tunnel, and run servers on them as if they were in your DC. See `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
 - **Optional Gateway stack** — public ingress/proxy (edge), hub and link services for routing player traffic without exposing node IPs. Lives in a separate repo (`dylaris-gateway`).
-
-### Solder API (Technic Launcher)
-
-Core serves a Solder-compatible API for the Technic Launcher: a PUBLIC,
-UNAUTHENTICATED route tree at `/solder/api/...` plus a mod/loader-zip mirror at
-`/solder/mirror/...`, both on the Core port (`core/routes.go`). These bypass the
-setup-lock, maintenance, and auth middleware by design — the launcher must reach
-published packs at all times — and gate the modpacks feature in-handler instead.
-
-The `solder_delivery_mode` setting (default `core`) controls how mod download
-URLs are served: `core` streams through Core's own mirror route; `presigned`
-hands back short-lived signed URLs from the configured S3/R2 backend;
-`public` advertises an operator-configured external mirror URL directly. A
-read-only probe, `GET /api/admin/settings/modpacks/delivery-capabilities`,
-reports which modes the current storage backend actually supports.
-
-**Warning:** in `public` mode, a private/hidden pack's mod files still live in
-the same publicly readable bucket as public packs — Core simply avoids handing
-out that direct URL through its own API for a gated pack, but the file is not
-otherwise protected if the URL is discovered or guessed. Use `presigned` when
-private packs must stay confidential.
 
 ## Architecture
 

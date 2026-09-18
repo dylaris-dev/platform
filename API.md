@@ -54,8 +54,8 @@ by a customer's warp client, not by a user.
 Check the Gates column and the description: `/api/store/*` authenticates with a
 shared `X-Store-Key` header inside the handler, and the four tab-proxy routes
 trust only the host-only `dyl_tabproxy` ticket cookie. Genuinely public are the
-health probe, the Solder API the Technic launcher calls, share links, and the
-login, registration, password-reset and setup-wizard endpoints.
+health probe, the pack mirror a node installs a built pack from, share links,
+and the login, registration, password-reset and setup-wizard endpoints.
 
 ## Authorization (the Capability column)
 
@@ -75,8 +75,8 @@ The italic values say why a route declares none:
   helpers that any authenticated caller may use. Which one it is, is in the
   Notes.
 - **_public_** - no credential and no capability. These are the login,
-  registration and reset endpoints, the health probe, the Solder API the
-  Technic launcher calls, share links, and the tab proxy, which authenticates
+  registration and reset endpoints, the health probe, the pack mirror, share
+  links, and the tab proxy, which authenticates
   itself with a ticket cookie inside the handler.
 - **_uncapped method_** - this method carries no capability, but its path
   template does, guarding a different method on the same path. Five `GET`s sit
@@ -104,15 +104,13 @@ Two pieces of middleware run before any per-route handling:
    maintenance back off.
 
 Routes registered on the root router bypass both by design: `/healthz` (infra
-probes must answer during setup and maintenance), the whole `/solder` subtree
-(the Technic launcher must keep reaching published packs), `/api/share/{token}`,
+probes must answer during setup and maintenance), `/mirror/{rest}` (a node
+installing a built pack must reach it whatever the panel's state), `/api/share/{token}`,
 and the four tab-proxy routes.
 
 ## Errors and limits
 
 Errors are `{"success": false, "message": "..."}` with the matching HTTP status.
-The Solder subtree is the exception: it answers `{"error": "..."}` because the
-launcher expects that shape.
 
 `Limit` in the Gates column is a per-client-IP request budget per minute; over
 it, the answer is `429` with `Retry-After: 60`. `LimitBody` caps the request
@@ -135,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **528 routes** in 52 sections: 236 GET, 160 POST, 39 PUT, 37 PATCH, 57 DELETE.
-- **38** accept no credential at all; read the Gates column before assuming any of them is open.
-- **353** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **38** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **503 routes** in 49 sections: 222 GET, 153 POST, 39 PUT, 36 PATCH, 54 DELETE.
+- **30** accept no credential at all; read the Gates column before assuming any of them is open.
+- **336** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (126)
+- [/api/admin](#apiadmin) (125)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -158,12 +156,12 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (2)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (26)
+- [/api/me](#apime) (24)
 - [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (4)
-- [/api/packs](#apipacks) (29)
+- [/api/packs](#apipacks) (23)
 - [/api/placement](#apiplacement) (3)
 - [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
@@ -173,7 +171,6 @@ can still show what exists.
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
-- [/api/solder](#apisolder) (8)
 - [/api/sse-ticket](#apisse-ticket) (1)
 - [/api/status](#apistatus) (1)
 - [/api/storage](#apistorage) (1)
@@ -191,9 +188,7 @@ can still show what exists.
 - [/api/versions](#apiversions) (2)
 - [/api/warp](#apiwarp) (18)
 - [/healthz](#healthz) (1)
-- [/solder/api](#solderapi) (2)
-- [/solder/mirror](#soldermirror) (1)
-- [/solder/u](#solderu) (6)
+- [/mirror/{rest:.*}](#mirrorrest) (1)
 
 ## /api/admin
 
@@ -255,7 +250,6 @@ can still show what exists.
 | PUT | `/api/admin/settings/mod-cache` | session | `settings.write` | - | `ModCacheSettingsHandler.Set` | - |
 | GET | `/api/admin/settings/modpacks` | session | `settings.read` | - | `ModpackSettingsHandler.Get` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/modpacks` | session | `settings.write` | - | `ModpackSettingsHandler.Set` | Body: full modpackSettings. |
-| GET | `/api/admin/settings/modpacks/delivery-capabilities` | session | `settings.read` | - | `ModpackSettingsHandler.DeliveryCapabilities` | Reflects the SAVED storage config only — it never presigns or HTTP-probes a caller-supplied URL, so it is not an SSRF lever. |
 | GET | `/api/admin/settings/node-admission` | session | `nodes.read` | - | `NodeAdmissionHandler.GetAdmission` | current modes + CIDRs. |
 | PUT | `/api/admin/settings/node-admission` | session | `nodes.write` | - | `NodeAdmissionHandler.SetAdmission` | write join + IP mode. |
 | POST | `/api/admin/settings/node-admission/cidrs` | session | `nodes.write` | - | `NodeAdmissionHandler.AddCIDR` | add one allowlist CIDR. |
@@ -520,8 +514,6 @@ can still show what exists.
 | GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
 | GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns. |
 | POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
-| POST | `/api/me/packs/import-solder` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolder` | imports one modpack (all its builds) from an external Solder instance into a new draft pack owned by the caller. |
-| POST | `/api/me/packs/import-solder/preview` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportSolderPreview` | reads the pack index of an external Solder instance so the UI can list what is importable. |
 | GET | `/api/me/regions` | session | _no capability_ | - | `UserRegionsHandler.GetMyRegions` | current user's own region assignment (any authenticated user). |
 | GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
 | PUT | `/api/me/security-questions` | session | _no capability_ | Limit, LimitBody | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
@@ -599,20 +591,14 @@ can still show what exists.
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ReplaceWithModrinth` | swaps a stored content artifact for Modrinth's exact file: download the chosen Modrinth version's primary file, verify its bytes against Modrinth's published hashes, re-wrap + store it, delete the old storage object, and rewrite the modversion so it becomes byte-identical to Modrinth (clean files[] reference + auto-update eligible). |
 | PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetSide` | sets whether an entry ships to the client, the server or both. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetContentText` | returns the UTF-8 text of a single stored content entry (e.g. a config file) so the panel can edit it in place. |
-| PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the Solder zip at the same key and re-hashing. |
+| PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the content zip at the same key and re-hashing. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ExportMrpack` | streams the .mrpack for a build (self-distributed download). |
-| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetBuildLoader` | returns the cached loader row for a build's (minecraft, loader, loader_version) triple, so the panel / hand-test can see build status + md5. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.MigrateBuild` | - |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishSolder` | renders + publishes a build to the public Solder API. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | the share links issued for one build. |
 | DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.RevokeShareLink` | revokes one share link. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
-| GET | `/api/packs/{id:[0-9]+}/clients` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListPackClientsHandler` | the Technic clients whitelisted for one pack. |
-| POST | `/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.AddPackClient` | whitelists one client for a private pack. |
-| DELETE | `/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.RemovePackClient` | drops a client from a pack's whitelist. |
-| PATCH | `/api/packs/{id:[0-9]+}/solder-config` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetSolderConfig` | sets the pack's public Solder identity + visibility. |
 
 ## /api/placement
 
@@ -788,19 +774,6 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/share/{token}` | **none** | _public_ | Limit | `PacksHandler.ServeShare` | is PUBLIC, unauthenticated. |
 
-## /api/solder
-
-| Method | Path | Auth | Capability | Gates | Handler | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/solder/clients` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListClients` | the Technic launcher clients the caller has registered. |
-| POST | `/api/solder/clients` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateClient` | registers a Technic launcher client under the caller. |
-| DELETE | `/api/solder/clients/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteClient` | removes one of the caller's clients; the delete is owner-scoped. |
-| GET | `/api/solder/handle` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.GetHandle` | the caller's Solder address, or the empty string when they have not claimed one. |
-| POST | `/api/solder/handle` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.SetHandle` | claims the caller's Solder address, once. |
-| GET | `/api/solder/keys` | session | `modpack.read` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.ListKeys` | the caller's Solder API keys, hashes only. |
-| POST | `/api/solder/keys` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.CreateKey` | registers a Solder API key. |
-| DELETE | `/api/solder/keys/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `SolderHandler.DeleteKey` | revokes one of the caller's Solder keys. |
-
 ## /api/sse-ticket
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
@@ -959,27 +932,9 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/healthz` | **none** | _public_ | - | `HealthHandler.Healthz` | Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load balancers). |
 
-## /solder/api
+## /mirror/{rest:.*}
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/solder/api` | **none** | _public_ | - | `SolderHandler.LegacyAPI` | answers every path under the RETIRED shared /solder/api prefix. |
-| GET | `/solder/api/` | **none** | _public_ | - | `SolderHandler.LegacyAPI` | answers every path under the RETIRED shared /solder/api prefix. |
-
-## /solder/mirror
-
-| Method | Path | Auth | Capability | Gates | Handler | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| GET | `/solder/mirror/{rest:.*}` | **none** | _public_ | Limit | `SolderHandler.SolderMirror` | streams a stored public artifact (a Solder mod zip, a loader zip, or a rendered pack .mrpack). |
-
-## /solder/u
-
-| Method | Path | Auth | Capability | Gates | Handler | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| GET | `/solder/u/{handle}/api` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
-| GET | `/solder/u/{handle}/api/` | **none** | _public_ | - | `SolderHandler.Info` | the root probe. |
-| GET | `/solder/u/{handle}/api/modpack` | **none** | _public_ | - | `SolderHandler.ListModpacks` | Default: {modpacks:{slug:displayName}, mirror_url}. |
-| GET | `/solder/u/{handle}/api/modpack/{slug}` | **none** | _public_ | - | `SolderHandler.GetModpack` | 404 (Solder-shaped) when the pack does not exist or is private/hidden without valid auth. |
-| GET | `/solder/u/{handle}/api/modpack/{slug}/{build}` | **none** | _public_ | - | `SolderHandler.GetBuild` | the differential-update payload. |
-| GET | `/solder/u/{handle}/api/verify/{key}` | **none** | _public_ | - | `SolderHandler.VerifyKey` | Validates a Solder API key by hash lookup. |
+| GET | `/mirror/{rest:.*}` | **none** | _public_ | Limit | `PacksHandler.ModpackMirror` | streams a rendered pack .mrpack to the node installing it. |
 

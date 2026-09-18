@@ -32,24 +32,16 @@ type modpackSettings struct {
 	S3SecretKey              string   `json:"s3SecretKey,omitempty"` // write-only
 	UpdateCheckIntervalHours int      `json:"updateCheckIntervalHours"`
 	ShareLinksEnabled        bool     `json:"shareLinksEnabled"`
-	// The public base a Solder client is told to fetch artifacts from.
-	// CorePublicURL is Core's own public origin and serves the local mirror at
-	// {CorePublicURL}/solder/mirror/; SolderMirrorURL is the public bucket base
-	// used instead when SolderDeliveryMode is "public". solderMirrorBase picks
-	// between them by delivery mode (not by storage provider), and
-	// isSnapshotFetchHostAllowed derives its SSRF allowlist from the same value
-	// - so an unset one is not cosmetic: it 500s the public Solder pack list and
-	// leaves the mirror host off the allowlist.
-	CorePublicURL   string `json:"corePublicUrl"`
-	SolderMirrorURL string `json:"solderMirrorUrl"`
+	// CorePublicURL is Core's own public origin. A node installing a panel-built
+	// pack downloads it from {CorePublicURL}/mirror/ (modpackMirrorBase), and
+	// isSnapshotFetchHostAllowed derives its SSRF allowlist from the same value -
+	// so an unset one is not cosmetic: a pack install fails to start and the
+	// mirror host drops off the allowlist.
+	CorePublicURL string `json:"corePublicUrl"`
 	// ConnectionID references a saved storage connection. When non-zero, modpack
 	// storage is built from that connection (buildModpackStorageProvider) and the
 	// inline s3 fields are ignored. 0 = use the inline config.
 	ConnectionID int `json:"connectionId"`
-	// SolderDeliveryMode selects how Solder mod URLs are served: "core"
-	// (Core proxy, default), "presigned" (private bucket, expiring URLs) or
-	// "public" (public base = solderMirrorUrl). Orthogonal to Provider.
-	SolderDeliveryMode string `json:"solderDeliveryMode"`
 
 	// DetectedCorePublicURL is the origin THIS request arrived on. Offered as a
 	// one-click suggestion for CorePublicURL, which an admin otherwise has to
@@ -128,11 +120,6 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.ShareLinksEnabled = get("modpack_share_links_enabled") == "true"
 	out.ConnectionID, _ = strconv.Atoi(get(keyModpackStorageConnectionID)) // "" or bad -> 0 = none
 	out.CorePublicURL = get("core_public_url")
-	out.SolderMirrorURL = get("solder_mirror_url")
-	out.SolderDeliveryMode = get("solder_delivery_mode")
-	if out.SolderDeliveryMode == "" {
-		out.SolderDeliveryMode = "core"
-	}
 	out.DetectedCorePublicURL = requestOrigin(r)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -154,17 +141,6 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func validModpackProvider(p string) bool {
 	switch p {
 	case "local", "s3", "core-storage":
-		return true
-	}
-	return false
-}
-
-// validSolderDeliveryMode allowlists the Solder delivery mode. Mirrors the
-// switch in solderModURL / solderMirrorBase so an unknown value can never
-// persist and silently break the serve path later.
-func validSolderDeliveryMode(m string) bool {
-	switch m {
-	case "core", "presigned", "public":
 		return true
 	}
 	return false
@@ -266,39 +242,12 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	// Both are validated whatever the provider is, for the same reason the S3
-	// endpoint above is: the writes below persist them either way.
+	// Validated whatever the provider is, for the same reason the S3 endpoint
+	// above is: the write below persists it either way.
 	req.CorePublicURL = strings.TrimSpace(req.CorePublicURL)
-	req.SolderMirrorURL = strings.TrimSpace(req.SolderMirrorURL)
 	if err := validatePublicBaseURL("core public URL", req.CorePublicURL); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
-	}
-	if err := validatePublicBaseURL("solder mirror URL", req.SolderMirrorURL); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.SolderDeliveryMode == "" {
-		req.SolderDeliveryMode = "core"
-	}
-	if !validSolderDeliveryMode(req.SolderDeliveryMode) {
-		sendJSONError(w, "solder delivery mode must be core, presigned or public", http.StatusBadRequest)
-		return
-	}
-	// Syntactic gate only: the save handler cannot build a provider from the
-	// not-yet-saved fields, so "can R2 actually presign" is the capabilities
-	// probe's job. Reject only the obviously impossible.
-	switch req.SolderDeliveryMode {
-	case "public":
-		if req.SolderMirrorURL == "" {
-			sendJSONError(w, "public delivery mode requires a solder mirror URL", http.StatusBadRequest)
-			return
-		}
-	case "presigned":
-		if req.Provider == "local" {
-			sendJSONError(w, "presigned delivery mode requires S3/R2-backed storage (not local)", http.StatusBadRequest)
-			return
-		}
 	}
 
 	// Normalize paths: strip empties + dedupe + MkdirAll so the provider
@@ -326,7 +275,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// alongside Settings -> Features writing the same key, so the platform had one
 	// switch behind two independent toggles: flipping either moved the other, and
 	// with the authoring flag added, one of the two screens would always show a
-	// half-truth. Features owns the flags, this screen owns storage + delivery.
+	// half-truth. Features owns the flags, this screen owns storage.
 	// The GET still returns featureEnabled so this tab can display the state.
 	writes := []struct{ k, v string }{
 		{"modpack_storage_provider", req.Provider},
@@ -339,8 +288,6 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_share_links_enabled", boolStr(req.ShareLinksEnabled)},
 		{keyModpackStorageConnectionID, storageConnIDSetting(req.ConnectionID)},
 		{"core_public_url", req.CorePublicURL},
-		{"solder_mirror_url", req.SolderMirrorURL},
-		{"solder_delivery_mode", req.SolderDeliveryMode},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {

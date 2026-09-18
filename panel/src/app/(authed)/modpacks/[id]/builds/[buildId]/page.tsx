@@ -15,7 +15,6 @@ import {
 } from '@/lib/api/packs';
 import { publishModrinth, replaceWithModrinth, updateMods, mrpackDownloadUrl } from '@/lib/api/packsPublish';
 import BuildMigrationPanel from '@/components/mods/BuildMigrationPanel';
-import { publishSolder } from '@/lib/api/solderPublish';
 import { createShareLink, listShareLinks, revokeShareLink, publicShareUrl, type ShareLink, type ShareLinkKind } from '@/lib/api/packsShare';
 import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
@@ -64,8 +63,6 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
     const [busy, setBusy] = useState(false);
     const [warnings, setWarnings] = useState<string[]>([]);
     const [needsAck, setNeedsAck] = useState(false);
-    const [solderPublishing, setSolderPublishing] = useState(false);
-    const [solderMsg, setSolderMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
     const submit = async (ackNonModrinth = false) => {
         setBusy(true);
@@ -162,32 +159,6 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
                                 />
                                 <span className="text-sm">Modrinth</span>
                             </label>
-                            <div className="flex flex-col gap-1.5">
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary btn-sm w-full"
-                                    disabled={solderPublishing}
-                                    onClick={async () => {
-                                        setSolderPublishing(true);
-                                        setSolderMsg(null);
-                                        const r = await publishSolder(packId, build.id);
-                                        setSolderPublishing(false);
-                                        if (r.success) {
-                                            onPublished?.();
-                                            setSolderMsg({ ok: true, text: `Published to Solder as ${r.slug} / ${r.build}` });
-                                        } else {
-                                            setSolderMsg({ ok: false, text: r.message || 'Publish failed' });
-                                        }
-                                    }}
-                                >
-                                    {solderPublishing ? 'Publishing...' : 'Publish to Solder'}
-                                </button>
-                                {solderMsg && (
-                                    <p className={`text-xs ${solderMsg.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
-                                        {solderMsg.text}
-                                    </p>
-                                )}
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -621,10 +592,6 @@ export default function BuildContentEditorPage() {
                             {/* Piece 4: Modrinth published badge */}
                             {build.modrinthPublished && (
                                 <Badge variant="success" icon={<CircleCheck size={10} />}>Modrinth</Badge>
-                            )}
-                            {/* Technic / Solder published badge */}
-                            {build.solderPublished && (
-                                <Badge variant="accent" icon={<CircleCheck size={10} />}>Technic</Badge>
                             )}
                         </h1>
                         <p className="text-xs text-(--base-06)">

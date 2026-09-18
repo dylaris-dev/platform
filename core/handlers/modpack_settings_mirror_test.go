@@ -8,10 +8,9 @@ import (
 	"testing"
 )
 
-// TestValidatePublicBaseURL pins the input rules for the two mirror-base
-// settings. The value is handed to third-party launchers AND feeds
-// isSnapshotFetchHostAllowed's SSRF allowlist, so a scheme-less or hostless
-// string must not persist.
+// TestValidatePublicBaseURL pins the input rules for core_public_url. A node is
+// pointed at it to download a pack, and it feeds isSnapshotFetchHostAllowed's
+// SSRF allowlist, so a scheme-less or hostless string must not persist.
 func TestValidatePublicBaseURL(t *testing.T) {
 	cases := []struct {
 		name string
@@ -43,35 +42,35 @@ func TestValidatePublicBaseURL(t *testing.T) {
 	}
 }
 
-// TestModpackSettingsHandler_Set_PersistsMirrorBases is the regression guard
-// for the shipped defect: both keys were READ by solderMirrorBase and written
-// by nothing at all, so the public Solder pack list answered 500 on every
-// install with no supported way to fix it.
-func TestModpackSettingsHandler_Set_PersistsMirrorBases(t *testing.T) {
+// TestModpackSettingsHandler_Set_PersistsCorePublicURL is the regression guard
+// for the shipped defect: the key was READ by the mirror base and written by
+// nothing at all, so a pack install had no supported way to find Core.
+//
+// It also pins that the two Solder settings stay gone. The boot schema deletes
+// them; a save that wrote them again would put back what the removal took out.
+func TestModpackSettingsHandler_Set_PersistsCorePublicURL(t *testing.T) {
 	fs := newCoreStorageHTTPFakeStore()
 	h := newModpackSettingsTestHandler(fs)
 
 	body, _ := json.Marshal(modpackSettings{
-		Provider:        "local",
-		CorePublicURL:   "https://panel.example.com/",
-		SolderMirrorURL: "https://cdn.example.com/packs",
+		Provider:      "local",
+		CorePublicURL: "https://panel.example.com/",
 	})
 	rw := httptest.NewRecorder()
 	h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-
-	for k, want := range map[string]string{
-		"core_public_url":   "https://panel.example.com/",
-		"solder_mirror_url": "https://cdn.example.com/packs",
-	} {
-		if got := fs.kv[k]; got != want {
-			t.Errorf("settings[%q] = %q, want %q", k, got, want)
+	if got := fs.kv["core_public_url"]; got != "https://panel.example.com/" {
+		t.Errorf("settings[core_public_url] = %q, want the saved value", got)
+	}
+	for _, k := range []string{"solder_mirror_url", "solder_delivery_mode"} {
+		if _, ok := fs.kv[k]; ok {
+			t.Errorf("save wrote %q, a setting Solder's removal deleted", k)
 		}
 	}
 
-	// And GET must echo them back, or the panel form loads blank and the next
+	// And GET must echo it back, or the panel form loads blank and the next
 	// save silently clears what was just configured.
 	rw = httptest.NewRecorder()
 	h.Get(rw, httptest.NewRequest(http.MethodGet, "/api/admin/settings/modpacks", nil))
@@ -84,34 +83,20 @@ func TestModpackSettingsHandler_Set_PersistsMirrorBases(t *testing.T) {
 	if out.Settings.CorePublicURL != "https://panel.example.com/" {
 		t.Errorf("GET corePublicUrl = %q, want the saved value", out.Settings.CorePublicURL)
 	}
-	if out.Settings.SolderMirrorURL != "https://cdn.example.com/packs" {
-		t.Errorf("GET solderMirrorUrl = %q, want the saved value", out.Settings.SolderMirrorURL)
-	}
 }
 
-func TestModpackSettingsHandler_Set_RejectsBadMirrorBase(t *testing.T) {
-	for _, c := range []struct{ name, core, mirror string }{
-		{"bad core public url", "panel.example.com", ""},
-		{"bad solder mirror url", "", "ftp://cdn.example.com"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			fs := newCoreStorageHTTPFakeStore()
-			h := newModpackSettingsTestHandler(fs)
+func TestModpackSettingsHandler_Set_RejectsBadCorePublicURL(t *testing.T) {
+	fs := newCoreStorageHTTPFakeStore()
+	h := newModpackSettingsTestHandler(fs)
 
-			body, _ := json.Marshal(modpackSettings{
-				Provider:        "local",
-				CorePublicURL:   c.core,
-				SolderMirrorURL: c.mirror,
-			})
-			rw := httptest.NewRecorder()
-			h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
+	body, _ := json.Marshal(modpackSettings{Provider: "local", CorePublicURL: "panel.example.com"})
+	rw := httptest.NewRecorder()
+	h.Set(rw, httptest.NewRequest(http.MethodPut, "/api/admin/settings/modpacks", bytes.NewReader(body)))
 
-			if rw.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want 400 (%s)", rw.Code, rw.Body.String())
-			}
-			if _, ok := fs.kv["modpack_storage_provider"]; ok {
-				t.Errorf("a rejected save still reached the store, kv = %v", fs.kv)
-			}
-		})
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (%s)", rw.Code, rw.Body.String())
+	}
+	if _, ok := fs.kv["modpack_storage_provider"]; ok {
+		t.Errorf("a rejected save still reached the store, kv = %v", fs.kv)
 	}
 }

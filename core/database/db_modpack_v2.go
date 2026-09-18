@@ -16,18 +16,6 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			internal_name         VARCHAR(128) NOT NULL,
 			internal_slug         VARCHAR(128) NOT NULL,
 			summary               VARCHAR(512) NOT NULL DEFAULT '',
-			solder_display_name   VARCHAR(128) NOT NULL DEFAULT '',
-			solder_slug           VARCHAR(128) NOT NULL DEFAULT '',
-			hidden                BOOLEAN      NOT NULL DEFAULT FALSE,
-			private               BOOLEAN      NOT NULL DEFAULT FALSE,
-			recommended_build     VARCHAR(64)  NOT NULL DEFAULT '',
-			latest_build          VARCHAR(64)  NOT NULL DEFAULT '',
-			icon_url              TEXT         NOT NULL DEFAULT '',
-			logo_url              TEXT         NOT NULL DEFAULT '',
-			background_url        TEXT         NOT NULL DEFAULT '',
-			icon_md5              VARCHAR(32)  NOT NULL DEFAULT '',
-			logo_md5              VARCHAR(32)  NOT NULL DEFAULT '',
-			background_md5        VARCHAR(32)  NOT NULL DEFAULT '',
 			modrinth_project_id   VARCHAR(64)  NOT NULL DEFAULT '',
 			modrinth_project_name VARCHAR(128) NOT NULL DEFAULT '',
 			modrinth_visibility   VARCHAR(16)  NOT NULL DEFAULT 'unlisted',
@@ -35,7 +23,6 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 			UNIQUE (owner_id, internal_slug)
 		)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS packs_solder_slug_uniq ON packs (solder_slug) WHERE solder_slug <> ''`,
 		`CREATE TABLE IF NOT EXISTS pack_builds (
 			id                  SERIAL PRIMARY KEY,
 			pack_id             INTEGER      NOT NULL REFERENCES packs(id) ON DELETE CASCADE,
@@ -48,8 +35,6 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			changelog           TEXT         NOT NULL DEFAULT '',
 			channel             VARCHAR(16)  NOT NULL DEFAULT 'draft',
 			frozen              BOOLEAN      NOT NULL DEFAULT FALSE,
-			solder_published    BOOLEAN      NOT NULL DEFAULT FALSE,
-			solder_private      BOOLEAN      NOT NULL DEFAULT FALSE,
 			modrinth_published  BOOLEAN      NOT NULL DEFAULT FALSE,
 			modrinth_version_id VARCHAR(64)  NOT NULL DEFAULT '',
 			mrpack_storage_key  VARCHAR(512) NOT NULL DEFAULT '',
@@ -78,7 +63,6 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			md5                        VARCHAR(32)  NOT NULL DEFAULT '',
 			sha1                       VARCHAR(40)  NOT NULL DEFAULT '',
 			sha512                     VARCHAR(128) NOT NULL DEFAULT '',
-			url_override               TEXT         NOT NULL DEFAULT '',
 			source                     VARCHAR(16)  NOT NULL DEFAULT 'upload',
 			target_path                VARCHAR(512) NOT NULL DEFAULT '',
 			modrinth_project_id        VARCHAR(64)  NOT NULL DEFAULT '',
@@ -103,41 +87,6 @@ func applyUnifiedModpackSchema(db *sql.DB) error {
 			modversion_id INTEGER     NOT NULL REFERENCES modversions(id) ON DELETE CASCADE,
 			side          VARCHAR(8)  NOT NULL DEFAULT 'both',
 			UNIQUE (build_id, modversion_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS loaders (
-			id                  SERIAL PRIMARY KEY,
-			minecraft           TEXT NOT NULL,
-			loader              TEXT NOT NULL,
-			loader_version      TEXT NOT NULL,
-			client_storage_key  TEXT NOT NULL DEFAULT '',
-			md5                 TEXT NOT NULL DEFAULT '',
-			filesize            BIGINT NOT NULL DEFAULT 0,
-			build_status        TEXT NOT NULL DEFAULT 'pending',
-			build_error         TEXT NOT NULL DEFAULT '',
-			built_at            TIMESTAMPTZ,
-			created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			UNIQUE (minecraft, loader, loader_version)
-		)`,
-		`CREATE TABLE IF NOT EXISTS solder_clients (
-			id         SERIAL       PRIMARY KEY,
-			uuid       UUID         NOT NULL UNIQUE DEFAULT gen_random_uuid(),
-			name       VARCHAR(128) NOT NULL DEFAULT '',
-			owner_id   UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-		)`,
-		`CREATE TABLE IF NOT EXISTS pack_clients (
-			id        SERIAL  PRIMARY KEY,
-			pack_id   INTEGER NOT NULL REFERENCES packs(id) ON DELETE CASCADE,
-			client_id INTEGER NOT NULL REFERENCES solder_clients(id) ON DELETE CASCADE,
-			UNIQUE (pack_id, client_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS solder_keys (
-			id         SERIAL       PRIMARY KEY,
-			key_hash   VARCHAR(64)  NOT NULL UNIQUE,
-			name       VARCHAR(128) NOT NULL DEFAULT '',
-			owner_id   UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE TABLE IF NOT EXISTS share_links (
 			id          SERIAL PRIMARY KEY,

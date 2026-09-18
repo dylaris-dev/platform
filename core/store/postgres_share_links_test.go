@@ -178,7 +178,7 @@ func TestGetShareLinkByToken_ReturnsRevokedAndExpired(t *testing.T) {
 }
 
 // TestGetShareLinkByToken_NotFound pins the nil,nil-on-no-match contract
-// (same public-lookup style as GetPackBySolderSlug) so the handler's uniform
+// so the handler's uniform
 // 404 works off a nil link, not an error.
 func TestGetShareLinkByToken_NotFound(t *testing.T) {
 	db, mock, err := sqlmock.New()

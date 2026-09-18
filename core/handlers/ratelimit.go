@@ -158,7 +158,7 @@ func (l *IPRateLimiter) allow(ip string, perMin int) bool {
 // shares one counter per client and perMin is that route's ceiling on the shared
 // count, not a budget of its own. Callers rely on this in both directions: the
 // auth routes deliberately share an instance so an attacker rotating between
-// them gets one budget, while the solder mirror, share links and beam download
+// them gets one budget, while the pack mirror, share links and beam download
 // each construct their own so an expensive route cannot drain the login budget.
 // Adding a route to an existing limiter therefore changes the effective limit of
 // every other route on it.

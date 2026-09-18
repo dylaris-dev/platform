@@ -10,15 +10,11 @@ import (
 var errPackNotFound = errors.New("pack not found")
 
 const packCols = `id, owner_id, internal_name, internal_slug, summary,
-	solder_display_name, solder_slug, hidden, private, recommended_build, latest_build,
-	icon_url, logo_url, background_url, icon_md5, logo_md5, background_md5,
 	modrinth_project_id, modrinth_project_name, modrinth_visibility, created_at, updated_at`
 
 func scanPack(row interface{ Scan(...interface{}) error }) (*models.Pack, error) {
 	var p models.Pack
 	if err := row.Scan(&p.ID, &p.OwnerID, &p.InternalName, &p.InternalSlug, &p.Summary,
-		&p.SolderDisplayName, &p.SolderSlug, &p.Hidden, &p.Private, &p.RecommendedBuild, &p.LatestBuild,
-		&p.IconURL, &p.LogoURL, &p.BackgroundURL, &p.IconMD5, &p.LogoMD5, &p.BackgroundMD5,
 		&p.ModrinthProjectID, &p.ModrinthProjectName, &p.ModrinthVisibility, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -28,28 +24,21 @@ func scanPack(row interface{ Scan(...interface{}) error }) (*models.Pack, error)
 func (s *PostgresStore) CreatePack(p *models.Pack) (int, error) {
 	var id int
 	err := s.db.QueryRow(`INSERT INTO packs
-		(owner_id, internal_name, internal_slug, summary, solder_display_name, solder_slug,
-		 hidden, private, modrinth_visibility)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-		p.OwnerID, p.InternalName, p.InternalSlug, p.Summary, p.SolderDisplayName, p.SolderSlug,
-		p.Hidden, p.Private, p.ModrinthVisibility,
+		(owner_id, internal_name, internal_slug, summary, modrinth_visibility)
+		VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		p.OwnerID, p.InternalName, p.InternalSlug, p.Summary, p.ModrinthVisibility,
 	).Scan(&id)
 	return id, err
 }
 
 func (s *PostgresStore) UpdatePack(p *models.Pack) error {
 	// internal_slug is intentionally immutable after creation: it is the stable
-	// UNIQUE (owner_id, internal_slug) handle. Rename the launcher-facing
-	// identity via solder_slug, never the internal slug.
+	// UNIQUE (owner_id, internal_slug) handle.
 	_, err := s.db.Exec(`UPDATE packs SET
-		internal_name=$1, summary=$2, solder_display_name=$3, solder_slug=$4,
-		hidden=$5, private=$6, recommended_build=$7, latest_build=$8,
-		icon_url=$9, logo_url=$10, background_url=$11, icon_md5=$12, logo_md5=$13, background_md5=$14,
-		modrinth_project_id=$15, modrinth_project_name=$16, modrinth_visibility=$17, updated_at=NOW()
-		WHERE id=$18`,
-		p.InternalName, p.Summary, p.SolderDisplayName, p.SolderSlug,
-		p.Hidden, p.Private, p.RecommendedBuild, p.LatestBuild,
-		p.IconURL, p.LogoURL, p.BackgroundURL, p.IconMD5, p.LogoMD5, p.BackgroundMD5,
+		internal_name=$1, summary=$2,
+		modrinth_project_id=$3, modrinth_project_name=$4, modrinth_visibility=$5, updated_at=NOW()
+		WHERE id=$6`,
+		p.InternalName, p.Summary,
 		p.ModrinthProjectID, p.ModrinthProjectName, p.ModrinthVisibility, p.ID)
 	return err
 }
@@ -86,14 +75,14 @@ func (s *PostgresStore) ListPacksByOwner(ownerID string) ([]models.Pack, error) 
 }
 
 const buildCols = `id, pack_id, version_string, minecraft, loader, loader_version,
-	min_java, min_memory, changelog, channel, frozen, solder_published, solder_private,
+	min_java, min_memory, changelog, channel, frozen,
 	modrinth_published, modrinth_version_id, mrpack_storage_key, mrpack_sha256, created_at, published_at`
 
 func scanBuild(row interface{ Scan(...interface{}) error }) (*models.PackBuild, error) {
 	var b models.PackBuild
 	var publishedAt sql.NullTime
 	if err := row.Scan(&b.ID, &b.PackID, &b.VersionString, &b.Minecraft, &b.Loader, &b.LoaderVersion,
-		&b.MinJava, &b.MinMemory, &b.Changelog, &b.Channel, &b.Frozen, &b.SolderPublished, &b.SolderPrivate,
+		&b.MinJava, &b.MinMemory, &b.Changelog, &b.Channel, &b.Frozen,
 		&b.ModrinthPublished, &b.ModrinthVersionID, &b.MrpackStorageKey, &b.MrpackSHA256, &b.CreatedAt, &publishedAt); err != nil {
 		return nil, err
 	}
@@ -125,11 +114,11 @@ func (s *PostgresStore) UpdatePackBuild(b *models.PackBuild) error {
 	}
 	_, err := s.db.Exec(`UPDATE pack_builds SET
 		version_string=$1, minecraft=$2, loader=$3, loader_version=$4, min_java=$5, min_memory=$6,
-		changelog=$7, channel=$8, frozen=$9, solder_published=$10, solder_private=$11,
-		modrinth_published=$12, modrinth_version_id=$13, mrpack_storage_key=$14, mrpack_sha256=$15, published_at=$16
-		WHERE id=$17`,
+		changelog=$7, channel=$8, frozen=$9,
+		modrinth_published=$10, modrinth_version_id=$11, mrpack_storage_key=$12, mrpack_sha256=$13, published_at=$14
+		WHERE id=$15`,
 		b.VersionString, b.Minecraft, b.Loader, b.LoaderVersion, b.MinJava, b.MinMemory,
-		b.Changelog, b.Channel, b.Frozen, b.SolderPublished, b.SolderPrivate,
+		b.Changelog, b.Channel, b.Frozen,
 		b.ModrinthPublished, b.ModrinthVersionID, b.MrpackStorageKey, b.MrpackSHA256, publishedAt, b.ID)
 	return err
 }
@@ -163,149 +152,4 @@ func (s *PostgresStore) ListPackBuilds(packID int) ([]models.PackBuild, error) {
 		out = append(out, *b)
 	}
 	return out, rows.Err()
-}
-
-// GetPackBySolderSlug resolves a pack by its public Solder slug (index-supported
-// by packs_solder_slug_uniq). Returns (nil, nil) when no pack has that slug.
-func (s *PostgresStore) GetPackBySolderSlug(slug string) (*models.Pack, error) {
-	row := s.db.QueryRow(`SELECT `+packCols+` FROM packs WHERE solder_slug = $1`, slug)
-	p, err := scanPack(row)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	return p, err
-}
-
-// GetPackBuildByVersion resolves one build inside a pack by its version string
-// (unique per pack via pack_builds_pack_version_uniq). (nil, nil) when absent.
-func (s *PostgresStore) GetPackBuildByVersion(packID int, versionString string) (*models.PackBuild, error) {
-	row := s.db.QueryRow(`SELECT `+buildCols+` FROM pack_builds
-		WHERE pack_id = $1 AND version_string = $2`, packID, versionString)
-	b, err := scanBuild(row)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	return b, err
-}
-
-// ListSolderPublishedBuilds returns the pack's Solder-published builds, newest first.
-func (s *PostgresStore) ListSolderPublishedBuilds(packID int) ([]models.PackBuild, error) {
-	rows, err := s.db.Query(`SELECT `+buildCols+` FROM pack_builds
-		WHERE pack_id = $1 AND solder_published = true ORDER BY created_at DESC`, packID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []models.PackBuild
-	for rows.Next() {
-		b, err := scanBuild(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *b)
-	}
-	return out, rows.Err()
-}
-
-// ListPublicSolderPacks returns every pack that has a Solder slug and is neither
-// private nor hidden, alphabetically by internal name (the public Solder listing).
-func (s *PostgresStore) ListPublicSolderPacks() ([]models.Pack, error) {
-	rows, err := s.db.Query(`SELECT ` + packCols + ` FROM packs
-		WHERE solder_slug <> '' AND private = false AND hidden = false
-		ORDER BY internal_name ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []models.Pack
-	for rows.Next() {
-		p, err := scanPack(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *p)
-	}
-	return out, rows.Err()
-}
-
-// CountPrivateSolderPacks returns how many Solder-capable packs (have a
-// solder_slug) are private or hidden. Used to warn the operator that public
-// delivery mode would place these packs' files in a publicly readable bucket.
-// AnyPublishedSolderModKey returns the storage key of one mod file that is
-// actually reachable through a published Solder build, or "" when the install
-// has none yet.
-//
-// It exists so the public-delivery probe can ask a definitive question. Probing
-// the mirror BASE cannot answer it: a base URL is not an object, so a correctly
-// configured public bucket legitimately 404s there, and Cloudflare R2's S3
-// endpoint answers 400 to any unauthenticated request - measured, on the base
-// AND on a real object. The probe therefore reported "reachable" for a base no
-// player can read a single byte from.
-func (s *PostgresStore) AnyPublishedSolderModKey() (string, error) {
-	var key string
-	err := s.db.QueryRow(`
-		SELECT mv.storage_key
-		FROM build_modversions bm
-		JOIN pack_builds b  ON b.id = bm.build_id
-		JOIN packs p        ON p.id = b.pack_id
-		JOIN modversions mv ON mv.id = bm.modversion_id
-		WHERE b.solder_published = true
-		  AND p.solder_slug <> ''
-		  AND mv.storage_key <> ''
-		LIMIT 1`).Scan(&key)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return key, err
-}
-
-func (s *PostgresStore) CountPrivateSolderPacks() (int, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM packs
-		WHERE solder_slug <> '' AND (private = true OR hidden = true)`).Scan(&n)
-	return n, err
-}
-
-// ListAllSolderPacks returns every pack with a Solder slug OWNED BY ownerID,
-// regardless of private/hidden. Used by the public read path ONLY when a
-// valid ?k= is present, scoped to that key's own owner (BC5: a key must
-// never unlock another owner's packs).
-func (s *PostgresStore) ListAllSolderPacks(ownerID string) ([]models.Pack, error) {
-	rows, err := s.db.Query(`SELECT `+packCols+` FROM packs
-		WHERE solder_slug <> '' AND owner_id = $1 ORDER BY internal_name`, ownerID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	packs := make([]models.Pack, 0)
-	for rows.Next() {
-		p, err := scanPack(rows)
-		if err != nil {
-			return nil, err
-		}
-		packs = append(packs, *p)
-	}
-	return packs, rows.Err()
-}
-
-// ListSolderPacksForClient returns the Solder packs assigned to a client via
-// pack_clients. Used by the public read path when a valid ?cid= is present.
-// Uses an IN subquery so the bare packCols list has no ambiguous column reference.
-func (s *PostgresStore) ListSolderPacksForClient(clientID int) ([]models.Pack, error) {
-	rows, err := s.db.Query(`SELECT `+packCols+` FROM packs
-		WHERE solder_slug <> '' AND id IN (SELECT pack_id FROM pack_clients WHERE client_id = $1)
-		ORDER BY internal_name`, clientID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	packs := make([]models.Pack, 0)
-	for rows.Next() {
-		p, err := scanPack(rows)
-		if err != nil {
-			return nil, err
-		}
-		packs = append(packs, *p)
-	}
-	return packs, rows.Err()
 }

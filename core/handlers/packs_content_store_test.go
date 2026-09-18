@@ -63,7 +63,7 @@ func modpackProviderAt(t *testing.T, dir string) modpack.ModpackStorageProvider 
 }
 
 // TestStoreUploadedContent_StreamsAStoredZip is the constant-memory upload path:
-// a pre-built Solder .zip is stored as-is via PutStream, its hashes are the raw
+// a pre-built content .zip is stored as-is via PutStream, its hashes are the raw
 // upload's hashes, and the object is retrievable byte-for-byte.
 func TestStoreUploadedContent_StreamsAStoredZip(t *testing.T) {
 	dir := t.TempDir()
@@ -115,7 +115,7 @@ func TestStoreUploadedContent_RejectsUnsafeZip(t *testing.T) {
 }
 
 // TestStoreUploadedContent_WrapsAJar covers the buffered wrap path: a raw jar is
-// wrapped into a Solder zip at mods/<file> and stored, with the inner hashes
+// wrapped into a content zip at mods/<file> and stored, with the inner hashes
 // taken over the raw jar (for Modrinth linking) and the stored hashes over the
 // wrapped zip.
 func TestStoreUploadedContent_WrapsAJar(t *testing.T) {

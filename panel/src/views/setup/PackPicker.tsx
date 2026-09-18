@@ -77,11 +77,11 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
         onSelect({
             packId: pack.id,
             buildId: build.id,
-            packName: pack.solderDisplayName || pack.internalName,
+            packName: pack.internalName,
             versionString: build.versionString,
             loader: build.loader || undefined,
             mcVersion: build.minecraft || undefined,
-            published: build.solderPublished || build.modrinthPublished,
+            published: build.modrinthPublished,
         });
     };
 
@@ -146,10 +146,10 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
                                         </div>
                                         <div className="min-w-0 flex-1">
                                             <div className="text-sm font-medium text-(--base-09) truncate">
-                                                {pack.solderDisplayName || pack.internalName}
+                                                {pack.internalName}
                                             </div>
                                             <div className="text-[10px] font-mono text-(--base-06) truncate">
-                                                {pack.latestBuild ? `latest ${pack.latestBuild}` : 'no builds yet'}
+                                                /{pack.internalSlug}
                                             </div>
                                         </div>
                                     </button>
@@ -180,7 +180,7 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
                                                             <div className="text-xs text-(--base-09)">{build.versionString}</div>
                                                             <div className="text-[10px] font-mono text-(--base-06) truncate">
                                                                 {build.loader} · MC {build.minecraft} ·{' '}
-                                                                {(build.solderPublished || build.modrinthPublished) ? 'published' : 'draft'}
+                                                                {build.modrinthPublished ? 'published' : 'draft'}
                                                             </div>
                                                         </div>
                                                     </button>

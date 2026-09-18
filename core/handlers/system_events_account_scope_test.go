@@ -8,8 +8,8 @@ import "testing"
 // packs.changed carried the pack owner's id and users.changed the subject's, on
 // a fan-out that reached every authenticated session, while the scope filter
 // looked only at serverId. The owner id is the expensive half: it is the first
-// segment of modpacks/<ownerID>/<slug>/<version>/pack.mrpack, and /solder/mirror
-// serves that path to anyone without a credential by design. The layout is
+// segment of modpacks/<ownerID>/<slug>/<version>/pack.mrpack, and the pack
+// mirror serves that path to anyone without a credential by design. The layout is
 // accepted because the path cannot be derived from outside - which stops being
 // true the moment one of its unknown segments is broadcast.
 func TestSystemEventsAccountScope(t *testing.T) {

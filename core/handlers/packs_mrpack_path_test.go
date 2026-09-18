@@ -9,12 +9,12 @@ import (
 
 // The .mrpack path is a credential, not an address.
 //
-// The Node downloads it over /solder/mirror/, which is anonymous - a Technic
-// launcher cannot present one, so the whole route is. The layout is only safe
-// while the path cannot be reconstructed from what the platform publishes, and
-// the public Solder API publishes the pack owner's id in every mods[].url. A
-// path built from that id left just the internal slug between an anonymous
-// caller and the full .mrpack of every other pack on the account.
+// The Node downloads it over /mirror/, which is anonymous - a node presents no
+// credential there, so the whole route is. The layout is only safe while the
+// path cannot be reconstructed from what the platform publishes, and the Solder
+// API that existed until 2026-09-18 published the pack owner's id in every
+// mods[].url. A path built from that id left just the internal slug between an
+// anonymous caller and the full .mrpack of every other pack on the account.
 func TestMrpackStorageKeyRevealsNoPublishedComponent(t *testing.T) {
 	h := &PacksHandler{state: &AppState{ClusterSecret: "cluster-secret-under-test"}}
 	pack := &models.Pack{OwnerID: "aaaaaaaa-1111-4111-8111-111111111111", InternalSlug: "skyfactory"}
@@ -23,7 +23,7 @@ func TestMrpackStorageKeyRevealsNoPublishedComponent(t *testing.T) {
 	key := h.mrpackStorageKey(pack, build)
 
 	if !strings.HasPrefix(key, "modpacks/") || !strings.HasSuffix(key, "/pack.mrpack") {
-		t.Fatalf("key %q is outside the prefix SolderMirror serves", key)
+		t.Fatalf("key %q is outside the prefix ModpackMirror serves", key)
 	}
 	// The owner id is the one component an anonymous caller already holds.
 	for _, leak := range []string{pack.OwnerID, pack.InternalSlug, build.VersionString} {
@@ -45,8 +45,8 @@ func TestMrpackStorageKeyIsStableAndDistinct(t *testing.T) {
 		t.Fatalf("not stable: %q vs %q", first, second)
 	}
 
-	// Two accounts may hold the same slug since uniqueness moved to
-	// (owner_id, solder_slug), so the owner has to reach the key.
+	// Two accounts may hold the same internal slug (it is unique per owner), so
+	// the owner has to reach the key.
 	other := &models.Pack{OwnerID: "bbbbbbbb-2222-4222-8222-222222222222", InternalSlug: "skyfactory"}
 	if h.mrpackStorageKey(other, build) == first {
 		t.Error("two owners with the same slug collide on one object")

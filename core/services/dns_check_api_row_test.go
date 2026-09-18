@@ -9,8 +9,8 @@ import (
 //
 // It matters because the answer CHANGED. Core serves the panel itself now, so
 // the browser calls /api on the origin it was loaded from and there is no
-// second name to create. The row was still built from core_public_url - a
-// setting that exists for Solder mod URLs and has nothing to do with what the
+// second name to create. The row was still built from core_public_url - the
+// base a node downloads a built pack from, with nothing to do with what the
 // browser calls - and told an operator with a perfectly working panel that no
 // API address was set and that the panel would "load and then do nothing".
 //

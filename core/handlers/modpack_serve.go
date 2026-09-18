@@ -26,11 +26,14 @@ import (
 // share link still serves the pack to anyone the URL was forwarded to.
 const modpackPresignTTL = 5 * time.Minute
 
-// SolderMirrorRequestsPerMinute is the per-IP budget on the public mirror
-// route. See the route registration in routes.go for why it sits this high:
-// the budget counts requests and a single pack install fetches one per mod, so
-// a tight limit would 429 a legitimate install part way through.
-const SolderMirrorRequestsPerMinute = 600
+// ModpackMirrorRequestsPerMinute is the per-IP budget on the public pack mirror.
+//
+// It used to be 600, sized for a Technic launcher that fetched one zip PER MOD
+// and would have been cut off part way through a large pack. That client is gone
+// with Solder. What is left is a node downloading one rendered .mrpack per
+// install, so 60 leaves ample room for retries and for several servers of one
+// machine installing at once, and bounds what a single source can pull.
+const ModpackMirrorRequestsPerMinute = 60
 
 // modpackDelivery selects how a stored object reaches the client.
 type modpackDelivery int
@@ -54,9 +57,8 @@ const (
 // Streaming makes the cost a fixed buffer regardless of pack size or
 // concurrency.
 //
-// Callers map the returned error themselves: the two call sites answer in
-// different error shapes (Solder-flavoured JSON vs the panel's), and
-// modpack.ErrNotFound has to become a 404 rather than a 500 in both.
+// Callers map the returned error themselves: modpack.ErrNotFound has to become a
+// 404 rather than a 500, and each call site owns its own answer.
 func serveModpackObject(w http.ResponseWriter, r *http.Request, prov modpack.ModpackStorageProvider, key string, mode modpackDelivery, contentType, filename string) error {
 	if mode == deliverRedirect {
 		url, err := prov.DownloadURL(r.Context(), key, modpackPresignTTL)

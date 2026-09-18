@@ -7,9 +7,8 @@ import (
 )
 
 // The storage key must never carry raw remote text. version_number is whatever
-// the project author typed on Modrinth and it went into the key verbatim, while
-// the Solder import path slugifies the same field with a comment saying exactly
-// why. A key that escapes "packs/<owner>/mods/<slug>/" writes into another
+// the project author typed on Modrinth and it went into the key verbatim. A key
+// that escapes "packs/<owner>/mods/<slug>/" writes into another
 // owner's prefix.
 //
 // The key is built inline in swapModversionToModrinth, so this pins the

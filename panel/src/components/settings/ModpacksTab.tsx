@@ -3,7 +3,7 @@
 // Settings tab for the modpack-authoring subsystem. Houses:
 //   - a read-only mirror of the platform-wide feature flag (owned by Features)
 //   - the .mrpack storage provider (local mirror list, or a saved S3 connection)
-//   - Solder delivery mode + the public base launchers download from
+//   - the public address a node downloads a built pack from
 // S3 credentials are NOT edited here: they live in Settings -> Storage
 // Connections and this screen only references one by id.
 //
@@ -20,47 +20,14 @@ import SettingsCard, { SettingsGroup, SettingsRow } from '@/components/settings/
 import ModCacheCard from '@/components/settings/ModCacheCard';
 import { SwitchRow } from '@/components/ui/Switch';
 import {
-    getModpackSettings, setModpackSettings, getModpackDeliveryCapabilities,
-    type ModpackSettings, type DeliveryCapabilities,
+    getModpackSettings, setModpackSettings,
+    type ModpackSettings,
 } from '@/lib/api/modpackSettings';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
-
-// Whether a Solder delivery mode is currently unusable given the backend's
-// probed capabilities. `caps === null` (not yet loaded, or the probe failed)
-// fails OPEN - every mode stays enabled rather than greying out on an unknown,
-// same reasoning as FeaturesTab's storageConfigured gate.
-export function isDeliveryModeDisabled(
-    mode: ModpackSettings['solderDeliveryMode'],
-    caps: DeliveryCapabilities | null,
-): boolean {
-    if (mode === 'presigned') return caps?.canPresign === false;
-    if (mode === 'public') return caps?.publicConfigured === false || caps?.publicReachable === false;
-    return false;
-}
-
-// The backend already knows WHY a mode is unavailable and returns it in
-// caps.notes. Surfacing it beside the disabled option is the difference between
-// "this is broken" and "point this at a bucket first". Falls back to a generic
-// line only when the probe returned no note.
-export function deliveryDisabledReason(
-    mode: ModpackSettings['solderDeliveryMode'],
-    caps: DeliveryCapabilities | null,
-): string {
-    if (!isDeliveryModeDisabled(mode, caps)) return '';
-    if (mode === 'presigned') return caps?.notes?.presigned || 'The current storage backend cannot issue presigned URLs.';
-    if (mode === 'public') return caps?.notes?.public || 'No reachable public base URL is configured.';
-    return '';
-}
 
 const PROVIDER_OPTIONS = [
     { value: 'local' as const, label: 'Local paths', desc: 'Archives on disk, mirrored across the paths below' },
     { value: 's3' as const, label: 'S3 connection', desc: 'A bucket from Settings, Storage connections' },
-];
-
-const DELIVERY_OPTIONS = [
-    { value: 'core' as const, label: 'Through Core', desc: 'Core proxies every file. Works everywhere, and all traffic goes through it.' },
-    { value: 'presigned' as const, label: 'Presigned', desc: 'Expiring links straight to a private bucket. Core stays out of the transfer.' },
-    { value: 'public' as const, label: 'Public base', desc: 'Files served from a public bucket or CDN. Anyone with the URL can fetch them.' },
 ];
 
 const DEFAULTS: ModpackSettings = {
@@ -79,16 +46,10 @@ const DEFAULTS: ModpackSettings = {
     shareLinksEnabled: false,
     connectionId: 0,
     corePublicUrl: '',
-    solderMirrorUrl: '',
-    solderDeliveryMode: 'core',
 };
 
 export default function ModpacksTab() {
     const [connections, setConnections] = useState<StorageConnection[]>([]);
-    // Probed once on mount - which delivery modes the backend can actually
-    // serve right now, so the radios below can grey out one that would just
-    // 500 at Solder-download time. null = not loaded yet / probe failed.
-    const [deliveryCaps, setDeliveryCaps] = useState<DeliveryCapabilities | null>(null);
 
     const form = useSettingsForm<ModpackSettings>({
         load: async () => {
@@ -113,9 +74,6 @@ export default function ModpacksTab() {
     });
 
     useEffect(() => {
-        getModpackDeliveryCapabilities()
-            .then(res => setDeliveryCaps(res.capabilities ?? null))
-            .catch(() => setDeliveryCaps(null));
         listStorageConnections().then(res => {
             if (res.success && res.connections) setConnections(res.connections);
         });
@@ -130,7 +88,7 @@ export default function ModpacksTab() {
         <SettingsPage
             title="Modpacks"
             icon={Package}
-            description="Storage layout and delivery for modpack archives. The on/off switches live under Settings, Features."
+            description="Where modpack archives are stored, and the address a node downloads a built pack from. The on/off switches live under Settings, Features."
             loading={form.loading}
         >
             {/* Read-only mirror of the platform flag, NOT a second switch. This
@@ -153,7 +111,7 @@ export default function ModpacksTab() {
             </div>
 
             <SettingsCard
-                title="Modpack storage and delivery"
+                title="Modpack storage"
                 description="Everything below is written by one save."
                 form={form}
                 saveBlockedReason={settings.provider ? undefined : 'Pick where modpack archives are stored first'}
@@ -312,115 +270,41 @@ export default function ModpacksTab() {
                     )}
                 </SettingsGroup>
 
-                {/* Each option carries its own explanation and, when the current
-                    storage config cannot serve it, the concrete reason. The probe
-                    already knows it, and "greyed out with no reason" is the
-                    version of this screen people file bugs about. */}
                 <SettingsGroup
-                    title="Solder delivery"
-                    description="How a launcher actually fetches mod files. Independent of where they are stored: this only decides who serves the bytes."
+                    title="Pack download address"
+                    description="A node installing a pack built here downloads it from Core, so Core needs to know its own public address."
                 >
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        {DELIVERY_OPTIONS.map(opt => {
-                            const disabled = isDeliveryModeDisabled(opt.value, deliveryCaps);
-                            const active = settings.solderDeliveryMode === opt.value;
-                            const reason = disabled ? deliveryDisabledReason(opt.value, deliveryCaps) : '';
-                            return (
-                                <button
-                                    key={opt.value}
-                                    type="button"
-                                    aria-pressed={active}
-                                    disabled={disabled}
-                                    title={reason || opt.desc}
-                                    onClick={() => patch({ solderDeliveryMode: opt.value })}
-                                    className={`p-3 rounded-md border text-left transition-colors ${
-                                        disabled
-                                            ? 'border-(--base-03) bg-(--base-02) opacity-50 cursor-not-allowed'
-                                            : active
-                                                ? 'border-(--accent) bg-(--accent)/10'
-                                                : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
-                                    }`}
-                                >
-                                    <div className={`text-sm font-medium ${active && !disabled ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
-                                    <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
-                                    {reason && (
-                                        <div className="flex items-start gap-1 text-[11px] text-(--warning-light) mt-1.5">
-                                            <AlertTriangle size={10} className="mt-0.5 shrink-0" />
-                                            <span>{reason}</span>
-                                        </div>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-                    {settings.solderDeliveryMode === 'public' && (deliveryCaps?.privatePackCount ?? 0) > 0 && (
-                        <p className="flex items-start gap-1.5 text-xs text-(--warning)">
-                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                            <span>
-                                {deliveryCaps?.privatePackCount} private or hidden Solder pack
-                                {(deliveryCaps?.privatePackCount ?? 0) === 1 ? '' : 's'} exist. In public
-                                mode their files sit in a publicly readable bucket and can be fetched by
-                                anyone who derives the URL; the URL is just not advertised.
-                                Use presigned to keep private packs confidential.
-                            </span>
-                        </p>
-                    )}
-                </SettingsGroup>
-
-                <SettingsGroup
-                    title="Solder download address"
-                    description={
-                        settings.solderDeliveryMode === 'public'
-                            ? 'Public mode serves artifacts straight from your bucket or CDN, so launchers need its public base URL. Core never sees these downloads.'
-                            : 'Launchers download through Core in this mode, so Core needs to know its own public address. A separate mirror URL is only used by public delivery.'
-                    }
-                >
-                    {settings.solderDeliveryMode === 'public' ? (
+                    <div className="space-y-1.5">
                         <Field
-                            id="modpack-mirror-url"
-                            label="Mirror URL"
-                            value={settings.solderMirrorUrl}
-                            onChange={v => patch({ solderMirrorUrl: v })}
-                            placeholder="https://cdn.example.com/modpacks"
+                            id="modpack-core-url"
+                            label="Core public URL"
+                            value={settings.corePublicUrl}
+                            onChange={v => patch({ corePublicUrl: v })}
+                            placeholder="https://api.example.com"
                         />
-                    ) : (
-                        <div className="space-y-1.5">
-                            <Field
-                                id="modpack-core-url"
-                                label="Core public URL"
-                                value={settings.corePublicUrl}
-                                onChange={v => patch({ corePublicUrl: v })}
-                                placeholder="https://api.example.com"
-                            />
-                            {/* Core reports the origin this very request came in
-                                on. Offered, never applied on its own: an admin
-                                reaching Core over localhost or a service name
-                                would otherwise silently persist an address no
-                                launcher can resolve. */}
-                            {detectedUrl && detectedUrl !== settings.corePublicUrl.trim() && (
-                                <button
-                                    type="button"
-                                    onClick={() => patch({ corePublicUrl: detectedUrl })}
-                                    className="btn btn-secondary btn-sm"
-                                >
-                                    Use the address you are on: <span className="font-mono ml-1">{detectedUrl}</span>
-                                </button>
-                            )}
-                        </div>
-                    )}
-                    {(settings.solderDeliveryMode === 'public' ? settings.solderMirrorUrl : settings.corePublicUrl).trim() === '' && (
+                        {/* Core reports the origin this very request came in on.
+                            Offered, never applied on its own: an admin reaching
+                            Core over localhost or a service name would otherwise
+                            silently persist an address no node can resolve. */}
+                        {detectedUrl && detectedUrl !== settings.corePublicUrl.trim() && (
+                            <button
+                                type="button"
+                                onClick={() => patch({ corePublicUrl: detectedUrl })}
+                                className="btn btn-secondary btn-sm"
+                            >
+                                Use the address you are on: <span className="font-mono ml-1">{detectedUrl}</span>
+                            </button>
+                        )}
+                    </div>
+                    {settings.corePublicUrl.trim() === '' && (
                         <div className="text-xs text-(--warning-light)">
-                            {settings.solderDeliveryMode === 'public'
-                                ? 'Not set: in public mode the pack list answers 500 and launchers cannot download.'
-                                : 'Not set: the pack list answers 500 and launchers cannot download. This is the address Core serves mirror files from.'}
+                            Not set: a pack built here cannot be installed on a server, because the node downloads it from this address.
                         </div>
                     )}
-                    {settings.provider !== 's3' && (
-                        <p className="text-xs text-(--base-06)">
-                            Core serves the mirror itself at <span className="font-mono">{'{url}'}/solder/mirror/</span>,
-                            so this is the origin players reach Core on, not an internal address.
-                        </p>
-                    )}
+                    <p className="text-xs text-(--base-06)">
+                        Core serves built packs itself at <span className="font-mono">{'{url}'}/mirror/</span>,
+                        so this is the origin a node reaches Core on, not an internal address.
+                    </p>
                 </SettingsGroup>
             </SettingsCard>
 

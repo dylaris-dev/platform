@@ -192,7 +192,7 @@ func TestListStorageManifests_FiltersByDataSetWhenGiven(t *testing.T) {
 	}
 }
 
-func TestListModpackStorageKeys_UnionsThreeColumnsAndSkipsBlanks(t *testing.T) {
+func TestListModpackStorageKeys_UnionsTheColumnsAndSkipsBlanks(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
@@ -220,19 +220,22 @@ func TestListModpackStorageKeys_UnionsThreeColumnsAndSkipsBlanks(t *testing.T) {
 	}
 }
 
-func TestListModpackStorageKeys_QueryCoversAllThreeSources(t *testing.T) {
+func TestListModpackStorageKeys_QueryCoversBothSources(t *testing.T) {
 	q := modpackStorageKeysSQL()
 	for _, want := range []string{
 		"modversions",
 		"pack_builds",
-		"loaders",
 		"storage_key <> ''",
 		"mrpack_storage_key <> ''",
-		"client_storage_key <> ''",
 	} {
 		if !strings.Contains(q, want) {
 			t.Errorf("modpack key-space query is missing %q:\n%s", want, q)
 		}
+	}
+	// The Solder loader table is dropped at boot. A query that still named it
+	// would fail the whole storage migration of the modpacks data set.
+	if strings.Contains(q, "loaders") {
+		t.Errorf("modpack key-space query still reads the dropped loaders table:\n%s", q)
 	}
 }
 

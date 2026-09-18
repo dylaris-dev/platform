@@ -10,16 +10,16 @@ import (
 	"fmt"
 )
 
-// WrapJarAsSolderZip packages a single mod jar into a Solder-format zip whose
+// WrapJarAsContentZip packages a single mod jar into a content zip whose
 // contents extract into the .minecraft root: the jar lands at mods/<fileName>.
-// The launcher downloads this zip, verifies its md5, and extracts it as-is.
-func WrapJarAsSolderZip(fileName string, jar []byte) ([]byte, error) {
+// The pack renders copy that entry out as-is.
+func WrapJarAsContentZip(fileName string, jar []byte) ([]byte, error) {
 	if fileName == "" {
 		return nil, fmt.Errorf("wrap: empty file name")
 	}
 	// fileName is a base name, not a path: it is concatenated onto "mods/"
 	// below, so a "../" in it lands the jar outside the instance when the
-	// launcher extracts. Both callers derive it from a name they sanitized
+	// pack is extracted. Both callers derive it from a name they sanitized
 	// first; refusing it here is what keeps that true for the next caller.
 	if IsUnsafeEntryPath("mods/" + fileName) {
 		return nil, fmt.Errorf("wrap: unsafe file name %q", fileName)
@@ -39,7 +39,8 @@ func WrapJarAsSolderZip(fileName string, jar []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Hashes returns hex md5 (Solder), sha1 + sha512 (Modrinth) over the bytes.
+// Hashes returns hex md5, sha1 and sha512 over the bytes; Modrinth matches a
+// file by the last two.
 func Hashes(data []byte) (md5hex, sha1hex, sha512hex string) {
 	m := md5.Sum(data)
 	s1 := sha1.Sum(data)

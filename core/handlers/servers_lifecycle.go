@@ -451,9 +451,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 				sendJSONError(w, "Failed to prepare pack for install", 500)
 				return
 			}
-			base, err := solderMirrorBase(h.state.Store.GetSetting)
+			base, err := modpackMirrorBase(h.state.Store.GetSetting)
 			if err != nil {
-				log.Printf("solderMirrorBase failed: %v", err)
+				log.Printf("modpackMirrorBase failed: %v", err)
 				sendJSONError(w, "Failed to prepare pack for install", 500)
 				return
 			}

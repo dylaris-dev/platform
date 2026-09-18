@@ -14,7 +14,12 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Breaking
-- Nothing.
+- **Solder is removed.** The Technic launcher API, Solder keys and clients, "Publish to
+  Solder" and the Solder import are gone; Core drops their tables and columns on boot. `core` `panel`
+- **That schema change is one way.** An older Core no longer starts on a database this
+  release has booted; to roll back, first run the restore SQL in `core/database/db_solder_removal.go`. `core`
+- **The pack builder stays; built packs now download from `/mirror/`.** If you used the
+  public delivery mode, add your Core host to the nodes' `MODPACK_MIRROR_HOSTS`. `core` `panel`
 
 ### Security
 - Nothing.

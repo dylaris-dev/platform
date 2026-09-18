@@ -44,19 +44,14 @@ func (h *PacksHandler) ownsPack(r *http.Request, packID int) (*models.Pack, bool
 
 // packRequest is the body for both Create and the Update PATCH.
 //
-// The three editable text fields are POINTERS because Update is a PATCH: as
-// plain strings, a body that simply left one out decoded to "" and Update
-// wrote that over the stored value. Blanking Summary or SolderDisplayName is
-// merely destructive; blanking SolderSlug takes the pack off the public Solder
-// API entirely AND orphans every published build, because solderManifestKey is
-// derived from the slug (see its own caveat). Absent now means "leave it
-// alone", the same rule serverTabRequest applies with *bool.
+// Summary is a POINTER because Update is a PATCH: as a plain string, a body
+// that simply left it out decoded to "" and Update wrote that over the stored
+// value. Absent means "leave it alone", the same rule serverTabRequest applies
+// with *bool.
 type packRequest struct {
-	Name              string  `json:"name"`
-	Slug              string  `json:"slug"`
-	Summary           *string `json:"summary"`
-	SolderDisplayName *string `json:"solderDisplayName"`
-	SolderSlug        *string `json:"solderSlug"`
+	Name    string  `json:"name"`
+	Slug    string  `json:"slug"`
+	Summary *string `json:"summary"`
 }
 
 // strVal dereferences an optional request string, treating absent as empty.
@@ -110,18 +105,11 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid slug", http.StatusBadRequest)
 		return
 	}
-	solderSlug := strings.TrimSpace(strVal(req.SolderSlug))
-	if solderSlug != "" && !packSlugRe.MatchString(solderSlug) {
-		sendJSONError(w, "Invalid solder slug", http.StatusBadRequest)
-		return
-	}
 	p := &models.Pack{
 		OwnerID:            userID,
 		InternalName:       req.Name,
 		InternalSlug:       slug,
 		Summary:            strings.TrimSpace(strVal(req.Summary)),
-		SolderDisplayName:  strings.TrimSpace(strVal(req.SolderDisplayName)),
-		SolderSlug:         solderSlug,
 		ModrinthVisibility: "unlisted",
 	}
 	id, err := h.state.Store.CreatePack(p)
@@ -171,31 +159,7 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Summary != nil {
 		p.Summary = strings.TrimSpace(*req.Summary)
 	}
-	if req.SolderDisplayName != nil {
-		p.SolderDisplayName = strings.TrimSpace(*req.SolderDisplayName)
-	}
-	// An invalid slug used to be swallowed: the caller got 200 and the old
-	// value, with nothing saying the field was ignored. Clearing it is still
-	// allowed - that is how a pack is taken off the Solder API deliberately -
-	// but it now has to be asked for.
-	if req.SolderSlug != nil {
-		s := strings.TrimSpace(*req.SolderSlug)
-		if s != "" && !packSlugRe.MatchString(s) {
-			sendJSONError(w, "Invalid solder slug", http.StatusBadRequest)
-			return
-		}
-		p.SolderSlug = s
-	}
 	if err := h.state.Store.UpdatePack(p); err != nil {
-		// Same answer Create already gives. A Solder slug is unique per owner,
-		// so renaming one onto another of your own packs is a thing a person
-		// does by hand - and it came back as a flat 500 here, which reads as a
-		// server fault rather than as a name that is taken.
-		msg := strings.ToLower(err.Error())
-		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {
-			sendJSONError(w, "A pack with that slug already exists", http.StatusConflict)
-			return
-		}
 		sendJSONError(w, "Failed to update", http.StatusInternalServerError)
 		return
 	}
@@ -243,33 +207,35 @@ func (h *PacksHandler) ListBuilds(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "builds": builds})
 }
 
-// validateBuildKeyComponents reports the first build field that must not reach
-// a storage key or an upstream URL path, or "" when all three are fine.
+// validateBuildKeyComponents reports the first build field that must not carry a
+// path separator or a traversal, or "" when all three are fine.
 //
 // VersionString has been checked since this handler was written; these three
-// never were, and they end up in exactly the same two places. packs_loader.go
-// builds "loaders/<loader>/<minecraft>/<resolved>/loader.zip" from them, and
-// services.BuildLoaderArtifact fmt.Sprintf's minecraft and the resolved loader
-// version straight into a meta.fabricmc.net path with no escaping at all.
-//
-// The storage-key half is defence in depth rather than a hole anyone can walk
-// through today: a "../" only reaches the Put if the upstream fetch SUCCEEDS,
-// and the key and the URL carry the same user segments, so a payload that keeps
-// the fabric endpoint valid nets to zero displacement in the key as well. The
-// URL half is not theoretical - unescaped request text decides which path on
-// fabricmc.net is fetched. Both stop being a question once the values are
-// checked where they arrive, which is what safeSolderKeyComponent exists for.
+// travel with the build into the .mrpack's dependencies, and a node installing
+// the pack formats them straight into a meta.fabricmc.net path with no escaping
+// (node/installer.go). Unescaped request text deciding which upstream path is
+// fetched is not theoretical, so the values are checked where they arrive rather
+// than trusted wherever they end up.
 //
 // Empty passes: a vanilla build has no loader and no loader version.
-// safeSolderKeyComponent rejects "" on purpose (an empty key COMPONENT is a
-// different question from an absent field), so emptiness is handled here.
+// safeKeyComponent rejects "" on purpose (an empty key COMPONENT is a different
+// question from an absent field), so emptiness is handled here.
+// safeKeyComponent rejects a value that could escape the namespace it is placed
+// in, as a storage-key segment or an upstream URL path segment. Modrinth version
+// numbers reach us verbatim (no charset validation), so a crafted "../.." could
+// otherwise address another tenant's objects - and no read-time guard can undo a
+// bad write.
+func safeKeyComponent(s string) bool {
+	return s != "" && !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
+}
+
 func validateBuildKeyComponents(minecraft, loader, loaderVersion string) string {
 	for _, f := range []struct{ name, value string }{
 		{"minecraft", minecraft},
 		{"loader", loader},
 		{"loaderVersion", loaderVersion},
 	} {
-		if f.value != "" && !safeSolderKeyComponent(f.value) {
+		if f.value != "" && !safeKeyComponent(f.value) {
 			return f.name
 		}
 	}
@@ -277,8 +243,7 @@ func validateBuildKeyComponents(minecraft, loader, loaderVersion string) string 
 }
 
 // CreateBuild POST /api/packs/{id}/builds - adds a build. A duplicate version
-// is 409. The matching loader is built in the background afterwards, so a
-// build is usable before that finishes.
+// is 409.
 func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	userID, _ := r.Context().Value("userID").(string)
@@ -296,8 +261,8 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "versionString is required", http.StatusBadRequest)
 		return
 	}
-	// reject path chars: VersionString feeds storage keys (mrpack + solder manifest) and a download filename
-	if !safeSolderKeyComponent(strings.TrimSpace(req.VersionString)) {
+	// reject path chars: VersionString feeds the download filename and the node-side install paths
+	if !safeKeyComponent(strings.TrimSpace(req.VersionString)) {
 		sendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 		return
 	}
@@ -320,15 +285,12 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.ID = id
-	// Kick a best-effort loader build for this build's loader (DB-check-first inside).
-	go h.EnsureLoader(b.Minecraft, b.Loader, b.LoaderVersion)
 	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
 
 // UpdateBuild PATCH /api/packs/{id}/builds/{buildId} - edits a build. The
-// build must belong to the pack in the path (404 otherwise), and a loader
-// change kicks a background loader build.
+// build must belong to the pack in the path (404 otherwise).
 func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
@@ -353,7 +315,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if v := strings.TrimSpace(req.VersionString); v != "" {
-		if !safeSolderKeyComponent(v) {
+		if !safeKeyComponent(v) {
 			sendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 			return
 		}
@@ -371,8 +333,6 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to update build", http.StatusInternalServerError)
 		return
 	}
-	// Kick a best-effort loader build for this build's loader (DB-check-first inside).
-	go h.EnsureLoader(b.Minecraft, b.Loader, b.LoaderVersion)
 	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }

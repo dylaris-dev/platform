@@ -4,11 +4,10 @@ import path from 'node:path';
 
 // Every page under /account must be reachable from the account dropdown.
 //
-// Two of them were not. /account/solder-keys was linked from NOWHERE, and
-// /account/solder-clients only from one sentence on a modpack detail page - so
-// the key needed to link this Solder to the Technic Platform sat behind a URL
-// an operator had to know already. Nothing failed anywhere: the routes existed,
-// the pages rendered, and typecheck and every test were green.
+// Two of them once were not: two account pages existed and rendered, and the
+// only way to them was a URL an operator had to know already. Nothing failed
+// anywhere: the routes existed, the pages rendered, and typecheck and every test
+// were green. (Those two pages belonged to Solder and are gone with it.)
 //
 // Checked at the source rather than by rendering, because the failure is a link
 // that is ABSENT, and a component test can only assert about what it renders.
@@ -27,8 +26,10 @@ function accountPages(): string[] {
 describe('account navigation', () => {
     it('finds the pages at all, so an empty sweep cannot pass', () => {
         // The denominator. A wrong path would make the loop below iterate zero
-        // times and report success for a check that never ran.
-        expect(accountPages().length).toBeGreaterThanOrEqual(5);
+        // times and report success for a check that never ran. A page known to
+        // exist proves the path resolves, where a minimum count broke every time
+        // a page was legitimately removed.
+        expect(accountPages()).toContain('/account/api-keys');
     });
 
     it('links every account page from the account dropdown', () => {

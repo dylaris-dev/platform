@@ -904,7 +904,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	// The download link is a URL Core itself GETs and then streams to the
 	// caller of the unauthenticated /api/beam/download, so it gets the same
 	// http/https + host + no-credentials check the other operator-set public
-	// URLs get (core public URL, solder mirror URL). The dialer behind that
+	// URLs get (the core public URL). The dialer behind that
 	// fetch refuses non-public addresses, which is what actually contains an
 	// SSRF; this rejects the obviously-wrong value at the point where an
 	// operator can still see the error.

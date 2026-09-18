@@ -70,9 +70,8 @@ func isMrpackFilesEntry(e models.BuildContentEntry) bool {
 //
 // files[].path is a path the LAUNCHER writes to, so a traversal-bearing
 // TargetPath here is the manifest's version of a zip slip - the same defect
-// renderServerPack's streamModrinthContent and the Solder render both already
-// refuse on this exact field. This was the third reader of it and the one
-// without the check. It reaches the DB unsanitized from exactly one place:
+// renderServerPack's streamModrinthContent already refuses on this exact field.
+// This was a reader of it without the check. It reaches the DB unsanitized from exactly one place:
 // addModrinthVersion builds it from the filename the MODRINTH API reports,
 // which is third-party text. Our own node resolves every mrpack entry through
 // resolveExtractPath and would refuse it; a third-party launcher is not ours to
@@ -112,10 +111,7 @@ func buildMrpackIndex(pack *models.Pack, build *models.PackBuild, content []mode
 	if build.Changelog != "" {
 		summary = strings.TrimSpace(pack.Summary + "\n\n" + build.Changelog)
 	}
-	name := pack.SolderDisplayName
-	if name == "" {
-		name = pack.InternalName
-	}
+	name := pack.InternalName
 	return mrpackIndexOut{
 		FormatVersion: 1,
 		Game:          "minecraft",
@@ -128,9 +124,8 @@ func buildMrpackIndex(pack *models.Pack, build *models.PackBuild, content []mode
 }
 
 // modrinthCDNURL returns the cdn.modrinth.com download URL for a linked entry,
-// or "". It reads modrinth_download_url (set at add/replace time); url_override
-// is reserved for the Solder mirror URL and is NOT used here. An entry with no
-// cdn URL falls to overrides/ (still installs, just embedded not referenced).
+// or "". It reads modrinth_download_url (set at add/replace time). An entry with
+// no cdn URL falls to overrides/ (still installs, just embedded not referenced).
 func modrinthCDNURL(e models.BuildContentEntry) string {
 	if strings.HasPrefix(e.ModrinthDownloadURL, "https://cdn.modrinth.com/") {
 		return e.ModrinthDownloadURL
@@ -138,8 +133,8 @@ func modrinthCDNURL(e models.BuildContentEntry) string {
 	return ""
 }
 
-// overrideEntriesFromStoredZip reads a content entry's stored Solder zip and
-// writes its inner files directly into zw under overrides/. A Solder zip
+// overrideEntriesFromStoredZip reads a content entry's stored content zip and
+// writes its inner files directly into zw under overrides/. A content zip
 // already holds the file at its .minecraft-relative path (e.g. mods/x.jar),
 // so we prefix "overrides/". Skips content that has no storage_key (pure
 // Modrinth reference).
@@ -253,18 +248,17 @@ func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, buil
 // mrpackStorageKey is the storage key for a build's rendered .mrpack.
 //
 // The directory segment is opaque on purpose: the Node fetches this object over
-// /solder/mirror/, which is anonymous by necessity (see SolderMirror), so the
-// PATH is the credential here, the same model as /api/share/{token}. That only
-// holds while the path cannot be derived from something the platform publishes.
+// /mirror/, which is anonymous by necessity (see ModpackMirror), so the PATH is
+// the credential here, the same model as /api/share/{token}. That only holds
+// while the path cannot be derived from something the platform publishes.
 //
 // It used to be modpacks/<ownerID>/<internalSlug>/<version>/, and the owner id
-// is printed in plain sight in every mods[].url the public Solder API serves -
-// in all three delivery modes, since the storage key is what a launcher
-// downloads by. One public pack therefore handed out a segment the layout
-// treated as secret, leaving only the internal slug between an anonymous caller
-// and every OTHER pack of that account. services.SystemEvents already refuses to
-// broadcast a pack owner id for exactly this reason; the Solder API published it
-// anyway.
+// was printed in plain sight by the Solder API that existed then. One public
+// pack therefore handed out a segment the layout treated as secret, leaving only
+// the internal slug between an anonymous caller and every OTHER pack of that
+// account. Solder is gone; the HMAC stays, because an owner id is not a secret
+// anywhere else either (services.SystemEvents refuses to broadcast one for the
+// same reason).
 //
 // Derived rather than random so the key stays stable per (owner, pack, build):
 // re-rendering a draft install overwrites its object instead of leaving a new

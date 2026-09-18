@@ -320,8 +320,8 @@ func newServerSnapshotHandler(settings map[string]string) *ServerHandler {
 }
 
 // TestIsSnapshotFetchHostAllowed pins the SSRF host-allowlist gate
-// (server_modpack_snapshot.go:140): cdn.modrinth.com or the configured
-// Solder-mirror host, everything else refused.
+// (server_modpack_snapshot.go): cdn.modrinth.com or this Core's own pack mirror
+// host, everything else refused.
 func TestIsSnapshotFetchHostAllowed(t *testing.T) {
 	localMirrorSettings := map[string]string{
 		"modpack_storage_provider": "local",
@@ -335,21 +335,25 @@ func TestIsSnapshotFetchHostAllowed(t *testing.T) {
 		}
 	})
 
-	t.Run("configured local solder-mirror host is allowed", func(t *testing.T) {
+	t.Run("this core's own mirror host is allowed", func(t *testing.T) {
 		h := newServerSnapshotHandler(localMirrorSettings)
-		if !h.isSnapshotFetchHostAllowed("https://core.example.com/solder/mirror/pack.mrpack") {
+		if !h.isSnapshotFetchHostAllowed("https://core.example.com/mirror/modpacks/abc/pack.mrpack") {
 			t.Fatalf("expected the configured core_public_url host to be allowed")
 		}
 	})
 
-	t.Run("configured s3 solder-mirror host is allowed", func(t *testing.T) {
+	// The Solder "public bucket" base no longer widens this list. A leftover
+	// solder_mirror_url must not open a host a pack install never fetches from:
+	// every panel-built pack is served from Core's own mirror now.
+	t.Run("a leftover solder mirror url opens nothing", func(t *testing.T) {
 		h := newServerSnapshotHandler(map[string]string{
 			"modpack_storage_provider": "s3",
+			"core_public_url":          "https://core.example.com",
 			"solder_delivery_mode":     "public",
 			"solder_mirror_url":        "https://cdn.myhoster.example/mirror",
 		})
-		if !h.isSnapshotFetchHostAllowed("https://cdn.myhoster.example/mirror/pack.mrpack") {
-			t.Fatalf("expected the configured S3 solder_mirror_url host to be allowed")
+		if h.isSnapshotFetchHostAllowed("https://cdn.myhoster.example/mirror/pack.mrpack") {
+			t.Fatalf("a Solder-only setting still widened the SSRF allowlist")
 		}
 	})
 

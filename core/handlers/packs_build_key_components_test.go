@@ -6,14 +6,12 @@ import (
 	"testing"
 )
 
-// safeSolderKeyComponent exists because "Modrinth version numbers reach us
-// verbatim (no charset validation), so a crafted '../..' could otherwise
-// clobber another tenant's objects - and the mirror's read-time guard cannot
-// undo a bad write". Only versionString was ever checked against it. The other
-// three build fields reach the same two places: packs_loader.go builds
-// "loaders/<loader>/<minecraft>/<resolved>/loader.zip" from them, and the
-// fabric loader builder fmt.Sprintf's minecraft and the resolved version into a
-// meta.fabricmc.net path with no escaping.
+// safeKeyComponent exists because "Modrinth version numbers reach us verbatim
+// (no charset validation), so a crafted '../..' could otherwise address another
+// tenant's objects". Only versionString was ever checked against it. The other
+// three build fields travel with the build into the .mrpack's dependencies, and
+// a node installing the pack fmt.Sprintf's minecraft and the loader version
+// into a meta.fabricmc.net path with no escaping (node/installer.go).
 func TestBuildKeyComponentsAreCheckedLikeVersionString(t *testing.T) {
 	tests := []struct {
 		name                             string
@@ -41,9 +39,9 @@ func TestBuildKeyComponentsAreCheckedLikeVersionString(t *testing.T) {
 	}
 }
 
-// The check has to sit on BOTH write paths. UpdateBuild kicks the very same
-// background loader build as CreateBuild, so guarding only the create leaves
-// the field settable one PATCH later.
+// The check has to sit on BOTH write paths. UpdateBuild writes the very same
+// fields as CreateBuild, so guarding only the create leaves them settable one
+// PATCH later.
 func TestBothBuildWritePathsCheckTheKeyComponents(t *testing.T) {
 	src := readPacksSource(t)
 	if n := countOccurrences(src, "validateBuildKeyComponents(strings.TrimSpace(req.Minecraft)"); n != 2 {

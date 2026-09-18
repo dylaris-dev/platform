@@ -329,22 +329,21 @@ var requiredCaps = map[string]string{
 	// shared template can't record two different per-method caps here, so those
 	// three are deliberately NOT listed and are deferred to the Task 22/23
 	// per-method ExemptRoutes reconciliation.
-	"/api/admin/settings/users":                          "settings.read",
-	"/api/admin/settings/modpacks":                       "settings.read",
-	"/api/admin/settings/mod-cache":                      "settings.read",
-	"/api/admin/settings/modpacks/delivery-capabilities": "settings.read",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag":   "settings.write",
-	"/api/admin/settings/permissions-mode":               "settings.write",
-	"/api/admin/settings/features":                       "settings.read",
-	"/api/admin/settings/tab-proxy":                      "settings.read",
-	"/api/admin/settings/metrics-db":                     "settings.read",
-	"/api/admin/settings/metrics-db/test":                "settings.write",
-	"/api/admin/health":                                  "settings.read",
-	"/api/admin/db/migration":                            "settings.read",
-	"/api/admin/db/migration/test-connection":            "settings.write",
-	"/api/admin/db/migration/verify":                     "settings.write",
-	"/api/admin/db/hypertable":                           "settings.read",
-	"/api/admin/db/hypertable/convert":                   "settings.write",
+	"/api/admin/settings/users":                        "settings.read",
+	"/api/admin/settings/modpacks":                     "settings.read",
+	"/api/admin/settings/mod-cache":                    "settings.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag": "settings.write",
+	"/api/admin/settings/permissions-mode":             "settings.write",
+	"/api/admin/settings/features":                     "settings.read",
+	"/api/admin/settings/tab-proxy":                    "settings.read",
+	"/api/admin/settings/metrics-db":                   "settings.read",
+	"/api/admin/settings/metrics-db/test":              "settings.write",
+	"/api/admin/health":                                "settings.read",
+	"/api/admin/db/migration":                          "settings.read",
+	"/api/admin/db/migration/test-connection":          "settings.write",
+	"/api/admin/db/migration/verify":                   "settings.write",
+	"/api/admin/db/hypertable":                         "settings.read",
+	"/api/admin/db/hypertable/convert":                 "settings.write",
 	// Blob storage migration (Task 15). /api/admin/storage/migration is one
 	// template shared by GET (job status) and POST (start): the manifest's
 	// documented convention records the representative .read cap here and the
@@ -431,11 +430,11 @@ var requiredCaps = map[string]string{
 	"/api/modules/{id:[0-9]+}/position": "settings.write",
 	"/api/modules/{id:[0-9]+}/role":     "settings.write",
 
-	// Phase 4 Task 20: modpack builder + solder owner tools (OWNER modpack.*).
+	// Phase 4 Task 20: modpack builder owner tools (OWNER modpack.*).
 	// These routes are chokepoint-open by design for any authenticated user
 	// (serverID==0 -> ownerSelf per the resolver); the real per-realm boundary
 	// is the handler's own owner-filter (packsHandler.ownsPack's p.OwnerID ==
-	// userID check, solder_manage.go's solderCaller/pack.OwnerID checks), which
+	// userID check), which
 	// is untouched. Read-vs-write-vs-delete representative per shared template,
 	// same convention as every other batch; the fine per-method cap lives at
 	// each RequireCap call. GET /api/modrinth/* (the external proxy) and GET
@@ -443,8 +442,6 @@ var requiredCaps = map[string]string{
 	// deliberately NOT listed here (see the route registration comments).
 	"/api/me/modrinth-pat":                                                                          "modpack.read",
 	"/api/me/packs":                                                                                 "modpack.read",
-	"/api/me/packs/import-solder/preview":                                                           "modpack.write",
-	"/api/me/packs/import-solder":                                                                   "modpack.write",
 	"/api/packs/{id:[0-9]+}":                                                                        "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds":                                                                 "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}":                                                "modpack.write",
@@ -456,23 +453,13 @@ var requiredCaps = map[string]string{
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text":             "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish":                                        "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export":                                         "modpack.read",
-	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader":                                         "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth": "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat":                                         "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate":                                        "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods":                                    "modpack.write",
-	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder":                                 "modpack.write",
-	"/api/packs/{id:[0-9]+}/solder-config":                                                          "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link":                                     "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links":                                    "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}":                    "modpack.delete",
-	"/api/solder/clients":                                                                           "modpack.read",
-	"/api/solder/clients/{id:[0-9]+}":                                                               "modpack.delete",
-	"/api/packs/{id:[0-9]+}/clients":                                                                "modpack.read",
-	"/api/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}":                                              "modpack.write",
-	"/api/solder/handle":                                                                            "modpack.read",
-	"/api/solder/keys":                                                                              "modpack.read",
-	"/api/solder/keys/{id:[0-9]+}":                                                                  "modpack.delete",
 
 	// Phase 4 Task 20: /library/* CONTENT. INSPECTED and found to be a single
 	// platform-shared file catalog (buildProvider has no per-owner scoping;
@@ -592,7 +579,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	packsHandler := handlers.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
-	solderHandler := handlers.NewSolderHandler(appState)
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
@@ -653,69 +639,24 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// can toggle maintenance back off.
 	api.Use(handlers.MaintenanceMuxMiddleware(appState, authHandler.IsAdminToken))
 
-	// --- PUBLIC SOLDER API (Technic Launcher) ---
-	// Registered on the ROOT router with NO .Use(...) - it deliberately bypasses
-	// the setup-lock, maintenance, and auth middleware so the launcher can reach
-	// published packs at all times. The modpacks feature is gated IN-HANDLER
-	// (Solder-shaped {"error":...} JSON), not by the 503 feature middleware.
-	solder := r.PathPrefix("/solder").Subrouter()
-	// Addressed per ACCOUNT. One shared /solder/api served every tenant, which
-	// forced pack slugs to be unique across customers and listed everyone's
-	// public packs together; see database.applySolderTenancySchema.
+	// --- PUBLIC PACK MIRROR ---
+	// A node installing a panel-built pack downloads the rendered .mrpack from
+	// here. Registered on the ROOT router with NO .Use(...): the node fetches it
+	// with a plain GET and no credential, so it bypasses the setup-lock,
+	// maintenance and auth middleware. The storage key carries an HMAC of
+	// CLUSTER_SECRET, which is what makes it unguessable; the handler serves
+	// modpacks/ keys only. The modpacks feature is gated in-handler.
 	//
-	// Both spellings of the API root, answering identically rather than
-	// redirecting. This is the URL an operator types into the Technic Platform,
-	// and mux matched only the trailing-slash form once - so it fell through to
-	// the panel's HTML catch-all and Technic reported an invalid Solder URL for
-	// a Solder that was working. Upstream TechnicSolder answers both. A 301
-	// would also work for a client that follows redirects, which is not
-	// something to assume about somebody else's HTTP client.
-	solder.HandleFunc("/u/{handle}/api", solderHandler.Info).Methods("GET")
-	solder.HandleFunc("/u/{handle}/api/", solderHandler.Info).Methods("GET")
-	solder.HandleFunc("/u/{handle}/api/modpack", solderHandler.ListModpacks).Methods("GET")
-	solder.HandleFunc("/u/{handle}/api/modpack/{slug}", solderHandler.GetModpack).Methods("GET")
-	solder.HandleFunc("/u/{handle}/api/modpack/{slug}/{build}", solderHandler.GetBuild).Methods("GET")
-	solder.HandleFunc("/u/{handle}/api/verify/{key}", solderHandler.VerifyKey).Methods("GET")
-	// The retired shared root, answering in the Solder shape so the operator who
-	// typed the old URL reads a sentence instead of a web page. Only the ROOT:
-	// that is the URL a person enters into the Technic Platform and the one it
-	// probes, and a launcher holding a deeper old path cannot exist - the shared
-	// URL never served a published pack.
-	solder.HandleFunc("/api", solderHandler.LegacyAPI).Methods("GET")
-	solder.HandleFunc("/api/", solderHandler.LegacyAPI).Methods("GET")
-	// The mirror is the one route here that serves BYTES rather than JSON and
-	// it is unauthenticated, so it gets the same kind of per-IP limiter its
-	// sibling /api/share already had. Its own instance, not a shared one: a
-	// client exhausting one budget must not lock the other.
-	//
-	// The ceiling is deliberately high, and it is the one number here that is a
-	// judgement call rather than a measurement. This budget counts REQUESTS,
-	// while a launcher installing a pack fetches one zip PER MOD - several
-	// hundred for a large pack, and quickly on a fast link - so a tight limit
-	// would return 429 in the middle of a legitimate install. Whether the
-	// launcher retries a 429 is not something this codebase can verify, so the
-	// number is set where no plausible install reaches it and only sustained
-	// automated pulling does. Raise it if a large pack ever trips it.
-	//
-	// It is not what stops the resource abuse that mattered, either. The
-	// handler used to hold each requested object in memory in full; it streams
-	// now, so concurrency costs a copy buffer rather than a whole pack. This
-	// limiter only bounds egress.
-	//
-	// (This comment used to end by saying the budget was forgeable, because
-	// clientIP took the leftmost X-Forwarded-For value with no trusted-proxy
-	// check. That is no longer true and has not been for some time: clientIP
-	// anchors on RemoteAddr, ignores XFF entirely unless the peer is a
-	// configured trusted proxy, and then walks the header from the RIGHT. Left
-	// standing, the note told a reader that this limiter and the login and
-	// share-link ones were decorative, which is a good way to get one deleted.)
+	// It lived at /solder/mirror/ until Solder was removed, because the same
+	// route served the Technic launcher. Its own rate-limiter instance, not a
+	// shared one: a client exhausting one budget must not lock another.
 	mirrorLimiter := handlers.NewIPRateLimiter()
-	solder.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.SolderMirrorRequestsPerMinute, solderHandler.SolderMirror)).Methods("GET")
+	r.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, packsHandler.ModpackMirror)).Methods("GET")
 
 	// --- PUBLIC SHARE-LINK DOWNLOAD ---
-	// Sibling of the /solder block on the ROOT router: bypasses the /api
+	// Sibling of the pack mirror on the ROOT router: bypasses the /api
 	// subrouter's setup-lock + maintenance middleware AND auth, because the
-	// token is the credential (like /solder/api/verify/{key}). Per-IP rate
+	// token is the credential. Per-IP rate
 	// limited; the modpacks feature is gated in-handler with a uniform 404.
 	shareLimiter := handlers.NewIPRateLimiter()
 	r.HandleFunc("/api/share/{token}", shareLimiter.Limit(30, packsHandler.ServeShare)).Methods("GET")
@@ -918,7 +859,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status)))).Methods("GET")
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Set))))).Methods("PUT")
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear))))).Methods("DELETE")
-	// --- Unified pack builder (Solder + Modrinth). Reuses the modpacks feature gates. ---
+	// --- Pack builder. Reuses the modpacks feature gates. ---
 	// Phase 4 Task 20: OWNER modpack.read/write/delete, chokepoint-open by
 	// design. The real per-realm boundary is packsHandler.ownsPack's
 	// p.OwnerID == userID check (List/Update/Delete/CreateBuild/... inline the
@@ -926,8 +867,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// front of.
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.List)))).Methods("GET")
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create))))).Methods("POST")
-	api.HandleFunc("/me/packs/import-solder/preview", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolderPreview))))).Methods("POST")
-	api.HandleFunc("/me/packs/import-solder", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportSolder))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Get)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Update))))).Methods("PATCH")
 	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Delete))))).Methods("DELETE")
@@ -944,42 +883,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetContentText))))).Methods("PUT")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishModrinth))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/loader", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetBuildLoader)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ReplaceWithModrinth))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateMods))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.BuildCompat)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.MigrateBuild))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish-solder", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishSolder))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/solder-config", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSolderConfig))))).Methods("PATCH")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateShareLink)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListShareLinks)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RevokeShareLink))))).Methods("DELETE")
-
-	// --- Solder client/key management (authed) ---
-	// Phase 4 Task 20 INSPECT result: these ARE session-authed (authHandler.
-	// AuthMiddleware, userID from the JWT context via solderCaller/ownsPack) -
-	// NOT the Technic-launcher API-key protocol (that is the separate,
-	// deliberately unauthenticated "/solder/api/*" root-router block above,
-	// left untouched). So these get OWNER modpack.* like the pack-builder
-	// routes above; solder_manage.go's solderCaller(r)-scoped store calls and
-	// ownsPackAndClient's pack.OwnerID/client-owner checks are the kept
-	// per-realm boundary.
-	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListClients))))).Methods("GET")
-	api.HandleFunc("/solder/clients", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateClient))))).Methods("POST")
-	api.HandleFunc("/solder/clients/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteClient))))).Methods("DELETE")
-
-	api.HandleFunc("/packs/{id:[0-9]+}/clients", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListPackClientsHandler))))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.AddPackClient))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/clients/{clientId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.RemovePackClient))))).Methods("DELETE")
-
-	// The account's own Solder address. Same gates as the keys beside it: the
-	// address and the key are the two halves of one setup, and a caller who may
-	// not hold a key has nothing to address.
-	api.HandleFunc("/solder/handle", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.GetHandle))))).Methods("GET")
-	api.HandleFunc("/solder/handle", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.SetHandle))))).Methods("POST")
-	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.ListKeys))))).Methods("GET")
-	api.HandleFunc("/solder/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.CreateKey))))).Methods("POST")
-	api.HandleFunc("/solder/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(solderHandler.DeleteKey))))).Methods("DELETE")
 
 	// --- Username history + account policy ---
 	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap
@@ -1029,7 +939,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Modpack settings + system feature flags (PANEL settings.*; Phase 4 Task 17) ---
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/settings/modpacks", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(modpackSettingsHandler.Set))).Methods("PUT")
-	api.HandleFunc("/admin/settings/modpacks/delivery-capabilities", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modpackSettingsHandler.DeliveryCapabilities))).Methods("GET")
 	// Where Modrinth metadata is cached. Optional by design: unset means the
 	// Redis Core already has, which is why nothing is gated on it.
 	api.HandleFunc("/admin/settings/mod-cache", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(modCacheSettingsHandler.Get))).Methods("GET")
@@ -1736,7 +1645,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Rate-limited because this is the only session-less route that makes Core
 	// fetch a whole file from an external host and stream it: one anonymous
 	// request costs Core the full binary inbound plus the same again outbound.
-	// Every other public route that costs something is limited (the solder
+	// Every other public route that costs something is limited (the pack
 	// mirror, /api/share/{token}, the auth and store routes); this one was the
 	// exception. 10/min per IP is far above any human clicking "download Beam"
 	// - the app's own updater fetches from GitHub directly and never comes

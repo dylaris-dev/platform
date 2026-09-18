@@ -17,7 +17,9 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Breaking
-- Nothing.
+- **Solder and Technic launcher support are gone.** Solder Keys and Solder Clients have left
+  your account menu. Modrinth modpacks install exactly as before. Nothing on your side
+  to update.
 
 ### Security
 - Nothing.

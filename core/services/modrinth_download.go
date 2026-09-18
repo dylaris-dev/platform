@@ -12,9 +12,10 @@ import (
 	"time"
 )
 
-// modrinthCDNPrefix is the ONLY host the Solder render will download mod jars from.
-// A hard allowlist keeps the render from being coerced into fetching arbitrary URLs
-// out of a content entry's stored ModrinthDownloadURL.
+// modrinthCDNPrefix is the ONLY host the pack builder downloads mod jars from
+// (rendering a server pack, replacing a content entry). A hard allowlist keeps it
+// from being coerced into fetching arbitrary URLs out of a content entry's stored
+// ModrinthDownloadURL.
 const modrinthCDNPrefix = "https://cdn.modrinth.com/"
 
 // modrinthJarMaxBytes caps a single download so a hostile/huge upstream response

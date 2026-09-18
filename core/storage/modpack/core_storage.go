@@ -101,7 +101,7 @@ func (p *CoreStorageProvider) PutStream(ctx context.Context, key string, r io.Re
 // another. With enough concurrent streams every slot is held by a reader whose
 // owner is blocked waiting for a slot that can never free, and since acquireFS
 // deliberately does not fail fast, the whole filesystem side of Core wedges
-// permanently against a perfectly healthy backend. The public Solder mirror is
+// permanently against a perfectly healthy backend. The public pack mirror is
 // one of the callers, so it does not take an authenticated user to get there.
 //
 // Doing the Stat FIRST and the open second would avoid the nesting, but it

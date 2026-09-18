@@ -60,7 +60,6 @@ func applyPhase16Schema(db *sql.DB) error {
 		{"modpack_storage_s3_region", ""},
 		{"modpack_storage_s3_access_key", ""},
 		{"modpack_storage_s3_secret_key", ""},
-		{"solder_delivery_mode", "core"},
 	} {
 		if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ($1, $2)
 			ON CONFLICT (key) DO NOTHING`, kv.k, kv.v); err != nil {

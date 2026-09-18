@@ -321,7 +321,7 @@ func (d *modpackDataSet) Delete(ctx context.Context, key string) error {
 	return d.prov.Delete(ctx, key)
 }
 
-// ChecksumHint returns the Modrinth/Solder-supplied SHA-512 already recorded
+// ChecksumHint returns the Modrinth-supplied SHA-512 already recorded
 // for a modversion object, when there is one. Opportunistic only - see
 // ChecksumHinter. A lookup failure is reported as "no hint" rather than
 // failing the capture, because this signal is never load-bearing.
