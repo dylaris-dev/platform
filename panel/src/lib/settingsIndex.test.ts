@@ -41,7 +41,6 @@ describe('the settings index points at places that exist', () => {
         const tabsByPage: Record<string, string[]> = {
             users: tabsDeclaredIn('UserManagementTab.tsx', 'USER_TABS'),
             nodes: tabsDeclaredIn('NodesTab.tsx', 'NODE_TABS'),
-            gateway: tabsDeclaredIn('GatewayTab.tsx', 'GATEWAY_TABS'),
             mailing: tabsDeclaredIn('MailingTab.tsx', 'MAILING_TABS'),
         };
 
@@ -69,7 +68,7 @@ describe('searchSettings', () => {
         ['r2', 'storage-connections'],
         ['bucket', 'storage-connections'],
         ['wireguard', 'warp'],
-        ['ddos', 'gateway'],
+        ['cloudflare', 'gateway'],
         ['throttle', 'beam'],
         ['gdpr', 'users'],
     ])('%s finds a setting on the %s page', (query, page) => {

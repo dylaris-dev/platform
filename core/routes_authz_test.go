@@ -1166,8 +1166,8 @@ func TestCap_PlatformSettingsPanel(t *testing.T) {
 }
 
 // TestCap_PlatformSettingsWriteSurfacePanel spot-checks the settings.write side
-// of Task 17 across three DIFFERENT handler families (db migration, XDP config,
-// demo-server flag) to prove the uniform read/write mapping actually reaches
+// of Task 17 across two DIFFERENT handler families (db migration, demo-server
+// flag) to prove the uniform read/write mapping actually reaches
 // every cluster in this batch, not just the auth/SMTP pair above. RequireCap
 // runs before the handler body, so a settings.read-only holder must be denied
 // even though the handler itself (nil DBMigration/Redis in this fake harness)
@@ -1186,12 +1186,6 @@ func TestCap_PlatformSettingsWriteSurfacePanel(t *testing.T) {
 	}
 	if c := doAs(t, srv, "POST", "/api/admin/db/migration", testIdentity{UserID: "rw-id", Username: "rw"}); c == 403 {
 		t.Error("settings.write holder must not be 403 starting a db migration")
-	}
-	if c := doAs(t, srv, "GET", "/api/admin/xdp/config", testIdentity{UserID: "ro-id", Username: "ro"}); c == 403 {
-		t.Error("settings.read holder must read XDP config")
-	}
-	if c := doAs(t, srv, "PUT", "/api/admin/xdp/config", testIdentity{UserID: "ro-id", Username: "ro"}); c != 403 {
-		t.Errorf("settings.read-only holder must be 403 saving XDP config, got %d", c)
 	}
 	if c := doAs(t, srv, "PATCH", "/api/admin/servers/1/demo", testIdentity{UserID: "ro-id", Username: "ro"}); c != 403 {
 		t.Errorf("settings.read-only holder must be 403 flagging a demo server, got %d", c)

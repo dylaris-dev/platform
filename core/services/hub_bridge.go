@@ -61,20 +61,15 @@ type GatewayEdgeInfo struct {
 // EdgeLiveStats mirrors the EdgeMetrics payload published by the Edge service
 // to dylaris:edge:{id}:stats. Field names match the JSON the Edge produces.
 type EdgeLiveStats struct {
-	CPU                 float64 `json:"cpu"`
-	RAMUsed             uint64  `json:"ram_used"`
-	RAMTotal            uint64  `json:"ram_total"`
-	RAMPercent          float64 `json:"ram_pct"`
-	RxSpeed             uint64  `json:"rx_speed"`
-	TxSpeed             uint64  `json:"tx_speed"`
-	ActiveTunnels       int     `json:"active_tunnels"`
-	ActiveTokens        int     `json:"active_tokens"`
-	ActiveMCStreams     int64   `json:"active_mc_streams"`
-	XDPEnabled          bool    `json:"xdp_enabled"`
-	XDPPassed           uint64  `json:"xdp_passed"`
-	XDPDroppedBlocked   uint64  `json:"xdp_dropped_blocked"`
-	XDPDroppedRateLimit uint64  `json:"xdp_dropped_ratelimit"`
-	XDPBlockedIPs       int     `json:"xdp_blocked_ips"`
+	CPU             float64 `json:"cpu"`
+	RAMUsed         uint64  `json:"ram_used"`
+	RAMTotal        uint64  `json:"ram_total"`
+	RAMPercent      float64 `json:"ram_pct"`
+	RxSpeed         uint64  `json:"rx_speed"`
+	TxSpeed         uint64  `json:"tx_speed"`
+	ActiveTunnels   int     `json:"active_tunnels"`
+	ActiveTokens    int     `json:"active_tokens"`
+	ActiveMCStreams int64   `json:"active_mc_streams"`
 }
 
 // GatewayLinkStatus represents a link's online state as readable from Redis.

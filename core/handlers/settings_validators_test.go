@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"testing"
-
-	sharedxdp "dylaris-pkg/xdp"
 )
 
 // TestNormalizeWarpPorts pins the leader-trusted port-list normalizer
@@ -144,85 +142,6 @@ func TestValidMaintenanceLevel(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestValidateXDPConfig pins both the returned error AND the in-place clamp
-// mutation (xdp.go). validateXDPConfig mutates cfg even when it ultimately
-// returns nil.
-func TestValidateXDPConfig(t *testing.T) {
-	t.Run("enabled with empty protected ports errors", func(t *testing.T) {
-		cfg := &sharedxdp.Config{Enabled: true, ProtectedPorts: ""}
-		if err := validateXDPConfig(cfg); err == nil {
-			t.Fatalf("expected error for enabled+empty ProtectedPorts, got nil")
-		}
-	})
-
-	t.Run("enabled with whitespace-only protected ports errors", func(t *testing.T) {
-		cfg := &sharedxdp.Config{Enabled: true, ProtectedPorts: "   "}
-		if err := validateXDPConfig(cfg); err == nil {
-			t.Fatalf("expected error for enabled+whitespace ProtectedPorts, got nil")
-		}
-	})
-
-	t.Run("enabled with non-empty protected ports is accepted", func(t *testing.T) {
-		cfg := &sharedxdp.Config{Enabled: true, ProtectedPorts: "25565"}
-		if err := validateXDPConfig(cfg); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("disabled with empty protected ports is accepted (no port-filter guard needed)", func(t *testing.T) {
-		cfg := &sharedxdp.Config{Enabled: false, ProtectedPorts: ""}
-		if err := validateXDPConfig(cfg); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("zero-value numeric fields are clamped up to their floors", func(t *testing.T) {
-		cfg := &sharedxdp.Config{}
-		if err := validateXDPConfig(cfg); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.RateLimit != 1 {
-			t.Errorf("RateLimit = %d, want clamped to 1", cfg.RateLimit)
-		}
-		if cfg.RateWindowMs != 100 {
-			t.Errorf("RateWindowMs = %d, want clamped to 100", cfg.RateWindowMs)
-		}
-		if cfg.BanDurationMin != 1 {
-			t.Errorf("BanDurationMin = %d, want clamped to 1", cfg.BanDurationMin)
-		}
-	})
-
-	t.Run("RateLimit above 1,000,000 is clamped down", func(t *testing.T) {
-		cfg := &sharedxdp.Config{RateLimit: 5_000_000}
-		if err := validateXDPConfig(cfg); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.RateLimit != 1_000_000 {
-			t.Errorf("RateLimit = %d, want clamped to 1000000", cfg.RateLimit)
-		}
-	})
-
-	t.Run("RateLimit exactly at the cap is left untouched", func(t *testing.T) {
-		cfg := &sharedxdp.Config{RateLimit: 1_000_000}
-		if err := validateXDPConfig(cfg); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.RateLimit != 1_000_000 {
-			t.Errorf("RateLimit = %d, want unchanged 1000000", cfg.RateLimit)
-		}
-	})
-
-	t.Run("in-range non-zero values are left untouched", func(t *testing.T) {
-		cfg := &sharedxdp.Config{RateLimit: 500, RateWindowMs: 50, BanDurationMin: 5}
-		if err := validateXDPConfig(cfg); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.RateLimit != 500 || cfg.RateWindowMs != 50 || cfg.BanDurationMin != 5 {
-			t.Errorf("cfg = %+v, want unchanged (500, 50, 5)", cfg)
-		}
-	})
 }
 
 // normalizeTunnelSubnets feeds the deploy snippet the panel hands operators, so

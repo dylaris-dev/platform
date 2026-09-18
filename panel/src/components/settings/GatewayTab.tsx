@@ -6,18 +6,14 @@ import {
     getRoutingMode, saveRoutingMode, getRoutingMigrationStatus,
     bulkDeleteRoutesBySuffix,
     RoutingMode, FileAccessMode,
-    getInfrastructureOverview, type GatewayEdge,
-    API_URL,
 } from '@/lib/api';
-import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Shield, Copy, Check, Search, Network } from 'lucide-react';
+import { RefreshCw, Save, CircleCheck, CircleAlert, Router, AlertTriangle, EyeOff, Globe, Plus, Trash2, X, Copy, Check, Search, Network } from 'lucide-react';
 import { SkeletonHeader, SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import Spinner from '@/components/Spinner';
 import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsLoadError from '@/components/settings/SettingsLoadError';
 import { settingsLoadState } from '@/lib/settingsLoadState';
-import GuardedTabs from '@/components/settings/GuardedTabs';
-import { useTabParam } from '@/lib/useTabParam';
 import { toast } from '@/components/ui/Toast';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
@@ -34,11 +30,6 @@ import SettingsPage from '@/components/settings/SettingsPage';
 
 type LimitKey = 'global' | 'userDefault';
 type ModeOption<T extends string> = { value: T; label: string; desc: string };
-type SubTab = 'gateway' | 'xdp';
-
-// Exported so the settings-index test can prove every tab the search points at
-// actually exists here.
-export const GATEWAY_TABS: readonly SubTab[] = ['gateway', 'xdp'];
 
 const ROUTING_OPTIONS: ModeOption<RoutingMode>[] = [
     { value: 'ip_port', label: 'IP : Port', desc: 'Direct host port binding — players connect via Node IP + port' },
@@ -50,14 +41,6 @@ const FILE_OPTIONS: ModeOption<FileAccessMode>[] = [
     { value: 'sftp', label: 'SFTP', desc: 'Users access server files via SFTP on the Node IP' },
     { value: 'both', label: 'Both', desc: 'Allow both SFTP and Beam file access' },
     { value: 'beam', label: 'Beam', desc: 'File access only via Beam relay — no direct Node IP needed' },
-];
-
-const NAV_ITEMS: { id: SubTab; label: string; icon: React.ElementType }[] = [
-    { id: 'gateway', label: 'Gateway', icon: Router },
-    { id: 'xdp', label: 'DDoS Protection', icon: Shield },
-    // Not the Hub's own web interface, which is off by default and stays off.
-    // This mints the Redis ACL user the Hub needs to reach Core's Redis at all,
-    // which is how a Hub deployed alongside the platform is bootstrapped.
 ];
 
 // ─────────────────────────────────────────────
@@ -298,19 +281,18 @@ function DnsRecordRow({ rec, checked }: { rec: DnsRecord; checked: boolean }) {
 // Gateway panel
 // ─────────────────────────────────────────────
 
-// Inline notice shown above the operational gateway controls (routes, XDP)
+// Inline notice shown above the operational gateway controls (routes)
 // whenever Game Traffic is still on IP:Port. The routing-mode selector
 // itself is never gated — it's the only way to turn the gateway on — so the
-// copy points the operator back at it. `here` = shown on the Gateway sub-tab
-// (selector is right above); otherwise it points back to the Gateway sub-tab.
-function GatewayDisabledNotice({ here = false }: { here?: boolean }) {
+// copy points the operator back at it, right above.
+function GatewayDisabledNotice() {
     return (
         <div className="alert alert-warning text-xs">
             <AlertTriangle size={14} className="shrink-0 mt-0.5" />
             <span>
                 Gateway routing is disabled. Switch <span className="font-medium">Game Traffic</span> to{' '}
                 <span className="font-medium">Gateway</span> or <span className="font-medium">Both</span>{' '}
-                {here ? 'above' : 'in the Gateway sub-tab'} to manage routes and XDP.
+                above to manage routes.
             </span>
         </div>
     );
@@ -709,7 +691,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             {/* Operational gateway content — only meaningful once Gateway/Both
                 is the applied routing mode. Greyed + disabled otherwise; the
                 mode selector above stays usable to turn it on. */}
-            {gatewayOff && <GatewayDisabledNotice here />}
+            {gatewayOff && <GatewayDisabledNotice />}
             <fieldset disabled={gatewayOff} className="space-y-6 disabled:opacity-50 border-0 p-0 m-0">
 
             {/* Domains and route limits are ONE payload behind one endpoint, so
@@ -1036,382 +1018,14 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 }
 
 // ─────────────────────────────────────────────
-// XDP / DDoS Protection panel
-// ─────────────────────────────────────────────
-
-interface XDPConfig {
-    enabled: boolean;
-    host_mode: boolean;
-    interface?: string;
-    protected_ports: string;
-    rate_limit: number;
-    rate_window_ms: number;
-    ban_duration_min: number;
-    mc_malformed_limit: number;
-    mc_malformed_window_min: number;
-    mc_invalid_host_limit: number;
-    mc_invalid_host_window_min: number;
-    mc_ban_duration_min: number;
-    whitelist?: string;
-}
-
-const XDP_DEFAULTS: XDPConfig = {
-    enabled: false,
-    host_mode: false,
-    interface: '',
-    protected_ports: '25565',
-    rate_limit: 1000,
-    rate_window_ms: 1000,
-    ban_duration_min: 30,
-    mc_malformed_limit: 20,
-    mc_malformed_window_min: 2,
-    mc_invalid_host_limit: 100,
-    mc_invalid_host_window_min: 2,
-    mc_ban_duration_min: 5,
-    whitelist: '',
-};
-
-async function getXDPConfig(): Promise<{ success: boolean; config?: XDPConfig; present?: boolean }> {
-    try {
-        const res = await fetch(`${API_URL}/admin/xdp/config`);
-        return await res.json();
-    } catch {
-        return { success: false };
-    }
-}
-
-async function saveXDPConfig(cfg: XDPConfig): Promise<{ success: boolean; message?: string }> {
-    try {
-        const res = await fetch(`${API_URL}/admin/xdp/config`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(cfg),
-        });
-        return await res.json();
-    } catch {
-        return { success: false, message: 'Network error' };
-    }
-}
-
-function XDPPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
-    // XDP runs on the Edges, which only carry traffic in gateway routing
-    // mode. Gate the config on the applied mode.
-    const { routingMode } = useAppData();
-    const gatewayOff = routingMode === 'ip_port';
-
-    const [cfg, setCfg] = useState<XDPConfig>(XDP_DEFAULTS);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [present, setPresent] = useState(false);
-
-    // What the EDGES report, which is a different question from what is stored.
-    // `present` only ever meant "a config row exists in Redis", so one save made
-    // this screen look settled forever - and on 2026-09-03 both production edges
-    // were running with no shield attached at all while it did. null = not
-    // asked yet or the request failed, which must not be rendered as either
-    // answer.
-    const [shield, setShield] = useState<{ total: number; up: number } | null>(null);
-
-    // Snapshot of last-saved config for dirty detection.
-    const snapshotRef = useRef<XDPConfig | null>(null);
-    const [loadFailed, setLoadFailed] = useState(false);
-
-    // Same reasoning as the gateway panel above: XDP_DEFAULTS rendered after a
-    // failed load is a screen that says XDP is off, which is a claim about the
-    // edges rather than about the request that did not come back.
-    const load = useCallback(async () => {
-        setLoading(true);
-        try {
-            const res = await getXDPConfig();
-            if (!res.success || !res.config) {
-                setLoadFailed(true);
-                return;
-            }
-            setCfg(res.config);
-            setPresent(!!res.present);
-            snapshotRef.current = res.config;
-            setLoadFailed(false);
-        } catch {
-            setLoadFailed(true);
-        } finally {
-            setLoading(false);
-        }
-        // Best-effort and separate: the config is what this page edits, the
-        // edges are what it is claiming about. A failure here leaves the
-        // banner silent rather than asserting either state.
-        try {
-            const inf = await getInfrastructureOverview();
-            const edges = ((inf?.edges || []) as GatewayEdge[]).filter(e => e.status === 'online');
-            setShield({ total: edges.length, up: edges.filter(e => e.stats?.xdp_enabled).length });
-        } catch {
-            setShield(null);
-        }
-    }, []);
-
-    useEffect(() => { load(); }, [load]);
-
-    const set = <K extends keyof XDPConfig>(key: K, value: XDPConfig[K]) =>
-        setCfg(s => ({ ...s, [key]: value }));
-
-    const handleSave = async (): Promise<boolean> => {
-        setSaving(true);
-        try {
-            const res = await saveXDPConfig(cfg);
-            showToast(res.success ? 'XDP config saved — Edges reconcile within 30s.' : (res.message || 'Save failed.'), res.success);
-            if (res.success) {
-                setPresent(true);
-                snapshotRef.current = cfg;
-            }
-            return !!res.success;
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleDiscard = () => {
-        if (snapshotRef.current) setCfg(snapshotRef.current);
-    };
-
-    const dirty =
-        snapshotRef.current !== null &&
-        JSON.stringify(cfg) !== JSON.stringify(snapshotRef.current);
-
-    useUnsavedChanges({ dirty, save: handleSave, discard: handleDiscard, saving });
-
-    const loadState = settingsLoadState(loading, loadFailed);
-    if (loadState === 'loading') return (
-        <div className="space-y-6">
-            <SkeletonHeader />
-            <SkeletonCard height="h-80" />
-            <SkeletonCard height="h-44" />
-            <SkeletonCard height="h-72" />
-            <SkeletonCard height="h-40" />
-        </div>
-    );
-    if (loadState === 'failed') return <SettingsLoadError what="the XDP configuration" onRetry={load} />;
-
-    return (
-        <SettingsPage
-            title="DDoS protection (XDP / eBPF)"
-            icon={Shield}
-            width="full"
-            description="Kernel-level packet filtering on every Edge replica. Changes are written to Redis and picked up by all Edges within about 30 seconds; saving triggers an automatic sidecar recreate, which is one to three seconds of downtime for the XDP shield while the Edge proxy itself stays up."
-        >
-            <div>
-                {/* The state of the actual shield comes first: everything below
-                    it is settings, and settings that reach nothing are worse
-                    than no settings, because they read as protection. */}
-                {!gatewayOff && shield !== null && shield.total > 0 && shield.up < shield.total && (
-                    <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-(--danger)/10 border border-(--danger)/40 text-xs text-(--base-09)">
-                        <AlertTriangle size={14} className="text-(--danger-light) mt-0.5 shrink-0" />
-                        <span>
-                            {shield.up === 0
-                                ? `The shield is not loaded on any of the ${shield.total} online edge${shield.total === 1 ? '' : 's'}. Nothing on this page is filtering traffic.`
-                                : `The shield is not loaded on ${shield.total - shield.up} of ${shield.total} online edges. Those edges are filtering nothing.`}
-                            {' '}An edge loads it when <span className="font-mono">XDP_ENABLED</span> is set in its deployment; the settings below only take effect where it is.
-                        </span>
-                    </div>
-                )}
-                {!present && !gatewayOff && (
-                    <div className="mt-3 flex items-start gap-2 p-3 rounded-md bg-(--accent)/5 border border-(--accent-border)/40 text-xs text-(--base-08)">
-                        <AlertTriangle size={14} className="text-(--accent-light) mt-0.5 shrink-0" />
-                        <span>No XDP config in Redis yet — these are the package defaults. Save once to commit them.</span>
-                    </div>
-                )}
-            </div>
-
-            {gatewayOff && <GatewayDisabledNotice />}
-            <fieldset disabled={gatewayOff} className="space-y-6 disabled:opacity-50 border-0 p-0 m-0">
-
-            <SettingsCard title="XDP shield" form={{ dirty, saving, save: handleSave, discard: handleDiscard }}>
-            <SettingsGroup title="General" first>
-
-                <div className="flex items-center justify-between">
-                    <div>
-                        <label className="input-label">XDP Enabled</label>
-                        <p className="text-xs text-(--base-06) mt-0.5">Master switch — disables packet filtering when off</p>
-                    </div>
-                    <button
-                        onClick={() => set('enabled', !cfg.enabled)}
-                        className={`toggle-track ${cfg.enabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        role="switch"
-                        aria-checked={cfg.enabled}
-                    >
-                        <span className={`toggle-knob ${cfg.enabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                    <div>
-                        <label className="input-label">Host Sidecar Mode</label>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            Run XDP as a separate host-networked container (recommended for production).
-                            Toggling this requires an Edge restart.
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => set('host_mode', !cfg.host_mode)}
-                        className={`toggle-track ${cfg.host_mode ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        role="switch"
-                        aria-checked={cfg.host_mode}
-                    >
-                        <span className={`toggle-knob ${cfg.host_mode ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                </div>
-
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Network Interface</label>
-                    <p className="text-xs text-(--base-06) mb-1">Empty = auto-detect all non-loopback IPv4 interfaces (sidecar mode only)</p>
-                    <input
-                        type="text"
-                        value={cfg.interface || ''}
-                        onChange={e => set('interface', e.target.value)}
-                        placeholder="eth0"
-                        className="input-field w-48"
-                    />
-                </div>
-
-                <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Protected Ports</label>
-                    <p className="text-xs text-(--base-06) mb-1">Comma-separated list of ports to apply rate-limiting to</p>
-                    <input
-                        type="text"
-                        value={cfg.protected_ports}
-                        onChange={e => set('protected_ports', e.target.value)}
-                        placeholder="25565"
-                        className="input-field w-72"
-                    />
-                </div>
-            </SettingsGroup>
-
-            <SettingsGroup title="Per-IP rate limiting" description="Drops packets from any source IP that exceeds the threshold within the window. Tripped IPs are blocked for the ban duration.">
-
-                <div className="grid grid-cols-3 gap-4">
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Packets / Window</label>
-                        <input type="number" min={1} max={1000000} value={cfg.rate_limit}
-                            onChange={e => set('rate_limit', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field" />
-                    </div>
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Window (ms)</label>
-                        <input type="number" min={100} value={cfg.rate_window_ms}
-                            onChange={e => set('rate_window_ms', Math.max(100, parseInt(e.target.value) || 1000))}
-                            className="input-field" />
-                    </div>
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Ban Duration (min)</label>
-                        <input type="number" min={1} value={cfg.ban_duration_min}
-                            onChange={e => set('ban_duration_min', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field" />
-                    </div>
-                </div>
-            </SettingsGroup>
-
-            <SettingsGroup
-                title="Minecraft-aware filters"
-                description="Protocol-level filters intended to catch scanners and malformed-packet floods that pass plain rate-limiting."
-            >
-                {/* These values are stored and reach the edge, but nothing feeds
-                    the counter that would act on them, so saving a limit here
-                    grants no protection. Said plainly rather than left implied:
-                    a security control that looks armed and is not is worse than
-                    one that is visibly off. */}
-                <div className="alert alert-warning text-xs">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <span>
-                        <span className="font-medium">Not currently enforced.</span> These limits are
-                        saved and delivered to the edge, but no handshake ever reaches the counter, so
-                        setting them does not block anything today. Enforcement has to live in the
-                        splice sidecar, which is the only component that sees the player&apos;s own IP
-                        address. The rate limit and whitelist above are unaffected and do apply.
-                    </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Malformed / Window</label>
-                        <input type="number" min={1} value={cfg.mc_malformed_limit}
-                            onChange={e => set('mc_malformed_limit', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field" />
-                    </div>
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Window (min)</label>
-                        <input type="number" min={1} value={cfg.mc_malformed_window_min}
-                            onChange={e => set('mc_malformed_window_min', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field" />
-                    </div>
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Invalid Host / Window</label>
-                        <input type="number" min={1} value={cfg.mc_invalid_host_limit}
-                            onChange={e => set('mc_invalid_host_limit', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field" />
-                    </div>
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Window (min)</label>
-                        <input type="number" min={1} value={cfg.mc_invalid_host_window_min}
-                            onChange={e => set('mc_invalid_host_window_min', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field" />
-                    </div>
-                    <div className="flex flex-col gap-[5px] col-span-2">
-                        <label className="input-label">MC Ban Duration (min)</label>
-                        <input type="number" min={1} value={cfg.mc_ban_duration_min}
-                            onChange={e => set('mc_ban_duration_min', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="input-field w-48" />
-                    </div>
-                </div>
-            </SettingsGroup>
-
-            <SettingsGroup
-                title="Whitelist"
-                description="IPs and CIDRs that bypass all checks, comma-separated. Useful for monitoring services or known crawlers."
-            >
-                <textarea
-                    value={cfg.whitelist || ''}
-                    onChange={e => set('whitelist', e.target.value)}
-                    placeholder="1.2.3.4, 10.0.0.0/8, 192.168.0.0/16"
-                    rows={3}
-                    className="input-field font-mono text-xs resize-y"
-                />
-            </SettingsGroup>
-            </SettingsCard>
-
-            </fieldset>
-        </SettingsPage>
-    );
-}
-
-// ─────────────────────────────────────────────
 // Hub Admin panel (TP2b)
 // ─────────────────────────────────────────────
 
 
 // ─────────────────────────────────────────────
-// Main export: Gateway with left-nav
+// Main export
 // ─────────────────────────────────────────────
 
 export default function GatewayTab() {
-    const [subTab, setSubTab] = useTabParam<SubTab>(GATEWAY_TABS, 'gateway');
-
-
-    const showToast = toast;
-
-
-
-
-    // This used to be a SECOND left sidebar, next to the settings sidebar. Two
-    // vertical navigations side by side read as one confused one; a tab bar is
-    // the only sub-navigation in the panel now, and the deepest it goes.
-    return (
-        <div className="flex flex-col h-full min-h-0">
-            <GuardedTabs items={NAV_ITEMS} active={subTab} onChange={setSubTab} ariaLabel="Gateway settings" />
-
-            <div className="flex-1 overflow-y-auto pt-5">
-                {subTab === 'gateway' && <GatewayPanel showToast={showToast} />}
-                {subTab === 'xdp' && <XDPPanel showToast={showToast} />}
-            </div>
-
-
-        </div>
-    );
+    return <GatewayPanel showToast={toast} />;
 }

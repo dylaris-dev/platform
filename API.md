@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **503 routes** in 49 sections: 222 GET, 153 POST, 39 PUT, 36 PATCH, 54 DELETE.
+- **501 routes** in 49 sections: 221 GET, 153 POST, 38 PUT, 36 PATCH, 54 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **336** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (125)
+- [/api/admin](#apiadmin) (123)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -317,8 +317,6 @@ can still show what exists.
 | POST | `/api/admin/warp/keys` | session | `topology.write` | - | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
 | DELETE | `/api/admin/warp/keys/{id:[0-9]+}` | session | `topology.write` | - | `WarpHandler.RevokeAPIKey` | revoke an enrollment key AND disconnect whatever it already enrolled. |
 | DELETE | `/api/admin/warp/keys/{id:[0-9]+}/purge` | session | `topology.write` | - | `WarpHandler.DeleteAPIKey` | remove the key row entirely, after disconnecting whatever it enrolled. |
-| GET | `/api/admin/xdp/config` | session | `settings.read` | - | `XDPHandler.GetConfig` | PANEL settings.read (RequireCap at the route). |
-| PUT | `/api/admin/xdp/config` | session | `settings.write` | - | `XDPHandler.UpdateConfig` | PANEL settings.write (RequireCap at the route). |
 
 ## /api/auth
 

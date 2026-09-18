@@ -21,7 +21,7 @@ import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 // the ADMIN one (fleet routes across edges) and the two are easy to import by
 // mistake for each other.
 //
-// Route-only ("via Link"): a DDoS-protected address pointed at a server the user
+// Route-only ("via Link"): a protected address pointed at a server the user
 // runs on their OWN machine, reached through their own outbound Link tunnel. No
 // managed node, no open ports - the customer runs warp + link with a "link kit"
 // and the edge proxies through that tunnel to their LOCAL server.

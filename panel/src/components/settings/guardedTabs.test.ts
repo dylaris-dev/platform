@@ -36,8 +36,8 @@ describe('tabbed settings pages guard unsaved work', () => {
         ).toEqual([]);
     });
 
-    it('the three tabbed pages use the guarded one', () => {
-        for (const name of ['UserManagementTab.tsx', 'NodesTab.tsx', 'GatewayTab.tsx']) {
+    it('the tabbed pages use the guarded one', () => {
+        for (const name of ['UserManagementTab.tsx', 'NodesTab.tsx']) {
             const src = readFileSync(join(SETTINGS_DIR, name), 'utf8');
             expect(src, `${name} should render GuardedTabs`).toMatch(/<GuardedTabs\b/);
         }

@@ -357,7 +357,6 @@ var requiredCaps = map[string]string{
 	"/api/admin/storage/manifests/{id:[0-9]+}/export": "settings.read",
 	"/api/admin/maintenance":                          "settings.write",
 	"/api/admin/settings/audit":                       "settings.read",
-	"/api/admin/xdp/config":                           "settings.read",
 	"/api/settings/core-storage":                      "settings.read",
 	"/api/settings/core-storage/test":                 "settings.write",
 	"/api/settings/storage-reach":                     "settings.read",
@@ -1411,12 +1410,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/metrics-db", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(metricsDBHandler.Set))).Methods("PUT")
 	api.HandleFunc("/admin/settings/metrics-db/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(metricsDBHandler.Test))).Methods("POST")
 	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetRoutingMigrationStatus))).Methods("GET")
-
-	// XDP / eBPF DDoS Protection (deployment-wide config managed by Panel,
-	// consumed by every Edge replica via Redis poll)
-	xdpHandler := handlers.NewXDPHandler(appState)
-	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(xdpHandler.GetConfig))).Methods("GET")
-	api.HandleFunc("/admin/xdp/config", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(xdpHandler.UpdateConfig))).Methods("PUT")
 
 	api.HandleFunc("/files", authHandler.AuthMiddleware(fileHandler.GetFilesHandler)).Methods("GET")
 	api.HandleFunc("/files/content", authHandler.AuthMiddleware(fileHandler.GetFileContentHandler)).Methods("GET")

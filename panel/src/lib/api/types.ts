@@ -773,11 +773,6 @@ export interface EdgeStats {
     tx_speed: number;
     active_tokens: number;
     active_mc_streams: number;
-    xdp_enabled: boolean;
-    xdp_passed: number;
-    xdp_dropped_blocked: number;
-    xdp_dropped_ratelimit: number;
-    xdp_blocked_ips: number;
 }
 
 export interface GatewayEdge {

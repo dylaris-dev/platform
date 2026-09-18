@@ -61,7 +61,7 @@ RUN CGO_ENABLED=1 go test -race -count=1 ./...
 
 # pkg joined the same day, under the same rule. Its concurrency is one package:
 # queue's worker pool. Everything else (validate, protocol, storageplacement,
-# migration, xdp, errlog, beam) is pure. The hand check found no race there -
+# migration, errlog, beam) is pure. The hand check found no race there -
 # Consumer's fields are write-once before Run and the pool communicates over a
 # channel - but it did find a dead-letter that ACKed a message it had failed to
 # park, which is why the check is worth doing whatever the detector says.

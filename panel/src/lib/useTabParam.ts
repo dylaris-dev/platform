@@ -37,7 +37,7 @@ export function useTabParam<T extends string>(valid: readonly T[], fallback: T):
         [params, pathname, router],
     );
 
-    // /settings/gateway#xdp was a documented deep link before this existed.
+    // A #tab hash was a documented deep link form before this existed.
     // Promote it to the query form once, so there is only one representation to
     // reason about afterwards.
     useEffect(() => {

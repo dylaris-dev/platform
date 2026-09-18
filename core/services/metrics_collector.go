@@ -41,9 +41,6 @@ type MetricsCollector struct {
 
 	pgCounters    *counterSource
 	redisCounters *counterSource
-	// XDP totals are cumulative since the shield was loaded, and there is one
-	// set per edge, so the key carries the edge id.
-	xdpCounters *counterSource
 
 	// Previous CPU-time reading for the Core process, so cpu_pct is a rate
 	// rather than a total.
@@ -106,7 +103,6 @@ func NewMetricsCollector(s store.Store, r *redis.Client, db *sql.DB, rec recorde
 		store: s, redis: r, db: db, recorders: rec, flags: flags,
 		pgCounters:    newCounterSource(),
 		redisCounters: newCounterSource(),
-		xdpCounters:   newCounterSource(),
 		lastUptime:    map[string]int64{},
 	}
 }
@@ -472,50 +468,6 @@ func (c *MetricsCollector) sampleNode(n *models.Node, hasHeartbeat bool, now tim
 	c.obs("node.servers", n.Token, n.Region, float64(n.ServerCount), now)
 }
 
-// recordXDP records what the kernel-level shield did on one edge.
-//
-// xdp_up FIRST and unconditionally, because it is the series that answers the
-// question nobody could answer before: is the shield actually loaded. Measured
-// in production on 2026-09-03, both edges reported xdp_enabled=false - the
-// deployment never set XDP_ENABLED - and nothing on the platform said so. The
-// panel's only warning meant "no config row in Redis", so one save made the
-// screen look healthy while no edge ran the filter, and the counters below had
-// no reader anywhere in either repository to contradict it.
-//
-// The counters are recorded ONLY while the shield is up. A shield that is not
-// loaded drops nothing, and recording that as a zero would read as "no attack
-// today" rather than "no protection today" - the same lie in the other
-// direction. xdp_up is what separates them.
-//
-// They are cumulative since load, so they go through the same delta treatment
-// as the Postgres and Redis totals: the first reading of an edge establishes a
-// baseline and records nothing, and a counter that went backwards means the
-// edge restarted and re-baselines. The key carries the edge id, because these
-// are per-machine totals and one baseline shared between two edges would record
-// their difference as traffic.
-func (c *MetricsCollector) recordXDP(edgeID, region string, s *EdgeLiveStats, now time.Time) {
-	up := 0.0
-	if s.XDPEnabled {
-		up = 1
-	}
-	c.obs("edge.xdp_up", edgeID, region, up, now)
-	if !s.XDPEnabled {
-		return
-	}
-	for metric, cur := range map[string]uint64{
-		"edge.xdp_passed":            s.XDPPassed,
-		"edge.xdp_dropped_blocked":   s.XDPDroppedBlocked,
-		"edge.xdp_dropped_ratelimit": s.XDPDroppedRateLimit,
-	} {
-		if d, ok := c.xdpCounters.delta(edgeID+"/"+metric, float64(cur)); ok {
-			c.obs(metric, edgeID, region, d, now)
-		}
-	}
-	// A gauge, not a total: how many addresses the shield is holding out right
-	// now. Summing it over a window would be meaningless.
-	c.obs("edge.xdp_blocked_ips", edgeID, region, float64(s.XDPBlockedIPs), now)
-}
-
 // linkOwnership is the classifier for this tick, built from the nodes
 // samplePlatform already listed. Empty when nothing has been sampled yet, which
 // classifies every link as ours - the same conservative direction the handlers
@@ -564,7 +516,6 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 		c.obs("edge.rx_bps", e.EdgeID, e.Region, float64(s.RxSpeed)*8, now)
 		c.obs("edge.tx_bps", e.EdgeID, e.Region, float64(s.TxSpeed)*8, now)
 		c.obs("edge.players", e.EdgeID, e.Region, float64(s.ActiveMCStreams), now)
-		c.recordXDP(e.EdgeID, e.Region, s, now)
 		players += s.ActiveMCStreams
 		totalRxBits += s.RxSpeed * 8
 		totalTxBits += s.TxSpeed * 8

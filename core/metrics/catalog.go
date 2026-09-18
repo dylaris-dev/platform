@@ -101,16 +101,6 @@ var Catalog = []Series{
 	{Metric: "edge.restarts", Label: "Edge restarts", Group: "Edge", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
 	{Metric: "edge.uptime_sec", Label: "Edge uptime", Group: "Edge", Kind: KindGauge, Unit: UnitSeconds, PerSubject: true},
 
-	// The kernel-level shield. The edge has always published these and nothing
-	// had ever read them, so the platform could neither say whether the filter
-	// was loaded nor what it had absorbed.
-	{Metric: "edge.xdp_up", Label: "DDoS shield loaded", Group: "Edge", Kind: KindGauge, Unit: UnitCount, PerSubject: true,
-		Help: "1 while the edge has the XDP filter attached, 0 while it does not. Averaged over a window this is the fraction of the time that edge was actually protected."},
-	{Metric: "edge.xdp_passed", Label: "Packets passed by the shield", Group: "Edge", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
-	{Metric: "edge.xdp_dropped_blocked", Label: "Packets dropped, blocked address", Group: "Edge", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
-	{Metric: "edge.xdp_dropped_ratelimit", Label: "Packets dropped, rate limit", Group: "Edge", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
-	{Metric: "edge.xdp_blocked_ips", Label: "Addresses currently blocked", Group: "Edge", Kind: KindGauge, Unit: UnitCount, PerSubject: true},
-
 	// Splice - the handover record
 	{Metric: "splice.sessions_opened", Label: "Player sessions opened", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
 	{Metric: "splice.handover_attempted", Label: "Handovers attempted", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,

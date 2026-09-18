@@ -59,9 +59,7 @@ type SystemSnapshot struct {
 
 // MonitorConfig controls which optional components are initialized.
 type MonitorConfig struct {
-	DataFile      string // Path for persistent history JSON. Empty = no persistence.
-	EnablePackets bool   // Whether to init PacketCollector
-	EnableDDoS    bool   // Whether to init DDoSDetector
+	DataFile string // Path for persistent history JSON. Empty = no persistence.
 }
 
 type Monitor struct {
@@ -80,9 +78,6 @@ type Monitor struct {
 	cachedCPU     float64
 	cachedRxSpeed uint64
 	cachedTxSpeed uint64
-
-	Packets *PacketCollector
-	DDoS    *DDoSDetector
 }
 
 func NewMonitor(cfg MonitorConfig) (*Monitor, error) {
@@ -110,18 +105,6 @@ func NewMonitor(cfg MonitorConfig) (*Monitor, error) {
 
 	if m.data.History == nil {
 		m.data.History = make([]HistoryPoint, 0)
-	}
-
-	if cfg.EnablePackets {
-		packets, err := NewPacketCollector(cfg.DataFile + ".packets.json")
-		if err != nil {
-			return nil, err
-		}
-		m.Packets = packets
-	}
-
-	if cfg.EnableDDoS {
-		m.DDoS = NewDDoSDetector(cfg.DataFile + ".ddos.json")
 	}
 
 	return m, nil

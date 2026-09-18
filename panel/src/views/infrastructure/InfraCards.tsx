@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Server, Globe, Network, Trash2, AlertTriangle, Users,
-  Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine, Shield,
+  Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine,
   Link2, HardDrive, Layers, ArrowUpCircle, AlertCircle, Info
 } from 'lucide-react';
 import { getNodeServers, setNodeStoragePlacement, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
@@ -572,21 +572,6 @@ export function EdgeCard({ edge }: { edge: GatewayEdge }) {
               </div>
             )}
           </div>
-          {stats.xdp_enabled && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--accent)/10 mono-label text-(--accent-light)">
-                <Shield size={9} /> XDP
-              </span>
-              <span className="text-[10px] font-mono text-(--base-06) tabular-nums">
-                {stats.xdp_dropped_blocked + stats.xdp_dropped_ratelimit} dropped
-              </span>
-              {stats.xdp_blocked_ips > 0 && (
-                <span className="text-[10px] font-mono text-(--error-light) tabular-nums">
-                  {stats.xdp_blocked_ips} blocked IPs
-                </span>
-              )}
-            </div>
-          )}
         </div>
       ) : (
         <div className="pt-1 border-t border-(--base-03)">

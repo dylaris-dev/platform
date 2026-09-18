@@ -13,7 +13,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Route-only ("via Link") routes: a DDoS-protected address pointed at a server
+// Route-only ("via Link") routes: a protected address pointed at a server
 // the customer runs on their OWN machine, reached through their own outbound Link
 // tunnel — no managed node, no exposed origin. The customer runs warp (joins the
 // overlay) + link (tunnels out); the edge opens a stream on their Link and the

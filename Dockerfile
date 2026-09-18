@@ -97,7 +97,7 @@ ARG RELEASE_VERSION=""
 
 # Build
 # We explicitly specify the path and use sh expansion
-# BUILD_TAGS allows excluding packages (e.g. "noxdp" to skip eBPF)
+# BUILD_TAGS passes Go build tags through to the build (none are used today)
 RUN echo "Building from: ${ENTRY_PATH} (tags: ${BUILD_TAGS:-none}, release: ${RELEASE_VERSION:-unstamped})" && \
     LD="-s -w"; \
     if [ -n "${RELEASE_VERSION}" ]; then LD="${LD} -X main.releaseVersion=${RELEASE_VERSION}"; fi && \

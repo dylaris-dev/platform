@@ -1223,26 +1223,6 @@
       "external": false
     },
     {
-      "method": "GET",
-      "path": "/api/admin/xdp/config",
-      "auth": "session",
-      "authorization": "settings.read",
-      "description": "PANEL settings.read (RequireCap at the route).",
-      "handler": "XDPHandler.GetConfig",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "PUT",
-      "path": "/api/admin/xdp/config",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "PANEL settings.write (RequireCap at the route).",
-      "handler": "XDPHandler.UpdateConfig",
-      "group": "admin",
-      "external": false
-    },
-    {
       "method": "POST",
       "path": "/api/auth/2fa/disable",
       "auth": "session",
@@ -5023,15 +5003,15 @@
     }
   ],
   "counts": {
-    "total": 504,
+    "total": 502,
     "byAuth": {
       "none": 30,
-      "session": 461,
+      "session": 459,
       "user API key": 10,
       "warp key": 3
     },
     "byGroup": {
-      "admin": 125,
+      "admin": 123,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,

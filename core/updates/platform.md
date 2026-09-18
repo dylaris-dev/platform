@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.18
+
+### Features
+- Nothing.
+
+### Breaking
+- **The XDP DDoS filter is removed.** Settings -> Gateway loses its "DDoS Protection" tab and
+  `/api/admin/xdp/config` is gone. It was off by default; volumetric filtering belongs to
+  your hosting provider's network. `core` `panel`
+- **The edge card no longer shows XDP drop counters,** and the `edge.xdp_*` series are no
+  longer recorded. History already stored stays until you delete it. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.16.4
 
 ### Features
