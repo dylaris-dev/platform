@@ -12,7 +12,13 @@ import (
 // makes anything else this might call panic rather than pass quietly.
 type routeDeleteGateway struct {
 	GatewayProvider
-	deleted []string
+	deleted       []string
+	serverDeletes []string
+}
+
+func (g *routeDeleteGateway) DeleteServerRoutes(uuid string) error {
+	g.serverDeletes = append(g.serverDeletes, uuid)
+	return nil
 }
 
 func (g *routeDeleteGateway) DeleteRoute(domain string) error {
@@ -195,5 +201,23 @@ func TestRemoveDeletedServers_EmptyUUIDSweepsNothing(t *testing.T) {
 
 	if n, _ := rdb.Exists(ctx, "dylaris:server:owner_x:java-heap").Result(); n != 1 {
 		t.Error("an empty uuid removed keys")
+	}
+}
+
+// The regression this exists for: a cache that lost its route keys. The
+// per-domain deletes can only name routes Redis still holds, so nothing reached
+// the hub, its rows survived, and its next sync published the addresses again.
+// The hub now hears about every deleted server regardless.
+func TestRemoveDeletedServersTellsTheHubEvenWhenRedisIsEmpty(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	gw := &routeDeleteGateway{}
+
+	RemoveDeletedServers(context.Background(), gw, rdb, []string{"srv-1", "srv-2"})
+
+	if len(gw.serverDeletes) != 2 || gw.serverDeletes[0] != "srv-1" || gw.serverDeletes[1] != "srv-2" {
+		t.Errorf("server deletes sent = %v, want both servers", gw.serverDeletes)
+	}
+	if len(gw.deleted) != 0 {
+		t.Errorf("per-domain deletes = %v, want none: the cache named nothing", gw.deleted)
 	}
 }

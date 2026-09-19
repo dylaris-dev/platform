@@ -54,6 +54,18 @@ func applyNodeJoinAttemptsSchema(db *sql.DB) error {
 		return fmt.Errorf("node join attempts: create table: %w", err)
 	}
 
+	// presented_key is the fingerprint of the key the refused connection PROVED
+	// it holds (the signature is checked before a refusal is recorded at the
+	// admission point). approved_key binds an admission to it: for a customer's
+	// machine every connection arrives from the warp leader's address, shared by
+	// every customer in the region, so the address alone could not tell their
+	// machine from anyone else knocking with its id.
+	if _, err := db.Exec(`ALTER TABLE node_join_attempts
+		ADD COLUMN IF NOT EXISTS presented_key TEXT NOT NULL DEFAULT '',
+		ADD COLUMN IF NOT EXISTS approved_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("node join attempts: key columns: %w", err)
+	}
+
 	// The panel lists the newest first and the row is small, so one index on the
 	// sort column is the whole story.
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_node_join_attempts_last_seen

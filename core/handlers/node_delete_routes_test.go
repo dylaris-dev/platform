@@ -45,6 +45,8 @@ type nodeDeleteGateway struct {
 	deleted []string
 }
 
+func (g *nodeDeleteGateway) DeleteServerRoutes(string) error { return nil }
+
 func (g *nodeDeleteGateway) DeleteRoute(domain string) error {
 	g.deleted = append(g.deleted, domain)
 	return nil

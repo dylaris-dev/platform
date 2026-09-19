@@ -82,6 +82,7 @@ func (g *linkRouteFakeGateway) CreateRouteViaLink(ownerID string, domain string,
 
 func (g *linkRouteFakeGateway) DeleteCoreOwnedRoute(domain string) error { return nil }
 func (g *linkRouteFakeGateway) DeleteRoute(domain string) error          { return nil }
+func (g *linkRouteFakeGateway) DeleteServerRoutes(string) error          { return nil }
 func (g *linkRouteFakeGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error {
 	return nil
 }
@@ -105,8 +106,25 @@ func newLinkRouteRedis(t *testing.T) *redis.Client {
 	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
 }
 
+// routeOnlyOnFlags is a flag source with route-only switched on and nothing
+// else, so the handler's own gate lets these tests reach what they test.
+type routeOnlyOnFlags struct{}
+
+func (routeOnlyOnFlags) GetSetting(key string) (string, error) {
+	if key == "feature_route_only_enabled" {
+		return "true", nil
+	}
+	return "", nil
+}
+
+// A tenant holding one route-only product: the entitlement gate passes.
+func (f *linkRouteFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	one := int64(1)
+	return &store.UserBilling{UserID: userID, Status: "active", MaxLinks: &one}, nil
+}
+
 func newLinkRouteHandler(fs *linkRouteFakeStore, gw *linkRouteFakeGateway, rdb *redis.Client) *GatewayHandler {
-	return &GatewayHandler{state: &AppState{Store: fs, Gateway: gw, Redis: rdb}}
+	return &GatewayHandler{state: &AppState{Store: fs, Gateway: gw, Redis: rdb, FeatureFlags: services.NewFeatureFlags(routeOnlyOnFlags{})}}
 }
 
 func linkRouteReq(userID string, body map[string]interface{}) *http.Request {

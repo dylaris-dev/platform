@@ -137,8 +137,11 @@ var ExemptRoutes = map[string]bool{
 	// holds nodes.delete, and these two answer ONLY for a node whose owner_id is
 	// the caller - an admin asking about somebody else's gets a 404 here and uses
 	// the capability-gated /api/nodes/{id} instead.
-	"/api/me/nodes/{id:[0-9]+}":          true, // authed; own machine, owner-checked in the handler
-	"/api/me/nodes/{id:[0-9]+}/contents": true, // authed; own machine, owner-checked in the handler
+	"/api/me/nodes/{id:[0-9]+}":               true, // authed; own machine, owner-checked in the handler
+	"/api/me/nodes/{id:[0-9]+}/contents":      true, // authed; own machine, owner-checked in the handler
+	"/api/me/nodes/{id:[0-9]+}/reset-pairing": true, // authed; own machine, owner-checked in the handler
+	"/api/me/nodes/{id:[0-9]+}/join-attempt":  true, // authed; own machine, owner-checked in the handler
+	"/api/me/nodes/{id:[0-9]+}/admit":         true, // authed; own machine, owner-checked in the handler
 
 	// Sessions helpers: SSE ticket mint, SSE stream, platform-wide feature flags.
 	"/api/sse-ticket":      true, // authed; mints own disposable SSE ticket

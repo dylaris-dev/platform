@@ -60,6 +60,15 @@ type billingFakeStore struct {
 	warpKeys      []store.WarpAPIKey
 	warpKeysErr   error
 	warpKeyOwners []string
+
+	nodes map[int]*models.Node
+}
+
+func (f *billingFakeStore) GetNodeByID(id int) (*models.Node, error) {
+	if n, ok := f.nodes[id]; ok {
+		return n, nil
+	}
+	return nil, errors.New("no such node")
 }
 
 type statusCall struct {
@@ -564,7 +573,8 @@ func TestEnforceSuspensions_GraceBoundary(t *testing.T) {
 
 			svc.enforceSuspensions(context.Background())
 
-			enforced := len(fs.listServersCalls) == 1
+			// At least one: the tunnel check reads the servers again.
+			enforced := len(fs.listServersCalls) >= 1
 			if enforced != tc.wantEnforced {
 				t.Errorf("enforced = %v, want %v (listServersCalls=%v)", enforced, tc.wantEnforced, fs.listServersCalls)
 			}
@@ -654,6 +664,11 @@ func (f *fakeWarpDisconnector) DisconnectKeyPeers(_ context.Context, keyID int) 
 func (f *billingFakeStore) ListWarpAPIKeysByOwner(owner string) ([]store.WarpAPIKey, error) {
 	f.warpKeyOwners = append(f.warpKeyOwners, owner)
 	return f.warpKeys, f.warpKeysErr
+}
+
+// The fake keeps no revoked state, so both listings answer the same keys.
+func (f *billingFakeStore) ListAllWarpAPIKeysByOwner(owner string) ([]store.WarpAPIKey, error) {
+	return f.ListWarpAPIKeysByOwner(owner)
 }
 
 // Taking away what the tunnel carries is not the same as taking away the
@@ -819,8 +834,11 @@ func TestSuspendNow_RevokesNodeKeysAndDropsTheirPeers(t *testing.T) {
 		servers:  map[string][]models.Server{},
 		warpKeys: []store.WarpAPIKey{{ID: 4, NodeID: "node-a"}, {ID: 5, NodeID: "link-b"}},
 	}}
-	warp := &fakeWarpDisconnector{removed: 1}
+	warp := &syncWarpDisconnector{dropped: make(chan int, 4)}
 	svc := &BillingLifecycleService{store: fs, warpPeers: warp}
+	old := forceSuspendStopDrain
+	forceSuspendStopDrain = 0
+	t.Cleanup(func() { forceSuspendStopDrain = old })
 
 	if err := svc.SuspendNow(context.Background(), "u1"); err != nil {
 		t.Fatalf("SuspendNow: %v", err)
@@ -828,7 +846,58 @@ func TestSuspendNow_RevokesNodeKeysAndDropsTheirPeers(t *testing.T) {
 	if len(fs.revoked) != 1 || fs.revoked[0] != "node-a" {
 		t.Errorf("revoked %v, want only the node key", fs.revoked)
 	}
-	if len(warp.calls) != 1 || warp.calls[0] != 4 {
-		t.Errorf("peers dropped for %v, want key 4", warp.calls)
+	select {
+	case id := <-warp.dropped:
+		if id != 4 {
+			t.Errorf("peers dropped for key %d, want 4", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the revoked node key's peers were never dropped")
+	}
+}
+
+type syncWarpDisconnector struct{ dropped chan int }
+
+func (d *syncWarpDisconnector) DisconnectKeyPeers(_ context.Context, keyID int) int {
+	d.dropped <- keyID
+	return 1
+}
+
+// The payment cutoff queues the stop and then keeps the overlay while a server
+// on the tenant's own machine still runs: the node reads its commands through
+// that tunnel. Dropping both in one pass left the containers running on the
+// customer's hardware and the panel on "stopping" forever. Bounded, so a node
+// that never reports cannot keep its tunnel.
+func TestEnforceSuspensions_KeepsTheOverlayUntilTheStopLands(t *testing.T) {
+	const grace = time.Hour
+	owner := "u1"
+	cases := []struct {
+		name        string
+		suspendedAt time.Time
+		status      string
+		wantDropped bool
+	}{
+		{"a server on their machine is still stopping", time.Now().Add(-grace - time.Minute), "stopping", false},
+		{"their servers report stopped", time.Now().Add(-grace - time.Minute), "stopped", true},
+		{"past the drain window whatever it reports", time.Now().Add(-grace - maxStopDrain - time.Minute), "stopping", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			at := tc.suspendedAt
+			fs := &billingFakeStore{
+				suspended: []store.UserBilling{{UserID: owner, SuspendedAt: &at}},
+				warpKeys:  []store.WarpAPIKey{{ID: 7}},
+				servers:   map[string][]models.Server{owner: {{ID: 1, NodeID: 3, Status: tc.status}}},
+				nodes:     map[int]*models.Node{3: {ID: 3, OwnerID: &owner}},
+			}
+			warp := &fakeWarpDisconnector{}
+			svc := &BillingLifecycleService{store: fs, suspendGrace: grace, warpPeers: warp}
+
+			svc.enforceSuspensions(context.Background())
+
+			if dropped := len(warp.calls) > 0; dropped != tc.wantDropped {
+				t.Errorf("overlay dropped = %v, want %v", dropped, tc.wantDropped)
+			}
+		})
 	}
 }

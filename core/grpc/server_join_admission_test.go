@@ -37,6 +37,7 @@ func (noSecretACL) EnsureExisting(context.Context, int, string) (string, error) 
 type recordingJoins struct {
 	recorded      []JoinAttempt
 	admitIP       string
+	admitKey      string // "" = an admission bound to no key
 	consumed      int
 	forgot        []string
 	authenticated []authRecord
@@ -57,10 +58,14 @@ func (r *recordingJoins) RecordJoinAttempt(a JoinAttempt) error {
 	return nil
 }
 
-func (r *recordingJoins) ConsumeJoinApproval(nodeToken, peerIP string) (bool, error) {
-	// One-shot, and only from the address the approval was granted for - the
-	// same two properties the real store enforces in SQL.
+func (r *recordingJoins) ConsumeJoinApproval(nodeToken, peerIP, keyFingerprint string) (bool, error) {
+	// One-shot, only from the address the approval was granted for, and only
+	// for its key when it names one - the properties the real store enforces
+	// in SQL.
 	if r.admitIP == "" || peerIP != r.admitIP {
+		return false, nil
+	}
+	if r.admitKey != "" && keyFingerprint != r.admitKey {
 		return false, nil
 	}
 	r.admitIP = ""

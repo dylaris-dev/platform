@@ -20,6 +20,10 @@ export interface FeatureFlags {
     library: boolean;
     // BYON tenancy. Gates tenant-facing UI like the server transfer control.
     byon: boolean;
+    // Route-only (tenant link kits and their addresses). Its own switch; unset
+    // it follows byon, which Core resolves. Optional: an older Core omits it,
+    // and the panel then reads byon, which is what it followed.
+    routeOnly?: boolean;
     // Store integration (dylaris.com). True only when the hosted Core has both
     // STORE_URL + STORE_SHARED_KEY set. Gates the connect-store button and the
     // demo account/server admin UI; false on a self-host/open-core build.
@@ -51,6 +55,9 @@ export interface FeatureFlagsAdminPayload {
     applyAuthoringToManual?: boolean;
     autoMove?: boolean;
     byon?: boolean;
+    // Sent only when changed: unset it follows byon, and a save that wrote it
+    // along with the other switches would pin it for good.
+    routeOnly?: boolean;
     // NO metrics flag. Long-term statistics are switched on by
     // /admin/settings/metrics-db, together with the database they record into:
     // the resolution is fixed the moment recording starts and nothing can be

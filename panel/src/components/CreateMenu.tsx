@@ -78,7 +78,7 @@ function MenuEntry({
 // 56px column is the text that gets clipped rather than the control that gets
 // smaller. Same menu, same position, just the glyph.
 export default function CreateMenu({ onNewServer, compact = false }: { onNewServer?: () => void; compact?: boolean }) {
-    const { user, featureFlags, entitlement, gatewayEnabled, byonEnabled } = useAppData();
+    const { user, featureFlags, entitlement, gatewayEnabled, byonEnabled, routeOnlyEnabled } = useAppData();
     const [open, setOpen] = useState(false);
     const [deployableNodes, setDeployableNodes] = useState<number | null>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
@@ -121,6 +121,7 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
         deployableNodes: deployableNodes ?? 0,
         storeEnabled: featureFlags.store,
         gatewayEnabled,
+        routeOnlyEnabled,
         entitledRouteOnly: entitlement?.routeOnly ?? false,
     };
 

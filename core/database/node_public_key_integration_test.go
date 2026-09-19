@@ -26,7 +26,7 @@ func TestIntegrationResetPairingDisarmsAnEarlierAdmission(t *testing.T) {
 	// The re-pair through the old admission finds nothing to consume. Core then
 	// refuses the connect and records it, which is what puts the node under
 	// Connection attempts.
-	if ok, err := st.ConsumeNodeJoinApproval(f.node.Token, addr); err != nil || ok {
+	if ok, err := st.ConsumeNodeJoinApproval(f.node.Token, addr, ""); err != nil || ok {
 		t.Fatalf("the admission armed before the Reset was consumed after it (%v, %v)", ok, err)
 	}
 	if err := st.RecordNodeJoinAttempt(models.NodeJoinAttempt{
@@ -50,7 +50,7 @@ func TestIntegrationResetPairingDisarmsAnEarlierAdmission(t *testing.T) {
 	if armed, err := st.ApproveNodeJoinAttempt(f.node.Token, ""); err != nil || !armed {
 		t.Fatalf("Admit after the Reset = (%v, %v), want armed", armed, err)
 	}
-	if ok, err := st.ConsumeNodeJoinApproval(f.node.Token, addr); err != nil || !ok {
+	if ok, err := st.ConsumeNodeJoinApproval(f.node.Token, addr, ""); err != nil || !ok {
 		t.Errorf("the Admit given after the Reset did not admit the node (%v, %v)", ok, err)
 	}
 }

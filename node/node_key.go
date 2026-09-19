@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"dylaris-pkg/nodeauth"
 )
 
 // nodeKeyFileName holds this node's identity: an Ed25519 key pair it generated
@@ -104,4 +106,14 @@ func replaceRejectedNodeKey(dir string, presented ed25519.PublicKey) {
 	}
 	nodeKey = k
 	log.Println("nodekey: Core refused this node's key because an operator replaced it; generated a new one and connecting again")
+	logNodeKeyFingerprint(k)
+}
+
+// logNodeKeyFingerprint prints the name the panel shows for this key. The owner
+// compares the two before admitting the machine: the panel can only show what
+// knocked, and only this log says it was their machine.
+func logNodeKeyFingerprint(k ed25519.PrivateKey) {
+	if fp := nodeauth.KeyFingerprint(publicKeyOf(k)); fp != "" {
+		log.Printf("nodekey: this node's key fingerprint is %s", nodeauth.ShortFingerprint(fp))
+	}
 }

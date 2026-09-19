@@ -53,7 +53,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -195,6 +195,11 @@ export default function FeaturesTab() {
             keys.includes('modpackAuthoring') && platformFlags.modpackAuthoring !== prev.modpackAuthoring
                 ? { ...subsetPayload(keys), applyAuthoringToManual: applyToManual }
                 : subsetPayload(keys);
+        // Route-only follows BYON until it is set. Written along with every
+        // other switch on this card, the first unrelated save would pin it.
+        // Unless BYON moved: then the value on screen is what the operator
+        // means route-only to be, and leaving it unset would move it with BYON.
+        if (payload.routeOnly === prev.routeOnly && platformFlags.byon === prev.byon) delete payload.routeOnly;
         setPlatformSaving(true);
         try {
             const res = await updateSystemFeatures(payload);
@@ -222,7 +227,7 @@ export default function FeaturesTab() {
     // inline so a new flag has exactly one place to be added and cannot end up
     // in no tab at all - which would make it unsavable while looking fine.
     const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library'] as const;
-    const INFRA_KEYS = ['autoMove', 'byon'] as const;
+    const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
 
     // One registration covering all three: the unsaved-changes guard asks "is
@@ -457,6 +462,13 @@ export default function FeaturesTab() {
                         checked={!!platformFlags.byon}
                         disabled={gatewayOff}
                         onChange={v => editPlatformFlag('byon', v)}
+                    />
+                    <SwitchRow
+                        label="Route-only (protected addresses)"
+                        description="Lets customers point a protected address at a server they run themselves, through one link container. Follows BYON until you set it."
+                        checked={!!platformFlags.routeOnly}
+                        disabled={gatewayOff}
+                        onChange={v => editPlatformFlag('routeOnly', v)}
                     />
                     {gatewayOff && (
                         <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">

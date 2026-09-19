@@ -27,6 +27,7 @@ import { isLocationName } from '@/lib/validation';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { SkeletonCard } from '@/components/Skeleton';
 import { resolveInfraTab, showInfraTabBar, infraAvailability, type InfraTab } from '@/lib/infraTab';
+import { PendingAdmission, ResetPairingButton } from '@/components/infra/MachinePairing';
 import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
 import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
@@ -84,7 +85,7 @@ interface OwnNode {
 const NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
 
 function MyNodesInner() {
-    const { featureFlags, entitlement, user, byonEnabled } = useAppData();
+    const { featureFlags, entitlement, user, byonEnabled, routeOnlyEnabled } = useAppData();
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -93,7 +94,7 @@ function MyNodesInner() {
     // What this reader HAS - separate from whether this ACCOUNT is entitled to
     // it, which the panels below answer for themselves. The pairing lives in
     // lib/infraTab so it can be tested; see the note on InfraAvailability.routes.
-    const have = infraAvailability(isAdmin, byonEnabled);
+    const have = infraAvailability(isAdmin, byonEnabled, routeOnlyEnabled);
 
     // The tab lives in the URL so Create can deep-link straight into the half it
     // means, and so a reload or a shared link lands where it left off.
@@ -126,6 +127,10 @@ function MyNodesInner() {
     const [nodeLimit, setNodeLimit] = useState<number | undefined>(undefined);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
+    const pairingDone = (msg: string, ok: boolean) => {
+        if (ok) { setError(''); setNotice(msg); } else { setNotice(''); setError(msg); }
+    };
     // When the node list was last read. Connectivity is "how long since the last
     // heartbeat", so it needs a clock - but reading one during render makes the
     // rendered output depend on when React happened to re-render. Stamped at
@@ -514,6 +519,11 @@ function MyNodesInner() {
                     <span>{error}</span>
                 </div>
             )}
+            {notice && (
+                <div className="alert alert-success" role="status">
+                    <span>{notice}</span>
+                </div>
+            )}
 
             {suspended && (
                 <div className="alert alert-warning">
@@ -698,7 +708,8 @@ function MyNodesInner() {
                                 nodes.map(n => {
                                     const { tier } = nodeConnectivity(n.status, n.lastSeenAt, nodesReadAt);
                                     return (
-                                        <div key={n.id} className="flex items-center justify-between gap-3 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2.5">
+                                        <div key={n.id} className="rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2.5">
+                                        <div className="flex items-center justify-between gap-3">
                                             <div className="flex items-center gap-2.5 min-w-0">
                                                 <div className={`w-2 h-2 rounded-full shrink-0 ${dotFor(tier, 'bg-(--success-light)')}`} />
                                                 <div className="min-w-0">
@@ -744,7 +755,12 @@ function MyNodesInner() {
                                                 >
                                                     <Trash2 size={14} />
                                                 </button>
+                                                {byonAllowed && <ResetPairingButton nodeId={n.id} label={nodeLabel(n)} onDone={pairingDone} />}
                                             </div>
+                                        </div>
+                                        {/* Only while it is not connected: a machine that is up
+                                            has nothing waiting to be admitted. */}
+                                        {tier !== 'ok' && <PendingAdmission nodeId={n.id} onDone={pairingDone} />}
                                         </div>
                                     );
                                 })

@@ -124,6 +124,7 @@ func ensureNodeSecret(ctx context.Context) []byte {
 			"row holds no key, and refuses it once it does.", err)
 	} else {
 		setNodeKey(k)
+		logNodeKeyFingerprint(k)
 	}
 	if s, ok := loadNodeSecret(nodeSecretDir); ok {
 		setNodeSecret(s, false) // already on disk; first install, never restarts

@@ -110,7 +110,7 @@ func purchasedKind(byon, routeOnly bool) string {
 // The contributions are a UNION, deliberately: "give them 14 days now, they can
 // subscribe later" must not have the subscription and the grant fight.
 //
-// Callers must gate this behind feature_byon_enabled; with BYON off none of it
+// Callers must gate this behind the product's flag (BYON or route-only); with BYON off none of it
 // is meaningful.
 func EffectiveEntitlement(st entitlementStore, userID string, now time.Time, storeEnabled, isAdmin bool) (Entitlement, error) {
 	// 0. An administrator is not a customer. They run the platform, and the store

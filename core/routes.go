@@ -894,7 +894,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap
 	// (not in requiredCaps). /admin/usage is PANEL plans.read.
 	api.HandleFunc("/me/usage", authHandler.AuthMiddleware(usageHandler.GetMyUsage)).Methods("GET")
-	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(usageHandler.GetAllUsage)))).Methods("GET")
+	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(usageHandler.GetAllUsage)))).Methods("GET")
 
 	// /me/billing is the caller's OWN lifecycle state: EXEMPT-authed, no RequireCap
 	// (not in requiredCaps). The admin billing routes below are PANEL plans.*.
@@ -908,23 +908,26 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// ownership check of its own.
 	api.HandleFunc("/me/nodes/{id:[0-9]+}/contents", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.GetMyNodeContents))).Methods("GET")
 	api.HandleFunc("/me/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.DeleteMyNode))).Methods("DELETE")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.ResetMyNodePairing))).Methods("POST")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/join-attempt", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.GetMyNodeJoinAttempt))).Methods("GET")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/admit", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.AdmitMyNode))).Methods("POST")
 	// Own entitlement: what the caller may use. Deliberately NOT gated on
 	// RequireBYONEnabled - with BYON off the tenant UI still asks, and needs the
 	// answer "no" rather than a 503 it would have to special-case.
 	api.HandleFunc("/me/entitlement", authHandler.AuthMiddleware(entitlementHandler.GetMine)).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(appState.RequireStoreEnabled(billingHandler.GetBillingSettings))))).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingSettings))))).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(billingHandler.GetUserBilling)))).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(billingHandler.SetBillingStatus)))).Methods("PATCH")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingOverrides))))).Methods("PATCH")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(appState.RequireStoreEnabled(billingHandler.GetBillingSettings))))).Methods("GET")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingSettings))))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(billingHandler.GetUserBilling)))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(billingHandler.SetBillingStatus)))).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingOverrides))))).Methods("PATCH")
 	// Entitlement = WHAT a tenant may use (BYON / route-only), as opposed to the
 	// billing routes above, which are status and HOW MUCH.
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireBYONEnabled(entitlementHandler.GetForUser)))).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(entitlementHandler.Grant)))).Methods("POST")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(entitlementHandler.Revoke)))).Methods("DELETE")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(entitlementHandler.GetForUser)))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(entitlementHandler.Grant)))).Methods("POST")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(entitlementHandler.Revoke)))).Methods("DELETE")
 
 	// --- BYON plans + per-user plan/limit overrides (admin, PANEL plans.*) ---
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireBYONEnabled(plansHandler.SetUserLimitOverrides)))).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(plansHandler.SetUserLimitOverrides)))).Methods("PATCH")
 
 	// /me/username-history is the caller's OWN history: EXEMPT-authed, no
 	// RequireCap (not in requiredCaps). The admin two below are PANEL users.*.

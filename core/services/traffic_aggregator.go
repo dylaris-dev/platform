@@ -154,7 +154,7 @@ type seenUpdate struct {
 }
 
 func (a *TrafficAggregator) runOnce(ctx context.Context) {
-	if !a.flags.IsBYONEnabled(ctx) {
+	if !a.flags.IsTenancyEnabled(ctx) {
 		return // no tenants to bill
 	}
 	owners, err := a.subjectOwners()

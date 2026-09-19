@@ -38,8 +38,10 @@ export interface InfraAvailability {
  * different things and the page has picked the wrong pair before - see the
  * history at the top of this file.
  */
-export function infraAvailability(isAdmin: boolean, byonEnabled: boolean): InfraAvailability {
-    return { external: isAdmin, machines: byonEnabled, routes: byonEnabled };
+export function infraAvailability(isAdmin: boolean, byonEnabled: boolean, routeOnlyEnabled: boolean = byonEnabled): InfraAvailability {
+    // Route-only has its own switch; unset it follows BYON, so an install that
+    // never set it gets the same two halves as before.
+    return { external: isAdmin, machines: byonEnabled, routes: routeOnlyEnabled };
 }
 
 const ORDER: InfraTab[] = ['external', 'machines', 'routes'];

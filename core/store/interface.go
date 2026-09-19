@@ -207,10 +207,12 @@ type Store interface {
 	RecordNodeJoinAttempt(a models.NodeJoinAttempt) error
 	ListNodeJoinAttempts() ([]models.NodeJoinAttempt, error)
 	ApproveNodeJoinAttempt(nodeToken, approvedBy string) (bool, error)
+	ApproveNodeJoinAttemptForKey(nodeToken, keyFingerprint, approvedBy string) (bool, error)
+	GetNodeJoinAttempt(nodeToken string) (*models.NodeJoinAttempt, error)
 	// ArmNodeJoinApproval is the roll-key half: the same admission, bound to the
 	// address the node last authenticated from rather than to a refusal.
 	ArmNodeJoinApproval(nodeToken, fromIP, approvedBy string) (bool, error)
-	ConsumeNodeJoinApproval(nodeToken, peerIP string) (bool, error)
+	ConsumeNodeJoinApproval(nodeToken, peerIP, keyFingerprint string) (bool, error)
 	GetNodeLastAuthPeerIP(id int) (string, error)
 	DeleteNodeJoinAttempt(nodeToken string) error
 

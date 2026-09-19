@@ -579,8 +579,8 @@ func (h *WarpHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 // token). The key lives in warp_api_keys beside the node keys, and warp enroll
 // refuses it.
 func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
-	if !byonActive(h.state, r) {
-		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+	if !routeOnlyActive(h.state, r) {
+		sendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
 	// Route-only needs the gateway: routes and link tunnels only exist in
@@ -844,8 +844,8 @@ func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) 
 // no secrets). The link token is re-derivable from link_id, so it is re-revealed
 // via the kit's reveal flow, not listed here.
 func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
-	if !byonActive(h.state, r) {
-		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+	if !routeOnlyActive(h.state, r) {
+		sendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
 	userID := byonCallerID(r)
@@ -928,7 +928,7 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
-	if key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID)) {
+	if key.OwnerID != userID && (!isAdmin || h.state.kitOwnedByOther(key.OwnerID, userID)) {
 		sendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
@@ -1000,7 +1000,7 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 	// carry no capability, so "any admin" would be the whole gate, and a rolled
 	// External node key boots that machine's Link. The admin way to act on one
 	// is RevokeAPIKey / DeleteAPIKey under /api/admin/warp/keys.
-	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.userOwnedByOther(&key.OwnerID, userID))) {
+	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.kitOwnedByOther(key.OwnerID, userID))) {
 		sendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}

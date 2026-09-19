@@ -803,6 +803,7 @@ func main() {
 				MemoryBytes:        a.MemoryBytes,
 				ReleaseVersion:     a.ReleaseVersion,
 				Reason:             a.Reason,
+				PresentedKey:       a.PresentedKey,
 			})
 		},
 		Consume:       pgStore.ConsumeNodeJoinApproval,

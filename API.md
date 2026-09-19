@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **504 routes** in 49 sections: 222 GET, 155 POST, 38 PUT, 36 PATCH, 54 DELETE.
+- **507 routes** in 49 sections: 223 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **101** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **104** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -156,7 +156,7 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (2)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (24)
+- [/api/me](#apime) (27)
 - [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
@@ -237,8 +237,8 @@ can still show what exists.
 | PUT | `/api/admin/settings/audit` | session | `settings.write` | - | `AuditSettingsHandler.SavePolicy` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/settings/auth` | session | `settings.read` | - | `AuthSettingsHandler.GetAuthPolicy` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/auth` | session | `settings.write` | - | `AuthSettingsHandler.SaveAuthPolicy` | PANEL settings.write (RequireCap at the route). |
-| GET | `/api/admin/settings/billing` | session | `plans.read` | RequireBYONEnabled, RequireStoreEnabled | `BillingHandler.GetBillingSettings` | RequireCap("plans.read") at the route. |
-| PUT | `/api/admin/settings/billing` | session | `plans.write` | RequireBYONEnabled, RequireStoreEnabled | `BillingHandler.SetBillingSettings` | RequireCap("plans.write") at the route. |
+| GET | `/api/admin/settings/billing` | session | `plans.read` | RequireTenancyEnabled, RequireStoreEnabled | `BillingHandler.GetBillingSettings` | RequireCap("plans.read") at the route. |
+| PUT | `/api/admin/settings/billing` | session | `plans.write` | RequireTenancyEnabled, RequireStoreEnabled | `BillingHandler.SetBillingSettings` | RequireCap("plans.write") at the route. |
 | GET | `/api/admin/settings/demo-account` | session | `settings.read` | - | `ServerHandler.GetDemoAccount` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/demo-account` | session | `settings.write` | - | `ServerHandler.SetDemoAccount` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/settings/features` | session | `settings.read` | - | `FeatureSettingsHandler.Get` | current bundle of platform toggles. |
@@ -292,16 +292,16 @@ can still show what exists.
 | POST | `/api/admin/tickets/migration/test-connection` | session | `tickets.write` | RequireTicketsEnabled | `TicketMigrationHandler.TestExternalConnection` | Takes a Postgres DSN, opens it, runs a SELECT 1, returns the version string so admins can confirm they hit the right server. |
 | POST | `/api/admin/tickets/restore/execute` | session | `tickets.write` | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketMigrationHandler.ExecuteRestore` | Validates: token exists + not expired + cooldown passed + caller matches the token's user + TOTP verifies + typed phrase matches. |
 | POST | `/api/admin/tickets/restore/init` | session | `tickets.write` | RequireTicketsEnabled, RequireCoreStorageReachable | `TicketMigrationHandler.InitRestore` | Issues a token tied to the backup name. |
-| GET | `/api/admin/usage` | session | `plans.read` | RequireBYONEnabled | `UsageHandler.GetAllUsage` | RequireCap("plans.read") at the route. |
-| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/billing` | session | `plans.read` | RequireBYONEnabled | `BillingHandler.GetUserBilling` | RequireCap("plans.read") at the route. |
-| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing` | session | `plans.write` | RequireBYONEnabled | `BillingHandler.SetBillingStatus` | RequireCap("plans.write") at the route. |
-| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides` | session | `plans.write` | RequireBYONEnabled, RequireStoreEnabled | `BillingHandler.SetBillingOverrides` | RequireCap("plans.write") at the route. |
+| GET | `/api/admin/usage` | session | `plans.read` | RequireTenancyEnabled | `UsageHandler.GetAllUsage` | RequireCap("plans.read") at the route. |
+| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/billing` | session | `plans.read` | RequireTenancyEnabled | `BillingHandler.GetUserBilling` | RequireCap("plans.read") at the route. |
+| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing` | session | `plans.write` | RequireTenancyEnabled | `BillingHandler.SetBillingStatus` | RequireCap("plans.write") at the route. |
+| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/billing-overrides` | session | `plans.write` | RequireTenancyEnabled, RequireStoreEnabled | `BillingHandler.SetBillingOverrides` | RequireCap("plans.write") at the route. |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion` | session | `users.write` | - | `UserHandler.CancelUserDeletion` | Admin override: clears the pending_deletion stamps and returns the user to active state. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/email` | session | `users.write` | NewUserEmailHandler | `AuthMiddleware` | - |
-| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireBYONEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
-| POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireBYONEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
-| DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireBYONEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |
-| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireBYONEnabled | `PlansHandler.SetUserLimitOverrides` | - |
+| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireTenancyEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
+| POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
+| DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |
+| PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireTenancyEnabled | `PlansHandler.SetUserLimitOverrides` | - |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.SetUserFlag` | PANEL settings.write (RequireCap at the route). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.ClearUserFlagOverride` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/panel-role` | session | `panelroles.read` | - | `UserHandler.GetUserPanelRoleHandler` | Reads the user's level-1 panel role id + per-user override caps, symmetric with the PUT. |
@@ -509,7 +509,10 @@ can still show what exists.
 | PUT | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Set` | accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores. |
 | DELETE | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Clear` | wipes the PAT entirely. |
 | DELETE | `/api/me/nodes/{id:[0-9]+}` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.DeleteMyNode` | removes the caller's own machine. |
+| POST | `/api/me/nodes/{id:[0-9]+}/admit` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.AdmitMyNode` | {fingerprint} - let this machine back in with the key its owner read off the machine's own log. |
 | GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
+| GET | `/api/me/nodes/{id:[0-9]+}/join-attempt` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeJoinAttempt` | the connection Core is refusing for this machine, if any, with the fingerprint of the key it presented. |
+| POST | `/api/me/nodes/{id:[0-9]+}/reset-pairing` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.ResetMyNodePairing` | the owner's own Reset pairing, for a machine whose key is wedged or may have leaked. |
 | GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns. |
 | POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
 | GET | `/api/me/regions` | session | _no capability_ | - | `UserRegionsHandler.GetMyRegions` | current user's own region assignment (any authenticated user). |

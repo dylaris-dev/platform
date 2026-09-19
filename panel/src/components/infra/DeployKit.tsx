@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon } from 'lucide-react';
 import {
@@ -148,6 +148,36 @@ export function platformNote(kind: 'node' | 'route-only', platform: DeployPlatfo
         : 'Host networking on Docker Desktop joins the WSL2 VM, not Windows, so the snippet points the link at host.docker.internal. Your Minecraft server keeps running on Windows as it does now.';
 }
 
+const PLATFORM_KEY = 'dylaris:deployPlatform';
+
+/**
+ * The target machine the reader picked, remembered per browser.
+ *
+ * It reset to Linux on every visit, and on the route-only file the wrong tab is
+ * not cosmetic: it decides LOCAL_HOST, and left on Linux on Docker Desktop the
+ * link dials the WSL2 VM's loopback while the server runs on Windows. Nothing
+ * in the panel said so - only a dial error in the container log.
+ *
+ * Read in an effect, as SidebarCollapse does: the server render has no storage,
+ * and reading during render would not match it.
+ */
+export function useDeployPlatform(): [DeployPlatform, (p: DeployPlatform) => void] {
+    const [platform, setPlatformState] = useState<DeployPlatform>('linux');
+    useEffect(() => {
+        try {
+            const v = localStorage.getItem(PLATFORM_KEY);
+            if (v === 'linux' || v === 'windows') setPlatformState(v);
+        } catch { /* private mode: the default stands */ }
+    }, []);
+    const setPlatform = useCallback((p: DeployPlatform) => {
+        setPlatformState(p);
+        try {
+            localStorage.setItem(PLATFORM_KEY, p);
+        } catch { /* private mode: the choice lasts this page only */ }
+    }, []);
+    return [platform, setPlatform];
+}
+
 export function DeployKit({ kind, ...props }: { kind: 'node' | 'route-only' } & KitProps) {
     // Both kinds run on Docker Desktop. The node was Linux-only here for longer
     // than it needed to be: it drives the host's Docker socket, and on Docker
@@ -155,7 +185,7 @@ export function DeployKit({ kind, ...props }: { kind: 'node' | 'route-only' } & 
     // inside the same WSL2 VM - so they reach each other exactly as on Linux.
     // What genuinely differs is where the server FILES land, which the snippet
     // says in the place it matters, at the bind mount.
-    const [platform, setPlatform] = useState<DeployPlatform>('linux');
+    const [platform, setPlatform] = useDeployPlatform();
     // Spread, never field by field: listing the props here by hand is exactly
     // how linkBesideNode went missing and every customer file came out without
     // its link service. KitProps is kitInput's own parameter type, so a new

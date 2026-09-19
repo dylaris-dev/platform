@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.19.3
+
+### Features
+- **Route-only has its own switch** under Features. Unset it follows BYON, so nothing
+  changes until you set it; usage, billing and grants open with either. `core` `panel`
+- **Customers reset and re-admit their own machines.** The owner enters the key fingerprint
+  the node now logs, and only that key is admitted, from any address. `core` `panel` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- **Admitting a node binds the admission to the key it presented,** not only to its
+  address; an operator can no longer admit a key onto a customer's machine. `core`
+
+### Fixes
+- **Deleting a server tells the hub by the server,** so its addresses no longer come back
+  after Redis lost its route keys. Deploy the hub before Core to skip one warning. `core`
+- **A suspension keeps a customer machine's tunnel until its servers report stopped,**
+  at most two hours; before, the stop never arrived and they kept running. `core`
+- **The deploy file remembers Linux or Windows** per browser, and says in its header
+  which machine it is for. `panel`
+
 ## 2026.09.19.2
 
 ### Features

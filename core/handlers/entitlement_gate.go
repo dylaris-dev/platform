@@ -57,9 +57,17 @@ const (
 // response.
 func (s *AppState) requireEntitlement(r *http.Request, w http.ResponseWriter, userID, kind string) bool {
 	ctx := r.Context()
-	// BYON off: there is no entitlement plane, and every one of these endpoints
-	// is already unreachable. Nothing to decide.
-	if s.FeatureFlags == nil || !s.FeatureFlags.IsBYONEnabled(ctx) {
+	// The product off: there is no entitlement plane for it, and its endpoints
+	// are already unreachable. Nothing to decide. Per kind, since route-only has
+	// its own switch.
+	if s.FeatureFlags == nil {
+		return true
+	}
+	on := s.FeatureFlags.IsBYONEnabled(ctx)
+	if kind == services.EntitlementRouteOnly {
+		on = s.FeatureFlags.IsRouteOnlyEnabled(ctx)
+	}
+	if !on {
 		return true
 	}
 

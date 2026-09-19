@@ -39,6 +39,8 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// BYON tenancy: drives tenant-facing UI (e.g. the server transfer
 			// control). Read-only flag; the actual authz is enforced backend-side.
 			"byon": h.state.FeatureFlags.IsBYONEnabled(r.Context()),
+			// Resolved: unset follows byon. The panel ANDs it with gateway routing.
+			"routeOnly": h.state.FeatureFlags.IsRouteOnlyEnabled(r.Context()),
 			// Gates the builder's share-link create UI. Existing links keep
 			// serving while modpacks is on; this only reflects the create toggle.
 			"shareLinks": h.state.FeatureFlags.IsShareLinksEnabled(r.Context()),

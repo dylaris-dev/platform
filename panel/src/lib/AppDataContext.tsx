@@ -43,6 +43,8 @@ interface AppData {
     gatewayEnabled: boolean;
     /** featureFlags.byon ANDed with live gateway routing: BYON cannot work without it. */
     byonEnabled: boolean;
+    /** featureFlags.routeOnly ANDed with gateway routing, the same way. */
+    routeOnlyEnabled: boolean;
     libraryEnabled: boolean;
     // platform-wide feature toggles. Loaded on boot from
     // /api/system/features; refreshed when features.changed SSE fires.
@@ -276,6 +278,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // with the live routing mode". featureFlags.byon stays the raw value so the
     // Features toggle keeps rendering the operator's actual setting.
     const byonEnabled = isByonUsable(featureFlags.byon, routingMode);
+    const routeOnlyEnabled = isByonUsable(featureFlags.routeOnly ?? featureFlags.byon, routingMode);
 
     // The FLAG, not the module row. The row hides a navbar entry; the flag is
     // what Core actually gates the library routes on, so a screen that offers
@@ -296,7 +299,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         apiUnreachable,
         retryBoot,
         refreshUser, refreshModules, refreshServers, refreshSettings,
-        gatewayEnabled, byonEnabled, libraryEnabled,
+        gatewayEnabled, byonEnabled, routeOnlyEnabled, libraryEnabled,
         featureFlags, refreshFeatureFlags,
         regions, coreInfo, refreshRegions,
         entitlement, refreshEntitlement,

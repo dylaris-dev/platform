@@ -35,7 +35,7 @@ function avatarURL(minecraftUsername: string): string {
 }
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready, apiUnreachable, retryBoot, featureFlags, gatewayEnabled, servers } = useAppData();
+    const { user, ready, apiUnreachable, retryBoot, featureFlags, byonEnabled, routeOnlyEnabled, servers } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
@@ -115,7 +115,9 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     //
     // Shown without an entitlement as well, since the page explains what is
     // missing - more use than a link that silently is not there.
-    const canSeeMyInfra = user.isAdmin || featureFlags.byon || gatewayEnabled;
+    // Each product's own usable flag: the page opened on gatewayEnabled alone
+    // and then showed a route-only tab its gate had closed.
+    const canSeeMyInfra = user.isAdmin || byonEnabled || routeOnlyEnabled;
 
     return (
         <SidebarCollapseProvider>

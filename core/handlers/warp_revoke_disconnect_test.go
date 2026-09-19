@@ -200,6 +200,7 @@ func (linkRevokeFakeGateway) CreateRouteViaLink(string, string, string, string, 
 }
 func (linkRevokeFakeGateway) DeleteCoreOwnedRoute(string) error    { return nil }
 func (linkRevokeFakeGateway) DeleteRoute(string) error             { return nil }
+func (linkRevokeFakeGateway) DeleteServerRoutes(string) error      { return nil }
 func (linkRevokeFakeGateway) MigrateServerRoutes(uint, uint) error { return nil }
 func (linkRevokeFakeGateway) LinkToken(nodeID string) string       { return "tok-" + nodeID }
 func (linkRevokeFakeGateway) DiscoveryProof(nodeID string) string  { return "proof-" + nodeID }

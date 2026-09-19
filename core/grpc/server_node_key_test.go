@@ -893,3 +893,41 @@ func TestAClusterProofNeverRePairsAnExternalNode(t *testing.T) {
 		}
 	})
 }
+
+// A customer's machine reaches Core through the warp leader, whose address every
+// customer in the region shares, so an admission bound to the address alone
+// would let anyone knocking with the machine's id in. The owner admits the key
+// they compared with their machine's log, and only that key gets in.
+func TestAnAdmissionBoundToAKeyAdmitsOnlyThatKey(t *testing.T) {
+	old, mine, theirs := newKey(t), newKey(t), newKey(t)
+	mineFP := nodeauth.KeyFingerprint(pubOf(mine))
+
+	t.Run("the refusal records the key it proved", func(t *testing.T) {
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(old)}
+		joins := &recordingJoins{}
+		_ = dial(t, known, acl, joins, nodeWith(pubOf(mine), rowSecret, mine))
+		if len(joins.recorded) != 1 || joins.recorded[0].PresentedKey != mineFP {
+			t.Fatalf("recorded %+v, want the presented key's fingerprint", joins.recorded)
+		}
+	})
+	t.Run("another key from the same address is refused", func(t *testing.T) {
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(old)}
+		joins := &recordingJoins{admitIP: "203.0.113.7", admitKey: mineFP}
+		if err := dial(t, known, acl, joins, nodeWith(pubOf(theirs), rowSecret, theirs)); err == nil {
+			t.Fatal("a key the owner never admitted got in")
+		}
+		if joins.consumed != 0 || len(acl.stored) != 0 {
+			t.Errorf("consumed=%d stored=%v, want the admission left for the owner's key", joins.consumed, acl.stored)
+		}
+	})
+	t.Run("the admitted key gets in", func(t *testing.T) {
+		acl := &keyedACL{secret: rowSecret, rejected: pubOf(old)}
+		joins := &recordingJoins{admitIP: "203.0.113.7", admitKey: mineFP}
+		if err := dial(t, known, acl, joins, nodeWith(pubOf(mine), rowSecret, mine)); err != nil {
+			t.Fatalf("refused: %v", err)
+		}
+		if joins.consumed != 1 || !bytes.Equal(acl.key, pubOf(mine)) {
+			t.Errorf("consumed=%d key=%x, want the owner's key registered", joins.consumed, acl.key)
+		}
+	})
+}

@@ -109,6 +109,17 @@ func RouteBelongsToServer(rt GatewayRoute, uuid string) bool {
 //
 // Returns how many routes matched.
 func removeServerRoutes(ctx context.Context, gw GatewayProvider, rdb *redis.Client, uuids []string) int {
+	// By server first, and whatever the cache holds: the per-domain deletes
+	// below can only name routes Redis still has, so a cache that lost its
+	// route keys left the hub's rows standing and the next sync published the
+	// addresses again, pointing at servers that no longer exist.
+	if gw != nil {
+		for _, u := range uuids {
+			if err := gw.DeleteServerRoutes(u); err != nil {
+				log.Printf("remove server routes: hub delete for server %s: %v", u, err)
+			}
+		}
+	}
 	if rdb == nil || len(uuids) == 0 {
 		return 0
 	}

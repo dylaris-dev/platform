@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.19.3
+
+### Features
+- **Reset and re-admit your own machine** under My infrastructure, instead of removing
+  and adding it. Update the node: it now logs the key fingerprint you enter there. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A suspended machine now receives the stop before its tunnel is closed,** so its
+  servers actually stop instead of running on.
+- **Your deploy file remembers whether it is for Linux or Windows,** and says so in its
+  header.
+
 ## 2026.09.19.2
 
 ### Features

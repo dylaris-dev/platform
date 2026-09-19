@@ -31,9 +31,10 @@ func (s *PostgresStore) RecordNodeJoinAttempt(a models.NodeJoinAttempt) error {
 		INSERT INTO node_join_attempts (
 			node_token, peer_ip, reported_public_ip, reported_private_ips,
 			hostname, cpu_cores, cpu_model, memory_bytes, release_version,
-			reason, attempts, first_seen_at, last_seen_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,NOW(),NOW())
+			reason, presented_key, attempts, first_seen_at, last_seen_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,NOW(),NOW())
 		ON CONFLICT (node_token) DO UPDATE SET
+			presented_key = EXCLUDED.presented_key,
 			peer_ip = EXCLUDED.peer_ip,
 			reported_public_ip = EXCLUDED.reported_public_ip,
 			reported_private_ips = EXCLUDED.reported_private_ips,
@@ -46,7 +47,7 @@ func (s *PostgresStore) RecordNodeJoinAttempt(a models.NodeJoinAttempt) error {
 			attempts = node_join_attempts.attempts + 1,
 			last_seen_at = NOW()`,
 		a.NodeToken, a.PeerIP, a.ReportedPublicIP, a.ReportedPrivateIPs,
-		a.Hostname, a.CPUCores, a.CPUModel, a.MemoryBytes, a.ReleaseVersion, a.Reason)
+		a.Hostname, a.CPUCores, a.CPUModel, a.MemoryBytes, a.ReleaseVersion, a.Reason, a.PresentedKey)
 	return err
 }
 
@@ -57,7 +58,7 @@ func (s *PostgresStore) ListNodeJoinAttempts() ([]models.NodeJoinAttempt, error)
 		SELECT a.node_token, COALESCE(n.name, ''), COALESCE(n.display_name, ''),
 			a.peer_ip, a.reported_public_ip, a.reported_private_ips,
 			a.hostname, a.cpu_cores, a.cpu_model, a.memory_bytes, a.release_version,
-			a.reason, a.attempts, a.first_seen_at, a.last_seen_at,
+			a.reason, a.presented_key, a.attempts, a.first_seen_at, a.last_seen_at,
 			a.approved_until, a.approved_from_ip, a.approved_by
 		FROM node_join_attempts a
 		LEFT JOIN nodes n ON n.token = a.node_token
@@ -74,7 +75,7 @@ func (s *PostgresStore) ListNodeJoinAttempts() ([]models.NodeJoinAttempt, error)
 		if err := rows.Scan(&a.NodeToken, &a.NodeName, &a.DisplayName,
 			&a.PeerIP, &a.ReportedPublicIP, &a.ReportedPrivateIPs,
 			&a.Hostname, &a.CPUCores, &a.CPUModel, &a.MemoryBytes, &a.ReleaseVersion,
-			&a.Reason, &a.Attempts, &a.FirstSeenAt, &a.LastSeenAt,
+			&a.Reason, &a.PresentedKey, &a.Attempts, &a.FirstSeenAt, &a.LastSeenAt,
 			&approvedUntil, &a.ApprovedFromIP, &a.ApprovedBy); err != nil {
 			continue
 		}
@@ -99,6 +100,7 @@ func (s *PostgresStore) ApproveNodeJoinAttempt(nodeToken, approvedBy string) (bo
 		UPDATE node_join_attempts
 		SET approved_until = NOW() + $2::interval,
 			approved_from_ip = peer_ip,
+			approved_key = presented_key,
 			approved_by = $3
 		WHERE node_token = $1 AND peer_ip <> ''`,
 		nodeToken, nodeJoinApprovalWindow.String(), approvedBy)
@@ -107,6 +109,65 @@ func (s *PostgresStore) ApproveNodeJoinAttempt(nodeToken, approvedBy string) (bo
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// ApproveNodeJoinAttemptForKey is the owner's admission: it admits the key
+// whose fingerprint the owner read off their own machine's log, from anywhere.
+//
+// Bound to the key and NOT to an address, deliberately. A customer's machine
+// reaches Core through the warp leader, whose address every customer in the
+// region shares, so the address says nothing; and the attempt row is rewritten
+// by whoever knocks with the machine's id, so binding to "what knocked last"
+// let anyone who knows the id keep the owner from ever admitting their machine.
+// A key the node must sign our nonce with is a binding no one else can meet.
+//
+// keyFingerprint is at least the 16-digit prefix the node logs (at least 64
+// bits: finding a key that matches it is out of reach) or the full 64. The
+// caller normalises it to lowercase hex.
+func (s *PostgresStore) ApproveNodeJoinAttemptForKey(nodeToken, keyFingerprint, approvedBy string) (bool, error) {
+	if len(keyFingerprint) < 16 {
+		return false, nil
+	}
+	res, err := s.db.Exec(`
+		INSERT INTO node_join_attempts (node_token, reason, attempts,
+			approved_until, approved_from_ip, approved_key, approved_by)
+		VALUES ($1, 'Admitted by its owner. Waiting for it to connect.', 0,
+			NOW() + $2::interval, '', $3, $4)
+		ON CONFLICT (node_token) DO UPDATE SET
+			approved_until = EXCLUDED.approved_until,
+			approved_from_ip = '',
+			approved_key = EXCLUDED.approved_key,
+			approved_by = EXCLUDED.approved_by`,
+		nodeToken, nodeJoinApprovalWindow.String(), keyFingerprint, approvedBy)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// GetNodeJoinAttempt returns the refused connection recorded for one identity,
+// nil when there is none.
+func (s *PostgresStore) GetNodeJoinAttempt(nodeToken string) (*models.NodeJoinAttempt, error) {
+	var a models.NodeJoinAttempt
+	var approvedUntil sql.NullTime
+	err := s.db.QueryRow(`
+		SELECT node_token, peer_ip, hostname, release_version, reason, presented_key,
+			attempts, first_seen_at, last_seen_at, approved_until
+		FROM node_join_attempts WHERE node_token = $1`, nodeToken).
+		Scan(&a.NodeToken, &a.PeerIP, &a.Hostname, &a.ReleaseVersion, &a.Reason, &a.PresentedKey,
+			&a.Attempts, &a.FirstSeenAt, &a.LastSeenAt, &approvedUntil)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if approvedUntil.Valid {
+		t := approvedUntil.Time
+		a.ApprovedUntil = &t
+	}
+	return &a, nil
 }
 
 // ArmNodeJoinApproval arms the same admission ApproveNodeJoinAttempt does, for
@@ -134,6 +195,7 @@ func (s *PostgresStore) ArmNodeJoinApproval(nodeToken, fromIP, approvedBy string
 		ON CONFLICT (node_token) DO UPDATE SET
 			approved_until = EXCLUDED.approved_until,
 			approved_from_ip = EXCLUDED.approved_from_ip,
+			approved_key = '',
 			approved_by = EXCLUDED.approved_by`,
 		nodeToken, fromIP, nodeJoinApprovalWindow.String(), approvedBy)
 	if err != nil {
@@ -150,11 +212,11 @@ func (s *PostgresStore) ArmNodeJoinApproval(nodeToken, fromIP, approvedBy string
 // node dials whichever answers, so a check-then-clear could admit the same
 // approval twice. The UPDATE ... RETURNING makes the clear the same act as the
 // check, and only the replica whose UPDATE matched a row gets a true.
-func (s *PostgresStore) ConsumeNodeJoinApproval(nodeToken, peerIP string) (bool, error) {
+func (s *PostgresStore) ConsumeNodeJoinApproval(nodeToken, peerIP, keyFingerprint string) (bool, error) {
 	var token string
 	err := s.db.QueryRow(`
 		UPDATE node_join_attempts
-		SET approved_until = NULL, approved_from_ip = ''
+		SET approved_until = NULL, approved_from_ip = '', approved_key = ''
 		WHERE node_token = $1
 			-- The emptiness check is on the COLUMN, not on the parameter. Asking
 			-- it of $2 as well made the placeholder compare to a column in one
@@ -162,9 +224,19 @@ func (s *PostgresStore) ConsumeNodeJoinApproval(nodeToken, peerIP string) (bool,
 			-- type and refuses to prepare. It says the same thing: a row with no
 			-- observed address matches nothing, so an unidentifiable caller
 			-- cannot be admitted by a blank on both sides.
-			AND approved_from_ip <> '' AND approved_from_ip = $2
 			AND approved_until IS NOT NULL AND approved_until > NOW()
-		RETURNING node_token`, nodeToken, peerIP).Scan(&token)
+			AND (
+				-- An operator's admission: from the address it was granted for,
+				-- and for its key when it names one. Unbound ('') is the
+				-- roll-key admission and a legacy one.
+				(approved_from_ip <> '' AND approved_from_ip = $2
+					AND (approved_key = '' OR approved_key = $3))
+				-- The owner's: from anywhere, for the key they named, which may
+				-- be the prefix their node logs. Never empty.
+				OR (approved_from_ip = '' AND length(approved_key) >= 16
+					AND left($3, length(approved_key)) = approved_key)
+			)
+		RETURNING node_token`, nodeToken, peerIP, keyFingerprint).Scan(&token)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

@@ -17,6 +17,8 @@ export interface CreateOptionsInput {
     storeEnabled: boolean;
     /** Gateway routing is on. Route-only does not exist without it. */
     gatewayEnabled: boolean;
+    /** The route-only switch (feature_route_only_enabled, following BYON while unset). */
+    routeOnlyEnabled: boolean;
     /** The caller may create protected addresses (resolved entitlement). */
     entitledRouteOnly: boolean;
 }
@@ -106,6 +108,9 @@ export function routeOption(i: CreateOptionsInput): CreateOption {
             enabled: false,
             reason: 'Gateway routing is turned off on this platform.',
         };
+    }
+    if (!i.routeOnlyEnabled) {
+        return { enabled: false, reason: 'Protected addresses are turned off on this platform.' };
     }
     if (i.isAdmin) return { enabled: true, href: '/routes' };
     if (i.entitledRouteOnly) return { enabled: true, href: '/routes' };

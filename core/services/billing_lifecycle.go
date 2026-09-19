@@ -344,8 +344,54 @@ func (s *BillingLifecycleService) enforceSuspensions(ctx context.Context) {
 			b.UserID, b.SuspendedAt.UTC().Format(time.RFC3339), s.suspendGrace)
 		s.stopTenantServers(ctx, b.UserID)
 		s.suspendTenantLinks(ctx, b.UserID)
-		s.suspendTenantWarpPeers(ctx, b.UserID)
+		s.dropWarpPeersOnceStopped(ctx, b.UserID, b.SuspendedAt.Add(s.suspendGrace), now)
 	}
+}
+
+// maxStopDrain bounds how long past a cutoff a tenant's overlay tunnel is kept
+// so the stop sent over it can land.
+//
+// ponytail: the sweep is hourly, so the tunnel goes at the second or third pass;
+// a finer clock would need a timer of its own.
+const maxStopDrain = 2 * time.Hour
+
+// dropWarpPeersOnceStopped drops the tenant's overlay tunnel, but not while a
+// server on their own machine is still running and the cutoff is recent.
+//
+// A BYON node reads its commands and its desired state through that tunnel.
+// Dropping it in the same pass that queued the stop meant the node never read
+// the stop: the containers kept running on the customer's hardware and the
+// panel showed "stopping" forever. Players are cut off regardless - the link
+// keys go in the same pass - so only the control path lingers, and not past
+// maxStopDrain, whatever the servers report.
+func (s *BillingLifecycleService) dropWarpPeersOnceStopped(ctx context.Context, userID string, cutoff, now time.Time) {
+	if now.Before(cutoff.Add(maxStopDrain)) && s.byonServersStillUp(userID) {
+		log.Printf("billing lifecycle: %s: keeping the overlay until their own machines report their servers stopped (at most until %s)",
+			userID, cutoff.Add(maxStopDrain).UTC().Format(time.RFC3339))
+		return
+	}
+	s.suspendTenantWarpPeers(ctx, userID)
+}
+
+// byonServersStillUp reports whether any of the tenant's servers on a machine
+// they own is not stopped yet. A failed read answers false, which drops the
+// tunnel: toward the cutoff, not away from it.
+func (s *BillingLifecycleService) byonServersStillUp(userID string) bool {
+	servers, err := s.store.ListServersByOwner(userID)
+	if err != nil {
+		return false
+	}
+	for _, srv := range servers {
+		switch srv.Status {
+		case "online", "starting", "stopping", "restarting":
+		default:
+			continue
+		}
+		if n, err := s.store.GetNodeByID(srv.NodeID); err == nil && n != nil && n.OwnerID != nil && *n.OwnerID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // suspendTenantWarpPeers drops the tenant's warp tunnels once the grace has
@@ -369,7 +415,11 @@ func (s *BillingLifecycleService) suspendTenantWarpPeers(ctx context.Context, us
 	if s.warpPeers == nil {
 		return
 	}
-	keys, err := s.store.ListWarpAPIKeysByOwner(userID)
+	// Revoked keys included: the admin's immediate suspension revokes the node
+	// keys and drops their peers a moment later from memory, and a Core that
+	// restarted in between left them up for good if this pass could not see
+	// a revoked key. Dropping the peers of a revoked key is always right.
+	keys, err := s.store.ListAllWarpAPIKeysByOwner(userID)
 	if err != nil {
 		log.Printf("billing lifecycle: list warp keys for %s: %v", userID, err)
 		return
@@ -737,12 +787,32 @@ func (s *BillingLifecycleService) revokeTenantNodeKeys(ctx context.Context, user
 			continue
 		}
 		if s.warpPeers != nil {
-			dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			n := s.warpPeers.DisconnectKeyPeers(dctx, k.ID)
-			cancel()
-			log.Printf("billing lifecycle: force-suspend %s: revoked node key %s, dropped %d peer(s)", userID, k.NodeID, n)
+			go s.dropPeersAfter(context.WithoutCancel(ctx), userID, k.NodeID, k.ID, forceSuspendStopDrain)
 		}
 	}
+}
+
+// forceSuspendStopDrain is how long the admin's kill leaves a revoked node key's
+// tunnel up, so the stop queued a moment earlier is read over it. The revoke is
+// immediate - warp cannot re-enrol - and the node reads its commands within
+// seconds; without the pause the stop never arrived and the containers kept
+// running on the customer's machine.
+var forceSuspendStopDrain = 2 * time.Minute
+
+func (s *BillingLifecycleService) dropPeersAfter(ctx context.Context, userID, nodeID string, keyID int, wait time.Duration) {
+	if wait > 0 {
+		t := time.NewTimer(wait)
+		defer t.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	n := s.warpPeers.DisconnectKeyPeers(dctx, keyID)
+	log.Printf("billing lifecycle: force-suspend %s: dropped %d peer(s) of revoked node key %s", userID, n, nodeID)
 }
 
 func (s *BillingLifecycleService) linkKitsForUser(userID string) []string {

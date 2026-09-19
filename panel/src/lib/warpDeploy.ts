@@ -219,10 +219,14 @@ export function routeOnlyCompose(i: WarpDeployInput): string {
     const localHost = defaultLocalTarget(i.platform);
     // A route-only key is a link key, not a warp key; the placeholder says so.
     const key = i.apiKey === KEY_PLACEHOLDER ? '<your-link-key>' : i.apiKey;
+    // Which machine the file is for, in the file: the wrong one fails with
+    // nothing but a dial error in the link's log.
     const header = i.platform === 'windows'
-        ? `# On Docker Desktop, host networking is the WSL2 VM's rather than Windows',
+        ? `# Made for Docker Desktop on Windows. On a Linux host, take the Linux file.
+# On Docker Desktop, host networking is the WSL2 VM's rather than Windows',
 # so your own server is reached at host.docker.internal.`
-        : `# No VPN and no extra privileges: every connection is outbound.`;
+        : `# Made for Linux. On Docker Desktop (Windows), take the Windows file.
+# No VPN and no extra privileges: every connection is outbound.`;
     return `# route-only.yml
 #
 # link hands your own server to the gateway. It talks to our API with the key

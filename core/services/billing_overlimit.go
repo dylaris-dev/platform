@@ -285,7 +285,7 @@ func (s *BillingLifecycleService) enforceEntitlementLimits(ctx context.Context) 
 		// the tenant never noticed either.
 		s.stopTenantServers(ctx, b.UserID)
 		s.suspendTenantLinks(ctx, b.UserID)
-		s.suspendTenantWarpPeers(ctx, b.UserID)
+		s.dropWarpPeersOnceStopped(ctx, b.UserID, b.OverLimitSince.Add(OverLimitGrace), now)
 	}
 }
 

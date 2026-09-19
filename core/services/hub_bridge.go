@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"dylaris-core/store"
@@ -209,6 +210,9 @@ type GatewayProvider interface {
 	CreateRouteViaLink(ownerID string, domain string, linkToken string, targetHost string, port int) error
 	DeleteCoreOwnedRoute(domain string) error
 	DeleteRoute(domain string) error
+	// DeleteServerRoutes tells the hub to drop every route of a deleted server,
+	// keyed by the server rather than by domains read back from Redis.
+	DeleteServerRoutes(serverUUID string) error
 	MigrateServerRoutes(serverID uint, newNodeID uint) error
 	// LinkToken derives the deterministic Link tunnel token for a link identity
 	// (a warp key's node_id). Core holds the cluster secret; tenants receive only
@@ -465,6 +469,16 @@ func (g *RedisGateway) DeleteRoute(domain string) error {
 		log.Printf("delete route %s: cache drop failed, the hub sweep has to clear it: %v", domain, perr)
 	}
 	return nil
+}
+
+// DeleteServerRoutes pushes delete_server_routes. A hub older than this action
+// logs it as unknown and drops it; the per-domain delete_route messages that
+// removeServerRoutes still sends cover what the cache can see.
+func (g *RedisGateway) DeleteServerRoutes(serverUUID string) error {
+	if strings.TrimSpace(serverUUID) == "" {
+		return nil
+	}
+	return g.pushToQueue(hubQueueMessage{Action: "delete_server_routes", ServerUUID: serverUUID})
 }
 
 func (g *RedisGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error {

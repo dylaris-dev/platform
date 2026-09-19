@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -190,4 +191,124 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	h.cleanupDeletedNode(r, node, warpKeys)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// ResetMyNodePairing POST /api/me/nodes/{id}/reset-pairing - the owner's own
+// Reset pairing, for a machine whose key is wedged or may have leaked.
+//
+// Before this, the only way out was to remove the machine and add it again: a
+// new identity, a node slot, and its servers orphaned. The operator's route
+// needs nodes.write, which no customer holds, and refuses a customer's machine
+// even to an admin.
+func (h *NodeHandler) ResetMyNodePairing(w http.ResponseWriter, r *http.Request) {
+	node, ok := h.myNode(w, r)
+	if !ok {
+		return
+	}
+	if err := resetNodePairing(r.Context(), h.state, node, byonCallerID(r)); err != nil {
+		log.Printf("reset-my-pairing: %v", err)
+		sendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"note": "The machine's key is refused and its secret cleared. It keeps retrying with a new key; " +
+			"admit it here once it shows up. It then restarts its servers, which disconnects their players.",
+	})
+}
+
+// GetMyNodeJoinAttempt GET /api/me/nodes/{id}/join-attempt - the connection
+// Core is refusing for this machine, if any, with the fingerprint of the key it
+// presented. null when nothing is waiting.
+func (h *NodeHandler) GetMyNodeJoinAttempt(w http.ResponseWriter, r *http.Request) {
+	node, ok := h.myNode(w, r)
+	if !ok {
+		return
+	}
+	a, err := h.state.Store.GetNodeJoinAttempt(node.Token)
+	if err != nil {
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	var out interface{}
+	if a != nil {
+		// Only what the owner needs to recognise their machine. The token stays
+		// out: it is the node's id, and this is a response a browser caches.
+		out = map[string]interface{}{
+			"presentedKey":  a.PresentedKey,
+			"hostname":      a.Hostname,
+			"reason":        a.Reason,
+			"attempts":      a.Attempts,
+			"lastSeenAt":    a.LastSeenAt,
+			"approvedUntil": a.ApprovedUntil,
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "attempt": out})
+}
+
+// normalizeFingerprint accepts the fingerprint as a person copies it: any case,
+// with or without the dashes the node prints between groups.
+func normalizeFingerprint(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "-", "")
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return s
+}
+
+// AdmitMyNode POST /api/me/nodes/{id}/admit {fingerprint} - let this machine
+// back in with the key its owner read off the machine's own log.
+//
+// Bound to the KEY and not to the address or to what is knocking: see
+// ApproveNodeJoinAttemptForKey. The panel shows what is knocking only as a
+// hint; the owner types or pastes the fingerprint from the machine itself.
+func (h *NodeHandler) AdmitMyNode(w http.ResponseWriter, r *http.Request) {
+	node, ok := h.myNode(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Fingerprint) == "" {
+		sendJSONError(w, "Say which key to admit", http.StatusBadRequest)
+		return
+	}
+	fp := normalizeFingerprint(req.Fingerprint)
+	if len(fp) != 16 && len(fp) != 64 {
+		sendJSONError(w, "Paste the fingerprint your machine logs: the line starting with \"nodekey: this node's key fingerprint is\".", http.StatusBadRequest)
+		return
+	}
+	// Same order as the operator's Admit: take the current login away first, or
+	// the next connect is answered with a challenge and never reaches the check.
+	if err := (&NodeAdmissionHandler{state: h.state}).revokeNodeLogin(node.ID, false); err != nil {
+		log.Printf("admit-my-node: %v", err)
+		sendJSONError(w, "Failed to admit the machine", http.StatusInternalServerError)
+		return
+	}
+	if h.state.Redis != nil {
+		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
+	}
+	uid := byonCallerID(r)
+	armed, err := h.state.Store.ApproveNodeJoinAttemptForKey(node.Token, fp, uid)
+	if err != nil {
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	if !armed {
+		sendJSONError(w, "The admission could not be armed. Try again.", http.StatusInternalServerError)
+		return
+	}
+	_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+		EventType:   "node.join_approved",
+		ActorUserID: &uid,
+		Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token, "keyFingerprint": fp, "by": "owner"},
+	})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"note":    "Admitted. The machine retries every 30 seconds, so it should be back within a minute.",
+	})
 }

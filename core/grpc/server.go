@@ -112,6 +112,9 @@ type JoinAttempt struct {
 	MemoryBytes    int64
 	ReleaseVersion string
 	Reason         string
+	// PresentedKey is nodeauth.KeyFingerprint of the key the connection
+	// presented, "" for none.
+	PresentedKey string
 }
 
 // JoinAttemptRecorder makes a refusal visible and lets an operator undo it.
@@ -128,9 +131,10 @@ type JoinAttempt struct {
 type JoinAttemptRecorder interface {
 	RecordJoinAttempt(a JoinAttempt) error
 	// ConsumeJoinApproval reports whether an operator has admitted this identity
-	// FROM THIS ADDRESS, and closes the door behind it. Bounded by address
-	// because the identity in a refused attempt is self-claimed.
-	ConsumeJoinApproval(nodeToken, peerIP string) (bool, error)
+	// FROM THIS ADDRESS and, when the admission names one, WITH THIS KEY, and
+	// closes the door behind it. Bounded because the identity in a refused
+	// attempt is self-claimed.
+	ConsumeJoinApproval(nodeToken, peerIP, keyFingerprint string) (bool, error)
 	// ForgetJoinAttempts drops the record once the node is back, so the list is
 	// of machines that need attention rather than a history.
 	ForgetJoinAttempts(nodeToken string) error
@@ -144,14 +148,14 @@ type JoinAttemptRecorder interface {
 // wire the store without this package importing it.
 type JoinAttemptFuncs struct {
 	Record        func(a JoinAttempt) error
-	Consume       func(nodeToken, peerIP string) (bool, error)
+	Consume       func(nodeToken, peerIP, keyFingerprint string) (bool, error)
 	Forget        func(nodeToken string) error
 	Authenticated func(nodeID int, peerIP string) error
 }
 
 func (f *JoinAttemptFuncs) RecordJoinAttempt(a JoinAttempt) error { return f.Record(a) }
-func (f *JoinAttemptFuncs) ConsumeJoinApproval(t, ip string) (bool, error) {
-	return f.Consume(t, ip)
+func (f *JoinAttemptFuncs) ConsumeJoinApproval(t, ip, key string) (bool, error) {
+	return f.Consume(t, ip, key)
 }
 func (f *JoinAttemptFuncs) ForgetJoinAttempts(t string) error { return f.Forget(t) }
 func (f *JoinAttemptFuncs) RecordAuthenticated(id int, ip string) error {
@@ -302,6 +306,10 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	//
 	// Best-effort: a failure to record must never change whether a node is
 	// admitted. It is a screen, not a gate.
+	// Set once the node has PROVEN it holds the key it presented (below), so a
+	// refusal records only a key that signed our nonce: anyone can present a
+	// victim's public key, nobody else can sign with it.
+	var presentedFingerprint string
 	recordRefusal := func(reason string) {
 		if s.joins == nil {
 			return
@@ -311,6 +319,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			PeerIP:         peerIPString(ctx),
 			ReleaseVersion: auth.ReleaseVersion,
 			Reason:         reason,
+			PresentedKey:   presentedFingerprint,
 		}
 		if ips := auth.GetIps(); ips != nil {
 			a.PublicIP = ips.Public
@@ -620,6 +629,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail("bad challenge response")
 				return fmt.Errorf("acl: bad key signature for node %d", node.ID)
 			}
+			presentedFingerprint = nodeauth.KeyFingerprint(presented)
 			// storeKey registers the presented key on this row only while the row
 			// still holds the keys read above, so two replicas re-pairing one node
 			// at once cannot have the later write replace the earlier. Losing to a
@@ -752,7 +762,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				if !clusterProof {
 					admitted := false
 					if s.joins != nil {
-						ok, aerr := s.joins.ConsumeJoinApproval(node.Token, peerIPString(ctx))
+						ok, aerr := s.joins.ConsumeJoinApproval(node.Token, peerIPString(ctx), presentedFingerprint)
 						if aerr != nil {
 							sendFail("admission check failed")
 							return fmt.Errorf("acl: node %d admission check failed: %w", node.ID, aerr)

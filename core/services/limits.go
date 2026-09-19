@@ -75,7 +75,7 @@ type limitStore interface {
 // cap check alone would let it through. Gate on services.EffectiveEntitlement
 // first and use this only for the ceiling behind it.
 //
-// Callers must gate this behind feature_byon_enabled.
+// Callers must gate this behind the product's flag (BYON or route-only).
 func EffectiveLimits(st limitStore, userID string) (Limits, error) {
 	b, err := st.GetUserBilling(userID)
 	if err != nil {

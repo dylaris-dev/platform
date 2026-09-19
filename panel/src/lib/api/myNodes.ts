@@ -52,3 +52,54 @@ export async function deleteMyNode(nodeId: number, withServers: boolean): Promis
         return handleError(err) as { success: boolean; message?: string };
     }
 }
+
+/** A connection Core is refusing for the caller's machine. */
+export interface MyNodeJoinAttempt {
+    /** Full fingerprint of the key it presented; "" for none. */
+    presentedKey?: string;
+    hostname?: string;
+    reason?: string;
+    attempts?: number;
+    lastSeenAt?: string;
+    approvedUntil?: string | null;
+}
+
+/** The first 16 hex digits in groups of four: what the node logs at start. */
+export function shortFingerprint(fp: string): string {
+    return fp.length < 16 ? fp : `${fp.slice(0, 4)}-${fp.slice(4, 8)}-${fp.slice(8, 12)}-${fp.slice(12, 16)}`;
+}
+
+type Ok = { success: boolean; message?: string; note?: string };
+
+/** Take away this machine's login; it then knocks with a new key to be admitted. */
+export async function resetMyNodePairing(nodeId: number): Promise<Ok> {
+    try {
+        const res = await fetch(`${API_URL}/me/nodes/${nodeId}/reset-pairing`, { method: 'POST', headers: getAuthHeader() });
+        return (await handleResponse(res)) as Ok;
+    } catch (err) {
+        return handleError(err) as Ok;
+    }
+}
+
+export async function getMyNodeJoinAttempt(nodeId: number): Promise<{ success: boolean; attempt?: MyNodeJoinAttempt | null; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/me/nodes/${nodeId}/join-attempt`, { headers: getAuthHeader() });
+        return (await handleResponse(res)) as { success: boolean; attempt?: MyNodeJoinAttempt | null };
+    } catch (err) {
+        return handleError(err) as { success: boolean; message?: string };
+    }
+}
+
+/** Admit exactly the key the owner was shown; refused if another is knocking by now. */
+export async function admitMyNode(nodeId: number, fingerprint: string): Promise<Ok> {
+    try {
+        const res = await fetch(`${API_URL}/me/nodes/${nodeId}/admit`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fingerprint }),
+        });
+        return (await handleResponse(res)) as Ok;
+    } catch (err) {
+        return handleError(err) as Ok;
+    }
+}

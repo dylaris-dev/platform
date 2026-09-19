@@ -8,6 +8,7 @@ const base: CreateOptionsInput = {
     deployableNodes: 0,
     storeEnabled: false,
     gatewayEnabled: false,
+    routeOnlyEnabled: true,
     entitledRouteOnly: false,
 };
 const w = (o: Partial<CreateOptionsInput>): CreateOptionsInput => ({ ...base, ...o });
@@ -136,5 +137,14 @@ describe('routeOption', () => {
     // or a gateway-only install with no BYON would lose the button entirely.
     it('counts towards the menu having something to show', () => {
         expect(hasAnyCreateOption(w({ gatewayEnabled: true, entitledRouteOnly: true, byonEnabled: true }))).toBe(true);
+    });
+});
+
+// Route-only has its own switch; off, not even an admin is offered an address.
+describe('routeOption with route-only switched off', () => {
+    it('is refused with a reason', () => {
+        const o = routeOption(w({ gatewayEnabled: true, isAdmin: true, routeOnlyEnabled: false }));
+        expect(o.enabled).toBe(false);
+        expect(o.reason).toMatch(/turned off/);
     });
 });

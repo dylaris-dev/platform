@@ -97,6 +97,13 @@ func (f *FeatureFlags) BYONOwnershipInForce(ctx context.Context) bool {
 	return f.GetFailClosed(ctx, "feature_byon_enabled", false)
 }
 
+// RouteOnlyOwnershipInForce is BYONOwnershipInForce for a tenant's link kits:
+// in force while either product is, failing closed. Route-only on beside BYON
+// off would otherwise let any admin roll a customer's kit and read the new key.
+func (f *FeatureFlags) RouteOnlyOwnershipInForce(ctx context.Context) bool {
+	return f.BYONOwnershipInForce(ctx) || f.GetFailClosed(ctx, "feature_route_only_enabled", false)
+}
+
 // GetInt returns the integer value for key, defaulting to defaultV when the
 // setting is missing or unparseable. Cached like Get.
 func (f *FeatureFlags) GetInt(_ context.Context, key string, defaultV int) int {
@@ -169,6 +176,24 @@ func (f *FeatureFlags) IsAutoMoveEnabled(ctx context.Context) bool {
 // platform ships as today's single-operator panel and the operator opts in.
 func (f *FeatureFlags) IsBYONEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_byon_enabled", false)
+}
+
+// IsRouteOnlyEnabled gates route-only: tenants' link kits and the addresses
+// they point at servers the tenant runs themselves. Its own switch, because it
+// needs no BYON at all - a platform can protect customers' servers without ever
+// letting a customer bring a node.
+//
+// Unset, it FOLLOWS the BYON flag, which is what it was gated on until it had
+// one: an operator who never touches it sees no change. Get does not cache a
+// default, so the fallback tracks BYON live.
+func (f *FeatureFlags) IsRouteOnlyEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_route_only_enabled", f.IsBYONEnabled(ctx))
+}
+
+// IsTenancyEnabled is BYON or route-only: whether customers can hold anything
+// the entitlement, billing and metering planes have to account for.
+func (f *FeatureFlags) IsTenancyEnabled(ctx context.Context) bool {
+	return f.IsBYONEnabled(ctx) || f.IsRouteOnlyEnabled(ctx)
 }
 
 // UserAPIKeysEnabled gates whether a NON-ADMIN may hold an API key at all.

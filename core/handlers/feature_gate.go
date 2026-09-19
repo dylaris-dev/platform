@@ -100,6 +100,19 @@ func (s *AppState) RequireLibraryEnabled(next http.HandlerFunc) http.HandlerFunc
 // platform-wide BYON toggle is off. Wrap the ADMIN usage/billing/plans routes
 // so they refuse cleanly while the platform runs as today's single-operator
 // panel. Additive to the plans.* capability checks already on those routes.
+// RequireTenancyEnabled is RequireBYONEnabled for the admin planes both
+// products share - billing, entitlements, limits, usage. With route-only on and
+// BYON off an operator still has tenants to grant and bill.
+func (s *AppState) RequireTenancyEnabled(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.FeatureFlags.IsTenancyEnabled(r.Context()) {
+			featureDisabledResponse(w, FeatureBYON, "Customer tenancy (BYON and route-only) is disabled by the platform admin.")
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (s *AppState) RequireBYONEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsBYONEnabled(r.Context()) {

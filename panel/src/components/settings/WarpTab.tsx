@@ -19,7 +19,7 @@ import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeploy
 import { coreOrigin } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import HelpTip from '@/components/ui/HelpTip';
-import { platformNote } from '@/components/infra/DeployKit';
+import { platformNote, useDeployPlatform } from '@/components/infra/DeployKit';
 import { isLocationName } from '@/lib/validation';
 
 const enrollUrl = coreOrigin();
@@ -680,7 +680,7 @@ function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint,
 }) {
     const external = keyNodeId.startsWith('node-');
     const [copied, setCopied] = useState<string | null>(null);
-    const [platform, setPlatform] = useState<DeployPlatform>('linux');
+    const [platform, setPlatform] = useDeployPlatform();
 
     // Through kitInput like every other kit: an object assembled by hand here
     // is the shape that shipped a file without its link service once already.

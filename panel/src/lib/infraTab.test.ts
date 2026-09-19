@@ -106,6 +106,13 @@ describe('infraAvailability', () => {
         expect(resolveInfraTab(null, infraAvailability(false, false))).toBeNull();
     });
 
+    // Route-only can be on without BYON (and off beside it) now that it has
+    // its own switch.
+    it('opens route-only on its own flag', () => {
+        expect(infraAvailability(false, false, true)).toEqual({ external: false, machines: false, routes: true });
+        expect(infraAvailability(false, true, false)).toEqual({ external: false, machines: true, routes: false });
+    });
+
     it('does not strand a reader who asked for a tab they lost', () => {
         expect(resolveInfraTab('routes', infraAvailability(true, false))).toBe('external');
     });

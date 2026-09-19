@@ -467,13 +467,13 @@ func TestIntegrationRollSecretArmsTheSameOneShotAdmission(t *testing.T) {
 	if ok, err := st.ArmNodeJoinApproval(fresh, "203.0.113.7", "admin-1"); err != nil || !ok {
 		t.Fatalf("ArmNodeJoinApproval: ok=%v err=%v", ok, err)
 	}
-	if ok, err := st.ConsumeNodeJoinApproval(fresh, "198.51.100.1"); err != nil || ok {
+	if ok, err := st.ConsumeNodeJoinApproval(fresh, "198.51.100.1", ""); err != nil || ok {
 		t.Errorf("the admission admitted another address (ok=%v err=%v)", ok, err)
 	}
-	if ok, err := st.ConsumeNodeJoinApproval(fresh, "203.0.113.7"); err != nil || !ok {
+	if ok, err := st.ConsumeNodeJoinApproval(fresh, "203.0.113.7", ""); err != nil || !ok {
 		t.Errorf("the admission did not admit its own address (ok=%v err=%v)", ok, err)
 	}
-	if ok, err := st.ConsumeNodeJoinApproval(fresh, "203.0.113.7"); err != nil || ok {
+	if ok, err := st.ConsumeNodeJoinApproval(fresh, "203.0.113.7", ""); err != nil || ok {
 		t.Errorf("the admission was consumed twice (ok=%v err=%v)", ok, err)
 	}
 

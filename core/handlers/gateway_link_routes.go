@@ -149,6 +149,10 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 // means the domain is already routed to someone else.
 func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
+	if !routeOnlyActive(h.state, r) {
+		sendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
+		return
+	}
 	// The same gate minting a kit passes. Only the panel checked it before, so a
 	// suspended tenant could still claim addresses through the API.
 	if !h.state.requireEntitlement(r, w, userID, services.EntitlementRouteOnly) {

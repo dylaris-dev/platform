@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -198,33 +199,41 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
-	uid := byonCallerID(r)
-
-	// Revoke the login: the next reconnect goes down the branch that accepts a
-	// cluster proof or an admission granted here.
-	if err := h.revokeNodeLogin(node.ID, true); err != nil {
+	if err := resetNodePairing(r.Context(), h.state, node, byonCallerID(r)); err != nil {
 		log.Printf("reset-pairing: %v", err)
 		sendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
-	}
-	// Hard-cut the live Redis ACL so a possibly-compromised node loses access at
-	// once (ACL DELUSER disconnects live clients) instead of only at its next
-	// reconnect. Best-effort. Recovery re-provisions all three users under the new
-	// secret via EnsureNodeACL when the node re-pairs.
-	if h.state.Redis != nil {
-		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
-	}
-	if uid != "" {
-		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
-			EventType:   "node.pairing_reset",
-			ActorUserID: &uid,
-			Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token},
-		})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"note":    "The node's key is refused, its secret cleared, and any re-admission armed earlier by Roll key cancelled. A node holding the cluster secret re-pairs itself within seconds; any other node will appear under Connection attempts, where you can admit it. Once back it gets a new secret and restarts its game servers, which disconnects their players.",
 	})
+}
+
+// resetNodePairing is Reset pairing itself, shared by the operator's route and
+// the owner's own (/api/me/nodes/{id}/reset-pairing): the caller has already
+// decided the node is theirs to reset.
+func resetNodePairing(ctx context.Context, state *AppState, node *models.Node, uid string) error {
+	// Revoke the login: the next reconnect goes down the branch that accepts a
+	// cluster proof or an admission.
+	if err := (&NodeAdmissionHandler{state: state}).revokeNodeLogin(node.ID, true); err != nil {
+		return err
+	}
+	// Hard-cut the live Redis ACL so a possibly-compromised node loses access at
+	// once (ACL DELUSER disconnects live clients) instead of only at its next
+	// reconnect. Best-effort. Recovery re-provisions all three users under the new
+	// secret via EnsureNodeACL when the node re-pairs.
+	if state.Redis != nil {
+		redisacl.NewProvisioner(state.Redis).RemoveNodeACL(ctx, node.Token)
+	}
+	if uid != "" {
+		_ = state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+			EventType:   "node.pairing_reset",
+			ActorUserID: &uid,
+			Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token},
+		})
+	}
+	return nil
 }
 
 // RollSecret POST /api/admin/nodes/{id}/roll-secret - replace the node's key
@@ -332,8 +341,16 @@ func (h *NodeAdmissionHandler) ListJoinAttempts(w http.ResponseWriter, r *http.R
 func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http.Request) {
 	token := mux.Vars(r)["token"]
 	node, err := h.state.Store.GetNodeByToken(token)
+	// A customer's machine is admitted by its owner, who can compare the key
+	// with their machine's log (AdmitMyNode). The same rule Reset pairing and
+	// Roll key already follow: an operator must not be able to let a different
+	// key onto a machine that is not theirs.
 	if err != nil || node == nil {
 		sendJSONError(w, "No node with that identity", http.StatusNotFound)
+		return
+	}
+	if foreignToCaller(h.state, r, node.ID) {
+		sendJSONError(w, "This machine belongs to a customer. They admit it themselves under My infrastructure, with the fingerprint their machine logs.", http.StatusConflict)
 		return
 	}
 	if err := h.revokeNodeLogin(node.ID, false); err != nil {

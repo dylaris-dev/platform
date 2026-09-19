@@ -21,6 +21,12 @@ func byonActive(state *AppState, r *http.Request) bool {
 	return state != nil && state.FeatureFlags != nil && state.FeatureFlags.IsBYONEnabled(r.Context())
 }
 
+// routeOnlyActive reports whether route-only (tenant link kits) is on. See
+// FeatureFlags.IsRouteOnlyEnabled for why it follows BYON while unset.
+func routeOnlyActive(state *AppState, r *http.Request) bool {
+	return state != nil && state.FeatureFlags != nil && state.FeatureFlags.IsRouteOnlyEnabled(r.Context())
+}
+
 // ownershipInForce is byonActive for the ownership fences below, failing closed:
 // a flag that cannot be read keeps a customer's machine theirs. byonActive stays
 // for the gates that OPEN tenant features, where failing closed would do the
@@ -101,6 +107,18 @@ func (s *AppState) userOwnedByOther(ownerID *string, userID string) bool {
 		return true
 	}
 	return s.FeatureFlags.BYONOwnershipInForce(context.Background())
+}
+
+// kitOwnedByOther is userOwnedByOther for a route-only link kit, whose owner is
+// fenced whenever route-only is on, not only with BYON.
+func (s *AppState) kitOwnedByOther(ownerID string, userID string) bool {
+	if ownerID == "" || (userID != "" && ownerID == userID) {
+		return false
+	}
+	if s.FeatureFlags == nil {
+		return true
+	}
+	return s.FeatureFlags.RouteOnlyOwnershipInForce(context.Background())
 }
 
 // foreignToCaller is NodeOwnedByOther for the caller of r. It guards the admin

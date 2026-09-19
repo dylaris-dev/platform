@@ -2362,12 +2362,42 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/me/nodes/{id:[0-9]+}/admit",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "{fingerprint} - let this machine back in with the key its owner read off the machine's own log.",
+      "handler": "NodeHandler.AdmitMyNode",
+      "group": "me",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/me/nodes/{id:[0-9]+}/contents",
       "auth": "session",
       "authorization": "no capability",
       "description": "what removing this machine would destroy.",
       "handler": "NodeHandler.GetMyNodeContents",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/nodes/{id:[0-9]+}/join-attempt",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the connection Core is refusing for this machine, if any, with the fingerprint of the key it presented.",
+      "handler": "NodeHandler.GetMyNodeJoinAttempt",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/nodes/{id:[0-9]+}/reset-pairing",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the owner's own Reset pairing, for a machine whose key is wedged or may have leaked.",
+      "handler": "NodeHandler.ResetMyNodePairing",
       "group": "me",
       "external": false
     },
@@ -5033,10 +5063,10 @@
     }
   ],
   "counts": {
-    "total": 505,
+    "total": 508,
     "byAuth": {
       "none": 30,
-      "session": 459,
+      "session": 462,
       "user API key": 10,
       "warp key": 6
     },
@@ -5058,7 +5088,7 @@
       "infrastructure": 2,
       "library": 6,
       "maintenance": 1,
-      "me": 24,
+      "me": 27,
       "mirror": 1,
       "modrinth": 6,
       "modules": 6,

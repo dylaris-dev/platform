@@ -257,7 +257,7 @@ function SettingsLayoutInner({
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
-    const { user, modules, ready, featureFlags, gatewayEnabled, byonEnabled } = useAppData();
+    const { user, modules, ready, featureFlags, gatewayEnabled, byonEnabled, routeOnlyEnabled } = useAppData();
 
     // Admin-only gate
     useEffect(() => {
@@ -277,7 +277,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     // Drop feature-gated groups (BYON only when the flag is on), then filter each
     // group's tabs by the per-module toggle, and finally drop groups left empty.
     const visibleGroups: SettingsGroup[] = TAB_GROUPS
-        .filter(g => !g.requiresByon || byonEnabled)
+        // Usage, traffic limits and billing cover route-only tenants as well.
+        .filter(g => !g.requiresByon || byonEnabled || routeOnlyEnabled)
         .map(g => ({
             ...g,
             tabs: g.tabs.filter(tab => {

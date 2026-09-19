@@ -753,3 +753,23 @@ func TestErrorStreamServicesIsTheSharedList(t *testing.T) {
 		t.Error(`"gate" is back in errlog.Services; the service is called "edge" and no producer writes "gate"`)
 	}
 }
+
+// The wire shape is a cross-repo contract with the hub's queue consumer
+// (gateway/hub/pkg/hub/queue.go): action plus server_uuid, nothing else.
+func TestDeleteServerRoutes_PushesQueueMessage(t *testing.T) {
+	g, rdb, _ := newHubBridgeTestGateway(t)
+
+	if err := g.DeleteServerRoutes("uuid-gone"); err != nil {
+		t.Fatalf("DeleteServerRoutes: %v", err)
+	}
+	if err := g.DeleteServerRoutes("  "); err != nil {
+		t.Fatalf("DeleteServerRoutes blank: %v", err)
+	}
+	msgs := readHubQueueMessages(t, rdb)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d queue messages, want 1 (a blank uuid sends nothing)", len(msgs))
+	}
+	if msgs[0].Action != "delete_server_routes" || msgs[0].ServerUUID != "uuid-gone" || msgs[0].Domain != "" {
+		t.Errorf("msg = %+v, want Action=delete_server_routes ServerUUID=uuid-gone", msgs[0])
+	}
+}

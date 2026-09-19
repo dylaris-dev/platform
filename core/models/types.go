@@ -646,6 +646,10 @@ type NodeJoinAttempt struct {
 	MemoryBytes        int64  `json:"memoryBytes"`
 	ReleaseVersion     string `json:"releaseVersion"`
 
+	// PresentedKey is the fingerprint of the key the connection presented
+	// (nodeauth.KeyFingerprint), "" for a node that presented none.
+	PresentedKey string `json:"presentedKey,omitempty"`
+
 	Reason      string    `json:"reason"`
 	Attempts    int       `json:"attempts"`
 	FirstSeenAt time.Time `json:"firstSeenAt"`

@@ -10,6 +10,7 @@ package nodeauth
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 )
 
@@ -85,3 +86,24 @@ var smallOrder = func() [][]byte {
 	}
 	return out
 }()
+
+// KeyFingerprint names a node key to a human: the lowercase hex SHA-256 of the
+// public key, "" for none. The node logs it at start and Core shows it beside a
+// refused connection, so the owner can tell their own machine from anyone else
+// knocking with its id before they admit it.
+func KeyFingerprint(pub ed25519.PublicKey) string {
+	if len(pub) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(pub)
+	return hex.EncodeToString(sum[:])
+}
+
+// ShortFingerprint is the part of a fingerprint a person compares: the first 16
+// hex digits in groups of four. The panel formats it the same way.
+func ShortFingerprint(fp string) string {
+	if len(fp) < 16 {
+		return fp
+	}
+	return fp[0:4] + "-" + fp[4:8] + "-" + fp[8:12] + "-" + fp[12:16]
+}
