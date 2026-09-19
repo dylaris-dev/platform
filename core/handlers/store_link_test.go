@@ -32,6 +32,8 @@ type storeLinkFakeStore struct {
 
 	setUserBillingStatusCalls []storeLinkBillingStatusCall
 	setUserBillingStatusErr   error
+	// billingStatus is what GetUserBilling reports; empty means active.
+	billingStatus string
 
 	setUserPlanCalls []storeLinkSetPlanCall
 	setUserPlanErr   error
@@ -83,7 +85,26 @@ func (f *storeLinkFakeStore) GetUserByID(id string) (*models.User, error) {
 // empty GracePeriod falls through to the platform setting, then the built-in
 // default - none of which this test suite needs to pin precisely.
 func (f *storeLinkFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	if f.billingStatus != "" {
+		now := time.Now()
+		return &store.UserBilling{UserID: userID, Status: f.billingStatus, SuspendedAt: &now}, nil
+	}
 	return &store.UserBilling{UserID: userID, Status: "active"}, nil
+}
+
+// A failed payment retry reaching a tenant who is already suspended must not put
+// them back into grace: that was every Stripe retry lifting the cutoff.
+func TestProvision_PastDueNeverLiftsASuspension(t *testing.T) {
+	fs := &storeLinkFakeStore{users: map[string]*models.User{"u1": {ID: "u1"}}, billingStatus: "suspended"}
+	h := newStoreLinkHandler(fs, newStoreLinkRedis(t), true)
+	rec := httptest.NewRecorder()
+	h.Provision(rec, storeLinkPost("/api/store/provision", map[string]interface{}{"uuid": "u1", "action": "past_due"}, storeLinkTestKey))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.setUserBillingStatusCalls) != 0 {
+		t.Fatalf("a past_due rewrote a suspended tenant: %+v", fs.setUserBillingStatusCalls)
+	}
 }
 
 func (f *storeLinkFakeStore) SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error {

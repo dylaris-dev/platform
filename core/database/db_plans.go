@@ -39,7 +39,8 @@ func applyPlansSchema(db *sql.DB) error {
 		return fmt.Errorf("plans: add users.plan_id: %w", err)
 	}
 
-	// max_links caps a tenant's route-only link kits (0 = unlimited, mirrors max_nodes).
+	// max_links is stored with a plan but caps nothing: plans no longer take part
+	// in limits, see services.EffectiveLimits.
 	if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS max_links INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("plans: add plans.max_links: %w", err)
 	}

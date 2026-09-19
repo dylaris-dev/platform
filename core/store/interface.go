@@ -366,6 +366,13 @@ type Store interface {
 	ListWarpAPIKeys() ([]WarpAPIKey, error)
 	GetWarpAPIKeyByID(id int) (*WarpAPIKey, error)
 	RevokeWarpAPIKeyByID(id int) error
+	// CreateLinkKitUnderCap inserts a tenant's link kit only while they hold
+	// fewer than cap live kits, counted and inserted under one per-owner lock.
+	// false (no error) when the cap is reached.
+	CreateLinkKitUnderCap(k WarpAPIKey, cap int64) (bool, error)
+	// ListWarpKeyIDsBoundToNode names the overlay keys bound to one node, revoked
+	// or not. Read before the node row goes: the binding is ON DELETE SET NULL.
+	ListWarpKeyIDsBoundToNode(nodeID int) ([]int, error)
 	DeleteWarpAPIKeyByID(id int) error
 	GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error)
 	RevokeWarpAPIKeyByNodeID(nodeID string) error

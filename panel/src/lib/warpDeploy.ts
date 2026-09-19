@@ -38,7 +38,7 @@ export type WarpDeployInput = {
     grpcTlsFingerprint?: string;
     /** Stable id for the machine. */
     nodeId?: string;
-    /** Route-only: the local host the link may dial. Host only, no port. */
+    /** Route-only: the local host(s) the link may dial, comma-separated. Hosts only, no port. */
     localTarget?: string;
     /**
      * Which machine the snippet is for. Only route-only differs, and only in
@@ -243,11 +243,12 @@ services:
       # the whole revocation.
       LINK_KEY: "${key}"
 
-      # keep - our API, which is not the same host as the panel.
+      # keep - our API. It lives at the panel's own address.
       CORE_URL: "${or(i.enrollUrl, '<core-url>')}"
 
       # EDIT if your server is not on this machine. Host only, NO port: it is
       # compared as an exact string, so a "host:25565" here never matches.
+      # Several servers: separate them with commas.
       LINK_ALLOWED_TARGETS: "${allowedTarget}"
 
       # keep - where this link looks for a server you told us runs "here".
@@ -402,7 +403,7 @@ services:
       # keep - this node's key. Shown once; we store only a hash of it.
       API_KEY: "${i.apiKey}"
 
-      # keep - our API, which is not the same host as the panel.
+      # keep - our API. It lives at the panel's own address.
       ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
 
       # keep - the network routed through the tunnel. NOT your home LAN.
@@ -509,16 +510,18 @@ export function kitInput(p: KitInputProps): WarpDeployInput {
 }
 
 /**
- * The one local address a route-only file can fill in for the reader: the
- * target every existing route of theirs already points at.
+ * The LINK_ALLOWED_TARGETS value for a route-only file: every target the link's
+ * routes point at, comma-separated, the form the link reads.
  *
- * Only when they agree. LINK_ALLOWED_TARGETS is compared as an exact string, so
- * guessing one of several would hand the reader a file that refuses the others
- * with nothing shown anywhere - worse than the placeholder they have to edit.
+ * All of them, not one. This used to fill in a target only when the routes
+ * agreed on one and fall back to 127.0.0.1 otherwise, so a link with a route on
+ * this machine and one on the LAN got a file that refused the LAN one, with
+ * nothing shown anywhere. undefined when there are none, so the platform
+ * default applies.
  */
-export function singleLocalTarget(targets: string[]): string | undefined {
+export function allowedTargets(targets: string[]): string | undefined {
     const seen = [...new Set(targets.map(t => t.trim()).filter(t => t !== ''))];
-    return seen.length === 1 ? seen[0] : undefined;
+    return seen.length > 0 ? seen.join(',') : undefined;
 }
 
 /**
@@ -593,7 +596,11 @@ docker compose -f ${file} up -d
 #    to every edge ("Secure Tunnel established ... over the internet").
 docker compose -f ${file} logs -f link
 
-# 3. Create the route(s) in the panel.`;
+# 3. Create the route(s) in the panel.
+#
+# Updating later is the same pull + up. With players online the old link lets
+# them finish and takes nobody new meanwhile, so "up" can take up to
+# LINK_DRAIN_TIMEOUT. Update when the server is quiet.`;
     }
     return `# 1. Start it. Pull first: the tunnel agent is what supplies the internal
 #    addresses, so a stale cached image would leave the rest of the stack
@@ -621,7 +628,7 @@ docker compose -f ${file} logs -f node`;
  */
 export const EXTERNAL_NODE_PORTS = [
     { port: 25520, what: 'SFTP', note: 'starts even with NODE_EXTERNAL=true' },
-    { port: 25521, what: 'Beam gRPC', note: 'overlay-only in practice' },
+    { port: 25521, what: 'Beam gRPC', note: 'every interface; needs a ticket Dylaris issues' },
     { port: 25522, what: 'Migration pull', note: 'auto-move transport' },
     { port: 25523, what: 'Beam LAN fast-path', note: 'set BEAM_LAN_FASTPATH=false to drop it' },
     { port: 25570, what: 'Overlay proxy (Core)', note: 'bound by warp on loopback + your Docker bridges, never the LAN' },

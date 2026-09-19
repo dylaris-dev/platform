@@ -27,7 +27,9 @@ func RevokeLinkKitTeardown(ctx context.Context, st store.Store, gw GatewayProvid
 		return 0, fmt.Errorf("mark revoked: %w", derr)
 	}
 	tunnelToken := gw.LinkToken(linkID)
-	if derr := rdb.Del(ctx, "link:"+tunnelToken, "online_link:"+tunnelToken).Err(); derr != nil {
+	// The stats stream goes with it: nothing writes it again, and every Core
+	// otherwise kept a consumer on it for as long as it ran.
+	if derr := rdb.Del(ctx, "link:"+tunnelToken, "online_link:"+tunnelToken, "dylaris:link:"+linkID+":stats").Err(); derr != nil {
 		log.Printf("revoke link %s: delete tunnel key: %v", linkID, derr)
 	}
 	// The ROWS, not Redis. This used to enumerate the live routing table, which

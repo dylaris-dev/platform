@@ -400,6 +400,10 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 
 	// Read the node BEFORE the row goes: everything below is keyed by its token.
 	node, nodeErr := h.state.Store.GetNodeByID(id)
+	var warpKeys []int
+	if nodeErr == nil {
+		warpKeys = h.boundWarpKeys(node)
+	}
 
 	if err := h.state.Store.DeleteNode(id); err != nil {
 		// Not a fault, the current state of the data: say what to do about it.
@@ -414,7 +418,7 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if nodeErr == nil && node != nil {
-		h.cleanupDeletedNode(r, node.Token)
+		h.cleanupDeletedNode(r, node, warpKeys)
 	} else {
 		log.Printf("node delete: could not read node %d before deleting it, so its Redis ACL and keys were left behind: %v", id, nodeErr)
 	}
@@ -438,14 +442,63 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 //
 // Both are best-effort. The row is already gone and the request has succeeded;
 // a Redis hiccup here must not turn a completed delete into a 500.
-func (h *NodeHandler) cleanupDeletedNode(r *http.Request, token string) {
-	if h.state.Redis == nil || token == "" {
+func (h *NodeHandler) cleanupDeletedNode(r *http.Request, node *models.Node, warpKeys []int) {
+	h.releaseNodeWarpKeys(r.Context(), node, warpKeys)
+	if h.state.Redis == nil || node == nil || node.Token == "" {
 		return
 	}
 	// One implementation, because there are two callers: this, and the account
 	// teardown that removes the nodes a departing tenant brought. A second
 	// copy of the key list is how one of them ends up missing a key.
-	services.RemoveNodeRedisState(r.Context(), h.state.Redis, redisacl.NewProvisioner(h.state.Redis), token)
+	services.RemoveNodeRedisState(r.Context(), h.state.Redis, redisacl.NewProvisioner(h.state.Redis), node.Token)
+	// The machine's Link keeps its edge tunnels for as long as its token is
+	// valid, which is up to 24h after the last refresh. Nothing refreshes it
+	// once the node is gone, and nothing should still route to it.
+	//
+	// Only for a machine outside the cluster, whose Link serves that machine
+	// alone. An in-cluster node can be served by a self-enrolled Link shared
+	// with its neighbours, and dropping that token would cut them off too.
+	if node.Kind() == models.NodeKindPlatform {
+		return
+	}
+	if tok := services.EffectiveLinkToken(node, h.state.ClusterSecret); tok != "" {
+		if err := h.state.Redis.Del(r.Context(), "link:"+tok, "online_link:"+tok).Err(); err != nil {
+			log.Printf("node delete: the Link token of node %d could not be dropped: %v", node.ID, err)
+		}
+	}
+}
+
+// boundWarpKeys reads the overlay keys of a node BEFORE its row is deleted; the
+// delete nulls the binding and nothing could name them afterwards.
+func (h *NodeHandler) boundWarpKeys(node *models.Node) []int {
+	if node == nil {
+		return nil
+	}
+	ids, err := h.state.Store.ListWarpKeyIDsBoundToNode(node.ID)
+	if err != nil {
+		log.Printf("node delete: the overlay keys of node %d could not be read, so they stay live: %v", node.ID, err)
+	}
+	return ids
+}
+
+// releaseNodeWarpKeys revokes a deleted machine's overlay keys and drops their
+// WireGuard peers. Without it the machine stayed a member of our overlay with a
+// key that could re-enroll at will, attributed to no machine at all, and
+// counted by no cap - the peer row keeps it out of the node-slot count.
+// Revoke first, so a failed disconnect cannot leave a key that re-enrolls.
+func (h *NodeHandler) releaseNodeWarpKeys(ctx context.Context, node *models.Node, ids []int) {
+	for _, id := range ids {
+		if err := h.state.Store.RevokeWarpAPIKeyByID(id); err != nil {
+			log.Printf("node delete: overlay key %d of node %d could not be revoked: %v", id, node.ID, err)
+			continue
+		}
+		if h.state.WarpPeers != nil {
+			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			n := h.state.WarpPeers.DisconnectKeyPeers(dctx, id)
+			cancel()
+			log.Printf("node delete: revoked overlay key %d of node %d, disconnected %d peer(s)", id, node.ID, n)
+		}
+	}
 }
 
 // GetNodeServers returns all servers assigned to a node
@@ -514,6 +567,8 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 		log.Printf("ForceDeleteNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", id, err)
 	}
 
+	warpKeys := h.boundWarpKeys(node)
+
 	// Delete all servers on this node first (FK constraint)
 	if err := h.state.Store.DeleteServersByNode(id); err != nil {
 		sendJSONError(w, "Failed to delete servers on node", 500)
@@ -535,7 +590,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// the reason a deleted machine's addresses keep resolving.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
 	log.Printf("ForceDeleteNode: node %d — cleaned up %d route(s) across %d server(s)", id, matched, len(servers))
-	h.cleanupDeletedNode(r, node.Token)
+	h.cleanupDeletedNode(r, node, warpKeys)
 
 	deletedNames := make([]string, 0, len(servers))
 	for _, s := range servers {

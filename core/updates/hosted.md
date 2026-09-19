@@ -11,6 +11,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.19.2
+
+### Features
+- **Add the other product to the subscription you have.** Holding one of bring-your-own-node
+  and route-only, add the other in your store account, charged pro rata. Neither is sold twice.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Removing a machine disconnects it from our network at once.** Before, it stayed
+  connected until you switched it off yourself.
+
+### Fixes
+- **A trial or grant running out no longer suspends a subscription you pay for,** and a
+  failed payment retry no longer restarts the grace period.
+- **A maintenance window on our side no longer takes your link offline.**
+- **Your route-only file now allows every server that link routes to,** where before a
+  second server on another machine was refused with nothing shown.
+- **If a product ends, you still see what you hold under it and can remove it.** Revoking a
+  link now says that its addresses go with it; rolling a key says to redeploy within 24 hours.
+
 ## 2026.09.19
 
 ### Features

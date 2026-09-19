@@ -220,3 +220,5 @@ func TestDeleteServer_TakesItsAddressWithIt(t *testing.T) {
 		t.Errorf("the hub was told about %v, want [play.example.com]", gw.deleted)
 	}
 }
+
+func (s *nodeDeleteStore) ListWarpKeyIDsBoundToNode(int) ([]int, error) { return nil, nil }

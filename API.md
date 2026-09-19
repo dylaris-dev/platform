@@ -905,9 +905,9 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/warp/assignment` | warp key | _no capability_ | - | `WarpHandler.Assignment` | the client's lightweight poll for its current endpoint order (warp API-key auth). |
+| GET | `/api/warp/assignment` | warp key | _no capability_ | Limit | `WarpHandler.Assignment` | the client's lightweight poll for its current endpoint order (warp API-key auth). |
 | GET | `/api/warp/deploy-config` | session | _no capability_ | - | `WarpHandler.GetDeployConfig` | any authenticated user. |
-| POST | `/api/warp/enroll` | warp key | _no capability_ | - | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
+| POST | `/api/warp/enroll` | warp key | _no capability_ | Limit | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
 | POST | `/api/warp/leaders` | session | `topology.write` | - | `WarpHandler.UpsertLeader` | (admin) creates or updates a leader endpoint within a region. |
 | DELETE | `/api/warp/leaders/{leaderId}` | session | `topology.write` | - | `WarpHandler.DeleteLeader` | (admin) removes a leader endpoint. |
 | POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit | `WarpHandler.LinkBoot` | a Link presents its key and receives its tunnel token. |

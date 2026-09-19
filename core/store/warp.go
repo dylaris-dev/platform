@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -15,6 +16,36 @@ func (s *PostgresStore) CreateWarpAPIKey(k WarpAPIKey) (int, error) {
 		k.Name, k.KeyHash, k.Policy, k.MaxConns, k.OnNewConn, k.FixedWGIP, k.NodeID, k.Region, k.OwnerID,
 	).Scan(&id)
 	return id, err
+}
+
+// CreateLinkKitUnderCap is CreateWarpAPIKey for a capped tenant. The count and
+// the insert used to be two statements from the handler, so two parallel mints
+// both saw room for one and both got it - and holding more than the cap is what
+// the over-limit sweep stops EVERYTHING for, three days later.
+func (s *PostgresStore) CreateLinkKitUnderCap(k WarpAPIKey, cap int64) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('link-kit-cap:' || $1))`, k.OwnerID); err != nil {
+		return false, fmt.Errorf("lock link kits of %s: %w", k.OwnerID, err)
+	}
+	var n int64
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM warp_api_keys
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND node_id LIKE 'link-%'`, k.OwnerID).Scan(&n); err != nil {
+		return false, err
+	}
+	if n >= cap {
+		return false, nil
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO warp_api_keys (name, key_hash, policy, max_conns, on_new_conn, fixed_wg_ip, node_id, region, owner_id)
+		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,'')::uuid)`,
+		k.Name, k.KeyHash, k.Policy, k.MaxConns, k.OnNewConn, k.FixedWGIP, k.NodeID, k.Region, k.OwnerID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func (s *PostgresStore) GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error) {
@@ -524,6 +555,24 @@ func (s *PostgresStore) BindWarpAPIKey(keyID, nodeID int) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// ListWarpKeyIDsBoundToNode returns the ids of the keys bound to a node.
+func (s *PostgresStore) ListWarpKeyIDsBoundToNode(nodeID int) ([]int, error) {
+	rows, err := s.db.Query(`SELECT id FROM warp_api_keys WHERE bound_node_id = $1`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // RevokeWarpAPIKeyByNodeID marks a link kit's warp key revoked (revoked_at = NOW),

@@ -1411,7 +1411,9 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 </div>
                                 <p className="text-xs text-(--base-06)">
                                     past due starts the grace window + dunning email; suspended stops the tenant&apos;s servers
-                                    (data and backups are kept). active reactivates without auto-starting servers.
+                                    at once and permanently revokes their route-only links and node keys, which drops their
+                                    tunnels (data and backups are kept). active reactivates without auto-starting servers;
+                                    revoked links and keys have to be created again.
                                 </p>
                                 {data.graceUntil && (
                                     <p className="text-xs text-(--base-06)">Grace until {new Date(data.graceUntil).toLocaleString()}</p>

@@ -167,3 +167,5 @@ func TestMyNodeContentsNamesEverySubServer(t *testing.T) {
 		}
 	}
 }
+
+func (s *selfNodeStore) ListWarpKeyIDsBoundToNode(int) ([]int, error) { return nil, nil }

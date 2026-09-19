@@ -12,7 +12,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { SkeletonCard } from '@/components/Skeleton';
 import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded, usageLabel } from '@/components/infra/DeployKit';
 import { routeSubmitRequest } from '@/lib/routeSubmit';
-import { singleLocalTarget } from '@/lib/warpDeploy';
+import { allowedTargets } from '@/lib/warpDeploy';
 import { linkState } from '@/lib/linkState';
 import LinkBadge from '@/components/infra/LinkBadge';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -100,9 +100,9 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
         }
     }, []);
 
-    // Only fetch once the caller is allowed to have any of this: an unentitled
-    // tenant would otherwise fire two requests to render a refusal.
-    useEffect(() => { if (allowed) load(); }, [allowed, load]);
+    // Fetched whether or not the tenant is entitled now: a lapsed one still
+    // holds links and addresses, and has to be able to see and remove them.
+    useEffect(() => { if (entitlementKnown) load(); }, [entitlementKnown, load]);
     // Same reason as the machines tab: the liveness key behind the badge lives
     // 15 seconds, so a single read on mount goes stale while the reader watches
     // it and waits for their link to come up.
@@ -141,13 +141,15 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     // New secret, same link. The link_id, its routes and its protected address all
     // stay; only LINK_KEY changes. The link uses its key on every heartbeat, so
     // the running one stops reporting at once and shows offline until it is
-    // redeployed; its tunnels stay up meanwhile. Revoke beside this is still the
-    // immediate cutoff for a key that leaked.
+    // redeployed. Its tunnels stay up only until the token it last refreshed
+    // expires, 24 hours later. Revoke beside this is still the immediate cutoff
+    // for a key that leaked.
     const roll = async (linkIdToRoll: string, name: string) => {
         if (!(await confirmDialog({
             title: 'Roll this link key?',
             message: `The current key for ${name} stops working straight away, and you get a replacement shown once. `
-                + 'The address and its routes do not change. Players keep connecting, but the link shows offline until you redeploy it with the new key.',
+                + 'The address and its routes do not change. Redeploy the link with the new key soon: until you do it shows offline, '
+                + 'and after 24 hours players can no longer connect.',
             confirmLabel: 'Roll the key',
             destructive: false,
         }))) return;
@@ -170,7 +172,16 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     };
 
     const revoke = async (linkIdToRevoke: string) => {
-        if (!(await confirmDialog({ title: 'Revoke link', message: 'Revoke this link? Its tunnel drops and it can no longer connect.', confirmLabel: 'Revoke' }))) return;
+        const addresses = routes.filter(rt => rt.link_id === linkIdToRevoke).map(rt => rt.domain);
+        if (!(await confirmDialog({
+            title: 'Revoke link',
+            message: 'Revoke this link? Its tunnel drops and it can no longer connect. '
+                + (addresses.length > 0
+                    ? `Its ${addresses.length === 1 ? 'address' : `${addresses.length} addresses`} (${addresses.join(', ')}) ${addresses.length === 1 ? 'is' : 'are'} deleted with it and ${addresses.length === 1 ? 'is' : 'are'} free for anyone to take. `
+                    : '')
+                + 'This cannot be undone. To only replace a key, roll it instead.',
+            confirmLabel: 'Revoke',
+        }))) return;
         try {
             // fetchAPI resolves (does not throw) on an HTTP error whose body is JSON, so a
             // 404/500 arrives here as { success: false }. Check it, or a failed revoke of a
@@ -221,11 +232,10 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
         // link would move the route to a different one on save without anyone
         // asking for that.
         if (rt.link_id) setLinkId(rt.link_id);
-        // And say so when it could not. A route whose link kit was revoked
-        // keeps running on the old tunnel and its link_id resolves to nothing,
-        // so the select shows some OTHER kit and saving would rebind the route
-        // to it. The one case where the form cannot be trusted to describe what
-        // it is editing is the one case that has to be said out loud.
+        // And say so when it could not. Then the select shows some OTHER kit
+        // and saving would rebind the route to it. The one case where the form
+        // cannot be trusted to describe what it is editing is the one case that
+        // has to be said out loud.
         setLinkUnknown(!rt.link_id);
         setAvailability('idle');
     };
@@ -254,7 +264,55 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     // null means "not fetched yet". Rendering a refusal during that window tells
     // an entitled tenant they have nothing and then takes it back.
     if (!entitlementKnown) return <SkeletonCard height="h-24" />;
-    if (!allowed) return <NotIncluded what="route only" storeUrl={storeUrl} suspended={suspended} storeLinked={storeLinked} />;
+    if (!allowed) {
+        // A lapsed tenant still holds what they minted. Hiding it took away the
+        // only way to remove it, while the over-limit notice asked them to.
+        const holds = kits.length > 0 || routes.length > 0;
+        return (
+            <div className="space-y-6">
+                <NotIncluded what="route only" storeUrl={storeUrl} suspended={suspended} storeLinked={storeLinked} />
+                {holds && (
+                    <div className="card p-5 space-y-3">
+                        <p className="text-xs text-(--base-07)">
+                            What you still hold. Remove it here, or it counts against your account.
+                        </p>
+                        {kits.map(k => (
+                            <div key={k.id} className="flex items-center gap-3 px-3 py-2 rounded-md bg-(--base-01)">
+                                <Link2 size={14} className="text-(--base-06) shrink-0" />
+                                <span className="text-sm text-(--base-09) truncate">{k.name}</span>
+                                <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
+                                <button
+                                    onClick={() => revoke(k.link_id)}
+                                    title="Revoke link"
+                                    aria-label={`Revoke ${k.name}`}
+                                    className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        ))}
+                        {routes.map(rt => (
+                            <div key={rt.domain} className="flex items-center gap-3 px-3 py-2 rounded-md bg-(--base-01)">
+                                <span className="font-mono text-sm text-(--base-09) truncate">{rt.domain}</span>
+                                <span className="text-xs text-(--base-06) font-mono truncate ml-auto">→ {rt.target_ip}:{rt.target_port}</span>
+                                <button
+                                    onClick={() => removeRoute(rt.domain)}
+                                    title="Delete"
+                                    aria-label={`Delete ${rt.domain}`}
+                                    className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {toast && (
+                    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-md bg-(--success) text-white text-sm shadow-lg">{toast}</div>
+                )}
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">
@@ -361,8 +419,8 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                     </select>
                     {editing && linkUnknown && (
                         <p className="text-xs text-(--warning-light)">
-                            This route&apos;s link could not be identified &mdash; its kit was probably revoked.
-                            Saving will move the route to the link selected above.
+                            This route&apos;s link could not be identified. Saving will move the route to the
+                            link selected above.
                         </p>
                     )}
                 </div>
@@ -480,12 +538,16 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                     warpKey={minted?.link_key ?? null}
                     enrollUrl={enrollUrl}
                     config={config}
-                    // What their routes already dial, so the file allows exactly
-                    // that. Core accepts any local address in the route form, and
-                    // the link compares LINK_ALLOWED_TARGETS as an exact string,
-                    // so a file stuck on 127.0.0.1 refuses every player of a
-                    // server that runs on another machine, silently.
-                    localTarget={singleLocalTarget(routes.map(rt => rt.target_ip))}
+                    // What THIS link's routes already dial, all of them, so the
+                    // file allows exactly that. Core accepts any local address in
+                    // the route form, and the link compares LINK_ALLOWED_TARGETS
+                    // as an exact string, so a file stuck on 127.0.0.1 refuses
+                    // every player of a server that runs on another machine,
+                    // silently. The file is one link's, so another link's
+                    // targets have no business in it.
+                    localTarget={allowedTargets(routes
+                        .filter(rt => rt.link_id === (minted?.link_id ?? linkId))
+                        .map(rt => rt.target_ip))}
                 />
             </aside>
             </div>
@@ -514,15 +576,9 @@ function MintReveal({ kit, rolled, onCopy, onClose }: { kit: MintedLinkKit; roll
             <p className="text-xs text-(--base-07) leading-relaxed">
                 Shown once. It is already filled into the compose file below, and it is the only credential
                 on your machine. It cannot be retrieved later.
-                {rolled && ' Only the key changed - the address and its routes are untouched. Redeploy the link with it; until then it shows offline.'}
+                {rolled && ' Only the key changed - the address and its routes are untouched. Redeploy the link with it soon: until then it shows offline, and after 24 hours players can no longer connect.'}
             </p>
             <CopyRow label="LINK_KEY" value={kit.link_key} onCopy={onCopy} />
-            <button
-                onClick={() => { navigator.clipboard?.writeText(`LINK_KEY=${kit.link_key}`); onCopy('Copied .env line'); }}
-                className="btn btn-secondary inline-flex items-center gap-2 text-xs"
-            >
-                <Copy size={13} /> Copy .env line
-            </button>
         </div>
     );
 }

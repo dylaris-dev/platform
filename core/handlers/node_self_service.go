@@ -148,6 +148,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	withServers := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("servers")), "delete")
+	warpKeys := h.boundWarpKeys(node)
 
 	// Read before the delete: afterwards there is no row left to name the
 	// addresses and Redis keys of these servers. A failed read is a silent leak,
@@ -186,7 +187,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	// is why the row was read first. Best-effort, and logged rather than
 	// swallowed: leftovers here are a credential that outlives the thing it
 	// belonged to.
-	h.cleanupDeletedNode(r, node.Token)
+	h.cleanupDeletedNode(r, node, warpKeys)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

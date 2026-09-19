@@ -181,6 +181,12 @@ function MyNodesInner() {
     // all, and locking the operator out of their own infrastructure page is not a
     // billing decision anyone made.
     const byonAllowed = isAdmin || (entitlement?.byon ?? false);
+    // What the tenant still HOLDS, whatever they are entitled to now. A kind
+    // that lapsed used to hide its whole section, remove buttons included, while
+    // the over-limit notice told them to remove what they no longer need - and
+    // three days later everything was stopped, the product they still pay for
+    // with it.
+    const holdsByon = nodes.length > 0 || nodeKeys.length > 0 || tokens.length > 0;
     const routeOnlyAllowed = isAdmin || (entitlement?.routeOnly ?? false);
     // null means "not fetched yet". Rendering a refusal during that window tells
     // an entitled tenant they have nothing and then takes it back.
@@ -555,10 +561,20 @@ function MyNodesInner() {
 
                 {!entitlementKnown ? (
                     <SkeletonCard height="h-16" />
-                ) : !byonAllowed ? (
+                ) : !byonAllowed && !holdsByon ? (
                     <NotIncluded what="bring your own node" storeUrl={storeUrl} suspended={suspended} storeLinked={storeLinked} />
                 ) : (
                     <>
+                        {!byonAllowed && (
+                            <>
+                                <NotIncluded what="bring your own node" storeUrl={storeUrl} suspended={suspended} storeLinked={storeLinked} />
+                                <p className="text-xs text-(--base-07)">
+                                    What you still hold is listed below. Remove it here, or it counts against your
+                                    account.
+                                </p>
+                            </>
+                        )}
+                        {byonAllowed && (<>
                         <div className="flex flex-col sm:flex-row gap-2 sm:items-start">
                             <div className="flex-1 flex flex-col gap-[5px]">
                                 <label htmlFor="location-name" className="input-label">Name this location</label>
@@ -606,6 +622,7 @@ function MyNodesInner() {
                                 </span>
                             </p>
                         )}
+                        </>)}
 
                         {nodeKeys.length > 0 && (
                             <div className="border-t border-(--base-03) pt-3 space-y-2">
@@ -621,14 +638,16 @@ function MyNodesInner() {
                                             <div className="mono-label truncate">{k.node_id}</div>
                                         </div>
                                         <div className="flex items-center gap-0.5 shrink-0">
-                                            <button
-                                                onClick={() => handleRollNodeKey(k.node_id, k.name)}
-                                                disabled={rollingKey === k.node_id}
-                                                className="text-(--base-06) hover:text-(--base-09) p-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                                title="Replace this key with a new one, keeping the machine and its servers"
-                                            >
-                                                <RefreshCw size={14} className={rollingKey === k.node_id ? 'animate-spin' : undefined} />
-                                            </button>
+                                            {byonAllowed && (
+                                                <button
+                                                    onClick={() => handleRollNodeKey(k.node_id, k.name)}
+                                                    disabled={rollingKey === k.node_id}
+                                                    className="text-(--base-06) hover:text-(--base-09) p-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    title="Replace this key with a new one, keeping the machine and its servers"
+                                                >
+                                                    <RefreshCw size={14} className={rollingKey === k.node_id ? 'animate-spin' : undefined} />
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => handleRevokeNodeKey(k.node_id)}
                                                 className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors"
@@ -701,7 +720,7 @@ function MyNodesInner() {
                                                 {/* A machine whose key is not bound still runs its Link inside
                                                     the node; that is the one it has to act on. A bound one only
                                                     ever needs its file again. */}
-                                                {nodeKeysLoaded && (
+                                                {nodeKeysLoaded && byonAllowed && (
                                                     <button
                                                         type="button"
                                                         onClick={() => openLinkSetup(n)}
@@ -848,9 +867,10 @@ function MyNodesInner() {
                     {revealedNode.rolled ? (
                         <p className="text-xs text-(--base-07)">
                             Only the key changed. Replace <code className="font-mono">API_KEY</code> in
-                            this machine&apos;s warp service and deploy again — the name, the address and
-                            your servers all stay as they are. Until you do, the machine keeps running
-                            on the connection it already has.
+                            this machine&apos;s warp service <strong>and</strong>{' '}
+                            <code className="font-mono">LINK_BOOT_KEY</code> in its link service, then deploy
+                            again — the name, the address and your servers all stay as they are. Until you
+                            do, the machine keeps running on the connection it already has.
                         </p>
                     ) : (
                         <p className="text-xs text-(--base-07)">

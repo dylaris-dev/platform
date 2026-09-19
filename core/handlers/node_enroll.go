@@ -110,9 +110,21 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// are already at the cap. A machine needs both halves, so on max_nodes = 1
 	// the warp key the panel mints a moment earlier filled the allowance and this
 	// gate refused the token belonging to the same machine - see NodeSlots.
-	if lim, lerr := services.EffectiveLimits(h.state.Store, userID); lerr == nil && lim.MaxNodes != nil {
+	//
+	// A failed read refuses. It used to skip the check, so a database hiccup was
+	// a way past the cap.
+	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
+	if lerr != nil {
+		sendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
+		return
+	}
+	if lim.MaxNodes != nil {
 		slots, serr := services.CountNodeSlots(h.state.Store, userID)
-		if serr == nil && services.Exceeds(lim.MaxNodes, slots.UsedWithEnrollToken()) {
+		if serr != nil {
+			sendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
+			return
+		}
+		if services.Exceeds(lim.MaxNodes, slots.UsedWithEnrollToken()) {
 			sendJSONError(w, fmt.Sprintf(
 				"Node limit reached (%d). Remove a machine, or revoke an unused enroll token or node key, before adding another.", *lim.MaxNodes),
 				http.StatusForbidden)

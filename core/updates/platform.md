@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.19.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Removing a customer's machine now takes it off the overlay.** Its warp key is revoked
+  and its WireGuard peer dropped; its Link token goes with it. `core`
+- **A retried failed payment no longer lifts a suspension,** and repeated dunning or
+  suspend calls no longer restart the grace window. `core`
+- **Claiming a route-only address checks the subscription on the server,** not only in
+  the panel, so a suspended tenant cannot take addresses through the API. `core`
+- **An admin's immediate suspension now revokes the tenant's node keys too,** dropping
+  their BYON tunnels at once instead of after the grace window. `core` `panel`
+
+### Fixes
+- **Maintenance mode no longer blocks warp and link.** Their endpoints are exempt; enrol,
+  assignment and link-boot share a new limit of 300 a minute per address, not login's. `core`
+- **A tenant whose product lapsed still sees what they hold,** with its remove and revoke
+  buttons, instead of a notice that hid the only way out. `panel`
+- **The route-only file allows every target of that link,** not only one; a database
+  fault while checking a kit key answers 503, not "revoked". `core` `panel`
+
 ## 2026.09.19
 
 ### Features

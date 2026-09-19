@@ -15,9 +15,9 @@ import (
 
 // Route-only ("via Link") routes: a protected address pointed at a server
 // the customer runs on their OWN machine, reached through their own outbound Link
-// tunnel — no managed node, no exposed origin. The customer runs warp (joins the
-// overlay) + link (tunnels out); the edge opens a stream on their Link and the
-// Link dials the LOCAL target. Splice + rolling updates work exactly as for a
+// tunnel — no managed node, no exposed origin. The customer runs one link
+// container that talks to Core over HTTPS; the edge opens a stream on their Link
+// and the Link dials the LOCAL target. Splice + rolling updates work exactly as for a
 // managed server, because it uses the same tunnel path. The Link's own
 // allow-list (LINK_ALLOWED_TARGETS) is the authority on what it will dial.
 
@@ -30,8 +30,16 @@ func validateLocalTarget(host string) error {
 	if host == "" {
 		return fmt.Errorf("target host is required")
 	}
-	if net.ParseIP(host) != nil {
-		return nil // any IP literal, including LAN / loopback
+	// The Link treats exactly one address as "this machine": 127.0.0.1, which it
+	// allows without a list and rewrites to the host on Docker Desktop. ::1 gets
+	// neither, so the route would be refused by the Link with nothing in the
+	// panel saying why.
+	if ip := net.ParseIP(host); ip != nil {
+		// Any other spelling of loopback, ::1 or ::ffff:127.0.0.1 alike.
+		if ip.IsLoopback() && strings.Contains(host, ":") {
+			return fmt.Errorf("use 127.0.0.1 for this machine")
+		}
+		return nil // any other IP literal, including LAN / loopback
 	}
 	// Hostname (e.g. localhost, my-pc.local): basic format check, no wildcard.
 	if strings.HasPrefix(host, "*.") || !domainRegex.MatchString(host) {
@@ -141,6 +149,11 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 // means the domain is already routed to someone else.
 func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
+	// The same gate minting a kit passes. Only the panel checked it before, so a
+	// suspended tenant could still claim addresses through the API.
+	if !h.state.requireEntitlement(r, w, userID, services.EntitlementRouteOnly) {
+		return
+	}
 
 	var req struct {
 		LinkID       string `json:"linkId"`
@@ -221,6 +234,11 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}
 
 	host := strings.TrimSpace(strings.ToLower(req.TargetHost))
+	if host == "localhost" {
+		// Same reason as ::1 in validateLocalTarget, but unambiguous enough to
+		// fix rather than refuse.
+		host = "127.0.0.1"
+	}
 	if err := h.state.Gateway.CreateRouteViaLink(userID, finalDomain, linkToken, host, req.TargetPort); err != nil {
 		msg := err.Error()
 		if errors.Is(err, services.ErrRouteDomainTaken) {

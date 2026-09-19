@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
     nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
-    kitInput, singleLocalTarget, genericNodeKitApplies
+    kitInput, allowedTargets, genericNodeKitApplies
 } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
@@ -681,15 +681,20 @@ describe('kitInput', () => {
     });
 });
 
-// The one local address the panel may fill in for the reader. The link compares
-// LINK_ALLOWED_TARGETS as an exact string, so a guess among several is a file
-// that refuses players with nothing shown anywhere.
-describe('singleLocalTarget', () => {
-    it('answers only when every route agrees', () => {
-        expect(singleLocalTarget(['192.168.1.10', '192.168.1.10'])).toBe('192.168.1.10');
-        expect(singleLocalTarget(['192.168.1.10', '10.0.0.5'])).toBeUndefined();
-        expect(singleLocalTarget([])).toBeUndefined();
-        expect(singleLocalTarget(['  ', ''])).toBeUndefined();
+// Every target the link's routes dial, in the comma-separated form the link
+// reads. It used to answer only when they agreed and fall back to 127.0.0.1
+// otherwise, which gave a link with a local and a LAN route a file that refused
+// the LAN one with nothing shown anywhere.
+describe('allowedTargets', () => {
+    it('lists every distinct target once', () => {
+        expect(allowedTargets(['192.168.1.10', '192.168.1.10'])).toBe('192.168.1.10');
+        expect(allowedTargets(['127.0.0.1', '192.168.1.10', '127.0.0.1'])).toBe('127.0.0.1,192.168.1.10');
+        expect(allowedTargets([])).toBeUndefined();
+        expect(allowedTargets(['  ', ''])).toBeUndefined();
+    });
+    it('lands in the file as the link reads it', () => {
+        const out = routeOnlyCompose({ ...base, localTarget: allowedTargets(['127.0.0.1', '192.168.1.10']) });
+        expect(out).toContain('LINK_ALLOWED_TARGETS: "127.0.0.1,192.168.1.10"');
     });
 });
 

@@ -48,8 +48,15 @@ func (h *WarpHandler) WarpAPIKeyMiddleware(next http.HandlerFunc) http.HandlerFu
 		}
 		plaintext := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 		key, err := h.state.Store.GetWarpAPIKeyByHash(HashAPIKey(plaintext))
-		if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			sendJSONError(w, "Invalid warp key", http.StatusUnauthorized)
+			return
+		}
+		if err != nil {
+			// Not an answer about the key. A 401 here told a link booting during a
+			// database blip that its key was revoked, and it exited for good.
+			log.Printf("warp key lookup failed: %v", err)
+			sendJSONError(w, "Could not check the key right now", http.StatusServiceUnavailable)
 			return
 		}
 		if key.RevokedAt != nil {
@@ -631,7 +638,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	}
 	// The policy columns are warp's and mean nothing for a kit key, which never
 	// enrolls; they are filled because the table requires them.
-	if _, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
+	kit := store.WarpAPIKey{
 		Name:      name,
 		KeyHash:   HashAPIKey(plaintext),
 		Policy:    "general",
@@ -639,7 +646,20 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		OnNewConn: "kill_old",
 		NodeID:    nodeID,
 		OwnerID:   userID,
-	}); err != nil {
+	}
+	if lim.MaxLinks != nil {
+		// The count above is the friendly answer; this is the one that holds
+		// when two mints race.
+		created, err := h.state.Store.CreateLinkKitUnderCap(kit, *lim.MaxLinks)
+		if err != nil {
+			sendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
+			return
+		}
+		if !created {
+			sendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
+			return
+		}
+	} else if _, err := h.state.Store.CreateWarpAPIKey(kit); err != nil {
 		sendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
 		return
 	}
@@ -1025,7 +1045,7 @@ func (h *WarpHandler) RollNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		"success":  true,
 		"warp_key": plaintext,
 		"node_id":  nodeID,
-		"note":     "Shown once. Replace API_KEY in the node's warp service and redeploy; nothing else changes.",
+		"note":     "Shown once. Replace API_KEY in the warp service AND LINK_BOOT_KEY in the link service, then redeploy both; nothing else changes.",
 	})
 }
 
@@ -1043,7 +1063,7 @@ func (h *WarpHandler) RollLinkKit(w http.ResponseWriter, r *http.Request) {
 		"success":  true,
 		"link_key": plaintext,
 		"link_id":  linkID,
-		"note":     "Shown once. Replace LINK_KEY in the route-only .env and redeploy; the running link stops reporting until you do.",
+		"note":     "Shown once. Replace LINK_KEY and redeploy. Until you do, the running link is offline in the panel, and its tunnel expires within 24 hours - then players cannot connect.",
 	})
 }
 
@@ -1168,10 +1188,10 @@ func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
 // same gateway-routing gate, same owner scoping, same shown-once secret. Two
 // things differ, and both matter:
 //
-//   - The identity carries the "node-" prefix, not "link-". LinkBoot refuses a
-//     non-link key, so a node key can never mint a link credential; and
-//     CountLinkKitsByOwner counts only "link-%", so this never eats the tenant's
-//     route-only allowance.
+//   - The identity carries the "node-" prefix, not "link-". LinkBoot answers a
+//     node key with the BYON Link of the machine it is bound to, never with a
+//     route-only kit's token; and CountLinkKitsByOwner counts only "link-%", so
+//     this never eats the tenant's route-only allowance.
 //   - It is capped on max_nodes, counting EXISTING nodes plus unredeemed keys. A
 //     minted key is a node that has not connected yet, so capping on connected
 //     nodes alone would let a one-node plan mint keys without limit.

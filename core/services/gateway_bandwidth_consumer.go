@@ -315,7 +315,19 @@ func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey
 			if ctx.Err() != nil {
 				return
 			}
-			// Self-heal a vanished group (Redis restart, no persistence).
+			// A stream that is GONE is not healed back into existence: a revoked
+			// link's stream is deleted with it, and recreating it here kept a
+			// dead kit's stream and this goroutine alive for good. Stop and
+			// forget it; the next scan starts a consumer again if its component
+			// publishes again (which is also how a Redis restart recovers).
+			if n, xerr := s.redis.Exists(ctx, streamKey).Result(); xerr == nil && n == 0 {
+				s.mu.Lock()
+				delete(s.streams, streamKey)
+				s.mu.Unlock()
+				log.Printf("Gateway bandwidth consumer stopped for %s: the stream no longer exists", streamKey)
+				return
+			}
+			// Self-heal a vanished group on a stream that still exists.
 			// Idempotent: BUSYGROUP when the group still exists.
 			s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0")
 			time.Sleep(5 * time.Second)

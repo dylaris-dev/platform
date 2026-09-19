@@ -140,7 +140,7 @@ export function Snippet({ title, body, note }: { title: string; body: string; no
 export function platformNote(kind: 'node' | 'route-only', platform: DeployPlatform): string {
     if (platform === 'linux') {
         return kind === 'node'
-            ? 'The node drives the host’s Docker socket to run your servers, which needs host networking and NET_ADMIN.'
+            ? 'The node drives the host’s Docker socket to run your servers, which needs host networking; warp needs NET_ADMIN for the tunnel.'
             : 'Host networking lets the link reach your server on this machine or your LAN. It needs no extra privileges and opens no port.';
     }
     return kind === 'node'

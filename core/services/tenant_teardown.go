@@ -13,8 +13,8 @@ import (
 )
 
 // TeardownTenantInfrastructure removes everything an account HOLDS outside its
-// own database row: its route-only link kits (durable revoke, scoped Redis ACL
-// user, tunnel key) and its protected addresses.
+// own database row: its route-only link kits (durable revoke, tunnel key) and
+// its protected addresses.
 //
 // It exists because removing an account did not remove what the account ran,
 // and the two paths that remove accounts disagreed about how much of that was

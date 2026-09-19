@@ -290,9 +290,11 @@ func userRouteScope(userID string) string { return "user:" + userID }
 // states that Go's usual *int64 collapses into two: the field being absent (do
 // not touch this column), an explicit null (clear the override), and a number.
 //
-// A non-positive count is treated as "clear", not as the literal value: 0 in
-// user_billing means UNLIMITED, so writing a store's "0 nodes granted" straight
-// through would hand the tenant an uncapped account.
+// A non-positive count is treated as "clear", not as the literal value. A stored
+// number is a PURCHASE, and a purchase wins over a live manual grant (see
+// services.grantedCap): writing a store's "0 nodes" through would read as having
+// bought zero and override a grant an admin gave separately. Cleared, the column
+// says nothing, and the entitlement gate - not the cap - refuses what is not held.
 func parseEntitlement(raw json.RawMessage) (*int64, bool, error) {
 	if len(raw) == 0 {
 		return nil, false, nil
@@ -310,11 +312,9 @@ func parseEntitlement(raw json.RawMessage) (*int64, bool, error) {
 // parseRoutePool decodes the purchased ADDRESS POOL, which cannot go through
 // parseEntitlement even though it looks identical on the wire.
 //
-// The two land in tables with OPPOSITE conventions for zero. parseEntitlement
-// reasons from user_billing, where 0 means UNLIMITED, so it converts any
-// non-positive number into "clear the override" - correct there, because writing
-// a store's "0 nodes granted" straight through would hand the tenant an uncapped
-// account.
+// The two need different answers for zero. parseEntitlement converts any
+// non-positive number into "clear the override", because a stored count in
+// user_billing is a purchase and would override a manual grant.
 //
 // max_routes lives in gateway_route_limits, where the user scope already has a
 // perfectly good representation for zero: GetUserRouteLimit reports mode
@@ -481,6 +481,12 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "past_due":
+		// Dunning never lifts a suspension. A failed payment retry reaching a
+		// tenant already cut off used to put them back into grace, with
+		// everything running again, on every retry Stripe made.
+		if b, err := h.state.Store.GetUserBilling(req.UUID); err == nil && b != nil && b.Status == "suspended" {
+			break
+		}
 		if err := h.state.Billing.EnterPastDue(req.UUID); err != nil {
 			sendJSONError(w, "Failed to set past_due", http.StatusInternalServerError)
 			return

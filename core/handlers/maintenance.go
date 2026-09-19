@@ -161,6 +161,17 @@ func MaintenanceMuxMiddleware(state *AppState, isAdminFn func(*http.Request) boo
 	}
 }
 
+// maintenanceExemptMachinePaths are the endpoints a customer's warp and link
+// call with a kit key. Each is key-authenticated and does its own refusals.
+var maintenanceExemptMachinePaths = map[string]bool{
+	"/api/warp/enroll":         true,
+	"/api/warp/assignment":     true,
+	"/api/warp/link-boot":      true,
+	"/api/warp/link/edges":     true,
+	"/api/warp/link/heartbeat": true,
+	"/api/warp/link/stats":     true,
+}
+
 // shouldBlockForMaintenance returns true when the request must be rejected
 // because maintenance mode is on and the caller/method isn't on the pass-list.
 // isAdmin is resolved by the caller — the mux middleware runs before
@@ -169,6 +180,14 @@ func shouldBlockForMaintenance(state *AppState, r *http.Request, isAdmin bool) b
 	// Always allow the state endpoint, login + status — otherwise users
 	// can't even see why they're being blocked.
 	if r.URL.Path == "/api/maintenance" || r.URL.Path == "/api/auth/login" || r.URL.Path == "/api/status" {
+		return false
+	}
+	// Machines, not people: a customer's warp and link authenticate with their
+	// kit key and keep the player path up. Blocking them turned a maintenance
+	// window into an outage - every route-only link went offline within 15s, a
+	// link restarting in the window crash-looped, and past 24h every tunnel
+	// token expired.
+	if maintenanceExemptMachinePaths[r.URL.Path] {
 		return false
 	}
 	s := loadMaintenanceStateCached(state)

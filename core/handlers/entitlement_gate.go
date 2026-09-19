@@ -102,7 +102,7 @@ func (s *AppState) denialFor(ctx context.Context, ent services.Entitlement, user
 	if ent.Source == services.EntitlementSourceSuspended {
 		return entitlementDenial{
 			Code:    DenySuspended,
-			Message: "Your subscription is suspended. Settle the outstanding invoice in the store to continue.",
+			Message: "Your subscription is suspended. Your account in the Dylaris store says why and how to resume.",
 			Status:  http.StatusForbidden,
 		}
 	}

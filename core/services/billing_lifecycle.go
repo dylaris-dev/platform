@@ -481,11 +481,18 @@ func (s *BillingLifecycleService) effectiveSpec(override, settingKey, def string
 
 // EnterPastDue marks a tenant past_due, sets the grace deadline from the
 // effective grace period, and sends the dunning email. Everything keeps running
-// during grace. Re-calling resets the grace window.
+// during grace.
+//
+// A tenant already past_due keeps the deadline they were given. Stripe retries a
+// failed payment several times and every retry arrives here; resetting the
+// window on each one meant a customer who never paid was never suspended.
 func (s *BillingLifecycleService) EnterPastDue(userID string) error {
 	b, err := s.store.GetUserBilling(userID)
 	if err != nil {
 		return err
+	}
+	if b.Status == "past_due" && b.GraceUntil != nil {
+		return nil
 	}
 	grace := s.effectiveSpec(b.GracePeriod, BillingGracePeriodKey, DefaultGracePeriod)
 	until, ok := AddRetention(time.Now(), grace)
@@ -535,7 +542,14 @@ func (s *BillingLifecycleService) Reactivate(userID string) error {
 // and the store webhook (handlers/store.go): a buggy webhook must not
 // instant-kill a paying tenant. See SuspendNow for the ADMIN-manual immediate
 // variant.
+//
+// Suspending a tenant who is already suspended changes nothing: the store
+// re-sends its state after any hiccup, and a fresh suspended_at on each one
+// would push the hard cutoff back every time.
 func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) error {
+	if b, err := s.store.GetUserBilling(userID); err == nil && b != nil && b.Status == "suspended" && b.SuspendedAt != nil {
+		return nil
+	}
 	now := time.Now()
 	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
 		return err
@@ -568,6 +582,7 @@ func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string)
 	}
 	s.sendSuspendedEmail(userID)
 	s.stopTenantServers(ctx, userID)
+	s.revokeTenantNodeKeys(ctx, userID)
 	if s.gateway == nil || s.redis == nil {
 		return nil // solo/hoster mode: no link kits to revoke
 	}
@@ -687,9 +702,9 @@ func (s *BillingLifecycleService) sendSuspendedEmail(userID string) {
 	}
 	body := fmt.Sprintf(`Hi %s,
 
-Your Dylaris account has been suspended for non-payment. Your servers and services will stop after a grace period if the issue is not resolved. Your data and backups are kept and remain viewable.
+Your Dylaris account has been suspended: a payment did not go through, your subscription ended, or the account ran past its traffic allowance. Your servers and services will stop after a grace period if nothing changes. Your data and backups are kept and remain viewable.
 
-Pay here to reactivate:
+Your account page says which it is and how to resume:
 
 %s
 
@@ -701,6 +716,35 @@ Pay here to reactivate:
 }
 
 // linkKitsForUser returns the tenant's non-revoked route-only link identities.
+// revokeTenantNodeKeys is the BYON half of the admin's hard kill, the same
+// treatment its link kits get: every node key is revoked durably and its
+// WireGuard peers dropped. Dropping the peers alone does nothing - the graced
+// enrol gate is still open, so warp re-enrols within minutes and the tunnel was
+// back for the whole grace window. Durable, so a reactivated tenant binds a new
+// key to the machine, exactly as they re-mint a revoked link kit.
+func (s *BillingLifecycleService) revokeTenantNodeKeys(ctx context.Context, userID string) {
+	keys, err := s.store.ListWarpAPIKeysByOwner(userID)
+	if err != nil {
+		log.Printf("billing lifecycle: force-suspend %s: list node keys: %v", userID, err)
+		return
+	}
+	for _, k := range keys {
+		if !strings.HasPrefix(k.NodeID, "node-") {
+			continue
+		}
+		if err := s.store.RevokeWarpAPIKeyByNodeID(k.NodeID); err != nil {
+			log.Printf("billing lifecycle: force-suspend %s: revoke node key %s: %v", userID, k.NodeID, err)
+			continue
+		}
+		if s.warpPeers != nil {
+			dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			n := s.warpPeers.DisconnectKeyPeers(dctx, k.ID)
+			cancel()
+			log.Printf("billing lifecycle: force-suspend %s: revoked node key %s, dropped %d peer(s)", userID, k.NodeID, n)
+		}
+	}
+}
+
 func (s *BillingLifecycleService) linkKitsForUser(userID string) []string {
 	keys, err := s.store.ListWarpAPIKeysByOwner(userID)
 	if err != nil {

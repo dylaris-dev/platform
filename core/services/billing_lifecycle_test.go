@@ -447,6 +447,35 @@ func TestEnterPastDue(t *testing.T) {
 	})
 }
 
+// Stripe retries a failed payment several times, and each retry arrives as
+// another past_due. Resetting the window on each one meant a customer who never
+// paid was never suspended.
+func TestEnterPastDueKeepsTheDeadlineAlreadyGiven(t *testing.T) {
+	given := time.Now().Add(time.Hour)
+	fs := &billingFakeStore{billing: &store.UserBilling{UserID: "u1", Status: "past_due", GraceUntil: &given}}
+	svc := &BillingLifecycleService{store: fs}
+	if err := svc.EnterPastDue("u1"); err != nil {
+		t.Fatalf("EnterPastDue: %v", err)
+	}
+	if len(fs.statusCalls) != 0 {
+		t.Fatalf("a repeated past_due rewrote the billing row: %+v", fs.statusCalls)
+	}
+}
+
+// The store re-sends its state after any hiccup. A fresh suspended_at on each
+// push would move the hard cutoff back every time.
+func TestSuspendKeepsTheFirstSuspension(t *testing.T) {
+	first := time.Now().Add(-time.Hour)
+	fs := &billingFakeStore{billing: &store.UserBilling{UserID: "u1", Status: "suspended", SuspendedAt: &first}}
+	svc := &BillingLifecycleService{store: fs}
+	if err := svc.Suspend(context.Background(), "u1"); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if len(fs.statusCalls) != 0 {
+		t.Fatalf("a repeated suspend rewrote suspended_at: %+v", fs.statusCalls)
+	}
+}
+
 // --- Suspend / SuspendNow / Reactivate: state transitions ---
 
 func TestSuspend(t *testing.T) {
@@ -768,5 +797,38 @@ func TestAPurchaseWinsOverAGrantForTheBackupAllowance(t *testing.T) {
 	b := &store.UserBilling{MaxNodes: &three, ManualByonExpiresAt: &future}
 	if got := R2IncludedGB(st, b); got != 150 {
 		t.Errorf("R2IncludedGB = %d, want 150 (three purchased units, the grant adding nothing on top)", got)
+	}
+}
+
+type revokingFakeStore struct {
+	*billingFakeStore
+	revoked []string
+}
+
+func (f *revokingFakeStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {
+	f.revoked = append(f.revoked, nodeID)
+	return nil
+}
+
+// The admin's hard kill takes a BYON tunnel down at once, the way it already
+// did a route-only kit. Dropping the peers alone was not enough: the graced
+// enrol gate was still open, so warp re-enrolled within minutes and the
+// tunnel stayed for the whole grace window.
+func TestSuspendNow_RevokesNodeKeysAndDropsTheirPeers(t *testing.T) {
+	fs := &revokingFakeStore{billingFakeStore: &billingFakeStore{
+		servers:  map[string][]models.Server{},
+		warpKeys: []store.WarpAPIKey{{ID: 4, NodeID: "node-a"}, {ID: 5, NodeID: "link-b"}},
+	}}
+	warp := &fakeWarpDisconnector{removed: 1}
+	svc := &BillingLifecycleService{store: fs, warpPeers: warp}
+
+	if err := svc.SuspendNow(context.Background(), "u1"); err != nil {
+		t.Fatalf("SuspendNow: %v", err)
+	}
+	if len(fs.revoked) != 1 || fs.revoked[0] != "node-a" {
+		t.Errorf("revoked %v, want only the node key", fs.revoked)
+	}
+	if len(warp.calls) != 1 || warp.calls[0] != 4 {
+		t.Errorf("peers dropped for %v, want key 4", warp.calls)
 	}
 }

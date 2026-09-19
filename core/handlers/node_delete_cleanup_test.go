@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"dylaris-core/models"
@@ -16,8 +17,75 @@ import (
 
 type nodeDeleteFakeStore struct {
 	store.Store
-	node    *models.Node
-	deleted int
+	node      *models.Node
+	deleted   int
+	boundKeys []int
+	revoked   []int
+}
+
+func (f *nodeDeleteFakeStore) ListWarpKeyIDsBoundToNode(nodeID int) ([]int, error) {
+	return f.boundKeys, nil
+}
+
+func (f *nodeDeleteFakeStore) RevokeWarpAPIKeyByID(id int) error {
+	f.revoked = append(f.revoked, id)
+	return nil
+}
+
+type recordingPeerDisconnector struct{ keys []int }
+
+func (d *recordingPeerDisconnector) DisconnectKeyPeers(_ context.Context, keyID int) int {
+	d.keys = append(d.keys, keyID)
+	return 1
+}
+
+// Removing a machine used to leave its overlay key live and its WireGuard peer
+// connected: the machine stayed on our overlay indefinitely, could re-enroll at
+// will, and its Link kept its edge tunnels for up to a day. The key is read
+// before the row goes because the delete nulls the binding.
+func TestDeleteNode_ReleasesTheMachinesOverlayKeyAndLink(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+
+	owner := "tenant-1"
+	for _, c := range []struct {
+		name     string
+		node     *models.Node
+		wantLink bool // true: the link token must survive
+	}{
+		{"a customer's machine", &models.Node{ID: 7, Token: "t7", LinkToken: "lt7", OwnerID: &owner}, false},
+		{"an in-cluster node keeps a Link it may share", &models.Node{ID: 8, Token: "t8", LinkToken: "lt8"}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tok := c.node.LinkToken
+			rdb.Set(ctx, "link:"+tok, "valid", 0)
+			rdb.Set(ctx, "online_link:"+tok, "1", 0)
+			fs := &nodeDeleteFakeStore{node: c.node, boundKeys: []int{41}}
+			peers := &recordingPeerDisconnector{}
+			h := &NodeHandler{state: &AppState{Store: fs, Redis: rdb, WarpPeers: peers}}
+
+			id := strconv.Itoa(c.node.ID)
+			rw := httptest.NewRecorder()
+			h.DeleteNode(rw, mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/nodes/"+id, nil), map[string]string{"id": id}))
+			if rw.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", rw.Code, rw.Body.String())
+			}
+			if len(fs.revoked) != 1 || fs.revoked[0] != 41 {
+				t.Errorf("revoked = %v, want the key bound to the machine", fs.revoked)
+			}
+			if len(peers.keys) != 1 || peers.keys[0] != 41 {
+				t.Errorf("peers disconnected for %v, want key 41", peers.keys)
+			}
+			n, _ := rdb.Exists(ctx, "link:"+tok, "online_link:"+tok).Result()
+			if c.wantLink && n != 2 {
+				t.Errorf("the Link token of an in-cluster node was dropped")
+			}
+			if !c.wantLink && n != 0 {
+				t.Errorf("the Link token of a removed machine outlived it")
+			}
+		})
+	}
 }
 
 func (f *nodeDeleteFakeStore) GetNodeByID(id int) (*models.Node, error) {
