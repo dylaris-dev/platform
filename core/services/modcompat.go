@@ -290,7 +290,7 @@ func compatGet(ctx context.Context, rawURL string, out interface{}) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", modrinthUA)
+	req.Header.Set("User-Agent", DylarisUserAgent())
 	res, err := compatHTTP.Do(req)
 	if err != nil {
 		return err

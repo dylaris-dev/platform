@@ -364,6 +364,27 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A Technic pack is resolved here, before anything is written: the browser
+	// names a slug and a build, and every URL the node receives comes from
+	// Technic now. A node that predates the installer is refused rather than
+	// sent a job it would fail after the container already exists.
+	var technic *TechnicResolution
+	if req.Installer.Type == "technic" {
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && nodeReleaseOlderThan(r.Context(), h.state, node.Token, technicSince) {
+			sendJSONError(w, "This node runs an older release that cannot install Technic packs. Update the node, then try again.", http.StatusConflict)
+			return
+		}
+		res, err := NewTechnicHandler(h.state).resolveTechnic(r.Context(), strings.TrimSpace(req.Installer.TechnicSlug), strings.TrimSpace(req.Installer.TechnicBuild))
+		if err != nil {
+			sendTechnicError(w, err)
+			return
+		}
+		technic = res
+		req.Installer.McVersion = res.MCVersion
+		req.Installer.Version = res.Build
+		req.Installer.URL = res.URL
+	}
+
 	// Enforce sub-server limit. Skipped during first setup only - the comment
 	// here used to claim admins were exempt too, and they never have been:
 	// the condition below reads srv.Status and nothing else.
@@ -521,6 +542,12 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			// What to clear first. The node validates these again against its own
 			// copy of the vocabulary before it deletes anything.
 			"wipePaths": req.Installer.WipePaths,
+		}
+		if technic != nil {
+			installerPayload["variant"] = technic.Variant
+			if len(technic.Mods) > 0 {
+				installerPayload["technicMods"] = technic.Mods
+			}
 		}
 
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {

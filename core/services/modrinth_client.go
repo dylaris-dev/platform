@@ -31,13 +31,10 @@ type ModrinthClient struct {
 	pat        string
 }
 
-func NewModrinthClient(pat, userAgent string) *ModrinthClient {
-	if userAgent == "" {
-		userAgent = "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)"
-	}
+func NewModrinthClient(pat string) *ModrinthClient {
 	return &ModrinthClient{
 		httpClient: &http.Client{Timeout: 60 * time.Second},
-		userAgent:  userAgent,
+		userAgent:  DylarisUserAgent(),
 		pat:        pat,
 	}
 }

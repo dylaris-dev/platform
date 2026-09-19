@@ -358,7 +358,7 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 // sha512 in the manifest, a corrupt jar was then renamed into place as if it
 // were the real one.
 func downloadFileBounded(url, dst string, maxBytes int64) (int64, error) {
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := &http.Client{Timeout: 5 * time.Minute, Transport: uaTransport{base: http.DefaultTransport}}
 	resp, err := client.Get(url)
 	if err != nil {
 		return 0, err

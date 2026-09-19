@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.19.4
+
+### Features
+- **Install Technic Platform modpacks** when you set up a server. Update your node to use
+  it; until then the panel says your node is too old. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Forge 1.12 to 1.16 servers now start** after you update your node; before, the setup
+  ended with "no runnable server found". `node`
+
 ## 2026.09.19.3
 
 ### Features

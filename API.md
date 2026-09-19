@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **507 routes** in 49 sections: 223 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
+- **509 routes** in 50 sections: 225 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **104** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **106** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -178,6 +178,7 @@ can still show what exists.
 - [/api/store](#apistore) (9)
 - [/api/system](#apisystem) (4)
 - [/api/tabproxy](#apitabproxy) (1)
+- [/api/technic](#apitechnic) (2)
 - [/api/ticket-canned-responses](#apiticket-canned-responses) (1)
 - [/api/ticket-categories](#apiticket-categories) (1)
 - [/api/tickets](#apitickets) (15)
@@ -832,6 +833,13 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/tabproxy/{token}/resolve` | **none** | _public_ | Limit | `ProxyHandler.ResolveShare` | turns a share token into the content host that serves it. |
+
+## /api/technic
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/technic/pack/{slug}` | session | _no capability_ | Limit | `TechnicHandler.Pack` | one Technic pack and what an install would use: its server pack, its client zip, or a Solder build. |
+| GET | `/api/technic/search` | session | _no capability_ | Limit | `TechnicHandler.Search` | searches Technic Platform modpacks by name through Core's cache. |
 
 ## /api/ticket-canned-responses
 

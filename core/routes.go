@@ -22,7 +22,6 @@ type routeCfg struct {
 	TabProxyHostSuffix string
 	ClusterSecret      string
 	GatewayHubURL      string
-	ModrinthUA         string
 	// Panel is the embedded panel bundle, mounted as the router's fallback.
 	// Nil in tests, where nothing asks for a page.
 	Panel http.Handler
@@ -570,7 +569,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 	rconHandler := handlers.NewRconHandler(appState)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
-	modrinthHandler := handlers.NewModrinthHandler(appState, cfg.ModrinthUA)
+	modrinthHandler := handlers.NewModrinthHandler(appState)
+	technicHandler := handlers.NewTechnicHandler(appState)
 	serverModsHandler := handlers.NewServerModsHandler(appState)
 	sparkHandler := handlers.NewSparkHandler(appState)
 	serverTabsHandler := handlers.NewServerTabsHandler(appState)
@@ -800,6 +800,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/modrinth/version/{id}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Version))).Methods("GET")
 	api.HandleFunc("/modrinth/categories", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Categories))).Methods("GET")
 	api.HandleFunc("/modrinth/game-versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.GameVersions))).Methods("GET")
+	// Technic Platform metadata, same shape: authed, cached, per-IP limited -
+	// tighter than Modrinth. Technic answers 429 after a short burst, and its
+	// cooldown is shared, so one panel typing fast must not stall every other
+	// customer's setup.
+	technicLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/technic/search", technicLimiter.Limit(20, authHandler.AuthMiddleware(technicHandler.Search))).Methods("GET")
+	api.HandleFunc("/technic/pack/{slug}", technicLimiter.Limit(30, authHandler.AuthMiddleware(technicHandler.Pack))).Methods("GET")
 	// Per-server installed mods + install/uninstall dispatch.
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.List))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.Install))).Methods("POST")

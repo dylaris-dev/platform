@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,7 +28,7 @@ func SetDockerManager(dm *DockerManager) {
 }
 
 type InstallerConfig struct {
-	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import", "backup", "modpack"
+	Type      string `json:"type"`      // "paper", "vanilla", "fabric", "forge", "neoforge", "library", "upload", "upload-zip", "import", "backup", "modpack", "technic"
 	Version   string `json:"version"`   // MC version, e.g. "1.21.1"
 	Loader    string `json:"loader"`    // Optional loader/build version (Fabric loader, Forge build, NeoForge version)
 	URL       string `json:"url"`       // Direct download URL (for "import" / library fallback / modpack .mrpack)
@@ -52,6 +53,11 @@ type InstallerConfig struct {
 	// there, which is what every install did before this existed and is still
 	// the right answer for a plain jar swap.
 	WipePaths []string `json:"wipePaths,omitempty"`
+	// Technic pack ("technic"): Core resolves the pack and says which of the
+	// three shapes it is (installer_technic.go); TechnicMods are a Solder
+	// build's archives. The Minecraft version is read from the pack itself.
+	Variant     string       `json:"variant,omitempty"`
+	TechnicMods []TechnicMod `json:"technicMods,omitempty"`
 }
 
 // CleanServerJars removes server JARs and cached/generated directories while preserving
@@ -138,6 +144,8 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 		return installFromBackupArchive(destDir)
 	case "modpack":
 		return nil, installModpack(destDir, config)
+	case "technic":
+		return nil, installTechnic(destDir, config)
 	default:
 		return nil, fmt.Errorf("unknown installer type: %s", config.Type)
 	}
@@ -521,8 +529,12 @@ func installFromUploadZip(destDir, structure string) error {
 // Returns the detected JAR filename (e.g. "forge-1.20.1-47.2.0-shim.jar") or "server.jar" as fallback.
 func DetectServerJar(destDir string) string {
 	patterns := []string{
-		"forge-*-shim.jar",         // Forge 1.17+ (new launcher)
-		"forge-*-universal.jar",    // Forge legacy
+		"forge-*-shim.jar",      // Forge 1.17+ (new launcher)
+		"forge-*-universal.jar", // Forge legacy
+		// Forge 1.12-1.16: the installer writes forge-<mc>-<build>.jar (measured
+		// with the real 1.12.2 and 1.16.5 installers). Listed after the two
+		// specific shapes so a 1.17+ directory still picks its shim.
+		"forge-*.jar",
 		"neoforge-*.jar",           // NeoForge
 		"fabric-server-launch.jar", // Fabric
 		"paper-*.jar",              // Paper
@@ -531,8 +543,13 @@ func DetectServerJar(destDir string) string {
 	}
 	for _, pattern := range patterns {
 		matches, _ := filepath.Glob(filepath.Join(destDir, pattern))
-		if len(matches) > 0 {
-			jar := filepath.Base(matches[0])
+		for _, m := range matches {
+			// A leftover installer sorts BEFORE its jar ('-' < '.') and is not
+			// a server.
+			if strings.HasSuffix(m, "-installer.jar") {
+				continue
+			}
+			jar := filepath.Base(m)
 			log.Printf("Detected server JAR: %s", jar)
 			return jar
 		}
@@ -750,6 +767,12 @@ func downloadFile(url, destPath string) error {
 // `installing` forever, which is worse than a failed install because a failure
 // can be retried.
 func downloadFileWithin(url, destPath string, stall time.Duration) error {
+	return downloadWith(installerDownloadClient, url, destPath, stall, 0)
+}
+
+// downloadWith is the shared body: client chooses the dial policy, maxBytes > 0
+// caps the body (0 = no cap).
+func downloadWith(client *http.Client, url, destPath string, stall time.Duration, maxBytes int64) error {
 	out, err := os.Create(destPath)
 	if err != nil {
 		return err
@@ -765,7 +788,7 @@ func downloadFileWithin(url, destPath string, stall time.Duration) error {
 	if err != nil {
 		return err
 	}
-	resp, err := installerDownloadClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -778,7 +801,14 @@ func downloadFileWithin(url, destPath string, stall time.Duration) error {
 	watchdog := time.AfterFunc(stall, cancel)
 	defer watchdog.Stop()
 
-	_, err = io.Copy(out, &stallGuard{r: resp.Body, timer: watchdog, window: stall})
+	var dst io.Writer = out
+	if maxBytes > 0 {
+		dst = &cappedWriter{w: out, left: maxBytes}
+	}
+	_, err = io.Copy(dst, &stallGuard{r: resp.Body, timer: watchdog, window: stall})
+	if errors.Is(err, errDownloadTooLarge) {
+		return fmt.Errorf("%w (%d bytes)", errDownloadTooLarge, maxBytes)
+	}
 	if err != nil && ctx.Err() != nil {
 		return fmt.Errorf("download stalled: no data for %s", stall)
 	}

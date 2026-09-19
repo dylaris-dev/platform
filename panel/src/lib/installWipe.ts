@@ -37,7 +37,7 @@ export const WIPE_HINTS: Record<WipeToken, string> = {
 export type InstallChange = 'none' | 'runtime' | 'version' | 'modpack' | 'installer';
 
 export interface NextInstall {
-    /** The install tab in use: online | library | upload | backup | modpack | pack. */
+    /** The install tab in use: online | library | upload | backup | modpack | pack | technic. */
     tab: string;
     /**
      * An archive is selected on the backup tab. Unlike every other tab there is
@@ -53,11 +53,22 @@ export interface NextInstall {
     modrinthVersionId?: string;
     /** Set when a NEW pack build was picked. */
     packBuildId?: number;
+    /**
+     * A Technic pack is picked. Core records no pack name for Technic, so a
+     * pick cannot be compared with what is installed and always counts as a
+     * pack change; an untouched picker keeps the install.
+     */
+    technicPicked?: boolean;
 }
 
 const tabToInstaller = (tab: string, software?: string): string => {
     if (tab === 'modpack') return 'modpack';
     if (tab === 'pack') return 'pack';
+    // Without this the tab fell through to the ONLINE software (paper by
+    // default): a Paper server switched to a Technic pack compared as "same
+    // installer, same version", was classified as runtime-only, and saved
+    // without installing anything.
+    if (tab === 'technic') return 'technic';
     if (tab === 'library') return 'library';
     if (tab === 'upload') return 'upload';
     if (tab === 'backup') return 'backup';
@@ -90,6 +101,9 @@ export function classifyInstallChange(prev: SubServerInstall | undefined, next: 
     if (next.tab === 'pack') {
         if (next.packBuildId && next.packBuildId !== prev.packBuildId) return 'modpack';
         return 'runtime';
+    }
+    if (next.tab === 'technic') {
+        return next.technicPicked ? 'modpack' : 'runtime';
     }
     if (next.tab === 'backup') {
         // Re-importing over an existing sub-server replaces everything in it, so

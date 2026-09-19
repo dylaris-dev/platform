@@ -46,7 +46,6 @@ type modrinthVersion struct {
 type ModrinthVersion = modrinthVersion
 
 const modrinthAPI = "https://api.modrinth.com/v2"
-const modrinthUA = "Dylaris/1.0 (dylaris panel)"
 
 var modrinthHTTP = &http.Client{Timeout: 15 * time.Second}
 
@@ -75,7 +74,7 @@ func ModrinthNotFound(err error) bool {
 
 func modrinthGet(path string, out interface{}) error {
 	req, _ := http.NewRequest("GET", modrinthAPI+path, nil)
-	req.Header.Set("User-Agent", modrinthUA)
+	req.Header.Set("User-Agent", DylarisUserAgent())
 	res, err := modrinthHTTP.Do(req)
 	if err != nil {
 		return err
@@ -134,7 +133,7 @@ func CheckLatestVersions(hashes []string, algorithm string, loaders, gameVersion
 		return nil, err
 	}
 	req, _ := http.NewRequest("POST", modrinthAPI+"/version_files/update", bytes.NewReader(buf))
-	req.Header.Set("User-Agent", modrinthUA)
+	req.Header.Set("User-Agent", DylarisUserAgent())
 	req.Header.Set("Content-Type", "application/json")
 	res, err := modrinthHTTP.Do(req)
 	if err != nil {

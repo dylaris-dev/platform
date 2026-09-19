@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/pkg/crypto"
+	"dylaris-core/services"
 )
 
 // Modrinth PAT management endpoints. The plaintext PAT only ever
@@ -136,7 +137,7 @@ func (h *ModrinthPATHandler) validatePAT(ctx context.Context, plaintext string) 
 		return "", err
 	}
 	req.Header.Set("Authorization", plaintext)
-	req.Header.Set("User-Agent", "Dylaris/0.14 (+https://github.com/Bartis-Dev/dylaris-platform)")
+	req.Header.Set("User-Agent", services.DylarisUserAgent())
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return "", err

@@ -75,6 +75,11 @@ type SetupServerRequest struct {
 		// dispatch — the Node never sees type="pack".
 		PackID  int `json:"packId,omitempty"`
 		BuildID int `json:"buildId,omitempty"`
+		// Technic pack; installer.type=="technic". SetupServer resolves both
+		// against Technic itself (resolveTechnic). TechnicBuild matters only for
+		// Solder packs and defaults to the pack's recommended build.
+		TechnicSlug  string `json:"technicSlug,omitempty"`
+		TechnicBuild string `json:"technicBuild,omitempty"`
 		// WipePaths names what to CLEAR before installing. Tokens, never paths -
 		// see installWipeTokens. Empty means install on top of whatever is there,
 		// which is what every install did before this existed and is still right

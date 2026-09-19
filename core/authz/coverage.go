@@ -182,6 +182,8 @@ var ExemptRoutes = map[string]bool{
 	"/api/modrinth/version/{id}":            true, // authed; external proxy
 	"/api/modrinth/categories":              true, // authed; external proxy
 	"/api/modrinth/game-versions":           true, // authed; external proxy
+	"/api/technic/search":                   true, // authed; external proxy
+	"/api/technic/pack/{slug}":              true, // authed; external proxy
 
 	// Library browse/download: platform-shared catalog, no gate beyond auth
 	// (Phase 4 Task 20 INSPECT result; mutations ARE RequireCap-gated).

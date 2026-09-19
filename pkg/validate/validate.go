@@ -163,6 +163,10 @@ var installerTypes = map[string]bool{
 	// Restores an uploaded Dylaris backup archive and reads the description it
 	// carries. See node/installer_backup.go and services.SetupResultService.
 	"backup": true,
+	// A Technic Platform pack, resolved by Core (handlers/technic.go) and
+	// installed by node/installer_technic.go, shipped in release 2026.09.19.4.
+	// Core also refuses it for a node reporting an older release.
+	"technic": true,
 }
 
 // IsInstallerType reports whether t is a known server source/installer type.

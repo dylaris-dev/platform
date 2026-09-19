@@ -929,6 +929,12 @@ func isProtectedFile(path string) bool {
 		if part == ".dylaris-backups" || strings.HasPrefix(part, ".pending-delete-") {
 			return true
 		}
+		// A Technic install's staging and download directories. The installer
+		// moves files out of them as root; a tenant who could reach in during
+		// the install could swap an entry for a symlink between two steps.
+		if strings.HasPrefix(part, ".technic-stage-") || strings.HasPrefix(part, ".technic-dl-") {
+			return true
+		}
 	}
 	return false
 }

@@ -11,15 +11,16 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"dylaris-core/services"
 )
 
 // Modrinth API proxy. Mods/plugins browse, version metadata,
 // project details. Cached in Redis to keep panel browse traffic off
 // Modrinth's rate limit and to make the UI feel instant.
 //
-// User-Agent: Modrinth's terms ask for an identifying UA; we send
-// "Dylaris/<frontend-url> (admin contact via that site)". Operators can
-// override with DYLARIS_MODRINTH_UA in the future if needed.
+// User-Agent: services.DylarisUserAgent, the one string every outbound call
+// carries.
 
 const (
 	modrinthBaseURL     = "https://api.modrinth.com/v2"
@@ -30,17 +31,15 @@ const (
 
 type ModrinthHandler struct {
 	state *AppState
-	ua    string
 	http  *http.Client
+	// cool is Modrinth's 429: the limit is per IP and Core is one IP for
+	// every customer, so one busy panel must not turn into a ban for all.
+	cool upstreamCooldown
 }
 
-func NewModrinthHandler(state *AppState, ua string) *ModrinthHandler {
-	if ua == "" {
-		ua = "Dylaris/unknown (https://github.com/Bartis-Dev/dylaris-platform)"
-	}
+func NewModrinthHandler(state *AppState) *ModrinthHandler {
 	return &ModrinthHandler{
 		state: state,
-		ua:    ua,
 		http:  &http.Client{Timeout: 15 * time.Second},
 	}
 }
@@ -75,12 +74,17 @@ func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, 
 		}
 	}
 
+	if left, ok := h.cool.blocked(time.Now()); ok {
+		sendCooldown(w, "Modrinth", left)
+		return
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		sendJSONError(w, "Bad upstream request", http.StatusBadGateway)
 		return
 	}
-	req.Header.Set("User-Agent", h.ua)
+	req.Header.Set("User-Agent", services.DylarisUserAgent())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := h.http.Do(req)
@@ -89,6 +93,10 @@ func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, 
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		sendCooldown(w, "Modrinth", h.cool.trip(resp.Header, time.Now()))
+		return
+	}
 	body, _ := io.ReadAll(resp.Body)
 
 	// Transform only a successful body: an error response has a different shape

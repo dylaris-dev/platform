@@ -11,10 +11,6 @@ import (
 	"time"
 )
 
-// importFetchUA identifies this fetcher to upstream servers. It was written for
-// the Solder import, which is gone; the modpack snapshot is what uses it now.
-const importFetchUA = "Dylaris/1.0 (modpack fetch)"
-
 // isDisallowedIP reports whether an IP must never be dialed by the import
 // fetcher. It blocks loopback, private (RFC1918 / IPv6 ULA), link-local
 // (including the cloud metadata endpoint 169.254.169.254 and fe80::/10),
@@ -119,7 +115,7 @@ func SafeFetch(ctx context.Context, rawURL string, maxBytes int64, timeout time.
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", importFetchUA)
+	req.Header.Set("User-Agent", DylarisUserAgent())
 	resp, err := safeFetchClient.Do(req)
 	if err != nil {
 		return nil, err

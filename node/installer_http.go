@@ -22,7 +22,7 @@ import (
 const installerMetaTimeout = 30 * time.Second
 
 // installerMetaClient fetches version manifests and build metadata.
-var installerMetaClient = &http.Client{Timeout: installerMetaTimeout}
+var installerMetaClient = &http.Client{Timeout: installerMetaTimeout, Transport: uaTransport{base: http.DefaultTransport}}
 
 // installerStallTimeout is how long a download may produce NO bytes at all
 // before it is abandoned. It bounds silence rather than duration, so it can be
@@ -45,12 +45,12 @@ const installerStallTimeout = 60 * time.Second
 // HTTP_PROXY/HTTPS_PROXY, which would break every download on a node behind a
 // corporate proxy that worked before this file existed.
 var installerDownloadClient = &http.Client{
-	Transport: &http.Transport{
+	Transport: uaTransport{base: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		ForceAttemptHTTP2:     true,
 		DialContext:           (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 5 * time.Second,
-	},
+	}},
 }

@@ -4543,6 +4543,26 @@
     },
     {
       "method": "GET",
+      "path": "/api/technic/pack/{slug}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "one Technic pack and what an install would use: its server pack, its client zip, or a Solder build.",
+      "handler": "TechnicHandler.Pack",
+      "group": "technic",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/technic/search",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "searches Technic Platform modpacks by name through Core's cache.",
+      "handler": "TechnicHandler.Search",
+      "group": "technic",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/ticket-canned-responses",
       "auth": "session",
       "authorization": "no capability",
@@ -5063,10 +5083,10 @@
     }
   ],
   "counts": {
-    "total": 508,
+    "total": 510,
     "byAuth": {
       "none": 30,
-      "session": 462,
+      "session": 464,
       "user API key": 10,
       "warp key": 6
     },
@@ -5111,6 +5131,7 @@
       "store": 9,
       "system": 4,
       "tabproxy": 1,
+      "technic": 2,
       "ticket-canned-responses": 1,
       "ticket-categories": 1,
       "tickets": 15,

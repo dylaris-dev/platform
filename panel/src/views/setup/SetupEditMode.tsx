@@ -10,6 +10,7 @@ import UploadSection from './UploadSection';
 import BackupImportSection from './BackupImportSection';
 import ModpackPicker from './ModpackPicker';
 import PackPicker from './PackPicker';
+import TechnicPicker from './TechnicPicker';
 import type { SubServerInstall } from '@/lib/api/subServerInstalls';
 
 /**
@@ -63,12 +64,14 @@ interface SetupEditModeProps {
     onFlagsChange: (flags: string) => void;
     ramMB: number;
     // Install tab
-    installTab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack';
-    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack') => void;
+    installTab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic';
+    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic') => void;
     modpackSelection?: import('@/views/setup/ModpackPicker').ModpackSelection | null;
     onModpackSelect?: (s: import('@/views/setup/ModpackPicker').ModpackSelection | null) => void;
     packSelection?: import('@/views/setup/PackPicker').PackSelection | null;
     onPackSelect?: (s: import('@/views/setup/PackPicker').PackSelection | null) => void;
+    technicSelection?: import('@/views/setup/technic').TechnicSelection | null;
+    onTechnicSelect?: (s: import('@/views/setup/technic').TechnicSelection | null) => void;
     /** What is on disk right now, when Core recorded it. */
     currentInstall?: SubServerInstall;
     libraryEnabled?: boolean;
@@ -204,6 +207,10 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                             className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'pack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             My modpacks
                         </button>
+                        <button type="button" onClick={() => props.onInstallTabChange('technic')}
+                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'technic' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            Technic
+                        </button>
                     </div>
 
                     {/* Tab content */}
@@ -275,6 +282,13 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                                 onSelect={(s) => props.onPackSelect?.(s)}
                             />
                         </>
+                    )}
+
+                    {props.installTab === 'technic' && (
+                        <TechnicPicker
+                            selection={props.technicSelection ?? null}
+                            onSelect={(s) => props.onTechnicSelect?.(s)}
+                        />
                     )}
                 </div>
 

@@ -256,6 +256,7 @@ func main() {
 	// gRPC Registry for Node connections
 	grpcRegistry := nodegrpc.NewRegistry()
 
+	services.SetUserAgentRelease(coreReleaseVersion().String())
 	appState := &handlers.AppState{
 		Store:               pgStore,
 		GRPCRegistry:        grpcRegistry,
@@ -657,7 +658,6 @@ func main() {
 		TabProxyHostSuffix: cfg.TabProxyHostSuffix,
 		ClusterSecret:      cfg.ClusterSecret,
 		GatewayHubURL:      cfg.GatewayHubURL,
-		ModrinthUA:         "Dylaris/0.10 (+https://github.com/Bartis-Dev/dylaris-platform)",
 	})
 	// boot-time warp resync watcher + firewall-allowlist publish use the
 	// handlers/service buildAPIRouter just constructed.

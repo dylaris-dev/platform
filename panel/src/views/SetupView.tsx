@@ -18,6 +18,8 @@ import WipeChoiceDialog from '@/views/setup/WipeChoiceDialog';
 import { classifyInstallChange, type InstallChange, type WipeToken } from '@/lib/installWipe';
 import { API_URL } from '@/lib/api/core';
 import { isSubServerName } from '@/lib/validation';
+import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
+
 const DEFAULT_GC_FLAGS = '-XX:+UseG1GC -XX:MaxHeapFreeRatio=40 -XX:MinHeapFreeRatio=15 -XX:-ShrinkHeapInSteps';
 
 const PROXY_GC_FLAGS = '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 ' +
@@ -58,7 +60,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [subNameError, setSubNameError] = useState('');
     const [javaImage, setJavaImage] = useState(JAVA_21);
     const [extraFlags, setExtraFlags] = useState('');
-    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack'>('online');
+    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic'>('online');
     // The backup archive to import. Separate from uploadFile: the two tabs mean
     // different installers, and one field for both would carry a .zip into a
     // backup import as easily as the other way round.
@@ -69,6 +71,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // Selected unified-builder pack + build (Core pack/build IDs).
     // Cleared on tab change or on submit.
     const [packSelection, setPackSelection] = useState<import('@/views/setup/PackPicker').PackSelection | null>(null);
+    // Selected Technic pack; Core resolves its download at install time.
+    const [technicSelection, setTechnicSelection] = useState<TechnicSelection | null>(null);
 
     // Software list from API
     const [softwareCatalog, setSoftwareCatalog] = useState<{ name: string; type: string }[]>([]);
@@ -99,11 +103,12 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         const fromPicker =
             installTab === 'modpack' ? (modpackSelection?.mcVersion || '')
             : installTab === 'pack' ? (packSelection?.mcVersion || '')
+            : installTab === 'technic' ? (technicSelection?.mcVersion || '')
             : effectiveMcVersion(selectedMajor, selectedBuild);
         if (!fromPicker) return;
         const rec = recommendJavaForVersion(fromPicker);
         if (rec) setJavaImage(rec);
-    }, [selectedMajor, selectedBuild, formMode, installTab, modpackSelection?.mcVersion, packSelection?.mcVersion]);
+    }, [selectedMajor, selectedBuild, formMode, installTab, modpackSelection?.mcVersion, packSelection?.mcVersion, technicSelection?.mcVersion]);
 
     // Pre-populate version when entering edit mode (handles case where software didn't change)
     useEffect(() => {
@@ -320,6 +325,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             setInstallTab('modpack');
         } else if (sType === 'pack') {
             setInstallTab('pack');
+        } else if (sType === 'technic') {
+            setInstallTab('technic');
         } else {
             setSoftware(sType);
             setInstallTab('online');
@@ -429,6 +436,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                 buildVersion: selectedBuild,
                 modrinthVersionId: modpackSelection?.versionId,
                 packBuildId: packSelection?.buildId,
+                technicPicked: !!technicSelection,
             });
             if (change !== 'runtime' && change !== 'none') {
                 setPendingWipe(change);
@@ -489,6 +497,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             installer.buildId = packSelection.buildId;
             if (packSelection.loader) installer.loader = packSelection.loader;
             if (packSelection.mcVersion) installer.mcVersion = packSelection.mcVersion;
+        } else if (installTab === 'technic' && technicSelection) {
+            Object.assign(installer, technicInstaller(technicSelection));
         } else if (installTab === 'backup' && backupFile) {
             installer.type = 'backup';
             setUploadStatus('Uploading...');
@@ -734,6 +744,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         onModpackSelect: setModpackSelection,
         packSelection,
         onPackSelect: setPackSelection,
+        technicSelection,
+        onTechnicSelect: setTechnicSelection,
         serverId: server.id,
         onFileTooLarge: setFileTooLarge,
     };

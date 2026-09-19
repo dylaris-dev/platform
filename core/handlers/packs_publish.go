@@ -13,11 +13,6 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// modrinthUserAgent identifies Dylaris to the Modrinth API per their UA policy.
-// The proxy/deps clients carry their own (unexported, package-local) UA; this
-// is the publish flow's copy so it stays independent of those internals.
-const modrinthUserAgent = "Dylaris/1.0 (+https://github.com/Bartis-Dev/dylaris-platform)"
-
 type publishModrinthRequest struct {
 	Channel        string `json:"channel"`        // "beta"|"release" (draft cannot publish)
 	AckNonModrinth bool   `json:"ackNonModrinth"` // user acknowledged the redistribution warning
@@ -161,7 +156,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	mc := services.NewModrinthClient(pat, modrinthUserAgent)
+	mc := services.NewModrinthClient(pat)
 
 	projectID := pack.ModrinthProjectID
 	if projectID == "" {

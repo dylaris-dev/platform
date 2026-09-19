@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.19.4
+
+### Features
+- **Technic Platform modpacks in server setup,** next to Modrinth: the author's server
+  pack when there is one, otherwise the client pack with a warning. Update nodes first. `core` `panel` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- **Technic downloads refuse internal addresses:** a pack author chooses the host, and a
+  node shares a network with Redis and Postgres. `node`
+
+### Fixes
+- **Forge 1.12 to 1.16 servers start:** the node did not recognise the jar those installers
+  write and stopped with "no runnable server found". `node`
+- **Modrinth and Technic are asked less aggressively:** a 429 pauses calls until the reset,
+  and every request names DYLARIS with a contact URL. `core` `node`
+
 ## 2026.09.19.3
 
 ### Features

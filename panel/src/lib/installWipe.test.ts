@@ -88,6 +88,21 @@ describe('classifyInstallChange', () => {
             next({ tab: 'backup', software: undefined }),
         )).toBe('installer');
     });
+
+    // The online software stays set to paper while the Technic tab is open; it
+    // must not be read as "still paper, nothing changed".
+    it('reads switching from paper to a Technic pack as a full install', () => {
+        expect(classifyInstallChange(
+            installed(),
+            next({ tab: 'technic', technicPicked: true }),
+        )).toBe('installer');
+    });
+
+    it('reads a new Technic pick as a pack change, an untouched picker as runtime', () => {
+        const technic = installed({ installerType: 'technic', mcVersion: '1.12.2', buildVersion: '1.0' });
+        expect(classifyInstallChange(technic, next({ tab: 'technic', technicPicked: true }))).toBe('modpack');
+        expect(classifyInstallChange(technic, next({ tab: 'technic', technicPicked: false }))).toBe('runtime');
+    });
 });
 
 describe('recommendedWipe', () => {

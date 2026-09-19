@@ -69,7 +69,7 @@ func TestInstallerDownloadClient_HasNoOverallDeadline(t *testing.T) {
 // It must still bound the phases that can hang without transferring anything,
 // or it would be no better than http.DefaultClient for a stalled peer.
 func TestInstallerDownloadClient_BoundsTheStallablePhases(t *testing.T) {
-	tr, ok := installerDownloadClient.Transport.(*http.Transport)
+	tr, ok := installerDownloadClient.Transport.(uaTransport).base.(*http.Transport)
 	if !ok {
 		t.Fatal("installerDownloadClient has no *http.Transport, so nothing bounds a stalled connection")
 	}
@@ -93,7 +93,7 @@ func TestInstallerDownloadClient_BoundsTheStallablePhases(t *testing.T) {
 // would be testing net/http's env parsing, which caches the environment in a
 // sync.Once and so cannot be driven from a test anyway.
 func TestInstallerDownloadClient_HonoursProxyEnvironment(t *testing.T) {
-	tr, ok := installerDownloadClient.Transport.(*http.Transport)
+	tr, ok := installerDownloadClient.Transport.(uaTransport).base.(*http.Transport)
 	if !ok {
 		t.Fatal("installerDownloadClient has no *http.Transport")
 	}

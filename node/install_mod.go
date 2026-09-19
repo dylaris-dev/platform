@@ -300,7 +300,8 @@ func validActiveSubServer(s string) bool {
 
 func downloadAndVerify(url, dest, expectedSHA512 string) error {
 	client := &http.Client{
-		Timeout: 5 * time.Minute,
+		Timeout:   5 * time.Minute,
+		Transport: uaTransport{base: http.DefaultTransport},
 		// Core pins the download host to a Modrinth CDN before this command is
 		// queued, and with the default policy that pin covered the first hop
 		// only: Go follows up to ten redirects, so one hop off cdn.modrinth.com
