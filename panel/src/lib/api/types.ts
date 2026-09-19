@@ -1219,9 +1219,9 @@ export const createLinkRoute = (data: CreateLinkRouteRequest) =>
 export const deleteLinkRoute = (domain: string) =>
     fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
-// Link kits: a warp key + auto link identity bound to the account. The customer
-// runs warp + link with the kit to expose a LOCAL server through the gateway.
-// Mint returns the secrets ONCE; the list is metadata-only.
+// Link kits: a key + auto link identity bound to the account. The customer runs
+// one container, the link, with the key to expose a LOCAL server through the
+// gateway. Mint returns the key ONCE; the list is metadata-only.
 export interface LinkKit {
     id: number;
     name: string;
@@ -1235,7 +1235,7 @@ export interface LinkKit {
 }
 export interface MintedLinkKit {
     success: boolean;
-    warp_key: string;
+    link_key: string;
     link_id: string;
     note: string;
 }
@@ -1246,10 +1246,10 @@ export const mintLinkKit = (name: string): Promise<MintedLinkKit> =>
 export const revokeLinkKit = (linkId: string): Promise<{ success: boolean }> =>
     fetchAPI(`/warp/link-kits/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
 
-// Roll replaces the SECRET and nothing else: same link_id, same row, same peer.
-// It is not a revoke - the machine keeps its tunnel until it is redeployed with
-// the new key, at which point kill_old swaps the connection. Revoke is still
-// the immediate-cutoff path for a key that leaked.
+// Roll replaces the SECRET and nothing else: same link_id, same row. It is not
+// a revoke - the running link keeps its tunnels, but its heartbeat stops being
+// accepted, so it shows offline until it is redeployed with the new key. Revoke
+// is still the immediate-cutoff path for a key that leaked.
 export const rollLinkKit = (linkId: string): Promise<MintedLinkKit> =>
     fetchAPI(`/warp/link-kits/${encodeURIComponent(linkId)}/roll`, { method: 'POST' });
 

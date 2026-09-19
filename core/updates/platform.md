@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.19
+
+### Features
+- **Route-only links talk to Core, not Redis.** New `/api/warp/link/{edges,heartbeat,stats}`;
+  Core writes the link's token and presence keys. The kit is one container. `core` `panel`
+
+### Breaking
+- **The warp-based route-only kit is gone.** Warp enroll refuses a route-only key and
+  link-boot hands it no Redis login; kits must redeploy with the new file. `core` `panel`
+
+### Security
+- **Route-only kits get no Redis login and cannot join the overlay.** Existing `link-*` ACL
+  users are not removed for you: delete them once with `ACL DELUSER`. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.18
 
 ### Features

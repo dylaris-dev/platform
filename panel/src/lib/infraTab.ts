@@ -21,9 +21,8 @@ export interface InfraAvailability {
     machines: boolean;
     /**
      * Protected addresses exist AND can be minted. This is byonEnabled, not
-     * gatewayEnabled: route-only rides the warp overlay, so Core's MintLinkKit
-     * and ListNodeWarpKeys refuse on byonActive BEFORE they look at the routing
-     * mode. Asking routing alone showed the whole route-only half on a
+     * gatewayEnabled: Core's MintLinkKit and ListNodeWarpKeys refuse on
+     * byonActive BEFORE they look at the routing mode. Asking routing alone showed the whole route-only half on a
      * gateway-routed install with BYON off, where every read under it answered
      * 403 "BYON is not enabled" - to admins included.
      */

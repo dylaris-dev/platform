@@ -8,31 +8,22 @@ import {
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
 
 describe('routeOnlyCompose', () => {
-    it('embeds the key and enroll url', () => {
+    it('embeds the key and the API url', () => {
         const out = routeOnlyCompose(base);
-        expect(out).toContain('API_KEY: "KEY123"');
-        expect(out).toContain('ENROLL_URL: "https://api.example.com"');
+        expect(out).toContain('LINK_KEY: "KEY123"');
+        expect(out).toContain('CORE_URL: "https://api.example.com"');
     });
 
-    // The link is what makes this route-only rather than plain overlay access.
-    it('includes the link container', () => {
+    // The whole point of the kit: one container, no tunnel into the customer's
+    // network and nothing that opens anything of ours but the link's own key.
+    it('is the link alone, with no warp, no privileges and no Redis', () => {
         const out = routeOnlyCompose(base);
         expect(out).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
-        expect(out).toContain('depends_on: [warp]');
-    });
-
-    // One key does both jobs: the link exchanges it for its own derived token,
-    // so no second secret is handed out.
-    it('reuses the warp key as LINK_BOOT_KEY', () => {
-        expect(routeOnlyCompose(base)).toContain('LINK_BOOT_KEY: "KEY123"');
-    });
-
-    // Against a plain-TCP Redis a TLS client fails the handshake and the link
-    // never registers - the exact trap the repo example still carries. With the
-    // local proxy it is doubly required: a TLS client would verify the
-    // certificate against 127.0.0.1. The path is inside WireGuard either way.
-    it('defaults REDIS_USE_TLS to false', () => {
-        expect(routeOnlyCompose(base)).toContain('REDIS_USE_TLS: "false"');
+        for (const gone of ['gateway-warp', 'NET_ADMIN', 'cap_add', 'TUNNEL_SUBNETS', 'API_KEY:', 'LINK_BOOT_KEY',
+            'REDIS_', 'depends_on', 'LINK_EXTERNAL']) {
+            expect(out).not.toContain(gone);
+        }
+        expect(out.match(/\n {2}[a-z]+:\n {4}image:/g)).toHaveLength(1);
     });
 
     // Host networking means anything the link binds lands on the customer's
@@ -41,23 +32,9 @@ describe('routeOnlyCompose', () => {
         expect(routeOnlyCompose(base)).toContain('LINK_PORT: "127.0.0.1:25540"');
     });
 
-    // Route-only runs the link with host networking, so warp's loopback
-    // listener is already in its namespace and no bridge binding is needed.
-    // The link defaults to that listener on its own, so the file no longer
-    // names an address a reader could get wrong.
-    it('leaves the proxy address to the link and binds no bridges', () => {
-        const out = routeOnlyCompose(base);
-        expect(out).not.toContain('REDIS_ADDR: "');
-        expect(out).not.toContain('PROXY_BIND_DOCKER_BRIDGES');
-    });
-
-    // The link caches what it last got from Core under /data. Without a named
-    // volume that cache dies with the container, and a recreate while Core is
-    // unreachable does not come up.
-    it('keeps the link cache across a recreate', () => {
-        const out = routeOnlyCompose(base);
-        expect(out).toContain('- link_data:/data');
-        expect(out).toMatch(/\nvolumes:\n {2}link_data:\n/);
+    // The link caches nothing; a volume would only suggest it did.
+    it('needs no volume', () => {
+        expect(routeOnlyCompose(base)).not.toContain('volumes:');
     });
 
     // LINK_ALLOWED_TARGETS is compared as an exact host string; a port never matches.
@@ -68,14 +45,16 @@ describe('routeOnlyCompose', () => {
         expect(routeOnlyCompose(base)).toContain('LINK_ALLOWED_TARGETS: "127.0.0.1"');
     });
 
-    it('leaves an obvious placeholder when the overlay CIDR is unknown', () => {
-        expect(routeOnlyCompose(base)).toContain('<overlay-cidr');
-        expect(routeOnlyCompose({ ...base, tunnelSubnets: '10.20.0.0/16' }))
-            .toContain('TUNNEL_SUBNETS: "10.20.0.0/16"');
+    // A key that is no longer known is a LINK key here, and the placeholder
+    // must not send the reader looking for a warp key they never had.
+    it('names a forgotten key as a link key', () => {
+        const out = routeOnlyCompose(kitInput({ warpKey: null, enrollUrl: 'https://api.example.com', platform: 'linux' }));
+        expect(out).toContain('LINK_KEY: "<your-link-key>"');
+        expect(out).not.toContain('warp-key');
     });
 
-    it('treats a whitespace-only value as unset rather than emitting an empty string', () => {
-        expect(routeOnlyCompose({ ...base, tunnelSubnets: '   ' })).toContain('<overlay-cidr');
+    it('leaves an obvious placeholder when the API url is unknown', () => {
+        expect(routeOnlyCompose({ apiKey: 'KEY123', enrollUrl: '   ' })).toContain('CORE_URL: "<core-url>"');
     });
 });
 
@@ -235,15 +214,7 @@ describe('deployIntro', () => {
 // Every env line carries one of two markers, because the reader's real
 // question about each of them is "may I touch this". A line with neither is a
 // line they have to guess about.
-// The edge's private address is reachable from a customer machine too, because
-// warp routes the overlay - so the link's default preference succeeds and puts
-// every player's bytes through the tunnel. Only the kit knows which side of the
-// network this compose file lands on.
-describe('route-only is marked as an outside machine', () => {
-    it('sets LINK_EXTERNAL on the link', () => {
-        expect(routeOnlyCompose(base)).toContain('LINK_EXTERNAL: "true"');
-    });
-
+describe('LINK_EXTERNAL', () => {
     // A managed node sets it for its own sidecar from NODE_EXTERNAL, so the
     // node kit must NOT also carry it - two sources for one setting is how they
     // end up disagreeing.
@@ -333,13 +304,10 @@ describe('routeOnlyCompose on Docker Desktop', () => {
         expect(out).not.toContain('Linux only');
     });
 
-    // warp and the link share the VM's namespace, so they still find each other
-    // on loopback - only the customer's own server sits outside it.
-    it('keeps warp\'s local proxy on loopback', () => {
-        const out = routeOnlyCompose({ ...base, platform: 'windows' });
-        expect(out).not.toContain('REDIS_ADDR: "');
-        expect(out).toContain('127.0.0.1:25571');
-        expect(out).toContain('LINK_PORT: "127.0.0.1:25540"');
+    // The status port stays on the VM's loopback; only the customer's own
+    // server sits outside it.
+    it('keeps the status port on loopback', () => {
+        expect(routeOnlyCompose({ ...base, platform: 'windows' })).toContain('LINK_PORT: "127.0.0.1:25540"');
     });
 
     // An explicit target is the ALLOW list, never LOCAL_HOST: the link rewrites
@@ -531,10 +499,8 @@ describe('nodeCompose on Windows', () => {
 // the one image assertion in this file was an incidental substring that matched
 // the WRONG name, so it stayed green precisely because the bug was there.
 describe('emitted image paths', () => {
-    it('route-only names warp and link at the current registry path', () => {
-        const out = routeOnlyCompose(base);
-        expect(out).toContain('image: ghcr.io/dylaris-dev/gateway-warp:latest');
-        expect(out).toContain('image: ghcr.io/dylaris-dev/gateway-link:latest');
+    it('route-only names the link at the current registry path', () => {
+        expect(routeOnlyCompose(base)).toContain('image: ghcr.io/dylaris-dev/gateway-link:latest');
     });
 
     it('node names warp and the node agent at the current registry path', () => {
@@ -711,7 +677,7 @@ describe('kitInput', () => {
         const i = kitInput({ ...props, warpKey: null, config: null });
         expect(i.apiKey).toBe('<your-warp-key>');
         expect(i.tunnelSubnets).toBeUndefined();
-        expect(routeOnlyCompose(i)).toContain('<overlay-cidr e.g. 10.20.0.0/16>');
+        expect(nodeCompose(i)).toContain('<overlay-cidr e.g. 10.20.0.0/16>');
     });
 });
 

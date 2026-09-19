@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"dylaris-core/services"
-	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -205,18 +204,14 @@ func (linkRevokeFakeGateway) MigrateServerRoutes(uint, uint) error { return nil 
 func (linkRevokeFakeGateway) LinkToken(nodeID string) string       { return "tok-" + nodeID }
 func (linkRevokeFakeGateway) DiscoveryProof(nodeID string) string  { return "proof-" + nodeID }
 
-// RevokeLinkKitTeardown takes away what the tunnel CARRIES - routes, tunnel key,
-// Redis ACL - and deliberately leaves the tunnel itself, because it is shared
-// with the admin force-suspend path where the cutoff is the grace, not the
-// suspension. A tenant revoking their OWN kit has no grace to preserve, so the
-// overlay membership has to go here, at the handler.
+// A kit key cannot enroll any more, but a kit from the warp era may still be an
+// overlay member, and revoking it must take that away as well.
 func TestRevokeLinkKitDisconnectsThePeer(t *testing.T) {
 	h, fs := newRevokeTestHandler(t)
 	fs.settings["feature_byon_enabled"] = "true"
 	fs.keysByNodeID["link-abc"] = &store.WarpAPIKey{ID: 11, NodeID: "link-abc", OwnerID: "owner-1"}
 	fs.seedPeer(11, store.WarpPeer{Pubkey: "pk-link", WGIP: "10.0.99.9", Region: "leader-01"})
 	h.state.Gateway = linkRevokeFakeGateway{}
-	h.state.ACLProvisioner = redisacl.NewProvisioner(h.state.Redis)
 
 	rec := httptest.NewRecorder()
 	h.RevokeLinkKit(rec, revokeReq(t, "/api/warp/link-kits/link-abc", "linkID", "link-abc", "owner-1", false))

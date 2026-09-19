@@ -3,10 +3,8 @@ package redisacl
 import "strings"
 
 // nodeACLPrefix is the namespace Core owns for per-node ACL users:
-// NodeUsername/ShipperUsername/LinkUsername all start with it. Route-only link
-// kits deliberately do NOT (RouteOnlyLinkUsername is the bare link id), and
-// neither does anything else on this Redis - the hub admin, the warp leader,
-// `default`. Restricting the prune to this prefix is what keeps it from
+// NodeUsername/ShipperUsername/LinkUsername all start with it. Nothing else on
+// this Redis does - the hub admin, the warp leader, `default`. Restricting the prune to this prefix is what keeps it from
 // touching a user Core did not create.
 const nodeACLPrefix = "node-"
 

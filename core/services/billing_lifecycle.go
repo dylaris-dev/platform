@@ -6,7 +6,6 @@ import (
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
-	"dylaris-core/services/redisacl"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 	"fmt"
@@ -213,12 +212,10 @@ type BillingLifecycleService struct {
 	// everything - the safe direction if this is ever left unwired.
 	storeEnabled bool
 
-	// Route-only link teardown/restore deps, wired after the ACL provisioner is
-	// built (SetLinkACL). Nil in solo/hoster mode, where there are no link kits.
-	gateway       GatewayProvider
-	redis         *redis.Client
-	provisioner   *redisacl.Provisioner
-	clusterSecret string
+	// Route-only link teardown/restore deps (SetLinkACL). Nil in solo/hoster
+	// mode, where there are no link kits.
+	gateway GatewayProvider
+	redis   *redis.Client
 
 	// warpPeers drops a tenant's warp tunnels at the hard cutoff. Wired after the
 	// warp service exists (SetWarpPeers); nil where there is no overlay, in which
@@ -254,13 +251,12 @@ func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }
 func (s *BillingLifecycleService) SetWarpPeers(w WarpPeerDisconnector) { s.warpPeers = w }
 
 // SetLinkACL wires the route-only link teardown/restore hooks. Called once at
-// startup after the ACL provisioner and gateway exist. When any dependency is nil
-// (solo/hoster mode) Suspend/Reactivate skip the link steps.
-func (s *BillingLifecycleService) SetLinkACL(gw GatewayProvider, rdb *redis.Client, prov *redisacl.Provisioner, clusterSecret string) {
+// startup after the gateway exists. When either dependency is nil (solo/hoster
+// mode) Suspend/Reactivate skip the link steps. The name is older than the
+// route-only link losing its Redis login; it wires the tunnel keys now.
+func (s *BillingLifecycleService) SetLinkACL(gw GatewayProvider, rdb *redis.Client) {
 	s.gateway = gw
 	s.redis = rdb
-	s.provisioner = prov
-	s.clusterSecret = clusterSecret
 }
 
 func (s *BillingLifecycleService) Start(ctx context.Context) {
@@ -520,9 +516,9 @@ func (s *BillingLifecycleService) Reactivate(userID string) error {
 	}
 	// Paying again does not hand the links back to a tenant who is ALSO past
 	// their over-limit grace. The two enforcements have separate clocks, and the
-	// ACL reconciler would tear these down again on its next 60s tick anyway -
-	// so restoring them here would mean issuing a working Redis credential for
-	// one minute and calling it a reactivation.
+	// link's next heartbeat would be refused and take the token down again - so
+	// restoring it here would mean a valid token for five seconds and calling
+	// it a reactivation.
 	if b, err := s.store.GetUserBilling(userID); err == nil && b != nil &&
 		b.OverLimitSince != nil && !time.Now().Before(b.OverLimitSince.Add(OverLimitGrace)) {
 		log.Printf("billing lifecycle: %s is active again but still over its limits, links stay down", userID)
@@ -560,13 +556,11 @@ func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) er
 // a one-click hard kill for fraud/abuse. It records the suspended state +
 // sends the same email as Suspend, stops the tenant's running servers
 // synchronously, and DURABLY revokes every one of the tenant's route-only
-// link kits via RevokeLinkKitTeardown (revoked_at first, then ACL, then
-// tunnel key, then routes - the same ordering RevokeLinkKit uses) so they are
-// immediately and permanently down. No grace-window resurrection, and no
-// change to the three grace predicates (reconciler SQL, enforceSuspensions,
-// handlers.linkHardSuspended all stay as-is): a durably revoked link is
-// already excluded by all three. See Reactivate's doc comment for what
-// happens to these links on reactivation.
+// link kits via RevokeLinkKitTeardown (revoked_at first, then tunnel key,
+// then routes - the same ordering RevokeLinkKit uses) so they are immediately
+// and permanently down. No grace-window resurrection: a durably revoked key is
+// refused by link-boot and the heartbeat alike. See Reactivate's doc comment
+// for what happens to these links on reactivation.
 func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string) error {
 	now := time.Now()
 	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
@@ -574,13 +568,13 @@ func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string)
 	}
 	s.sendSuspendedEmail(userID)
 	s.stopTenantServers(ctx, userID)
-	if s.provisioner == nil || s.gateway == nil || s.redis == nil {
+	if s.gateway == nil || s.redis == nil {
 		return nil // solo/hoster mode: no link kits to revoke
 	}
 	revokeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	for _, linkID := range s.linkKitsForUser(userID) {
-		if _, rerr := RevokeLinkKitTeardown(revokeCtx, s.store, s.gateway, s.redis, s.provisioner, linkID, userID); rerr != nil {
+		if _, rerr := RevokeLinkKitTeardown(revokeCtx, s.store, s.gateway, s.redis, linkID, userID); rerr != nil {
 			log.Printf("billing lifecycle: force-suspend %s: revoke link %s: %v", userID, linkID, rerr)
 		}
 	}
@@ -722,11 +716,13 @@ func (s *BillingLifecycleService) linkKitsForUser(userID string) []string {
 	return ids
 }
 
-// suspendTenantLinks drops each of the tenant's route-only links (ACL user +
-// tunnel key), killing their live tunnels. It does NOT revoke the warp key or
-// delete routes, so Reactivate can bring the same links back.
+// suspendTenantLinks drops each of the tenant's route-only links' tunnel keys,
+// killing their live tunnels within the edges' 30s recheck. The link's
+// heartbeat does not bring them back: Core refuses it while the owner is cut
+// off. It does NOT revoke the key or delete routes, so Reactivate can bring the
+// same links back.
 func (s *BillingLifecycleService) suspendTenantLinks(ctx context.Context, userID string) {
-	if s.provisioner == nil || s.gateway == nil || s.redis == nil {
+	if s.gateway == nil || s.redis == nil {
 		return
 	}
 	// The hourly ticker calls Suspend with context.Background(); a hung Redis call
@@ -735,29 +731,23 @@ func (s *BillingLifecycleService) suspendTenantLinks(ctx context.Context, userID
 	defer cancel()
 	for _, linkID := range s.linkKitsForUser(userID) {
 		tunnelToken := s.gateway.LinkToken(linkID)
-		s.provisioner.RemoveRouteOnlyLinkACL(ctx, linkID)
-		if err := s.redis.Del(ctx, "link:"+tunnelToken).Err(); err != nil {
+		if err := s.redis.Del(ctx, "link:"+tunnelToken, "online_link:"+tunnelToken).Err(); err != nil {
 			log.Printf("billing lifecycle: suspend link %s: delete tunnel key: %v", linkID, err)
 		}
 	}
 }
 
-// reactivateTenantLinks restores each link's scoped Redis ACL (identical derived
-// password, so the link's pool re-authenticates on its next reconnect) and re-adds
-// its tunnel key, so the edge accepts the tunnel again within seconds. No restart
-// needed: the link's ConnectionManager retries on its own.
+// reactivateTenantLinks re-adds each link's tunnel key, so the edge accepts the
+// tunnel again within seconds rather than at the link's next heartbeat. No
+// restart needed: the link's ConnectionManager retries on its own.
 func (s *BillingLifecycleService) reactivateTenantLinks(userID string) {
-	if s.provisioner == nil || s.gateway == nil || s.redis == nil {
+	if s.gateway == nil || s.redis == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, linkID := range s.linkKitsForUser(userID) {
 		tunnelToken := s.gateway.LinkToken(linkID)
-		if _, _, err := s.provisioner.EnsureRouteOnlyLinkACL(ctx, s.clusterSecret, linkID, tunnelToken); err != nil {
-			log.Printf("billing lifecycle: reactivate link %s: ensure ACL: %v", linkID, err)
-			continue
-		}
 		if err := s.redis.Set(ctx, "link:"+tunnelToken, "valid", 24*time.Hour).Err(); err != nil {
 			log.Printf("billing lifecycle: reactivate link %s: set tunnel key: %v", linkID, err)
 		}

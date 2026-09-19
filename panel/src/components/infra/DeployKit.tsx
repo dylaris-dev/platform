@@ -141,7 +141,7 @@ export function platformNote(kind: 'node' | 'route-only', platform: DeployPlatfo
     if (platform === 'linux') {
         return kind === 'node'
             ? 'The node drives the host’s Docker socket to run your servers, which needs host networking and NET_ADMIN.'
-            : 'The tunnel uses kernel WireGuard, which needs host networking and NET_ADMIN.';
+            : 'Host networking lets the link reach your server on this machine or your LAN. It needs no extra privileges and opens no port.';
     }
     return kind === 'node'
         ? 'Host networking on Docker Desktop joins the WSL2 VM, not Windows. Your servers run inside that VM alongside the node, so bind a Windows path in the snippet if you want the files where you can see them.'

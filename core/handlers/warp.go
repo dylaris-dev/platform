@@ -81,6 +81,15 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Gateway routing is disabled; enable gateway or both mode before enrolling warp peers.", http.StatusConflict)
 		return
 	}
+	// A route-only kit never joins the overlay: its link talks to Core over
+	// HTTPS (link_api.go), and a customer who wants route-only does not want a
+	// VPN into their network. Refused here, where the tunnel would be made, so
+	// no route-only machine can become a warp peer by running a warp client with
+	// its key.
+	if strings.HasPrefix(key.NodeID, "link-") {
+		sendJSONError(w, "A route-only link key does not join the overlay; run the route-only kit instead.", http.StatusForbidden)
+		return
+	}
 	var req struct {
 		PublicKey     string   `json:"public_key"`
 		TunnelSubnets []string `json:"tunnel_subnets"`
@@ -122,9 +131,8 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	// so clientIP(r) is the customer's real address (and is spoofing-resistant -
 	// it only believes X-Forwarded-For from a configured trusted proxy).
 	//
-	// Node keys only. The setting is "node admission", and a route-only link kit
-	// is not a node; gating link kits here would be a surprise to anyone reading
-	// the setting's name. The JOIN gate (open / one-shot / disabled) stays on the
+	// Node keys only. The setting is "node admission"; route-only kit keys are
+	// refused above and never get this far. The JOIN gate (open / one-shot / disabled) stays on the
 	// gRPC path, where it can be consumed exactly once per successful node enrol.
 	if h.state.Admission != nil && strings.HasPrefix(key.NodeID, "node-") {
 		allowed, reason, aerr := h.state.Admission.CheckNetwork(r.Context(), net.ParseIP(clientIP(r)))
@@ -492,7 +500,7 @@ func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
-	// Tenant link kits have their own teardown (routes + Redis ACL); routing one
+	// Tenant link kits have their own teardown (routes + tunnel key); routing one
 	// through here would revoke the key and leave those behind.
 	if key.OwnerID != "" {
 		sendJSONError(w, "This is a tenant link kit — revoke it from Protected Addresses", http.StatusBadRequest)
@@ -553,22 +561,23 @@ func (h *WarpHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "disconnected": removed})
 }
 
-// MintLinkKit (tenant) creates a route-only "link kit": a warp enrollment key
-// bound to the calling user plus an auto-generated link identity (node_id). The
-// customer runs warp (joins the overlay) + link (tunnels their LOCAL server out
-// through warp) — no managed node. Returns the plaintext warp key and the link
-// identity ONCE; it does NOT return the link token. That same key doubles as the
-// link's LINK_BOOT_KEY: the link exchanges it at /api/warp/link-boot for its
-// derived token at boot, so the token never travels with the kit and the cluster
-// secret never leaves Core (a tenant must never be able to derive another
-// tenant's link token).
+// MintLinkKit (tenant) creates a route-only "link kit": a key bound to the
+// calling user plus an auto-generated link identity (node_id). The customer runs
+// one container, the link, which tunnels their LOCAL server out to the edges
+// and talks to Core over HTTPS - no managed node, no overlay. Returns the
+// plaintext key and the link identity ONCE; it does NOT return the link token.
+// The link exchanges the key at /api/warp/link-boot for its derived token at
+// boot, so the token never travels with the kit and the cluster secret never
+// leaves Core (a tenant must never be able to derive another tenant's link
+// token). The key lives in warp_api_keys beside the node keys, and warp enroll
+// refuses it.
 func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	if !byonActive(h.state, r) {
 		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	// Route-only needs the overlay: warp enroll + link tunnel only exist in
-	// gateway/both routing mode. Match Enroll, which refuses in ip_port mode.
+	// Route-only needs the gateway: routes and link tunnels only exist in
+	// gateway/both routing mode. Match LinkBoot, which refuses otherwise.
 	if !h.state.gatewayEnabled() || h.state.Gateway == nil {
 		sendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
@@ -620,8 +629,8 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
 	}
-	// general policy + single connection: one customer machine, one warp peer.
-	// kill_old so a restart re-enrolls cleanly instead of hitting the limit.
+	// The policy columns are warp's and mean nothing for a kit key, which never
+	// enrolls; they are filled because the table requires them.
 	if _, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
 		Name:      name,
 		KeyHash:   HashAPIKey(plaintext),
@@ -637,28 +646,28 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
-		"warp_key": plaintext,
+		"link_key": plaintext,
 		"link_id":  nodeID,
-		"note":     "Shown once. Paste WARP_API_KEY into the route-only .env.",
+		"note":     "Shown once. Paste it as LINK_KEY into the route-only .env.",
 	})
 }
 
-// LinkBoot POST /api/warp/link-boot - a Link presents its warp key and receives
-// its tunnel token plus a Redis credential scoped to its own keys. A route-only
-// link kit gets its own derived token and route-only ACL; a node key (a BYON
-// machine's or an External node's) gets the Link of the node it is bound to
-// (nodeLinkBoot). WarpAPIKeyMiddleware has
-// already rejected an unknown or revoked key. The response is never logged.
+// LinkBoot POST /api/warp/link-boot - a Link presents its key and receives its
+// tunnel token. A route-only kit's key gets that token alone (mode "core"): the
+// link then talks to Core's /api/warp/link/* endpoints and holds no Redis
+// login. A node key (a BYON machine's or an External node's) gets the Link of
+// the node it is bound to, with that node's scoped Redis credential
+// (nodeLinkBoot). WarpAPIKeyMiddleware has already rejected an unknown or
+// revoked key. The response is never logged.
 func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
 	if !ok {
 		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// A node's warp key must never mint a ROUTE-ONLY link credential: that ACL
-	// has none of the keys a node's servers need, and it would give the machine a
-	// second tunnel identity beside its node's. It gets its node's own Link
-	// instead.
+	// A node's warp key must never get a ROUTE-ONLY answer: that would give the
+	// machine a second tunnel identity beside its node's. It gets its node's own
+	// Link instead.
 	//
 	// Owned or not. An owner-less node- key is an admin's External node key
 	// (MintExternalNodeKey); admin keys cannot carry the prefix any other way
@@ -696,12 +705,8 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Re-check revoked_at with a fresh read immediately before provisioning, to
-	// shrink the TOCTOU window against a concurrent RevokeLinkKit: the middleware
-	// already checked revoked_at once, but a revoke racing between that check and
-	// this point could otherwise have EnsureRouteOnlyLinkACL resurrect the just-
-	// deleted ACL user. The reconciler's cleanup sweep (acl_reconciler.go) is the
-	// robust backstop regardless (self-heals within ~60s even if this race is lost).
+	// Re-check revoked_at with a fresh read: the middleware checked it once, and a
+	// revoke can land between that check and this answer.
 	if fresh, ferr := h.state.Store.GetWarpAPIKeyByNodeID(key.NodeID); ferr != nil {
 		log.Printf("link-boot: fresh revoke check for %s failed, proceeding: %v", key.NodeID, ferr)
 	} else if fresh.RevokedAt != nil {
@@ -712,23 +717,15 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		h.nodeLinkBoot(w, key)
 		return
 	}
-	tunnelToken := h.state.Gateway.LinkToken(key.NodeID)
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	user, pass, err := h.state.ACLProvisioner.EnsureRouteOnlyLinkACL(ctx, h.state.ClusterSecret, key.NodeID, tunnelToken)
-	if err != nil {
-		log.Printf("link-boot: provision ACL for %s failed: %v", key.NodeID, err)
-		sendJSONError(w, "Failed to provision credentials", http.StatusInternalServerError)
-		return
-	}
+	// A route-only link gets its token and nothing else: no Redis login. From
+	// here it talks to Core alone (link_api.go), which is what makes revoking
+	// this key the whole revocation.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":    true,
+		"mode":       "core",
 		"link_id":    key.NodeID,
-		"link_token": tunnelToken,
-		"redis_user": user,
-		"redis_pass": pass,
-		"redis_db":   h.state.Redis.Options().DB,
+		"link_token": h.state.Gateway.LinkToken(key.NodeID),
 	})
 }
 
@@ -889,12 +886,11 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 }
 
 // RevokeLinkKit DELETE /api/warp/link-kits/{linkID} - owner or admin. Tears the
-// route-only link down end to end: marks the warp key revoked so it can never
-// re-enroll or boot again, drops its scoped Redis ACL user (ACL DELUSER terminates
-// its live connections), deletes its tunnel key so the edge closes the tunnel within
-// 30s, and removes its Core-owned routes. Order matters twice: the durable revoke
-// comes first so a partial failure cannot undo itself, and the ACL user is dropped
-// before the tunnel key so a restart cannot re-register (see the design doc).
+// route-only link down end to end: marks the key revoked so it can never boot or
+// heartbeat again, deletes its tunnel key so the edge closes the tunnel within
+// 30s, and removes its Core-owned routes. The durable revoke comes first so a
+// partial failure cannot undo itself; the heartbeat re-checks after its own
+// write, so a beat racing the revoke cannot bring the tunnel key back.
 func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -923,25 +919,14 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	// Durable-first revoke, ACL dropped before the tunnel key, routes cleaned up
 	// last - shared with the admin force-suspend path (billing_lifecycle.go
 	// SuspendNow) so the ordering has one source of truth. See its doc comment.
-	removed, rerr := services.RevokeLinkKitTeardown(ctx, h.state.Store, h.state.Gateway, h.state.Redis, h.state.ACLProvisioner, linkID, key.OwnerID)
+	removed, rerr := services.RevokeLinkKitTeardown(ctx, h.state.Store, h.state.Gateway, h.state.Redis, linkID, key.OwnerID)
 	if rerr != nil {
 		log.Printf("revoke link %s: %v", linkID, rerr)
 		sendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
 		return
 	}
-	// The overlay membership, on top of what the teardown removes.
-	//
-	// Deliberately HERE and not inside RevokeLinkKitTeardown, which is shared with
-	// the admin force-suspend path (BillingLifecycleService.SuspendNow). Suspension
-	// cuts the tunnel at the grace CUTOFF, not at the moment of suspension - that
-	// is what suspendTenantWarpPeers is for and it is a decision, not an omission.
-	// Putting the disconnect in the shared helper would move that cutoff forward
-	// for every suspended tenant. A tenant revoking their OWN kit has no grace to
-	// preserve: they asked for the machine to lose access.
-	//
-	// Without this the teardown took away what the tunnel CARRIES (routes, tunnel
-	// key, Redis ACL) and left the tunnel itself, so the machine stayed an overlay
-	// member after the panel reported the kit revoked.
+	// A kit key cannot enroll any more, but a kit from the warp era may still be
+	// a peer; revoking it must take that away too.
 	peers := 0
 	if h.svc != nil {
 		peers = h.svc.DisconnectKeyPeers(ctx, key.ID)
@@ -959,12 +944,15 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 // in their id prefix and their wording. Both are the SAME operation on the same
 // table, and writing it twice is how the two drift.
 //
-// It deliberately does NOT disconnect the peer, which is the one thing that
-// makes this different from revoke. A roll is "the machine keeps running, and
-// the old secret stops opening anything new": the customer edits one line and
-// redeploys when it suits them, and the kit's kill_old policy replaces the old
-// tunnel at that moment. Revoke is the immediate-cutoff path and already exists
-// beside it - a leaked key wants that one, not this.
+// It deliberately does NOT disconnect the peer or delete a tunnel key, which is
+// what makes this different from revoke. For a node key a roll is "the machine
+// keeps running, and the old secret stops opening anything new": the customer
+// edits one line and redeploys when it suits them, and the key's kill_old policy
+// replaces the old tunnel at that moment. A route-only link uses its key on
+// every heartbeat, so there the old one stops working at once: the link shows
+// offline until it is redeployed, and its tunnels stay up until the token Core
+// last marked valid expires (24 hours). Revoke is the immediate-cutoff path and
+// already exists beside it - a leaked key wants that one, not this.
 func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, id, prefix, notFound string) (string, bool) {
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -1053,9 +1041,9 @@ func (h *WarpHandler) RollLinkKit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
-		"warp_key": plaintext,
+		"link_key": plaintext,
 		"link_id":  linkID,
-		"note":     "Shown once. Replace WARP_API_KEY in the route-only .env and redeploy.",
+		"note":     "Shown once. Replace LINK_KEY in the route-only .env and redeploy; the running link stops reporting until you do.",
 	})
 }
 

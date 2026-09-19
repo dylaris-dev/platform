@@ -138,14 +138,3 @@ func derive(secret []byte, domain string) string {
 	m.Write([]byte(domain))
 	return hex.EncodeToString(m.Sum(nil))
 }
-
-// RouteOnlyLinkUsername is the ACL username for an external route-only link. The
-// link identity (the warp key's node_id) is unguessable and already carries a
-// "link-" prefix, so it doubles as the username.
-func RouteOnlyLinkUsername(linkID string) string { return linkID }
-
-// RouteOnlyLinkPassword derives the route-only link's Redis password from the
-// cluster secret, so Core never stores it. Rotating the domain rotates the password.
-func RouteOnlyLinkPassword(clusterSecret, linkID string) string {
-	return derive([]byte(clusterSecret), "dylaris-redis-acl:v1:route-only-link:"+linkID)
-}

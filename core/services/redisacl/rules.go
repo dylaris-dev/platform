@@ -359,33 +359,3 @@ func SetUserArgs(username string, rules []interface{}) []interface{} {
 	out = append(out, rules...)
 	return out
 }
-
-// BuildRouteOnlyLinkACLRules scopes an external route-only link to exactly the keys
-// it touches. No hub discovery, no beam: a route-only link has no NodeID and can
-// neither publish nor resolve either.
-//
-// instanceID is the link's ID - which is also its Redis ACL username - and NOT a
-// slice of its tunnel token. It used to be tunnelToken[:8], so eight hex
-// characters of a live authentication token became a Redis KEY NAME that never
-// expires. Key names are readable by anything that can SCAN, so that was one
-// tenant's token prefix published to every other tenant's machine. The link ID
-// is public by construction: it is the username the link already authenticates
-// with, so both sides can name the same stream without either one leaking.
-func BuildRouteOnlyLinkACLRules(password, tunnelToken, instanceID string) []interface{} {
-	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
-	rules = append(rules,
-		"~link:"+tunnelToken,
-		"~online_link:"+tunnelToken,
-		"~dylaris:errors:link:"+instanceID,
-		// Same stream, same instance, same reason as BuildLinkACLRules above. A
-		// route-only link has no NodeID, so errLogInstance falls back to the ACL
-		// username - which is what instanceID already is, so both names agree
-		// without either side deriving anything new.
-		"~dylaris:link:"+instanceID+":stats",
-		"%R~sys:edges", "%R~edge:registry:*", "%R~edge:cert:fingerprint:*",
-	)
-	for _, c := range commandCats {
-		rules = append(rules, c)
-	}
-	return rules
-}

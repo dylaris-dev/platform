@@ -135,7 +135,7 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 			if !strings.HasPrefix(k.NodeID, "link-") {
 				continue
 			}
-			if _, rerr := RevokeLinkKitTeardown(ctx, st, gw, rdb, prov, k.NodeID, userID); rerr != nil {
+			if _, rerr := RevokeLinkKitTeardown(ctx, st, gw, rdb, k.NodeID, userID); rerr != nil {
 				return fmt.Errorf("revoke link kit %s: %w", k.NodeID, rerr)
 			}
 		}

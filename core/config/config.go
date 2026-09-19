@@ -136,8 +136,8 @@ type Config struct {
 	StoreSharedKey string
 	StoreEnabled   bool
 
-	// SuspendGrace defers the hard cutoff (stop servers + drop route-only link
-	// ACLs) for this long after a tenant is marked "suspended", so a transient
+	// SuspendGrace defers the hard cutoff (stop servers + take route-only link
+	// tunnels down) for this long after a tenant is marked "suspended", so a transient
 	// billing/DB fault cannot instantly kick a paying customer. Env
 	// BILLING_SUSPEND_GRACE (Go duration), default 48h; 0 = enforce on the next
 	// hourly lifecycle tick (no grace).

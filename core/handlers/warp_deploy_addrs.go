@@ -19,8 +19,8 @@ import (
 // Swarm service name; a warp spoke has no DNS into the cluster, so handing it
 // "redis:6379" produces a proxy that never resolves anything.
 
-// DeployConfig is what a BYON or route-only deploy snippet still needs from
-// Core: the tunnel subnets and the pin for Core's control channel. The two
+// DeployConfig is what a BYON deploy snippet still needs from Core (a route-only
+// kit needs none of it): the tunnel subnets and the pin for Core's control channel. The two
 // overlay addresses used to be here too, and now go to the machine's warp
 // instead, which proxies them. An empty TunnelSubnets means "could not be
 // determined here" and the panel keeps showing its placeholder rather than a

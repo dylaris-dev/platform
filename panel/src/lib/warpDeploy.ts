@@ -191,19 +191,15 @@ export function nodeIdFromLabel(label: string | undefined): string | undefined {
 }
 
 /**
- * routeOnlyCompose is warp + link: the customer runs the Minecraft server
- * themselves and gets a protected Dylaris address for it. No node, no swarm
- * join, no published ports.
+ * routeOnlyCompose is ONE container, the link: the customer runs the Minecraft
+ * server themselves and gets a protected Dylaris address for it. No node, no
+ * swarm join, no published ports, and no tunnel into their network - the link
+ * talks to our API over HTTPS with the kit key and dials out to the edges.
  *
- * Both containers are host-networked, so anything they bind lands on the
- * customer's own machine. The link's management server is therefore pinned to
- * loopback below: nothing reads it in this mode (only a NODE-managed link has a
- * reader), and its /health is unauthenticated.
- *
- * The link is what makes this route-only rather than plain overlay access, and
- * nothing deploys it implicitly: the customer runs it. It fetches its tunnel token and a scoped Redis
- * credential from Core at boot, authenticated by the same warp key, so no
- * second secret has to be handed out and nothing secret lands on disk.
+ * It is host-networked so a server on loopback or the LAN is reached exactly as
+ * the customer enters the target, so anything it binds lands on their own
+ * machine. Its management server is therefore pinned to loopback below: nothing
+ * reads it, and its /health is unauthenticated.
  */
 export function routeOnlyCompose(i: WarpDeployInput): string {
     // The two lines below are not the same knob, and writing one value into
@@ -221,51 +217,34 @@ export function routeOnlyCompose(i: WarpDeployInput): string {
     // own answer and must never follow a route target.
     const allowedTarget = or(i.localTarget, defaultLocalTarget(i.platform));
     const localHost = defaultLocalTarget(i.platform);
+    // A route-only key is a link key, not a warp key; the placeholder says so.
+    const key = i.apiKey === KEY_PLACEHOLDER ? '<your-link-key>' : i.apiKey;
     const header = i.platform === 'windows'
         ? `# On Docker Desktop, host networking is the WSL2 VM's rather than Windows',
 # so your own server is reached at host.docker.internal.`
-        : `# Kernel WireGuard needs host networking and NET_ADMIN.`;
+        : `# No VPN and no extra privileges: every connection is outbound.`;
     return `# route-only.yml
 #
-# warp opens an outbound tunnel to us; link hands your own server to the
-# gateway. Nothing is published and no port is opened.
+# link hands your own server to the gateway. It talks to our API with the key
+# below and opens outbound tunnels to our edges. Nothing is published and no
+# port is opened.
 ${header}
 #
 # Lines marked "keep" are filled in for this link and must stay as they are.
 # Only a line marked EDIT is yours to change.
 
 services:
-  warp:
-    image: ${REG}/gateway-warp:latest
-    restart: unless-stopped
-    environment:
-      # keep - this link's key. Shown once; we store only a hash of it.
-      API_KEY: "${i.apiKey}"
-
-      # keep - our API, which is not the same host as the panel.
-      ENROLL_URL: "${or(i.enrollUrl, '<core-url>')}"
-
-      # keep - the network routed through the tunnel. NOT your home LAN.
-      TUNNEL_SUBNETS: "${or(i.tunnelSubnets, '<overlay-cidr e.g. 10.20.0.0/16>')}"
-    network_mode: host
-    cap_add: [NET_ADMIN]
-
   link:
     image: ${REG}/gateway-link:latest
     restart: unless-stopped
-    depends_on: [warp]
     environment:
-      # keep - the same address as ENROLL_URL above.
+      # keep - this link's key. Shown once; we store only a hash of it. It is
+      # the only credential on this machine, and revoking it in the panel is
+      # the whole revocation.
+      LINK_KEY: "${key}"
+
+      # keep - our API, which is not the same host as the panel.
       CORE_URL: "${or(i.enrollUrl, '<core-url>')}"
-
-      # keep - the same key again. link trades it for its own token at boot, so
-      # no second secret has to travel with this file.
-      LINK_BOOT_KEY: "${i.apiKey}"
-
-      # keep - link finds warp's local proxy on 127.0.0.1:${WARP_PROXY_REDIS_PORT} by itself.
-      # That proxy is loopback, so there is no certificate to verify, and the
-      # path is already inside WireGuard.
-      REDIS_USE_TLS: "false"
 
       # EDIT if your server is not on this machine. Host only, NO port: it is
       # compared as an exact string, so a "host:25565" here never matches.
@@ -277,13 +256,6 @@ services:
       # keep - loopback, so this unauthenticated status port stays off your LAN.
       LINK_PORT: "127.0.0.1:25540"
 
-      # keep - this machine is outside our network, so link reaches our edges
-      # over the internet. Through the tunnel instead, your players would share
-      # one connection with your own uploads and drop whenever it restarts,
-      # which is why that route is not open. Current versions work this out on
-      # their own and ignore this line; it stays because an older image does not.
-      LINK_EXTERNAL: "true"
-
       # EDIT if you want a shorter window. When you stop or update link, it keeps
       # the players already on your server until the last one leaves, and only
       # then shuts down - nobody is kicked. It takes no new players while it
@@ -293,13 +265,6 @@ services:
     # keep - a little longer than LINK_DRAIN_TIMEOUT, so link finishes on its own
     # terms instead of being killed with players still on it.
     stop_grace_period: 6h10m
-    volumes:
-      # keep - what link last got from us, so a restart comes up even while
-      # our API cannot be reached.
-      - link_data:/data
-
-volumes:
-  link_data:
 `;
 }
 
@@ -521,9 +486,12 @@ export type KitInputProps = {
  */
 export type KitProps = Omit<KitInputProps, 'platform'>;
 
+/** What kitInput puts in the file when the key is no longer known. */
+export const KEY_PLACEHOLDER = '<your-warp-key>';
+
 export function kitInput(p: KitInputProps): WarpDeployInput {
     return {
-        apiKey: p.warpKey ?? '<your-warp-key>',
+        apiKey: p.warpKey ?? KEY_PLACEHOLDER,
         enrollUrl: p.enrollUrl,
         nodeEnrollToken: p.nodeEnrollToken,
         grpcTlsFingerprint: kitGrpcTlsFingerprint(p.grpcTlsFingerprint, p.config),
@@ -616,6 +584,17 @@ export const DEPLOY_PORTAINER_NOTE =
  */
 export function deployCli(kind: 'route-only' | 'node', externalNode = false): string {
     const file = composeFileName(kind);
+    if (kind === 'route-only') {
+        return `# 1. Start it. Pull first, so a cached image is not what runs.
+docker compose -f ${file} pull
+docker compose -f ${file} up -d
+
+# 2. Watch the link come up: it gets its token from us, then opens a tunnel
+#    to every edge ("Secure Tunnel established ... over the internet").
+docker compose -f ${file} logs -f link
+
+# 3. Create the route(s) in the panel.`;
+    }
     return `# 1. Start it. Pull first: the tunnel agent is what supplies the internal
 #    addresses, so a stale cached image would leave the rest of the stack
 #    with nothing to talk to.
@@ -627,15 +606,11 @@ docker compose -f ${file} logs -f warp
 
 # 3. Verify the overlay actually carries traffic, not just that wg0 exists:
 docker compose -f ${file} exec warp wg show
-${kind === 'node'
-            ? `
+
 # 4. The node registers itself; it appears in the panel under ${externalNode
-                ? 'My infrastructure -> External nodes'
-                : 'Nodes'} within ~30s.
-docker compose -f ${file} logs -f node`
-            : `
-# 4. The link registers its tunnel; then create the route(s) in the panel.
-docker compose -f ${file} logs -f link`}`;
+        ? 'My infrastructure -> External nodes'
+        : 'Nodes'} within ~30s.
+docker compose -f ${file} logs -f node`;
 }
 
 /**

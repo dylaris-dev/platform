@@ -718,9 +718,8 @@ func main() {
 	// mandatory); provisions the node's scoped ACL users and mints/returns its
 	// per-node secret.
 	aclProvisioner := redisacl.NewProvisioner(redisClient)
-	// Hand the warp handler Core's ACL provisioner + cluster secret so the
-	// route-only link-boot endpoint can derive and provision per-link creds.
-	appState.ACLProvisioner = aclProvisioner
+	// The cluster secret, for link-boot's BYON answer (the node's derived Redis
+	// password).
 	appState.ClusterSecret = cfg.ClusterSecret
 
 	// How Core reaches its OWN database with pg_dump / pg_restore, for platform
@@ -749,24 +748,24 @@ func main() {
 	appState.SuspendGrace = cfg.SuspendGrace
 
 	// ACL reconciler - leader-gated. Periodically (and on a Redis reconnect)
-	// re-provisions every paired node's + route-only link's scoped Redis ACL
+	// re-provisions every paired node's scoped Redis ACL
 	// users from the DB-stored per-node secret, so a Valkey restart that lost the
 	// aclfile self-heals without a service restart. Same users, same passwords;
 	// running services re-auth transparently on their next command.
-	aclReconciler := services.NewACLReconciler(pgStore, aclProvisioner, redisClient, cfg.ClusterSecret, cfg.SuspendGrace)
+	aclReconciler := services.NewACLReconciler(pgStore, aclProvisioner, redisClient, cfg.ClusterSecret)
 	aclReconciler.SetLeader(coreLeader)
 	aclReconciler.Start(bgCtx)
-	// The billing lifecycle drops/restores route-only link tunnels on
-	// suspend/reactivate; give it the same provisioner, gateway and cluster secret.
-	appState.Billing.SetLinkACL(appState.Gateway, redisClient, aclProvisioner, cfg.ClusterSecret)
+	// The billing lifecycle drops/restores route-only link tunnel keys on
+	// suspend/reactivate.
+	appState.Billing.SetLinkACL(appState.Gateway, redisClient)
 	// ...and the warp service, so the hard cutoff can drop the tenant's overlay
 	// tunnel itself. Taking away what the tunnel carries is not the same as
 	// taking away the tunnel, and only this drops the WireGuard peer.
 	appState.Billing.SetWarpPeers(extras.warpService)
 	appState.Billing.Start(bgCtx)
-	// Same three values, same reason: the auto-delete sweep removes accounts, and
-	// an account's link kit holds a Redis credential and a tunnel key that
-	// nothing else will ever clean up once its row is gone.
+	// The auto-delete sweep removes accounts, and an account's link kit holds a
+	// tunnel key and its nodes hold Redis users that nothing else will ever clean
+	// up once the row is gone.
 	autoDelete.SetLinkACL(appState.Gateway, redisClient, aclProvisioner)
 	autoDelete.SetWarpPeers(extras.warpService)
 	autoDelete.Start(bgCtx)

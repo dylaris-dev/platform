@@ -51,9 +51,9 @@ func TestUnknownNodeACLUsers(t *testing.T) {
 
 	users := []string{
 		"default",
-		// Route-only link kits: generateLinkIdentity returns "link-"+hex, so a
-		// link kit username can never collide with the node- namespace. Pinned
-		// here because the whole prune rests on that.
+		// A link- user from before route-only links lost their Redis login
+		// (generateLinkIdentity returns "link-"+hex). It is outside the node-
+		// namespace, so the prune must leave it alone like any other stranger.
 		"link-0123456789abcdef0123456789abcdef",
 		// Other subsystems on the same Redis.
 		"gw-warp",

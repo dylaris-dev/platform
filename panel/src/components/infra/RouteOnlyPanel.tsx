@@ -23,8 +23,9 @@ import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 //
 // Route-only ("via Link"): a protected address pointed at a server the user
 // runs on their OWN machine, reached through their own outbound Link tunnel. No
-// managed node, no open ports - the customer runs warp + link with a "link kit"
-// and the edge proxies through that tunnel to their LOCAL server.
+// managed node, no open ports and no VPN - the customer runs one container, the
+// link, with a "link kit" key, and the edge proxies through that tunnel to their
+// LOCAL server.
 //
 // This was its own page at /routes while /nodes carried a SECOND, partial copy
 // of the same mint flow: one product, minted in two places, with the deploy
@@ -122,7 +123,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             const res = await mintLinkKit(linkName.trim());
             // Mirrors revoke's res.success check below: fetchAPI resolves (does not
             // throw) on an HTTP error with a JSON body, so an unchecked res here
-            // would render the one-time-secret panel with WARP_API_KEY=undefined -
+            // would render the one-time-secret panel with LINK_KEY=undefined -
             // looking like success for a security-critical mint.
             if (!res.success) throw new Error((res as { message?: string }).message || 'Failed to create link');
             setMinted(res);
@@ -138,14 +139,15 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     };
 
     // New secret, same link. The link_id, its routes and its protected address all
-    // stay; only WARP_API_KEY changes. The tunnel is left up on purpose - the
-    // machine keeps serving until it is redeployed with the new key, and revoke
-    // beside this is still the immediate cutoff for a key that leaked.
+    // stay; only LINK_KEY changes. The link uses its key on every heartbeat, so
+    // the running one stops reporting at once and shows offline until it is
+    // redeployed; its tunnels stay up meanwhile. Revoke beside this is still the
+    // immediate cutoff for a key that leaked.
     const roll = async (linkIdToRoll: string, name: string) => {
         if (!(await confirmDialog({
             title: 'Roll this link key?',
-            message: `The current key for ${name} stops working for new connections straight away, and you get a replacement shown once. `
-                + 'The address and its routes do not change, and the link keeps running until you redeploy it with the new key.',
+            message: `The current key for ${name} stops working straight away, and you get a replacement shown once. `
+                + 'The address and its routes do not change. Players keep connecting, but the link shows offline until you redeploy it with the new key.',
             confirmLabel: 'Roll the key',
             destructive: false,
         }))) return;
@@ -153,9 +155,9 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
         try {
             // Same reason mint and revoke check it: fetchAPI resolves on an HTTP
             // error with a JSON body, so an unchecked res would reveal a panel
-            // reading WARP_API_KEY=undefined after a roll that never happened.
+            // reading LINK_KEY=undefined after a roll that never happened.
             const res = await rollLinkKit(linkIdToRoll);
-            if (!res.success || !res.warp_key) throw new Error((res as { message?: string }).message || 'Failed to roll link key');
+            if (!res.success || !res.link_key) throw new Error((res as { message?: string }).message || 'Failed to roll link key');
             setMinted(res);
             setMintedWasRoll(true);
             setLinkId(res.link_id);
@@ -332,7 +334,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-(--base-06)">A link is the kit you run on your machine (warp + link). It opens an outbound tunnel — nothing is exposed.</p>
+                <p className="text-xs text-(--base-06)">A link is the one container you run on your machine. It opens outbound connections only — no VPN, nothing is exposed.</p>
             </div>
 
             {/* Create or edit route */}
@@ -469,13 +471,13 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                 {!minted && (
                     <p className="text-xs text-(--base-06)">
                         {kits.length > 0
-                            ? <>The key itself cannot be shown again — only its hash is stored. Paste the one you saved where the file says <code className="font-mono">&lt;your-warp-key&gt;</code>, or revoke the link and create a new one.</>
+                            ? <>The key itself cannot be shown again — only its hash is stored. Paste the one you saved where the file says <code className="font-mono">&lt;your-link-key&gt;</code>, or revoke the link and create a new one.</>
                             : <>This is what you will run. Create a link on the left and its key is filled in for you.</>}
                     </p>
                 )}
                 <DeployKit
                     kind="route-only"
-                    warpKey={minted?.warp_key ?? null}
+                    warpKey={minted?.link_key ?? null}
                     enrollUrl={enrollUrl}
                     config={config}
                     // What their routes already dial, so the file allows exactly
@@ -495,12 +497,12 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     );
 }
 
-// MintReveal shows the one-time secrets for a freshly minted link kit. The warp
-// key is hashed server-side and can never be shown again, so we make copying it
+// MintReveal shows the one-time secret for a freshly minted link kit. The key
+// is hashed server-side and can never be shown again, so we make copying it
 // prominent and warn the user.
 function MintReveal({ kit, rolled, onCopy, onClose }: { kit: MintedLinkKit; rolled?: boolean; onCopy: (m: string) => void; onClose: () => void }) {
-    // The link fetches everything else (its tunnel token + Redis credential) from
-    // Core at boot using this warp key, so the only secret to paste is WARP_API_KEY.
+    // The link fetches its tunnel token from Core at boot and talks to Core with
+    // this key from then on, so the only secret to paste is LINK_KEY.
     return (
         <div className="rounded-md border border-(--accent)/30 bg-(--accent)/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -510,13 +512,13 @@ function MintReveal({ kit, rolled, onCopy, onClose }: { kit: MintedLinkKit; roll
                 <button onClick={onClose} className="text-xs text-(--base-06) hover:text-(--base-09)">Dismiss</button>
             </div>
             <p className="text-xs text-(--base-07) leading-relaxed">
-                Shown once. It is already filled into the compose file below. The link fetches its tunnel token
-                and Redis credential from Core on its own. The warp key cannot be retrieved later.
-                {rolled && ' Only the key changed - the address and its routes are untouched, and the link keeps running until you redeploy it.'}
+                Shown once. It is already filled into the compose file below, and it is the only credential
+                on your machine. It cannot be retrieved later.
+                {rolled && ' Only the key changed - the address and its routes are untouched. Redeploy the link with it; until then it shows offline.'}
             </p>
-            <CopyRow label="WARP_API_KEY" value={kit.warp_key} onCopy={onCopy} />
+            <CopyRow label="LINK_KEY" value={kit.link_key} onCopy={onCopy} />
             <button
-                onClick={() => { navigator.clipboard?.writeText(`WARP_API_KEY=${kit.warp_key}`); onCopy('Copied .env line'); }}
+                onClick={() => { navigator.clipboard?.writeText(`LINK_KEY=${kit.link_key}`); onCopy('Copied .env line'); }}
                 className="btn btn-secondary inline-flex items-center gap-2 text-xs"
             >
                 <Copy size={13} /> Copy .env line

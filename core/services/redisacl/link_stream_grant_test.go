@@ -40,9 +40,6 @@ func TestALinkIsGrantedBothOfItsStreams(t *testing.T) {
 		// nodeToken is what the Link sees as NODE_ID, so errLogInstance returns
 		// it and both streams are named by it.
 		{"a node's link sidecar", BuildLinkACLRules("pw", "node-a", "tunnel-token")},
-		// A route-only link has no NodeID, so errLogInstance falls back to the
-		// ACL username - which IS the instance id Core passes here.
-		{"a route-only link", BuildRouteOnlyLinkACLRules("pw", "tunnel-token", "link-abc")},
 	}
 
 	for _, tc := range cases {

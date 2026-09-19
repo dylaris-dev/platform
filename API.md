@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **501 routes** in 49 sections: 221 GET, 153 POST, 38 PUT, 36 PATCH, 54 DELETE.
+- **504 routes** in 49 sections: 222 GET, 155 POST, 38 PUT, 36 PATCH, 54 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **98** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **101** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -186,7 +186,7 @@ can still show what exists.
 - [/api/updates](#apiupdates) (1)
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (2)
-- [/api/warp](#apiwarp) (18)
+- [/api/warp](#apiwarp) (21)
 - [/healthz](#healthz) (1)
 - [/mirror/{rest:.*}](#mirrorrest) (1)
 
@@ -910,11 +910,14 @@ can still show what exists.
 | POST | `/api/warp/enroll` | warp key | _no capability_ | - | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
 | POST | `/api/warp/leaders` | session | `topology.write` | - | `WarpHandler.UpsertLeader` | (admin) creates or updates a leader endpoint within a region. |
 | DELETE | `/api/warp/leaders/{leaderId}` | session | `topology.write` | - | `WarpHandler.DeleteLeader` | (admin) removes a leader endpoint. |
-| POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit | `WarpHandler.LinkBoot` | a Link presents its warp key and receives its tunnel token plus a Redis credential scoped to its own keys. |
+| POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit | `WarpHandler.LinkBoot` | a Link presents its key and receives its tunnel token. |
 | GET | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.ListLinkKits` | (tenant) returns the caller's route-only link kits (metadata only, no secrets). |
-| POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a warp enrollment key bound to the calling user plus an auto-generated link identity (node_id). |
+| POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a key bound to the calling user plus an auto-generated link identity (node_id). |
 | DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
 | POST | `/api/warp/link-kits/{linkID}/roll` | session | _no capability_ | - | `WarpHandler.RollLinkKit` | owner or admin. |
+| GET | `/api/warp/link/edges` | warp key | _no capability_ | Limit | `WarpHandler.LinkEdges` | every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published. |
+| POST | `/api/warp/link/heartbeat` | warp key | _no capability_ | Limit | `WarpHandler.LinkHeartbeat` | a route-only link says it is running. |
+| POST | `/api/warp/link/stats` | warp key | _no capability_ | Limit | `WarpHandler.LinkStats` | one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:<link id>:stats. |
 | GET | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
 | POST | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
 | DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |

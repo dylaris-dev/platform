@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -41,7 +40,7 @@ type linkRevokeFakeGateway struct {
 	deletedDomains []string
 	// tokenedFor records which identities the KIT teardown was run for. The
 	// revoke alone no longer tells them apart: the account teardown revokes every
-	// key of the owner, and only a link kit gets the ACL/tunnel/route treatment.
+	// key of the owner, and only a link kit gets the tunnel/route treatment.
 	tokenedFor []string
 }
 
@@ -59,9 +58,8 @@ func TestRevokeLinkKitTeardown_RevokeFails_NoSideEffects(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	fs := &linkRevokeFakeStore{revokeErr: map[string]error{"link-1": errors.New("db down")}}
 	gw := &linkRevokeFakeGateway{tunnelToken: "tunnel-1"}
-	prov := redisacl.NewProvisioner(rdb)
 
-	removed, err := RevokeLinkKitTeardown(context.Background(), fs, gw, rdb, prov, "link-1", "owner-1")
+	removed, err := RevokeLinkKitTeardown(context.Background(), fs, gw, rdb, "link-1", "owner-1")
 
 	if err == nil {
 		t.Fatal("expected error when the durable revoke fails")
@@ -80,7 +78,6 @@ func TestRevokeLinkKitTeardown_RemovesOnlyMatchingCoreOwnedRoutes(t *testing.T) 
 	fs := &linkRevokeFakeStore{revokeErr: map[string]error{}}
 	const tunnelToken = "tunnel-1"
 	gw := &linkRevokeFakeGateway{tunnelToken: tunnelToken}
-	prov := redisacl.NewProvisioner(rdb)
 
 	// The stored rows are what a revocation works from now. A hub-managed route
 	// cannot appear here at all - only route-only entries are ever recorded -
@@ -97,7 +94,7 @@ func TestRevokeLinkKitTeardown_RemovesOnlyMatchingCoreOwnedRoutes(t *testing.T) 
 	seedGatewayRoute(t, rdb, "a.example.com", GatewayRoute{CoreOwned: true, OwnerID: "owner-1", TunnelID: tunnelToken})
 	seedGatewayRoute(t, rdb, "c.example.com", GatewayRoute{CoreOwned: false, OwnerID: "owner-1", TunnelID: tunnelToken})
 
-	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, prov, "link-1", "owner-1")
+	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, "link-1", "owner-1")
 	if err != nil {
 		t.Fatalf("RevokeLinkKitTeardown: %v", err)
 	}
@@ -130,14 +127,13 @@ func TestRevokeLinkKitTeardown_RouteDeleteError_ContinuesAndSkipsCount(t *testin
 		tunnelToken:  tunnelToken,
 		deleteErrFor: map[string]error{"f.example.com": errors.New("redis blip")},
 	}
-	prov := redisacl.NewProvisioner(rdb)
 
 	fs.rows = []store.CoreLinkRoute{
 		{Domain: "f.example.com", OwnerID: "owner-1", LinkToken: tunnelToken},
 		{Domain: "g.example.com", OwnerID: "owner-1", LinkToken: tunnelToken},
 	}
 
-	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, prov, "link-2", "owner-1")
+	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, "link-2", "owner-1")
 	if err != nil {
 		t.Fatalf("RevokeLinkKitTeardown: %v", err)
 	}
@@ -151,9 +147,8 @@ func TestRevokeLinkKitTeardown_NoMatchingRoutes_ReturnsZero(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	fs := &linkRevokeFakeStore{revokeErr: map[string]error{}}
 	gw := &linkRevokeFakeGateway{tunnelToken: "tunnel-3"}
-	prov := redisacl.NewProvisioner(rdb)
 
-	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, prov, "link-3", "owner-1")
+	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, "link-3", "owner-1")
 	if err != nil {
 		t.Fatalf("RevokeLinkKitTeardown: %v", err)
 	}
@@ -168,22 +163,23 @@ func TestRevokeLinkKitTeardown_DeletesTunnelKey(t *testing.T) {
 	fs := &linkRevokeFakeStore{revokeErr: map[string]error{}}
 	const tunnelToken = "tunnel-4"
 	gw := &linkRevokeFakeGateway{tunnelToken: tunnelToken}
-	prov := redisacl.NewProvisioner(rdb)
 
-	if err := rdb.Set(ctx, "link:"+tunnelToken, "some-value", 0).Err(); err != nil {
-		t.Fatalf("seed tunnel key: %v", err)
+	for _, k := range []string{"link:" + tunnelToken, "online_link:" + tunnelToken} {
+		if err := rdb.Set(ctx, k, "some-value", 0).Err(); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
 	}
 
-	if _, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, prov, "link-4", "owner-1"); err != nil {
+	if _, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, "link-4", "owner-1"); err != nil {
 		t.Fatalf("RevokeLinkKitTeardown: %v", err)
 	}
 
-	n, err := rdb.Exists(ctx, "link:"+tunnelToken).Result()
+	n, err := rdb.Exists(ctx, "link:"+tunnelToken, "online_link:"+tunnelToken).Result()
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
 	if n != 0 {
-		t.Errorf("tunnel key still exists after teardown")
+		t.Errorf("%d of the tunnel and presence keys still exist after teardown", n)
 	}
 }
 
@@ -218,11 +214,10 @@ func TestRevokeLinkKitTeardown_RemovesRoutesMissingFromRedis(t *testing.T) {
 		{Domain: "gone.example.com", OwnerID: "owner-1", LinkToken: tunnelToken},
 	}}
 	gw := &linkRevokeFakeGateway{tunnelToken: tunnelToken}
-	prov := redisacl.NewProvisioner(rdb)
 	// Nothing seeded into Redis at all: the cache is exactly as empty as it is
 	// after the restart that started this.
 
-	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, prov, "link-9", "owner-1")
+	removed, err := RevokeLinkKitTeardown(ctx, fs, gw, rdb, "link-9", "owner-1")
 	if err != nil {
 		t.Fatalf("RevokeLinkKitTeardown: %v", err)
 	}
@@ -242,9 +237,8 @@ func TestRevokeLinkKitTeardown_ListFails_RemovesNothing(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	fs := &linkRevokeFakeStore{revokeErr: map[string]error{}, listErr: errors.New("db down")}
 	gw := &linkRevokeFakeGateway{tunnelToken: "tunnel-10"}
-	prov := redisacl.NewProvisioner(rdb)
 
-	removed, _ := RevokeLinkKitTeardown(ctx, fs, gw, rdb, prov, "link-10", "owner-1")
+	removed, _ := RevokeLinkKitTeardown(ctx, fs, gw, rdb, "link-10", "owner-1")
 	if removed != 0 {
 		t.Errorf("removed = %d, want 0", removed)
 	}

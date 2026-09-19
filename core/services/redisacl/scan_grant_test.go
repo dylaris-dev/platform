@@ -1,9 +1,6 @@
 package redisacl
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // SCAN is a keyspace-wide read of NAMES, and Redis does not filter it by the
 // ACL's key patterns.
@@ -29,7 +26,6 @@ func TestOnlyTheNodeAgentMayScan(t *testing.T) {
 		{"node agent", BuildNodeACLRules("node-a", "pw", []string{"srv-1"}), true},
 		{"log-shipper in the tenant's container", BuildShipperACLRules("pw", "srv-1"), false},
 		{"the node's link sidecar", BuildLinkACLRules("pw", "node-a", "tok"), false},
-		{"a route-only link on a customer machine", BuildRouteOnlyLinkACLRules("pw", "tok", "link-abc"), false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -40,36 +36,11 @@ func TestOnlyTheNodeAgentMayScan(t *testing.T) {
 					t.Error("this principal may enumerate every key name on the platform")
 				}
 			}
-			// KEYS must stay denied for all four, which -@dangerous does.
+			// KEYS must stay denied for all three, which -@dangerous does.
 			if !grants(c.rules, "-@dangerous") {
 				t.Error("KEYS is no longer denied")
 			}
 		})
-	}
-}
-
-// The route-only link's error stream is named by its link id, never by a slice
-// of its token.
-//
-// The instance id becomes a Redis KEY NAME, and key names are readable by
-// anything that can SCAN. It used to be tunnelToken[:8] on both sides, so eight
-// hex characters of a live authentication token were published to every other
-// tenant's machine, in a key with no expiry.
-func TestRouteOnlyLinkErrorStreamCarriesNoSecret(t *testing.T) {
-	const token = "0123456789abcdef0123456789abcdef"
-	const linkID = "link-94784d508b87a684501786a98b482484"
-
-	for _, r := range BuildRouteOnlyLinkACLRules("pw", token, linkID) {
-		s, ok := r.(string)
-		if !ok || !strings.Contains(s, "dylaris:errors:link:") {
-			continue
-		}
-		if strings.Contains(s, token[:8]) {
-			t.Errorf("the error-stream grant %q carries a prefix of the tunnel token", s)
-		}
-		if !strings.Contains(s, linkID) {
-			t.Errorf("the error-stream grant %q is not named by the link id, so the link's own writes get NOPERM", s)
-		}
 	}
 }
 

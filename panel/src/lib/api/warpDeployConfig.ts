@@ -1,4 +1,4 @@
-// What a BYON or route-only deploy snippet still needs from Core.
+// What a BYON deploy snippet still needs from Core (a route-only one needs none of it).
 //
 // The two overlay addresses used to be here as well. They now go straight to
 // the machine's warp, which proxies them on fixed local ports, so no snippet

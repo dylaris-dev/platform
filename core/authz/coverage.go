@@ -70,6 +70,10 @@ var ExemptRoutes = map[string]bool{
 	"/api/warp/enroll":     true,
 	"/api/warp/link-boot":  true,
 	"/api/warp/assignment": true,
+	// A route-only link's own API: its kit key is the credential.
+	"/api/warp/link/edges":     true,
+	"/api/warp/link/heartbeat": true,
+	"/api/warp/link/stats":     true,
 
 	// Store service-to-service calls (shared X-Store-Key header, NOT a panel
 	// session): requireStoreKey is the boundary, same category as warp's API key.

@@ -35,29 +35,6 @@ func TestGoldenVectorsExtended(t *testing.T) {
 	}
 }
 
-// TestRouteOnlyLinkPassword pins the route-only external link derivation.
-// Core-only: no node-side equivalent exists (route-only links are not
-// node-agent connections), so this is not part of the cross-check.
-func TestRouteOnlyLinkPassword(t *testing.T) {
-	const clusterSecret = "test-cluster-secret"
-	const linkID = "link-abc123"
-
-	got := RouteOnlyLinkPassword(clusterSecret, linkID)
-	want := "657923b71de940e4fc3731bb4a894792ec68024e1fd89608c719e3beb8682c11"
-	if got != want {
-		t.Errorf("RouteOnlyLinkPassword vector drift:\n got  %s\n want %s", got, want)
-	}
-	if len(got) != 64 {
-		t.Errorf("expected 64 hex chars, got %d", len(got))
-	}
-	if RouteOnlyLinkPassword(clusterSecret, "link-other") == got {
-		t.Error("different link ids must yield different passwords")
-	}
-	if RouteOnlyLinkUsername(linkID) != linkID {
-		t.Errorf("RouteOnlyLinkUsername must equal linkID verbatim, got %s", RouteOnlyLinkUsername(linkID))
-	}
-}
-
 func TestChallengeAndHeartbeatRoundTrip(t *testing.T) {
 	secret := []byte("0123456789abcdef0123456789abcdef")
 

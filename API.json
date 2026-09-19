@@ -4876,7 +4876,7 @@
       "path": "/api/warp/link-boot",
       "auth": "warp key",
       "authorization": "no capability",
-      "description": "a Link presents its warp key and receives its tunnel token plus a Redis credential scoped to its own keys.",
+      "description": "a Link presents its key and receives its tunnel token.",
       "handler": "WarpHandler.LinkBoot",
       "group": "warp",
       "external": false
@@ -4896,7 +4896,7 @@
       "path": "/api/warp/link-kits",
       "auth": "session",
       "authorization": "no capability",
-      "description": "(tenant) creates a route-only \"link kit\": a warp enrollment key bound to the calling user plus an auto-generated link identity (node_id).",
+      "description": "(tenant) creates a route-only \"link kit\": a key bound to the calling user plus an auto-generated link identity (node_id).",
       "handler": "WarpHandler.MintLinkKit",
       "group": "warp",
       "external": false
@@ -4918,6 +4918,36 @@
       "authorization": "no capability",
       "description": "owner or admin.",
       "handler": "WarpHandler.RollLinkKit",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/warp/link/edges",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published.",
+      "handler": "WarpHandler.LinkEdges",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/link/heartbeat",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "a route-only link says it is running.",
+      "handler": "WarpHandler.LinkHeartbeat",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/warp/link/stats",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:\u003clink id\u003e:stats.",
+      "handler": "WarpHandler.LinkStats",
       "group": "warp",
       "external": false
     },
@@ -5003,12 +5033,12 @@
     }
   ],
   "counts": {
-    "total": 502,
+    "total": 505,
     "byAuth": {
       "none": 30,
       "session": 459,
       "user API key": 10,
-      "warp key": 3
+      "warp key": 6
     },
     "byGroup": {
       "admin": 123,
@@ -5059,7 +5089,7 @@
       "updates": 1,
       "users": 7,
       "versions": 2,
-      "warp": 18
+      "warp": 21
     },
     "external": 10
   }

@@ -9,7 +9,6 @@ import (
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
-	"dylaris-core/services/redisacl"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	"dylaris-core/store"
@@ -195,11 +194,8 @@ type AppState struct {
 	// GRPCTLSFingerprint is worth handing to an operator (see node_enroll.go).
 	GRPCTLSEnabled bool
 
-	// ACLProvisioner provisions the route-only links' scoped Redis ACL users on
-	// Core's own Redis client (link-boot + revoke + billing suspend/reactivate).
-	ACLProvisioner *redisacl.Provisioner
 	// ClusterSecret is the deployment-wide secret used to derive per-link tunnel
-	// tokens and Redis passwords. Never sent to a tenant.
+	// tokens and a node's Redis passwords. Never sent to a tenant.
 	ClusterSecret string
 
 	// GatewayHubURL is the gateway Hub's internal base URL. Empty when no

@@ -109,13 +109,12 @@ func newNodeLinkHandler(t *testing.T) (*WarpHandler, *nodeLinkFakeStore, []byte)
 		t.Fatalf("mint the node secret: %v", err)
 	}
 	state := &AppState{
-		Store:          fs,
-		Redis:          rdb,
-		FeatureFlags:   services.NewFeatureFlags(fs),
-		Gateway:        services.NewRedisGateway(rdb, fs, nodeLinkClusterSecret),
-		ClusterSecret:  nodeLinkClusterSecret,
-		ACLProvisioner: redisacl.NewProvisioner(rdb),
-		SuspendGrace:   48 * time.Hour,
+		Store:         fs,
+		Redis:         rdb,
+		FeatureFlags:  services.NewFeatureFlags(fs),
+		Gateway:       services.NewRedisGateway(rdb, fs, nodeLinkClusterSecret),
+		ClusterSecret: nodeLinkClusterSecret,
+		SuspendGrace:  48 * time.Hour,
 	}
 	return NewWarpHandler(state, nil), fs, secret
 }
@@ -236,17 +235,30 @@ func TestLinkBoot_NodeWithoutASecretYetIsAskedToRetry(t *testing.T) {
 	}
 }
 
-// A route-only key keeps its own path: no node is ever read for it, and it goes
-// on to provision the route-only ACL. miniredis has no ACL command, so that
-// provisioning step is where this stops - which is the proof it got there.
-func TestLinkBoot_RouteOnlyKeyKeepsItsOwnPath(t *testing.T) {
+// A route-only key keeps its own path: no node is ever read for it, and the
+// answer is its token and NO Redis login - the link talks to Core from then on.
+// A Redis credential in this answer is exactly what the route-only kit exists
+// not to put on a customer's machine.
+func TestLinkBoot_RouteOnlyKeyGetsATokenAndNoRedisLogin(t *testing.T) {
 	h, fs, _ := newNodeLinkHandler(t)
 	fs.keys["link-xyz"] = &store.WarpAPIKey{ID: 9, NodeID: "link-xyz", OwnerID: "owner-1"}
 
 	rec := linkBootAs(h, *fs.keys["link-xyz"])
 
-	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "Failed to provision credentials") {
-		t.Fatalf("status = %d (%s), want the route-only provisioning step", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["mode"] != "core" || got["link_id"] != "link-xyz" || got["link_token"] != h.state.Gateway.LinkToken("link-xyz") {
+		t.Errorf("answer %v, want mode core, the kit id and its derived token", got)
+	}
+	for _, k := range []string{"redis_user", "redis_pass", "redis_db", "redis_addr", "node_id"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("the route-only answer carries %s", k)
+		}
 	}
 	if fs.nodeLookups != 0 {
 		t.Error("a route-only key looked a node up")

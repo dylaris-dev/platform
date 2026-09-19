@@ -262,7 +262,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Everything the account HOLDS, before the row that owns it goes: its
-	// route-only link kits (durable revoke, Redis ACL user, tunnel key) and its
+	// route-only link kits (durable revoke, tunnel key) and its
 	// protected addresses.
 	//
 	// This used to be an inline loop over the addresses only, and the auto-delete

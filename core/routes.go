@@ -382,8 +382,8 @@ var requiredCaps = map[string]string{
 	"/api/admin/mail/templates/{key}/test":        "settings.write",
 
 	// Phase 4 Task 18: gateway/warp topology + dns + infrastructure oversight
-	// (PANEL topology.*). /api/warp/enroll, /api/warp/assignment, /api/warp/link-boot
-	// (warp API-key auth, not a session) and /api/warp/link-kits/* (tenant
+	// (PANEL topology.*). /api/warp/enroll, /api/warp/assignment, /api/warp/link-boot,
+	// /api/warp/link/* (warp API-key auth, not a session) and /api/warp/link-kits/* (tenant
 	// self-service, BYON-gated + owner-filtered in-handler) are deliberately NOT
 	// listed here - they stay EXEMPT-authed (Phase 4 controller decision #2).
 	"/api/gateway/links":                     "topology.read",
@@ -1004,6 +1004,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.MintLinkKit)).Methods("POST")
 	api.HandleFunc("/warp/link-boot",
 		authLimiter.Limit(30, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkBoot))).Methods("POST")
+	// A route-only link's steady traffic: an edge list and a heartbeat every
+	// 5s and a stats record every 3s, about 45 a minute. Its own limiter, so it
+	// can never drain the login budget of the same address. The ceiling leaves
+	// room for ~25 kits behind one IP: route-only is for people behind CGNAT,
+	// and a carrier puts many customers behind one address.
+	linkAPILimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkEdges))).Methods("GET")
+	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkHeartbeat))).Methods("POST")
+	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkStats))).Methods("POST")
 	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(warpHandler.RevokeLinkKit)).Methods("DELETE")
 	api.HandleFunc("/warp/link-kits/{linkID}/roll", authHandler.AuthMiddleware(warpHandler.RollLinkKit)).Methods("POST")
 	// BYON node warp keys (tenant self-service; BYON + gateway gated inside the

@@ -1,15 +1,32 @@
 # Service updates
 
 Release notes for DYLARIS customers: BYON (you run a node on your own hardware)
-and route-only (we route, you run nothing).
+and route-only (you run one small link container, we route).
 
-Route-only entries name no service on purpose - there is nothing on your side to
-update, and those entries tell you what changes on ours.
+Route-only entries name no service on purpose. When there is something to do on
+your machine, the entry says so in words.
 
 Newest release first. The format is fixed and checked in CI - see the
 "Release notes" section of the repository's CLAUDE.md before editing.
 
 <!-- Everything in this file is English, including text dictated in German. -->
+
+## 2026.09.19
+
+### Features
+- **The route-only kit is one container, with no VPN.** Your link talks to us over HTTPS
+  with its key and holds nothing that opens your network or ours. It needs no extra privileges.
+
+### Breaking
+- **Redeploy your route-only link with the new file.** The old two-container kit (warp and
+  link) no longer connects. Download the file under Protected Addresses; your key stays.
+
+### Security
+- **Revoking a link key cuts the link off within half a minute.** Only we can mark its
+  tunnel valid now, and we stop once the key is revoked or a suspension takes effect.
+
+### Fixes
+- Nothing.
 
 ## 2026.09.16.4
 
