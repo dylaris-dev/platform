@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.20
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A pack built in the panel can be installed again.** A node is now told Core's public
+  address when it connects, so `MODPACK_MIRROR_HOSTS` no longer has to be set by hand -
+  set "Core public URL" under Settings, Modpacks. `core` `node`
+- **The CurseForge CDN is no longer in the node's pack download allowlist.** Those files
+  have needed an API key since July, so such a download could only end in a 401. `node`
+
 ## 2026.09.19.4
 
 ### Features

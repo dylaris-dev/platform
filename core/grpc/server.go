@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"strings"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -206,6 +207,11 @@ type Server struct {
 	// authenticates so the node no longer has to be configured with one. Empty
 	// names none, which a node reads as "keep what you have".
 	redisAddr string
+	// publicURL answers with Core's configured core_public_url. A function, not
+	// a value: the setting is editable in the panel, and a node that connected
+	// before the edit would otherwise be told the old host until Core restarts.
+	// nil means the same as an empty answer - the node is told no host.
+	publicURL func() string
 }
 
 // SetUpdateGate installs the mandatory-update policy. Separate from NewServer so
@@ -216,6 +222,36 @@ func (s *Server) SetUpdateGate(g *UpdateGate) { s.updateGate = g }
 // SetRedisAddr installs the Redis address nodes are told. Separate from
 // NewServer for the same reason as SetUpdateGate.
 func (s *Server) SetRedisAddr(addr string) { s.redisAddr = addr }
+
+// SetPublicURLFunc installs the source of Core's public URL. Separate from
+// NewServer for the same reason as SetUpdateGate.
+func (s *Server) SetPublicURLFunc(f func() string) { s.publicURL = f }
+
+// modpackMirrorHost is the host a node is told to trust for a pack download.
+// Every node is told the same one, owned or not: the pack is served from Core's
+// public URL, which is the one address a customer's machine can reach.
+func (s *Server) modpackMirrorHost() string {
+	if s.publicURL == nil {
+		return ""
+	}
+	return MirrorHostFromURL(s.publicURL())
+}
+
+// MirrorHostFromURL reduces a configured public URL to the host the node
+// compares a download URL against, including the port when one is named. It
+// answers "" for anything it cannot read as an absolute http(s) URL, which the
+// node reads as "Core names none".
+func MirrorHostFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
 
 // redisAddrFor is the address a node is told. An owned node is told nothing: it
 // reaches Redis through its warp proxy, and an internal service name means
@@ -567,7 +603,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 			// one after.
 			node = &Node{ID: id, Token: assignedID, Owned: owned, PlatformToken: enroll && !owned}
 			ar := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, NodeSecret: secretHex, AssignedId: assignedID,
-				RedisAddr: s.redisAddrFor(owned)}
+				RedisAddr: s.redisAddrFor(owned), ModpackMirrorHost: s.modpackMirrorHost()}
 			applyUpdateWarning(ar, verdict)
 			if err := stream.Send(&pb.NodeMessage{Payload: &pb.NodeMessage_AuthResult{AuthResult: ar}}); err != nil {
 				return fmt.Errorf("failed to send auth result: %w", err)
@@ -832,7 +868,8 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail("the node's pairing changed during login; connect again")
 				return fmt.Errorf("acl: node %d: its pairing changed during the login; nothing handed out, not registered", node.ID)
 			}
-			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, RedisAddr: s.redisAddrFor(node.Owned)}
+			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, RedisAddr: s.redisAddrFor(node.Owned),
+				ModpackMirrorHost: s.modpackMirrorHost()}
 			applyUpdateWarning(res, verdict)
 			if !hasSecret || rehand {
 				// A first issue for this known node (the secret was reset), or the
@@ -921,7 +958,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 // stream was severed by process exit instead of drained. Bind errors are
 // returned synchronously rather than raised from inside a goroutine, so a port
 // clash now fails the caller's boot sequence at a defined point.
-func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, admission AdmissionChecker, joins JoinAttemptRecorder, tlsEnabled bool, clusterSecret, redisAddr string) (*grpc.Server, error) {
+func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID string, acl ACLHandshake, admission AdmissionChecker, joins JoinAttemptRecorder, tlsEnabled bool, clusterSecret, redisAddr string, publicURL func() string) (*grpc.Server, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on port %d: %w", port, err)
@@ -967,6 +1004,7 @@ func StartGRPCServer(port int, registry *Registry, lookup NodeLookup, coreID str
 	// construct Server directly and stay silent about updates unless they ask.
 	srv.SetUpdateGate(NewUpdateGate())
 	srv.SetRedisAddr(redisAddr)
+	srv.SetPublicURLFunc(publicURL)
 	pb.RegisterNodeServiceServer(grpcServer, srv)
 
 	log.Printf("gRPC: NodeService listening on :%d", port)

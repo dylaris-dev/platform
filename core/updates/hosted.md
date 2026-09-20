@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.20
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A modpack you built in the panel can now be installed on your machine.** Update your
+  node; before, the install ended with the download being refused. `node`
+
 ## 2026.09.19.4
 
 ### Features

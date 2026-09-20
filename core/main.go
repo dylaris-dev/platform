@@ -824,7 +824,19 @@ func main() {
 		CoreStorage: appState.CoreStorageBackupBuilder(),
 		Connection:  appState.ConnectionBackupBuilder(),
 	}, cfg.StoreEnabled).Register(grpcRegistry)
-	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret, strings.TrimSpace(os.Getenv("REDIS_ADDR")))
+	// Read per auth, not once at boot: an admin can set core_public_url long
+	// after Core started, and every node that connects after that edit has to be
+	// told the new address without Core being restarted first. A node ALREADY
+	// connected is told on its next connect, which is as far as a value sent
+	// with the login reaches.
+	corePublicURL := func() string {
+		v, err := pgStore.GetSetting("core_public_url")
+		if err != nil {
+			return ""
+		}
+		return v
+	}
+	grpcServer, err := nodegrpc.StartGRPCServer(cfg.GRPCPort, grpcRegistry, grpcLookup, cfg.CoreID, aclHandshake, admissionGate, joinAttempts, cfg.GRPCTLSEnabled, cfg.ClusterSecret, strings.TrimSpace(os.Getenv("REDIS_ADDR")), corePublicURL)
 	if err != nil {
 		log.Fatalf("gRPC server error: %v", err)
 	}

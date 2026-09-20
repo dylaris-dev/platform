@@ -303,7 +303,9 @@ export default function ModpacksTab() {
                     )}
                     <p className="text-xs text-(--base-06)">
                         Core serves built packs itself at <span className="font-mono">{'{url}'}/mirror/</span>,
-                        so this is the origin a node reaches Core on, not an internal address.
+                        so this is the origin a node reaches Core on, not an internal address. Nodes are told
+                        it when they connect, so a node that is already connected uses a new address from its
+                        next connect on.
                     </p>
                 </SettingsGroup>
             </SettingsCard>

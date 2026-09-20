@@ -318,6 +318,11 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	// current address is a no-op.
 	go noteCoreRedisAddr(parentCtx, authResult.RedisAddr, getNodeSecret())
 
+	// Core's own public host rides on the same message. A pack built in the
+	// panel is downloaded from it, and the installer refuses every host it was
+	// not told about.
+	setCoreMirrorHost(authResult.ModpackMirrorHost)
+
 	// Register connection
 	cc := &coreConnection{conn: conn, stream: stream, cancel: cancel, handler: m.handler, pending: make(map[string]chan *pb.NodeMessage)}
 	m.mu.Lock()

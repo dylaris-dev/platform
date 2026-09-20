@@ -225,6 +225,16 @@ message AuthResult {
   // a successful auth. An image that predates it ignores it and is refused as
   // before, which is right: it presented the refused key.
   bool node_key_rejected = 13;
+  // The host (with port when it carries one) of Core's own public URL, the one
+  // a panel-built pack is downloaded from ({core_public_url}/mirror/...). The
+  // node adds it to the host allowlist its .mrpack installer enforces, so a
+  // pack this Core built can be installed without an operator having to set
+  // MODPACK_MIRROR_HOSTS by hand - which nobody ever did, so no built pack
+  // could be installed anywhere.
+  //
+  // Same rule as redis_addr: EMPTY MEANS "Core names none", never "forget the
+  // one you have", so a Core that does not send it leaves the node as it was.
+  string modpack_mirror_host = 14;
 }
 
 // Reconnect challenge: Core issues a fresh single-use nonce. The node answers

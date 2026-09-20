@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -52,13 +53,15 @@ type mrpackFile struct {
 // modpackAllowedHosts mirrors Modrinth's published list of approved download
 // hosts. Any URL outside this set is a sign of a tampered or self-hosted
 // pack — V1 we just refuse those rather than try to whitelist user content.
+//
+// The two forgecdn hosts are gone: since 2026-07-16 every download from that
+// CDN needs a CurseForge API key, so such a URL could only end in a 401. A
+// refusal here names the host and is the clearer failure of the two.
 var modpackAllowedHosts = map[string]bool{
 	"cdn.modrinth.com":          true,
 	"github.com":                true,
 	"raw.githubusercontent.com": true,
 	"gitlab.com":                true,
-	"edge.forgecdn.net":         true,
-	"mediafilez.forgecdn.net":   true,
 	"maven.fabricmc.net":        true,
 	"maven.minecraftforge.net":  true,
 }
@@ -99,9 +102,9 @@ func modpackFileCap(declared int64) int64 {
 }
 
 // loadExtraModpackHosts merges operator-trusted hosts from MODPACK_MIRROR_HOSTS
-// (comma-separated, e.g. the operator's Core public domain / S3 mirror host)
-// into modpackAllowedHosts. This lets the Node fetch Core-minted pack-build
-// .mrpack files without a blanket allowlist bypass. Call once at startup,
+// (comma-separated, e.g. a mirror of the operator's own) into
+// modpackAllowedHosts. Core's public host does NOT need to be listed here any
+// more - the node is told it on every login (coreMirrorHost). Call once at startup,
 // before any command processing — modpackAllowedHosts is a package-level map
 // with no synchronization, so mutating it concurrently with validateMrpackURL
 // reads would race.
@@ -119,11 +122,67 @@ func loadExtraModpackHosts() {
 	}
 }
 
+// coreMirrorHost is the host Core named for itself on this node's last
+// successful login (AuthResult.modpack_mirror_host). A pack BUILT in the panel
+// is served from there, and nothing else on the node knows that address: the
+// node is configured with Core's gRPC address, which is a different name in
+// every real deploy.
+//
+// Before this, the only way to allow it was MODPACK_MIRROR_HOSTS, an env var an
+// operator had to know about. Nobody set it - not on our own nodes, not in the
+// deploy files the panel writes for customers - so a built pack could not be
+// installed anywhere.
+//
+// An atomic rather than an entry in modpackAllowedHosts: a login runs
+// concurrently with an install, and that map is written once at startup and
+// read without synchronization from then on.
+var coreMirrorHost atomic.Value // string
+
+// setCoreMirrorHost records what Core named. Empty means "Core names none",
+// never "forget the one you have" - the same rule as the Redis address on the
+// same message, so an older Core (or a replica that has no public URL
+// configured) cannot revoke a host the node was told by another.
+func setCoreMirrorHost(host string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return
+	}
+	if prev, _ := coreMirrorHost.Load().(string); prev != host {
+		log.Printf("modpack: pack downloads from Core host %q are allowed", host)
+	}
+	coreMirrorHost.Store(host)
+}
+
+// validateMrpackArchiveURL checks the URL of the pack ARCHIVE, which Core named
+// itself. It is the one place Core's own host is accepted; the per-file
+// downloads inside the manifest stay on the published allowlist, because those
+// URLs come from whoever wrote the pack.
+func validateMrpackArchiveURL(u string) error {
+	err := validateMrpackURL(u)
+	if err == nil {
+		return nil
+	}
+	host, herr := mrpackURLHost(u)
+	if herr != nil {
+		return herr
+	}
+	mirror, _ := coreMirrorHost.Load().(string)
+	if mirror != "" && host == mirror {
+		return nil
+	}
+	if mirror == "" {
+		// The likeliest reason by far, and one an operator can act on: the
+		// address was set in the panel after this node connected.
+		return fmt.Errorf("%w (Core has not named a public address to this node; it is told one when it connects)", err)
+	}
+	return err
+}
+
 func installModpack(destDir string, cfg InstallerConfig) error {
 	if cfg.URL == "" {
 		return fmt.Errorf("modpack installer requires URL")
 	}
-	if err := validateMrpackURL(cfg.URL); err != nil {
+	if err := validateMrpackArchiveURL(cfg.URL); err != nil {
 		return err
 	}
 
@@ -199,16 +258,27 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 	return installVanilla(destDir, mcVersion)
 }
 
-func validateMrpackURL(u string) error {
+// mrpackURLHost is the host of a download URL, https only. A download that is
+// not https is refused before its host is looked at at all: a pack archive
+// carries no hash of its own, so plain HTTP would be a pack anyone on the path
+// can replace.
+func mrpackURLHost(u string) (string, error) {
 	if !strings.HasPrefix(u, "https://") {
-		return fmt.Errorf(".mrpack url must be https")
+		return "", fmt.Errorf(".mrpack url must be https")
 	}
 	rest := strings.TrimPrefix(u, "https://")
 	slash := strings.IndexByte(rest, '/')
 	if slash < 1 {
-		return fmt.Errorf("bad .mrpack url")
+		return "", fmt.Errorf("bad .mrpack url")
 	}
-	host := rest[:slash]
+	return strings.ToLower(rest[:slash]), nil
+}
+
+func validateMrpackURL(u string) error {
+	host, err := mrpackURLHost(u)
+	if err != nil {
+		return err
+	}
 	if !modpackAllowedHosts[host] {
 		return fmt.Errorf(".mrpack url host %q not allowed", host)
 	}

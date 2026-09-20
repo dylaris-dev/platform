@@ -1060,8 +1060,18 @@ type AuthResult struct {
 	// a successful auth. An image that predates it ignores it and is refused as
 	// before, which is right: it presented the refused key.
 	NodeKeyRejected bool `protobuf:"varint,13,opt,name=node_key_rejected,json=nodeKeyRejected,proto3" json:"node_key_rejected,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The host (with port when it carries one) of Core's own public URL, the one
+	// a panel-built pack is downloaded from ({core_public_url}/mirror/...). The
+	// node adds it to the host allowlist its .mrpack installer enforces, so a
+	// pack this Core built can be installed without an operator having to set
+	// MODPACK_MIRROR_HOSTS by hand - which nobody ever did, so no built pack
+	// could be installed anywhere.
+	//
+	// Same rule as redis_addr: EMPTY MEANS "Core names none", never "forget the
+	// one you have", so a Core that does not send it leaves the node as it was.
+	ModpackMirrorHost string `protobuf:"bytes,14,opt,name=modpack_mirror_host,json=modpackMirrorHost,proto3" json:"modpack_mirror_host,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *AuthResult) Reset() {
@@ -1183,6 +1193,13 @@ func (x *AuthResult) GetNodeKeyRejected() bool {
 		return x.NodeKeyRejected
 	}
 	return false
+}
+
+func (x *AuthResult) GetModpackMirrorHost() string {
+	if x != nil {
+		return x.ModpackMirrorHost
+	}
+	return ""
 }
 
 // Reconnect challenge: Core issues a fresh single-use nonce. The node answers
@@ -3723,7 +3740,7 @@ const file_node_node_proto_rawDesc = "" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1b\n" +
 	"\tcpu_cores\x18\x02 \x01(\x05R\bcpuCores\x12\x1b\n" +
 	"\tcpu_model\x18\x03 \x01(\tR\bcpuModel\x12!\n" +
-	"\fmemory_bytes\x18\x04 \x01(\x03R\vmemoryBytes\"\xeb\x03\n" +
+	"\fmemory_bytes\x18\x04 \x01(\x03R\vmemoryBytes\"\x9b\x04\n" +
 	"\n" +
 	"AuthResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x17\n" +
@@ -3744,7 +3761,8 @@ const file_node_node_proto_rawDesc = "" +
 	"\x18update_required_deadline\x18\v \x01(\tR\x16updateRequiredDeadline\x12\x1d\n" +
 	"\n" +
 	"redis_addr\x18\f \x01(\tR\tredisAddr\x12*\n" +
-	"\x11node_key_rejected\x18\r \x01(\bR\x0fnodeKeyRejected\"%\n" +
+	"\x11node_key_rejected\x18\r \x01(\bR\x0fnodeKeyRejected\x12.\n" +
+	"\x13modpack_mirror_host\x18\x0e \x01(\tR\x11modpackMirrorHost\"%\n" +
 	"\rNodeChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"Q\n" +
 	"\x15NodeChallengeResponse\x12\x1a\n" +
