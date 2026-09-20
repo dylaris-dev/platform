@@ -463,6 +463,9 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The runs cascade with the job and take their storage keys with them, so
+	// the archives have to go first or nothing can ever name them again.
+	purgeBackupArchivesForJob(h.state, jobID)
 	if err := h.state.Store.DeleteBackupJob(jobID); err != nil {
 		sendJSONError(w, err.Error(), 500)
 		return

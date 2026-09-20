@@ -23,6 +23,17 @@ type deleteDispatchFakeStore struct {
 	store.Store
 	deleted     bool
 	nodeMissing bool
+	// archivesAskedFor is set when the server's backup archives were named
+	// while its rows still existed - after the delete they cannot be.
+	archivesAskedFor bool
+}
+
+func (f *deleteDispatchFakeStore) ListBackupRunRefsForServers(ids []int) ([]store.BackupRunRef, error) {
+	if f.deleted {
+		return nil, errors.New("the archives were looked up after the server row was gone")
+	}
+	f.archivesAskedFor = len(ids) > 0
+	return nil, nil
 }
 
 func (f *deleteDispatchFakeStore) GetServerByID(id int) (*models.Server, error) {

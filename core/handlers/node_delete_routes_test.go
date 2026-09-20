@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,6 +31,11 @@ type nodeDeleteStore struct {
 	servers  []models.Server
 	bulkDone bool
 	nodeGone bool
+	// archivesAskedFor records the server ids whose backup archives were looked
+	// up. The lookup has to happen BEFORE the rows go: backup_jobs and
+	// backup_runs cascade with the server, and the run row is the only record of
+	// where an archive lives.
+	archivesAskedFor []int
 }
 
 func (f *nodeDeleteStore) GetNodeByID(int) (*models.Node, error) { return f.node, nil }
@@ -37,7 +43,14 @@ func (f *nodeDeleteStore) ListServersByNode(int) ([]models.Server, error) {
 	return f.servers, nil
 }
 func (f *nodeDeleteStore) DeleteServersByNode(int) error { f.bulkDone = true; return nil }
-func (f *nodeDeleteStore) DeleteNode(int) error          { f.nodeGone = true; return nil }
+func (f *nodeDeleteStore) ListBackupRunRefsForServers(ids []int) ([]store.BackupRunRef, error) {
+	if f.bulkDone {
+		return nil, errors.New("the archives were looked up after the rows were already gone")
+	}
+	f.archivesAskedFor = append(f.archivesAskedFor, ids...)
+	return nil, nil
+}
+func (f *nodeDeleteStore) DeleteNode(int) error { f.nodeGone = true; return nil }
 
 // nodeDeleteGateway answers the one call the cleanup makes of the hub.
 type nodeDeleteGateway struct {
@@ -136,6 +149,7 @@ func TestForceDeleteNode_TakesTheAddressesOfItsServersWithIt(t *testing.T) {
 		t.Fatalf("the delete itself did not happen (servers=%v node=%v)", fs.bulkDone, fs.nodeGone)
 	}
 	assertNodeRoutesGone(t, rdb, gw)
+	assertArchivesAskedFor(t, fs)
 
 	// The node's own housekeeping keys. This was the only node-delete door with
 	// no cleanup call at all, so every force-deleted machine left its Redis user
@@ -199,8 +213,9 @@ func TestDeleteServer_TakesItsAddressWithIt(t *testing.T) {
 	seedNodeRoute(t, rdb, "other.example.com", "uuid-elsewhere")
 
 	gw := &nodeDeleteGateway{}
+	fs := &deleteDispatchFakeStore{nodeMissing: true}
 	h := &ServerHandler{state: &AppState{
-		Store:   &deleteDispatchFakeStore{nodeMissing: true},
+		Store:   fs,
 		Redis:   rdb,
 		Gateway: gw,
 		Events:  services.NewSystemEventsPublisher(nil),
@@ -221,6 +236,21 @@ func TestDeleteServer_TakesItsAddressWithIt(t *testing.T) {
 	if len(gw.deleted) != 1 || gw.deleted[0] != "play.example.com" {
 		t.Errorf("the hub was told about %v, want [play.example.com]", gw.deleted)
 	}
+	// The other half a deleted server leaves behind: its backup archives, whose
+	// only record cascades away with it.
+	if !fs.archivesAskedFor {
+		t.Error("the server's backup archives were never named, so they stay in the bucket with nothing pointing at them")
+	}
 }
 
 func (s *nodeDeleteStore) ListWarpKeyIDsBoundToNode(int) ([]int, error) { return nil, nil }
+
+// assertArchivesAskedFor checks the backup half of the same story: the servers'
+// archives have to be named while their rows still exist, or they stay in the
+// bucket with nothing pointing at them.
+func assertArchivesAskedFor(t *testing.T, fs *nodeDeleteStore) {
+	t.Helper()
+	if len(fs.archivesAskedFor) != len(fs.servers) {
+		t.Errorf("archives looked up for %d server(s), want %d - the rest are left in the bucket", len(fs.archivesAskedFor), len(fs.servers))
+	}
+}

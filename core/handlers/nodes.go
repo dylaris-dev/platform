@@ -569,6 +569,10 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 
 	warpKeys := h.boundWarpKeys(node)
 
+	// Before the rows: their backup archives are named by run rows that cascade
+	// away with the servers.
+	purgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
+
 	// Delete all servers on this node first (FK constraint)
 	if err := h.state.Store.DeleteServersByNode(id); err != nil {
 		sendJSONError(w, "Failed to delete servers on node", 500)

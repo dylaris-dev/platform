@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.20.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting a backup schedule or a server now really deletes its backup files.** They used
+  to stay in storage after the panel stopped listing them.
+
 ## 2026.09.20
 
 ### Features

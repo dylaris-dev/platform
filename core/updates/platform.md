@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.20.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting a backup schedule or a server deletes its archives too.** Only the database
+  rows went before, and the files stayed in object storage with nothing naming them, so
+  they could not even be listed as leftovers. `core`
+
 ## 2026.09.20
 
 ### Features

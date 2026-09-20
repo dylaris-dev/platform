@@ -160,6 +160,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 		if servers, lerr = h.state.Store.ListServersByNode(node.ID); lerr != nil {
 			log.Printf("DeleteMyNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", node.ID, lerr)
 		}
+		purgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
 		if err := h.state.Store.DeleteServersByNode(node.ID); err != nil {
 			sendJSONError(w, "Failed to delete the servers on this machine", 500)
 			return

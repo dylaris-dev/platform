@@ -1813,6 +1813,10 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// Delete the authoritative server row FIRST. If it fails we return having
 	// touched nothing, so Core and Hub stay consistent — the route cleanup
 	// below only runs once the server is actually gone.
+	// Same reason as the schedule delete: this server's backup jobs and their
+	// runs cascade with the row, and the run is the only record of where its
+	// archive lives.
+	purgeBackupArchivesForServers(h.state, []int{serverID})
 	if err := h.state.Store.DeleteServer(serverID); err != nil {
 		sendJSONError(w, "Delete failed", 500)
 		return

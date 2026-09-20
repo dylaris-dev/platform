@@ -355,6 +355,10 @@ type BackupRunRef struct {
 	RunID      int
 	StorageKey string
 	StorageID  *int
+	// OwnerID is the tenant the archive's SERVER belongs to, "" when the caller
+	// did not ask for it. It decides which storage a run's storage id resolves
+	// in: a tenant's own connection is not reachable from the platform chain.
+	OwnerID string
 }
 
 // ListBackupRunsByOwner returns every backup run for the servers a tenant owns,

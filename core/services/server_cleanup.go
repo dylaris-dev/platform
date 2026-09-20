@@ -165,3 +165,14 @@ func ServerUUIDs(servers []models.Server) []string {
 	}
 	return out
 }
+
+// ServerIDs is the id list of a set of servers, the counterpart to ServerUUIDs
+// for the cleanups that key off the row rather than the uuid (backup archives
+// hang off backup_jobs.server_id).
+func ServerIDs(servers []models.Server) []int {
+	out := make([]int, 0, len(servers))
+	for _, s := range servers {
+		out = append(out, s.ID)
+	}
+	return out
+}

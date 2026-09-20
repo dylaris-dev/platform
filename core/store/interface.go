@@ -275,6 +275,11 @@ type Store interface {
 	CreateBackupJob(j *models.BackupJob) (int, error)
 	UpdateBackupJob(j *models.BackupJob) error
 	DeleteBackupJob(id int) error
+	// The archives a delete is about to make unnameable. backup_jobs.server_id
+	// and backup_runs.job_id both cascade, and the run row is the only record of
+	// an archive's storage key, so these are read BEFORE the rows go.
+	ListBackupRunRefsForJob(jobID int) ([]BackupRunRef, error)
+	ListBackupRunRefsForServers(serverIDs []int) ([]BackupRunRef, error)
 	ListDueBackupJobs(now time.Time) ([]models.BackupJob, error)
 	SetBackupJobScheduled(jobID int, lastRun, nextRun time.Time) error
 
