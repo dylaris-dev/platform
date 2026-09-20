@@ -24,12 +24,16 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 	// If file mode is beam-only, do not expose node IP
 	fileMode, _ := h.state.Store.GetSetting("file_access_mode")
 	if fileMode == "beam" {
+		// With a reason, like the external-node branch below. Without one a
+		// client gets four empty fields and nothing to say about them, which is
+		// how the panel's SFTP line came to sit in its loading state forever.
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":  true,
 			"host":     "",
 			"port":     0,
 			"username": "",
 			"path":     "",
+			"reason":   "beam_only",
 		})
 		return
 	}

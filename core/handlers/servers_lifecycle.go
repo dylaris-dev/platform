@@ -46,8 +46,20 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The node's numeric id, as a string. Sscanf leaves it at 0 for anything it
+	// cannot read - including a node UUID, which is what the panel calls a node
+	// everywhere else - and 0 then fell through to a lookup that answered "Node
+	// not found". Say which field is wrong instead of describing the row it
+	// failed to find.
 	var nodeIDInt int
-	fmt.Sscanf(req.NodeID, "%d", &nodeIDInt)
+	if raw := strings.TrimSpace(req.NodeID); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			sendJSONError(w, "nodeId must be the node's numeric id; a node uuid is not accepted here", http.StatusBadRequest)
+			return
+		}
+		nodeIDInt = n
+	}
 
 	// Auto-placement: when no explicit nodeId is given, defer to the
 	// scheduler. Region and tags (AND-filtered) narrow the candidate
@@ -114,6 +126,9 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		}
 		req.OwnerID = userID
 	}
+
+	callerID, _ := r.Context().Value("userID").(string)
+	req.OwnerID = effectiveOwnerID(req.OwnerID, callerID)
 
 	// Validate owner exists before going further.
 	if _, err := h.state.Store.GetUserByID(req.OwnerID); err != nil {
@@ -966,6 +981,27 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	username := r.Context().Value("username").(string)
+	isAdmin := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+
+	// POWER is in-handler-enforced (Rule R5): the action is in the request body,
+	// so a route-level RequireCap cannot distinguish a kill-only holder from a
+	// start-only holder. Resolve the per-action cap here instead.
+	//
+	// BEFORE the state checks below, not after. They used to run first, so a
+	// stranger asking about somebody else's server was told "not set up yet"
+	// (400) for one still installing, "Forbidden" (403) for a running one and
+	// "not found" (404) for an id that does not exist - enough to enumerate
+	// server ids and their rough state from any account. Measured with a second
+	// account on production. A caller with no right to act on the server now
+	// learns nothing about it beyond the fact that they may not.
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
+	if rerr != nil || !res.HasCap("power."+req.Action) {
+		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
 	// Server must be set up before it can be started
 	if srv.Status == "pending_setup" {
 		sendJSONError(w, "Server is not set up yet", 400)
@@ -975,19 +1011,6 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// Block start/restart when disk quota is full
 	if srv.Status == "disk_full" && (req.Action == "start" || req.Action == "restart") {
 		sendJSONError(w, "Server cannot start - storage limit reached. Delete files or raise the limit.", 400)
-		return
-	}
-
-	username := r.Context().Value("username").(string)
-	isAdmin := r.Context().Value("isAdmin").(bool)
-	userID, _ := r.Context().Value("userID").(string)
-
-	// POWER is in-handler-enforced (Rule R5): the action is in the request body,
-	// so a route-level RequireCap cannot distinguish a kill-only holder from a
-	// start-only holder. Resolve the per-action cap here instead.
-	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
-	if rerr != nil || !res.HasCap("power."+req.Action) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -1726,6 +1749,20 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 			dispatchWarning + "). Its files are still on the node and still count against the disk limit."
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+// effectiveOwnerID is who a newly created server belongs to.
+//
+// The owner named in the request, or the CALLER when none is named: leaving the
+// field out means "mine". It used to be passed through empty and answered with
+// "Owner not found", which describes a user that does not exist rather than a
+// field that was not sent. (A non-admin's value is already overwritten with
+// their own id further up, so this only ever decides for an admin.)
+func effectiveOwnerID(requested, callerID string) string {
+	if strings.TrimSpace(requested) == "" {
+		return callerID
+	}
+	return requested
 }
 
 // DeleteServer: Completely delete a server

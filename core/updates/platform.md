@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.20.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A node's public address is no longer handed to every user who can see a server.**
+  It is kept where it is needed: for admins, for direct (non-gateway) routing, for SFTP
+  file access and on a customer's own machine. `core` `panel`
+- **The power endpoint checks permission before it answers about a server's state,** so a
+  server's id and rough state can no longer be probed from any account. `core`
+
+### Fixes
+- **The SFTP line above the upload box says what it knows** instead of loading forever. It
+  now names the host, or says SFTP is off on this platform. `core` `panel`
+- **Creating a server through the API names the wrong field.** A node uuid where the numeric
+  id belongs used to answer "Node not found", and leaving the owner out answered "Owner not
+  found"; the owner now defaults to the caller. `core`
+
 ## 2026.09.20.2
 
 ### Features

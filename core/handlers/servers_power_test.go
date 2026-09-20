@@ -255,7 +255,10 @@ func TestServerPowerHandler_ServerNotFound(t *testing.T) {
 // --- Blocked states ---
 
 func TestServerPowerHandler_PendingSetupBlocked(t *testing.T) {
-	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "pending_setup", OwnerName: "alice"}}
+	// OwnerID, so the caller is entitled to act and the state check is what
+	// answers. Without it this passed for the wrong reason: the state checks
+	// used to run before authorization, so a stranger got this message too.
+	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "pending_setup", OwnerName: "alice", OwnerID: "u1"}}
 	h := newServerPowerHandler(fs, newServerPowerRedis(t))
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
@@ -264,6 +267,29 @@ func TestServerPowerHandler_PendingSetupBlocked(t *testing.T) {
 	}
 	if msg := decodeErrBody(t, rec); msg != "Server is not set up yet" {
 		t.Fatalf("message = %q", msg)
+	}
+}
+
+// A caller with no right to the server learns nothing about its state.
+//
+// The authorization used to run AFTER the state checks, so the same stranger
+// got "Server is not set up yet" (400) for a server still installing, a 403 for
+// a running one and a 404 for an id that does not exist - enough to enumerate
+// ids and their rough state from any account.
+func TestServerPowerHandler_StateSaysNothingToAStranger(t *testing.T) {
+	for _, status := range []string{"pending_setup", "disk_full", "online", "stopped"} {
+		t.Run(status, func(t *testing.T) {
+			fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: status, OwnerName: "alice", OwnerID: "someone-else"}}
+			h := newServerPowerHandler(fs, newServerPowerRedis(t))
+			rec := httptest.NewRecorder()
+			h.ServerPowerHandler(rec, serverPowerReq(1, "start", "mallory", false, "u-mallory"))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+			}
+			if msg := decodeErrBody(t, rec); msg != "Forbidden" {
+				t.Fatalf("message = %q, want the same refusal whatever the state", msg)
+			}
+		})
 	}
 }
 

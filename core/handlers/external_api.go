@@ -239,6 +239,7 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 			out = append(out, s)
 		}
 	}
+	redactNodeAddress(h.state, out, owner.IsAdmin, ownerID)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "servers": out})
 }
 
@@ -251,5 +252,8 @@ func (h *APIKeysHandler) GetExternalServer(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	ownerID := APIKeyCallerID(r)
+	owner, oerr := h.state.Store.GetUserByID(ownerID)
+	redactNodeAddressOne(h.state, srv, oerr == nil && owner != nil && owner.IsAdmin, ownerID)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "server": srv})
 }

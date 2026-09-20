@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.20.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The address of the machine behind your server is no longer shown to everyone you invite.**
+  You still see it for your own machine and wherever you need it to connect.
+
+### Fixes
+- **The SFTP line above the upload box no longer loads forever.** It says the host, or that
+  SFTP is switched off here.
+
 ## 2026.09.20.2
 
 ### Features

@@ -39,7 +39,9 @@ export default function UploadSection({
     const [dragging, setDragging] = useState(false);
 
     // SFTP
-    const [sftpCreds, setSftpCreds] = useState<SftpCredentials | null>(null);
+    // null while the answer is still on its way; afterwards either credentials
+    // or the reason there are none, so the banner can say which.
+    const [sftp, setSftp] = useState<{ creds: SftpCredentials | null; reason: string } | null>(null);
 
     // Load JSZip CDN
     useEffect(() => {
@@ -56,9 +58,18 @@ export default function UploadSection({
         getUserLimits().then(res => {
             if (res.success && res.uploadLimit) setUploadLimit(res.uploadLimit);
         }).catch(() => {});
+        // Core answers with the fields at the TOP level, not under `credentials`.
+        // Reading a key that is never sent left this undefined, so the banner
+        // below sat in its skeleton state forever - on every platform, not only
+        // where SFTP is off.
         getSftpCredentials(serverId).then(res => {
-            if (res.success) setSftpCreds(res.credentials);
-        }).catch(() => {});
+            if (!res.success) { setSftp({ creds: null, reason: '' }); return; }
+            if (res.host) {
+                setSftp({ creds: { host: res.host, port: res.port, username: res.username, path: res.path }, reason: '' });
+                return;
+            }
+            setSftp({ creds: null, reason: res.reason || '' });
+        }).catch(() => setSftp({ creds: null, reason: '' }));
     }, [serverId]);
 
     const fileTooLarge = !!(uploadFile && uploadLimit > 0 && uploadFile.size > uploadLimit);
@@ -118,12 +129,18 @@ export default function UploadSection({
             {/* SFTP Banner */}
             <div className="flex items-center gap-3 px-3 py-2 bg-(--base-02) rounded-md border border-(--base-03)">
                 <span className="mono-label shrink-0">SFTP</span>
-                {sftpCreds ? (
+                {sftp === null ? (
+                    <SkeletonText width="w-40" className="h-3" />
+                ) : sftp.creds ? (
                     <span className="text-xs font-mono text-(--base-07) truncate">
-                        {sftpCreds.host}:{sftpCreds.port} &middot; {sftpCreds.username}
+                        {sftp.creds.host}:{sftp.creds.port} &middot; {sftp.creds.username}
                     </span>
                 ) : (
-                    <SkeletonText width="w-40" className="h-3" />
+                    <span className="text-xs text-(--base-06) truncate">
+                        {sftp.reason === 'external_node_beam_only'
+                            ? 'Not available on your own machine. Upload here or use the file manager.'
+                            : 'Off on this platform. Upload here or use the file manager.'}
+                    </span>
                 )}
                 {uploadLimit > 0 && (
                     <span className="ml-auto text-[10px] font-mono text-(--base-06) shrink-0">

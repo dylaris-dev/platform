@@ -207,6 +207,8 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	// never resolves. Costs nothing when no server is installing.
 	annotateStalledInstallsFor(r.Context(), h.state, servers)
 
+	redactNodeAddress(h.state, servers, isAdmin, userID)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,
