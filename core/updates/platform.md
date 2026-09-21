@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A two-factor code can now be used only once.** The same six digits logged the same
+  account in repeatedly, and the neighbouring 30-second codes worked too, so a code seen
+  once was good for about 90 seconds and for as many sessions as its holder wanted. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.21.4
 
 ### Features

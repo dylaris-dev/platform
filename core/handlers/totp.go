@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -11,12 +13,74 @@ import (
 
 	"dylaris-core/models"
 
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // totpIssuer appears in the user's Authenticator app entry.
 const totpIssuer = "Dylaris"
+
+const (
+	// totpStepSeconds and totpSkewSteps mirror what totp.Validate does by
+	// default: 30-second steps, plus or minus one for clock drift.
+	totpStepSeconds = 30
+	totpSkewSteps   = 1
+	// totpReplayTTL is how long a spent step is remembered. It only has to
+	// outlive the window in which the code is still acceptable, which is the
+	// skew on both sides of the step; the rest is margin.
+	totpReplayTTL = 3 * totpStepSeconds * time.Second
+)
+
+// matchTOTPStep reports which time step a code belongs to, or ok=false for
+// none. totp.Validate answers only yes or no, and "which step" is what makes a
+// code claimable exactly once.
+func matchTOTPStep(code, secret string, now time.Time) (step int64, ok bool) {
+	opts := totp.ValidateOpts{Period: totpStepSeconds, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
+	for off := -totpSkewSteps; off <= totpSkewSteps; off++ {
+		t := now.Add(time.Duration(off) * totpStepSeconds * time.Second)
+		valid, err := totp.ValidateCustom(code, secret, t, opts)
+		if err == nil && valid {
+			return t.Unix() / totpStepSeconds, true
+		}
+	}
+	return 0, false
+}
+
+// claimTOTPStep takes one time step for one account and reports whether it was
+// still free. A step yields exactly one code, so claiming the step spends the
+// code.
+//
+// A time-based one-time password is one-time or it is not a one-time password.
+// This check did not exist: measured on production, the same six digits logged
+// the same account in repeatedly, and the neighbouring steps worked too, so a
+// code seen once was good for roughly 90 seconds and for as many sessions as
+// the holder wanted. The backup codes two branches down have always been
+// destructive on use, and RFC 6238 asks for the same of these - the password is
+// still required either way, which is exactly why the second factor has to be
+// the part that cannot be replayed.
+//
+// A legitimate user who needs a code twice inside one step waits for the next
+// one, which their authenticator already shows.
+//
+// FAILS OPEN when Redis cannot answer, and logs it. Redis being down means Core
+// is degraded in ways this is the least of; refusing every second factor would
+// lock out every account including the operator's, to stop a replay that needs
+// the password as well.
+func claimTOTPStep(state *AppState, userID string, step int64) bool {
+	if state == nil || state.Redis == nil {
+		return true
+	}
+	key := fmt.Sprintf("dylaris:totp:used:%s:%d", userID, step)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	free, err := state.Redis.SetNX(ctx, key, "1", totpReplayTTL).Result()
+	if err != nil {
+		log.Printf("totp: could not claim the one-time step for user %s, accepting the code without replay protection: %v", userID, err)
+		return true
+	}
+	return free
+}
 
 // backupCodeCount is the number of single-use codes generated when 2FA is set up.
 const backupCodeCount = 10
@@ -385,9 +449,18 @@ func verifyTOTPOrBackupFor(state *AppState, user *models.User, code string) (boo
 		return false, nil
 	}
 
-	// 1) TOTP — fast path for the regular case
-	if user.TOTPSecret != "" && totp.Validate(code, user.TOTPSecret) {
-		return true, nil
+	// 1) TOTP — fast path for the regular case, and single-use like the backup
+	// codes below.
+	if user.TOTPSecret != "" {
+		if step, ok := matchTOTPStep(code, user.TOTPSecret, time.Now()); ok {
+			if claimTOTPStep(state, user.ID, step) {
+				return true, nil
+			}
+			// A code that was already spent is simply not a valid code. Falling
+			// through to the backup branch costs one bcrypt per stored code and
+			// cannot match, so refuse here.
+			return false, nil
+		}
 	}
 
 	// 2) Backup codes — bcrypt-compare each, drop the matched one on success
