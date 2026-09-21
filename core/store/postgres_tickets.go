@@ -1098,6 +1098,13 @@ func (s *PostgresStore) PurgeServerAuditOlderThan(cutoff time.Time) (int, error)
 //   - the ticket creator
 //   - the assigned supporter (if any)
 //   - all watchers
+//   - everyone who has written on the ticket
+//
+// The last one was missing, and it is the one that made the ticket system
+// silent towards support: a supporter who ANSWERS a ticket is not its creator,
+// is not assigned to it unless somebody assigned it, and is not a watcher - so
+// the customer's next reply notified nobody, measured on production. Answering
+// is the strongest statement of involvement there is.
 //
 // excludeUserID is used to skip the actor (you don't get notified for your
 // own reply). Returns deduplicated, sorted IDs.
@@ -1109,6 +1116,8 @@ func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUse
 		    SELECT assigned_user_id AS user_id FROM tickets WHERE id = $1 AND assigned_user_id IS NOT NULL
 		    UNION
 		    SELECT user_id FROM ticket_watchers WHERE ticket_id = $1
+		    UNION
+		    SELECT user_id FROM ticket_messages WHERE ticket_id = $1
 		 ) AS p WHERE user_id IS NOT NULL AND user_id != $2`,
 		ticketID, excludeUserID,
 	)
@@ -1126,6 +1135,32 @@ func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUse
 		}
 	}
 	return out, nil
+}
+
+// ListTicketStaffIDs returns the user ids of everyone who works tickets:
+// admins and support. It is who a NEW ticket is announced to - a ticket
+// nobody is told about waits until somebody happens to open the inbox, which
+// is how a paying customer ends up waiting on a queue nobody is watching.
+//
+// Role, not capability: the panel role is what decides support everywhere else
+// in this subsystem (see ComputeEffectivePermissions), and resolving the
+// capability per user would mean one permission load per recipient on every
+// ticket created.
+func (s *PostgresStore) ListTicketStaffIDs() ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT id FROM users WHERE is_admin = TRUE OR role IN ('admin', 'support')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil && id != "" {
+			out = append(out, id)
+		}
+	}
+	return out, rows.Err()
 }
 
 // ==========================================

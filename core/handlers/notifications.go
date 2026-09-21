@@ -27,6 +27,7 @@ const (
 	NotifyTypeTicketAssigned   = "ticket_assigned"
 	NotifyTypeTicketWatcherAdd = "ticket_watcher_added"
 	NotifyTypeTicketAutoClosed = "ticket_auto_closed"
+	NotifyTypeTicketOpened     = "ticket_opened"
 )
 
 // ── Endpoints ────────────────────────────────────────────────────────

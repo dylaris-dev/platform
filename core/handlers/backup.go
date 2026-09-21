@@ -482,6 +482,12 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The SCHEDULE is deliberately left running for a suspended tenant: their
+	// data keeps being protected for the retention window, which is what makes
+	// a cutoff reversible. Asking for an extra run on demand is not that.
+	if srv, err := h.state.Store.GetServerByID(job.ServerID); err == nil && refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
 	runID, err := h.startBackupRun(r.Context(), job)
 	if err != nil {
 		// A quota refusal is the system working, not failing. Answering 500 put
@@ -611,6 +617,9 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByID(job.ServerID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)

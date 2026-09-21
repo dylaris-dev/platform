@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21
+
+### Features
+- **A new ticket now tells support it exists.** Admins and support get a notification when a
+  ticket is opened and when a customer reopens a closed one; before, the only way to learn
+  about a waiting customer was to open the inbox and look. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- **A suspended account can no longer make its node work.** The cutoff covered the Start
+  button only, so a reinstall brought the server back up. It now covers installing,
+  reinstalling, switching sub-server, resources, mods, storage moves, restores and beam. `core`
+
+### Fixes
+- **A reply on a ticket reaches whoever answered it.** Only the creator, the assignee and
+  explicit watchers were told, so a supporter who had answered heard nothing about the
+  customer's next reply. A customer writing on a resolved or closed ticket now reopens it. `core`
+- **The status page no longer reports the gateway as degraded because of a link registration
+  that outlived its link.** A registration lives 24 hours, so a link redeployed under a new
+  token left a ghost; links are now counted, and only routes with no link at all are a fault. `core`
+- **The storefront check tests every call Core makes to the store,** not only the first one.
+  It reported the storefront healthy while account details and billing consent were
+  unreachable. `core`
+
 ## 2026.09.20.3
 
 ### Features

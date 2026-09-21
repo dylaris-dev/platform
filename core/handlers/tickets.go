@@ -315,6 +315,13 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
+	// Tell support a ticket exists. Every other event on a ticket emits a
+	// notification; the one event that starts a customer waiting emitted none,
+	// so the only way to learn about a new ticket was to open the inbox and
+	// look. Measured on production: a customer opened a ticket and the admin's
+	// bell stayed at zero.
+	notifyTicketStaff(h.state, userID, id, title)
+
 	created, _ := h.state.Store.GetTicket(id)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -576,12 +583,18 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	// Status auto-bumps: user reply on a waiting_user ticket flips it back
 	// to in_progress (or open if it was newly created and nobody picked up).
 	// Support reply on an open ticket bumps to in_progress.
+	//
+	// The owner writing on a resolved or closed ticket REOPENS it. Without
+	// that, "this is still not fixed" landed on a ticket that stayed closed,
+	// appeared in no open view and, since nobody was assigned, notified
+	// nobody - the reply was accepted and then lost. It becomes open rather
+	// than in_progress on purpose: nobody is working it yet.
+	reopened := false
 	if !req.IsInternal {
-		switch {
-		case t.UserID == userID && t.Status == "waiting_user":
-			h.state.Store.UpdateTicketStatus(id, "in_progress")
-		case (perms.IsSupport || perms.IsAdmin) && t.Status == "open":
-			h.state.Store.UpdateTicketStatus(id, "in_progress")
+		var next string
+		next, reopened = replyStatusTransition(t.Status, t.UserID == userID, perms.IsSupport || perms.IsAdmin)
+		if next != "" {
+			h.state.Store.UpdateTicketStatus(id, next)
 		}
 	}
 
@@ -596,9 +609,17 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 			t.Title, link)
 	} else {
 		recipients, _ := h.state.Store.ListTicketParticipantsForNotify(id, userID)
+		title := "New reply on #" + strconv.Itoa(id)
+		if reopened {
+			// A ticket coming back from resolved/closed may have nobody
+			// involved who still watches it, so this one reaches all of
+			// support - the same announcement a new ticket gets.
+			recipients = withTicketStaff(h.state, recipients, userID)
+			title = "Reopened: #" + strconv.Itoa(id)
+		}
 		EmitTicketNotification(h.state, recipients,
 			NotifyTypeTicketReply,
-			"New reply on #"+strconv.Itoa(id),
+			title,
 			t.Title, link)
 	}
 
@@ -607,6 +628,65 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": msg,
 	})
+}
+
+// replyStatusTransition says what a public reply does to a ticket's status. It
+// returns the new status ("" = leave it alone) and whether that was a REOPEN,
+// which the caller announces more widely.
+//
+// The reopen is the part that was missing, and it lost messages: a customer
+// writing "this is still not fixed" on a resolved or closed ticket was
+// accepted, the status did not move, so the ticket appeared in no open view -
+// and with nobody assigned to it, nobody was told either. Measured on
+// production.
+//
+// It becomes "open" rather than "in_progress" on purpose: reopening means
+// nobody is working it yet, and a ticket that claims to be in progress when it
+// is not is worse than one that admits it is waiting.
+func replyStatusTransition(status string, byOwner, byStaff bool) (next string, reopened bool) {
+	switch {
+	case byOwner && (status == "resolved" || status == "closed"):
+		return "open", true
+	case byOwner && status == "waiting_user":
+		return "in_progress", false
+	case byStaff && status == "open":
+		return "in_progress", false
+	}
+	return "", false
+}
+
+// notifyTicketStaff announces a newly opened ticket to admins and support,
+// minus whoever opened it (an admin filing a ticket is not news to themselves).
+//
+// It is best-effort: a ticket that exists matters more than a notification
+// that does not, so a failed lookup is logged and the create still succeeds.
+func notifyTicketStaff(state *AppState, actorID string, ticketID int, title string) {
+	EmitTicketNotification(state, withTicketStaff(state, nil, actorID), NotifyTypeTicketOpened,
+		"New ticket #"+strconv.Itoa(ticketID),
+		title, "/tickets/"+strconv.Itoa(ticketID))
+}
+
+// withTicketStaff returns recipients plus every admin and supporter, minus the
+// actor, deduplicated. A staff lookup that fails returns what came in: telling
+// the people already on the list beats telling nobody.
+func withTicketStaff(state *AppState, recipients []string, actorID string) []string {
+	if state == nil || state.Store == nil {
+		return recipients
+	}
+	staff, err := state.Store.ListTicketStaffIDs()
+	if err != nil {
+		log.Printf("tickets: staff lookup failed, only the people already involved were notified: %v", err)
+		return recipients
+	}
+	seen := map[string]bool{actorID: true, "": true}
+	out := make([]string, 0, len(recipients)+len(staff))
+	for _, id := range append(append([]string{}, recipients...), staff...) {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // internalNoteRecipients is who may be told an internal note exists: the

@@ -595,6 +595,8 @@ type Store interface {
 	ListResolvedTicketsOlderThan(cutoff time.Time) ([]int, error)
 	// Watchers + assignee lookup for notification fan-out
 	ListTicketParticipantsForNotify(ticketID int, excludeUserID string) ([]string, error)
+	// Who a newly opened ticket is announced to: admins and support.
+	ListTicketStaffIDs() ([]string, error)
 
 	// --- Migration + backup raw access ---
 	// CountTicketRows returns the row count for a single ticket-related

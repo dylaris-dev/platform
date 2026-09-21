@@ -322,6 +322,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
 	// Atomically claim the install cooldown (30s, admins bypass). SetNX closes
@@ -638,6 +642,10 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
 	if srv.Status == "pending_setup" {
@@ -819,6 +827,10 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
+		return
+	}
+
+	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
 
@@ -1022,9 +1034,11 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// BYON billing suspend: a suspended tenant keeps read access but cannot
 	// start/restart their servers until payment is settled (an operator can
 	// reactivate). past_due (grace) is unaffected. Admins bypass.
-	if (req.Action == "start" || req.Action == "restart") && !isAdmin {
-		if b, err := h.state.Store.GetUserBilling(srv.OwnerID); err == nil && b.Status == "suspended" {
-			sendJSONError(w, "Account suspended for non-payment. Settle payment to start your servers.", 403)
+	//
+	// Stopping and killing stay open while suspended: a tenant who is cut off
+	// may still put their own server down.
+	if req.Action == "start" || req.Action == "restart" {
+		if refuseIfSuspended(w, r, h.state, srv) {
 			return
 		}
 	}
@@ -1257,6 +1271,10 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
+		return
+	}
+
+	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
 
@@ -1948,6 +1966,9 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
 	if srv.Status == "pending_setup" {

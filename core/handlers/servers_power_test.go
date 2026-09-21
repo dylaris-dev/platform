@@ -489,7 +489,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 		}
-		if msg := decodeErrBody(t, rec); msg != "Account suspended for non-payment. Settle payment to start your servers." {
+		if msg := decodeErrBody(t, rec); msg != suspendedMessage {
 			t.Fatalf("message = %q", msg)
 		}
 	})

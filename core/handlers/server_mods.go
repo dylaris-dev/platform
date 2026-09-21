@@ -111,6 +111,9 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
 	var req installModRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -295,6 +298,9 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	srv, ok := h.getServer(serverID)
 	if !ok {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])

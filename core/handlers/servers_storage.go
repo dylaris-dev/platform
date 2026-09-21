@@ -116,6 +116,10 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		sendJSONError(w, "Node not found", 404)

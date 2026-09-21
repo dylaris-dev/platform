@@ -19,6 +19,12 @@ type uninstallModFakeStore struct {
 	deleted bool
 }
 
+// The suspension guard reads the owner's billing before anything is queued.
+// An empty status is a paying account, which is what this case is about.
+func (f *uninstallModFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	return &store.UserBilling{UserID: userID}, nil
+}
+
 func (f *uninstallModFakeStore) GetServerByID(id int) (*models.Server, error) {
 	return &models.Server{ID: id, UUID: "srv-uuid", OwnerID: "alice", NodeID: 1, InstallerType: "paper"}, nil
 }

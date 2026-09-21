@@ -300,6 +300,9 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
 	var req versionUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -602,6 +605,9 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	srv, ok := h.getServer(serverID)
 	if !ok {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
 	var req copySubServerRequest

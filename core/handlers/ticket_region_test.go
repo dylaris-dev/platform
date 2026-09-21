@@ -20,6 +20,10 @@ type ticketRegionStore struct {
 	created  *models.Ticket
 }
 
+// Creating a ticket now announces it to support. No staff, no announcement,
+// which keeps these cases about the region and nothing else.
+func (f *ticketRegionStore) ListTicketStaffIDs() ([]string, error) { return nil, nil }
+
 func (f *ticketRegionStore) GetTicketCategory(int) (*models.TicketCategory, error) {
 	return f.category, nil
 }

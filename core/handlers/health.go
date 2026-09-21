@@ -266,17 +266,43 @@ func (h *HealthHandler) storefrontComponent(ctx context.Context) healthComponent
 	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	defer cancel()
 	sh := NewStoreHandler(h.state)
-	if _, _, err := sh.probeLinkStatus(cctx, "00000000-0000-0000-0000-000000000000"); err != nil {
+	if _, _, err := sh.probeLinkStatus(cctx, healthProbeUUID); err != nil {
 		comp.Status = "down"
 		comp.Cause = "storefront_unreachable"
 		comp.Detail = "Cannot talk to " + h.state.StoreURL
 		comp.Reason = err.Error() + ". Purchases cannot provision and the panel shows every account as unlinked while this stands."
 		return comp
 	}
+
+	// The second channel, and it has to be asked separately rather than assumed
+	// from the first. Core reaches the storefront on THREE paths - link-status,
+	// account-summary and billing-consent - and they are not one endpoint: on
+	// production only link-status was routed, so this component read "up" while
+	// every customer's billing page said the store could not be reached and
+	// nobody could consent to metered billing. One probe per reachable surface
+	// is what makes that visible here instead of in a support ticket.
+	//
+	// The all-zero UUID belongs to nobody and the store answers it with a
+	// perfectly valid "not linked", so this tests the CHANNEL and touches no
+	// account. billing-consent is not probed: it is a write, and there is no
+	// request to it that changes nothing.
+	if _, err := h.state.storeAccountSummary(cctx, healthProbeUUID); err != nil {
+		comp.Status = "down"
+		comp.Cause = "storefront_unreachable"
+		comp.Detail = "Account details are not reachable at " + h.state.StoreURL
+		comp.Reason = err.Error() + ". Link status works, so this is one route rather than the storefront being down: the panel's billing page shows every tenant 'the store could not be reached' and metered billing cannot be switched on."
+		return comp
+	}
+
 	comp.Status = "up"
 	comp.Detail = h.state.StoreURL + " answers and accepts our key"
 	return comp
 }
+
+// healthProbeUUID is a UUID no account can have, used for read probes against
+// the storefront. It gets a real answer over the real key without naming a real
+// tenant.
+const healthProbeUUID = "00000000-0000-0000-0000-000000000000"
 
 // redisACLComponent reports whether every scoped Redis credential Core is
 // supposed to have provisioned actually exists in Valkey.
@@ -495,29 +521,59 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	}
 	onlineLinks := split.OursOnline
 
+	status, detail, reason, linkStatus := gatewayVerdict(onlineEdges, len(edges), onlineLinks, len(links), routes)
 	comp.Items = []healthItem{
 		{Name: "Edges", Status: countStatus(onlineEdges, len(edges)), Detail: fmt.Sprintf("%d/%d online", onlineEdges, len(edges))},
-		{Name: "Links", Status: countStatus(onlineLinks, len(links)), Detail: fmt.Sprintf("%d/%d online", onlineLinks, len(links))},
+		{Name: "Links", Status: linkStatus, Detail: fmt.Sprintf("%d online", onlineLinks)},
 		{Name: "Routes", Status: "up", Detail: fmt.Sprintf("%d active", routes)},
 	}
+	comp.Status, comp.Detail, comp.Reason = status, detail, reason
+	return comp
+}
 
+// gatewayVerdict turns the four counts into the component's verdict. Separate
+// from the component so it can be read and tested without Redis.
+//
+// Links are COUNTED, not graded, and that is the whole point of this function.
+//
+// A link registration (link:<token>) is written with a 24 h TTL and a running
+// link refreshes its own; presence (online_link:<token>) lives 15 seconds. So a
+// token that stops being used - a link redeployed under a new one, a kit
+// revoked, a customer's box switched off - stays in the registration list for
+// up to a day after the process behind it is gone. Reading that as "one of our
+// links is DOWN" is what put production on "degraded" for a day after a link
+// update, with nothing wrong and nothing anybody could do about it. An
+// operator who learns the page cries wolf stops reading the page.
+//
+// Core cannot know how many links OUGHT to be running: nothing declares it, and
+// the Hub that provisions the in-cluster ones shares no database with Core.
+// What it can say is whether any link is carrying traffic at all while routes
+// exist, which is the state that genuinely takes those servers off the air.
+func gatewayVerdict(onlineEdges, totalEdges, onlineLinks, totalLinks int, routes int64) (status, detail, reason, linkStatus string) {
+	linkStatus = "up"
+	if totalLinks > 0 && onlineLinks == 0 && routes > 0 {
+		linkStatus = "down"
+	}
 	switch {
 	case onlineEdges == 0:
 		// Gateway routing is on but no edge is reachable: every gateway-routed
 		// server is currently unreachable. This is the one gateway state that
 		// is a real outage rather than a partial degrade.
-		comp.Status = "down"
-		comp.Detail = "No edges online"
-		comp.Reason = "gateway routing is enabled but no edge is reachable; gateway-routed servers are unreachable"
-	case onlineEdges < len(edges) || (len(links) > 0 && onlineLinks < len(links)):
-		comp.Status = "degraded"
-		comp.Detail = fmt.Sprintf("%d/%d edges, %d/%d links online", onlineEdges, len(edges), onlineLinks, len(links))
-		comp.Reason = "some gateway components are offline"
+		return "down", "No edges online",
+			"gateway routing is enabled but no edge is reachable; gateway-routed servers are unreachable",
+			linkStatus
+	case linkStatus == "down":
+		return "down", fmt.Sprintf("No links online, %d route(s) configured", routes),
+			"routes are configured but no link is online to carry them; those servers are unreachable",
+			linkStatus
+	case onlineEdges < totalEdges:
+		return "degraded", fmt.Sprintf("%d/%d edges online, %d link(s)", onlineEdges, totalEdges, onlineLinks),
+			"some gateway components are offline",
+			linkStatus
 	default:
-		comp.Status = "up"
-		comp.Detail = fmt.Sprintf("%d edge(s), %d link(s), %d route(s)", onlineEdges, len(links), routes)
+		return "up", fmt.Sprintf("%d edge(s), %d link(s), %d route(s)", onlineEdges, onlineLinks, routes),
+			"", linkStatus
 	}
-	return comp
 }
 
 // storageComponent reports the connection state of the configured core-storage

@@ -374,6 +374,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A ticket is a working channel into the node, so it follows the same rule
+	// as everything else a cut-off tenant may not ask the node to do. Measured
+	// on production: a suspended account minted a ticket and the relay spliced
+	// it through to the node.
+	if refuseIfSuspended(w, r, h.state, server) {
+		return
+	}
+
 	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID) + direct-connect
 	// hint inputs. Whether these are actually handed out is decided below by relay
 	// presence, not by node ownership.

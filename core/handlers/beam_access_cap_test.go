@@ -49,6 +49,15 @@ type beamAccessFakeStore struct {
 	// inviteCalls counts GetInvite hits, so a perturbation that restores the
 	// old membership check is visible as more than a status change.
 	inviteCalls int
+
+	// billingStatus of the server's OWNER, as the suspension guard reads it.
+	billingStatus string
+}
+
+// billingStatus is what the suspension guard reads; empty means a paying
+// account, so these cases test access and nothing else.
+func (f *beamAccessFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	return &store.UserBilling{UserID: userID, Status: f.billingStatus}, nil
 }
 
 func (f *beamAccessFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
@@ -280,6 +289,62 @@ func TestGetBeamServers_ListsOnlyWhatBeamCanOpen(t *testing.T) {
 				if s.NodeID == "" {
 					t.Fatal("a listed server carried no node discovery id")
 				}
+			}
+		})
+	}
+}
+
+// A beam ticket is a working channel into the node, so a tenant who is cut off
+// for non-payment must not get one. Measured on production before this guard
+// existed: a suspended account minted a ticket and the relay spliced it through
+// to the node, which is the cutoff being undone by the person it applies to.
+//
+// The owner case is the one that matters: the guard reads the SERVER's owner,
+// not the caller, so an admin helping out is unaffected and a delegated member
+// of a suspended owner is stopped just the same.
+func TestGetBeamTicket_RefusedWhileTheOwnerIsSuspended(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     string
+		isAdmin    bool
+		wantTicket bool
+	}{
+		{"a paying owner gets one", "active", false, true},
+		{"grace period is not a cutoff", "past_due", false, true},
+		{"a suspended owner does not", "suspended", false, false},
+		{"an admin still does", "suspended", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := newBeamAccessStore(nil, "owner-id")
+			fs.billingStatus = c.status
+			h := newBeamAccessHandler(fs)
+
+			r := httptest.NewRequest("GET", "/api/beam/ticket?server_uuid=srv-uuid", nil)
+			ctx := context.WithValue(r.Context(), "username", "owner")
+			ctx = context.WithValue(ctx, "isAdmin", c.isAdmin)
+			ctx = context.WithValue(ctx, "userID", "owner-id")
+			rec := httptest.NewRecorder()
+
+			h.GetBeamTicket(rec, r.WithContext(ctx))
+
+			var body struct {
+				Ticket  string `json:"ticket"`
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+
+			if c.wantTicket {
+				if rec.Code != 200 || body.Ticket == "" {
+					t.Fatalf("status=%d ticket=%q, want a signed ticket (body=%s)", rec.Code, body.Ticket, rec.Body.String())
+				}
+				return
+			}
+			if rec.Code != 403 || body.Ticket != "" {
+				t.Fatalf("status=%d ticket=%q, want 403 and no ticket", rec.Code, body.Ticket)
+			}
+			if body.Message != suspendedMessage {
+				t.Errorf("message = %q, want the suspension message so the tenant is told to settle payment", body.Message)
 			}
 		})
 	}

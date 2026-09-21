@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21
+
+### Features
+- **Support is told the moment you open a ticket,** and writing on a ticket that was already
+  closed opens it again instead of leaving your message sitting on a closed thread.
+
+### Breaking
+- Nothing.
+
+### Security
+- **An account suspended for non-payment stays stopped.** Reinstalling used to bring a
+  server back up while the account was cut off.
+
+### Fixes
+- **Your subscription details and the billing switches load again.** The panel could not
+  reach the store for either, so the page said the store was unreachable and the switches
+  for traffic and backup billing could only fail.
+- **Someone who answers your ticket now hears your next reply.** Answers used to reach only
+  the people on the ticket from the start, so a follow-up could go unnoticed.
+
 ## 2026.09.20.3
 
 ### Features
