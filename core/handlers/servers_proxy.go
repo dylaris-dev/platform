@@ -60,6 +60,24 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Both ends must belong to the SAME owner. Linking is what puts the proxy
+	// on the backend's ingress allow-list (services.BuildNodePolicies), so a
+	// cross-owner link hands a stranger's container direct network access to
+	// this server - the one thing the per-server policy exists to prevent - and
+	// puts the server's name and container hostname into that stranger's
+	// endpoint list. Measured on production: a server owned by one account was
+	// linked to another account's proxy through this route, by the owner and
+	// again by a friend holding nothing but network.write.
+	//
+	// The resolver already refuses to inherit a grant across this same seam
+	// ("Never inherit across owners"); this is that rule on the other half of
+	// the relationship. Ids are sequential, so the caller needs no access to
+	// the proxy to name it - the check cannot live anywhere but here.
+	if proxy.OwnerID != srv.OwnerID {
+		sendJSONError(w, "A server can only be linked to a proxy owned by the same account", 403)
+		return
+	}
+
 	proxyID := req.ProxyID
 	if err := h.state.Store.UpdateServerProxyID(serverID, &proxyID); err != nil {
 		sendJSONError(w, "Failed to link server", 500)
@@ -124,6 +142,15 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 		var out []endpoint
 		for _, child := range linked {
 			if child.ProxyID == nil || *child.ProxyID != srv.ID {
+				continue
+			}
+			// A child of another account is not this proxy's business. Linking
+			// now refuses to create one, and the policy publisher ignores one
+			// that exists anyway; listing it here would still disclose that
+			// account's server name and container hostname. Not a visibility
+			// filter over the owner's own fleet - see the note above - but the
+			// boundary between two accounts.
+			if child.OwnerID != srv.OwnerID {
 				continue
 			}
 			out = append(out, endpoint{

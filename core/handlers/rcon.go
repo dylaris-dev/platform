@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -146,21 +147,54 @@ func (h *RconHandler) execAgainstServer(ctx context.Context, serverID int, serve
 	}
 	respMsg, err := h.state.GRPCRegistry.SendRequest(nodeID, msg, time.Duration(timeoutMs+1000)*time.Millisecond)
 	if err != nil {
-		return rconResponse{Error: fmt.Sprintf("node call failed: %v", err)}
+		return rconResponse{Error: rconFailureMessage(serverUUID, nodeID, err.Error())}
 	}
 	rconResp := respMsg.GetRconExecResp()
 	if rconResp == nil {
 		if errMsg := respMsg.GetError(); errMsg != nil {
-			return rconResponse{Error: errMsg.Message}
+			return rconResponse{Error: rconFailureMessage(serverUUID, nodeID, errMsg.Message)}
 		}
 		return rconResponse{Error: "unexpected response from node"}
+	}
+	if rconResp.Error != "" {
+		return rconResponse{
+			Success:    rconResp.Ok,
+			Output:     rconResp.Output,
+			Error:      rconFailureMessage(serverUUID, nodeID, rconResp.Error),
+			DurationMs: rconResp.DurationMs,
+		}
 	}
 	return rconResponse{
 		Success:    rconResp.Ok,
 		Output:     rconResp.Output,
-		Error:      rconResp.Error,
 		DurationMs: rconResp.DurationMs,
 	}
+}
+
+// rconFailureMessage logs what actually went wrong and returns what the caller
+// is told. The two are not the same thing: the node's error is a dial error, so
+// it carries the container's private overlay address, and RCON is handed out as
+// its own capability - a friend granted rcon.exec holds neither network.read
+// nor any other right to the topology. Measured on production: a delegate
+// running one command read back
+// "dial 10.20.13.16:25575: ... connect: connection refused".
+//
+// The one case worth naming is a refused connection, because it has an action
+// attached and is what an operator hits right after enabling RCON: MC only
+// opens the listener at JVM start. Everything else is one message plus a log
+// line, the same trade the tab proxy makes.
+func rconFailureMessage(serverUUID string, nodeID int, detail string) string {
+	log.Printf("rcon: server %s on node %d failed: %s", serverUUID, nodeID, detail)
+	if strings.Contains(detail, "connection refused") {
+		return "The server is not accepting RCON connections. If RCON was just enabled, restart the server to apply it."
+	}
+	if strings.Contains(detail, "timeout") || strings.Contains(detail, "deadline exceeded") {
+		return "The server did not answer the RCON command in time."
+	}
+	if strings.Contains(detail, "authentication") || strings.Contains(detail, "password") {
+		return "The server refused the RCON password. Regenerate it in the RCON settings and restart the server."
+	}
+	return "The RCON command could not be delivered to the server."
 }
 
 // --- RCON config CRUD (Network sub-tab support) ---

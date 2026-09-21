@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"dylaris-core/models"
@@ -258,5 +259,58 @@ func TestApplyImportedManifestDoesNotRelabelWhenTheInstallWriteFails(t *testing.
 
 	if len(st.loader) != 0 {
 		t.Fatal("the server was relabelled after the install record failed to save")
+	}
+}
+
+// installNotifyStore records the one write an install failure makes.
+type installNotifyStore struct {
+	notes []models.Notification
+}
+
+func (f *installNotifyStore) InsertNotification(n *models.Notification) (int64, error) {
+	f.notes = append(f.notes, *n)
+	return int64(len(f.notes)), nil
+}
+
+// A failed install used to reach nobody. The node logged the reason and wrote
+// the status "stopped", which is what a server that installed cleanly and is
+// not running says too - so the customer was told their server was set up and
+// idle. Measured on production: an install refused upstream (HTTP 404 for the
+// requested version) left a server reporting paper, the version and the
+// sub-server, which started into an empty container, crash-looped three times
+// and went offline, with the only explanation in a log no customer can read.
+func TestNotifyInstallFailedTellsTheOwnerWhy(t *testing.T) {
+	fs := &installNotifyStore{}
+	s := &SetupResultService{}
+	srv := &models.Server{ID: 20, UUID: "srv-uuid", Name: "bright-monarch", OwnerID: "owner-1"}
+
+	s.notifyInstallFailedVia(fs, srv, "main", "PaperMC API returned HTTP 404 for version 133")
+
+	if len(fs.notes) != 1 {
+		t.Fatalf("notifications written = %d, want 1", len(fs.notes))
+	}
+	n := fs.notes[0]
+	if n.UserID != "owner-1" {
+		t.Errorf("notified %q, want the server owner", n.UserID)
+	}
+	if !strings.Contains(n.Body, "404") {
+		t.Errorf("body %q does not carry the node's reason, which is the whole point", n.Body)
+	}
+	if !strings.Contains(n.Body, "bright-monarch") || !strings.Contains(n.Body, "main") {
+		t.Errorf("body %q does not say which server and sub-server failed", n.Body)
+	}
+	if n.Link != "/servers/20" {
+		t.Errorf("link = %q, want the server it is about", n.Link)
+	}
+}
+
+// A server with no owner has nobody to tell, and must not produce a row with
+// an empty user id.
+func TestNotifyInstallFailedSkipsAnOwnerlessServer(t *testing.T) {
+	fs := &installNotifyStore{}
+	s := &SetupResultService{}
+	s.notifyInstallFailedVia(fs, &models.Server{ID: 1, UUID: "u"}, "", "boom")
+	if len(fs.notes) != 0 {
+		t.Errorf("wrote %d notification(s) for a server with no owner", len(fs.notes))
 	}
 }

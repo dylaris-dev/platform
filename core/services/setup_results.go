@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"dylaris-core/models"
@@ -47,7 +48,12 @@ type setupReport struct {
 	ServerUUID string          `json:"serverUuid"`
 	SubServer  string          `json:"subServer"`
 	Manifest   json.RawMessage `json:"manifest"`
-	Timestamp  int64           `json:"timestamp"`
+	// Error is set instead of Manifest when the install did not happen. It
+	// carries the node's reason, which is the only explanation that exists -
+	// the status a failed install writes is "stopped", and that is what a
+	// server which installed cleanly and is not running says too.
+	Error     string `json:"error"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 func (s *SetupResultService) consume(ctx context.Context) {
@@ -92,7 +98,10 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 		log.Printf("setup result: dropping a message on unattributable channel %q", channel)
 		return
 	}
-	if rep.ServerUUID == "" || len(rep.Manifest) == 0 {
+	// A failure report carries no manifest, so the emptiness check cannot come
+	// before the branch or the one report a customer most needs would be the
+	// one dropped.
+	if rep.ServerUUID == "" || (len(rep.Manifest) == 0 && rep.Error == "") {
 		return
 	}
 	srv, err := s.store.GetServerByUUID(rep.ServerUUID)
@@ -113,12 +122,57 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 		return
 	}
 
+	if rep.Error != "" {
+		s.notifyInstallFailed(srv, rep.SubServer, rep.Error)
+		return
+	}
+
 	m, ok := DecodeBackupManifest(string(rep.Manifest))
 	if !ok {
 		log.Printf("setup result: server %q reported a description that could not be read", rep.ServerUUID)
 		return
 	}
 	ApplyImportedManifest(s.store, srv, rep.SubServer, m)
+}
+
+// notifyInstallFailed puts the node's reason in front of the person who asked
+// for the install.
+//
+// The owner, not the actor: setup can be triggered by a delegate or by an
+// operator, the row does not record who asked, and the server is the owner's
+// either way. A notification rather than a status, because the status a failed
+// install leaves behind ("stopped") is a real state the server is genuinely in
+// - what was missing is the explanation, and it has to survive until somebody
+// reads it.
+func (s *SetupResultService) notifyInstallFailed(srv *models.Server, subServer, cause string) {
+	log.Printf("setup result: install failed for server %q (sub-server %q): %s", srv.UUID, subServer, cause)
+	s.notifyInstallFailedVia(s.store, srv, subServer, cause)
+}
+
+// installFailureStore is the whole slice of the store this write touches.
+// Narrow on purpose, and the seam the test uses.
+type installFailureStore interface {
+	InsertNotification(n *models.Notification) (int64, error)
+}
+
+func (s *SetupResultService) notifyInstallFailedVia(st installFailureStore, srv *models.Server, subServer, cause string) {
+	if srv.OwnerID == "" {
+		return
+	}
+	where := srv.Name
+	if subServer != "" {
+		where = fmt.Sprintf("%s (%s)", srv.Name, subServer)
+	}
+	if _, err := st.InsertNotification(&models.Notification{
+		UserID: srv.OwnerID,
+		Type:   "server.install_failed",
+		Title:  "Installation failed",
+		Body: fmt.Sprintf("Setting up %s did not finish: %s. The server has not been installed; "+
+			"check the version you picked and run setup again.", where, cause),
+		Link: fmt.Sprintf("/servers/%d", srv.ID),
+	}); err != nil {
+		log.Printf("setup result: could not record the install failure for server %q: %v", srv.UUID, err)
+	}
 }
 
 // importManifestStore is the slice of the store an import writes through. Narrow

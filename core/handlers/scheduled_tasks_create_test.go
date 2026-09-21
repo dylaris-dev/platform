@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -50,7 +52,13 @@ func (f *schedCreateFakeStore) GetScheduledTask(int) (*models.ScheduledTask, err
 
 func newSchedCreateHandler(fs *schedCreateFakeStore) *ScheduledTasksHandler {
 	return NewScheduledTasksHandler(&AppState{
-		Store:  fs,
+		Store: fs,
+		// Creating a task now needs the capability the task USES, so these
+		// cases need a resolver. They are about the server lookup rather than
+		// about authorization, so the request below acts as an admin and
+		// short-circuits it; the capability itself is covered next door in
+		// scheduled_tasks_cap_test.go.
+		Authz:  authz.NewResolver(fs),
 		Events: services.NewSystemEventsPublisher(nil),
 	})
 }
@@ -58,7 +66,11 @@ func newSchedCreateHandler(fs *schedCreateFakeStore) *ScheduledTasksHandler {
 func schedCreateRequest(serverID string, body any) *http.Request {
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/servers/"+serverID+"/scheduled-tasks", bytes.NewReader(raw))
-	return mux.SetURLVars(req, map[string]string{"id": serverID})
+	req = mux.SetURLVars(req, map[string]string{"id": serverID})
+	ctx := context.WithValue(req.Context(), "userID", "admin-1")
+	ctx = context.WithValue(ctx, "username", "admin")
+	ctx = context.WithValue(ctx, "isAdmin", true)
+	return req.WithContext(ctx)
 }
 
 // TestScheduledTasksCreate_UnknownServerIs404 is the regression guard for a

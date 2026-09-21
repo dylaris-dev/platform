@@ -134,3 +134,48 @@ func TestBuildNodePoliciesRefusesToGroupAServerWithNoNode(t *testing.T) {
 		t.Error("no marker for the orphaned server; the caller cannot report it")
 	}
 }
+
+// A proxy belonging to somebody else contributes nothing.
+//
+// The allow rule is what lets a container reach a tenant's server, so a link
+// across two accounts hands a stranger's proxy direct network access to a
+// server - the one thing the per-server policy exists to prevent. Measured on
+// production: a server owned by one account was linked to another account's
+// proxy through PUT /api/servers/{id}/proxy, by the owner and again by a friend
+// holding nothing but network.write.
+//
+// The link route refuses it now. This is the same rule where it takes effect,
+// so a row written any other way, or one that predates the refusal, is inert.
+func TestBuildNodePoliciesIgnoresAProxyOfAnotherOwner(t *testing.T) {
+	own := func(s models.Server, owner string) models.Server { s.OwnerID = owner; return s }
+	proxyID := 1
+	servers := []models.Server{
+		own(srv(1, "uuid-stranger-proxy", 10, "proxy", nil), "stranger"),
+		own(srv(2, "uuid-mine", 10, "game", proxyRef(proxyID)), "me"),
+	}
+
+	got := BuildNodePolicies(servers)
+	if allow := got[10]["uuid-mine"]; len(allow) != 0 {
+		t.Fatalf("a server owned by %q allows %v, which belongs to another account", "me", allow)
+	}
+	if _, ok := got[10]["uuid-mine"]; !ok {
+		t.Error("the server must still appear with an empty list; a missing entry reads as unpoliced")
+	}
+}
+
+// The same shape with one owner still links, or the check above would simply
+// have switched the feature off.
+func TestBuildNodePoliciesKeepsAProxyOfTheSameOwner(t *testing.T) {
+	own := func(s models.Server, owner string) models.Server { s.OwnerID = owner; return s }
+	proxyID := 1
+	servers := []models.Server{
+		own(srv(1, "uuid-proxy", 10, "proxy", nil), "me"),
+		own(srv(2, "uuid-mine", 10, "game", proxyRef(proxyID)), "me"),
+	}
+
+	got := BuildNodePolicies(servers)
+	want := []string{"uuid-proxy"}
+	if !reflect.DeepEqual(got[10]["uuid-mine"], want) {
+		t.Fatalf("allow = %v, want %v", got[10]["uuid-mine"], want)
+	}
+}

@@ -11,6 +11,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **A scheduled task now needs the matching right.** Somebody you let manage the schedule can
+  no longer restart your server or send it commands unless you gave them those rights as
+  well. Nothing to change on your side.
+
+### Security
+- **Your server can only be attached to a proxy on your own account.** A link across two
+  accounts let the other account's proxy reach your server directly. Nothing to change on
+  your side.
+
+### Fixes
+- **When a server fails to install, you are now told why.** It used to go quiet and look like
+  a server that was simply switched off. `node`
+- **The member list shows what each person can really do** instead of reporting everyone as
+  having no permissions at all.
+
 ## 2026.09.21.2
 
 ### Features

@@ -1491,12 +1491,20 @@ func (s *PostgresStore) GetInvite(serverID int, userID string) (*models.ServerIn
 func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite, error) {
 	// Same LEFT JOIN as GetInvite: a deleted inviter must not remove a live
 	// member from the list.
+	// cap_overrides and the role's capabilities are read too, because they are
+	// where a member's access actually lives. The legacy permissions blob is
+	// empty for everyone added through POST /api/grants, so a roster built from
+	// it alone reported "no permissions at all" for a member holding full
+	// server admin. Measured on production.
 	query := `
 		SELECT si.id, si.server_id, si.user_id, u.username, COALESCE(u.email, ''),
-			si.permissions, COALESCE(si.invited_by::text, ''), COALESCE(inv_u.username, ''), si.created_at
+			si.permissions, COALESCE(si.invited_by::text, ''), COALESCE(inv_u.username, ''), si.created_at,
+			COALESCE(si.cap_overrides, '{}'::jsonb), COALESCE(sr.capabilities, '[]'::jsonb),
+			COALESCE(si.inherit, FALSE)
 		FROM server_invites si
 		JOIN users u ON si.user_id = u.id
 		LEFT JOIN users inv_u ON si.invited_by = inv_u.id
+		LEFT JOIN server_roles sr ON sr.id = si.server_role_id
 		WHERE si.server_id = $1
 		ORDER BY si.created_at ASC
 	`
@@ -1509,12 +1517,25 @@ func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite
 	var invites []models.ServerInvite
 	for rows.Next() {
 		var inv models.ServerInvite
-		var permsJSON []byte
+		var permsJSON, ovJSON, roleCapsJSON []byte
+		var inherit bool
 		if err := rows.Scan(&inv.ID, &inv.ServerID, &inv.UserID, &inv.Username, &inv.Email,
-			&permsJSON, &inv.InvitedBy, &inv.InviterName, &inv.CreatedAt); err != nil {
+			&permsJSON, &inv.InvitedBy, &inv.InviterName, &inv.CreatedAt,
+			&ovJSON, &roleCapsJSON, &inherit); err != nil {
 			continue
 		}
 		json.Unmarshal(permsJSON, &inv.Permissions)
+		var ov CapOverrides
+		json.Unmarshal(ovJSON, &ov)
+		var roleCaps []string
+		json.Unmarshal(roleCapsJSON, &roleCaps)
+		inv.Capabilities = EffectiveGrantCaps(roleCaps, ov)
+		// The capabilities decide, and the booleans are their summary. Written
+		// unconditionally rather than only when the blob is empty: the two are
+		// the same row, and a blob that disagrees with the caps is a blob that
+		// is out of date.
+		inv.Permissions = TabPermissionsFromCaps(inv.Capabilities)
+		inv.Permissions.Inherit = inherit
 		invites = append(invites, inv)
 	}
 	return invites, nil

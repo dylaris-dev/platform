@@ -534,9 +534,14 @@ type ServerInvite struct {
 	Username    string         `json:"username"`
 	Email       string         `json:"email"`
 	Permissions TabPermissions `json:"permissions"`
-	InvitedBy   string         `json:"invitedBy"`
-	InviterName string         `json:"inviterName"`
-	CreatedAt   time.Time      `json:"createdAt"`
+	// Capabilities is what the member actually holds on this server. The
+	// Permissions booleans above are its per-tab summary; this is the exact
+	// set, so a roster does not have to guess from nine bools what a grant of
+	// thirty capabilities means.
+	Capabilities []string  `json:"capabilities"`
+	InvitedBy    string    `json:"invitedBy"`
+	InviterName  string    `json:"inviterName"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 // ServerStatRow represents a single stats data point stored in PostgreSQL

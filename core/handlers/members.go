@@ -164,6 +164,36 @@ func callerMayDelegate(res *authz.Resolution, key string) bool {
 	return true
 }
 
+// refuseBadPermissionMap answers the request when the permissions blob cannot
+// be used as an authorization decision, and reports whether it did.
+//
+// Shared by the invite and the edit, because they are the same decision and
+// they drifted: the invite was hardened after a live finding and the PATCH
+// beside it was left accepting both mistakes. Measured on production,
+// PATCH {"perms": {...}} - one typo'd field name - answered 200 and stripped
+// every permission the member had, and PATCH with {"sudo": true} was accepted
+// where the POST refuses it by name.
+//
+// No default. There used to be one and it granted everything except member
+// management, so the way to hand somebody full control of a server was to say
+// nothing about permissions at all - the one shape a careless caller is most
+// likely to send. An authorization endpoint has to be told what it is
+// authorizing.
+func refuseBadPermissionMap(w http.ResponseWriter, perms map[string]bool) bool {
+	if perms == nil {
+		sendJSONError(w, "permissions is required and says what this member may do: "+
+			strings.Join(invitePermissionKeys, ", ")+". Send {} for no permissions beyond seeing the server.",
+			http.StatusBadRequest)
+		return true
+	}
+	if bad := unknownPermissionKeys(perms); len(bad) > 0 {
+		sendJSONError(w, "Unknown permission(s): "+strings.Join(bad, ", ")+". Valid keys are "+
+			strings.Join(invitePermissionKeys, ", "), http.StatusBadRequest)
+		return true
+	}
+	return false
+}
+
 // GetMembers GET /api/servers/{id}/members - the member invites on one server.
 func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -230,20 +260,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No default. There used to be one and it granted everything except member
-	// management, so the way to hand somebody full control of a server was to
-	// say nothing about permissions at all - the one shape a careless caller is
-	// most likely to send. An authorization endpoint has to be told what it is
-	// authorizing.
-	if req.Permissions == nil {
-		sendJSONError(w, "permissions is required and says what this member may do: "+
-			strings.Join(invitePermissionKeys, ", ")+". Send {} for no permissions beyond seeing the server.",
-			http.StatusBadRequest)
-		return
-	}
-	if bad := unknownPermissionKeys(req.Permissions); len(bad) > 0 {
-		sendJSONError(w, "Unknown permission(s): "+strings.Join(bad, ", ")+". Valid keys are "+
-			strings.Join(invitePermissionKeys, ", "), http.StatusBadRequest)
+	if refuseBadPermissionMap(w, req.Permissions) {
 		return
 	}
 
@@ -311,8 +328,14 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	var req struct {
 		Permissions map[string]bool `json:"permissions"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON: this endpoint takes only permissions ("+
+			strings.Join(invitePermissionKeys, ", ")+")", http.StatusBadRequest)
+		return
+	}
+	if refuseBadPermissionMap(w, req.Permissions) {
 		return
 	}
 

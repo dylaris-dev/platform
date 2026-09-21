@@ -71,8 +71,10 @@ func NetPolicyKey(nodeToken string) string {
 // unconditionally anyway.
 func BuildNodePolicies(servers []models.Server) map[int]map[string][]string {
 	uuidByID := make(map[int]string, len(servers))
+	ownerByID := make(map[int]string, len(servers))
 	for _, s := range servers {
 		uuidByID[s.ID] = s.UUID
+		ownerByID[s.ID] = s.OwnerID
 	}
 
 	out := make(map[int]map[string][]string)
@@ -96,7 +98,13 @@ func BuildNodePolicies(servers []models.Server) map[int]map[string][]string {
 		// missing server visible rather than silently unpoliced.
 		allow := out[s.NodeID][s.UUID]
 		if s.ProxyID != nil {
-			if proxyUUID, ok := uuidByID[*s.ProxyID]; ok && proxyUUID != "" && proxyUUID != s.UUID {
+			// Same owner only. The link route refuses a cross-owner link, but
+			// this is the place the rule actually takes effect, and a row that
+			// predates that refusal (or is written any other way) must not open
+			// a tenant's server to a stranger's container. A mismatch
+			// contributes nothing, exactly like a proxy that no longer exists.
+			sameOwner := ownerByID[*s.ProxyID] == s.OwnerID
+			if proxyUUID, ok := uuidByID[*s.ProxyID]; ok && sameOwner && proxyUUID != "" && proxyUUID != s.UUID {
 				allow = append(allow, proxyUUID)
 			}
 			// A proxy_id pointing at a server that no longer exists contributes

@@ -8,6 +8,33 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **A scheduled task now needs the capability it performs**, not only the right to manage the
+  schedule: a restart task needs `power.restart`, a message task needs `console.send`. `core`
+
+### Security
+- **A server can only be linked to a proxy owned by the same account.** A link across two
+  accounts put that account's proxy on the server's ingress allow-list and listed the server
+  in their network view. `core`
+- **RCON errors no longer carry the container's private address.** A friend holding only
+  `rcon.exec` read the server's internal IP and port out of one failed command. `core`
+
+### Fixes
+- **A failed installation now tells the server's owner why.** It wrote the status "stopped"
+  and left the reason in the node's log, so the server looked installed and simply idle.
+  `core` `node`
+- **Editing a member's permissions refuses a body it does not understand**, as the invite
+  already does. A mistyped field name answered "success" and removed every permission the
+  member had. `core`
+- **The member list reports what a member can actually do.** It read the legacy permission
+  blob only, so anyone added through the access page appeared with no permissions at all.
+  `core`
+
 ## 2026.09.21.2
 
 ### Features

@@ -155,6 +155,41 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 	return manifest, nil
 }
 
+// reportSetupFailed tells Core that an installation did not happen, and why.
+//
+// It rides the setup channel the successful case already uses, because that
+// channel is the one with an identity: the name carries this node's token, so
+// Core can check that the node reporting on a server is the node that hosts it.
+//
+// It exists because a failed install used to reach nobody. The node logged the
+// reason and wrote the status "stopped", so the customer was told their server
+// was set up and idle. Measured on production: an install refused upstream
+// (HTTP 404 for the requested version) left a server that reported paper, the
+// version and the sub-server, started to an empty container, crash-looped three
+// times and went offline - with no error anywhere a customer can see, and the
+// only explanation sitting in a log they have no access to.
+func reportSetupFailed(ctx context.Context, rdb *redis.Client, serverUUID, subServer string, cause error) {
+	if cause == nil {
+		return
+	}
+	payload := map[string]interface{}{
+		"serverUuid": serverUUID,
+		"subServer":  subServer,
+		"error":      cause.Error(),
+		"timestamp":  time.Now().Unix(),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("setup failure report: marshal failed: %v", err)
+		return
+	}
+	if err := rdb.Publish(ctx, queue.SetupResultsChannel(nodeID), data).Err(); err != nil {
+		// Logged, never fatal, and never retried: the install already failed,
+		// and the report is the explanation rather than the outcome.
+		log.Printf("setup failure report publish failed: %v", err)
+	}
+}
+
 // reportSetup publishes what an install turned out to describe on this node's
 // OWN setup channel, so Core can attribute it to the node that hosts the server.
 // Same reasoning as reportBackup and reportRestore; see queue.SetupResultsChannel.

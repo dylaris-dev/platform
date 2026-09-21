@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -41,6 +42,53 @@ const (
 	scheduledTaskMaxName    = 128
 	scheduledTaskMaxPayload = 512
 )
+
+// capForTaskType names the capability a task's EXECUTION needs, which is not
+// the same thing as the capability to manage the schedule.
+//
+// A "restart" task restarts the server and a "say" task writes a command on its
+// console, so schedule.write on its own was power.restart and console.send
+// under another name. Measured on production: an account refused
+// POST /power {"action":"restart"} and POST /console/command with 403 saved a
+// minutely restart task, the server restarted a minute later with the run
+// recorded "ok", and the same account's "say" task reached the live console.
+//
+// An unknown type returns "": validateTaskFields already refuses those, and a
+// new type with no entry here would otherwise be refused for everyone.
+func capForTaskType(taskType string) string {
+	switch taskType {
+	case "restart":
+		return "power.restart"
+	case "say":
+		return "console.send"
+	}
+	return ""
+}
+
+// refuseWithoutTaskCap answers the request when the caller may edit the
+// schedule but not run this kind of task, and reports whether it did. The
+// resulting task type is what matters, so Update calls it with the patched
+// value rather than the request's.
+//
+// Fails CLOSED with no resolver: this is an authorization check, and Core
+// always has one.
+func (h *ScheduledTasksHandler) refuseWithoutTaskCap(w http.ResponseWriter, r *http.Request, serverID int, taskType string) bool {
+	capID := capForTaskType(taskType)
+	if capID == "" {
+		return false
+	}
+	if h.state == nil || h.state.Authz == nil {
+		sendJSONError(w, "Authorization check failed", http.StatusInternalServerError)
+		return true
+	}
+	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), serverID)
+	if err != nil || !res.HasCap(capID) {
+		sendJSONError(w, "This task needs "+capID+", which you do not hold on this server",
+			http.StatusForbidden)
+		return true
+	}
+	return false
+}
 
 // normalizeTaskName and normalizeTaskPayload are the ONE place either field is
 // cleaned. They exist because Create did all of this inline and Update did none
@@ -124,6 +172,9 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
+	if h.refuseWithoutTaskCap(w, r, serverID, req.TaskType) {
+		return
+	}
 	next, err := services.ComputeNextRun(req.ScheduleCron, time.Now().UTC())
 	if err != nil {
 		sendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
@@ -200,6 +251,13 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := validateTaskFields(existing.Name, existing.TaskType, existing.Payload); msg != "" {
 		sendJSONError(w, msg, http.StatusBadRequest)
+		return
+	}
+	// The PATCHED type, not the request's: changing a "say" task into a
+	// "restart" one is how schedule.write would otherwise still reach a power
+	// action, and a patch that leaves the type alone must still not let someone
+	// who lost the capability re-enable the task.
+	if h.refuseWithoutTaskCap(w, r, serverID, existing.TaskType) {
 		return
 	}
 	if req.Enabled != nil {

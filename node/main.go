@@ -1312,6 +1312,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err != nil {
 			log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			// The status alone says "stopped", which is indistinguishable from a
+			// server that installed and is simply not running. The reason has to
+			// travel with it or it reaches nobody.
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, err)
 			return
 		}
 		// What the archive said it was, when the install was an import of one.
@@ -1331,6 +1335,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		eulaPath, err := resolveWithinDir(serverPath, filepath.Join(subName, "eula.txt"))
 		if err != nil {
 			log.Printf("Refusing to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
+			// This return leaves the install half-done, so it is a failure like
+			// any other and had even less to show for it: no status was written
+			// either, so the server sat in "installing" until the busy key aged
+			// out.
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, err)
 			return
 		}
 		if err := os.WriteFile(eulaPath, []byte("eula=true\n"), 0644); err != nil {
@@ -1346,6 +1356,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err != nil {
 			log.Printf("buildStartCommand failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			// The files are there but nothing can start them, which looks
+			// exactly like a successful install from the outside.
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, err)
 			return
 		}
 		cmd.Config.Docker.Command = startCmd

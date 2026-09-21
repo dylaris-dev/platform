@@ -1,6 +1,10 @@
 package store
 
-import "dylaris-core/models"
+import (
+	"sort"
+
+	"dylaris-core/models"
+)
 
 // MapLegacyInviteCaps maps the legacy 9-bool TabPermissions blob to the new
 // granular SERVER cap set (phase 3 migration). Field order is fixed so the
@@ -43,4 +47,60 @@ func MapLegacyInviteCaps(p models.TabPermissions) []string {
 		caps = append(caps, "server.settings.write")
 	}
 	return caps
+}
+
+// TabPermissionsFromCaps summarises a member's effective SERVER capabilities in
+// the legacy nine-bool shape: one bool per tab, true when the member can open
+// it at all. Inherit is not a capability and is carried by its own column, so
+// it is always false here and the caller sets it.
+//
+// This exists because the member roster answers "who may do what on my server"
+// and it was answering it from the legacy blob alone. A member added through
+// POST /api/grants - the route the panel's Access page actually uses - has an
+// empty blob and real capabilities, so the roster printed every flag false for
+// somebody holding full server admin. Measured on production.
+//
+// It is a summary, not an inverse: the read cap is what decides, because that
+// is what opens the tab. Note that legacy "power" also conferred players.read,
+// so a migrated invite reports Players true - which is the tab that member has
+// had all along.
+func TabPermissionsFromCaps(caps []string) models.TabPermissions {
+	has := make(map[string]bool, len(caps))
+	for _, c := range caps {
+		has[c] = true
+	}
+	return models.TabPermissions{
+		Console:  has["console.read"],
+		Files:    has["files.read"],
+		Config:   has["config.read"],
+		Setup:    has["server.settings.write"],
+		Overview: has["overview.read"],
+		Power:    has["power.start"] || has["power.stop"] || has["power.restart"] || has["power.kill"],
+		Players:  has["players.read"],
+		Members:  has["members.read"],
+		Network:  has["network.read"],
+		Backups:  has["backups.read"],
+	}
+}
+
+// EffectiveGrantCaps folds a role's capabilities and a grant's overrides into
+// the set the member actually holds, in the same order applyGrant does it:
+// role, then grant, then deny. Sorted so a roster row is stable between reads.
+func EffectiveGrantCaps(roleCaps []string, ov CapOverrides) []string {
+	set := map[string]bool{}
+	for _, c := range roleCaps {
+		set[c] = true
+	}
+	for _, c := range ov.Grant {
+		set[c] = true
+	}
+	for _, c := range ov.Deny {
+		delete(set, c)
+	}
+	out := make([]string, 0, len(set))
+	for c := range set {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
 }
