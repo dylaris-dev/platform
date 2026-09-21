@@ -657,6 +657,13 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "The node did not answer, so it is not known whether that name is already taken: "+lerr.Error(), http.StatusBadGateway)
 		return
 	}
+	// A copy CREATES a sub-server, so it is held to the same cap as creating one
+	// through setup. It never was, which is half of how a platform limited to
+	// three ended up with seven. The listing is already in hand, so this costs
+	// nothing extra.
+	if refuseIfOverSubServerLimit(w, subServerLimit(h.state), countSubServerDirs(entries)) {
+		return
+	}
 	if subServerNameTaken(entries, req.TargetName) {
 		sendJSONError(w, "A sub-server called "+req.TargetName+" already exists. Pick another name.", http.StatusConflict)
 		return
@@ -743,26 +750,10 @@ func subServerNameTaken(entries []*pb.FileInfo, name string) bool {
 
 // --- node round trips ------------------------------------------------------
 
+// listServerDir is the shared implementation; the sub-server COUNT has to be
+// read the same way here and in SetupServer, which belongs to another type.
 func (h *ServerModsHandler) listServerDir(nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
-	if h.state.GRPCRegistry == nil {
-		return nil, fmt.Errorf("node connection not available")
-	}
-	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
-		RequestId:  uuid.NewString(),
-		ServerUuid: serverUUID,
-		Payload:    &pb.NodeMessage_ListReq{ListReq: &pb.ListFilesReq{Path: dir}},
-	}, 30*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	if e := resp.GetError(); e != nil {
-		return nil, fmt.Errorf("%s", e.Message)
-	}
-	list := resp.GetListResp()
-	if list == nil {
-		return nil, fmt.Errorf("unexpected response from node")
-	}
-	return list.Files, nil
+	return listServerDirFor(h.state, nodeID, serverUUID, dir)
 }
 
 // hashFilesBatch must not exceed the node's own hashFilesMaxCount (200 in

@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Inviting a member through the API now requires an explicit `permissions` object,** and
+  refuses a field or a permission key it does not recognise. Leaving permissions out used to
+  grant everything except member management. `core`
+
+### Security
+- **A published tab no longer shows the node's own error text.** Someone holding a share link
+  to a stopped server was handed its container name, which carries the server's UUID, and the
+  fact that it was not running. `core`
+
+### Fixes
+- **The sub-server limit holds now.** It was counted from a cache that a stopped server does
+  not write, so it lapsed exactly when sub-servers get added, and copying one never checked
+  it at all. `core`
+- **An upload carrying no file is refused** instead of answering "0 files uploaded
+  successfully". The part has to be named `files`, and the error says so. `core`
+
 ## 2026.09.21
 
 ### Features

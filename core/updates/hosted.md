@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **If you invite people to a server through the API, the invite must now say what they may
+  do.** An invite that said nothing used to hand over almost everything.
+
+### Security
+- **A page you publish from a tab no longer reveals your server's internal name** or whether
+  it is currently running.
+
+### Fixes
+- **The limit on sub-servers applies when you copy one,** not only when you create one, and it
+  is no longer skipped while the server is stopped.
+- **An upload that contains no file now says so** instead of reporting success.
+
 ## 2026.09.21
 
 ### Features

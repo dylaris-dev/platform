@@ -915,6 +915,20 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// An upload that carries nothing is a failed upload, not a successful one.
+	// It used to fall all the way through the loop below and answer 200 with
+	// "0 files uploaded successfully" - measured on production by sending the
+	// part as "file" rather than "files", which is the obvious mistake to make
+	// against this endpoint. The only signal a client had was the 0 in a
+	// sentence whose other word was "successfully".
+	//
+	// It is answered here, before the server and node are looked up: there is
+	// nothing to ask a node about.
+	if len(r.MultipartForm.File["files"]) == 0 {
+		sendJSONError(w, "No files in the request: the file part must be named \"files\"", http.StatusBadRequest)
+		return
+	}
+
 	path := r.FormValue("path")
 	if !validate.IsSafeRelPath(path) {
 		sendJSONError(w, "Invalid path", http.StatusBadRequest)

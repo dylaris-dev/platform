@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -11,6 +13,33 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+// invitePermissionKeys is the vocabulary this endpoint accepts, in the order it
+// reads best in an error message. It is the same set callerMayDelegate knows,
+// plus "inherit" and the read-only keys the invite blob can carry - a key that
+// is not here confers nothing wherever it ends up, so accepting it silently
+// only lets a caller believe they granted something.
+var invitePermissionKeys = []string{
+	"overview", "console", "files", "config", "setup",
+	"power", "players", "members", "network", "backups", "inherit",
+}
+
+// unknownPermissionKeys returns the keys that are not in the vocabulary, sorted
+// so the message is the same every time.
+func unknownPermissionKeys(perms map[string]bool) []string {
+	known := make(map[string]bool, len(invitePermissionKeys))
+	for _, k := range invitePermissionKeys {
+		known[k] = true
+	}
+	var bad []string
+	for k := range perms {
+		if !known[k] {
+			bad = append(bad, k)
+		}
+	}
+	sort.Strings(bad)
+	return bad
+}
 
 type MemberHandler struct {
 	state *AppState
@@ -182,13 +211,39 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		Username    string          `json:"username"`
 		Permissions map[string]bool `json:"permissions"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+	// Unknown fields are an ERROR here, not something to ignore. This endpoint
+	// decides what somebody may do to a server, and the two mistakes it used to
+	// answer with "success" are the same mistake: a body it did not understand,
+	// and a body with no permissions at all. Measured on production by sending
+	// {"username": ..., "preset": "viewer"} - the word "viewer" was dropped on
+	// the floor and the guest could write files and stop the server.
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON: this endpoint takes only username and permissions ("+
+			strings.Join(invitePermissionKeys, ", ")+")", http.StatusBadRequest)
 		return
 	}
 
 	if req.Username == "" {
 		sendJSONError(w, "Username required", http.StatusBadRequest)
+		return
+	}
+
+	// No default. There used to be one and it granted everything except member
+	// management, so the way to hand somebody full control of a server was to
+	// say nothing about permissions at all - the one shape a careless caller is
+	// most likely to send. An authorization endpoint has to be told what it is
+	// authorizing.
+	if req.Permissions == nil {
+		sendJSONError(w, "permissions is required and says what this member may do: "+
+			strings.Join(invitePermissionKeys, ", ")+". Send {} for no permissions beyond seeing the server.",
+			http.StatusBadRequest)
+		return
+	}
+	if bad := unknownPermissionKeys(req.Permissions); len(bad) > 0 {
+		sendJSONError(w, "Unknown permission(s): "+strings.Join(bad, ", ")+". Valid keys are "+
+			strings.Join(invitePermissionKeys, ", "), http.StatusBadRequest)
 		return
 	}
 
@@ -212,15 +267,6 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	inviterID := ""
 	if id, ok := r.Context().Value("userID").(string); ok {
 		inviterID = id
-	}
-
-	// Default shape grants everything except member management.
-	if req.Permissions == nil {
-		req.Permissions = map[string]bool{
-			"console": true, "files": true,
-			"config": true, "setup": true, "overview": true,
-			"power": true, "members": false,
-		}
 	}
 
 	// Cap to what the inviter themselves holds.

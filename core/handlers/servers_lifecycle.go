@@ -412,13 +412,15 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// rule, guarded on `n > 0`, and therefore threw away a stored 0 and fell back
 	// to the default of three. An operator asking for none silently got three,
 	// and an operator asking for unlimited got three as well.
+	//
+	// The count comes from the node. It used to come from the disk-stats cache
+	// in Redis, which a STOPPED server does not write - so the cap did not
+	// apply while a server was stopped, and a stopped server is exactly when a
+	// sub-server gets added. Measured on production: a limit of three, seven
+	// sub-servers.
 	if srv.Status != "pending_setup" {
-		val, _ := h.state.Store.GetSetting(SettingMaxSubServers)
-		if maxSub := services.ParseLimitSetting(val, defaultMaxSubServers); maxSub != nil {
-			if known, ok := h.knownSubServers(r.Context(), srv.UUID); ok && services.AtOrOver(maxSub, int64(len(known))) {
-				sendJSONError(w, fmt.Sprintf("Sub-server limit reached (%d). Change the limit in Settings → Servers.", *maxSub), 400)
-				return
-			}
+		if refuseIfSubServerLimitReached(w, h.state, srv.NodeID, srv.UUID) {
+			return
 		}
 	}
 

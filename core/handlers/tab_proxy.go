@@ -25,6 +25,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -136,6 +137,33 @@ func (h *ProxyHandler) rawDB() *sql.DB {
 	return provider.RawDB()
 }
 
+// proxyUpstreamError answers a failed proxy hop without repeating what the node
+// said.
+//
+// The node's message names its own internals. Measured on production: an
+// anonymous visitor with a PUBLIC share link, on a tab whose server happened to
+// be stopped, was handed
+// "mc_<server-uuid> has no network IP (is it running?)" - so the link told a
+// stranger the server's UUID, its container name, and whether it was running.
+// Nothing about a proxied third-party page needs any of that, and this is a
+// content host: everything that reaches it is either a share visitor or a
+// browser rendering someone's page, never an operator reading a console.
+//
+// The real message goes to the log with the tab and server that produced it,
+// which is where an operator looks anyway.
+func proxyUpstreamError(w http.ResponseWriter, tab *proxyTab, code int, detail string) {
+	// An upstream that answers something that is not an HTTP status must not
+	// become one: WriteHeader panics below 100 and above 999.
+	if code < 400 || code > 599 {
+		code = http.StatusBadGateway
+	}
+	if tab != nil {
+		log.Printf("tab proxy: tab %d (server %s, node %d) failed with %d: %s",
+			tab.ID, tab.ServerUUID, tab.NodeID, code, detail)
+	}
+	http.Error(w, "The page could not be loaded.", code)
+}
+
 // serve branches to the WS bridge (Task 10) or the HTTP path.
 func (h *ProxyHandler) serve(w http.ResponseWriter, r *http.Request, tab *proxyTab, subPath string) {
 	if isWebSocketUpgrade(r) {
@@ -194,7 +222,7 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 	}
 	ch, err := h.state.GRPCRegistry.SendRequestStreaming(tab.NodeID, msg)
 	if err != nil {
-		http.Error(w, "Node communication error: "+err.Error(), http.StatusBadGateway)
+		proxyUpstreamError(w, tab, http.StatusBadGateway, "dispatch: "+err.Error())
 		return
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(tab.NodeID, reqID)
@@ -205,7 +233,7 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 	for resp := range ch {
 		if e := resp.GetError(); e != nil {
 			if !headerWritten {
-				http.Error(w, e.Message, int(e.Code))
+				proxyUpstreamError(w, tab, int(e.Code), e.Message)
 			}
 			return
 		}
