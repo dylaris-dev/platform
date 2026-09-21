@@ -2,7 +2,9 @@ package services
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
@@ -22,10 +24,20 @@ type sftpPruneFakeStore struct {
 	nodes     []models.Node
 	access    map[int][]store.SFTPAccess
 	accessErr map[int]error
+	// fileMode is what the operator set file access to. Empty is a platform
+	// that never saved the setting, which is what these cases are: they are
+	// about pruning and grants, not about whether SFTP is served at all.
+	fileMode string
 }
 
 func (f *sftpPruneFakeStore) ListUsers() ([]models.User, error) { return f.users, nil }
 func (f *sftpPruneFakeStore) ListNodes() ([]models.Node, error) { return f.nodes, nil }
+func (f *sftpPruneFakeStore) GetSetting(key string) (string, error) {
+	if key == "file_access_mode" {
+		return f.fileMode, nil
+	}
+	return "", nil
+}
 func (f *sftpPruneFakeStore) GetSFTPAccessByNode(nodeID int) ([]store.SFTPAccess, error) {
 	if err := f.accessErr[nodeID]; err != nil {
 		return nil, err
@@ -137,5 +149,85 @@ func TestLegacyFleetWideAuthKeysAreAlwaysPruned(t *testing.T) {
 
 	if mr.Exists("sftp:auth:alice") {
 		t.Error("the pre-node-scoping fleet-wide key survived; every node can read it")
+	}
+}
+
+// Beam-only file access means there is no SFTP, and the publisher has to know
+// that. It did not: the panel's credentials route answered "beam_only" while
+// this kept the bcrypt hash of every user's password and their per-node server
+// list alive in Redis, refreshed every 60 seconds, and the node went on
+// accepting logins against them. Measured on production - a delegate logged in
+// over SFTP with their panel password on a beam-only platform.
+func TestSyncPublishesNothingForSFTPWhenFileAccessIsBeam(t *testing.T) {
+	fs := pruneFixture()
+	fs.fileMode = "beam"
+	svc, mr := newSFTPPruneTest(t, fs)
+
+	// A tick from before the operator switched to beam: both halves published,
+	// both with the 5-minute TTL the publisher gives them, and the list already
+	// a minute into it.
+	staleList := "sftp:node:" + pruneNodeA + ":user:alice"
+	mr.Set(redisacl.SFTPAuthKey(pruneNodeA, "alice"), "$2a$10$hash-alice")
+	mr.Set(staleList, `[{"uuid":"srv-a"}]`)
+	mr.SetTTL(staleList, 4*time.Minute)
+
+	svc.sync()
+
+	// The credential goes at once, through the prune: it is the half that
+	// OPENS a session, and it is what was being refreshed every 60 seconds for
+	// a switched-off feature.
+	for _, k := range mr.Keys() {
+		if strings.HasPrefix(k, "sftp:auth:") {
+			t.Errorf("password hash %q is still published on a beam-only platform", k)
+		}
+	}
+	// The server list is left to its 5-minute TTL rather than scanned for on
+	// every tick. It opens nothing on its own, and a SCAN per skipped node per
+	// minute forever is a poor trade for five minutes of a list of server
+	// names. What must NOT happen is a refresh, which would keep it alive for
+	// as long as the platform stays on beam.
+	if ttl := mr.TTL(staleList); ttl <= 0 || ttl > 4*time.Minute {
+		t.Errorf("the stale server list was refreshed (ttl now %s); on a platform that stays on beam it would never age out", ttl)
+	}
+}
+
+// And the ordinary platform still gets both halves, or the check above would
+// have switched SFTP off for everyone.
+func TestSyncStillPublishesWhenFileAccessIsSFTP(t *testing.T) {
+	fs := pruneFixture()
+	fs.fileMode = "sftp"
+	svc, mr := newSFTPPruneTest(t, fs)
+
+	svc.sync()
+
+	for _, want := range []string{
+		redisacl.SFTPAuthKey(pruneNodeA, "alice"),
+		"sftp:node:" + pruneNodeA + ":user:alice",
+	} {
+		if !mr.Exists(want) {
+			t.Errorf("key %q was not published on a platform that serves SFTP", want)
+		}
+	}
+}
+
+// An external node forces beam locally whatever the platform is set to, so it
+// must get nothing even while the rest of the fleet serves SFTP.
+func TestSyncPublishesNothingForAnExternalNode(t *testing.T) {
+	fs := pruneFixture()
+	fs.fileMode = "sftp"
+	fs.nodes[1].Tags = "byon,external"
+	svc, mr := newSFTPPruneTest(t, fs)
+
+	svc.sync()
+
+	if mr.Exists("sftp:node:" + pruneNodeB + ":user:bob") {
+		t.Error("an external node was handed a server list for SFTP")
+	}
+	if mr.Exists(redisacl.SFTPAuthKey(pruneNodeB, "bob")) {
+		t.Error("an external node was handed a password hash for SFTP")
+	}
+	// The platform node beside it is unaffected.
+	if !mr.Exists("sftp:node:" + pruneNodeA + ":user:alice") {
+		t.Error("the platform node lost its server list")
 	}
 }
