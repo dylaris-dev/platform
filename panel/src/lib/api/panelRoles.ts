@@ -51,12 +51,14 @@ export async function deletePanelRole(id: number): Promise<{ success: boolean; m
     } catch (err) { return handleError(err); }
 }
 
-export async function assignUserPanelRole(userId: string, panelRoleId: number | null, grantCaps: string[], denyCaps: string[]): Promise<{ success: boolean; message?: string }> {
+// A panel role is the level-1 grant - panelroles.write alone is effectively
+// full admin - so Core asks the acting operator for their own credential.
+export async function assignUserPanelRole(userId: string, panelRoleId: number | null, grantCaps: string[], denyCaps: string[], reauth?: { password: string; code: string }): Promise<{ success: boolean; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/admin/users/${userId}/panel-role`, {
             method: 'PUT',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ panelRoleId, grantCaps, denyCaps }),
+            body: JSON.stringify({ panelRoleId, grantCaps, denyCaps, reauth }),
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }

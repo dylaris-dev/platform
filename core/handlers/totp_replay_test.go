@@ -142,3 +142,33 @@ func TestMatchTOTPStep(t *testing.T) {
 		t.Error("a code from two days away matched")
 	}
 }
+
+// Re-authentication verifies a code WITHOUT spending its step, and one save
+// can make two writes: the panel's "role and permissions" button calls two
+// endpoints from one prompt, and the second would be refused as a replay of
+// the code the operator had just typed.
+//
+// The replay this protects against is at the LOGIN endpoint, where a code plus
+// a phished password is the whole credential. Somebody able to replay one here
+// holds a session and the password already, and could simply sign in.
+func TestReauthDoesNotSpendTheStep(t *testing.T) {
+	state := totpReplayState(t)
+	secret := totpSecretFor(t)
+	code := codeAt(t, secret, time.Now())
+	user := &models.User{ID: "u-1", TOTPSecret: secret}
+
+	for i := 1; i <= 3; i++ {
+		ok, err := verifyTOTPOrBackupWith(state, user, code, false)
+		if err != nil || !ok {
+			t.Fatalf("re-authentication %d was refused (ok=%v err=%v); one prompt cannot cover a save that writes twice", i, ok, err)
+		}
+	}
+
+	// And the login path is untouched: the same code is still spent there.
+	if ok, _ := verifyTOTPOrBackupFor(state, user, code); !ok {
+		t.Fatal("the first login use was refused")
+	}
+	if ok, _ := verifyTOTPOrBackupFor(state, user, code); ok {
+		t.Error("the code was replayable at login after the re-authentication path had seen it")
+	}
+}

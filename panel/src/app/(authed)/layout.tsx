@@ -17,6 +17,7 @@ import BillingBanner from '@/components/BillingBanner';
 import StorageBanner from '@/components/StorageBanner';
 import NodeConnectionBanner from '@/components/NodeConnectionBanner';
 import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
+import { ReauthDialogRoot } from '@/components/ui/ReauthDialog';
 import { ToastRoot } from '@/components/ui/Toast';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
@@ -131,6 +132,11 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             {/* Single host for confirmDialog(). Mounted here so every authed
                 screen can ask without threading a node through its own JSX. */}
             <ConfirmDialogRoot />
+            {/* Single host for reauthDialog(). The admin account actions ask
+                for the operator's own password, so the prompt lives beside the
+                confirmation rather than inside every screen that manages a
+                user. */}
+            <ReauthDialogRoot />
             {/* Single host for toast(). Same reason as the dialog above: there
                 were 31 copies of this state and markup, with five shapes and
                 dismiss timeouts from 2800ms to 4500ms, so the same action

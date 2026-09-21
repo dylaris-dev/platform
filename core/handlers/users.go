@@ -68,12 +68,27 @@ type createUserRequest struct {
 	// carry one. Plaintext on the way in, hashed into req.User.Password below
 	// - never assign this field to the model directly.
 	Password string `json:"password"`
+	adminReauthRequest
 	// Region access. If the caller omits both fields, the new
 	// user defaults to all-regions access — matches the grandfather behavior
 	// applied to existing users at migration time, and avoids creating users
 	// who can see nothing.
 	AllRegions      *bool    `json:"allRegions,omitempty"`
 	RegionsExplicit []string `json:"regionsExplicit,omitempty"`
+}
+
+// createsPrivilegedAccount reports whether this create hands out power rather
+// than just making an account.
+//
+// Every field that would need re-authentication to set AFTERWARDS counts here,
+// or creation becomes the way around those checks: is_admin and the admin or
+// support role are the two that reach the panel, and the flags are the ones
+// SetUserPermissions gates. A panel role cannot be assigned at creation, so it
+// has nothing to check for.
+func createsPrivilegedAccount(req createUserRequest) bool {
+	return req.User.IsAdmin ||
+		req.User.Role == "admin" || req.User.Role == "support" ||
+		req.User.CanDeleteServers || req.User.CanChangeResources
 }
 
 // CreateUser POST /api/users - creates an account and assigns its regions. A
@@ -131,6 +146,15 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
 	}
+	// A PRIVILEGED account is durable access that outlives the session creating
+	// it, so the administrator proves who they are. An ordinary account is not:
+	// it holds nothing until somebody grants it something, and every route that
+	// grants is gated the same way. Gating routine user creation as well would
+	// train operators to type their password without reading the dialog.
+	if createsPrivilegedAccount(req) && !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
+		return
+	}
+
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("CreateUser: bcrypt hashing failed for username=%q: %v", req.Username, err)
@@ -320,6 +344,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 
 	var req struct {
 		Password string `json:"password"`
+		adminReauthRequest
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
 		sendJSONError(w, "Password is required", 400)
@@ -336,6 +361,13 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	}
 	if min := LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
 		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
+		return
+	}
+
+	// Setting somebody else's password is taking their account over, so the
+	// question is not what this session may do but whether the administrator is
+	// the one asking. Last, after every cheap check and before the hash.
+	if !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
 		return
 	}
 

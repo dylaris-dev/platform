@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Platform staff now have to re-enter their own password** before setting your password,
+  removing your second factor or changing your address. Nothing to change on your side.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.21.5
 
 ### Features

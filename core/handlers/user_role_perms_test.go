@@ -151,12 +151,12 @@ func TestSetUserRoleHandler_SelfDemotionGuard(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &userRoleFakeStore{
 				users:      tc.users,
-				targetUser: &models.User{ID: tc.targetID, Role: "admin"},
+				targetUser: &models.User{ID: tc.targetID, Role: "admin", Password: testReauthHash},
 			}
 			h := NewUserHandler(&AppState{Store: fs})
 			rec := httptest.NewRecorder()
 
-			h.SetUserRoleHandler(rec, setRoleReq(tc.targetID, testTargetID, true, map[string]interface{}{"role": tc.reqRole}))
+			h.SetUserRoleHandler(rec, setRoleReq(tc.targetID, testTargetID, true, withReauth(map[string]interface{}{"role": tc.reqRole})))
 
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
@@ -206,7 +206,11 @@ func setPermsReq(targetID string, isAdmin bool, body map[string]interface{}) *ht
 	b, _ := json.Marshal(body)
 	r := httptest.NewRequest("PUT", "/api/admin/users/"+targetID+"/permissions", bytes.NewReader(b))
 	r = mux.SetURLVars(r, map[string]string{"id": targetID})
-	return r.WithContext(context.WithValue(r.Context(), "isAdmin", isAdmin))
+	ctx := context.WithValue(r.Context(), "isAdmin", isAdmin)
+	// The handler re-authenticates the ACTING administrator, so a request
+	// without one is answered before it reaches what these cases are about.
+	ctx = context.WithValue(ctx, "userID", testOtherAdminID)
+	return r.WithContext(ctx)
 }
 
 // The old pure non-admin-forbidden case moved to routes_authz_test.go
@@ -217,10 +221,10 @@ func setPermsReq(targetID string, isAdmin bool, body map[string]interface{}) *ht
 // beyond the admin gate); this pins the argument order/mapping so a future
 // field-shuffle regresses loudly instead of silently swapping flags.
 func TestSetUserPermissionsHandler_Success(t *testing.T) {
-	fs := &userRoleFakeStore{}
+	fs := &userRoleFakeStore{targetUser: &models.User{ID: testTargetID, Password: testReauthHash}}
 	h := NewUserHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
-	body := map[string]interface{}{"canDeleteServers": true, "canChangeResources": true, "supportTeam": "billing"}
+	body := withReauth(map[string]interface{}{"canDeleteServers": true, "canChangeResources": true, "supportTeam": "billing"})
 
 	h.SetUserPermissionsHandler(rec, setPermsReq(testTargetID, true, body))
 
@@ -291,15 +295,18 @@ func TestSetUserPanelRoleHandler_RoleNotFound(t *testing.T) {
 }
 
 func TestSetUserPanelRoleHandler_Success(t *testing.T) {
-	fs := &userRoleFakeStore{panelRole: &store.PanelRole{ID: 3, Name: "support"}}
+	fs := &userRoleFakeStore{
+		panelRole:  &store.PanelRole{ID: 3, Name: "support"},
+		targetUser: &models.User{ID: testOtherUserID, Password: testReauthHash},
+	}
 	h := NewUserHandler(&AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
-	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{
+	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, withReauth(map[string]interface{}{
 		"panelRoleId": 3,
 		"grantCaps":   []string{"nodes.read"},
 		"denyCaps":    []string{"users.delete"},
-	}))
+	})))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())

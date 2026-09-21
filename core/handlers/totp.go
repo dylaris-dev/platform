@@ -419,6 +419,17 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "You cannot reset 2FA on an account with more rights than yours", http.StatusForbidden)
 		return
 	}
+	// Taking somebody's second factor away leaves their password as the whole
+	// credential, and the administrator's own session is not proof that the
+	// administrator asked for it. A DELETE carrying a body is unusual and
+	// deliberate: the alternative was a second method for the same action.
+	var req adminReauthRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req) // an absent body fails the check below, with its own message
+	}
+	if !requireAdminReauth(w, r, h.state, req) {
+		return
+	}
 	if err := h.state.Store.DisableUserTOTP(id); err != nil {
 		sendJSONError(w, "Reset failed", http.StatusInternalServerError)
 		return
@@ -444,6 +455,23 @@ func (h *AuthHandler) verifyTOTPOrBackup(user *models.User, code string) (bool, 
 // AppState. Splitting it was the alternative to plumbing an AuthHandler into
 // two more structs for one call each.
 func verifyTOTPOrBackupFor(state *AppState, user *models.User, code string) (bool, error) {
+	return verifyTOTPOrBackupWith(state, user, code, true)
+}
+
+// verifyTOTPOrBackupWith is the same check with the one-time claim as a
+// choice. claimStep=false verifies a TOTP code without spending its step; a
+// backup code is still consumed either way, since that is the code itself
+// being used up rather than a window.
+//
+// Only re-authentication passes false, and the reason is the attack each path
+// faces. At LOGIN a code plus a phished password is the whole credential, so a
+// replay is the attack and the step has to be spent. At re-authentication the
+// caller has already proved the password over a session they already hold -
+// somebody able to replay a code there could simply sign in. What false buys
+// is that one prompt can cover the two writes a single save makes: the panel's
+// "role and permissions" button calls two endpoints, and the second would
+// otherwise be refused as a replay of the code the operator had just typed.
+func verifyTOTPOrBackupWith(state *AppState, user *models.User, code string, claimStep bool) (bool, error) {
 	code = strings.TrimSpace(code)
 	if code == "" || user == nil {
 		return false, nil
@@ -453,7 +481,7 @@ func verifyTOTPOrBackupFor(state *AppState, user *models.User, code string) (boo
 	// codes below.
 	if user.TOTPSecret != "" {
 		if step, ok := matchTOTPStep(code, user.TOTPSecret, time.Now()); ok {
-			if claimTOTPStep(state, user.ID, step) {
+			if !claimStep || claimTOTPStep(state, user.ID, step) {
 				return true, nil
 			}
 			// A code that was already spent is simply not a valid code. Falling

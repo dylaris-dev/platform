@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **Seven admin account actions now ask for the operator's own password.** Setting an
+  account's password, removing its second factor, changing its address, creating a
+  privileged account, and the role, permission-flag and panel-role grants. An API client
+  driving these sends a `reauth` object. `core` `panel`
+
+### Security
+- **An admin session alone can no longer take over an account.** None of those actions
+  asked for anything beyond the session, so a stolen admin session was silent access to
+  every account on the platform. `core` `panel`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.21.5
 
 ### Features

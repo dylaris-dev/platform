@@ -85,6 +85,10 @@ func (f *guardFakeStore) SetUserRole(id, _ string) error {
 }
 func (f *guardFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
 
+// The email route looks for a collision before it re-authenticates, so the
+// fake has to answer. Nobody holds the address these cases try.
+func (f *guardFakeStore) GetUserByEmail(string) (*models.User, error) { return nil, nil }
+
 type guardErr string
 
 func (e guardErr) Error() string { return string(e) }
@@ -320,4 +324,51 @@ type emailTakenCreateStore struct{ createUserFakeStore }
 
 func (f *emailTakenCreateStore) GetUserByEmail(string) (*models.User, error) {
 	return &models.User{ID: "someone"}, nil
+}
+
+// The same routes, one question further along: an administrator who may manage
+// the account still has to prove they are the one asking.
+//
+// Measured on production: with an admin session alone and no password, any
+// account's password could be set, its second factor stripped and its address
+// changed. The session-kill that covers a password change reaches none of it -
+// it ends the VICTIM's sessions, while the borrowed admin session is the thing
+// doing the asking.
+//
+// Every case drives the route with no reauth block at all and expects 401 with
+// nothing written. Delete and rename are deliberately absent: removing an
+// account and renaming one hand nobody durable access.
+func TestAdminAccountActionsRefuseWithoutTheirPassword(t *testing.T) {
+	routes := []struct {
+		name string
+		call func(st *AppState, r *http.Request, w http.ResponseWriter)
+		body string
+	}{
+		{"reset password", func(st *AppState, r *http.Request, w http.ResponseWriter) {
+			NewUserHandler(st).ResetUserPassword(w, r)
+		}, `{"password":"a-long-enough-password"}`},
+		{"reset 2FA", func(st *AppState, r *http.Request, w http.ResponseWriter) {
+			(&AuthHandler{state: st}).AdminResetTOTPHandler(w, r)
+		}, ``},
+		{"change email", func(st *AppState, r *http.Request, w http.ResponseWriter) {
+			NewUserEmailHandler(st).SetEmail(w, r)
+		}, `{"email":"attacker@example.com"}`},
+		{"change role", func(st *AppState, r *http.Request, w http.ResponseWriter) {
+			NewUserHandler(st).SetUserRoleHandler(w, r)
+		}, `{"role":"support"}`},
+	}
+	for _, rt := range routes {
+		t.Run(rt.name, func(t *testing.T) {
+			fs := newGuardFakeStore()
+			rec := httptest.NewRecorder()
+			rt.call(guardState(fs), guardRequest("PUT", guardAdmin, true, guardMember, rt.body), rec)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401: %s", rec.Code, rec.Body.String())
+			}
+			if len(fs.touched) != 0 {
+				t.Fatalf("the account was changed anyway: %v", fs.touched)
+			}
+		})
+	}
 }

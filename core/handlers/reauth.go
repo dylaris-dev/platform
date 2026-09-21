@@ -66,7 +66,10 @@ func requireReauth(state *AppState, userID, password, code string) *reauthError 
 	if !user.Is2FAEnabled {
 		return nil
 	}
-	ok, verr := verifyTOTPOrBackupFor(state, user, code)
+	// Without spending the step - see verifyTOTPOrBackupWith. A save that makes
+	// two writes asks once, and the replay this protects against is the one at
+	// the login endpoint, which nobody reaches with a session they already have.
+	ok, verr := verifyTOTPOrBackupWith(state, user, code, false)
 	if verr != nil {
 		return &reauthError{http.StatusInternalServerError, "Verification failed"}
 	}
@@ -79,4 +82,49 @@ func requireReauth(state *AppState, userID, password, code string) *reauthError 
 // writeReauthError answers a failed re-authentication.
 func writeReauthError(w http.ResponseWriter, e *reauthError) {
 	sendJSONError(w, e.message, e.status)
+}
+
+// adminReauthRequest is the shape the ADMIN account-management actions carry
+// their re-authentication in.
+//
+// Nested rather than the flat password/code the two self-service endpoints
+// take, and the reason is not style: on an admin endpoint "password" already
+// means the TARGET's new password, and on a create it means the new account's.
+// One word cannot mean both the credential being SET and the credential being
+// PROVEN. The self-service endpoints keep the flat form, where "password" is
+// unambiguously the caller's own and integrators already send it that way.
+type adminReauthRequest struct {
+	Reauth reauthFields `json:"reauth"`
+}
+
+// requireAdminReauth re-proves the acting administrator, and answers the
+// request itself when it cannot. body is the already-decoded reauth block.
+//
+// It applies to the actions that hand somebody DURABLE access, which is the
+// same rule the file's opening comment draws for API keys and security
+// questions - one level up. Measured on production: with an admin session
+// alone and no password, any account's password could be set, its second
+// factor stripped, its address changed, and a fresh admin account created. The
+// session-kill covers none of that: it ends the VICTIM's sessions, while the
+// attacker's borrowed admin session is the thing doing the asking.
+//
+// The seven call sites are the three takeovers (password, two-factor, email)
+// and the four grants of power (creating a privileged account, role,
+// permission flags, panel role).
+//
+// Three of them ask only when the call CHANGES something - role, permission
+// flags and email - because the panel re-sends the current values on every
+// save and a save that grants nothing is not what this guard is for. The other
+// four ask whenever they are called at all, since calling them IS the change.
+func requireAdminReauth(w http.ResponseWriter, r *http.Request, state *AppState, body adminReauthRequest) bool {
+	actorID, _ := r.Context().Value("userID").(string)
+	if actorID == "" {
+		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if rerr := requireReauth(state, actorID, body.Reauth.Password, body.Reauth.Code); rerr != nil {
+		writeReauthError(w, rerr)
+		return false
+	}
+	return true
 }

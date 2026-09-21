@@ -26,6 +26,7 @@ func NewUserEmailHandler(state *AppState) *UserEmailHandler {
 
 type setUserEmailRequest struct {
 	Email string `json:"email"`
+	adminReauthRequest
 }
 
 // SetEmail PATCH /api/admin/users/{id}/email - RequireCap("users.write") at the
@@ -85,6 +86,15 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// standing between two accounts and the same reset mailbox.
 	if existing, eerr := h.state.Store.GetUserByEmail(email); eerr == nil && existing != nil && existing.ID != id {
 		sendJSONError(w, "That email address is already in use", http.StatusConflict)
+		return
+	}
+
+	// Re-authenticate last, after every cheap check and before the write.
+	// Nothing above this line changes anything, and a bcrypt comparison in
+	// front of the validation would let a malformed body buy CPU time - the
+	// same order the API key mint gives its own reasons for. A save that
+	// changes nothing returned above without asking at all.
+	if !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
 		return
 	}
 

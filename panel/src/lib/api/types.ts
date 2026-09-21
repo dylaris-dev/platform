@@ -279,21 +279,33 @@ export const toggleModule = (id: number, isEnabled: boolean) => fetchAPI(`/modul
 export const updateModulePosition = (id: number, position: number) => fetchAPI(`/modules/${id}/position`, { method: 'PATCH', body: JSON.stringify({ position }) });
 
 // --- USERS ---
+/** The acting administrator's own credential, asked for again before an action
+ *  that hands somebody durable access. Nested rather than flat because on these
+ *  routes "password" already means the password being SET - one word cannot
+ *  mean both the credential being set and the credential being proven.
+ *  See components/ui/ReauthDialog for what collects it. */
+export interface Reauth { password: string; code: string }
 export const getUsers = () => fetchAPI('/users');
-export const createUser = (data: Partial<User> & { allRegions?: boolean; regionsExplicit?: string[] }) => fetchAPI('/users', { method: 'POST', body: JSON.stringify(data) });
+/** Core asks for the reauth block only when the new account would be
+ *  PRIVILEGED (admin, support, or a permission flag); an ordinary account holds
+ *  nothing until something is granted to it. Sending it always is simpler than
+ *  mirroring that rule here and costs nothing when it is not needed. */
+export const createUser = (data: Partial<User> & { allRegions?: boolean; regionsExplicit?: string[] }, reauth?: Reauth) =>
+    fetchAPI('/users', { method: 'POST', body: JSON.stringify({ ...data, reauth }) });
 export const deleteUser = (id: string) => fetchAPI(`/users/${id}`, { method: 'DELETE' });
 export const cancelUserDeletion = (id: string) => fetchAPI(`/admin/users/${id}/cancel-deletion`, { method: 'POST' });
-export const setUserRole = (id: string, role: 'user' | 'support' | 'admin') =>
-    fetchAPI(`/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
+export const setUserRole = (id: string, role: 'user' | 'support' | 'admin', reauth?: Reauth) =>
+    fetchAPI(`/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role, reauth }) });
 /** Change an account's address. Core stores it UNVERIFIED and sends a
  *  verification when the policy requires one, because an admin typing an address
  *  has not shown that anyone reads it - and the reset link aims there. */
-export const setUserEmail = (id: string, email: string) =>
-    fetchAPI(`/admin/users/${id}/email`, { method: 'PATCH', body: JSON.stringify({ email }) });
+export const setUserEmail = (id: string, email: string, reauth?: Reauth) =>
+    fetchAPI(`/admin/users/${id}/email`, { method: 'PATCH', body: JSON.stringify({ email, reauth }) });
 export const setUserPermissions = (
     id: string,
     data: { canDeleteServers: boolean; canChangeResources: boolean; supportTeam?: string },
-) => fetchAPI(`/admin/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(data) });
+    reauth?: Reauth,
+) => fetchAPI(`/admin/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify({ ...data, reauth }) });
 
 // Maintenance API
 export interface MaintenanceState {
@@ -306,7 +318,8 @@ export interface MaintenanceState {
 export const getMaintenance = () => fetchAPI('/maintenance');
 export const saveMaintenance = (state: MaintenanceState) =>
     fetchAPI('/admin/maintenance', { method: 'PUT', body: JSON.stringify(state) });
-export const resetUserPassword = (id: string, password: string) => fetchAPI(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify({ password }) });
+export const resetUserPassword = (id: string, password: string, reauth?: Reauth) =>
+    fetchAPI(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify({ password, reauth }) });
 export const getUserRouteLimit = (id: string) => fetchAPI(`/users/${id}/route-limit`);
 export const setUserRouteLimit = (id: string, data: { mode: string; maxRoutes: number }) => fetchAPI(`/users/${id}/route-limit`, { method: 'PUT', body: JSON.stringify(data) });
 

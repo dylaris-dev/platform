@@ -12,6 +12,7 @@ import (
 
 type setRoleRequest struct {
 	Role string `json:"role"`
+	adminReauthRequest
 }
 
 // SetUserRole PUT /api/admin/users/{id}/role
@@ -77,6 +78,18 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// A change of role hands out (or takes away) durable power, so the
+	// administrator proves who they are. Last, after every cheap check that can
+	// refuse on its own - a caller who is about to be told "last admin" or
+	// "more rights than yours" should hear that, not a password prompt.
+	//
+	// Only a REAL change asks: the panel re-sends the current role on every
+	// save, which is the same reason the promotion guard above compares against
+	// previousRole.
+	if req.Role != previousRole && !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
+		return
+	}
+
 	if err := h.state.Store.SetUserRole(id, req.Role); err != nil {
 		sendJSONError(w, "Failed to update role", 500)
 		return
@@ -97,6 +110,7 @@ type setPermissionsRequest struct {
 	CanDeleteServers   bool   `json:"canDeleteServers"`
 	CanChangeResources bool   `json:"canChangeResources"`
 	SupportTeam        string `json:"supportTeam"`
+	adminReauthRequest
 }
 
 // SetUserPermissions PUT /api/admin/users/{id}/permissions
@@ -148,6 +162,19 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// Only a real change asks for the password: the panel re-sends the current
+	// values on every save, and a save that grants nothing is not the thing
+	// this guard is for. A target that could not be read counts as changed -
+	// the conservative direction, since the alternative is writing flags
+	// without proving who asked.
+	changed := target == nil ||
+		target.CanDeleteServers != req.CanDeleteServers ||
+		target.CanChangeResources != req.CanChangeResources ||
+		target.SupportTeam != req.SupportTeam
+	if changed && !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
+		return
+	}
+
 	if err := h.state.Store.SetUserPermissionFlags(id, req.CanDeleteServers, req.CanChangeResources, req.SupportTeam); err != nil {
 		sendJSONError(w, "Failed to update permissions", 500)
 		return
@@ -172,6 +199,7 @@ type setPanelRoleRequest struct {
 	PanelRoleID *int     `json:"panelRoleId"`
 	GrantCaps   []string `json:"grantCaps"`
 	DenyCaps    []string `json:"denyCaps"`
+	adminReauthRequest
 }
 
 // SetUserPanelRoleHandler PUT /api/admin/users/{id}/panel-role
@@ -211,6 +239,16 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	// A panel role is the level-1 grant - panelroles.write alone is effectively
+	// full admin - so this asks every time rather than comparing against the
+	// current assignment. Unlike the role and flags above, nothing here is
+	// re-sent by an unrelated save: this endpoint is called to CHANGE the
+	// assignment, and the read it would take to tell a no-op apart is not worth
+	// a branch on the one action that hands out panel power.
+	if !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
+		return
+	}
+
 	if err := h.state.Store.SetUserPanelRole(id, req.PanelRoleID); err != nil {
 		sendJSONError(w, "Failed to set panel role", 500)
 		return

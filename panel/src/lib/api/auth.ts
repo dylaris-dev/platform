@@ -91,10 +91,15 @@ export const disableTOTP = async (password: string, code: string) => {
   return handleResponse(res);
 };
 
-export const adminResetTOTP = async (userId: string) => {
+// Removing somebody's second factor leaves their password as the whole
+// credential, so Core asks the acting administrator for their own. A DELETE
+// carrying a body is unusual and deliberate on that side: the alternative was
+// a second method for the same action.
+export const adminResetTOTP = async (userId: string, reauth?: { password: string; code: string }) => {
   const res = await fetch(`${API_URL}/users/${userId}/2fa`, {
     method: 'DELETE',
-    headers: getAuthHeader(),
+    headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reauth }),
   });
   return handleResponse(res);
 };

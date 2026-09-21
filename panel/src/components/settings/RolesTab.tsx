@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CircleCheck, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye, Search } from 'lucide-react';
 import { getCatalog, getPermissionsMode, type CatalogScope, type PermissionsMode } from '@/lib/api/authzCatalog';
+import { reauthDialog } from '@/components/ui/ReauthDialog';
+import { useAppData } from '@/lib/AppDataContext';
 import {
     listPanelRoles,
     createPanelRole,
@@ -595,6 +597,7 @@ function AssignRoleModal({
     onSaved: () => void;
     onError: (msg: string) => void;
 }) {
+    const { user: me } = useAppData();
     const [loading, setLoading] = useState(true);
     const [panelRoleId, setPanelRoleId] = useState<number | null>(null);
     const [grantCaps, setGrantCaps] = useState<string[]>([]);
@@ -624,8 +627,16 @@ function AssignRoleModal({
     }, [user.id]);
 
     const handleSave = async () => {
+        // A panel role outlives the sign-in that hands it out, so the operator
+        // proves who they are. Cancelling leaves the dialog open and unchanged.
+        const reauth = await reauthDialog({
+            title: 'Assign this panel role',
+            message: `What "${user.username}" may do in the panel keeps applying after your current sign-in ends.`,
+            twoFactorEnabled: !!me?.is2FAEnabled,
+        });
+        if (!reauth) return;
         setSaving(true);
-        const res = await assignUserPanelRole(user.id, panelRoleId, grantCaps, denyCaps);
+        const res = await assignUserPanelRole(user.id, panelRoleId, grantCaps, denyCaps, reauth);
         setSaving(false);
         if (res.success) {
             onSaved();

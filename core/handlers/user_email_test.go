@@ -54,7 +54,7 @@ const emailTestUserID = "11111111-1111-1111-1111-111111111111"
 func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
 	h := NewUserEmailHandler(&AppState{Store: st})
-	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(body)))
+	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(withReauthJSON(body))))
 	r = mux.SetURLVars(r, map[string]string{"id": emailTestUserID})
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")
 	r = r.WithContext(context.WithValue(ctx, "isAdmin", true))
@@ -65,10 +65,32 @@ func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.Response
 	return w, out
 }
 
+// withReauthJSON adds the acting administrator's credential to a body these
+// cases write as raw JSON. Changing an address is a password change by other
+// means and re-authenticates now; a body that is not valid JSON is passed
+// through untouched, since the cases that send one are about the decode.
+func withReauthJSON(body string) string {
+	var m map[string]interface{}
+	if json.Unmarshal([]byte(body), &m) != nil {
+		return body
+	}
+	m["reauth"] = map[string]string{"password": testReauthPassword}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return string(out)
+}
+
 func emailStore() *emailFakeStore {
 	u := &models.User{ID: emailTestUserID, Username: "cust", Email: "old@example.com"}
 	return &emailFakeStore{
-		users:    map[string]*models.User{emailTestUserID: u},
+		users: map[string]*models.User{
+			emailTestUserID: u,
+			// The administrator doing the asking, with a password the
+			// re-authentication can actually verify.
+			"admin-1": {ID: "admin-1", Username: "admin", Password: testReauthHash},
+		},
 		byEmail:  map[string]*models.User{"old@example.com": u},
 		settings: map[string]string{},
 	}

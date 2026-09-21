@@ -40,6 +40,7 @@ import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { reauthDialog } from '@/components/ui/ReauthDialog';
 import HelpTip from '@/components/ui/HelpTip';
 
 interface UsersTabProps {
@@ -84,6 +85,13 @@ export function sortUsers(users: User[], sort: UserSort): User[] {
 }
 
 export default function UsersTab({ currentUser }: UsersTabProps) {
+    // Core asks for the operator's own credential before an action that hands
+    // somebody durable access - a takeover of an account, or a grant of power
+    // that outlives this sign-in. Resolves null when the operator cancels, so
+    // every call site reads the same way.
+    const askReauth = (title: string, message: string) =>
+        reauthDialog({ title, message, twoFactorEnabled: !!currentUser?.is2FAEnabled });
+
     const [users, setUsers] = useState<User[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [error, setError] = useState("");
@@ -149,11 +157,18 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     const handleSaveRoleAndPermissions = async () => {
         if (!settingsUser) return;
+        // One prompt covers both writes: Core verifies the code without
+        // spending it, so the second call is not refused as a replay.
+        const reauth = await askReauth(
+            'Save role and permissions',
+            `Changing what "${settingsUser.username}" may do grants access that outlives your current sign-in.`,
+        );
+        if (!reauth) return;
         setEditRolePermsSaving(true);
         // Two-step save: role first (it also flips is_admin), then flags.
         // Failure of either is surfaced; both completing means the modal
         // local copy gets updated.
-        const r1 = await setUserRole(settingsUser.id, editRole);
+        const r1 = await setUserRole(settingsUser.id, editRole, reauth);
         if (!r1.success) {
             setEditRolePermsSaving(false);
             showToast(r1.message || 'Failed to set role', false);
@@ -163,7 +178,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             canDeleteServers: editCanDeleteServers,
             canChangeResources: editCanChangeResources,
             supportTeam: editSupportTeam,
-        });
+        }, reauth);
         setEditRolePermsSaving(false);
         if (!r2.success) {
             showToast(r2.message || 'Role saved, but permissions failed', false);
@@ -246,11 +261,22 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     const handleCreateUser = async (e: React.FormEvent) => {
         e.preventDefault();
+        // Only a PRIVILEGED account asks: an ordinary one holds nothing until
+        // something is granted to it, and every route that grants asks its own
+        // way. Mirrors createsPrivilegedAccount in Core.
+        let reauth;
+        if (userForm.isAdmin || userForm.role === 'admin' || userForm.role === 'support') {
+            reauth = await askReauth(
+                'Create this account',
+                'An account with admin or support rights keeps them after your current sign-in ends.',
+            );
+            if (!reauth) return;
+        }
         const res = await createUser({
             ...userForm,
             allRegions: createAllRegions,
             regionsExplicit: createAllRegions ? [] : createRegions,
-        });
+        }, reauth);
         if (res.success) {
             setIsModalOpen(false);
             // Reset region state for the next open.
@@ -262,9 +288,16 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     const handleSaveEmail = async () => {
         if (!settingsUser) return;
+        // The address is where a password reset goes, so this is a password
+        // change by other means.
+        const reauth = await askReauth(
+            'Change this address',
+            `A reset link for "${settingsUser.username}" will be sent to the new address from now on.`,
+        );
+        if (!reauth) return;
         setEmailSaving(true);
         setEmailMsg(null);
-        const res = await setUserEmail(settingsUser.id, editEmail.trim());
+        const res = await setUserEmail(settingsUser.id, editEmail.trim(), reauth);
         setEmailSaving(false);
         if (res.success) {
             // Reflect it locally so the "Change" button disables again and the
@@ -366,8 +399,13 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     const handleResetPassword = async () => {
         if (!settingsUser || !newPassword) return;
+        const reauth = await askReauth(
+            'Reset this password',
+            `Setting a password for "${settingsUser.username}" signs them out everywhere and lets anyone with it into their account.`,
+        );
+        if (!reauth) return;
         setPwSaving(true);
-        const res = await resetUserPassword(settingsUser.id, newPassword);
+        const res = await resetUserPassword(settingsUser.id, newPassword, reauth);
         if (res.success) {
             showToast('Password updated');
             setNewPassword('');
@@ -380,9 +418,14 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const handleReset2FA = async () => {
         if (!settingsUser) return;
         if (!(await confirmDialog({ title: 'Reset two-factor', message: `Reset 2FA for "${settingsUser.username}"? They will be able to log in with just their password until they re-enable 2FA.`, confirmLabel: 'Reset 2FA' }))) return;
+        const reauth = await askReauth(
+            'Reset two-factor',
+            `Removing the second factor for "${settingsUser.username}" leaves their password as the whole credential.`,
+        );
+        if (!reauth) return;
         setResetting2FA(true);
         try {
-            const res = await adminResetTOTP(settingsUser.id);
+            const res = await adminResetTOTP(settingsUser.id, reauth);
             if (res?.success) {
                 showToast('2FA reset for user');
                 setSettingsUser({ ...settingsUser, is2FAEnabled: false });
