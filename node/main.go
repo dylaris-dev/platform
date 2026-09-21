@@ -174,6 +174,27 @@ func beamAdvertiseEnabled() bool {
 	return nodeExternal || fam == "beam" || fam == "both"
 }
 
+// sftpEnabled reports whether this node may open an SFTP session at all.
+//
+// The mirror of beamAdvertiseEnabled above, and it was missing. The listener
+// started unconditionally and authenticated against the hashes Core publishes,
+// so file_access_mode="beam" switched SFTP off in the PANEL - which refuses to
+// hand out credentials and answers "beam_only" - while the transport went on
+// accepting logins. Measured on production: with the platform on beam-only, a
+// delegate logged in over SFTP with their panel password and listed their
+// server's files.
+//
+// The listener keeps running either way, so a mode switch takes effect on the
+// next login without a restart, exactly as it does for beam advertising.
+//
+// Only "beam" is off, matching the panel route (handlers/servers_sftp.go): a
+// mode that was never configured reads as empty and must behave as it always
+// has. An external node forces beam locally whatever the platform says, which
+// is the same rule that route applies.
+func sftpEnabled() bool {
+	return !nodeExternal && getFileAccessMode() != "beam"
+}
+
 type NodeCommand struct {
 	Action     string          `json:"action"`
 	Config     ServerConfig    `json:"config"`

@@ -381,3 +381,36 @@ func TestTeardownRevokesTheKeysTheCascadeWouldNotTakeAway(t *testing.T) {
 		t.Errorf("revoked %v; the link kit was left live", fs.revokeCalls)
 	}
 }
+
+// The refusal above is not a failure: the operator can move the servers and
+// try again. It has to be tellable apart from a real fault, because the HTTP
+// layer answered 500 "Could not remove what this account still holds" for both
+// and dropped the sentence that says WHAT it holds into the Core log - where
+// the person clicking delete cannot read it. Measured on production.
+func TestTeardownRefusalNamesWhatIsInTheWay(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+
+	fs := &teardownFakeStore{ownedServers: 3}
+	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), &peerRecorder{}, "owner-1")
+	if err == nil {
+		t.Fatal("teardown succeeded for an account that still owns servers")
+	}
+
+	var owns *TenantStillOwnsServersError
+	if !errors.As(err, &owns) {
+		t.Fatalf("error %v (%T) cannot be told apart from a genuine failure", err, err)
+	}
+	if owns.Count != 3 {
+		t.Errorf("count = %d, want 3", owns.Count)
+	}
+	if !strings.Contains(err.Error(), "3") {
+		t.Errorf("message %q does not say how many servers are in the way", err)
+	}
+
+	// A genuine fault must NOT match, or the 409 would hide real breakage.
+	other := errors.New("count servers: connection refused")
+	if errors.As(other, &owns) {
+		t.Error("an unrelated failure matched the precondition type")
+	}
+}

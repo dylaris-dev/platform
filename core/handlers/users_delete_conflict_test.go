@@ -16,7 +16,8 @@ import (
 
 type deleteUserFakeStore struct {
 	store.Store
-	deleteErr error
+	deleteErr    error
+	ownedServers int
 }
 
 func (f *deleteUserFakeStore) GetUserByID(id string) (*models.User, error) {
@@ -28,7 +29,9 @@ func (f *deleteUserFakeStore) DeleteUser(string) error { return f.deleteErr }
 // The account teardown now asks these before it destroys anything, so the fake
 // has to answer them. Zero and empty: this test is about the message DeleteUser
 // produces, not about what the account holds.
-func (f *deleteUserFakeStore) CountServersByOwner(string) (int, error) { return 0, nil }
+func (f *deleteUserFakeStore) CountServersByOwner(string) (int, error) {
+	return f.ownedServers, nil
+}
 func (f *deleteUserFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
 	return nil, nil
 }
@@ -116,5 +119,30 @@ func TestDeleteUserSucceeds(t *testing.T) {
 
 	if rw.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 (body: %s)", rw.Code, rw.Body.String())
+	}
+}
+
+// The same promise, one layer earlier. The teardown now asks "does this account
+// still own servers" BEFORE anything is destroyed - which is right - but its
+// refusal came back as a 500 with a message that named nothing, so the fix
+// above was undone for the ordinary case. Measured on production: deleting an
+// account that still owned one server answered 500 "Could not remove what this
+// account still holds. Nothing was deleted.", and the sentence with the count
+// went to the Core log, where the person clicking delete cannot read it.
+func TestDeleteUserStillOwningServersIs409WithTheCount(t *testing.T) {
+	fs := &deleteUserFakeStore{ownedServers: 2}
+	h := &UserHandler{state: &AppState{Store: fs}}
+
+	rr := httptest.NewRecorder()
+	h.DeleteUser(rr, deleteUserRequest())
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %q)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"2", "Nothing was deleted"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("message %q does not mention %q", body, want)
+		}
 	}
 }

@@ -120,6 +120,13 @@ func sftpFailKey(nodeID, username string) string {
 }
 
 func (s *SFTPServer) authUser(username, password string) (*ssh.Permissions, error) {
+	// Before anything is read or compared: on a platform whose file access is
+	// beam-only there is no SFTP, and a password check that can succeed is not
+	// "no SFTP". See sftpEnabled in main.go for what was measured.
+	if !sftpEnabled() {
+		return nil, fmt.Errorf("SFTP is disabled on this platform")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 

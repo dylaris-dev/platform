@@ -278,6 +278,13 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
 		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), h.state.WarpPeers, id); err != nil {
 		log.Printf("delete user %s: teardown: %v", id, err)
+		// A precondition the operator can fix is not a server error, and the
+		// sentence naming what is in the way is the whole value of the refusal.
+		var owns *services.TenantStillOwnsServersError
+		if errors.As(err, &owns) {
+			sendJSONError(w, owns.Error()+" Nothing was deleted.", http.StatusConflict)
+			return
+		}
 		sendJSONError(w, "Could not remove what this account still holds. Nothing was deleted.", 500)
 		return
 	}

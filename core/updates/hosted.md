@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **If your platform is set to beam-only file access, SFTP is now genuinely off.** It was
+  refusing to show you credentials while still accepting logins. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.21.3
 
 ### Features

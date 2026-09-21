@@ -77,3 +77,44 @@ func TestSFTPNodeServersKey_DistinctPerNodeAndUser(t *testing.T) {
 		t.Errorf("two users share one key: %q", got)
 	}
 }
+
+// Whether a node serves SFTP at all is a different question from whether a
+// given user may use it, and it had no answer here. The panel's credentials
+// route refused with "beam_only" while this publisher kept every credential an
+// SFTP session needs alive in Redis and the node kept accepting them.
+//
+// Measured on production: with file_access_mode = beam, a delegate logged in
+// over SFTP with their panel password and listed their server's files, and the
+// bcrypt hash of every user's password was being republished every 60 seconds
+// for a feature the operator had switched off.
+func TestSFTPServedBy(t *testing.T) {
+	platform := models.Node{Token: "tok"}
+	external := models.Node{Token: "tok", Tags: "byon,external"}
+
+	cases := []struct {
+		name     string
+		node     models.Node
+		fileMode string
+		want     bool
+	}{
+		{"sftp mode serves it", platform, "sftp", true},
+		{"both serves it", platform, "both", true},
+		{"beam does NOT", platform, "beam", false},
+		// A platform that never saved the setting has no row at all, and the
+		// panel route treats only "beam" as off. Anything else here would change
+		// behaviour on every install that never opened the form.
+		{"never configured behaves as before", platform, "", true},
+		{"an unknown value is not 'beam'", platform, "something-else", true},
+		// An external node forces beam locally whatever the platform says -
+		// the same rule handlers/servers_sftp.go applies.
+		{"an external node never serves it", external, "sftp", false},
+		{"an external node in beam mode either", external, "beam", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sftpServedBy(c.node, c.fileMode); got != c.want {
+				t.Errorf("sftpServedBy(external=%v, %q) = %v, want %v", c.node.IsExternal(), c.fileMode, got, c.want)
+			}
+		})
+	}
+}

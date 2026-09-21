@@ -12,6 +12,21 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// TenantStillOwnsServersError is the one refusal here that is not a failure.
+// The account is in a state the operator can change, and this says how.
+//
+// A distinct type so the HTTP layer can answer 409 with the reason instead of
+// the 500 it used to give. Measured on production: deleting an account that
+// still owned one server answered 500 "Could not remove what this account still
+// holds. Nothing was deleted." - a server error for something the caller can
+// fix in ten seconds - while the sentence that says WHAT it holds went to the
+// Core log, where the person clicking delete cannot read it.
+type TenantStillOwnsServersError struct{ Count int }
+
+func (e *TenantStillOwnsServersError) Error() string {
+	return fmt.Sprintf("This account still owns %d server(s). Move or delete them first.", e.Count)
+}
+
 // TeardownTenantInfrastructure removes everything an account HOLDS outside its
 // own database row: its route-only link kits (durable revoke, tunnel key) and
 // its protected addresses.
@@ -59,7 +74,7 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 	if n, err := st.CountServersByOwner(userID); err != nil {
 		return fmt.Errorf("count servers: %w", err)
 	} else if n > 0 {
-		return fmt.Errorf("this account still owns %d server(s); move or delete them first", n)
+		return &TenantStillOwnsServersError{Count: n}
 	}
 
 	// INCLUDING the revoked keys, which is the difference between this working

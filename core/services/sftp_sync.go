@@ -62,6 +62,23 @@ func (s *SFTPSyncService) Start() {
 // would have to enforce per operation, and it does not today.
 const sftpAccessCap = "sftp.access"
 
+// sftpServedBy reports whether a node serves SFTP at all, which is a different
+// question from whether a given user may use it.
+//
+// It is the exact rule the panel's credentials route applies
+// (handlers/servers_sftp.go): file access "beam" means there is no SFTP, and an
+// external node forces beam locally whatever the platform says. Only "beam" is
+// off - a mode that was never configured reads as empty and behaves as it
+// always has.
+//
+// This did not exist, so the two surfaces disagreed: the panel answered
+// "beam_only" and handed out no host, port or username, while the publisher
+// kept every credential an SFTP session needs alive in Redis and the node kept
+// accepting them.
+func sftpServedBy(node models.Node, fileMode string) bool {
+	return !node.IsExternal() && fileMode != "beam"
+}
+
 // mayUseSFTP reports whether one candidate row may be published.
 //
 // Owners short-circuit because the resolver's own owner branch does: keying on
@@ -235,6 +252,12 @@ func (s *SFTPSyncService) sync() {
 		return
 	}
 
+	// What the operator set file access to. A read error leaves it empty, which
+	// reads as "not beam" below - the same direction every other mode decision
+	// here takes, and the alternative would turn one failed settings read into
+	// an SFTP lockout for the whole fleet.
+	fileMode, _ := s.store.GetSetting("file_access_mode")
+
 	// Prefixes of nodes whose access list this tick could not read. The prune
 	// below skips them instead of treating "no rows" and "no answer" alike.
 	var unknown []string
@@ -286,6 +309,20 @@ func (s *SFTPSyncService) sync() {
 			// package fails open, so a node left without this grant stops counting
 			// uploads rather than refusing them.
 			log.Printf("SFTPSync: could not set the beam quota grant for node %s, its uploads may go uncounted: %v", node.Name, err)
+		}
+
+		// The beam quota grant above still applies - beam is exactly what a
+		// beam-only platform uses - but nothing that OPENS an SFTP session may
+		// be published for a node that does not serve one. Leaving `valid`
+		// empty for this node is deliberate: the prune at the end then removes
+		// the auth hashes already out there, rather than waiting out their TTL.
+		//
+		// The node refuses the session on its own too (sftpEnabled). This is the
+		// other half: a bcrypt hash of every user's password, republished every
+		// 60s for a feature that is switched off, is a standing exposure the
+		// TTL above exists to bound - not one to keep renewing.
+		if !sftpServedBy(node, fileMode) {
+			continue
 		}
 
 		pipe := s.redis.Pipeline()

@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.21.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Setting file access to beam-only now switches SFTP off.** The panel already refused to
+  hand out credentials, but the node kept accepting SFTP logins and Core kept republishing
+  every user's password hash for it. `core` `node`
+
+### Fixes
+- **Deleting an account that still owns servers says so.** It answered a plain server error
+  and put the reason in the log instead of in front of the operator. `core`
+
 ## 2026.09.21.3
 
 ### Features
