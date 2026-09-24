@@ -18,10 +18,11 @@ type deleteUserFakeStore struct {
 	store.Store
 	deleteErr    error
 	ownedServers int
+	auditRows    []models.AuditEventIdentity
 }
 
 func (f *deleteUserFakeStore) GetUserByID(id string) (*models.User, error) {
-	return &models.User{ID: id, Username: "customer"}, nil
+	return &models.User{ID: id, Username: "customer", Email: "customer@example.test"}, nil
 }
 
 func (f *deleteUserFakeStore) DeleteUser(string) error { return f.deleteErr }
@@ -40,6 +41,13 @@ func (f *deleteUserFakeStore) ListAllWarpAPIKeysByOwner(o string) ([]store.WarpA
 }
 func (f *deleteUserFakeStore) ListNodesByOwner(string) ([]models.Node, error)     { return nil, nil }
 func (f *deleteUserFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return nil, nil }
+
+// Removing an account is on the record now, and the row is what the test
+// below reads.
+func (f *deleteUserFakeStore) InsertAuditIdentity(e *models.AuditEventIdentity) error {
+	f.auditRows = append(f.auditRows, *e)
+	return nil
+}
 
 func deleteUserRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", nil)
@@ -143,6 +151,64 @@ func TestDeleteUserStillOwningServersIs409WithTheCount(t *testing.T) {
 	for _, want := range []string{"2", "Nothing was deleted"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("message %q does not mention %q", body, want)
+		}
+	}
+}
+
+// Removing an account leaves no other trace, so the audit row has to carry
+// enough to say what was removed.
+//
+// This path wrote nothing at all, while the auto-delete sweep beside it always
+// did - so the removals an OPERATOR performs, which is most of them, were the
+// ones missing from the record. Found the hard way: an account deleted here by
+// mistake could only be reconstructed from its own registration row.
+//
+// The username and address are in the metadata because target_user_id is a
+// foreign key onto users: deleting the user SETS IT NULL, and the row is left
+// saying "some account was removed at this time".
+func TestDeleteUserIsOnTheRecord(t *testing.T) {
+	fs := &deleteUserFakeStore{}
+	h := &UserHandler{state: &AppState{Store: fs}}
+
+	rr := httptest.NewRecorder()
+	h.DeleteUser(rr, deleteUserRequest())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rr.Code, rr.Body.String())
+	}
+
+	var row *models.AuditEventIdentity
+	for i := range fs.auditRows {
+		if fs.auditRows[i].EventType == AuditEventUserHardDeleted {
+			row = &fs.auditRows[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("no %q row was written; the deletion left no trace at all", AuditEventUserHardDeleted)
+	}
+	if row.ActorUserID == nil || *row.ActorUserID == "" {
+		t.Error("the row does not say WHO removed the account")
+	}
+	if got := row.Metadata["username"]; got != "customer" {
+		t.Errorf("metadata username = %v, want the account that was removed", got)
+	}
+	if got := row.Metadata["email"]; got != "customer@example.test" {
+		t.Errorf("metadata email = %v; without it the row cannot identify the account once the row is gone", got)
+	}
+}
+
+// A refused delete must not claim one happened.
+func TestARefusedDeleteWritesNoRow(t *testing.T) {
+	fs := &deleteUserFakeStore{ownedServers: 1}
+	h := &UserHandler{state: &AppState{Store: fs}}
+
+	rr := httptest.NewRecorder()
+	h.DeleteUser(rr, deleteUserRequest())
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rr.Code)
+	}
+	for _, row := range fs.auditRows {
+		if row.EventType == AuditEventUserHardDeleted {
+			t.Fatal("a refused delete was recorded as a deletion")
 		}
 	}
 }

@@ -34,6 +34,9 @@ func (f *deleteRoutesFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, err
 }
 func (f *deleteRoutesFakeStore) DeleteUser(string) error { f.deleted = true; return f.deleteUser }
 
+// Removing an account is on the record now, so the fake has to take the row.
+func (f *deleteRoutesFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
+
 type deleteRoutesFakeGateway struct {
 	services.GatewayProvider
 	removed []string

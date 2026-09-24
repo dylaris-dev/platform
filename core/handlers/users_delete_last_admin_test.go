@@ -34,6 +34,10 @@ func (f *lastAdminFakeStore) ListUsers() ([]models.User, error) {
 	}
 	return f.users, nil
 }
+
+// Removing an account is on the record now, so the fake has to take the row.
+func (f *lastAdminFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
+
 func (f *lastAdminFakeStore) DeleteUser(string) error { f.deleted = true; return nil }
 
 func lastAdminRequest() *http.Request {

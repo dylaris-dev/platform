@@ -224,6 +224,18 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 			logErrf("auto-delete", "teardown for userID=%s failed, leaving the account in place: %v", userID, err)
 			continue
 		}
+		// Read WHO this is before the row goes. The audit row below outlives
+		// the account but not its identity: target_user_id is a foreign key
+		// onto users, so the delete SETS IT NULL and the row is left saying
+		// "some account was removed at this time". The username and address
+		// are what make it an actual record, and the identity log already
+		// carries an address on user_registered.
+		deleted := map[string]interface{}{}
+		if u, uerr := s.store.GetUserByID(userID); uerr == nil && u != nil {
+			deleted["username"] = u.Username
+			deleted["email"] = u.Email
+		}
+
 		switch p.Mode {
 		case "hard_delete":
 			if err := s.store.DeleteUser(userID); err != nil {
@@ -233,13 +245,13 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 			// We're about to lose the user row — audit event references
 			// will be SET NULL by the FK. Still write the event so the
 			// activity is on record.
-			insertAuditEvent(s.store, "user_hard_deleted", userID, nil)
+			insertAuditEvent(s.store, "user_hard_deleted", userID, deleted)
 		default: // "anonymize"
 			if err := s.store.AnonymizeUser(userID); err != nil {
 				log.Printf("auto-delete: anonymize userID=%s: %v", userID, err)
 				continue
 			}
-			insertAuditEvent(s.store, "user_anonymized", userID, nil)
+			insertAuditEvent(s.store, "user_anonymized", userID, deleted)
 		}
 	}
 }

@@ -330,6 +330,27 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The only record that this account ever existed.
+	//
+	// This path wrote nothing at all, while the auto-delete sweep beside it has
+	// always written one - so the removals an OPERATOR performs, which is most
+	// of them, left no trace. Measured the hard way: an account deleted here by
+	// mistake could only be reconstructed from its own registration row, and
+	// only because registration happens to record the username and address.
+	//
+	// Those two fields are in the metadata for the same reason. The row's
+	// target_user_id is a foreign key onto users, so deleting the user SETS IT
+	// NULL - the audit row survives the delete and loses the one thing that
+	// says who it was about. The identity log already carries an address on
+	// user_registered, so this discloses nothing it does not already hold.
+	actorID, _ := r.Context().Value("userID").(string)
+	deleted := map[string]interface{}{}
+	if userToDelete != nil {
+		deleted["username"] = userToDelete.Username
+		deleted["email"] = userToDelete.Email
+	}
+	LogIdentityAudit(h.state, r, AuditEventUserHardDeleted, actorID, id, deleted)
+
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

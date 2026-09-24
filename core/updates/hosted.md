@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Removing an account now leaves a record of which account it was and who removed it.**
+  Nothing to change on your side.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.21.6
 
 ### Features

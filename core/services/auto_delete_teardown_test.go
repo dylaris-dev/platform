@@ -49,6 +49,13 @@ func (f *autoDeleteFakeStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {
 	f.revokedKits = append(f.revokedKits, nodeID)
 	return nil
 }
+
+// The sweep reads WHO it is about to remove, so the audit row it writes says
+// more than "some account".
+func (f *autoDeleteFakeStore) GetUserByID(id string) (*models.User, error) {
+	return &models.User{ID: id, Username: "inactive-" + id, Email: id + "@example.test"}, nil
+}
+
 func (f *autoDeleteFakeStore) DeleteUser(id string) error {
 	f.deletedIDs = append(f.deletedIDs, id)
 	return nil

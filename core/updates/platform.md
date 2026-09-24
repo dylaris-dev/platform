@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Deleting an account is now on the record.** The admin delete wrote no audit row at all,
+  so the removals an operator performs left no trace. The row carries the username and
+  address, because the account row it points at is gone. `core`
+
+### Fixes
+- **The automatic inactivity sweep records which account it removed.** Its row said only
+  that some account had been deleted: the reference to the user is nulled by the delete
+  itself. `core`
+
 ## 2026.09.21.6
 
 ### Features
