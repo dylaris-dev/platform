@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The deletion record is actually written now.** Its reference to the removed account was
+  refused by the database - the column is a foreign key onto the accounts table - so the row
+  never appeared and the removal stayed unrecorded. The id, username and address are in the
+  row itself. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.24
 
 ### Features

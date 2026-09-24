@@ -224,13 +224,19 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 			logErrf("auto-delete", "teardown for userID=%s failed, leaving the account in place: %v", userID, err)
 			continue
 		}
-		// Read WHO this is before the row goes. The audit row below outlives
-		// the account but not its identity: target_user_id is a foreign key
-		// onto users, so the delete SETS IT NULL and the row is left saying
-		// "some account was removed at this time". The username and address
-		// are what make it an actual record, and the identity log already
-		// carries an address on user_registered.
-		deleted := map[string]interface{}{}
+		// Read WHO this is before the row goes, because afterwards nothing can
+		// say it. target_user_id is a foreign key onto users, so a row written
+		// after a HARD delete cannot point at the account at all - the insert is
+		// refused (23503) and insertAuditEvent swallows the error, so the row
+		// never appears. ON DELETE SET NULL blanks the target of rows that
+		// already exist; it does nothing for one that arrives afterwards.
+		// Measured on production on the admin delete path, which does the same
+		// thing one file over.
+		//
+		// The id, username and address therefore go in the metadata, and the
+		// hard-delete branch passes no target at all. Anonymize keeps the row,
+		// so it keeps its target.
+		deleted := map[string]interface{}{"userId": userID}
 		if u, uerr := s.store.GetUserByID(userID); uerr == nil && u != nil {
 			deleted["username"] = u.Username
 			deleted["email"] = u.Email
@@ -242,10 +248,9 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 				log.Printf("auto-delete: hard-delete userID=%s: %v", userID, err)
 				continue
 			}
-			// We're about to lose the user row — audit event references
-			// will be SET NULL by the FK. Still write the event so the
-			// activity is on record.
-			insertAuditEvent(s.store, "user_hard_deleted", userID, deleted)
+			// No target: the user row is gone and the foreign key refuses a
+			// reference to it. The metadata carries who it was.
+			insertAuditEvent(s.store, "user_hard_deleted", "", deleted)
 		default: // "anonymize"
 			if err := s.store.AnonymizeUser(userID); err != nil {
 				log.Printf("auto-delete: anonymize userID=%s: %v", userID, err)

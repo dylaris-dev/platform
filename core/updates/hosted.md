@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The record of an account removal is actually written now.** Yesterday's change wrote a
+  row the database refused. Nothing to change on your side.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.24
 
 ### Features

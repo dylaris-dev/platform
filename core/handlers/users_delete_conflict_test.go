@@ -188,6 +188,16 @@ func TestDeleteUserIsOnTheRecord(t *testing.T) {
 	if row.ActorUserID == nil || *row.ActorUserID == "" {
 		t.Error("the row does not say WHO removed the account")
 	}
+	// No target id, deliberately: the column is a foreign key onto users and
+	// the account is gone, so a row that names it is refused by the database.
+	// The unit fake has no foreign key, which is why this assertion exists here
+	// and a real-Postgres test exists next to it.
+	if row.TargetUserID != nil {
+		t.Errorf("the row points at %v, which no longer exists; Postgres refuses the insert", *row.TargetUserID)
+	}
+	if got := row.Metadata["userId"]; got == nil || got == "" {
+		t.Error("the row does not carry the id of the account it was about")
+	}
 	if got := row.Metadata["username"]; got != "customer" {
 		t.Errorf("metadata username = %v, want the account that was removed", got)
 	}

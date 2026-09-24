@@ -338,18 +338,27 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// mistake could only be reconstructed from its own registration row, and
 	// only because registration happens to record the username and address.
 	//
-	// Those two fields are in the metadata for the same reason. The row's
-	// target_user_id is a foreign key onto users, so deleting the user SETS IT
-	// NULL - the audit row survives the delete and loses the one thing that
-	// says who it was about. The identity log already carries an address on
-	// user_registered, so this discloses nothing it does not already hold.
+	// Written with NO target id, and that is the whole difficulty.
+	// audit_events_identity.target_user_id is a foreign key onto users: the
+	// account is gone by this line, so a row pointing at it is refused outright
+	// (23503), and LogIdentityAudit swallows the error - the row would simply
+	// never appear. ON DELETE SET NULL blanks the target of rows that already
+	// EXIST; it does nothing for an insert that arrives afterwards. Measured on
+	// production: the first version of this logged
+	// "violates foreign key constraint audit_events_identity_target_user_id_fkey"
+	// and wrote nothing, and the unit test could not see it because a fake
+	// store has no foreign keys.
+	//
+	// So the identity lives in the metadata, which is the only place it can:
+	// the id, the username and the address. The identity log already carries an
+	// address on user_registered, so this discloses nothing it does not hold.
 	actorID, _ := r.Context().Value("userID").(string)
-	deleted := map[string]interface{}{}
+	deleted := map[string]interface{}{"userId": id}
 	if userToDelete != nil {
 		deleted["username"] = userToDelete.Username
 		deleted["email"] = userToDelete.Email
 	}
-	LogIdentityAudit(h.state, r, AuditEventUserHardDeleted, actorID, id, deleted)
+	LogIdentityAudit(h.state, r, AuditEventUserHardDeleted, actorID, "", deleted)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
