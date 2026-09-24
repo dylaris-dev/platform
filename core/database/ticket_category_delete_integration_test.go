@@ -21,15 +21,22 @@ import (
 func TestIntegrationDeletingACategoryKeepsItsTickets(t *testing.T) {
 	db, st := integrationDB(t)
 
+	// Unique per run, like every other integration test in this package. A
+	// fixed username passes exactly once per fresh database and fails with a
+	// duplicate-key error on every run after it - which CI never sees, because
+	// its Postgres is thrown away each time, and which makes the test look like
+	// a real failure to anyone iterating locally.
 	var userID string
 	if err := db.QueryRow(
-		`INSERT INTO users (username, password, role) VALUES ('cat_del_user', 'x', 'user') RETURNING id`,
+		`INSERT INTO users (username, password, role) VALUES ($1, 'x', 'user') RETURNING id`,
+		uniqueName("cat_del_user_"),
 	).Scan(&userID); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
+	catName := uniqueName("Typo'd category ")
 	catID, err := st.CreateTicketCategory(&models.TicketCategory{
-		Name: "Typo'd category", DefaultPriority: "normal", Enabled: true,
+		Name: catName, DefaultPriority: "normal", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create category: %v", err)
@@ -38,7 +45,7 @@ func TestIntegrationDeletingACategoryKeepsItsTickets(t *testing.T) {
 	ticketID, err := st.CreateTicket(&models.Ticket{
 		Region:       "eu",
 		CategoryID:   catID,
-		CategoryName: "Typo'd category",
+		CategoryName: catName,
 		UserID:       userID,
 		Title:        "Something is broken",
 		Status:       "open",
@@ -56,7 +63,7 @@ func TestIntegrationDeletingACategoryKeepsItsTickets(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("the ticket disappeared with its category: err=%v ticket=%v", err, got)
 	}
-	if got.CategoryName != "Typo'd category" {
+	if got.CategoryName != catName {
 		t.Errorf("the ticket lost the name it was filed under: %q", got.CategoryName)
 	}
 	if got.CategoryID != 0 {
@@ -72,7 +79,7 @@ func TestIntegrationDeletingACategoryKeepsItsTickets(t *testing.T) {
 	for _, x := range list {
 		if x.ID == ticketID {
 			found = true
-			if x.CategoryName != "Typo'd category" {
+			if x.CategoryName != catName {
 				t.Errorf("the listed ticket lost its category name: %q", x.CategoryName)
 			}
 		}
