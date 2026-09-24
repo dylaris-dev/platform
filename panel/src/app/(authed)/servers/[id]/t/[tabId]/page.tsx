@@ -6,6 +6,7 @@ import { AlertTriangle, ExternalLink, Link2 } from 'lucide-react';
 import { listServerTabs, mintTabProxyAuth, type ServerTab } from '@/lib/api/serverTabs';
 import { systemEvents } from '@/lib/systemEvents';
 import { tabContentSrc } from '@/lib/tabProxy';
+import { tabHost } from '@/lib/tabHost';
 import { useAppData } from '@/lib/AppDataContext';
 import { Skeleton } from '@/components/Skeleton';
 import { useRouteId } from '@/lib/routeParams';
@@ -212,6 +213,7 @@ export default function ServerCustomTabPage() {
             <main className="flex-1 flex items-center justify-center p-6">
                 <div className="card p-6 max-w-md text-center space-y-3">
                     <p className="text-sm text-(--base-07)">{tab.name} opens in a new window.</p>
+                    <ExternalOriginLine url={tab.url} />
                     <a
                         href={tab.url}
                         target="_blank"
@@ -227,16 +229,75 @@ export default function ServerCustomTabPage() {
     }
 
     return (
-        <main className="h-full overflow-hidden bg-(--base-01)">
+        // flex column rather than a bare h-full box: the notice takes its own
+        // height and the frame takes the rest. See the h-full note above, a
+        // frame sized with flex-1 alone inside this shell collapses to 150px.
+        <main className="h-full overflow-hidden bg-(--base-01) flex flex-col">
+            <ExternalOriginBar url={tab.url} />
             {/* sandbox kept permissive so JS-heavy minimap viewers function;
                 referrer-policy keeps URLs from leaking the panel surface */}
             <iframe
                 src={tab.url}
                 title={tab.name}
-                className="w-full h-full border-0"
+                className="w-full flex-1 min-h-0 border-0"
                 referrerPolicy="no-referrer"
                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
             />
         </main>
+    );
+}
+
+// ExternalOriginBar names whose page fills the frame below it.
+//
+// A custom tab's URL is not necessarily the owner's: tabs.write is part of the
+// "Server admin" preset, so anyone they delegated that to can point a tab
+// anywhere, and the page then renders full width with scripts and forms
+// enabled while the address bar still reads the panel's own domain. Nothing on
+// screen said where the content came from, which is the whole ingredient list
+// for a convincing "your session expired, sign in again" page.
+//
+// It is deliberately shown for EVERY direct tab, including the owner's own
+// BlueMap. A warning that appears only on pages somebody decided were
+// suspicious teaches people to trust its absence.
+function ExternalOriginBar({ url }: { url: string }) {
+    const host = tabHost(url);
+    return (
+        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-(--base-03) bg-(--base-02)">
+            <AlertTriangle size={13} className="text-(--warning-light) shrink-0" />
+            {/* The host is its own element, and the sentence is what truncates.
+                With both in one line the narrow-screen ellipsis fell on the one
+                word the line exists to show. */}
+            {host && (
+                <span className="text-xs font-mono text-(--base-08) shrink-0 max-w-[45%] truncate" title={host}>
+                    {host}
+                </span>
+            )}
+            <p className="text-xs text-(--base-06) min-w-0 truncate">
+                {host
+                    ? 'is not part of DYLARIS. Never enter your password in it.'
+                    : 'This page is loaded from another site and is not part of DYLARIS. Never enter your password in it.'}
+            </p>
+            <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto shrink-0 hidden sm:inline-flex items-center gap-1 text-xs text-(--accent-light) hover:underline focus-visible:underline"
+            >
+                Open directly
+                <ExternalLink size={11} />
+            </a>
+        </div>
+    );
+}
+
+// The same statement for the popout card, where there is no frame to sit above.
+function ExternalOriginLine({ url }: { url: string }) {
+    const host = tabHost(url);
+    return (
+        <p className="text-xs text-(--base-06)">
+            {host
+                ? <>It is hosted at <span className="font-mono text-(--base-08)">{host}</span> and is not part of DYLARIS.</>
+                : <>It is hosted elsewhere and is not part of DYLARIS.</>}
+        </p>
     );
 }

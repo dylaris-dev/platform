@@ -569,10 +569,10 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/notifications` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.List` | the caller's own notifications plus the unread count. |
-| POST | `/api/notifications/read-all` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.MarkAllRead` | marks every one of the caller's notifications read. |
-| GET | `/api/notifications/unread-count` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.UnreadCount` | cheap polling endpoint for the bell badge. |
-| POST | `/api/notifications/{id:[0-9]+}/read` | session | _no capability_ | RequireTicketsEnabled | `NotificationsHandler.MarkRead` | marks one notification read. |
+| GET | `/api/notifications` | session | _no capability_ | - | `NotificationsHandler.List` | the caller's own notifications plus the unread count. |
+| POST | `/api/notifications/read-all` | session | _no capability_ | - | `NotificationsHandler.MarkAllRead` | marks every one of the caller's notifications read. |
+| GET | `/api/notifications/unread-count` | session | _no capability_ | - | `NotificationsHandler.UnreadCount` | cheap polling endpoint for the bell badge. |
+| POST | `/api/notifications/{id:[0-9]+}/read` | session | _no capability_ | - | `NotificationsHandler.MarkRead` | marks one notification read. |
 
 ## /api/packs
 

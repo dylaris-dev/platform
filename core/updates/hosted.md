@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- A custom tab now names the site it is showing, in a line above the page. Anyone you give
+  "Server admin" to can point a tab anywhere, and until now the page filled your panel
+  with nothing saying where it came from. Nothing to update on your machine.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.24.3
 
 ### Features

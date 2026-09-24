@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A custom tab now names the site it is showing.** Managing tabs is part of the Server
+  admin preset, so a delegated member can point one anywhere, and the page filled the
+  panel with nothing on screen saying whose it was. `core`
+
+### Fixes
+- **Notifications no longer vanish when the ticket system is switched off.** The inbox was
+  gated with tickets and has since grown notices that have nothing to do with them,
+  including the one telling an owner their server failed to install. `core`
+
 ## 2026.09.24.3
 
 ### Features

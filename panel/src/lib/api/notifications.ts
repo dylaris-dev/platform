@@ -17,9 +17,10 @@ export async function listNotifications(unreadOnly = false, limit = 50) {
         if (unreadOnly) params.set('unread_only', '1');
         if (limit) params.set('limit', String(limit));
         const res = await fetch(`${API_URL}/notifications?${params.toString()}`, { headers: getAuthHeader() });
-        // Tickets feature off -> Core replies 503 feature_disabled. Treat it as
-        // an empty inbox (no error path, no console noise) rather than a failure.
-        if (res.status === 503) return { success: true, notifications: [] };
+        // A 503 used to mean "the ticket feature is off" and was reported as an
+        // empty inbox. The inbox is no longer gated on that feature, so a 503
+        // here is Core being unreachable - reporting that as "you have no
+        // notifications" would hide an outage behind a quiet, plausible answer.
         return handleResponse(res);
     } catch (err) { return handleError(err); }
 }
@@ -27,9 +28,8 @@ export async function listNotifications(unreadOnly = false, limit = 50) {
 export async function getUnreadCount() {
     try {
         const res = await fetch(`${API_URL}/notifications/unread-count`, { headers: getAuthHeader() });
-        // Tickets feature off -> 503 feature_disabled. Report zero unread quietly
-        // instead of surfacing an error the bell would poll on repeatedly.
-        if (res.status === 503) return { success: true, unread: 0 };
+        // See listNotifications: a 503 is no longer "the feature is off", so it
+        // is not answered with a confident zero.
         return handleResponse(res);
     } catch (err) { return handleError(err); }
 }

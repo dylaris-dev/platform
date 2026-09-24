@@ -95,11 +95,13 @@ const CHECKS: Array<(ctx: CheckContext) => Promise<Notification | null>> = [
 // ---------------------------------------------------------------------------
 
 export default function NotificationsDropdown() {
-    const { user, featureFlags, gatewayEnabled } = useAppData();
-    // Notifications are backed by the Ticket System. When it is off, Core 503s
-    // the unread-count/list endpoints, so gate the poll on the flag to keep the
-    // bell quiet (the 503 is also swallowed defensively in the api client).
-    const ticketsEnabled = featureFlags.tickets;
+    const { user, gatewayEnabled } = useAppData();
+    // The inbox is NOT gated on the ticket feature, though it used to be on
+    // both sides: Core 503'd these endpoints and the bell skipped polling them.
+    // The inbox started out ticket-driven and has since grown notifications
+    // that have nothing to do with tickets - server.install_failed is the only
+    // way an owner learns their server did not install - so switching tickets
+    // off was silently switching those off too.
     const [open, setOpen] = useState(false);
     const [items, setItems] = useState<Notification[]>([]);
     const [inbox, setInbox] = useState<InboxNotification[]>([]);
@@ -121,16 +123,14 @@ export default function NotificationsDropdown() {
     // Refresh user inbox + unread badge. Cheap unread-count endpoint runs on
     // the same interval; the full inbox is only fetched on open.
     const refreshUnread = useCallback(async () => {
-        if (!ticketsEnabled) { setUnread(0); return; }
         const res = await getUnreadCount();
         if (res.success) setUnread(res.unread || 0);
-    }, [ticketsEnabled]);
+    }, []);
 
     const refreshInbox = useCallback(async () => {
-        if (!ticketsEnabled) { setInbox([]); return; }
         const res = await listNotifications(false, 20);
         if (res.success) setInbox(res.notifications || []);
-    }, [ticketsEnabled]);
+    }, []);
 
     // Initial load + 30s poll for both signals.
     useEffect(() => {

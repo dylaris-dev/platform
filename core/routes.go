@@ -1202,12 +1202,22 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(cannedResponsesHandler.Update)))).Methods("PATCH")
 	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.delete")(appState.RequireTicketsEnabled(cannedResponsesHandler.Delete)))).Methods("DELETE")
 
-	// Notifications: in-app inbox. Currently ticket-driven; gated with the
-	// rest of the ticket subsystem.
-	api.HandleFunc("/notifications", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.List))).Methods("GET")
-	api.HandleFunc("/notifications/unread-count", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.UnreadCount))).Methods("GET")
-	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkRead))).Methods("POST")
-	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(notificationsHandler.MarkAllRead))).Methods("POST")
+	// Notifications: the caller's own in-app inbox. NOT gated on the ticket
+	// feature, though it was: the inbox started out ticket-driven and inherited
+	// that gate, and it has since grown notifications that have nothing to do
+	// with tickets - server.install_failed is one, and it is the only way an
+	// owner learns their server did not install. An operator who switched
+	// tickets off was switching that off too, silently.
+	//
+	// Nothing here reads or writes a ticket. Every route answers for the calling
+	// user alone (the store scopes by user id), so there is no ticket surface to
+	// leave open by removing the gate. Rows about past tickets stay readable,
+	// which is what an inbox is - the ticket system being off stops new ones
+	// being made, it does not un-happen the old ones.
+	api.HandleFunc("/notifications", authHandler.AuthMiddleware(notificationsHandler.List)).Methods("GET")
+	api.HandleFunc("/notifications/unread-count", authHandler.AuthMiddleware(notificationsHandler.UnreadCount)).Methods("GET")
+	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(notificationsHandler.MarkRead)).Methods("POST")
+	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(notificationsHandler.MarkAllRead)).Methods("POST")
 
 	// --- Server audit ---
 	// View is server.audit.read: owner + admin via the resolver short-circuits,
