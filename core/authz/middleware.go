@@ -43,6 +43,29 @@ func (r *Resolver) RequireCap(capID string) func(http.HandlerFunc) http.HandlerF
 				denyJSON(w, "Forbidden", http.StatusForbidden)
 				return
 			}
+			// Every server-scoped ACTION passes here with both the capability and
+			// the server already resolved, which is why the audit record is taken
+			// here rather than in each handler - see write_audit.go for what leaving
+			// it to the handlers cost. Reads are not recorded: the trail answers
+			// "what was done to this server", and one browse of the file manager
+			// would otherwise bury every action in it.
+			// GET and HEAD are excluded by METHOD as well as by verb: spark's single
+			// "use" capability gates its listing as well as its recording, so the
+			// verb alone would file a GET as an action. It also keeps a websocket
+			// upgrade - always a GET - away from the wrapper entirely.
+			if r.writeAudit != nil && c.Scope == ScopeServer && c.Verb != VerbRead &&
+				req.Method != http.MethodGet && req.Method != http.MethodHead {
+				aw := &auditedWriter{ResponseWriter: w}
+				req = req.WithContext(withAuditSlot(req.Context()))
+				next(aw, req)
+				// Both conditions are decided HERE so every recorder gets the same
+				// contract: called once, for an action that happened, that nobody
+				// has already described better.
+				if aw.status >= 200 && aw.status < 300 && !WasAudited(req.Context()) {
+					r.writeAudit(req, serverID, capID, aw.status)
+				}
+				return
+			}
 			next(w, req)
 		}
 	}

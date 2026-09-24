@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.3
+
+### Features
+- Nothing.
+
+### Breaking
+- If a script of yours creates addresses by sending a plain hostname, that shortcut is
+  gone. Pick a name from the list instead, or bring your own domain and prove it with the
+  TXT record your panel shows you. Nothing to update on your machine.
+
+### Security
+- Anyone you give access to a server is now recorded in that server's activity log when
+  they change files, run commands, or edit backups, schedules, addresses or tabs. Before
+  this, only power actions and invitations were listed. Nothing to update on your machine.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.24.2
 
 ### Features

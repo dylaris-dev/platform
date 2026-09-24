@@ -80,7 +80,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("valid hoster subdomain", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hostersJSON(t)})
-		got, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "dylaris.com", "", 25565), false)
+		got, _, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "dylaris.com", "", 25565), false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -91,7 +91,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("hoster subdomain rejects an unconfigured hoster domain", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hostersJSON(t)})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "not-configured.com", "", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "myserver", "not-configured.com", "", 25565), false)
 		if err == nil {
 			t.Fatalf("expected an error for an unconfigured hoster domain")
 		}
@@ -102,7 +102,7 @@ func TestResolveRouteDomain(t *testing.T) {
 			"gateway_hoster_domains":         hostersJSON(t),
 			"gateway_custom_domains_enabled": "true",
 		})
-		got, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565), false)
+		got, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565), false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -113,7 +113,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("custom domain rejected when custom domains are not enabled", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "false"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "sub.example.com", 25565), false)
 		if err == nil {
 			t.Fatalf("expected an error when custom domains are disabled")
 		}
@@ -121,7 +121,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("reserved-label refusal on the hoster-picker path", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hostersJSON(t)})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "admin", "dylaris.com", "", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "admin", "dylaris.com", "", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Fatalf("err = %v, want a 'reserved' error for the default-blocklisted 'admin' subdomain", err)
 		}
@@ -129,7 +129,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("reserved-label refusal on the custom-domain path (leftmost label)", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "true"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "admin.example.com", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "admin.example.com", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Fatalf("err = %v, want a 'reserved' error for the default-blocklisted 'admin' leftmost label", err)
 		}
@@ -137,7 +137,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("custom domain with too few labels rejected", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "true"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "onelabel", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "onelabel", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "at most two subdomain levels") {
 			t.Fatalf("err = %v, want the label-count error", err)
 		}
@@ -145,7 +145,7 @@ func TestResolveRouteDomain(t *testing.T) {
 
 	t.Run("custom domain with too many labels rejected", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "true"})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "a.b.c.d.e", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "a.b.c.d.e", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "at most two subdomain levels") {
 			t.Fatalf("err = %v, want the label-count error", err)
 		}
@@ -156,28 +156,31 @@ func TestResolveRouteDomain(t *testing.T) {
 			"gateway_hoster_domains":         hostersJSON(t),
 			"gateway_custom_domains_enabled": "true",
 		})
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "test.dylaris.com", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "test.dylaris.com", 25565), false)
 		if err == nil || !strings.Contains(err.Error(), "may not be a subdomain of a hoster domain") {
 			t.Fatalf("err = %v, want the hoster-suffix rejection", err)
 		}
 	})
 
-	t.Run("legacy raw domain path is accepted and lowercased", func(t *testing.T) {
+	t.Run("raw domain from an ADMIN is accepted and lowercased", func(t *testing.T) {
 		h := newGatewayDomainHandler(nil)
-		// Not "MC.Example.com": "mc" is a default-reserved leftmost label, so
-		// that input now tests the blocklist instead of the lowercasing.
-		got, err := h.resolveRouteDomain(routeDomainReq("Survival.Example.com", "", "", "", 25565), false)
+		// Not "MC.Example.com": "mc" is a default-reserved leftmost label, and the
+		// list is lifted for an admin anyway, so that input would test nothing.
+		got, isCustom, err := h.resolveRouteDomain(routeDomainReq("Survival.Example.com", "", "", "", 25565), true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got != "survival.example.com" {
 			t.Fatalf("got %q, want survival.example.com", got)
 		}
+		if isCustom {
+			t.Fatalf("isCustom = true; an admin's raw domain is the escape hatch, not a tenant claim to prove")
+		}
 	})
 
 	t.Run("no domain provided at all is rejected", func(t *testing.T) {
 		h := newGatewayDomainHandler(nil)
-		_, err := h.resolveRouteDomain(routeDomainReq("", "", "", "", 25565), false)
+		_, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "", 25565), false)
 		if err == nil {
 			t.Fatalf("expected an error when no domain field is set")
 		}
@@ -450,10 +453,10 @@ func TestResolveRouteDomain_AdminMayUseReservedPrefixes(t *testing.T) {
 		{"raw domain", routeDomainReq("mc.example.com", "", "", "", 25565), "mc.example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := h.resolveRouteDomain(tc.req, false); err == nil {
+			if _, _, err := h.resolveRouteDomain(tc.req, false); err == nil {
 				t.Fatal("a non-admin was allowed a reserved prefix")
 			}
-			got, err := h.resolveRouteDomain(tc.req, true)
+			got, _, err := h.resolveRouteDomain(tc.req, true)
 			if err != nil {
 				t.Fatalf("admin refused a reserved prefix: %v", err)
 			}
@@ -479,7 +482,7 @@ func TestResolveRouteDomain_AdminBypassDoesNotLiftOtherRules(t *testing.T) {
 	}
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := h.resolveRouteDomain(req, true); err == nil {
+			if _, _, err := h.resolveRouteDomain(req, true); err == nil {
 				t.Error("admin bypass swallowed a structural validation error")
 			}
 		})
@@ -497,4 +500,121 @@ func TestDefaultBlockedPrefixesReserveTheHostersOwnNames(t *testing.T) {
 			t.Errorf("%q is not reserved by default — a tenant could claim the platform's own address", name)
 		}
 	}
+}
+
+// TestRawDomainFromATenantIsNotAThirdPath pins what the raw `domain` field is
+// worth in a tenant's hands. It used to be worth everything: whatever FQDN it
+// carried was registered, so moving the same string out of `customDomain` and
+// into `domain` skipped the custom-domain switch, the ownership proof, the
+// picker's format rules and - because the address allowance only counts the
+// configured hoster domains - the allowance too.
+//
+// Measured on production before the fix: an ordinary account registered
+// r7-squat.example.com with custom domains switched OFF platform-wide, and
+// r7probe.dylaris.com on our own apex, which the picker would have refused.
+// First registration wins, so that is a squatting lever.
+//
+// The rule now is that a tenant's raw domain is normalised into whichever of
+// the two real paths it belongs to, and answers to that path's rules.
+func TestRawDomainFromATenantIsNotAThirdPath(t *testing.T) {
+	hosters := func(t *testing.T) string {
+		return hosterDomainsJSON(t, []HosterDomain{{Domain: "eu.dylaris.com", Validation: "letters"}})
+	}
+
+	t.Run("foreign domain is refused while custom domains are off", func(t *testing.T) {
+		h := newGatewayDomainHandler(map[string]string{
+			"gateway_hoster_domains":         hosters(t),
+			"gateway_custom_domains_enabled": "false",
+		})
+		_, _, err := h.resolveRouteDomain(routeDomainReq("squat.example.com", "", "", "", 25565), false)
+		if err == nil || !strings.Contains(err.Error(), "custom domains are not enabled") {
+			t.Fatalf("err = %v, want the same refusal the customDomain field gets", err)
+		}
+	})
+
+	t.Run("foreign domain still has to prove ownership when custom domains are on", func(t *testing.T) {
+		h := newGatewayDomainHandler(map[string]string{
+			"gateway_hoster_domains":         hosters(t),
+			"gateway_custom_domains_enabled": "true",
+		})
+		got, isCustom, err := h.resolveRouteDomain(routeDomainReq("squat.example.com", "", "", "", 25565), false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "squat.example.com" {
+			t.Fatalf("got %q, want squat.example.com", got)
+		}
+		// The whole point of the second return value: the caller arms the
+		// ownership claim from it, and reading the request FIELD instead is what
+		// let this domain through unproven.
+		if !isCustom {
+			t.Fatal("isCustom = false, so the ownership gate and the claim would both be skipped")
+		}
+	})
+
+	t.Run("a name under a hoster domain answers to the picker's format rules", func(t *testing.T) {
+		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hosters(t)})
+		// "letters" validation: digits are not a name the picker would accept.
+		if _, _, err := h.resolveRouteDomain(routeDomainReq("r7probe123.eu.dylaris.com", "", "", "", 25565), false); err == nil {
+			t.Fatal("a raw FQDN skipped the hoster format rule the picker enforces")
+		}
+		got, isCustom, err := h.resolveRouteDomain(routeDomainReq("survival.eu.dylaris.com", "", "", "", 25565), false)
+		if err != nil {
+			t.Fatalf("a well-formed name under a hoster domain was refused: %v", err)
+		}
+		if got != "survival.eu.dylaris.com" {
+			t.Fatalf("got %q, want survival.eu.dylaris.com", got)
+		}
+		if isCustom {
+			t.Fatal("isCustom = true for one of OUR domains; it would be sent off to prove ownership of ours")
+		}
+	})
+
+	t.Run("a reserved name under a hoster domain is refused", func(t *testing.T) {
+		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hosters(t)})
+		_, _, err := h.resolveRouteDomain(routeDomainReq("panel.eu.dylaris.com", "", "", "", 25565), false)
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("err = %v, want a 'reserved' refusal", err)
+		}
+	})
+
+	t.Run("the hoster apex itself is not a tenant's to route", func(t *testing.T) {
+		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hosters(t)})
+		if _, _, err := h.resolveRouteDomain(routeDomainReq("eu.dylaris.com", "", "", "", 25565), false); err == nil {
+			t.Fatal("a tenant was allowed to register the hoster domain itself")
+		}
+	})
+
+	t.Run("an admin keeps the raw escape hatch", func(t *testing.T) {
+		h := newGatewayDomainHandler(map[string]string{
+			"gateway_hoster_domains":         hosters(t),
+			"gateway_custom_domains_enabled": "false",
+		})
+		got, isCustom, err := h.resolveRouteDomain(routeDomainReq("anything.example.com", "", "", "", 25565), true)
+		if err != nil || got != "anything.example.com" || isCustom {
+			t.Fatalf("got %q, isCustom %v, err %v; an admin's raw domain must pass through unchanged", got, isCustom, err)
+		}
+	})
+
+	t.Run("an unconfigured platform keeps the raw path, reserved names aside", func(t *testing.T) {
+		// No hoster domains and custom domains off: the operator has said
+		// nothing about what a tenant may claim, and the panel's picker is in
+		// its "legacy" mode. Closing the raw path here would leave those
+		// tenants unable to create any address at all.
+		h := newGatewayDomainHandler(nil)
+		got, isCustom, err := h.resolveRouteDomain(routeDomainReq("survival.example.com", "", "", "", 25565), false)
+		if err != nil || got != "survival.example.com" || isCustom {
+			t.Fatalf("got %q, isCustom %v, err %v; want the legacy fallback intact", got, isCustom, err)
+		}
+		if _, _, err := h.resolveRouteDomain(routeDomainReq("panel.example.com", "", "", "", 25565), false); err == nil {
+			t.Fatal("the reserved list must still hold on an unconfigured platform")
+		}
+	})
+
+	t.Run("one configured hoster domain is enough to close it", func(t *testing.T) {
+		h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hosters(t)})
+		if _, _, err := h.resolveRouteDomain(routeDomainReq("survival.example.com", "", "", "", 25565), false); err == nil {
+			t.Fatal("a configured platform still accepted an unproven foreign domain")
+		}
+	})
 }

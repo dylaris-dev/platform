@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.3
+
+### Features
+- Nothing.
+
+### Breaking
+- An address given to the API as a plain hostname is now held to the same rules as the
+  picker and the custom-domain field. Operator tooling is unaffected. `core`
+
+### Security
+- **A tenant could claim an address with none of the checks applied.** Sending the same
+  hostname in the raw field skipped the custom-domain switch, the ownership proof, the
+  name format and the per-account allowance - and first registration wins. `core`
+- **A server's activity log now records what the people you invited actually do.** It
+  listed power actions and membership only, so deleting files, running console commands
+  and changing backups, schedules, addresses or tabs left no trace at all. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.24.2
 
 ### Features

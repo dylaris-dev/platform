@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -49,6 +50,18 @@ func (f *linkRouteFakeStore) GetGatewayRouteLimit(scope string) (*models.Gateway
 
 func (f *linkRouteFakeStore) GetSetting(key string) (string, error) {
 	return f.settings[key], nil
+}
+
+// The custom-domain claim pair. A domain a tenant brought themselves now
+// reaches the ownership gate whichever request field carried it, so these are
+// on the path of any test that routes one - unclaimed and armed without
+// complaint, which is the "nothing stands in the way" fixture.
+func (f *linkRouteFakeStore) GetCustomDomainClaim(userID, domain string) (*store.CustomDomainClaim, error) {
+	return nil, store.ErrNoClaim
+}
+
+func (f *linkRouteFakeStore) StartCustomDomainClaim(userID, domain string, deadline time.Time) (*store.CustomDomainClaim, error) {
+	return &store.CustomDomainClaim{UserID: userID, Domain: domain, State: store.ClaimPending, DeadlineAt: &deadline}, nil
 }
 
 // linkRouteFakeGateway is a recording fake for services.GatewayProvider so

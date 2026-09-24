@@ -39,6 +39,7 @@ type Resolver struct {
 	store       Store
 	demoRead    func(serverID int) bool // optional; StoreEnabled-gated by the caller
 	foreignNode func(nodeID int, userID string) bool
+	writeAudit  WriteAuditFunc // optional; see write_audit.go
 }
 
 func NewResolver(st Store) *Resolver {

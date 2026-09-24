@@ -1435,16 +1435,24 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/settings/metrics-db/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(metricsDBHandler.Test))).Methods("POST")
 	api.HandleFunc("/infrastructure/routing-migration", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetRoutingMigrationStatus))).Methods("GET")
 
+	// The file routes name their server in ?server_uuid= rather than in the
+	// path, so they resolve their own capability (see FileHandler.getServerUUID)
+	// and are ExemptRoutes for the coverage harness. AuditResolvedWrite is what
+	// puts the WRITING ones back into the server audit trail: without it,
+	// deleting a file was the one destructive action an owner's trail did not
+	// record. The reads are deliberately left unwrapped - they would never
+	// produce a row, and wrapping a download costs it the ResponseWriter's
+	// io.ReaderFrom fast path for nothing.
 	api.HandleFunc("/files", authHandler.AuthMiddleware(fileHandler.GetFilesHandler)).Methods("GET")
 	api.HandleFunc("/files/content", authHandler.AuthMiddleware(fileHandler.GetFileContentHandler)).Methods("GET")
-	api.HandleFunc("/files/save", authHandler.AuthMiddleware(fileHandler.SaveFileHandler)).Methods("POST")
-	api.HandleFunc("/files/create", authHandler.AuthMiddleware(fileHandler.CreateFileHandler)).Methods("POST")
-	api.HandleFunc("/files/rename", authHandler.AuthMiddleware(fileHandler.RenameFileHandler)).Methods("POST")
-	api.HandleFunc("/files/copy", authHandler.AuthMiddleware(fileHandler.CopyFileHandler)).Methods("POST")
-	api.HandleFunc("/files/delete", authHandler.AuthMiddleware(fileHandler.DeleteFileHandler)).Methods("POST")
+	api.HandleFunc("/files/save", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(fileHandler.SaveFileHandler))).Methods("POST")
+	api.HandleFunc("/files/create", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(fileHandler.CreateFileHandler))).Methods("POST")
+	api.HandleFunc("/files/rename", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(fileHandler.RenameFileHandler))).Methods("POST")
+	api.HandleFunc("/files/copy", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(fileHandler.CopyFileHandler))).Methods("POST")
+	api.HandleFunc("/files/delete", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(fileHandler.DeleteFileHandler))).Methods("POST")
 	api.HandleFunc("/files/download", authHandler.AuthMiddleware(fileHandler.DownloadFileHandler)).Methods("GET")
 	api.HandleFunc("/files/download/selective", authHandler.AuthMiddleware(fileHandler.SelectiveDownloadHandler)).Methods("GET")
-	api.HandleFunc("/files/upload", authHandler.AuthMiddleware(fileHandler.UploadFileHandler)).Methods("POST")
+	api.HandleFunc("/files/upload", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(fileHandler.UploadFileHandler))).Methods("POST")
 
 	// Library endpoints. Phase 4 Task 20 INSPECT result: this is a single
 	// platform-shared file catalog (buildProvider has no per-owner scoping),

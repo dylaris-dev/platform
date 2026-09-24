@@ -200,7 +200,10 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	finalDomain, err := h.resolveRouteDomain(&struct {
+	// isCustomDomain comes from the resolver rather than from which FIELD was
+	// used: a tenant's raw FQDN is normalised into a brought domain, and reading
+	// the field here would have left that one unproven.
+	finalDomain, isCustomDomain, err := h.resolveRouteDomain(&struct {
 		Domain       string `json:"domain"`
 		Subdomain    string `json:"subdomain"`
 		HosterDomain string `json:"hosterDomain"`
@@ -227,7 +230,6 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
-	isCustomDomain := strings.TrimSpace(req.CustomDomain) != ""
 	if gErr := h.customDomainGate(r, userID, finalDomain, isCustomDomain); gErr != nil {
 		http.Error(w, gErr.Error(), http.StatusForbidden)
 		return

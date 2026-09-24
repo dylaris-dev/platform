@@ -280,6 +280,7 @@ func main() {
 	// chokepoint covers console/stats/overview reads on demo servers.
 	appState.Authz.SetDemoRead(appState.IsDemoServerID)
 	appState.Authz.SetForeignNode(appState.NodeOwnedByOther)
+	appState.Authz.SetServerWriteAudit(handlers.RecordServerWrite(appState))
 
 	// Precompute the cluster-wide gRPC-TLS fingerprint once so handlers can hand it
 	// to BYON operators without re-deriving. Non-secret; safe to expose.

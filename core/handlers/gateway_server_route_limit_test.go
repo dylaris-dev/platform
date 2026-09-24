@@ -120,8 +120,14 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 			}
 			// example.com is ours here: the cap only counts addresses in our own
 			// namespace, so without this the fixtures would sail past every limit.
+			// Custom domains ON, because two cases below route a domain the
+			// customer owns. They used to reach the create through the raw `domain`
+			// field, which took any FQDN from anyone - so the fixture never had to
+			// say whether the feature was even enabled. It does now: a tenant's raw
+			// domain is the custom-domain path, switch and ownership proof included.
 			fs := &linkRouteFakeStore{routeLimits: tc.limits, settings: map[string]string{
 				services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
+				"gateway_custom_domains_enabled": "true",
 			}}
 			gw := &linkRouteFakeGateway{}
 			h := newLinkRouteHandler(fs, gw, rdb)

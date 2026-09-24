@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -79,6 +80,33 @@ func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType st
 	}
 	if err := state.Store.InsertServerAudit(ev); err != nil {
 		log.Printf("server-audit: insert %s for %d: %v", eventType, serverID, err)
+		return
+	}
+	// This handler has said what happened, in its own words and with its own
+	// metadata. RecordServerWrite then stays quiet rather than adding a second,
+	// blunter row for the same action.
+	if r != nil {
+		authz.MarkAudited(r.Context())
+	}
+}
+
+// RecordServerWrite is the audit recorder RequireCap calls after an authorized
+// server-scoped action. It is installed on the resolver in main.
+//
+// The capability IS the event type. It reads as what the owner granted -
+// "files.delete" is the line in the preset they picked - and it needs no
+// per-capability vocabulary to be kept in step with the catalog, which is the
+// kind of list that goes stale the first time somebody adds a capability.
+//
+// RequireCap calls this only for an action that succeeded and that no handler
+// has already described, so there is nothing to filter here.
+func RecordServerWrite(state *AppState) authz.WriteAuditFunc {
+	return func(r *http.Request, serverID int, capID string, status int) {
+		actorID, _ := r.Context().Value("userID").(string)
+		LogServerAudit(state, r, serverID, capID, actorID, "", map[string]interface{}{
+			"method": r.Method,
+			"path":   r.URL.Path,
+		})
 	}
 }
 

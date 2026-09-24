@@ -418,14 +418,14 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/files` | session | _in-handler_ | - | `FileHandler.GetFilesHandler` | handles requests to list files in a directory |
 | GET | `/api/files/content` | session | _in-handler_ | - | `FileHandler.GetFileContentHandler` | handles requests to read the content of a file |
-| POST | `/api/files/copy` | session | _in-handler_ | - | `FileHandler.CopyFileHandler` | handles copying files and directories |
-| POST | `/api/files/create` | session | _in-handler_ | - | `FileHandler.CreateFileHandler` | handles requests to create a new file or directory |
-| POST | `/api/files/delete` | session | _in-handler_ | - | `FileHandler.DeleteFileHandler` | handles requests to delete a file |
+| POST | `/api/files/copy` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.CopyFileHandler` | handles copying files and directories |
+| POST | `/api/files/create` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.CreateFileHandler` | handles requests to create a new file or directory |
+| POST | `/api/files/delete` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.DeleteFileHandler` | handles requests to delete a file |
 | GET | `/api/files/download` | session | _in-handler_ | - | `FileHandler.DownloadFileHandler` | handles file and folder downloads via gRPC streaming |
 | GET | `/api/files/download/selective` | session | _in-handler_ | - | `FileHandler.SelectiveDownloadHandler` | handles selective folder downloads. |
-| POST | `/api/files/rename` | session | _in-handler_ | - | `FileHandler.RenameFileHandler` | handles renaming files and directories |
-| POST | `/api/files/save` | session | _in-handler_ | - | `FileHandler.SaveFileHandler` | handles requests to save file content |
-| POST | `/api/files/upload` | session | _in-handler_ | - | `FileHandler.UploadFileHandler` | handles uploads — receives files via HTTP multipart, then streams them to the Node via gRPC chunks. |
+| POST | `/api/files/rename` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.RenameFileHandler` | handles renaming files and directories |
+| POST | `/api/files/save` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.SaveFileHandler` | handles requests to save file content |
+| POST | `/api/files/upload` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.UploadFileHandler` | handles uploads — receives files via HTTP multipart, then streams them to the Node via gRPC chunks. |
 
 ## /api/gateway
 

@@ -192,6 +192,11 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, req
 		}
 		return "", false, fmt.Errorf("access denied")
 	}
+	// Hand the decision to the audit wrapper on the route. These routes name
+	// their server in a query parameter, so RequireCap - which reads it from the
+	// path - never gates them and never recorded them either; this is where the
+	// server and the capability are both known for certain.
+	authz.StashServerWrite(r.Context(), srv.ID, requiredCap)
 	return uuid, false, nil
 }
 

@@ -306,7 +306,7 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 		HosterDomain: q.Get("hosterDomain"),
 		CustomDomain: q.Get("customDomain"),
 	}
-	finalDomain, err := h.resolveRouteDomain(&req, IsAdmin(r))
+	finalDomain, _, err := h.resolveRouteDomain(&req, IsAdmin(r))
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"available": false,
@@ -378,14 +378,16 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		req.TargetPort = 25565
 	}
 
-	finalDomain, err := h.resolveRouteDomain(&req, IsAdmin(r))
+	// isCustomDomain comes from the resolver, not from which FIELD the request
+	// used: a tenant's raw FQDN is normalised into a brought domain, and reading
+	// the field here would have left that one unproven.
+	finalDomain, isCustomDomain, err := h.resolveRouteDomain(&req, IsAdmin(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
-	isCustomDomain := strings.TrimSpace(req.CustomDomain) != ""
 	if gErr := h.customDomainGate(r, userID, finalDomain, isCustomDomain); gErr != nil {
 		http.Error(w, gErr.Error(), http.StatusForbidden)
 		return
@@ -467,25 +469,26 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 }
 
 // resolveRouteDomain inspects the three accepted input shapes and returns the
-// final lowercase FQDN to register. It enforces the admin's hoster-domain
-// configuration: subdomains must match the per-hoster validation mode, custom
-// domains may only be used when the admin enabled them and may not collide
-// with any hoster domain. allowReserved lifts the blocked-prefix check for an
-// admin caller.
+// final lowercase FQDN to register, plus whether it is a domain the TENANT
+// brought themselves - which is what decides whether the ownership proof runs.
+// It enforces the admin's hoster-domain configuration: subdomains must match
+// the per-hoster validation mode, custom domains may only be used when the
+// admin enabled them and may not collide with any hoster domain.
+//
+// isAdmin lifts the blocked-prefix check (the reserved names exist to keep
+// confusable ones away from tenants; an admin is who they are reserved FOR)
+// and keeps the raw-FQDN escape hatch open. A tenant has no escape hatch: see
+// the raw path below for what that used to cost.
 func (h *GatewayHandler) resolveRouteDomain(req *struct {
 	Domain       string `json:"domain"`
 	Subdomain    string `json:"subdomain"`
 	HosterDomain string `json:"hosterDomain"`
 	CustomDomain string `json:"customDomain"`
 	TargetPort   int    `json:"targetPort"`
-}, allowReserved bool) (string, error) {
+}, isAdmin bool) (string, bool, error) {
 	hosters, customEnabled, _ := h.loadGatewayDomainConfig()
 	blocked := h.loadBlockedRoutePrefixes()
-	// The reserved list exists to keep confusable / impersonating names away
-	// from TENANTS. An admin is who the names are reserved FOR: they are the
-	// ones who legitimately need play.<base> or mc.<base> for the platform's own
-	// server, and refusing them left the reserved names unusable by anyone.
-	if allowReserved {
+	if isAdmin {
 		blocked = nil
 	}
 
@@ -494,7 +497,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 		sub := strings.ToLower(strings.TrimSpace(req.Subdomain))
 		host := strings.ToLower(strings.TrimSpace(req.HosterDomain))
 		if sub == "" || host == "" {
-			return "", fmt.Errorf("subdomain and hosterDomain must both be set")
+			return "", false, fmt.Errorf("subdomain and hosterDomain must both be set")
 		}
 		var hd *HosterDomain
 		for i := range hosters {
@@ -504,55 +507,108 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 			}
 		}
 		if hd == nil {
-			return "", fmt.Errorf("hoster domain not configured: %s", host)
+			return "", false, fmt.Errorf("hoster domain not configured: %s", host)
 		}
-		if !validateSubdomain(sub, hd.Validation) {
-			return "", fmt.Errorf("subdomain does not match the allowed format for %s", host)
-		}
-		if blocked[sub] {
-			return "", fmt.Errorf("subdomain %q is reserved", sub)
-		}
-		return sub + "." + host, nil
+		return resolveHosterSubdomain(sub, *hd, blocked)
 	}
 
 	// 2) Custom-domain path
 	if req.CustomDomain != "" {
-		if !customEnabled {
-			return "", fmt.Errorf("custom domains are not enabled")
-		}
-		dom := strings.ToLower(strings.TrimSpace(req.CustomDomain))
-		if !domainRegex.MatchString(dom) || strings.HasPrefix(dom, "*.") {
-			return "", fmt.Errorf("invalid custom domain format")
-		}
-		labels := strings.Split(dom, ".")
-		// Apex (mc.de = 2 labels) up to apex + 2 subdomains (a.b.c.d = 4 labels)
-		if len(labels) < 2 || len(labels) > 4 {
-			return "", fmt.Errorf("custom domain may have at most two subdomain levels")
-		}
-		if blocked[labels[0]] {
-			return "", fmt.Errorf("leftmost label %q is reserved", labels[0])
-		}
-		for _, h := range hosters {
-			if dom == h.Domain || strings.HasSuffix(dom, "."+h.Domain) {
-				return "", fmt.Errorf("custom domain may not be a subdomain of a hoster domain (%s) — use the subdomain picker instead", h.Domain)
-			}
-		}
-		return dom, nil
+		return resolveBroughtDomain(strings.ToLower(strings.TrimSpace(req.CustomDomain)), hosters, customEnabled, blocked)
 	}
 
-	// 3) Legacy raw-domain path (admin tools, scripts, backwards compat)
+	// 3) Raw-FQDN path (admin tools, scripts, backwards compat).
+	//
+	// For an ADMIN it stays what it says it is: whatever you type is registered.
+	//
+	// For a tenant it is not a third kind of address, it is one of the two above
+	// written differently - and taking it at face value meant every rule the two
+	// above enforce could be skipped by moving the same string into this field.
+	// Measured on production: an ordinary account registered a foreign domain
+	// while custom domains were switched OFF platform-wide, with no ownership
+	// proof, and a name on our own apex that the picker's format rules would have
+	// refused - and neither counted against its address allowance, because the
+	// allowance only counts the configured hoster domains. First registration
+	// wins, so that is a squatting lever, not just an untidy input.
+	//
+	// So a tenant's raw domain is normalised into whichever path it really is and
+	// answers to that path's rules, the ownership proof included (the isCustom
+	// return is what arms it at the call site).
 	if req.Domain != "" {
 		dom := strings.ToLower(strings.TrimSpace(req.Domain))
 		if !domainRegex.MatchString(dom) {
-			return "", fmt.Errorf("invalid domain format")
+			return "", false, fmt.Errorf("invalid domain format")
 		}
-		if labels := strings.Split(dom, "."); len(labels) > 0 && blocked[labels[0]] {
-			return "", fmt.Errorf("leftmost label %q is reserved", labels[0])
+		if isAdmin {
+			return dom, false, nil
 		}
-		return dom, nil
+		// An operator who has configured NO address policy at all - no hoster
+		// domain to pick from, custom domains off - has not said what a tenant may
+		// claim, and there is nothing to ration either. That is the install the
+		// panel's own picker calls "legacy" and falls back to, so closing this here
+		// would leave those tenants with no way to create an address at all. The
+		// reserved names still hold.
+		if len(hosters) == 0 && !customEnabled {
+			if labels := strings.Split(dom, "."); len(labels) > 0 && blocked[labels[0]] {
+				return "", false, fmt.Errorf("leftmost label %q is reserved", labels[0])
+			}
+			return dom, false, nil
+		}
+		for _, hd := range hosters {
+			if dom == hd.Domain || strings.HasSuffix(dom, "."+hd.Domain) {
+				sub := strings.TrimSuffix(strings.TrimSuffix(dom, hd.Domain), ".")
+				return resolveHosterSubdomain(sub, hd, blocked)
+			}
+		}
+		return resolveBroughtDomain(dom, hosters, customEnabled, blocked)
 	}
 
-	return "", fmt.Errorf("no domain provided")
+	return "", false, fmt.Errorf("no domain provided")
+}
+
+// resolveHosterSubdomain answers the subdomain-picker rules for one hoster
+// domain. Shared by the picker path and by a tenant's raw FQDN that turns out
+// to sit under a hoster domain, so the two cannot disagree about what a valid
+// name is - which is exactly how the raw path came to accept names the picker
+// refuses.
+//
+// An empty sub (the caller typed the hoster apex itself) fails validation, and
+// that is the intended answer: the apex is not a tenant's to route.
+func resolveHosterSubdomain(sub string, hd HosterDomain, blocked map[string]bool) (string, bool, error) {
+	if !validateSubdomain(sub, hd.Validation) {
+		return "", false, fmt.Errorf("subdomain does not match the allowed format for %s", hd.Domain)
+	}
+	if blocked[sub] {
+		return "", false, fmt.Errorf("subdomain %q is reserved", sub)
+	}
+	return sub + "." + hd.Domain, false, nil
+}
+
+// resolveBroughtDomain answers the rules for a domain the TENANT owns rather
+// than one of ours. It reports isCustom=true on success so the caller runs the
+// ownership gate and arms the claim: a domain reaching us through any input
+// shape has to prove itself the same way.
+func resolveBroughtDomain(dom string, hosters []HosterDomain, customEnabled bool, blocked map[string]bool) (string, bool, error) {
+	if !customEnabled {
+		return "", false, fmt.Errorf("custom domains are not enabled")
+	}
+	if !domainRegex.MatchString(dom) || strings.HasPrefix(dom, "*.") {
+		return "", false, fmt.Errorf("invalid custom domain format")
+	}
+	labels := strings.Split(dom, ".")
+	// Apex (mc.de = 2 labels) up to apex + 2 subdomains (a.b.c.d = 4 labels)
+	if len(labels) < 2 || len(labels) > 4 {
+		return "", false, fmt.Errorf("custom domain may have at most two subdomain levels")
+	}
+	if blocked[labels[0]] {
+		return "", false, fmt.Errorf("leftmost label %q is reserved", labels[0])
+	}
+	for _, h := range hosters {
+		if dom == h.Domain || strings.HasSuffix(dom, "."+h.Domain) {
+			return "", false, fmt.Errorf("custom domain may not be a subdomain of a hoster domain (%s) — use the subdomain picker instead", h.Domain)
+		}
+	}
+	return dom, true, nil
 }
 
 // loadGatewayDomainConfig reads the hoster-domain list + custom flag straight
