@@ -71,7 +71,11 @@ func TestCanReply(t *testing.T) {
 		wantInternal    bool
 	}{
 		{"admin can reply and post internal", EffectivePermissions{IsAdmin: true}, other, false, false, true, true},
-		{"support can reply and post internal", EffectivePermissions{IsSupport: true}, other, false, false, true, true},
+		{"support can reply and post internal", EffectivePermissions{IsSupport: true, CanManageTickets: true}, other, false, false, true, true},
+		// Seeing the queue and answering in the platform's name are different
+		// rights now, because they have different sources: tickets.read and
+		// tickets.write. A read-only supporter reads and does not answer.
+		{"read-only support may not reply", EffectivePermissions{IsSupport: true}, other, false, false, false, false},
 		{"owner can reply but not internal", EffectivePermissions{}, owner, false, false, true, false},
 		{"watcher with can-reply flag may reply but not internal", EffectivePermissions{}, other, true, true, true, false},
 		{"watcher without can-reply flag denied", EffectivePermissions{}, other, true, false, false, false},
@@ -88,8 +92,8 @@ func TestCanReply(t *testing.T) {
 	}
 }
 
-// TestCanMutate pins the status/priority/assignment mutation gate: support
-// and admin only.
+// TestCanMutate pins the status/priority/assignment mutation gate: admin, or
+// somebody who may MANAGE tickets. Being able to see the queue is not enough.
 func TestCanMutate(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -97,7 +101,8 @@ func TestCanMutate(t *testing.T) {
 		want  bool
 	}{
 		{"admin can mutate", EffectivePermissions{IsAdmin: true}, true},
-		{"support can mutate", EffectivePermissions{IsSupport: true}, true},
+		{"support can mutate", EffectivePermissions{IsSupport: true, CanManageTickets: true}, true},
+		{"read-only support cannot mutate", EffectivePermissions{IsSupport: true}, false},
 		{"plain user cannot mutate", EffectivePermissions{}, false},
 	}
 	for _, c := range cases {

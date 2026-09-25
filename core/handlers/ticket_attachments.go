@@ -259,7 +259,9 @@ func (c *clamdScanner) Scan(r io.Reader) error {
 // without the "user reply → may not internal" carve-out — internal-ness
 // belongs to the message, not the attachment.
 func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePermissions, userID string, isWatcher, watcherCanReply bool) bool {
-	if perms.IsAdmin || perms.IsSupport {
+	// Uploading and deleting are acting, so they follow tickets.write. Reading
+	// an attachment stays with IsSupport, beside reading the ticket it hangs on.
+	if perms.IsAdmin || perms.CanManageTickets {
 		return true
 	}
 	if t.UserID == userID {

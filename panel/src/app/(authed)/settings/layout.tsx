@@ -62,6 +62,7 @@ const TAB_GROUPS: SettingsGroup[] = [
         tabs: [
             { slug: 'users', label: 'User settings', always: true },
             { slug: 'roles', label: 'Roles', always: true },
+            { slug: 'identity-log', label: 'Identity log', always: true },
         ],
     },
     {

@@ -1142,13 +1142,33 @@ func (s *PostgresStore) ListTicketParticipantsForNotify(ticketID int, excludeUse
 // nobody is told about waits until somebody happens to open the inbox, which
 // is how a paying customer ends up waiting on a queue nobody is watching.
 //
-// Role, not capability: the panel role is what decides support everywhere else
-// in this subsystem (see ComputeEffectivePermissions), and resolving the
-// capability per user would mean one permission load per recipient on every
-// ticket created.
+// Both sources of support, because the platform has two and this query knew
+// only the older one. Someone given the seeded "support" PANEL role - the
+// mechanism the panel's role screen offers - was never told a ticket had
+// arrived, which is the same silence as not being staff at all.
+//
+// Still ONE query, not one permission load per recipient: "who holds
+// tickets.read" is answerable in SQL from the role's capability list and the
+// per-user overrides.
+//
+// The deny arm sits INSIDE the capability branch, not over the whole WHERE: an
+// admin is staff because they are an admin, and a deny override on a
+// capability they never needed must not quietly remove them from the queue.
 func (s *PostgresStore) ListTicketStaffIDs() ([]string, error) {
+	const capJSON = `["tickets.read"]`
 	rows, err := s.db.Query(
-		`SELECT id FROM users WHERE is_admin = TRUE OR role IN ('admin', 'support')`)
+		`SELECT u.id
+		   FROM users u
+		   LEFT JOIN panel_roles pr ON pr.id = u.panel_role_id
+		  WHERE u.is_admin = TRUE
+		     OR u.role IN ('admin', 'support')
+		     OR (
+		          (
+		            COALESCE(pr.capabilities, '[]'::jsonb) @> $1::jsonb
+		            OR COALESCE(u.panel_cap_overrides->'grant', '[]'::jsonb) @> $1::jsonb
+		          )
+		          AND NOT COALESCE(u.panel_cap_overrides->'deny', '[]'::jsonb) @> $1::jsonb
+		        )`, capJSON)
 	if err != nil {
 		return nil, err
 	}

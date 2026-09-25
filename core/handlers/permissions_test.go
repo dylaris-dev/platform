@@ -42,16 +42,18 @@ func TestComputeEffectivePermissions(t *testing.T) {
 			name: "is_admin flag grants everything regardless of per-user flags",
 			user: &models.User{IsAdmin: true, Role: "user", CanDeleteServers: false, CanChangeResources: false},
 			want: EffectivePermissions{
-				Role: "admin", IsAdmin: true, CanAccessAllRegions: true,
-				CanDeleteServers: true, CanChangeResources: true,
+				Role: "admin", IsAdmin: true, IsSupport: true, CanManageTickets: true,
+				CanAccessAllRegions: true,
+				CanDeleteServers:    true, CanChangeResources: true,
 			},
 		},
 		{
 			name: "role=admin grants everything even without the is_admin flag",
 			user: &models.User{IsAdmin: false, Role: "admin"},
 			want: EffectivePermissions{
-				Role: "admin", IsAdmin: true, CanAccessAllRegions: true,
-				CanDeleteServers: true, CanChangeResources: true,
+				Role: "admin", IsAdmin: true, IsSupport: true, CanManageTickets: true,
+				CanAccessAllRegions: true,
+				CanDeleteServers:    true, CanChangeResources: true,
 			},
 		},
 		{
@@ -60,9 +62,13 @@ func TestComputeEffectivePermissions(t *testing.T) {
 			want: EffectivePermissions{Role: "user"},
 		},
 		{
-			name: "support role is flagged as support, not admin",
+			// The LEGACY role keeps conferring both halves. The capability half is
+			// resolved by LoadEffectivePermissions, which this pure function does
+			// not have, so a user with no legacy role comes out with neither -
+			// exactly the behaviour that existed before the split.
+			name: "support role is flagged as support and may manage, not admin",
 			user: &models.User{Role: "support"},
-			want: EffectivePermissions{Role: "support", IsSupport: true},
+			want: EffectivePermissions{Role: "support", IsSupport: true, CanManageTickets: true},
 		},
 		{
 			// The stored can_delete_servers is deliberately NOT carried through:

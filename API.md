@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **509 routes** in 50 sections: 225 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
+- **510 routes** in 50 sections: 226 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **106** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **19** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **106** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **20** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (123)
+- [/api/admin](#apiadmin) (124)
 - [/api/auth](#apiauth) (20)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
@@ -195,6 +195,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/admin/audit/identity` | session | `audit.read` | - | `IdentityAuditHandler.List` | - |
 | GET | `/api/admin/db/hypertable` | session | `settings.read` | - | `DBMigrationHandler.HypertableStatus` | reports the current backend state: whether the timescaledb extension is present, whether server_stats is already a hypertable, whether an in-place conversion is possible, and whether we recommend switching to TimescaleDB for performance. |
 | POST | `/api/admin/db/hypertable/convert` | session | `settings.write` | - | `DBMigrationHandler.ConvertHypertable` | promote the existing plain server_stats table to a TimescaleDB hypertable IN PLACE (same database). |
 | GET | `/api/admin/db/migration` | session | `settings.read` | - | `DBMigrationHandler.GetMigration` | shared job status. |

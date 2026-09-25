@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.6
+
+### Features
+- **The identity log is readable.** Settings, Access, Identity log: registrations, address
+  and role changes, two-factor resets and deletions. It has been recorded all along and no
+  screen read it, so a deleted account's name was reachable only in the database. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The support panel role works.** Giving somebody the "support" role left them unable to
+  read, answer or even be notified about a single ticket: the ticket system consulted only
+  the older role column. `core`
+- **Seeing the ticket queue and acting on it are now separate.** `tickets.read` opens the
+  queue, `tickets.write` answers, sets status and assigns. The legacy support role keeps
+  both. `core`
+
 ## 2026.09.24.5
 
 ### Features

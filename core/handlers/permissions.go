@@ -3,6 +3,7 @@ package handlers
 import (
 	"strings"
 
+	"dylaris-core/authz"
 	"dylaris-core/models"
 )
 
@@ -14,9 +15,16 @@ import (
 // Compute once per request and pass around instead of re-reading the user
 // row in every gate — both cheaper and avoids stale-state races.
 type EffectivePermissions struct {
-	Role                string
-	IsAdmin             bool
-	IsSupport           bool
+	Role    string
+	IsAdmin bool
+	// IsSupport means "works the support queue": may SEE tickets that are not
+	// their own, their attachments and their internal notes.
+	IsSupport bool
+	// CanManageTickets is the acting half: reply as staff, set status, priority
+	// and assignment. Separated from IsSupport because the two now have separate
+	// sources - tickets.read and tickets.write - and a read-only supporter must
+	// not answer in the platform's name.
+	CanManageTickets    bool
 	CanAccessAllRegions bool
 	AllowedRegions      []string
 	CanDeleteServers    bool
@@ -27,7 +35,19 @@ type EffectivePermissions struct {
 // Admin-shortcut: an admin is_admin or role=='admin' grants everything,
 // regardless of per-user flag values. This matches the legacy contract
 // where is_admin was the only gate.
+// ticketCaps says whether a user holds the ticket capabilities through the
+// PANEL-ROLE system, which is the mechanism the panel's own role screen offers.
+// Both zero values are the honest answer when nothing can be resolved.
+type ticketCaps struct{ read, write bool }
+
 func ComputeEffectivePermissions(user *models.User, allowedRegions []string) EffectivePermissions {
+	return computeEffectivePermissions(user, allowedRegions, ticketCaps{})
+}
+
+// computeEffectivePermissions is the body, with the capability answer passed
+// in. ComputeEffectivePermissions keeps the old signature for the callers that
+// have no resolver to hand; they get the legacy role behaviour unchanged.
+func computeEffectivePermissions(user *models.User, allowedRegions []string, tc ticketCaps) EffectivePermissions {
 	if user == nil {
 		return EffectivePermissions{Role: "user"}
 	}
@@ -39,6 +59,8 @@ func ComputeEffectivePermissions(user *models.User, allowedRegions []string) Eff
 		return EffectivePermissions{
 			Role:                "admin",
 			IsAdmin:             true,
+			IsSupport:           true,
+			CanManageTickets:    true,
 			CanAccessAllRegions: true,
 			CanDeleteServers:    true,
 			CanChangeResources:  true,
@@ -57,9 +79,17 @@ func ComputeEffectivePermissions(user *models.User, allowedRegions []string) Eff
 	// which forces it false for non-admins (see SetUserPermissionsHandler), so
 	// there is no row that claims a right nobody has.
 	return EffectivePermissions{
-		Role:                role,
-		IsAdmin:             false,
-		IsSupport:           role == "support",
+		Role:    role,
+		IsAdmin: false,
+		// Two sources, because the platform has two ways to make somebody
+		// support and the ticket subsystem only ever honoured the older one.
+		// Measured on production: an account holding the seeded "support" PANEL
+		// role - which carries tickets.read and tickets.write, and passes the
+		// capability check on the route - could not read a customer's ticket,
+		// saw an empty inbox and was not notified of a new one. Only the legacy
+		// users.role column worked.
+		IsSupport:           role == "support" || tc.read,
+		CanManageTickets:    role == "support" || tc.write,
 		CanAccessAllRegions: user.AllRegionsAccess,
 		AllowedRegions:      allowedRegions,
 		CanDeleteServers:    false,
@@ -147,5 +177,20 @@ func LoadEffectivePermissions(state *AppState, userID string) EffectivePermissio
 		return EffectivePermissions{Role: "user"}
 	}
 	regions, _ := state.Store.GetUserRegionIDs(userID)
-	return ComputeEffectivePermissions(user, regions)
+	return computeEffectivePermissions(user, regions, loadTicketCaps(state, userID))
+}
+
+// loadTicketCaps asks the resolver for the two ticket capabilities. PANEL caps
+// resolve without a server, so the user id is all it needs. A resolver failure
+// yields no capabilities rather than a guess: the legacy role still decides on
+// its own, which is exactly the behaviour that existed before.
+func loadTicketCaps(state *AppState, userID string) ticketCaps {
+	if state == nil || state.Authz == nil {
+		return ticketCaps{}
+	}
+	res, err := state.Authz.Resolve(authz.Identity{UserID: userID}, 0)
+	if err != nil || res == nil {
+		return ticketCaps{}
+	}
+	return ticketCaps{read: res.HasCap("tickets.read"), write: res.HasCap("tickets.write")}
 }

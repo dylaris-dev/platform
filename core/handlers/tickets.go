@@ -82,7 +82,10 @@ func canSeeTicket(t *models.Ticket, perms EffectivePermissions, userID string, i
 // canReply gates POST replies. Returns (allowed, mayPostInternal). Internal
 // notes are support+admin only. Watchers obey their can_reply flag.
 func canReply(t *models.Ticket, perms EffectivePermissions, userID string, isWatcher bool, watcherCanReply bool) (bool, bool) {
-	if perms.IsAdmin || perms.IsSupport {
+	// CanManageTickets, not IsSupport: seeing the queue and answering in the
+	// platform's name are different rights now that they have different sources
+	// (tickets.read and tickets.write).
+	if perms.IsAdmin || perms.CanManageTickets {
 		return true, true
 	}
 	if t.UserID == userID {
@@ -96,7 +99,7 @@ func canReply(t *models.Ticket, perms EffectivePermissions, userID string, isWat
 
 // canMutate gates status/priority/assignment endpoints — support+admin only.
 func canMutate(perms EffectivePermissions) bool {
-	return perms.IsAdmin || perms.IsSupport
+	return perms.IsAdmin || perms.CanManageTickets
 }
 
 // mayAttachServer reports whether this caller may name serverUUID on a ticket.
@@ -592,7 +595,7 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	reopened := false
 	if !req.IsInternal {
 		var next string
-		next, reopened = replyStatusTransition(t.Status, t.UserID == userID, perms.IsSupport || perms.IsAdmin)
+		next, reopened = replyStatusTransition(t.Status, t.UserID == userID, perms.CanManageTickets || perms.IsAdmin)
 		if next != "" {
 			h.state.Store.UpdateTicketStatus(id, next)
 		}
@@ -955,7 +958,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	if !perms.IsAdmin && !perms.IsSupport {
+	if !perms.IsAdmin && !perms.CanManageTickets {
 		if t.UserID != userID || !settings.AllowUsersToAddWatchers {
 			sendJSONError(w, "Forbidden", http.StatusForbidden)
 			return
@@ -993,7 +996,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		canReplyFlag = *req.CanReply
 	}
 	// Non-support users can never grant reply rights — admin policy only.
-	if !perms.IsAdmin && !perms.IsSupport {
+	if !perms.IsAdmin && !perms.CanManageTickets {
 		canReplyFlag = settings.WatchersDefaultCanReply
 	}
 	uid := userID
@@ -1056,7 +1059,7 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 	// (ticket, target), so all it can ever reach is the caller's OWN watcher
 	// row, which they are entitled to remove. What made that arm a hole was the
 	// code after it, not the arm itself.
-	if !(perms.IsAdmin || perms.IsSupport || t.UserID == userID || targetID == userID) {
+	if !(perms.IsAdmin || perms.CanManageTickets || t.UserID == userID || targetID == userID) {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}

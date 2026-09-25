@@ -253,6 +253,7 @@ var requiredCaps = map[string]string{
 	"/api/nodes/{id:[0-9]+}/force":                     "nodes.delete",
 	"/api/nodes/{id:[0-9]+}/placement":                 "nodes.write",
 	"/api/admin/servers":                               "servers.read",
+	"/api/admin/audit/identity":                        "audit.read",
 	"/api/admin/servers/{id:[0-9]+}/owner":             "servers.write",
 	"/api/admin/servers/{id:[0-9]+}/move":              "servers.write",
 	"/api/admin/servers/{id:[0-9]+}/migration/cancel":  "servers.write",
@@ -563,6 +564,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	cannedResponsesHandler := handlers.NewCannedResponsesHandler(appState)
 	notificationsHandler := handlers.NewNotificationsHandler(appState)
 	serverAuditHandler := handlers.NewServerAuditHandler(appState)
+	identityAuditHandler := handlers.NewIdentityAuditHandler(appState)
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
 	ticketMigrationHandler := handlers.NewTicketMigrationHandler(appState)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
@@ -1235,6 +1237,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/audit/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.audit.read")(serverAuditHandler.GetStatus))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/audit/force", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverAuditHandler.SetForce))).Methods("PUT")
 	// Platform-wide audit retention policy (PANEL settings.*).
+	// The identity trail - registrations, email/username/role changes, 2FA
+	// resets, deletions. Written since the audit work and read by nothing until
+	// now, so the record an owner needs after removing an account was reachable
+	// only through psql. This is also the only route that checks audit.read,
+	// which until now was a capability the seeded support role carried and no
+	// route consulted.
+	api.HandleFunc("/admin/audit/identity", authHandler.AuthMiddleware(appState.Authz.RequireCap("audit.read")(identityAuditHandler.List))).Methods("GET")
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(auditSettingsHandler.GetPolicy))).Methods("GET")
 	api.HandleFunc("/admin/settings/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(auditSettingsHandler.SavePolicy))).Methods("PUT")
 

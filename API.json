@@ -2,6 +2,15 @@
   "routes": [
     {
       "method": "GET",
+      "path": "/api/admin/audit/identity",
+      "auth": "session",
+      "authorization": "audit.read",
+      "handler": "IdentityAuditHandler.List",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/db/hypertable",
       "auth": "session",
       "authorization": "settings.read",
@@ -5083,15 +5092,15 @@
     }
   ],
   "counts": {
-    "total": 510,
+    "total": 511,
     "byAuth": {
       "none": 30,
-      "session": 464,
+      "session": 465,
       "user API key": 10,
       "warp key": 6
     },
     "byGroup": {
-      "admin": 123,
+      "admin": 124,
       "auth": 20,
       "authz": 3,
       "backup-jobs": 4,
