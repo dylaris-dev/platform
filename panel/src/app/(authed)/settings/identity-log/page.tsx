@@ -26,6 +26,8 @@ const FILTERS: { id: string; label: string }[] = [
     { id: 'user_role_changed', label: 'Role changes' },
     { id: 'user_permissions_changed', label: 'Permission changes' },
     { id: '2fa_admin_reset', label: 'Two-factor resets' },
+    { id: 'storage_migration_started', label: 'Storage migrations' },
+    { id: 'db_migration_started', label: 'Database migrations' },
 ];
 
 const LABELS: Record<string, string> = {
@@ -41,6 +43,15 @@ const LABELS: Record<string, string> = {
     email_verified: 'Address verified',
     password_reset_requested: 'Password reset requested',
     account_grant_assigned: 'Account-wide access granted',
+    maintenance_toggled: 'Maintenance mode changed',
+    // Moving the platform's own data. All five of these used to arrive as
+    // maintenance_toggled, so this page said "Maintenance mode changed" for
+    // somebody moving the entire database to another host.
+    db_migration_started: 'Database migration started',
+    db_hypertable_converted: 'Statistics table converted',
+    storage_migration_started: 'Storage migration started',
+    storage_migration_cancelled: 'Storage migration cancelled',
+    storage_manifest_deleted: 'Storage manifest deleted',
 };
 
 export default function IdentityLogPage() {

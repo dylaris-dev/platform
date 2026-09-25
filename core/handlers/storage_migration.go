@@ -830,7 +830,7 @@ func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", storageMigrationAuditPayload(req, job.ID))
+	LogIdentityAudit(h.state, r, AuditEventStorageMigrationStart, actorID, "", storageMigrationAuditPayload(req, job.ID))
 	if h.state.Events != nil {
 		h.state.Events.Publish(r.Context(), "storagemigration.changed", nil)
 	}
@@ -857,7 +857,7 @@ func (h *StorageMigrationHandler) Cancel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+	LogIdentityAudit(h.state, r, AuditEventStorageMigrationCancel, actorID, "", map[string]interface{}{
 		"action": "storage_migration_cancel",
 	})
 	if h.state.Events != nil {
@@ -970,7 +970,7 @@ func (h *StorageMigrationHandler) DeleteManifest(w http.ResponseWriter, r *http.
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+	LogIdentityAudit(h.state, r, AuditEventStorageManifestDeleted, actorID, "", map[string]interface{}{
 		"action":     "storage_manifest_delete",
 		"manifestId": id,
 	})

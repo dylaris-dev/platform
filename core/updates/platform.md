@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Moving the platform's data is named in the identity log.** Starting a database or
+  storage migration, cancelling one, converting the statistics table and deleting a
+  manifest were all recorded as "maintenance mode changed", with the real action buried
+  in a metadata field. `core`
+
 ## 2026.09.24.8
 
 ### Features

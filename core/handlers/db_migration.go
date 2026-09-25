@@ -93,7 +93,7 @@ func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+	LogIdentityAudit(h.state, r, AuditEventDBMigrationStarted, actorID, "", map[string]interface{}{
 		"action": "db_migration_start",
 		"target": job.Target,
 		"jobId":  job.ID,
@@ -245,7 +245,7 @@ func (h *DBMigrationHandler) ConvertHypertable(w http.ResponseWriter, r *http.Re
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+	LogIdentityAudit(h.state, r, AuditEventDBHypertableConverted, actorID, "", map[string]interface{}{
 		"action": "server_stats_hypertable_convert",
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "converted": true})

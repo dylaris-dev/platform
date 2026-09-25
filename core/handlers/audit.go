@@ -63,6 +63,19 @@ const (
 	AuditEventUserPanelRoleChanged   = "user_panel_role_changed"
 	AuditEventMaintenanceToggled     = "maintenance_toggled"
 
+	// Moving the platform's own data. These used to be filed under
+	// maintenance_toggled, all five of them, with the real action buried in a
+	// metadata field - so the identity log answered "somebody moved the entire
+	// platform database to another host" with "Maintenance toggled". An audit
+	// trail that names the wrong noun is worse than one that says nothing,
+	// which is the same reason runtime_changed exists beside resources_changed
+	// in the server trail.
+	AuditEventDBMigrationStarted     = "db_migration_started"
+	AuditEventDBHypertableConverted  = "db_hypertable_converted"
+	AuditEventStorageMigrationStart  = "storage_migration_started"
+	AuditEventStorageMigrationCancel = "storage_migration_cancelled"
+	AuditEventStorageManifestDeleted = "storage_manifest_deleted"
+
 	// Tickets (ticket-scoped audit, written to ticket_audit_events
 	// rather than audit_events_identity).
 	TicketEventCreated         = "ticket_created"
