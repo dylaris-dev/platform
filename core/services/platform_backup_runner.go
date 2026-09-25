@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -110,7 +112,17 @@ func (r *PlatformBackupRunner) Run(ctx context.Context, jobID int) (int, error) 
 	if err := job.Selection.Validate(); err != nil {
 		return 0, fmt.Errorf("platform backup: %w", err)
 	}
+	// A key that was never written comes back as sql.ErrNoRows, which is the
+	// database describing its own state, not a fault. Before this, the read
+	// failed first and ErrNoBackupPassphrase below - the sentence that tells the
+	// operator what to do - was unreachable on exactly the installations that
+	// needed it: every one that had not set a passphrase yet. Measured on
+	// production, a run answered "reading the passphrase: sql: no rows in result
+	// set".
 	passphrase, err := r.Store.GetSetting(PlatformBackupPassphraseSetting)
+	if errors.Is(err, sql.ErrNoRows) {
+		passphrase, err = "", nil
+	}
 	if err != nil {
 		return 0, fmt.Errorf("platform backup: reading the passphrase: %w", err)
 	}

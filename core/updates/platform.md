@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Platform backups could not be started at all.** The passphrase they are encrypted with
+  had never been set on a fresh install, and every path that reads it treated the missing
+  setting as a database fault: the status endpoint answered 500, setting the first
+  passphrase answered 500 before storing anything, and a run failed with a raw driver
+  message instead of saying a passphrase is needed. `core`
+- **A failed platform backup run answered 200.** The body was written before the status
+  code, so the 409 for a refusal and the 500 for a broken queue never reached the wire.
+  `core`
+
 ## 2026.09.24.7
 
 ### Features

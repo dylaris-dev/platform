@@ -167,13 +167,19 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 			// any API client key off.
 			status = http.StatusConflict
 		}
+		// WriteHeader BEFORE the body. Writing the body sends 200 by itself, so
+		// the call the other way round arrived too late and every failed run -
+		// including the refusal by policy this block exists to distinguish -
+		// answered 200 with success:false. Measured on production.
+		//
 		// The run id is returned even on failure when one was opened, so the
 		// screen can show WHICH run to look at rather than only that something
 		// went wrong.
-		json.NewEncoder(w).Encode(map[string]any{
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": false, "message": rerr.Error(), "runId": runID,
 		})
-		w.WriteHeader(status)
 		return
 	}
 	// Pruned here as well as on the scheduled path: retention that only applied
@@ -272,7 +278,7 @@ func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Reque
 // PassphraseStatus GET /api/platform-backups/passphrase - whether one is set,
 // never what it is.
 func (h *PlatformBackupHandler) PassphraseStatus(w http.ResponseWriter, r *http.Request) {
-	v, err := h.state.Store.GetSetting(services.PlatformBackupPassphraseSetting)
+	v, err := settingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
 		sendJSONError(w, "Database error", 500)
 		return
@@ -298,7 +304,7 @@ func (h *PlatformBackupHandler) SetPassphrase(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, fmt.Sprintf("The passphrase must be at least %d characters", crypto.MinPassphraseLength), http.StatusBadRequest)
 		return
 	}
-	existing, err := h.state.Store.GetSetting(services.PlatformBackupPassphraseSetting)
+	existing, err := settingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
 		sendJSONError(w, "Database error", 500)
 		return
