@@ -230,9 +230,26 @@ func (s *PostgresStore) ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, 
 
 // DeleteNodeEnrollToken revokes a token, scoped to its owner so a tenant can only
 // delete their own.
-func (s *PostgresStore) DeleteNodeEnrollToken(id, userID string) error {
-	_, err := s.db.Exec(`DELETE FROM node_enroll_tokens WHERE id = $1 AND user_id = $2`, id, userID)
-	return err
+// DeleteNodeEnrollToken removes one of THIS user's enroll tokens and reports
+// whether there was one to remove.
+//
+// The bool is the point. The delete has always been scoped by user id, so a
+// stranger's id never matched and nothing was ever removed across accounts -
+// but the handler answered "success" all the same, to anyone, for any id. A
+// caller who mistyped an id was told their token was revoked while it was
+// still live, which in a credential-revocation path is the wrong way round.
+func (s *PostgresStore) DeleteNodeEnrollToken(id, userID string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM node_enroll_tokens WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// The driver could not say. Reporting "removed" would be a guess in the
+		// direction that lets somebody believe a live token is gone.
+		return false, nil
+	}
+	return n > 0, nil
 }
 
 // CreateRecoveryToken stores a single-use recovery token (hashed) bound to an

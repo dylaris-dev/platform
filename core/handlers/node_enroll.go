@@ -206,8 +206,17 @@ func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := mux.Vars(r)["id"]
-	if err := h.state.Store.DeleteNodeEnrollToken(id, userID); err != nil {
+	removed, err := h.state.Store.DeleteNodeEnrollToken(id, userID)
+	if err != nil {
 		sendJSONError(w, "Failed to revoke token", http.StatusInternalServerError)
+		return
+	}
+	// Nothing removed is not success. The delete is scoped to the caller's own
+	// tokens, so this covers both "no such token" and "not yours", which are
+	// deliberately the same answer - telling a stranger which ids exist is a
+	// different kind of mistake.
+	if !removed {
+		sendJSONError(w, "No such enroll token", http.StatusNotFound)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

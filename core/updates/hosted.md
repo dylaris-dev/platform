@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Revoking a node enroll token that is not yours, or no longer exists, now comes back as an
+  error instead of reporting success. Nothing to update on your machine.
+
+### Security
+- Nothing.
+
+### Fixes
+- A backup schedule pointing at storage it cannot use is refused when you save it, instead
+  of being accepted and then failing every time it runs. Nothing to update on your machine.
+
 ## 2026.09.24.5
 
 ### Features

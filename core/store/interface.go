@@ -82,7 +82,7 @@ type Store interface {
 	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	CountPendingNodeEnrollTokens(userID string) (int, error)
-	DeleteNodeEnrollToken(id, userID string) error
+	DeleteNodeEnrollToken(id, userID string) (bool, error)
 	// NO recovery-token methods here on purpose. Minting one and redeeming it
 	// were the two halves of NODE_RECOVERY_TOKEN, and re-admission is decided in
 	// the panel now - see ApproveNodeJoinAttempt. The methods still exist on

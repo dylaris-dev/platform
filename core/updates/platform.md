@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Revoking a node enroll token that does not exist, or is not yours, answers 404 instead of
+  200. Nothing was ever removed across accounts; the answer was simply wrong. `core`
+
+### Security
+- **Restoring a backup asks who before it answers what.** The run's state was checked
+  before the caller's rights, so run ids could be walked to learn which backups exist and
+  which of them succeeded. `core`
+
+### Fixes
+- **A backup job cannot name storage it may not use.** One that does not exist came back as
+  the database's own error with a 500; one belonging to another account was accepted,
+  listed, enabled, and failed every time it ran. `core`
+
 ## 2026.09.24.6
 
 ### Features

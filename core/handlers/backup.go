@@ -346,13 +346,47 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 6h"`, 400)
 		return
 	}
+	if h.refuseUnusableStorage(w, serverID, req.StorageID) {
+		return
+	}
 	req.NextRunAt = services.ComputeBackupNextRun(req.Schedule, time.Now())
 	id, err := h.state.Store.CreateBackupJob(&req)
 	if err != nil {
-		sendJSONError(w, err.Error(), 500)
+		log.Printf("create backup job for server %d: %v", serverID, err)
+		sendJSONError(w, "Failed to create the backup job", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
+}
+
+// refuseUnusableStorage answers the request when a job names a backup storage
+// that cannot be used for this server, and reports whether it did.
+//
+// The check belongs here, at write time, and did not exist: the storage was
+// resolved only when a run STARTED. So a job naming a storage that does not
+// exist came back as the database's own foreign-key error, verbatim, with a
+// 500 - table name, constraint name and SQLSTATE included - and a job naming
+// another tenant's storage was accepted, listed, enabled, and failed every
+// time it ran. That is the same shape as an unparseable schedule being stored:
+// you find out when you need the backup.
+func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, serverID int, storageID *int) bool {
+	if storageID == nil {
+		return false // no choice made: the resolver picks the default at run time
+	}
+	owner := services.BackupJobOwner(h.state.Store, serverID)
+	if _, err := services.ResolveJobStorage(h.state.Store, storageID, owner); err != nil {
+		switch {
+		case errors.Is(err, services.ErrForeignBackupStorage):
+			sendJSONError(w, "That backup storage belongs to another account", 400)
+		case errors.Is(err, services.ErrNoBackupStorage):
+			sendJSONError(w, "No such backup storage", 400)
+		default:
+			log.Printf("backup job storage %d for server %d: %v", *storageID, serverID, err)
+			sendJSONError(w, "That backup storage could not be used", 400)
+		}
+		return true
+	}
+	return false
 }
 
 // updateBackupJobRequest is a PATCH body: every field is a pointer, and nil
@@ -448,9 +482,13 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 			next.Schedule = s
 		}
 	}
+	if h.refuseUnusableStorage(w, next.ServerID, next.StorageID) {
+		return
+	}
 	next.NextRunAt = services.ComputeBackupNextRun(next.Schedule, time.Now())
 	if err := h.state.Store.UpdateBackupJob(&next); err != nil {
-		sendJSONError(w, err.Error(), 500)
+		log.Printf("update backup job %d: %v", jobID, err)
+		sendJSONError(w, "Failed to update the backup job", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -601,17 +639,21 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Run not found", 404)
 		return
 	}
-	if run.Status != "success" {
-		sendJSONError(w, "Cannot restore a run that did not complete successfully", 400)
-		return
-	}
 	job, err := h.state.Store.GetBackupJob(run.JobID)
 	if err != nil {
 		sendJSONError(w, "Job not found", 404)
 		return
 	}
+	// Authorization first, and only then what state the run is in. The other
+	// way round answered a stranger with "cannot restore a run that did not
+	// complete successfully" - which is a fact about somebody else's backup, so
+	// run ids could be walked to learn which exist and which succeeded.
 	if !h.hasServerAccess(r, job.ServerID, "backups.restore") {
 		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	if run.Status != "success" {
+		sendJSONError(w, "Cannot restore a run that did not complete successfully", 400)
 		return
 	}
 	srv, err := h.state.Store.GetServerByID(job.ServerID)
