@@ -1730,9 +1730,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListJobs))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.create")(backupHandler.CreateJob))).Methods("POST")
-	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.UpdateJob)).Methods("PATCH")
-	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteJob)).Methods("DELETE")
-	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/trigger", authHandler.AuthMiddleware(backupHandler.TriggerJob)).Methods("POST")
+	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(backupHandler.UpdateJob))).Methods("PATCH")
+	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(backupHandler.DeleteJob))).Methods("DELETE")
+	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/trigger", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(backupHandler.TriggerJob))).Methods("POST")
 
 	// The platform's own backups. Every route is settings.write, the download
 	// included - see the capability map above for why reading configuration and
@@ -1757,10 +1757,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/platform-backups/runs/{id:[0-9]+}/restore", authHandler.AuthMiddleware(pbCap(platformBackupHandler.RestoreRun))).Methods("POST")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}/runs", authHandler.AuthMiddleware(backupHandler.ListRuns)).Methods("GET")
 	api.HandleFunc("/backup-runs/{runId:[0-9]+}/download", authHandler.AuthMiddleware(backupHandler.DownloadRun)).Methods("GET")
-	api.HandleFunc("/backup-runs/{runId:[0-9]+}/restore", authHandler.AuthMiddleware(backupHandler.RestoreRun)).Methods("POST")
+	api.HandleFunc("/backup-runs/{runId:[0-9]+}/restore", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(backupHandler.RestoreRun))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-restores", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListRestores))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.BackupUsage))).Methods("GET")
-	api.HandleFunc("/backup-runs/{runId:[0-9]+}", authHandler.AuthMiddleware(backupHandler.DeleteRun)).Methods("DELETE")
+	api.HandleFunc("/backup-runs/{runId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(backupHandler.DeleteRun))).Methods("DELETE")
 	api.HandleFunc("/tools/beam", beamToolsRedirect).Methods("GET")
 
 	return r, &routeExtras{

@@ -356,18 +356,18 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| PATCH | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.UpdateJob` | edits a job and recomputes its next run. |
-| DELETE | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.DeleteJob` | removes a schedule, gated on backups.delete for the job's server. |
+| PATCH | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | AuditResolvedWrite | `BackupHandler.UpdateJob` | edits a job and recomputes its next run. |
+| DELETE | `/api/backup-jobs/{jobId:[0-9]+}` | session | _in-handler_ | AuditResolvedWrite | `BackupHandler.DeleteJob` | removes a schedule, gated on backups.delete for the job's server. |
 | GET | `/api/backup-jobs/{jobId:[0-9]+}/runs` | session | _in-handler_ | - | `BackupHandler.ListRuns` | the 50 most recent runs of one schedule. |
-| POST | `/api/backup-jobs/{jobId:[0-9]+}/trigger` | session | _in-handler_ | - | `BackupHandler.TriggerJob` | starts a run immediately. |
+| POST | `/api/backup-jobs/{jobId:[0-9]+}/trigger` | session | _in-handler_ | AuditResolvedWrite | `BackupHandler.TriggerJob` | starts a run immediately. |
 
 ## /api/backup-runs
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| DELETE | `/api/backup-runs/{runId:[0-9]+}` | session | _in-handler_ | - | `BackupHandler.DeleteRun` | deletes the stored archive and then the run row. |
+| DELETE | `/api/backup-runs/{runId:[0-9]+}` | session | _in-handler_ | AuditResolvedWrite | `BackupHandler.DeleteRun` | deletes the stored archive and then the run row. |
 | GET | `/api/backup-runs/{runId:[0-9]+}/download` | session | _in-handler_ | - | `BackupHandler.DownloadRun` | For S3-backed storage returns 302 to a pre-signed URL. |
-| POST | `/api/backup-runs/{runId:[0-9]+}/restore` | session | _in-handler_ | - | `BackupHandler.RestoreRun` | Dispatches a restore command to the node. |
+| POST | `/api/backup-runs/{runId:[0-9]+}/restore` | session | _in-handler_ | AuditResolvedWrite | `BackupHandler.RestoreRun` | Dispatches a restore command to the node. |
 
 ## /api/backup-storages
 

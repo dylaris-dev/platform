@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.5
+
+### Features
+- Nothing.
+
+### Breaking
+- If you drive RCON or player actions through the API, a refused command now comes back
+  with an error status instead of 200. The reason is in the same field as before. Nothing
+  to update on your machine.
+
+### Security
+- Backups are now on the record: whoever triggers, restores or deletes one shows up in
+  that server's activity log. Restoring replaces your world, so it belongs there. Nothing
+  to update on your machine.
+
+### Fixes
+- A sub-server you had just created could be refused with "no sub-server named ..." for a
+  few minutes. Nothing to update on your machine.
+
 ## 2026.09.24.4
 
 ### Features

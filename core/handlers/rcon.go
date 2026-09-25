@@ -63,6 +63,33 @@ type rconResponse struct {
 	Output     string `json:"output,omitempty"`
 	Error      string `json:"error,omitempty"`
 	DurationMs int64  `json:"durationMs"`
+
+	// status is the HTTP status writeRconResponse sends. Unexported, so it is
+	// never part of the body and the wire shape is unchanged.
+	//
+	// It exists because every one of these endpoints answered 200 and put the
+	// failure in the body, so nothing outside the panel could tell a ban that
+	// happened from one that never reached the server. Measured on production:
+	// a ban refused with "rcon not enabled" answered 200, and the server audit
+	// trail - which records a successful request - then recorded the ban.
+	status int
+}
+
+// writeRconResponse is the single writer for all four RCON-backed endpoints.
+// A failure with no status of its own is a bad gateway: the command left here
+// and the answer did not come back.
+func writeRconResponse(w http.ResponseWriter, resp rconResponse) {
+	code := resp.status
+	if code == 0 {
+		if resp.Success {
+			code = http.StatusOK
+		} else {
+			code = http.StatusBadGateway
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // ExecForUser POST /api/servers/{id}/rcon — panel-side entry. Gated by the
@@ -80,8 +107,7 @@ func (h *RconHandler) ExecForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := h.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, req)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeRconResponse(w, resp)
 }
 
 // ExecExternal POST /api/external/rcon/{uuid}/exec — automation entry.
@@ -101,31 +127,30 @@ func (h *RconHandler) ExecExternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := h.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, req)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeRconResponse(w, resp)
 }
 
 func (h *RconHandler) execAgainstServer(ctx context.Context, serverID int, serverUUID string, nodeID int, req rconRequest) rconResponse {
 	req.Command = strings.TrimSpace(req.Command)
 	if req.Command == "" {
-		return rconResponse{Error: "command required"}
+		return rconResponse{Error: "command required", status: http.StatusBadRequest}
 	}
 	if len(req.Command) > rconMaxCommandLen {
-		return rconResponse{Error: "command too long"}
+		return rconResponse{Error: "command too long", status: http.StatusBadRequest}
 	}
 
 	enabled, port, password, err := h.state.Store.GetServerRconConfig(serverID)
 	if err != nil {
-		return rconResponse{Error: "failed to load rcon config"}
+		return rconResponse{Error: "failed to load rcon config", status: http.StatusInternalServerError}
 	}
 	if !enabled || password == "" {
-		return rconResponse{Error: "rcon not enabled for this server"}
+		return rconResponse{Error: "rcon not enabled for this server", status: http.StatusConflict}
 	}
 	if port == 0 {
 		port = defaultRconPort
 	}
 	if h.state.GRPCRegistry == nil {
-		return rconResponse{Error: "node registry not available"}
+		return rconResponse{Error: "node registry not available", status: http.StatusServiceUnavailable}
 	}
 
 	timeoutMs := req.TimeoutMs
@@ -154,7 +179,7 @@ func (h *RconHandler) execAgainstServer(ctx context.Context, serverID int, serve
 		if errMsg := respMsg.GetError(); errMsg != nil {
 			return rconResponse{Error: rconFailureMessage(serverUUID, nodeID, errMsg.Message)}
 		}
-		return rconResponse{Error: "unexpected response from node"}
+		return rconResponse{Error: "unexpected response from node", status: http.StatusBadGateway}
 	}
 	if rconResp.Error != "" {
 		return rconResponse{

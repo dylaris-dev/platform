@@ -131,8 +131,7 @@ func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: "list"})
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeRconResponse(w, resp)
 }
 
 type playerActionRequest struct {
@@ -162,8 +161,7 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: cmd})
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeRconResponse(w, resp)
 }
 
 // playerActionVerbs is the allowlist: action -> the MC command it becomes.

@@ -785,6 +785,45 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 // Both readers of this key go through here. They used to parse it separately,
 // which is how one of them ended up asserting against a map that the node's
 // non-quota path never filled.
+// subServerExists answers whether name is a sub-server of this server, and
+// whether it could be answered at all.
+//
+// It asks Core's OWN record first. The disk report it used to rely on alone is
+// a node-written Redis cache refreshed every 10 seconds when disk quotas are
+// available and every 5 MINUTES when they are not - and both of that cache's
+// failure modes were wrong here, in opposite directions:
+//
+//   - Stale: a sub-server that had just been created was refused with "no
+//     sub-server named X on this server", a message saying it does not exist
+//     about a directory sitting on disk. Measured on production: the files
+//     endpoint listed it at 122 MB and the switch refused it for five minutes.
+//   - Absent: the caller skipped the check entirely, which is precisely the
+//     "switch to a name that is not on disk" case the check was written for.
+//
+// The install table has neither problem: the row is written when setup is
+// dispatched and removed when a sub-server is deleted, so it is current the
+// moment Core knows anything at all. The disk report still gets a say, because
+// a sub-server can predate that table.
+func (h *ServerHandler) subServerExists(ctx context.Context, serverID int, serverUUID, name string) (exists bool, answered bool) {
+	if h.state != nil && h.state.Store != nil {
+		if installs, err := h.state.Store.ListSubServerInstalls(serverID); err == nil {
+			for _, in := range installs {
+				if in.SubServerName == name {
+					return true, true
+				}
+			}
+			answered = true
+		}
+	}
+	if known, ok := h.knownSubServers(ctx, serverUUID); ok {
+		if known[name] {
+			return true, true
+		}
+		answered = true
+	}
+	return false, answered
+}
+
 func (h *ServerHandler) knownSubServers(ctx context.Context, serverUUID string) (map[string]bool, bool) {
 	if h.state == nil || h.state.Redis == nil {
 		return nil, false
@@ -853,7 +892,14 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	// .active_server disagreed from then on - with Core's pointing at nothing.
 	// Everything keyed on the active sub-server (the console above all) reads
 	// empty in that state while the old sub-server is still the one running.
-	if known, ok := h.knownSubServers(r.Context(), srv.UUID); ok && !known[subName] {
+	// Refused when nothing can answer, not waved through: "I could not check"
+	// used to mean "go ahead", which is the one outcome this check exists to
+	// prevent.
+	if exists, answered := h.subServerExists(r.Context(), serverID, srv.UUID, subName); !exists {
+		if !answered {
+			sendJSONError(w, "Could not check which sub-servers this server has; try again in a moment", 503)
+			return
+		}
 		sendJSONError(w, "No sub-server named "+subName+" on this server", 400)
 		return
 	}

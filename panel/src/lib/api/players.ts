@@ -71,7 +71,12 @@ export async function getOnlinePlayers(serverId: number): Promise<RconResponse> 
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/players/online`, { headers: getAuthHeader() });
         const data = await res.json();
-        if (!res.ok) return { success: false, error: data.message || 'Request failed' };
+        // data.error first: a refused command now answers with a real status
+        // (409 when RCON is off, 502 when the node did not answer) and carries
+        // its reason in `error`, the same field a 200 uses. Reading only
+        // `message` here would have turned every one of those into the
+        // useless "Request failed".
+        if (!res.ok) return { success: false, error: data.error || data.message || 'Request failed' };
         return data;
     } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Network error' };

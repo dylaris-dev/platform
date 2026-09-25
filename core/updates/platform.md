@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.24.5
+
+### Features
+- Nothing.
+
+### Breaking
+- **A refused RCON or player command now answers with a real status.** It used to answer
+  200 with the reason in the body, so nothing outside the panel could tell a command that
+  ran from one that never reached the server. The body is unchanged. `core`
+
+### Security
+- **Backups are on the record.** Triggering, restoring and deleting a backup left no trace
+  in the server's activity log, and restoring overwrites the world. `core`
+
+### Fixes
+- **A sub-server could be unswitchable for five minutes after you created it.** The check
+  read a disk report the node refreshes every five minutes when disk quotas are
+  unavailable, and skipped itself entirely when that report was missing. `core`
+
 ## 2026.09.24.4
 
 ### Features

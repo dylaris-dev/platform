@@ -36,7 +36,9 @@ export async function execRcon(serverId: number, command: string, timeoutMs?: nu
             body: JSON.stringify({ command, timeoutMs }),
         });
         const data = await res.json();
-        if (!res.ok) return { success: false, error: data.message || 'Request failed' };
+        // See players.ts: a refused command now carries a real status and its
+        // reason in `error`.
+        if (!res.ok) return { success: false, error: data.error || data.message || 'Request failed' };
         return data;
     } catch (err: any) {
         return { success: false, error: err?.message || 'Network error' };

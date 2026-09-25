@@ -958,7 +958,18 @@ func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, capID str
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 	res, err := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
-	return err == nil && res.HasCap(capID)
+	if err != nil || !res.HasCap(capID) {
+		return false
+	}
+	// Hand the decision to the audit wrapper on the route. The /backup-jobs and
+	// /backup-runs families name no server in their path - they resolve it from
+	// the job row - so RequireCap never gates them and never recorded them
+	// either. Measured on production: a delegate triggered a backup, RESTORED
+	// the server from it and deleted the run, and the owner's audit trail showed
+	// none of the three. Restoring overwrites the world, which makes it the most
+	// destructive thing a delegated member can do.
+	authz.StashServerWrite(r.Context(), serverID, capID)
+	return true
 }
 
 // startBackupRun creates a backup_run row, dispatches a node command, and
