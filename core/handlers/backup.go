@@ -378,7 +378,11 @@ func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, serverID in
 		switch {
 		case errors.Is(err, services.ErrForeignBackupStorage):
 			sendJSONError(w, "That backup storage belongs to another account", 400)
-		case errors.Is(err, services.ErrNoBackupStorage):
+		// sql.ErrNoRows as well as the service's own sentinel: the store answers a
+		// missing row with the driver error, and both mean the same thing to the
+		// caller. Measured on production after the first cut of this check, which
+		// sent a storage id that does not exist into the generic branch below.
+		case errors.Is(err, services.ErrNoBackupStorage), errors.Is(err, sql.ErrNoRows):
 			sendJSONError(w, "No such backup storage", 400)
 		default:
 			log.Printf("backup job storage %d for server %d: %v", *storageID, serverID, err)

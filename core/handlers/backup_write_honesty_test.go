@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,7 +42,16 @@ func (f *backupHonestyStore) GetAccountGrant(string, string) (*store.ServerGrant
 func (f *backupHonestyStore) GetBackupRun(int) (*models.BackupRun, error) { return f.run, nil }
 func (f *backupHonestyStore) GetBackupJob(int) (*models.BackupJob, error) { return f.job, nil }
 func (f *backupHonestyStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
-	return f.storages[id], nil
+	// The real store answers a missing row with the driver's error, not a nil
+	// pair, and the first cut of the check only knew the service's own
+	// sentinel - so on production a storage id that does not exist fell into
+	// the generic branch and said "could not be used" instead of naming the
+	// problem. The fake behaves like the real one now.
+	bs, ok := f.storages[id]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	return bs, nil
 }
 func (f *backupHonestyStore) GetDefaultBackupStorage() (*models.BackupStorage, error) {
 	return nil, nil
