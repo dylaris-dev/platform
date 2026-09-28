@@ -192,6 +192,15 @@ var catalog = []Capability{
 	{ID: "tickets.delete", Label: "Delete tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbDelete},
 
 	{ID: "settings.read", Label: "View platform settings", Category: "Settings", Scope: ScopePanel, Verb: VerbRead},
+	// settings.write carries the same dial-a-host power the comment above
+	// backupstorage.write describes, and that is easy to miss because its label
+	// says "settings": it gates the database-migration connection test, the
+	// metrics-database test and the storage-migration target, each of which
+	// makes Core connect to a host the CALLER names. There is no field on a
+	// capability for saying that to whoever builds a role, so it is said here.
+	//
+	// Today only 'admin' holds it - the seeded 'support' role excludes it by
+	// name. A custom role that includes it inherits this too.
 	{ID: "settings.write", Label: "Edit platform settings", Category: "Settings", Scope: ScopePanel, Verb: VerbWrite},
 
 	{ID: "plans.read", Label: "View plans", Category: "Plans", Scope: ScopePanel, Verb: VerbRead},

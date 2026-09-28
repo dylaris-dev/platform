@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The deploy snippet's values need a BYON or route-only subscription.** The overlay
+  range and the gRPC certificate fingerprint used to answer any signed-in account. They
+  authorize nothing on their own, but with open registration that made them free to read
+  rather than to guess. Admins and entitled tenants are unaffected. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.28.3
 
 ### Features

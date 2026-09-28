@@ -4895,7 +4895,7 @@
       "path": "/api/warp/deploy-config",
       "auth": "session",
       "authorization": "no capability",
-      "description": "any authenticated user.",
+      "description": "a tenant who can actually deploy something, or an admin.",
       "handler": "WarpHandler.GetDeployConfig",
       "group": "warp",
       "external": false
