@@ -6,10 +6,19 @@
 // per-user quota trivially evadable by switching upload paths.
 //
 // Config keys (published by core SaveBeamSettings): MaxUploadBytesKey and
-// DailyUploadBytesKey, both byte counts with 0 = unlimited. The per-user/day
-// counter lives under DailyKey. Every check fails OPEN: a nil client, a missing
-// or unparseable value, a non-positive limit, or an empty username all mean "no
-// limit" so a misconfigured or unpublished setting never blocks uploads.
+// DailyUploadBytesKey, both byte counts. A MISSING key means no limit and a
+// present one is that cap INCLUDING 0, which forbids uploads - see the
+// constants below, which are the authority on this. The per-user/day counter
+// lives under DailyKey.
+//
+// What fails OPEN is everything that is not an answer: a nil client, a missing
+// key, an unparseable value, a NEGATIVE limit, or an empty username. A cap of
+// zero is an answer and is enforced.
+//
+// This paragraph used to say "0 = unlimited" and "a non-positive limit means no
+// limit", which the code thirty lines below has not done since the limits
+// convention landed. A stale doc stating the opposite of its own package is how
+// the next caller reintroduces the defect the convention exists to prevent.
 //
 // INVARIANT for callers: the daily quota is keyed by username, and an empty
 // username disables it entirely (so distinct anonymous/unauthenticated sessions

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Update your node.** A file-transfer ticket said what the holder was allowed to do,
+  and on your own machine that part of the ticket could be edited. Someone you had given
+  read-only access to your files could have given themselves write and delete. Updating
+  the node closes it; nothing else you run is affected.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.24.7
 
 ### Features

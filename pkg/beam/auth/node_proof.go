@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"dylaris-pkg/fileperms"
 )
 
 // Per-node beam ticket proof.
@@ -53,7 +55,29 @@ func proofPayload(c BeamClaims) string {
 		c.ServerUUID + "|" +
 		c.Username + "|" +
 		strconv.FormatBool(c.IsAdmin) + "|" +
-		strconv.FormatInt(exp, 10)
+		strconv.FormatInt(exp, 10) + "|" +
+		permsField(c.Perms)
+}
+
+// permsField encodes the permission claim for the proof.
+//
+// Perms was added to BeamClaims after this payload was written and was left out
+// of it, which is the one thing the comment above says must never happen: the
+// node authorizes every file operation from claims.Perms alone, and on this
+// path nothing checks the signature. A read-only ticket could be edited to
+// grant write and delete, the proof still matched, and the node accepted it.
+//
+// nil and "may do nothing" are DIFFERENT and must stay different in the bytes:
+// nil means the ticket came from a Core too old to send permissions, which the
+// node reports differently, so collapsing them here would let one be swapped
+// for the other.
+func permsField(p *fileperms.Perms) string {
+	if p == nil {
+		return "-"
+	}
+	return strconv.FormatBool(p.Read) + "," +
+		strconv.FormatBool(p.Write) + "," +
+		strconv.FormatBool(p.Delete)
 }
 
 // NodeProof derives the per-node authenticator for a set of claims.

@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A beam ticket's file permissions are now covered by the per-node proof.** On the
+  path a node uses when it holds no fleet key, nothing checked the signature, and the
+  permission claim was not part of what the proof covered - so a read-only ticket could
+  be edited into one granting write and delete. `core` `node`
+- **A Redis outage no longer removes the beam bandwidth cap on a node.** The reload
+  swallowed the error and installed no limit until the next successful poll. The relay
+  already kept its limits; the node does now too. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.28.4
 
 ### Features

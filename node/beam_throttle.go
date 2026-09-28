@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -140,12 +141,29 @@ func logLimit(dir string, bytesPerSec int64) {
 	log.Printf("beam-throttle: %s capped at %d bytes/sec (%.1f MB/s)", dir, bytesPerSec, float64(bytesPerSec)/(1024*1024))
 }
 
+// failed separates "the key is not set" from "Redis did not answer". Only the
+// second one must stop a reload.
+func failed(err error) bool {
+	return err != nil && !errors.Is(err, redis.Nil)
+}
+
 // reloadFromRedis reads the current keys and applies them. The order
 // matters: per-direction keys win over the legacy symmetric key.
 func (bt *BeamThrottle) reloadFromRedis(ctx context.Context, rdb *redis.Client) {
-	legacy, _ := rdb.Get(ctx, "beam:bw_limit").Int64()
-	up, _ := rdb.Get(ctx, "beam:bw_up_internal").Int64()
-	down, _ := rdb.Get(ctx, "beam:bw_down_internal").Int64()
+	legacy, legacyErr := rdb.Get(ctx, "beam:bw_limit").Int64()
+	up, upErr := rdb.Get(ctx, "beam:bw_up_internal").Int64()
+	down, downErr := rdb.Get(ctx, "beam:bw_down_internal").Int64()
+
+	// redis.Nil just means the key is unset, which legitimately means no cap.
+	// Any OTHER error is Redis being unreachable, and reading that as "no cap"
+	// hands the tenant an uncapped transfer until the next poll succeeds. The
+	// relay's copy of this function guards it; this one swallowed all three
+	// errors and called setLimits(0, 0).
+	if failed(legacyErr) || failed(upErr) || failed(downErr) {
+		log.Printf("beam-throttle: Redis reload failed, keeping current limits (legacy=%v up=%v down=%v)",
+			legacyErr, upErr, downErr)
+		return
+	}
 
 	if up == 0 {
 		up = legacy
