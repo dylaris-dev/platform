@@ -48,8 +48,17 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 		models.Server
 		MemberCount int `json:"memberCount"`
 	}
+	// servers.read is held by the seeded 'support' role, whose whole point is
+	// read-only oversight without the high-privilege panel caps. The row carries
+	// the NODE's address, which is infrastructure rather than anything support
+	// needs to answer a ticket, so a reader who is not an actual admin does not
+	// get it. Everything else on the row is about the server itself.
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	rows := make([]adminServerRow, len(servers))
 	for i, s := range servers {
+		if !isAdmin {
+			s.NodeAddress = ""
+		}
 		rows[i] = adminServerRow{Server: s, MemberCount: memberCounts[s.ID]}
 	}
 

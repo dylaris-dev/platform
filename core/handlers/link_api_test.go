@@ -221,6 +221,35 @@ func TestLinkStatsLandInTheKitsOwnStream(t *testing.T) {
 	}
 }
 
+// Region is the third field the kit does not get to name, and the one with a
+// cost: it lands in metric_samples.region, which is part of a unique index and
+// of the hypertable's compress_segmentby. A link inventing a new value every
+// 30s would mint a new long-lived series label each time - no extra rows, but a
+// growing series index and fragmented compression segments. Core takes the
+// region off the KEY instead.
+func TestLinkStatsDoNotLetTheKitNameItsRegion(t *testing.T) {
+	h, fs, key, _ := routeOnlyKit(t)
+	fs.keys["link-xyz"].Region = "eu-central"
+	key.Region = "eu-central"
+
+	rec := callAs(h.LinkStats, http.MethodPost, "/api/warp/link/stats",
+		`{"v":1,"component":"link","id":"link-xyz","region":"made-up-`+"`"+`;drop`+"`"+`"}`, key)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	msgs, err := h.state.Redis.XRange(context.Background(), "dylaris:link:link-xyz:stats", "-", "+").Result()
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("stream: %v, %v", msgs, err)
+	}
+	var s protocol.GatewayStats
+	if err := json.Unmarshal([]byte(msgs[0].Values["data"].(string)), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Region != "eu-central" {
+		t.Errorf("region = %q, want the key's own region: the kit chose its metric label", s.Region)
+	}
+}
+
 // A route-only kit never joins the overlay: warp enroll refuses its key before
 // anything is allocated.
 func TestEnrollRefusesARouteOnlyKey(t *testing.T) {

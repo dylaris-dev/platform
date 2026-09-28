@@ -226,7 +226,12 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid stats record", http.StatusBadRequest)
 		return
 	}
-	s.Component, s.ID = "link", key.NodeID
+	// Region joins Component and ID as something the kit does not get to name.
+	// It is not cosmetic: it reaches metric_samples.region, which is part of a
+	// unique index and of the hypertable's compress_segmentby, so a link varying
+	// it every 30s creates a new long-lived series label each time. Core knows
+	// which region the kit belongs to; the body is only a claim.
+	s.Component, s.ID, s.Region = "link", key.NodeID, key.Region
 	data, err := protocol.MarshalGatewayStats(s)
 	if err != nil {
 		sendJSONError(w, "Invalid stats record", http.StatusBadRequest)

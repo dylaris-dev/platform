@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A support account no longer receives the node's address.** The admin server list
+  embeds the whole server row, so the seeded support role - which exists for read-only
+  oversight - was handed infrastructure it has no use for. `core`
+- **A route-only link no longer chooses its own metrics region.** It is taken from the
+  key, like the component and the id beside it, so a link cannot mint a new long-lived
+  series label on every report. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.28.2
 
 ### Features
