@@ -7,7 +7,7 @@
 
 This is upstream Wails v2.10.1 with ONE security patch (the "BC3" fix): the native
 dispatcher's `processBrowserMessage`
-(`third_party/wails/v2/internal/frontend/dispatcher/dispatcher.go`) enforces a
+(`third_party/wails/v2/internal/frontend/dispatcher/browser.go`) enforces a
 scheme allowlist on the `BrowserOpenURL` bridge call. Upstream Wails only guarded
 `window.runtime.BrowserOpenURL` in JavaScript, which page script could bypass with
 `window.WailsInvoke("BO:<url>")` to reach `RevealInExplorer` / shell-open with an
@@ -21,6 +21,12 @@ Consequences:
 - It must NOT be silently bumped to a stock Wails release - a plain `go get -u` would
   drop the patch and reopen the RCE class. To move to a newer Wails, re-apply the
   dispatcher patch on top and re-vendor.
+- `vendor_bc3_patch_test.go` in this module asserts the guard through the syntax
+  tree of that file: every native open in `processBrowserMessage` must sit under a
+  case listing exactly http, https and mailto. It reads the source because the
+  vendored tree is its own module (not in the CI matrix) and the package is under
+  `internal/`, so there is no seam to call. Re-applying the patch after a bump
+  means making that test pass, not just editing the file.
 - It is built via `wails build` with `GOWORK` honoring this module's own `replace`
   (the module is a member of the repo `go.work`, and module-level replaces are
   applied for workspace members).
