@@ -346,9 +346,15 @@ func (s *PostgresStore) UpsertWarpRegion(region, subnet string, enabled bool) er
 	return err
 }
 
-func (s *PostgresStore) DeleteWarpRegion(region string) error {
-	_, err := s.db.Exec(`DELETE FROM warp_regions WHERE region = $1`, region)
-	return err
+// DeleteWarpRegion reports whether a row was actually removed, so a delete of a
+// region that does not exist can be answered as such instead of as success.
+func (s *PostgresStore) DeleteWarpRegion(region string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM warp_regions WHERE region = $1`, region)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // --- Leaders ---
@@ -380,9 +386,15 @@ func (s *PostgresStore) UpsertWarpLeader(leaderID, region, endpoint string, enab
 	return err
 }
 
-func (s *PostgresStore) DeleteWarpLeader(leaderID string) error {
-	_, err := s.db.Exec(`DELETE FROM warp_leaders WHERE leader_id = $1`, leaderID)
-	return err
+// DeleteWarpLeader reports whether a row was actually removed. Same reason as
+// DeleteWarpRegion above.
+func (s *PostgresStore) DeleteWarpLeader(leaderID string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM warp_leaders WHERE leader_id = $1`, leaderID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func scanWarpLeaders(rows *sql.Rows) ([]WarpLeader, error) {

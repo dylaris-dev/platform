@@ -410,7 +410,7 @@ type Store interface {
 	ListWarpRegions() ([]WarpRegion, error)
 	GetWarpRegion(region string) (*WarpRegion, error)
 	UpsertWarpRegion(region, subnet string, enabled bool) error
-	DeleteWarpRegion(region string) error
+	DeleteWarpRegion(region string) (bool, error)
 	ListWarpLeaders() ([]WarpLeader, error)
 
 	// Route-only routes. The durable side of route:<domain> in Redis - see
@@ -420,7 +420,7 @@ type Store interface {
 	DeleteCoreLinkRoute(domain string) error
 	ListWarpLeadersByRegion(region string) ([]WarpLeader, error)
 	UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error
-	DeleteWarpLeader(leaderID string) error
+	DeleteWarpLeader(leaderID string) (bool, error)
 	SeedWarpRegionIfEmpty(region, subnet, leaderID, endpoint string) error
 
 	// --- SFTP ---

@@ -1143,12 +1143,52 @@ func (h *WarpHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 			len(peers)), http.StatusConflict)
 		return
 	}
-	if err := h.state.Store.DeleteWarpRegion(region); err != nil {
+	// A region whose leaders are still announcing is re-created by the
+	// self-registrar within a minute, together with every leader row this
+	// delete cascades away. The row coming back is not the problem; a delete
+	// that reports success and then quietly undoes itself is.
+	if leader, lerr := h.announcingLeaderIn(r.Context(), region); lerr != nil {
+		sendJSONError(w, "Could not check whether the region's leaders are still running", http.StatusServiceUnavailable)
+		return
+	} else if leader != "" {
+		sendJSONError(w, fmt.Sprintf(
+			"Leader %q in this region is still running and registers itself, so the region would be re-created within a minute. Stop that warp leader first, or disable the region instead.",
+			leader), http.StatusConflict)
+		return
+	}
+	removed, err := h.state.Store.DeleteWarpRegion(region)
+	if err != nil {
 		sendJSONError(w, "Failed to delete region", http.StatusInternalServerError)
+		return
+	}
+	if !removed {
+		sendJSONError(w, "Region not found", http.StatusNotFound)
 		return
 	}
 	log.Printf("warp: deleted region %s (no enrolled peers)", region)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// announcingLeaderIn returns the id of one leader of the region that is still
+// refreshing its liveness key, or "" when none is. An error means Redis could
+// not answer, which is not the same as "none" and must not be read as one.
+func (h *WarpHandler) announcingLeaderIn(ctx context.Context, region string) (string, error) {
+	leaders, err := h.state.Store.ListWarpLeadersByRegion(region)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for _, l := range leaders {
+		alive, aerr := services.LeaderAnnouncing(ctx, h.state.Redis, l.LeaderID)
+		if aerr != nil {
+			return "", aerr
+		}
+		if alive {
+			return l.LeaderID, nil
+		}
+	}
+	return "", nil
 }
 
 // UpsertLeader (admin) creates or updates a leader endpoint within a region.
@@ -1173,8 +1213,28 @@ func (h *WarpHandler) UpsertLeader(w http.ResponseWriter, r *http.Request) {
 // DeleteLeader (admin) removes a leader endpoint.
 func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
 	leaderID := mux.Vars(r)["leaderId"]
-	if err := h.state.Store.DeleteWarpLeader(leaderID); err != nil {
+	// A leader that is still announcing registers itself again within a minute,
+	// enabled, so this delete would report success and revert on its own. The
+	// panel even promised the endpoint "has to be re-entered by hand". Measured
+	// on production: deleted at T+0, gone at T+15s, back at T+30s.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	alive, aerr := services.LeaderAnnouncing(ctx, h.state.Redis, leaderID)
+	if aerr != nil {
+		sendJSONError(w, "Could not check whether this leader is still running", http.StatusServiceUnavailable)
+		return
+	}
+	if alive {
+		sendJSONError(w, "This leader is still running and registers itself, so it would come back within a minute. Stop the warp leader first, or disable it instead - a disabled leader stays disabled.", http.StatusConflict)
+		return
+	}
+	removed, err := h.state.Store.DeleteWarpLeader(leaderID)
+	if err != nil {
 		sendJSONError(w, "Failed to delete leader", http.StatusInternalServerError)
+		return
+	}
+	if !removed {
+		sendJSONError(w, "Leader not found", http.StatusNotFound)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

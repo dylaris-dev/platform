@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/services"
@@ -31,10 +32,18 @@ import (
 // need, plus a record of which keys were revoked.
 type revokeFakeStore struct {
 	warpFakeStore
-	keysByNodeID   map[string]*store.WarpAPIKey
-	peersByKey     map[int][]store.WarpPeer
-	revoked        []string
-	deletedRegions []string
+	keysByNodeID    map[string]*store.WarpAPIKey
+	peersByKey      map[int][]store.WarpPeer
+	revoked         []string
+	deletedRegions  []string
+	deletedLeaders  []string
+	leadersByRegion map[string][]store.WarpLeader
+	regions         map[string]bool
+	leaders         map[string]bool
+}
+
+func (f *revokeFakeStore) ListWarpLeadersByRegion(region string) ([]store.WarpLeader, error) {
+	return f.leadersByRegion[region], nil
 }
 
 // The revoke teardown enumerates the stored route-only rows rather than the
@@ -73,9 +82,24 @@ func (f *revokeFakeStore) ListWarpPeersByRegion(region string) ([]store.WarpPeer
 	return out, nil
 }
 
-func (f *revokeFakeStore) DeleteWarpRegion(region string) error {
+// The real store reports whether a row went away, so the fake keeps a set of
+// the regions and leaders that exist rather than accepting every delete.
+func (f *revokeFakeStore) DeleteWarpRegion(region string) (bool, error) {
 	f.deletedRegions = append(f.deletedRegions, region)
-	return nil
+	if !f.regions[region] {
+		return false, nil
+	}
+	delete(f.regions, region)
+	return true, nil
+}
+
+func (f *revokeFakeStore) DeleteWarpLeader(leaderID string) (bool, error) {
+	f.deletedLeaders = append(f.deletedLeaders, leaderID)
+	if !f.leaders[leaderID] {
+		return false, nil
+	}
+	delete(f.leaders, leaderID)
+	return true, nil
 }
 
 // seedPeer registers a peer in BOTH maps: peersByKey is what ListWarpPeersByKey
@@ -96,6 +120,12 @@ func newRevokeTestHandler(t *testing.T) (*WarpHandler, *revokeFakeStore) {
 		keysByNodeID:  map[string]*store.WarpAPIKey{},
 		peersByKey:    map[int][]store.WarpPeer{},
 	}
+	fs.leadersByRegion = map[string][]store.WarpLeader{}
+	// The region and leader the delete tests act on exist unless a test says
+	// otherwise, so a 404 means "this fixture never had it" rather than "the
+	// fake accepts anything".
+	fs.regions = map[string]bool{"leader-01": true}
+	fs.leaders = map[string]bool{"leader-01": true}
 	// The service is rebuilt against the EXTENDED fake, so DisconnectKeyPeers
 	// resolves peers through it rather than through the base fake.
 	svc := services.NewWarpService(fs, base.state.Redis, "test-secret")
@@ -188,6 +218,110 @@ func TestDeleteWarpRegionAllowedWhenEmpty(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A warp leader REGISTERS ITSELF: it writes its region and endpoint into the
+// liveness key it refreshes, and the self-registrar creates a row for any leader
+// it has never seen, enabled. So deleting the row of a leader whose process is
+// still running is not a deletion - it comes back within selfRegInterval, and the
+// panel's confirm dialog promised the endpoint "has to be re-entered by hand".
+//
+// Measured on production before this refusal existed: eu-edge-02 deleted at T+0,
+// absent at T+15s, back at T+30s with enabled=true.
+//
+// Disable is the durable decision (a disabled row is never re-enabled by its own
+// heartbeat), so the refusal points at it.
+func TestDeletingALeaderThatStillAnnouncesIsRefused(t *testing.T) {
+	h, fs := newRevokeTestHandler(t)
+	if err := h.state.Redis.Set(context.Background(), "dylaris:warp:leader-01:alive", "1", 0).Err(); err != nil {
+		t.Fatalf("seed liveness: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/warp/leaders/leader-01", nil)
+	r = mux.SetURLVars(r, map[string]string{"leaderId": "leader-01"})
+	h.DeleteLeader(rec, r)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.deletedLeaders) != 0 {
+		t.Errorf("the row was deleted anyway: %v", fs.deletedLeaders)
+	}
+	// The operator has to be told what to do instead, or the refusal is just a
+	// different way of getting nowhere.
+	if !strings.Contains(rec.Body.String(), "disable") {
+		t.Errorf("the refusal does not name the durable action: %s", rec.Body.String())
+	}
+}
+
+// The same leader once it has stopped announcing: nothing re-creates it, so the
+// delete is real and is allowed.
+func TestDeletingALeaderThatStoppedAnnouncingWorks(t *testing.T) {
+	h, fs := newRevokeTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/warp/leaders/leader-01", nil)
+	r = mux.SetURLVars(r, map[string]string{"leaderId": "leader-01"})
+	h.DeleteLeader(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.deletedLeaders) != 1 {
+		t.Errorf("nothing was deleted: %v", fs.deletedLeaders)
+	}
+}
+
+// Deleting something that is not there reported success, for both the leader and
+// the region endpoint. An operator cannot tell a typo from a delete, and a second
+// tab that already removed the row looks like it removed it twice.
+func TestDeletingWarpTopologyThatDoesNotExistIs404(t *testing.T) {
+	t.Run("leader", func(t *testing.T) {
+		h, _ := newRevokeTestHandler(t)
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodDelete, "/api/warp/leaders/no-such-leader", nil)
+		r = mux.SetURLVars(r, map[string]string{"leaderId": "no-such-leader"})
+		h.DeleteLeader(rec, r)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status %d, want 404: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("region", func(t *testing.T) {
+		h, _ := newRevokeTestHandler(t)
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodDelete, "/api/warp/regions/no-such-region", nil)
+		r = mux.SetURLVars(r, map[string]string{"region": "no-such-region"})
+		h.DeleteRegion(rec, r)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status %d, want 404: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A region is re-created the same way, out of the announcement of any leader that
+// is still in it - and deleting it cascades those leader rows away first, so the
+// self-registrar rebuilds both. The peer guard beside this one does not catch it:
+// a region with live leaders and no enrolled peers passes that check.
+func TestDeletingARegionWhoseLeaderStillAnnouncesIsRefused(t *testing.T) {
+	h, fs := newRevokeTestHandler(t)
+	fs.leadersByRegion["leader-01"] = []store.WarpLeader{{LeaderID: "leader-01", Region: "leader-01"}}
+	if err := h.state.Redis.Set(context.Background(), "dylaris:warp:leader-01:alive", "1", 0).Err(); err != nil {
+		t.Fatalf("seed liveness: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/warp/regions/leader-01", nil)
+	r = mux.SetURLVars(r, map[string]string{"region": "leader-01"})
+	h.DeleteRegion(rec, r)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.deletedRegions) != 0 {
+		t.Errorf("the region was deleted anyway: %v", fs.deletedRegions)
 	}
 }
 

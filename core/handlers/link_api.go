@@ -232,16 +232,34 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid stats record", http.StatusBadRequest)
 		return
 	}
+	// The same pair of reads LinkHeartbeat does, for the same reason and with
+	// more at stake than an orphan key. RevokeLinkKitTeardown DELETES this
+	// stream, and the bandwidth consumer stops a goroutine only when the stream
+	// is GONE - so an XAdd landing after that delete recreates a stream nothing
+	// will ever write again, and every Core keeps a consumer and a consumer
+	// group on it for as long as it runs.
+	if h.linkRevoked(key.NodeID) {
+		sendJSONError(w, "Key revoked", http.StatusUnauthorized)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	stream := "dylaris:link:" + key.NodeID + ":stats"
 	if err := h.state.Redis.XAdd(ctx, &redis.XAddArgs{
-		Stream: "dylaris:link:" + key.NodeID + ":stats",
+		Stream: stream,
 		MaxLen: linkStatsMaxLen,
 		Approx: true,
 		Values: map[string]interface{}{"data": string(data)},
 	}).Err(); err != nil {
 		log.Printf("route-only link %s: stats write failed: %v", key.NodeID, err)
 		sendJSONError(w, "Stats not recorded", http.StatusServiceUnavailable)
+		return
+	}
+	// Asked again AFTER the write: if the revoke's delete ran before this XAdd,
+	// this undoes the stream it just brought back.
+	if h.linkRevoked(key.NodeID) {
+		h.state.Redis.Del(ctx, stream)
+		sendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

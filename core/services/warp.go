@@ -214,13 +214,41 @@ func (s *WarpService) leaderQueueKey(leaderID string) string {
 func (s *WarpService) resyncKey(leaderID string) string {
 	return "dylaris:warp:" + leaderID + ":resync-request"
 }
-func (s *WarpService) aliveKey(leaderID string) string {
+
+// warpAliveKey is the leader's liveness key. Cross-repo contract: the gateway
+// warp leader writes it (gateway/warp/announce.go) and the self-registrar reads
+// the announcement out of it. One spelling, so the two readers here cannot drift
+// from each other or from the writer.
+func warpAliveKey(leaderID string) string {
 	return "dylaris:warp:" + leaderID + ":alive"
+}
+
+func (s *WarpService) aliveKey(leaderID string) string {
+	return warpAliveKey(leaderID)
 }
 
 func (s *WarpService) leaderAlive(ctx context.Context, leaderID string) bool {
 	n, err := s.redis.Exists(ctx, s.aliveKey(leaderID)).Result()
 	return err == nil && n > 0
+}
+
+// LeaderAnnouncing reports whether the leader is refreshing its liveness key
+// right now, and says so rather than guessing when it cannot tell.
+//
+// leaderAlive above answers the same question for a DISPLAY, where a failed read
+// is fairly shown as "not alive". A caller deciding whether to REFUSE an
+// operator's delete needs the third answer: a leader that is announcing
+// re-registers itself within selfRegInterval, so deleting its row is undone
+// silently, and "we could not reach Redis" must not read as "it is gone".
+func LeaderAnnouncing(ctx context.Context, rdb *redis.Client, leaderID string) (bool, error) {
+	if rdb == nil {
+		return false, errors.New("no redis client")
+	}
+	n, err := rdb.Exists(ctx, warpAliveKey(leaderID)).Result()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // pushToRegion fans a command out to every enabled leader of the region. It is

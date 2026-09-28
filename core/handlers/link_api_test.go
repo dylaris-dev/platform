@@ -173,6 +173,29 @@ func TestLinkEdgesListsEveryDialableEdgeWithItsPin(t *testing.T) {
 	}
 }
 
+// The same race, on the endpoint that had neither check. RevokeLinkKitTeardown
+// DELETES the stats stream, and the gateway bandwidth consumer stops a goroutine
+// only when the stream is GONE - so a stats POST landing after that delete
+// recreated a stream nothing writes again, and every Core kept a consumer and a
+// consumer group on it for as long as it ran. The heartbeat beside it had both
+// reads; this one had none.
+func TestLinkStatsNeverResurrectARevokedKitsStream(t *testing.T) {
+	for name, liveReads := range map[string]int{"revoked before the write": 0, "revoked right after the write": 1} {
+		t.Run(name, func(t *testing.T) {
+			h, fs, key, _ := routeOnlyKit(t)
+			h.state.Store = &revokeAfterReads{nodeLinkFakeStore: fs, n: liveReads}
+			rec := callAs(h.LinkStats, http.MethodPost, "/api/warp/link/stats",
+				`{"v":1,"component":"link","id":"link-xyz","counters":{"tunnels_established":1}}`, key)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status %d, want 401: %s", rec.Code, rec.Body.String())
+			}
+			if n, _ := h.state.Redis.Exists(context.Background(), "dylaris:link:link-xyz:stats").Result(); n != 0 {
+				t.Error("a revoked kit's stats stream exists again; every Core will keep a consumer on it")
+			}
+		})
+	}
+}
+
 // The link does not name its own stream or the id in it: both are the kit's.
 func TestLinkStatsLandInTheKitsOwnStream(t *testing.T) {
 	h, _, key, _ := routeOnlyKit(t)

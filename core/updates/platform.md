@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting a warp leader that is still running is now refused.** A running leader
+  registers itself, so the row came back within a minute while the delete reported
+  success. Disable it instead - a disabled leader stays disabled. `core`
+- **A revoked route-only link can no longer leave its stats stream behind.** A stats
+  report arriving during the revoke recreated the stream the revoke had just deleted,
+  and every Core then kept a reader on it for as long as it ran. `core`
+- **Deleting a warp region or leader that is not there now answers "not found".** Both
+  reported success, so a typo looked like a deletion. `core`
+
 ## 2026.09.28
 
 ### Features
