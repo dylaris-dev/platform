@@ -172,6 +172,47 @@ func (s *AppState) storeAccountSummary(ctx context.Context, uuid string) (map[st
 // "no active subscription", a 503 "no meter configured" and a 502 "the payment
 // provider said no" are three different people's problem, and one generic
 // failure would send all three to the wrong place.
+// probeBillingConsentRoute reports whether the storefront's billing-consent
+// endpoint is REACHABLE, without changing anything.
+//
+// It is the third channel Core depends on, and it was the one the health check
+// left out. The reason given was that it is a write and no request to it
+// changes nothing - but the key is checked before anything else, so a request
+// that deliberately omits it is refused on the first line and writes nothing.
+//
+// The key is left off for a second reason, and it is the one that makes this
+// work at all: a missing proxy route on the website answers 404, and so does
+// the store itself for a UUID nobody owns. With a valid key those two are
+// indistinguishable by status, which is why a "real" probe could not tell a
+// broken route from a healthy one. Without a key only the store can answer
+// 401, so a 401 proves both that the route exists and that the store is what
+// is behind it.
+//
+// This is what went wrong before: on production only link-status was routed,
+// and this component read "up" while every customer's billing page said the
+// store could not be reached and nobody could switch metered billing on.
+func (s *AppState) probeBillingConsentRoute(ctx context.Context) error {
+	endpoint := strings.TrimRight(s.StoreURL, "/") + "/api/store/billing-consent"
+	body, _ := json.Marshal(map[string]interface{}{"uuid": healthProbeUUID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// No X-Store-Key on purpose. See above.
+
+	resp, err := (&http.Client{Timeout: storeAccountTimeout}).Do(req)
+	if err != nil {
+		return fmt.Errorf("cannot reach the storefront at %s: %w", s.StoreURL, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<12))
+	if resp.StatusCode != http.StatusUnauthorized {
+		return fmt.Errorf("the storefront answered HTTP %d where the store answers 401, so this route does not reach it", resp.StatusCode)
+	}
+	return nil
+}
+
 func (s *AppState) storeSetBillingConsent(ctx context.Context, uuid string, traffic, backup *bool) (int, string, error) {
 	payload := map[string]interface{}{"uuid": uuid}
 	if traffic != nil {

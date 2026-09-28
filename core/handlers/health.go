@@ -284,13 +284,27 @@ func (h *HealthHandler) storefrontComponent(ctx context.Context) healthComponent
 	//
 	// The all-zero UUID belongs to nobody and the store answers it with a
 	// perfectly valid "not linked", so this tests the CHANNEL and touches no
-	// account. billing-consent is not probed: it is a write, and there is no
-	// request to it that changes nothing.
+	// account.
 	if _, err := h.state.storeAccountSummary(cctx, healthProbeUUID); err != nil {
 		comp.Status = "down"
 		comp.Cause = "storefront_unreachable"
 		comp.Detail = "Account details are not reachable at " + h.state.StoreURL
 		comp.Reason = err.Error() + ". Link status works, so this is one route rather than the storefront being down: the panel's billing page shows every tenant 'the store could not be reached' and metered billing cannot be switched on."
+		return comp
+	}
+
+	// The third channel. It used to be left out on the grounds that it is a
+	// write and no request to it changes nothing - but the store checks the key
+	// before anything else, so a request that deliberately omits the key is
+	// refused on the first line. That omission is also what makes the answer
+	// readable: a missing proxy route answers 404 and so does the store for a
+	// UUID nobody owns, while only the store answers 401. See
+	// probeBillingConsentRoute.
+	if err := h.state.probeBillingConsentRoute(cctx); err != nil {
+		comp.Status = "down"
+		comp.Cause = "storefront_unreachable"
+		comp.Detail = "Metered-billing consent is not reachable at " + h.state.StoreURL
+		comp.Reason = err.Error() + ". Link status and account details work, so this is one route rather than the storefront being down: nobody can switch metered traffic or backup billing on or off."
 		return comp
 	}
 

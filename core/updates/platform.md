@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Health now checks all three storefront routes, not two.** Metered-billing consent was
+  left unprobed, so the storefront could read "up" while nobody could switch traffic or
+  backup billing on. It is checked without a key on purpose: only the store answers 401,
+  which is what tells a missing route apart from a healthy one. `core`
+
 ## 2026.09.24.9
 
 ### Features
