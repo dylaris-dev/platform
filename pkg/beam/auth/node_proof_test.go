@@ -179,3 +179,28 @@ func TestNodeProofIsDomainSeparated(t *testing.T) {
 		t.Errorf("proof payload %q is not domain-separated", proofPayload(c))
 	}
 }
+
+// iat has to be covered too, and for a reason that did not exist when the proof
+// was written: the access epoch is compared against it. A ticket that could be
+// re-dated would walk straight past a revocation stamp - the proof would still
+// match, and on this path nothing checks the signature.
+//
+// The tamper table above covers RegisteredClaims through its expiry, which
+// cannot catch this: exp and iat are different fields of the same struct.
+func TestNodeProofCoversTheIssueTime(t *testing.T) {
+	nodeSecret := []byte("per-node-secret-bytes")
+	base := BeamClaims{ServerUUID: "srv-1", NodeID: "node-a", Username: "alice"}
+	now := time.Now()
+	base.RegisteredClaims = jwt.RegisteredClaims{
+		Issuer:    BeamIssuer,
+		IssuedAt:  jwt.NewNumericDate(now.Add(-10 * time.Minute)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+	}
+	good := NodeProof(nodeSecret, base)
+
+	redated := base
+	redated.IssuedAt = jwt.NewNumericDate(now)
+	if NodeProof(nodeSecret, redated) == good {
+		t.Error("iat is not covered by the proof - a ticket can be re-dated past an access stamp")
+	}
+}

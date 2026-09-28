@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Taking file access away now reaches a ticket that was already issued.** A beam
+  ticket is valid for 30 minutes and nothing re-read it, so a removed member or a
+  suspended account kept file access until it expired. Core now stamps the server and
+  the node refuses an older ticket at connect. `core` `node`
+- **A refused beam authentication is logged on the node.** It left no trace at all, so
+  an attempt against a machine was invisible to whoever runs it. The reason is logged,
+  never the ticket. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.28.5
 
 ### Features

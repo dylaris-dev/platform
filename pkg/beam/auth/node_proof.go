@@ -46,9 +46,15 @@ const nodeProofDomain = "dylaris-beam-node-proof:v1:"
 // admin's, flip is_admin, point server_uuid at a neighbour, or push exp years
 // out. Adding a claim to BeamClaims that decides access means adding it here.
 func proofPayload(c BeamClaims) string {
-	var exp int64
+	var exp, iat int64
 	if c.ExpiresAt != nil {
 		exp = c.ExpiresAt.Unix()
+	}
+	// iat is covered because the access epoch is compared against it: a
+	// ticket that could be re-dated would walk past a revocation stamp the
+	// moment one exists.
+	if c.IssuedAt != nil {
+		iat = c.IssuedAt.Unix()
 	}
 	return nodeProofDomain +
 		c.NodeID + "|" +
@@ -56,6 +62,7 @@ func proofPayload(c BeamClaims) string {
 		c.Username + "|" +
 		strconv.FormatBool(c.IsAdmin) + "|" +
 		strconv.FormatInt(exp, 10) + "|" +
+		strconv.FormatInt(iat, 10) + "|" +
 		permsField(c.Perms)
 }
 

@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/queue"
 )
@@ -70,6 +71,14 @@ func globalReadKeys() []string {
 		// "~dylaris:beam:daily:*" - read+write, fleet-wide, on a key named after a
 		// user - and it is now a per-node selector; see BeamQuotaSelector.
 		"%R~beam:max_upload_bytes", "%R~beam:daily_upload_bytes",
+		// The access stamp Core writes when who may reach a server's files
+		// changes, read by the node at beam Authenticate. Fleet-wide and
+		// read-only: the node cannot know in advance which server UUIDs it will
+		// be asked about, and a stamp is a timestamp - it says that something
+		// changed, never what or for whom. Without this grant the read returns
+		// NOPERM, the check fails OPEN, and a revoked ticket keeps working to
+		// its expiry with nothing failing anywhere.
+		"%R~" + beamauth.AccessEpochPrefix() + "*",
 		"%R~dylaris:core:*",
 	}
 }

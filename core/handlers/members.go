@@ -293,6 +293,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to create invite (user may already be invited)", http.StatusConflict)
 		return
 	}
+	stampBeamAccess(r.Context(), h.state, serverID)
 
 	// First member invite flips audit_enabled on. Cheap no-op when
 	// already on. The audit row for the invite is written right after.
@@ -346,6 +347,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Failed to update permissions", http.StatusInternalServerError)
 		return
 	}
+	stampBeamAccess(r.Context(), h.state, serverID)
 
 	actorID, _ := r.Context().Value("userID").(string)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
@@ -378,6 +380,7 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
 		return
 	}
+	stampBeamAccess(r.Context(), h.state, serverID)
 
 	actorID, _ := r.Context().Value("userID").(string)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberRemoved, actorID, targetUserID, nil)

@@ -151,6 +151,13 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		sendJSONError(w, "Failed to assign grant", 500)
 		return
 	}
+	// A nil ServerID is an ACCOUNT-wide grant, which the resolver honours on
+	// every server of that owner - so every one of them is stamped.
+	if req.ServerID != nil {
+		stampBeamAccess(r.Context(), h.state, *req.ServerID)
+	} else {
+		stampBeamAccessForOwner(r.Context(), h.state, ownerUserID)
+	}
 
 	// Handing someone access to a server is the most security-relevant thing
 	// that happens to one, and it was the only such action with no audit row.
@@ -251,6 +258,11 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 		}
 		sendJSONError(w, "Failed to revoke grant", 500)
 		return
+	}
+	if req.ServerID != nil {
+		stampBeamAccess(r.Context(), h.state, *req.ServerID)
+	} else {
+		stampBeamAccessForOwner(r.Context(), h.state, ownerUserID)
 	}
 	// Revocation is audited for the same reason the grant is, and matters more
 	// when reconstructing an incident: "when did they stop having it" is the

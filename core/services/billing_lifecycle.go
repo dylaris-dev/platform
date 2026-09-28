@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	beamauth "dylaris-pkg/beam/auth"
 )
 
 // Settings keys + built-in defaults for the BYON non-payment lifecycle. All are
@@ -678,6 +680,14 @@ func (s *BillingLifecycleService) stopTenantServers(ctx context.Context, userID 
 		return
 	}
 	for _, srv := range servers {
+		// Every server, not only the running ones: a beam ticket reaches a
+		// stopped server's FILES just as well, and a cut-off tenant holding one
+		// kept that access until it expired. Stamped before the loop's own
+		// early exits for exactly that reason - this is the one line here that
+		// is about files rather than about containers.
+		if err := beamauth.BumpAccessEpoch(ctx, s.redis, srv.UUID); err != nil {
+			log.Printf("billing lifecycle: beam access stamp for %s: %v", srv.UUID, err)
+		}
 		if srv.Status != "online" {
 			continue
 		}

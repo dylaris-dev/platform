@@ -550,15 +550,49 @@ func (s *beamServer) validateTicket(ticket string) (*beamauth.BeamClaims, error)
 	return claims, nil
 }
 
+// beamPeerAddr names the caller for a log line, or "unknown" when gRPC did not
+// give us one. Only ever used for logging.
+func beamPeerAddr(ctx context.Context) string {
+	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
+		return p.Addr.String()
+	}
+	return "unknown"
+}
+
 func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb.BeamAuthResp, error) {
 	claims, err := s.validateTicket(req.Ticket)
 	if err != nil {
+		// Logged because it was not. A refused ticket left no trace here at
+		// all, so an attempt against a customer's own machine was invisible to
+		// whoever runs it - and this is the hop that does not pass the relay,
+		// which does log its refusals. The reason, never the ticket.
+		log.Printf("beam: authentication refused from %s: %v", beamPeerAddr(ctx), err)
 		return &pb.BeamAuthResp{Ok: false, Message: err.Error()}, nil
 	}
 	// Node-binding: the relay routes by node_id, but a stolen ticket for
 	// another node should still be rejected at the destination.
 	if s.nodeID != "" && claims.NodeID != s.nodeID {
+		log.Printf("beam: authentication refused from %s: ticket is bound to node %s, this is %s",
+			beamPeerAddr(ctx), claims.NodeID, s.nodeID)
 		return &pb.BeamAuthResp{Ok: false, Message: "ticket bound to a different node"}, nil
+	}
+	// The ticket is a bearer token with a 30 minute life that nothing re-reads,
+	// so taking somebody's access away used to leave an outstanding one working
+	// to its expiry. Core stamps the server when that changes; a ticket minted
+	// before the stamp does not open a new session. An already-open one is not
+	// torn down - that is the half this does not close, and it is stated in
+	// access_epoch.go.
+	//
+	// Fails OPEN on a Redis fault, like every other Redis read on this path: an
+	// outage must not stand between a customer and their own files, and what it
+	// reopens is the window that existed before.
+	stale, aerr := beamauth.TicketPredatesAccessChange(ctx, s.rdb, claims)
+	if aerr != nil {
+		log.Printf("beam: could not check the access stamp for %s, allowing: %v", claims.ServerUUID, aerr)
+	} else if stale {
+		log.Printf("beam: authentication refused from %s: access to %s changed after this ticket was issued",
+			beamPeerAddr(ctx), claims.ServerUUID)
+		return &pb.BeamAuthResp{Ok: false, Message: "your access to this server changed - reconnect to get a new ticket"}, nil
 	}
 	// Remember which server this gRPC connection is allowed to touch.
 	// extractServerUUID reads the same key on every subsequent RPC from

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.28.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Removing someone's file access now takes effect at once.** It used to apply to new
+  file-manager connections only, so someone you had just removed could keep working for
+  up to half an hour. The same now applies the moment an account is suspended. Update
+  your node to get it.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.28.5
 
 ### Features
