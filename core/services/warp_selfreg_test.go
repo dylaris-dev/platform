@@ -298,3 +298,93 @@ var errRegionRead = errRegionReadType{}
 type errRegionReadType struct{}
 
 func (errRegionReadType) Error() string { return "connection reset by peer" }
+
+// A leader whose announcement is GONE keeps its row. This is the invariant that
+// had no test at all: the only thing preventing a "tidy up the orphans" pass was
+// that warpRegistrarStore has no delete method, and anyone adding one would have
+// added it to this fake in the same breath and seen nothing fail.
+//
+// It has to stay because Core removes a WireGuard peer by enumerating the leader
+// rows of its region. Delete the row of a machine that is merely unreachable and
+// its live peers are stranded on a host nothing can address any more. Liveness
+// already sorts a dead leader last, which is the softer answer the design chose.
+//
+// A second leader IS announcing, because RunOnce returns early on a pass that
+// read nothing - without it this would pass for the wrong reason.
+func TestSelfReg_KeepsTheRowOfALeaderThatStoppedAnnouncing(t *testing.T) {
+	r, st, mr := selfRegFixture(t)
+	st.regions["eu-central"] = store.WarpRegion{Region: "eu-central", Subnet: "10.77.0.0/16", Enabled: true}
+	// Two rows nothing announces for: one plain, one an operator switched off.
+	st.leaders["eu-edge-09"] = store.WarpLeader{LeaderID: "eu-edge-09", Region: "eu-central", Endpoint: "203.0.113.9:25599", Enabled: true}
+	st.leaders["eu-edge-10"] = store.WarpLeader{LeaderID: "eu-edge-10", Region: "eu-central", Endpoint: "203.0.113.10:25599", Enabled: false}
+	announce(t, mr, "eu-edge-02", liveAnnouncement())
+
+	r.RunOnce(context.Background())
+
+	gone, ok := st.leaders["eu-edge-09"]
+	if !ok {
+		t.Fatal("the row of a leader that stopped announcing was removed; its peers are now unreachable")
+	}
+	if gone.Endpoint != "203.0.113.9:25599" || !gone.Enabled {
+		t.Errorf("row = %+v, want it untouched", gone)
+	}
+	off, ok := st.leaders["eu-edge-10"]
+	if !ok {
+		t.Fatal("a disabled row with no announcement was removed")
+	}
+	if off.Enabled {
+		t.Errorf("a silent leader was re-enabled: %+v", off)
+	}
+	// And the pass did its actual job, or the assertions above prove nothing.
+	if _, ok := st.leaders["eu-edge-02"]; !ok {
+		t.Error("the announcing leader was not registered, so this pass did nothing")
+	}
+}
+
+// The wire shape of the liveness announcement, as a literal.
+//
+// gateway/warp WRITES this and platform/core READS it, and each repository
+// compiles its OWN copy of the struct - so both test suites round-trip
+// themselves and would stay green through a rename on one side, while
+// self-registration stopped working in production. A golden literal is the only
+// thing the two can both be held against.
+//
+// gateway/warp/announce_test.go pins the SAME string. Change one and you must
+// change the other, which is the point: there is no version negotiation here.
+const goldenLeaderAnnouncement = `{"v":1,"region":"eu-central","endpoint":"94.130.98.3:25599","subnet":"10.77.0.0/16"}`
+
+func TestLeaderAnnouncementWireShapeIsFrozen(t *testing.T) {
+	t.Run("core writes the golden shape", func(t *testing.T) {
+		b, err := json.Marshal(liveAnnouncement())
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if string(b) != goldenLeaderAnnouncement {
+			t.Errorf("\n got %s\nwant %s\nA field was renamed, retagged or reordered. The gateway leader on the other side is unchanged.", b, goldenLeaderAnnouncement)
+		}
+	})
+
+	t.Run("core reads the golden shape", func(t *testing.T) {
+		var a LeaderAnnouncement
+		if err := json.Unmarshal([]byte(goldenLeaderAnnouncement), &a); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if a != liveAnnouncement() {
+			t.Errorf("parsed %+v, want %+v", a, liveAnnouncement())
+		}
+	})
+
+	// subnet is the one optional field: a leader that has none omits it rather
+	// than sending "", because an empty subnet means "join the existing region"
+	// and a missing region cannot be created from it.
+	t.Run("a leader with no subnet omits the field", func(t *testing.T) {
+		b, err := json.Marshal(LeaderAnnouncement{V: 1, Region: "eu-central", Endpoint: "94.130.98.3:25599"})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		const want = `{"v":1,"region":"eu-central","endpoint":"94.130.98.3:25599"}`
+		if string(b) != want {
+			t.Errorf("\n got %s\nwant %s", b, want)
+		}
+	})
+}
