@@ -188,6 +188,11 @@ export default function NotificationsDropdown() {
                 type="button"
                 onClick={() => setOpen(o => !o)}
                 title={hasItems ? `${badgeCount} unread` : 'No notifications'}
+                // The badge count was the button's whole accessible name, so a
+                // screen reader announced "1" with nothing to say what it counted.
+                aria-label={hasItems ? `Notifications, ${badgeCount} unread` : 'Notifications'}
+                aria-expanded={open}
+                aria-haspopup="true"
                 className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors border ${
                     open
                         ? 'bg-(--base-03) border-(--base-04) text-(--base-09)'

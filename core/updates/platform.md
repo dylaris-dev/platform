@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.29.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting a server or a ticket now removes the notifications about it.** They used to
+  stay in every inbox as links to something that no longer existed. `core`
+- **The admin view labels a customer's server as Admin, not Owner.** Every server an
+  operator could see in that view read as their own. `core`
+- **The empty server list points at the button that exists.** It named a "New Container"
+  button; it is Create, then New server. The notification bell also has a proper name
+  for screen readers now. `core`
+
 ## 2026.09.29
 
 ### Features

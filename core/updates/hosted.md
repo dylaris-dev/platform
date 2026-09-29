@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.29.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Notifications about a deleted server or ticket now disappear with it.** They used to
+  stay in your inbox pointing at something that was gone. This was fixed on our side;
+  there is nothing for you to update.
+
 ## 2026.09.28.6
 
 ### Features

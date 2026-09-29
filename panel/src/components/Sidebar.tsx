@@ -142,7 +142,10 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   const renderServerItem = (server: Server, isChild = false) => {
     const isActive = activeServerId === server.id;
     const isProxy = server.serverType === 'proxy';
-    const roleLabel = server.role === 'inherited' ? 'Inherited' : server.role === 'invited' ? 'Invited' : isProxy ? 'Proxy' : 'Owner';
+    // 'admin' is what an operator gets for a customer's server in the admin view;
+    // it used to fall through to 'Owner' and label every customer server as theirs.
+    const roleLabel = server.role === 'inherited' ? 'Inherited' : server.role === 'invited' ? 'Invited'
+        : server.role === 'admin' ? 'Admin' : isProxy ? 'Proxy' : 'Owner';
     return (
       <GuardedLink
         key={server.id}

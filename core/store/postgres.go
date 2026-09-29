@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/lib/pq"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -1217,8 +1218,20 @@ func (s *PostgresStore) GetServerByUUID(uuid string) (*models.Server, error) {
 }
 
 func (s *PostgresStore) DeleteServer(id int) error {
-	_, err := s.db.Exec("DELETE FROM servers WHERE id = $1", id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM servers WHERE id = $1", id); err != nil {
+		return err
+	}
+	// Same transaction, so a server is never gone while its notifications
+	// still offer it. See deleteNotificationsFor.
+	if err := deleteNotificationsFor(tx, "/servers/"+strconv.Itoa(id)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *PostgresStore) UpdateServerStatus(id int, status string) error {

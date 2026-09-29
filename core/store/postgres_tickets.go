@@ -5,6 +5,7 @@ import (
 	"dylaris-core/models"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -784,6 +785,25 @@ func (s *PostgresStore) DeleteCannedResponse(id int) error {
 
 // ── Notifications ────────────────────────────────────────────────────
 
+// notificationExecer is what deleteNotificationsFor needs: a *sql.DB or a *sql.Tx.
+type notificationExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// deleteNotificationsFor removes the notifications whose link points at a thing
+// that is being deleted - "/tickets/7" or "/servers/12", and anything below it.
+//
+// They used to be left behind on purpose ("the link will 404 gracefully"), and
+// in practice that meant an inbox that kept offering a server or a ticket that
+// no longer existed, with nothing to do about it but mark it read. Measured on
+// production: thirteen of them, every one pointing at nothing.
+//
+// Exact, or followed by a slash: "/tickets/1" must not take "/tickets/12" with it.
+func deleteNotificationsFor(ex notificationExecer, link string) error {
+	_, err := ex.Exec(`DELETE FROM notifications WHERE link = $1 OR link LIKE $1 || '/%'`, link)
+	return err
+}
+
 func (s *PostgresStore) InsertNotification(n *models.Notification) (int64, error) {
 	var id int64
 	err := s.db.QueryRow(
@@ -1224,8 +1244,8 @@ func (s *PostgresStore) ListAttachmentStorageKeysByTicket(ticketID int) ([]strin
 // ON DELETE CASCADE on ticket_messages / ticket_watchers / ticket_audit_events
 // / ticket_attachments would already cover most of this; we still issue
 // explicit deletes so the contract is obvious from the source and so deletes
-// fire in a deterministic order. notifications are not FK'd to tickets — they
-// stay (the link will 404 gracefully when followed, by design).
+// fire in a deterministic order. notifications are not FK'd to tickets, so
+// the ones pointing at this ticket are removed explicitly in the same tx.
 func (s *PostgresStore) DeleteTicket(id int) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1252,6 +1272,9 @@ func (s *PostgresStore) DeleteTicket(id int) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return sql.ErrNoRows
+	}
+	if err := deleteNotificationsFor(tx, "/tickets/"+strconv.Itoa(id)); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
