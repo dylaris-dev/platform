@@ -244,13 +244,19 @@ function MyNodesInner() {
         setEnrollUrl(coreOrigin() || '<core-url>');
     }, []);
 
+    // Only asked for by an account that can deploy something. Core refuses the
+    // rest with a 403 (the values authorize nothing, but open registration made
+    // them free to read), and asking anyway put a red console error on every
+    // new customer's first visit to this page for a snippet they cannot use.
+    const canDeploy = byonAllowed || routeOnlyAllowed;
     useEffect(() => {
+        if (!canDeploy) return;
         let cancelled = false;
         getWarpDeployConfig().then(res => {
             if (!cancelled && res.success && res.config) setDeployConfig(res.config);
         }).catch(() => { /* the snippet falls back to its placeholders */ });
         return () => { cancelled = true; };
-    }, []);
+    }, [canDeploy]);
 
     useEffect(() => {
         let cancelled = false;

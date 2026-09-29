@@ -113,28 +113,39 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// Send the verification the account now needs. Only when the policy
 	// requires one: without it the account is usable immediately and an
 	// unexpected "confirm your account" mail would be noise.
-	verifySent := false
-	policy := LoadAuthPolicy(h.state)
-	if policy.EmailVerifyRequired {
-		if token, terr := randomToken(32); terr == nil {
-			if serr := h.state.Store.SetEmailVerificationToken(id, token); serr == nil {
-				if merr := sendVerificationEmail(h.state, email, target.Username, token); merr != nil {
-					// The address is already stored, so this is not a failed
-					// change - it is a user who cannot get in until a mail
-					// arrives, which is exactly the kind of failure that used
-					// to reach nobody.
-					services.ReportOperatorError("admin-email-change",
-						"verification mail to %s failed: %v", email, merr)
-				} else {
-					verifySent = true
-				}
-			}
-		}
-	}
+	verifySent := sendChangedEmailVerification(h.state, id, email, target.Username, "admin-email-change")
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":         true,
 		"email":           email,
 		"emailVerifySent": verifySent,
 	})
+}
+
+// sendChangedEmailVerification sends the verification an account needs after its
+// address changed, and reports whether one went out.
+//
+// Shared by the two doors that change an address - the admin screen and the
+// account's own profile - because they have to agree. Only when the policy
+// requires verification: without it the account is usable immediately and an
+// unexpected "confirm your account" mail would be noise.
+func sendChangedEmailVerification(state *AppState, userID, email, username, source string) bool {
+	if email == "" || !LoadAuthPolicy(state).EmailVerifyRequired {
+		return false
+	}
+	token, err := randomToken(32)
+	if err != nil {
+		return false
+	}
+	if err := state.Store.SetEmailVerificationToken(userID, token); err != nil {
+		return false
+	}
+	if err := sendVerificationEmail(state, email, username, token); err != nil {
+		// The address is already stored, so this is not a failed change - it is
+		// a user who cannot get in until a mail arrives, which is exactly the
+		// kind of failure that used to reach nobody.
+		services.ReportOperatorError(source, "verification mail to %s failed: %v", email, err)
+		return false
+	}
+	return true
 }

@@ -769,6 +769,44 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The address, decided BEFORE anything is written. The rename below commits
+	// on its own, so a refusal found after it would report failure for a save
+	// that had half happened.
+	//
+	// This door used to write any address straight through UpdateUser: no
+	// uniqueness check, the verified badge kept, no mail. The admin door has had
+	// all three for a reason its own comment gives - the address is where a
+	// password reset goes - and with registration answering "account created"
+	// for an address that is already taken, an account could claim a stranger's
+	// address and that stranger could then never register.
+	emailChanged, newEmail := false, ""
+	if req.Email != nil {
+		newEmail = strings.ToLower(strings.TrimSpace(*req.Email))
+		if !strings.EqualFold(strings.TrimSpace(user.Email), newEmail) {
+			if newEmail == "" {
+				// Removing the address would lock the account out at its next
+				// sign-in with nowhere to send the confirmation it then needs.
+				if LoadAuthPolicy(h.state).EmailVerifyRequired && !isAdmin {
+					sendJSONError(w, "An email address is required on this platform", http.StatusBadRequest)
+					return
+				}
+			} else {
+				if !validate.IsEmail(newEmail) {
+					sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+					return
+				}
+				// There is no unique index on users.email; this check is the only
+				// thing between two accounts and one reset mailbox. Same answer
+				// the admin door gives.
+				if existing, eerr := h.state.Store.GetUserByEmail(newEmail); eerr == nil && existing != nil && existing.ID != user.ID {
+					sendJSONError(w, "That email address is already in use", http.StatusConflict)
+					return
+				}
+			}
+			emailChanged = true
+		}
+	}
+
 	// Username change: route through RenameUser with policy + cooldown + uniqueness guards.
 	// RenameUser writes user_username_history and bumps last_username_change in one tx, so
 	// we MUST NOT also write the username column in the generic UpdateUser call below.
@@ -831,13 +869,8 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		user.Password = string(hashed)
 		passwordChanged = true
 	}
-	if req.Email != nil {
-		email := strings.TrimSpace(*req.Email)
-		if email != "" && !validate.IsEmail(email) {
-			sendJSONError(w, "Invalid email address", http.StatusBadRequest)
-			return
-		}
-		user.Email = email
+	if emailChanged {
+		user.Email = newEmail
 	}
 	if req.MinecraftUsername != nil {
 		mc := strings.TrimSpace(*req.MinecraftUsername)
@@ -855,12 +888,29 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// A new address is unproven, exactly as when an admin types one: the badge
+	// goes, and a confirmation goes out when the policy asks for one.
+	emailVerifySent := false
+	if emailChanged {
+		if err := h.state.Store.SetUserEmail(user.ID, newEmail); err != nil {
+			sendJSONError(w, "Update failed", 500)
+			return
+		}
+		LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, user.ID, user.ID, nil)
+		emailVerifySent = sendChangedEmailVerification(h.state, user.ID, newEmail, user.Username, "profile-email-change")
+	}
+
 	// A password change invalidates every session issued against the old one -
 	// including the caller's own, which they are holding right now. Hand back a
 	// replacement so changing your password in settings does not read as being
 	// thrown out of the panel. Everyone ELSE holding a session for this account
 	// still loses it, which is the point.
 	out := map[string]string{"success": "true", "message": "Profile updated!"}
+	if emailVerifySent {
+		// Said here because it decides the next sign-in: with the policy on, the
+		// account stays usable now and asks for the confirmation at next login.
+		out["message"] = "Profile updated. We sent a link to your new address - confirm it before you next sign in."
+	}
 	if passwordChanged {
 		if fresh, terr := h.IssueToken(user.Username, user.IsAdmin, user.Password); terr == nil {
 			out["token"] = fresh

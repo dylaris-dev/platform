@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.29.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Changing the address in your own profile now works like the admin change.** It kept
+  the verified mark, sent nothing and checked nothing, so an account could claim another
+  address and block its owner from ever registering. `core`
+
+### Fixes
+- **New customers no longer trigger a 403 on My infrastructure.** The page asked for the
+  deploy snippet before it knew the account could use one. `core`
+- **The profile form works with password managers,** and the empty server list points at
+  what a new account can actually do. `core`
+
 ## 2026.09.29.2
 
 ### Features

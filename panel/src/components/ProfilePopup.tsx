@@ -127,7 +127,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                   </p>
                 </div>
                 <div className="flex flex-col gap-[5px]">
-                  <label className="input-label">Email (Optional)</label>
+                  <label className="input-label">Email</label>
                   <input type="email" value={email} onChange={e => setEmail(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
                 </div>
                 <div className="flex flex-col gap-[5px]">
@@ -146,12 +146,12 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
               <div className="space-y-4 animate-fade-in">
                 <div className="flex flex-col gap-[5px]">
                   <label className="input-label">New Password</label>
-                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" placeholder="Leave blank to keep current" />
+                  <input type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" placeholder="Leave blank to keep current" />
                 </div>
                 {newPassword && (
                   <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Confirm Password</label>
-                    <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
+                    <input type="password" autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
                   </div>
                 )}
 
@@ -231,7 +231,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                 <div className="pt-4 border-t border-(--base-03)">
                   <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Current Password <span className="opacity-70">(required to save profile changes)</span></label>
-                    <input type="password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
+                    <input type="password" autoComplete="current-password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
                   </div>
                 </div>
 

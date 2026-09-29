@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.29.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A new email address has to be confirmed.** When you change it in your profile we now
+  send a link to the new address, and you confirm it before your next sign-in. An address
+  already used by another account is refused. Nothing for you to update.
+
+### Fixes
+- Nothing.
+
 ## 2026.09.29.2
 
 ### Features

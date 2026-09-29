@@ -21,7 +21,7 @@ export default function ServersIndexPage() {
             {servers.length === 0 && (
                 <p className="text-xs text-(--base-05) italic flex items-center gap-1.5">
                     <PlusCircle size={12} />
-                    Use &ldquo;Create&rdquo; at the bottom of the sidebar, then &ldquo;New server&rdquo;.
+                    Open &ldquo;Create&rdquo; at the bottom of the sidebar to see what you can set up.
                 </p>
             )}
         </div>
