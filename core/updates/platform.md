@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.29
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Restoring a platform backup now says when it needs a superuser.** With TimescaleDB an
+  ordinary target role failed on the first statement with a bare pg_restore error. It now
+  names the requirement and the steps, and the restore form says so up front. `core`
+
 ## 2026.09.28.6
 
 ### Features

@@ -197,7 +197,10 @@ func (h *PlatformBackupHandler) runRestore(w http.ResponseWriter, r *http.Reques
 	if rerr != nil {
 		status := 500
 		switch {
-		case errors.Is(rerr, services.ErrTargetNotEmpty), errors.Is(rerr, services.ErrNothingSelected):
+		// A role without the right to recreate the extension is the operator's
+		// choice of target, not Core failing, so it is answered like the other two.
+		case errors.Is(rerr, services.ErrTargetNotEmpty), errors.Is(rerr, services.ErrNothingSelected),
+			errors.Is(rerr, services.ErrTargetNeedsSuperuser):
 			status = http.StatusConflict
 		case errors.Is(rerr, services.ErrBundleWrongPassphrase):
 			status = http.StatusForbidden

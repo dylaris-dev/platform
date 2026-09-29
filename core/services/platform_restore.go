@@ -77,6 +77,35 @@ var ErrNothingSelected = errors.New("choose at least one component to restore")
 // ErrTargetNotEmpty is a target database that already holds tables.
 var ErrTargetNotEmpty = errors.New("the target database is not empty")
 
+// ErrTargetNeedsSuperuser is a restore the target role is not allowed to do.
+//
+// The platform database uses the TimescaleDB extension, and only a superuser
+// can drop or create an extension that is not trusted - or rebuild the catalog
+// it owns. A new database on a server that has TimescaleDB inherits it from
+// template1, owned by the superuser, so the restore fails on its very first
+// statement with a pg_restore line that says nothing about what to do. Measured
+// on production: "must be owner of extension timescaledb".
+//
+// Recognised from the failure rather than checked beforehand on purpose. A
+// platform without TimescaleDB restores fine with an ordinary role, and a
+// "must be superuser" gate would refuse exactly those. --single-transaction
+// means nothing was written when this comes back.
+var ErrTargetNeedsSuperuser = errors.New("this backup has to be restored with a superuser on the target database: " +
+	"it uses the TimescaleDB extension, which an ordinary role cannot recreate. Restore as a superuser, " +
+	"then give the database to the application role (ALTER DATABASE ... OWNER TO ...; REASSIGN OWNED BY ... TO ...). " +
+	"Nothing was written")
+
+// needsSuperuser reports whether a pg_restore failure is the extension-privilege
+// one above rather than anything else.
+func needsSuperuser(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "must be owner of extension") ||
+		strings.Contains(msg, "permission denied to create extension")
+}
+
 // PlatformRestorer reads a bundle and puts its parts back.
 type PlatformRestorer struct {
 	// ClusterSecret is THIS instance's secret, the one the restored credentials
@@ -282,7 +311,13 @@ func (r *PlatformRestorer) restoreDatabase(ctx context.Context, src io.Reader) e
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	return r.RestoreDatabaseInto(ctx, f)
+	if err := r.RestoreDatabaseInto(ctx, f); err != nil {
+		if needsSuperuser(err) {
+			return fmt.Errorf("%w (%v)", ErrTargetNeedsSuperuser, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // resealRestored moves every at-rest value in the RESTORED database from the

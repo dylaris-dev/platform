@@ -177,6 +177,13 @@ export default function PlatformRestoreCard() {
                     {needsTarget && (
                         <div className="space-y-2">
                             <p className="input-label">Target database</p>
+                            {/* Said up front because the failure itself is cryptic: with
+                                TimescaleDB an ordinary role dies on the first statement. */}
+                            <p className="text-xs text-(--base-06)">
+                                Use a <strong>superuser</strong> here if this platform runs TimescaleDB, which it
+                                does when statistics history is on. An ordinary role cannot recreate the
+                                extension. Hand the database to the application role afterwards.
+                            </p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                 <input className="input-field" placeholder="Host" value={target.host}
                                     onChange={e => setTarget(t => ({ ...t, host: e.target.value }))} />

@@ -417,3 +417,50 @@ func TestSafeBundleKey(t *testing.T) {
 		}
 	}
 }
+
+// Measured on production when a backup was first restored for real: the target
+// role was an ordinary one, the new database had inherited TimescaleDB from
+// template1, and the restore died on its first statement with
+//
+//	pg_restore: error: could not execute query: ERROR:  must be owner of
+//	extension timescaledb; Command was: DROP EXTENSION IF EXISTS timescaledb;
+//
+// which says nothing about what to do. The failure is now named, and it names
+// the fix. It is recognised from the failure rather than gated beforehand,
+// because a platform without TimescaleDB restores fine with an ordinary role.
+func TestRestoreNamesTheSuperuserRequirement(t *testing.T) {
+	raw := writeTestBundle(t, "source-secret", map[string]string{"database.dump": "PGDMP..."})
+
+	for _, raw0 := range []string{
+		"pg_restore: exit status 1: pg_restore: error: could not execute query: ERROR:  must be owner of extension timescaledb; Command was: DROP EXTENSION IF EXISTS timescaledb;",
+		"pg_restore: exit status 1: pg_restore: error: could not execute query: ERROR:  permission denied to create extension \"timescaledb\"",
+	} {
+		rig := newRig(t, "this-instances-secret")
+		rig.r.RestoreDatabaseInto = func(context.Context, io.Reader) error { return errors.New(raw0) }
+		_, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
+			PlatformRestoreSelection{Database: true}, false)
+		if !errors.Is(err, ErrTargetNeedsSuperuser) {
+			t.Errorf("err = %v, want ErrTargetNeedsSuperuser", err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "superuser") || !strings.Contains(err.Error(), "OWNER TO") {
+			t.Errorf("the message does not say what to do: %v", err)
+		}
+		// The raw line is kept beside it, for whoever has to look deeper.
+		if !strings.Contains(err.Error(), "timescaledb") {
+			t.Errorf("the original pg_restore error was dropped: %v", err)
+		}
+	}
+
+	// Any other failure stays what it was - this must not turn every broken
+	// restore into advice about superusers.
+	rig := newRig(t, "this-instances-secret")
+	rig.r.RestoreDatabaseInto = func(context.Context, io.Reader) error {
+		return errors.New("pg_restore: exit status 1: connection refused")
+	}
+	_, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
+		PlatformRestoreSelection{Database: true}, false)
+	if err == nil || errors.Is(err, ErrTargetNeedsSuperuser) {
+		t.Errorf("an unrelated failure was relabelled: %v", err)
+	}
+}
