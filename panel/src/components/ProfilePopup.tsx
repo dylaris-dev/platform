@@ -9,6 +9,7 @@ import { getMyUsernameHistory, type UsernameHistoryEntry } from '@/lib/api/accou
 import { isUsername } from '@/lib/validation';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface UserProfile {
     username: string;
@@ -95,7 +96,8 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   return (
     <>
     <div className="modal-overlay animate-fade-in">
-      <div className="modal-panel w-full max-w-md">
+      {/* Escape does what the X in its header does. */}
+      <ModalPanel onClose={onClose} className="modal-panel w-full max-w-md">
         <div className="modal-header flex justify-between items-center">
           <h2 className="modal-title">Profile Settings</h2>
           <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light) transition-colors">
@@ -242,7 +244,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
             )}
           </form>
         </div>
-      </div>
+      </ModalPanel>
     </div>
 
     {twoFactorOpen && (
@@ -409,7 +411,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
 
   return (
     <div className="modal-overlay animate-fade-in z-50">
-      <div className="modal-panel w-full max-w-md">
+      <ModalPanel className="modal-panel w-full max-w-md">
         <div className="modal-header flex items-center justify-between">
           <h2 className="modal-title flex items-center gap-2">
             <ShieldCheck size={18} />
@@ -523,7 +525,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
             </div>
           )}
         </div>
-      </div>
+      </ModalPanel>
     </div>
   );
 }
@@ -552,7 +554,7 @@ function DisableWizard({ onClose, onComplete }: { onClose: () => void; onComplet
 
   return (
     <div className="modal-overlay animate-fade-in z-50">
-      <div className="modal-panel w-full max-w-md">
+      <ModalPanel className="modal-panel w-full max-w-md">
         <div className="modal-header flex items-center justify-between">
           <h2 className="modal-title flex items-center gap-2">
             <ShieldOff size={18} className="text-(--error-light)" />
@@ -592,7 +594,7 @@ function DisableWizard({ onClose, onComplete }: { onClose: () => void; onComplet
             </button>
           </form>
         </div>
-      </div>
+      </ModalPanel>
     </div>
   );
 }
@@ -713,7 +715,7 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
 
   return (
     <div className="modal-overlay animate-fade-in z-50">
-      <div className="modal-panel w-full max-w-md">
+      <ModalPanel className="modal-panel w-full max-w-md">
         <div className="modal-header flex items-center justify-between">
           <h2 className="modal-title flex items-center gap-2">
             <RefreshCw size={18} className="text-(--accent-light)" />
@@ -794,7 +796,7 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
             </>
           )}
         </div>
-      </div>
+      </ModalPanel>
     </div>
   );
 }

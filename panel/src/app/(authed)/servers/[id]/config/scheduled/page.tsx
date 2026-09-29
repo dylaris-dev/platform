@@ -13,6 +13,7 @@ import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
 // Presets cover the 90% of operator wishes (daily restart at 4 AM, "10
@@ -313,7 +314,7 @@ export default function ServerConfigScheduledPage() {
             {/* Delete confirmation */}
             {deletePrompt && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setDeletePrompt(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setDeletePrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={20} />
@@ -330,7 +331,7 @@ export default function ServerConfigScheduledPage() {
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runDelete(handleDelete)} disabled={deletingTask} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
@@ -373,7 +374,7 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
                     <h3 className="modal-title flex items-center gap-2">
                         <Clock size={18} />
@@ -528,7 +529,7 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
                         {editing.isNew ? 'Create task' : 'Save changes'}
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

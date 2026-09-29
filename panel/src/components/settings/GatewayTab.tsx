@@ -23,6 +23,7 @@ import { useBusy } from '@/lib/useBusy';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
 import HelpTip from '@/components/ui/HelpTip';
 import SettingsPage from '@/components/settings/SettingsPage';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -908,7 +909,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             {/* Routing confirmation modal */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                    <div className="card p-6 max-w-md w-full mx-4 space-y-4">
+                    <ModalPanel className="card p-6 max-w-md w-full mx-4 space-y-4">
                         <div className="flex items-start gap-3">
                             <div className="w-9 h-9 rounded-md bg-(--warning)/10 border border-(--warning)/20 flex items-center justify-center shrink-0">
                                 <AlertTriangle size={18} className="text-(--warning-light)" />
@@ -943,14 +944,14 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             <button onClick={() => runSaveRouting(handleSaveRouting)} disabled={applyingRouting} className="btn btn-primary flex-1 disabled:opacity-40">Confirm & Apply</button>
                             <button onClick={() => setConfirmModal(false)} className="btn px-5 py-2 text-sm flex-1">Cancel</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Hoster-domain remove confirmation (optional cascade) */}
             {removeTarget && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-md">
+                    <ModalPanel className="modal-panel w-full max-w-md">
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={18} />
@@ -1010,7 +1011,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                             : 'Remove domain'}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </SettingsPage>

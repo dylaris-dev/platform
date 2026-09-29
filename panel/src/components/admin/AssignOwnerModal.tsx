@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Loader2, X, Check } from 'lucide-react';
 import { updateServerOwner, AdminServer, User } from '@/lib/api';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface AssignOwnerModalProps {
     server: AdminServer;
@@ -36,7 +37,7 @@ export function AssignOwnerModal({ server, users, onClose, onAssigned }: AssignO
 
     return (
         <div className="modal-overlay animate-fade-in">
-            <div className="modal-panel w-full max-w-md">
+            <ModalPanel className="modal-panel w-full max-w-md">
                 <div className="modal-header">
                     <h3 className="modal-title">Assign Owner</h3>
                     <button onClick={onClose} className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
@@ -82,7 +83,7 @@ export function AssignOwnerModal({ server, users, onClose, onAssigned }: AssignO
                         )}
                     </div>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

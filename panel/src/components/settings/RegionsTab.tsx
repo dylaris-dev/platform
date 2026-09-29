@@ -7,6 +7,7 @@ import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
 import HelpTip from '@/components/ui/HelpTip';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface RegionFormState {
     id: string;
@@ -194,7 +195,7 @@ export default function RegionsTab() {
             {/* Create / Edit Modal */}
             {modal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <form onSubmit={handleSubmit} className="card w-full max-w-md mx-4">
+                    <ModalPanel as="form" onSubmit={handleSubmit} className="card w-full max-w-md mx-4">
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title">{modal.mode === 'create' ? 'Add Region' : `Edit Region — ${modal.original?.id}`}</h3>
                             <button type="button" onClick={closeModal} className="text-(--base-07) hover:text-(--error-light)">
@@ -292,7 +293,7 @@ export default function RegionsTab() {
                                 {modal.mode === 'create' ? 'Create' : 'Save'}
                             </button>
                         </div>
-                    </form>
+                    </ModalPanel>
                 </div>
             )}
 

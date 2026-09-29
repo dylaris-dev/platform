@@ -22,6 +22,7 @@ import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { type SavableForm } from '@/components/settings/SettingsCard';
 import { readConnTest, CONN_TEST_TIMEOUT_MS, type ConnTestResult } from '@/lib/connectionTest';
 import { ConnectionTestNote } from '@/components/ui/ConnectionTest';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface LocalConfig {
     basePath: string;
@@ -527,7 +528,7 @@ export default function BackupsTab() {
 
             {editing && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setEditing(null)}>
-                    <div className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setEditing(null)} className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title">{editing.id === 0 ? 'New Storage' : 'Edit Storage'}</h3>
                             <button onClick={() => setEditing(null)} className="p-1 text-(--base-06) hover:text-(--base-09)">
@@ -718,7 +719,7 @@ export default function BackupsTab() {
                                 <Save size={13} /> Save
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </SettingsPage>

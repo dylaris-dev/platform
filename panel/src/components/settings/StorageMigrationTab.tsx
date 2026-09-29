@@ -21,6 +21,7 @@ import { systemEvents } from '@/lib/systemEvents';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 import SettingsPage from '@/components/settings/SettingsPage';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
     preparing: 'Preparing',
@@ -343,7 +344,7 @@ export default function StorageMigrationTab() {
 
             {wizardOpen && (
                 <div className="modal-overlay animate-fade-in" onClick={() => !submitting && setWizardOpen(false)}>
-                    <div className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => !submitting && setWizardOpen(false)} className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title">New migration</h3>
                             <button onClick={() => setWizardOpen(false)} className="p-1 text-(--base-06) hover:text-(--base-09)" disabled={submitting}>
@@ -524,7 +525,7 @@ export default function StorageMigrationTab() {
                                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />} Start migration
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </SettingsPage>

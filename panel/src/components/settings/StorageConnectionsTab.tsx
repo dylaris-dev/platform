@@ -19,6 +19,7 @@ import {
     useConnectionTest, readConnTest, CONN_TEST_TIMEOUT_MS, type ConnTestResult,
 } from '@/lib/connectionTest';
 import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // editing holds a StorageConnection plus a transient secret. The list never
 // carries the secret (secretSet only); a save sends secretAccessKey only when
@@ -328,7 +329,7 @@ export default function StorageConnectionsTab() {
 
             {editing && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setEditing(null)}>
-                    <div
+                    <ModalPanel onClose={() => setEditing(null)}
                         className="modal-with-help"
                         onClick={e => e.stopPropagation()}
                     >
@@ -431,7 +432,7 @@ export default function StorageConnectionsTab() {
                                 </>
                             }
                         />
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </SettingsPage>

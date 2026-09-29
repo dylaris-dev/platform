@@ -11,6 +11,7 @@ import { SkeletonCard } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // top-level packs list. Per-user authored packs on the unified pack API.
 // The builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -186,7 +187,7 @@ export default function PacksListPage() {
             {/* Create */}
             {creating && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setCreating(null)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setCreating(null)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Package size={16} />
@@ -238,14 +239,14 @@ export default function PacksListPage() {
                             <button onClick={() => setCreating(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runCreate(handleCreate)} disabled={creatingPack} className="btn btn-primary disabled:opacity-40">Create</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Delete */}
             {deletePrompt && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setDeletePrompt(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setDeletePrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <Trash2 size={16} />
@@ -263,7 +264,7 @@ export default function PacksListPage() {
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runDelete(handleDelete)} disabled={deletingPack} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

@@ -19,6 +19,7 @@ import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Custom Tabs management.
 //
@@ -445,7 +446,7 @@ export default function ServerConfigTabsPage() {
             {/* Editor */}
             {editing && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setEditing(null)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setEditing(null)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <LayoutGrid size={16} />
@@ -684,14 +685,14 @@ export default function ServerConfigTabsPage() {
                                 {editing.isNew ? 'Create' : 'Save'}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Delete confirm */}
             {deletePrompt && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setDeletePrompt(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setDeletePrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={18} />
@@ -707,7 +708,7 @@ export default function ServerConfigTabsPage() {
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runDelete(handleDelete)} disabled={deletingTab} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

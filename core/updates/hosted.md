@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.29.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Panel dialogs work from the keyboard and a screen reader.** Focus stays in the open
+  dialog, and Escape closes any dialog a click beside it already closed. Nothing for you to
+  update.
+
 ## 2026.09.29.3
 
 ### Features

@@ -10,6 +10,7 @@ import {
     Trash2, RefreshCw, AlertTriangle, X, Search, Copy, Check, Layers,
 } from 'lucide-react';
 import { SkeletonTable, SkeletonText } from '@/components/Skeleton';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface Toast {
     id: number;
@@ -288,7 +289,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
             {/* Delete confirm modal */}
             {deleteModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-                    <div className="card w-full max-w-sm p-6 flex flex-col gap-4">
+                    <ModalPanel className="card w-full max-w-sm p-6 flex flex-col gap-4">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <AlertTriangle size={16} className="text-(--error)" />
@@ -317,14 +318,14 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                 {deleting ? 'Deleting...' : 'Delete'}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Bulk-delete-by-suffix modal */}
             {bulkOpen && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-lg">
+                    <ModalPanel className="modal-panel w-full max-w-lg">
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <Layers size={18} />
@@ -401,7 +402,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                         : <><Trash2 size={13} /> Delete all matching</>}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

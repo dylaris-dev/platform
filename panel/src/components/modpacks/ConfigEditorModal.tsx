@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Loader2, FileText } from 'lucide-react';
 import { getContentText, setContentText } from '@/lib/api/packsPublish';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Loads a config entry's text, lets the user edit it, and saves it back.
 // onSaved fires so the parent can refresh + toast.
@@ -46,12 +47,6 @@ export default function ConfigEditorModal({
         return () => { live = false; };
     }, [packId, buildId, modversionId]);
 
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
     const save = async () => {
         setError(null);
         setSaving(true);
@@ -66,7 +61,7 @@ export default function ConfigEditorModal({
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel max-w-2xl" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel max-w-2xl" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
                     <h3 className="modal-title flex items-center gap-2">
                         <FileText size={16} />
@@ -102,7 +97,7 @@ export default function ConfigEditorModal({
                         {saving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

@@ -26,6 +26,7 @@ import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Panel-admin Settings tab (F6): (A) the global permissions_mode 3-state
 // switch, (B) panel-role CRUD, (C) assigning a panel role + grant/deny
@@ -365,7 +366,7 @@ export default function RolesTab() {
             {/* Delete role confirm */}
             {deletingRole && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setDeletingRole(null)}>
-                    <div className="modal-panel w-full max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setDeletingRole(null)} className="modal-panel w-full max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title text-(--error-light)">Delete &quot;{deletingRole.name}&quot;?</h3>
                         </div>
@@ -376,7 +377,7 @@ export default function RolesTab() {
                             <button type="button" onClick={() => setDeletingRole(null)} className="btn btn-secondary">Cancel</button>
                             <button type="button" onClick={() => runDeleteRole(handleDeleteRole)} disabled={deletingPanelRole} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
@@ -442,7 +443,7 @@ function ViewCapabilitiesModal({
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-center justify-between">
                     <div>
                         <h3 className="modal-title flex items-center gap-2">
@@ -500,7 +501,7 @@ function ViewCapabilitiesModal({
                 <div className="modal-footer">
                     <button type="button" onClick={onClose} className="btn btn-primary">Close</button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }
@@ -542,7 +543,7 @@ function RoleModal({
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-center justify-between">
                     <h3 className="modal-title">{role ? 'Edit Panel Role' : 'New Panel Role'}</h3>
                     <button onClick={onClose} className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
@@ -574,7 +575,7 @@ function RoleModal({
                         {saving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }
@@ -647,7 +648,7 @@ function AssignRoleModal({
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-center justify-between">
                     <div>
                         <h3 className="modal-title">Assign Panel Role</h3>
@@ -703,7 +704,7 @@ function AssignRoleModal({
                         {saving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

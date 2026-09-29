@@ -34,6 +34,7 @@ import {
     ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, RefreshCw, Eye, EyeOff,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node deploy ENV for
 // an already-enrolled node (see WarpTab's mint+reveal pattern). The Link's own
@@ -286,7 +287,7 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
 
             {revealed && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
-                    <div className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setRevealed(null)} className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
                         <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Setup values — {revealed.nodeId.slice(0, 8)}</h3></div>
                         <div className="modal-body space-y-3">
                             <div className="space-y-1">
@@ -298,7 +299,7 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                             </div>
                         </div>
                         <div className="modal-footer"><button onClick={() => setRevealed(null)} className="btn btn-primary">Done</button></div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </div>
@@ -1659,7 +1660,7 @@ function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string,
 
             {revealed && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setRevealed(null)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setRevealed(null)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Enroll token</h3></div>
                         <div className="modal-body space-y-3">
                             <p className="text-sm text-(--base-07)">Shown once. Copy it now — it cannot be retrieved later.</p>
@@ -1672,7 +1673,7 @@ function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string,
                             </div>
                         </div>
                         <div className="modal-footer"><button onClick={() => setRevealed(null)} className="btn btn-primary">Done</button></div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </div>

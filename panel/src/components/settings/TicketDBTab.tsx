@@ -17,6 +17,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
 import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
 import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
@@ -356,7 +357,7 @@ function RestoreDangerModal({ backup, onClose, onDone }: { backup: BackupSummary
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-            <div className="card w-full max-w-lg mx-4 border-2 border-(--error)/30">
+            <ModalPanel className="card w-full max-w-lg mx-4 border-2 border-(--error)/30">
                 <div className="modal-header flex items-center justify-between bg-(--error-ghost) text-(--error-light) rounded-t-md">
                     <h3 className="modal-title flex items-center gap-2"><ShieldAlert size={18} /> Danger Zone — Restore</h3>
                     <button type="button" onClick={onClose} className="text-(--base-07) hover:text-(--base-09)"><X size={18} /></button>
@@ -428,7 +429,7 @@ function RestoreDangerModal({ backup, onClose, onDone }: { backup: BackupSummary
                         Execute restore
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

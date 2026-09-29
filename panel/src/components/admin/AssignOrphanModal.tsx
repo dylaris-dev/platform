@@ -9,6 +9,7 @@ import { sortUsersForPicker } from '@/lib/userOrder';
 import { useAppData } from '@/lib/AppDataContext';
 import { OrphanFileBrowser } from './OrphanFileBrowser';
 import { Skeleton } from '@/components/Skeleton';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface AssignOrphanModalProps {
     nodeId: number;
@@ -139,7 +140,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
 
     return (
         <div className="modal-overlay animate-fade-in">
-            <div className="modal-panel w-full max-w-lg">
+            <ModalPanel className="modal-panel w-full max-w-lg">
                 {/* Header */}
                 <div className="modal-header flex items-start justify-between">
                     <div>
@@ -325,7 +326,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                         </div>
                     </>
                 )}
-            </div>
+            </ModalPanel>
         </div>
     );
 }

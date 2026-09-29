@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Pack detail. Shows pack metadata + its builds. Each build pins a
 // Minecraft version + loader and links to the per-build content editor at
@@ -228,7 +229,7 @@ export default function PackDetailPage() {
             {/* Create build */}
             {creating && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setCreating(null)}>
-                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setCreating(null)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Layers size={16} />
@@ -284,14 +285,14 @@ export default function PackDetailPage() {
                             <button onClick={() => setCreating(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runCreate(handleCreate)} disabled={creatingBuild} className="btn btn-primary disabled:opacity-40">Create</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Delete build */}
             {deletePrompt && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setDeletePrompt(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setDeletePrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <Trash2 size={16} />
@@ -308,7 +309,7 @@ export default function PackDetailPage() {
                             <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runDelete(handleDelete)} disabled={deletingBuild} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </main>

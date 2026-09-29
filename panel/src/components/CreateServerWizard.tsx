@@ -13,6 +13,7 @@ import CpuPinningControl from './CpuPinningControl';
 import { useAppData } from '@/lib/AppDataContext';
 import { sortUsersForPicker } from '@/lib/userOrder';
 import { nodeLabel } from '@/lib/nodeLabel';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface StoragePathInfo {
     path: string;
@@ -272,7 +273,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
     return (
         <div className="modal-overlay animate-fade-in">
-            <div className="modal-panel w-full max-w-4xl flex flex-col max-h-[90vh]">
+            <ModalPanel className="modal-panel w-full max-w-4xl flex flex-col max-h-[90vh]">
 
                 {/* Header */}
                 <div className="modal-header flex justify-between items-center">
@@ -786,7 +787,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     </>
                     )}
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

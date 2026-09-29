@@ -28,6 +28,7 @@ import { useBusy } from '@/lib/useBusy';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -953,7 +954,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             {/* Delete Confirmation Popup */}
             {showDeletePopup && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-md">
+                    <ModalPanel className="modal-panel w-full max-w-md">
                         <div className="modal-header">
                             <h3 className="modal-title text-(--error-light) flex items-center gap-2">
                                 <AlertTriangle size={20} />
@@ -989,7 +990,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 </>
                             )}
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
@@ -1000,7 +1001,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                 warnings -- they're independent risks. */}
             {pendingCooldownAction && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setPendingCooldownAction(null)}>
-                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setPendingCooldownAction(null)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
                                 <AlertTriangle size={20} />
@@ -1037,14 +1038,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 Override &amp; continue
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Kill Confirmation */}
             {showKillConfirm && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setShowKillConfirm(false)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setShowKillConfirm(false)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Skull size={20} className="text-(--error)" />
@@ -1072,14 +1073,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 Kill
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Transfer Popup (BYON owners). Admins use the Resources popup. */}
             {showTransferPopup && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-md">
+                    <ModalPanel className="modal-panel w-full max-w-md">
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Move size={18} />
@@ -1127,14 +1128,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Transfer</>}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Edit Resources Popup */}
             {showEditResourcesPopup && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-lg">
+                    <ModalPanel className="modal-panel w-full max-w-lg">
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <SlidersHorizontal size={18} />
@@ -1353,7 +1354,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                             <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources} className="btn btn-primary disabled:opacity-40">Save & Restart</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

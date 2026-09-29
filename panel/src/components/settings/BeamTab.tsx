@@ -11,6 +11,7 @@ import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import HelpTip from '@/components/ui/HelpTip';
 import { LimitField } from '@/components/settings/LimitField';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // ─────────────────────────────────────────────
 // Beam settings
@@ -618,7 +619,7 @@ export default function BeamTab() {
 
         {showDownloadLinkWarning && (
             <div className="modal-overlay animate-fade-in" onClick={() => setShowDownloadLinkWarning(false)}>
-                <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                <ModalPanel onClose={() => setShowDownloadLinkWarning(false)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                     <div className="modal-header">
                         <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
                             <AlertTriangle size={16} /> Use your own download link?
@@ -646,7 +647,7 @@ export default function BeamTab() {
                             I build my own Beam
                         </button>
                     </div>
-                </div>
+                </ModalPanel>
             </div>
         )}
         </>

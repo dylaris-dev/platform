@@ -24,6 +24,7 @@ import ConfigEditorModal from '@/components/modpacks/ConfigEditorModal';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Build content editor. Two panels:
 //   left:  the build's content list (mods / resource-packs / plugins), with a
@@ -83,18 +84,12 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
     };
 
     // Close on Escape
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
     return (
         <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
             onClick={onClose}
         >
-            <div
+            <ModalPanel onClose={onClose}
                 className="card w-full max-w-md mx-4"
                 onClick={e => e.stopPropagation()}
             >
@@ -194,7 +189,7 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
                         </button>
                     )}
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }
@@ -215,18 +210,12 @@ interface ReplaceDialogProps {
 
 function ReplaceDialog({ entry, build, packId, disabled, isFrozen, onClose, onReplaced, showToast }: ReplaceDialogProps) {
     // Close on Escape
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
     return (
         <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
             onClick={onClose}
         >
-            <div
+            <ModalPanel onClose={onClose}
                 className="card w-full max-w-2xl mx-4 flex flex-col"
                 style={{ maxHeight: 'min(90vh, 720px)' }}
                 onClick={e => e.stopPropagation()}
@@ -265,7 +254,7 @@ function ReplaceDialog({ entry, build, packId, disabled, isFrozen, onClose, onRe
                         }}
                     />
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }
@@ -288,18 +277,12 @@ interface UpdateModsDialogProps {
 
 function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, onUpdated, showToast }: UpdateModsDialogProps) {
     // Close on Escape
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
     return (
         <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
             onClick={onClose}
         >
-            <div
+            <ModalPanel onClose={onClose}
                 className="card w-full max-w-2xl mx-4 flex flex-col"
                 style={{ maxHeight: 'min(90vh, 720px)' }}
                 onClick={e => e.stopPropagation()}
@@ -342,7 +325,7 @@ function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, o
                         }}
                     />
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

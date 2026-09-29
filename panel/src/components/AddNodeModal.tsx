@@ -5,6 +5,7 @@ import { X, Server, Network, Copy, Check, ExternalLink, Info } from 'lucide-reac
 import { useAppData } from '@/lib/AppDataContext';
 import { coreOrigin } from '@/lib/api/core';
 import { isWails } from '@/lib/adapters';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // ---------------------------------------------------------------------------
 // "How do I add a node?" — the admin answer.
@@ -106,7 +107,7 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-3xl flex flex-col max-h-[88vh]" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-3xl flex flex-col max-h-[88vh]" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-start justify-between gap-4">
                     <div>
                         <h3 className="modal-title flex items-center gap-2">
@@ -237,7 +238,7 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                 <div className="modal-footer">
                     <button onClick={onClose} className="btn btn-secondary">Close</button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

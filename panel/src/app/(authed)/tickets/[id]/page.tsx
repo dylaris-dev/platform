@@ -23,6 +23,7 @@ import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
 import { useRouter } from 'next/navigation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'waiting_user', 'resolved', 'closed'];
 
@@ -594,7 +595,7 @@ export default function TicketDetailPage() {
                 above the rest of the page. */}
             {confirmDelete && user?.isAdmin && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-(--base-00)/70 backdrop-blur-sm">
-                    <div className="card max-w-md w-full p-6 border border-(--base-03)">
+                    <ModalPanel className="card max-w-md w-full p-6 border border-(--base-03)">
                         <div className="flex items-start gap-3">
                             <div className="w-10 h-10 rounded-md bg-(--error-ghost) flex items-center justify-center shrink-0">
                                 <Trash2 size={18} className="text-(--error-light)" />
@@ -625,7 +626,7 @@ export default function TicketDetailPage() {
                                 {deleting ? 'Deleting...' : 'Delete permanently'}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </main>

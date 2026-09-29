@@ -9,6 +9,7 @@ import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import { toast } from '@/components/ui/Toast';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // per-user API key management. Lives under /account/ because
 // keys are owned by users, not the admin platform. Plaintext is shown
@@ -226,7 +227,7 @@ export default function ApiKeysPage() {
             {/* Create modal */}
             {creating && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setCreating(false)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setCreating(false)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
                         {/* .modal-header sets padding and a divider, no layout, so a
                             header with a title AND a close button stacks them and the X
                             lands under the heading. Every modal that carries one adds
@@ -368,14 +369,14 @@ export default function ApiKeysPage() {
                             <button onClick={() => { setCreating(false); setReauthPassword(''); setReauthCode(''); }} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runCreate(handleCreate)} disabled={creatingKey || !reauthReady(!!user?.is2FAEnabled, reauthPassword, reauthCode)} className="btn btn-primary disabled:opacity-40">Create key</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Plaintext reveal — shown once */}
             {revealedKey && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setRevealedKey(null)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setRevealedKey(null)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--accent-light)">
                                 <Key size={16} />
@@ -405,14 +406,14 @@ export default function ApiKeysPage() {
                                 Hide
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Revoke confirmation */}
             {revoking && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setRevoking(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setRevoking(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={18} />
@@ -429,7 +430,7 @@ export default function ApiKeysPage() {
                             <button onClick={() => setRevoking(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runRevoke(handleRevoke)} disabled={revokingKey} className="btn btn-danger disabled:opacity-40">Revoke</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

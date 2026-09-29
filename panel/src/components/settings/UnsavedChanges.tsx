@@ -11,6 +11,7 @@ import React, {
     useRef,
 } from 'react';
 import { Loader2 } from 'lucide-react';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -225,7 +226,7 @@ export function UnsavedDialog({
 }) {
     return (
         <div className="modal-overlay animate-fade-in" onClick={onCancel}>
-            <div
+            <ModalPanel onClose={onCancel}
                 className="modal-panel w-full max-w-sm"
                 onClick={e => e.stopPropagation()}
             >
@@ -264,7 +265,7 @@ export function UnsavedDialog({
                         Save
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

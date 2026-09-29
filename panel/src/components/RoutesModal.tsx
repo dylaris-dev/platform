@@ -8,6 +8,7 @@ import {
 } from '@/lib/api';
 import { Globe, Plus, Trash2, X, Check, AlertTriangle } from 'lucide-react';
 import RouteDomainPicker from '@/components/RouteDomainPicker';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface RoutesModalProps {
     serverId: number;
@@ -163,7 +164,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-center justify-between">
                     <div>
                         <h3 className="modal-title flex items-center gap-2">
@@ -278,7 +279,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
 
                 {deleteTarget && (
                     <div className="modal-overlay animate-fade-in" onClick={() => setDeleteTarget(null)}>
-                        <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                        <ModalPanel onClose={() => setDeleteTarget(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                             <div className="modal-header">
                                 <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                     <AlertTriangle size={16} /> Delete Route
@@ -299,10 +300,10 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                                     {deleting ? 'Deleting…' : 'Delete'}
                                 </button>
                             </div>
-                        </div>
+                        </ModalPanel>
                     </div>
                 )}
-            </div>
+            </ModalPanel>
         </div>
     );
 }

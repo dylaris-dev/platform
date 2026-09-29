@@ -21,6 +21,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import HelpTip from '@/components/ui/HelpTip';
 import { platformNote, useDeployPlatform } from '@/components/infra/DeployKit';
 import { isLocationName } from '@/lib/validation';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 const enrollUrl = coreOrigin();
 
@@ -713,7 +714,7 @@ function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint,
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel max-w-3xl" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel max-w-3xl" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
                     <h3 className="modal-title text-(--accent-light)">{name} - deploy</h3>
                 </div>
@@ -825,7 +826,7 @@ function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint,
                 <div className="modal-footer">
                     <button onClick={onClose} className="btn btn-primary"><EyeOff size={12} /> Done</button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

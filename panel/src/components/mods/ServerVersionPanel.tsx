@@ -15,6 +15,7 @@ import {
 import Checkbox from '@/components/ui/Checkbox';
 import { isKnownLoader } from '@/lib/serverLoaderMetadata';
 import type { Server } from '@/lib/api/types';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 /**
  * "Move this server to another Minecraft version and take its mods along."
@@ -171,7 +172,7 @@ function MoveDialog({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="card w-full max-w-lg max-h-[90vh] flex flex-col">
+            <ModalPanel className="card w-full max-w-lg max-h-[90vh] flex flex-col">
                 <div className="modal-header flex items-center justify-between">
                     <h3 className="modal-title">Move to Minecraft {target.minecraft}</h3>
                     <button type="button" onClick={onClose} className="text-(--base-07) hover:text-(--error-light) transition-colors">
@@ -257,7 +258,7 @@ function MoveDialog({
                         {copyFirst ? 'Copy and move' : 'Move'}
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

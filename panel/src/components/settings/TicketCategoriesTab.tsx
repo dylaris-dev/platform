@@ -9,6 +9,7 @@ import {
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 
@@ -222,7 +223,7 @@ export default function TicketCategoriesTab() {
 
             {modal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <form onSubmit={handleSubmit} className="card w-full max-w-md mx-4 max-h-[90vh] flex flex-col">
+                    <ModalPanel as="form" onSubmit={handleSubmit} className="card w-full max-w-md mx-4 max-h-[90vh] flex flex-col">
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title">{modal.mode === 'create' ? 'Add category' : `Edit ${modal.original?.name}`}</h3>
                             <button type="button" onClick={closeModal} className="text-(--base-07) hover:text-(--error-light)"><X size={18} /></button>
@@ -333,7 +334,7 @@ export default function TicketCategoriesTab() {
                                 {modal.mode === 'create' ? 'Create' : 'Save'}
                             </button>
                         </div>
-                    </form>
+                    </ModalPanel>
                 </div>
             )}
 

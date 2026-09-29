@@ -74,12 +74,18 @@ export function ConfirmDialogRoot() {
     // operable from the keyboard the way the native one was.
     useEffect(() => {
         if (!pending) return;
+        // Back to the button that asked, so a confirm opened over a modal
+        // leaves the keyboard in that modal rather than on the page body.
+        const opener = document.activeElement as HTMLElement | null;
         confirmRef.current?.focus();
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') close(false);
         };
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            if (opener && document.contains(opener)) opener.focus();
+        };
     }, [pending, close]);
 
     if (!pending) return null;

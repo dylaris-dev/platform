@@ -8,6 +8,7 @@ import UnlinkedContentWarning from '@/components/mods/UnlinkedContentWarning';
 import { useCompat } from '@/components/mods/useCompat';
 import { migrateBuild, type CompatVersion } from '@/lib/api/modcompat';
 import type { BuildContentEntry } from '@/lib/api/packs';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 /**
  * What to tell someone after a migration returned 200.
@@ -190,7 +191,7 @@ function MigrateDialog({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="card w-full max-w-lg max-h-[90vh] flex flex-col">
+            <ModalPanel className="card w-full max-w-lg max-h-[90vh] flex flex-col">
                 <div className="modal-header flex items-center justify-between">
                     <h3 className="modal-title">Create a build for Minecraft {target.minecraft}</h3>
                     <button type="button" onClick={onClose} className="text-(--base-07) hover:text-(--error-light) transition-colors">
@@ -264,7 +265,7 @@ function MigrateDialog({
                         Create build
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

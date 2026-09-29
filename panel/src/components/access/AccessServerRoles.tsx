@@ -10,6 +10,7 @@ import {
 import CapabilityPicker from '@/components/access/CapabilityPicker';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Advanced-mode owner UI: custom per-server capability bundles. Bundles
 // SERVER + OWNER scope capabilities only (matches the backend
@@ -126,7 +127,7 @@ export default function AccessServerRoles({ catalog, roles, loading, onRolesChan
 
             {showEditor && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setShowEditor(false)}>
-                    <div className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setShowEditor(false)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Shield size={16} />
@@ -162,13 +163,13 @@ export default function AccessServerRoles({ catalog, roles, loading, onRolesChan
                             <button onClick={() => setShowEditor(false)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runSave(handleSave)} disabled={savingRole} className="btn btn-primary disabled:opacity-40">{editing ? 'Save' : 'Create role'}</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {deleting && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setDeleting(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setDeleting(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={18} />
@@ -184,7 +185,7 @@ export default function AccessServerRoles({ catalog, roles, loading, onRolesChan
                             <button onClick={() => setDeleting(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runDelete(handleDelete)} disabled={deletingRole} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </section>

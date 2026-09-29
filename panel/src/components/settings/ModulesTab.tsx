@@ -22,6 +22,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import HelpTip from '@/components/ui/HelpTip';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface ModulesTabProps {
     modules: AppModule[];
@@ -338,7 +339,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
 
             {isModalOpen && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-md">
+                    <ModalPanel className="modal-panel w-full max-w-md">
                         <div className="modal-header">
                             <h3 className="modal-title">New Module</h3>
                         </div>
@@ -392,7 +393,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                                 </div>
                             </form>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </div>

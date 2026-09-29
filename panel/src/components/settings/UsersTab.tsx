@@ -42,6 +42,7 @@ import { SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { reauthDialog } from '@/components/ui/ReauthDialog';
 import HelpTip from '@/components/ui/HelpTip';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -596,7 +597,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             {/* Create User Modal */}
             {isModalOpen && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-md">
+                    <ModalPanel className="modal-panel w-full max-w-md">
                         <div className="modal-header">
                             <h3 className="modal-title">New User</h3>
                         </div>
@@ -628,14 +629,14 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                 </div>
                             </form>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* User Settings Modal */}
             {settingsUser && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-                    <div className="card w-full max-w-lg flex flex-col max-h-[80vh]">
+                    <ModalPanel className="card w-full max-w-lg flex flex-col max-h-[80vh]">
                         {/* Header */}
                         <div className="flex items-center justify-between p-5 border-b border-(--base-03)">
                             <div>
@@ -1050,7 +1051,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                 </div>
                             )}
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
@@ -1095,7 +1096,7 @@ function UsernameHistoryModal({ user, onClose }: { user: { id: string; username:
     }, [user.id]);
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex justify-between items-center">
                     <h3 className="modal-title">Username history — {user.username}</h3>
                     <button onClick={onClose} className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
@@ -1130,7 +1131,7 @@ function UsernameHistoryModal({ user, onClose }: { user: { id: string; username:
                 <div className="modal-footer">
                     <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }
@@ -1373,7 +1374,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex justify-between items-center">
                     <h3 className="modal-title">Billing — {user.username}</h3>
                     <button onClick={onClose} className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
@@ -1678,7 +1679,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                 <div className="modal-footer">
                     <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }

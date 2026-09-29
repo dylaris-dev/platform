@@ -10,6 +10,7 @@ import {
 import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 const TEMPLATE_VARS = ['{{user_name}}', '{{ticket_id}}', '{{server_name}}', '{{actor_name}}'];
 
@@ -169,7 +170,7 @@ export default function CannedResponsesTab() {
 
             {modal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <form onSubmit={handleSubmit} className="card w-full max-w-lg mx-4 max-h-[90vh] flex flex-col">
+                    <ModalPanel as="form" onSubmit={handleSubmit} className="card w-full max-w-lg mx-4 max-h-[90vh] flex flex-col">
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title">{modal.mode === 'create' ? 'Add canned response' : `Edit ${modal.original?.name}`}</h3>
                             <button type="button" onClick={close} className="text-(--base-07) hover:text-(--error-light)"><X size={18} /></button>
@@ -210,7 +211,7 @@ export default function CannedResponsesTab() {
                                 {modal.mode === 'create' ? 'Create' : 'Save'}
                             </button>
                         </div>
-                    </form>
+                    </ModalPanel>
                 </div>
             )}
 

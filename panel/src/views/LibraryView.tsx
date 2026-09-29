@@ -7,6 +7,7 @@ import { FolderPlus, Upload, ArrowUp, FolderOpen, Folder, Archive, Trash2, Eye, 
 import { SkeletonTable } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 interface FileEntry {
     name: string;
@@ -260,7 +261,7 @@ export default function LibraryView() {
             {/* Create folder popup */}
             {showCreateDir && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-80">
+                    <ModalPanel className="modal-panel w-80">
                         <div className="modal-header">
                             <h3 className="modal-title">Create Folder</h3>
                         </div>
@@ -279,14 +280,14 @@ export default function LibraryView() {
                             <button onClick={() => setShowCreateDir(false)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runCreateDir(handleCreateDir)} disabled={creatingDir} className="btn btn-primary disabled:opacity-40">Create</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Delete confirm popup */}
             {deleteTarget && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-80">
+                    <ModalPanel className="modal-panel w-80">
                         <div className="modal-header">
                             <h3 className="modal-title text-(--error-light)">Delete {deleteTarget.is_dir ? 'Folder' : 'File'}?</h3>
                         </div>
@@ -299,7 +300,7 @@ export default function LibraryView() {
                             <button onClick={() => setDeleteTarget(null)} className="btn btn-secondary">Cancel</button>
                             <button onClick={() => runDelete(handleDelete)} disabled={deletingEntry} className="btn btn-danger disabled:opacity-40">Delete</button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

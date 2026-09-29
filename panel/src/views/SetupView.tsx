@@ -19,6 +19,7 @@ import { classifyInstallChange, type InstallChange, type WipeToken } from '@/lib
 import { API_URL } from '@/lib/api/core';
 import { isSubServerName } from '@/lib/validation';
 import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 const DEFAULT_GC_FLAGS = '-XX:+UseG1GC -XX:MaxHeapFreeRatio=40 -XX:MinHeapFreeRatio=15 -XX:-ShrinkHeapInSteps';
 
@@ -850,7 +851,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                 player connected to the live server. */}
             {switchTarget && switchTarget !== server.activeSubServer && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setSwitchTarget(null)}>
-                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setSwitchTarget(null)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
                                 <RefreshCw size={20} /> Switch Sub-Server
@@ -881,14 +882,14 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                                 }
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Delete Confirmation Modal */}
             {showDeleteConfirm && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setShowDeleteConfirm(false)}>
-                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setShowDeleteConfirm(false)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={20} /> Delete Sub-Server
@@ -925,7 +926,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                                 }
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

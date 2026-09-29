@@ -15,6 +15,7 @@ import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Player Management. Everything here goes through /servers/{id}/players,
 // which is gated on players.read (the roster + the three list files) and
@@ -429,7 +430,7 @@ export default function ServerPlayersPage() {
             {/* Confirm modal */}
             {confirm && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setConfirm(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setConfirm(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className={`modal-title flex items-center gap-2 ${confirm.danger ? 'text-(--error-light)' : ''}`}>
                                 {confirm.danger && <AlertTriangle size={18} />}
@@ -452,14 +453,14 @@ export default function ServerPlayersPage() {
                                 Confirm
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Tell prompt */}
             {tellPrompt && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setTellPrompt(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setTellPrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <MessageSquare size={16} />
@@ -494,14 +495,14 @@ export default function ServerPlayersPage() {
                                 Send
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 
             {/* Add to whitelist/ops */}
             {addPrompt && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setAddPrompt(null)}>
-                    <div className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => setAddPrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
                                 <ListPlus size={16} />
@@ -537,7 +538,7 @@ export default function ServerPlayersPage() {
                                 Add
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

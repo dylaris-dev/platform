@@ -10,6 +10,7 @@ import {
 } from '@/lib/api';
 import { AssignOrphanModal } from './AssignOrphanModal';
 import { nodeLabel } from '@/lib/nodeLabel';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 // Single confirm modal handles both flows (orphan folder + DB stray).
 // `target` describes what's being deleted; null means closed.
@@ -220,7 +221,7 @@ export function DiskAnalysisPanel({
 
             {pendingDelete && (
                 <div className="modal-overlay animate-fade-in">
-                    <div className="modal-panel w-full max-w-md">
+                    <ModalPanel className="modal-panel w-full max-w-md">
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <AlertTriangle size={18} />
@@ -280,7 +281,7 @@ export function DiskAnalysisPanel({
                                 {pendingDelete.kind === 'orphan' ? 'Delete folder' : 'Remove entry'}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </div>

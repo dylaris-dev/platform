@@ -16,6 +16,7 @@ import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 function formatBytes(b: number): string {
     if (!b) return '—';
@@ -76,7 +77,7 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel w-full max-w-xl" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-xl" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-center justify-between">
                     <h3 className="modal-title">{job.id ? 'Edit Backup Job' : 'New Backup Job'}</h3>
                     <button onClick={onClose} className="p-1 text-(--base-06) hover:text-(--base-09)">
@@ -184,7 +185,7 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
                         <Save size={13} /> {saving ? 'Saving…' : 'Save Job'}
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }
@@ -556,7 +557,7 @@ export default function ServerBackupsView() {
 
             {restoreTarget && (
                 <div className="modal-overlay animate-fade-in" onClick={() => !restoring && setRestoreTarget(null)}>
-                    <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+                    <ModalPanel onClose={() => !restoring && setRestoreTarget(null)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
                                 <AlertTriangle size={18} /> Restore Backup
@@ -590,7 +591,7 @@ export default function ServerBackupsView() {
                                         : <><Undo2 size={13} /> Restore now</>}
                             </button>
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
 

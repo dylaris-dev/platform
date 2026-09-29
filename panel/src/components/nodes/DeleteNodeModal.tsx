@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { getNodeServers, forceDeleteNode } from '@/lib/api';
+import ModalPanel from '@/components/ui/ModalPanel';
 
 /**
  * Deleting a node, and everything on it.
@@ -69,7 +70,7 @@ export default function DeleteNodeModal({
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <div className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
+            <ModalPanel onClose={onClose} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <AlertTriangle size={18} className="text-(--error)" />
@@ -138,7 +139,7 @@ export default function DeleteNodeModal({
                         {deleting ? 'Deleting...' : 'Delete node'}
                     </button>
                 </div>
-            </div>
+            </ModalPanel>
         </div>
     );
 }
