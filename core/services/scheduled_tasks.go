@@ -32,6 +32,10 @@ const (
 
 	// ScheduledTaskMaxCron matches the scheduled_tasks.schedule_cron column.
 	ScheduledTaskMaxCron = 128
+
+	// ScheduledTaskMinInterval is the shortest "@every" a schedule may ask for.
+	// A 5-field cron cannot go below a minute to begin with.
+	ScheduledTaskMinInterval = time.Minute
 )
 
 // skipError marks a firing that was deliberately not carried out because the
@@ -110,6 +114,15 @@ func ComputeNextRun(cronExpr string, from time.Time) (time.Time, error) {
 	}
 	if strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
 		return time.Time{}, fmt.Errorf("invalid cron: a time zone cannot be set, schedules run in UTC")
+	}
+	// "@every" is the one form that can go below a minute. The executor ticks
+	// every 30s, so anything shorter did not run more often - it fired on every
+	// single tick, which is the shortest a schedule can mean here anyway.
+	if rest, ok := strings.CutPrefix(spec, "@every"); ok {
+		d, derr := time.ParseDuration(strings.TrimSpace(rest))
+		if derr == nil && d < ScheduledTaskMinInterval {
+			return time.Time{}, fmt.Errorf("invalid cron: the shortest interval is %s", ScheduledTaskMinInterval)
+		}
 	}
 	sched, err := ScheduledTaskCronParser.Parse("CRON_TZ=UTC " + spec)
 	if err != nil {

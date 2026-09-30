@@ -715,6 +715,9 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 // they used to spell it out three times.
 const SettingMaxSubServers = "srv.max_sub_servers"
 
+// SettingMaxScheduledTasks caps the scheduled tasks one server may hold.
+const SettingMaxScheduledTasks = "srv.max_scheduled_tasks"
+
 // ServerSettings carries the per-server caps an operator types in.
 //
 // MaxSubServers follows the platform limit convention: nil is no cap, 0 is a
@@ -725,6 +728,11 @@ const SettingMaxSubServers = "srv.max_sub_servers"
 // was reachable and nothing said so.
 type ServerSettings struct {
 	MaxSubServers *int64 `json:"maxSubServers"`
+	// MaxScheduledTasks, same convention. There was no cap at all, and the
+	// executor shares one batch of due tasks per tick across every server on
+	// the platform - so one server holding thousands of minutely tasks delayed
+	// everybody else's.
+	MaxScheduledTasks *int64 `json:"maxScheduledTasks"`
 }
 
 // defaultMaxSubServers is the product default, used when the setting has never
@@ -732,8 +740,14 @@ type ServerSettings struct {
 // let one server spawn sub-servers without bound.
 var defaultMaxSubServers = services.LimitPtr(3)
 
+// defaultMaxScheduledTasks is the product default: enough for a nightly restart
+// and a good number of announcements, few enough that no single server can take
+// over the executor's batch.
+var defaultMaxScheduledTasks = services.LimitPtr(25)
+
 var defaultServerSettings = ServerSettings{
-	MaxSubServers: defaultMaxSubServers,
+	MaxSubServers:     defaultMaxSubServers,
+	MaxScheduledTasks: defaultMaxScheduledTasks,
 }
 
 // GetServerSettings GET /api/settings/servers - PANEL settings.read (RequireCap at the route).
@@ -757,7 +771,15 @@ func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "Sub-server limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
+	if req.MaxScheduledTasks != nil && *req.MaxScheduledTasks < 0 {
+		sendJSONError(w, "Scheduled task limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		return
+	}
 	if err := h.state.Store.SetSetting(SettingMaxSubServers, services.FormatLimitSetting(req.MaxSubServers)); err != nil {
+		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		return
+	}
+	if err := h.state.Store.SetSetting(SettingMaxScheduledTasks, services.FormatLimitSetting(req.MaxScheduledTasks)); err != nil {
 		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
@@ -768,11 +790,10 @@ func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Requ
 // LoadServerSettings reads server settings from the database.
 func (h *SettingsHandler) LoadServerSettings() ServerSettings {
 	settings := defaultServerSettings
-	val, err := h.state.Store.GetSetting(SettingMaxSubServers)
-	if err != nil {
-		return settings
+	if val, err := h.state.Store.GetSetting(SettingMaxSubServers); err == nil {
+		settings.MaxSubServers = services.ParseLimitSetting(val, defaultMaxSubServers)
 	}
-	settings.MaxSubServers = services.ParseLimitSetting(val, defaultMaxSubServers)
+	settings.MaxScheduledTasks = scheduledTaskLimit(h.state)
 	return settings
 }
 

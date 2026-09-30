@@ -40,6 +40,16 @@ type schedCapStore struct {
 	friendCaps  []string
 	createCalls int
 	task        *models.ScheduledTask
+
+	// existing is how many tasks the server already holds; settings backs
+	// GetSetting (a missing key answers "", as the real store does).
+	existing int
+	settings map[string]string
+}
+
+func (f *schedCapStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
+func (f *schedCapStore) ListScheduledTasksByServer(int) ([]models.ScheduledTask, error) {
+	return make([]models.ScheduledTask, f.existing), nil
 }
 
 func (f *schedCapStore) GetServerByID(id int) (*models.Server, error) {
@@ -235,4 +245,40 @@ func TestScheduledTaskDisablingNeedsNoActionRight(t *testing.T) {
 			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// The cap on tasks per server, under the platform limit convention: the product
+// default when never saved, a real "none" at 0, no cap at "unlimited". It is
+// checked for everyone, the owner included - the same as the sub-server cap.
+func TestScheduledTaskCreateHonoursTheServerLimit(t *testing.T) {
+	cases := []struct {
+		name       string
+		setting    string
+		existing   int
+		wantStatus int
+	}{
+		{"default 25, below", "", 24, http.StatusOK},
+		{"default 25, at it", "", 25, http.StatusBadRequest},
+		{"0 means none", "0", 0, http.StatusBadRequest},
+		{"a set cap, below", "3", 2, http.StatusOK},
+		{"a set cap, at it", "3", 3, http.StatusBadRequest},
+		{"unlimited", "unlimited", 5000, http.StatusOK},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &schedCapStore{existing: c.existing, settings: map[string]string{}}
+			if c.setting != "" {
+				fs.settings[SettingMaxScheduledTasks] = c.setting
+			}
+			rec := httptest.NewRecorder()
+			schedCapHandler(fs).Create(rec, schedCapReq(http.MethodPost, "/api/servers/1/scheduled-tasks", "owner-1",
+				scheduledTaskRequest{Name: "n", TaskType: "restart", ScheduleCron: "0 4 * * *"}))
+			if rec.Code != c.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, c.wantStatus, rec.Body.String())
+			}
+			if wantCreate := map[bool]int{true: 1, false: 0}[c.wantStatus == http.StatusOK]; fs.createCalls != wantCreate {
+				t.Errorf("CreateScheduledTask called %d time(s), want %d", fs.createCalls, wantCreate)
+			}
+		})
+	}
 }

@@ -755,6 +755,8 @@ export const getDiskUsage = (id: number) => fetchAPI(`/servers/${id}/stats/disk`
 export interface ServerLimitSettings {
     // null = no cap, 0 = none may be created, n = the cap.
     maxSubServers: number | null;
+    // Same convention: scheduled tasks one server may hold.
+    maxScheduledTasks: number | null;
 }
 export const getServerSettings = () => fetchAPI('/settings/servers');
 export const saveServerSettings = (data: ServerLimitSettings) => fetchAPI('/settings/servers', { method: 'POST', body: JSON.stringify(data) });

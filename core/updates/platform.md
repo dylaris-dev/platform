@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30.4
+
+### Features
+- **Scheduled tasks now have a per-server cap,** set under Settings > Servers: 25 by
+  default, 0 for none, or no cap at all. It is checked when a task is created. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A schedule can no longer repeat faster than once a minute.** Shorter intervals ran on
+  every executor tick anyway, and one server could delay everyone else's tasks. `core`
+
 ## 2026.09.30.3
 
 ### Features

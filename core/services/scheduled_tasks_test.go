@@ -744,3 +744,19 @@ func TestComputeNextRun_RefusesZonesAndOverlongSpecs(t *testing.T) {
 		t.Errorf("a padded schedule was refused: %v", err)
 	}
 }
+
+// "@every" is the one form that can go below a minute; the executor ticks every
+// 30s, so a shorter one just fired on every tick.
+func TestComputeNextRun_MinimumInterval(t *testing.T) {
+	from := time.Date(2026, 7, 15, 10, 15, 30, 0, time.UTC)
+	for _, spec := range []string{"@every 1s", "@every 30s", "@every 59s"} {
+		if _, err := ComputeNextRun(spec, from); err == nil {
+			t.Errorf("%q was accepted", spec)
+		}
+	}
+	for _, spec := range []string{"@every 1m", "@every 90s", "@every 2h"} {
+		if _, err := ComputeNextRun(spec, from); err != nil {
+			t.Errorf("%q was refused: %v", spec, err)
+		}
+	}
+}

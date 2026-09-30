@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -180,6 +181,9 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
 		return
 	}
+	if h.refuseIfScheduledTaskLimitReached(w, serverID) {
+		return
+	}
 
 	enabled := true
 	if req.Enabled != nil {
@@ -351,4 +355,41 @@ func (h *ScheduledTasksHandler) ValidateCron(w http.ResponseWriter, r *http.Requ
 		"valid":   true,
 		"nextRun": next,
 	})
+}
+
+// scheduledTaskLimit is the operator's cap on tasks per server, read through
+// the shared parser so the platform limit convention holds: nil means no cap at
+// all, 0 means none. A settings read that fails answers with the product
+// default rather than with "no cap".
+func scheduledTaskLimit(state *AppState) *int64 {
+	if state == nil || state.Store == nil {
+		return defaultMaxScheduledTasks
+	}
+	val, err := state.Store.GetSetting(SettingMaxScheduledTasks)
+	if err != nil {
+		return defaultMaxScheduledTasks
+	}
+	return services.ParseLimitSetting(val, defaultMaxScheduledTasks)
+}
+
+// refuseIfScheduledTaskLimitReached answers the request when the server already
+// holds as many tasks as it may, and reports whether it did. Checked on create
+// only: lowering the cap disables nothing, the tasks over it keep running.
+func (h *ScheduledTasksHandler) refuseIfScheduledTaskLimitReached(w http.ResponseWriter, serverID int) bool {
+	limit := scheduledTaskLimit(h.state)
+	if limit == nil {
+		return false
+	}
+	existing, err := h.state.Store.ListScheduledTasksByServer(serverID)
+	if err != nil {
+		// A cap nobody can evaluate must not quietly pass.
+		sendJSONError(w, "Could not count this server's scheduled tasks", http.StatusInternalServerError)
+		return true
+	}
+	if !services.AtOrOver(limit, int64(len(existing))) {
+		return false
+	}
+	sendJSONError(w, fmt.Sprintf("Scheduled task limit reached (%d per server). Remove a task, or change the limit in Settings → Servers.", *limit),
+		http.StatusBadRequest)
+	return true
 }

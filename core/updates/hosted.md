@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A server holds up to 25 scheduled tasks, repeating at most once a minute,** so one
+  server's schedule can no longer delay anyone else's. Nothing for you to update.
+
 ## 2026.09.30.3
 
 ### Features

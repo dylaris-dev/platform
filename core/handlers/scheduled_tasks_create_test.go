@@ -31,6 +31,12 @@ type schedCreateFakeStore struct {
 	createErr   error
 }
 
+// No tasks yet and no limit saved: the product default applies and is not hit.
+func (f *schedCreateFakeStore) GetSetting(string) (string, error) { return "", nil }
+func (f *schedCreateFakeStore) ListScheduledTasksByServer(int) ([]models.ScheduledTask, error) {
+	return nil, nil
+}
+
 func (f *schedCreateFakeStore) GetServerByID(int) (*models.Server, error) {
 	if f.serverErr != nil {
 		return nil, f.serverErr
