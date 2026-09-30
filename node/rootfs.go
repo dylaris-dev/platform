@@ -152,7 +152,9 @@ func createTempIn(root *os.Root, dir, prefix, suffix string) (*os.File, string, 
 	return nil, "", fmt.Errorf("create temp in %q: too many collisions", dir)
 }
 
-// chownForMCIn is chownForMC for a name inside a Root.
+// chownForMCIn hands one freshly written name inside a Root to the container's
+// uid, the way a file created by the node as root needs so a RUNNING server can
+// modify it. Errors are logged, never returned.
 func chownForMCIn(root *os.Root, name string) {
 	if mcUser() == 0 {
 		return
@@ -217,4 +219,119 @@ func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forT
 		}
 		return nil
 	})
+}
+
+// --- installer / archive helpers -------------------------------------------
+
+// openRootMk creates dir if missing and opens it as an os.Root. Used by the
+// extract, download and copy paths, which write into a directory whose CONTENTS
+// the tenant controls even though its path is node-chosen.
+func openRootMk(dir string) (*os.Root, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(dir)
+}
+
+// extractRel cleans an archive entry name into a slash path relative to the
+// extraction root, rejecting the empty name and the root itself. Traversal and
+// absolute names are folded away here; a symlink component that survives is
+// refused by the Root when the entry is created, which is the real boundary.
+func extractRel(name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("empty entry name")
+	}
+	n := strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(name)), "/")
+	if n == "" || n == "." {
+		return "", fmt.Errorf("entry names the destination directory itself")
+	}
+	return n, nil
+}
+
+// extractSkip decides whether an archive entry must be SKIPPED - because its
+// name escapes destDir lexically or through a symlink already planted there -
+// and otherwise returns its Root-relative name. The Root is still the runtime
+// boundary at the moment of writing; this keeps one poisoned entry from failing
+// the whole archive, the way the extractors always behaved. A link planted in
+// the race window after this check is caught by the Root and fails the extract,
+// which is safe.
+func extractSkip(destDir, entry string) (name string, skip bool) {
+	if _, err := resolveWithinDir(destDir, filepath.FromSlash(entry)); err != nil {
+		return "", true
+	}
+	n, err := extractRel(entry)
+	if err != nil {
+		return "", true
+	}
+	return n, false
+}
+
+// writeFileInto creates name inside root (truncating, creating parents) and
+// copies r into it, capped at max bytes when max > 0. The file is handed to the
+// container's uid, since it lands in a running server's tree.
+func writeFileInto(root *os.Root, name string, mode fs.FileMode, r io.Reader, max int64) error {
+	out, err := createIn(root, name, mode)
+	if err != nil {
+		return err
+	}
+	var src io.Reader = r
+	if max > 0 {
+		src = io.LimitReader(r, max)
+	}
+	if _, err := io.Copy(out, src); err != nil {
+		out.Close()
+		return err
+	}
+	if cerr := out.Close(); cerr != nil {
+		return cerr
+	}
+	chownForMCIn(root, name)
+	return nil
+}
+
+// copyDirInto duplicates the tree src into dst FOR A USER: protected entries are
+// dropped and everything written is handed to the container's uid. Both ends are
+// confined to their parent directories, so a link swapped in for src or planted
+// in the walk cannot move the copy outside them.
+func copyDirInto(src, dst string) error { return copyTreeAt(src, dst, true) }
+
+// copyTreeInto copies src to dst VERBATIM, protected entries included. Only a
+// whole-server MOVE uses it; see the copyTree comment.
+func copyTreeInto(src, dst string) error { return copyTreeAt(src, dst, false) }
+
+func copyTreeAt(src, dst string, forTenant bool) error {
+	srcRoot, err := os.OpenRoot(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	defer srcRoot.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	dstRoot, err := os.OpenRoot(filepath.Dir(dst))
+	if err != nil {
+		return err
+	}
+	defer dstRoot.Close()
+	return copyWalkIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst), forTenant)
+}
+
+// copyFileInto copies the single file src to dst, confined to their parents and
+// handed to the container's uid.
+func copyFileInto(src, dst string) error {
+	srcRoot, err := os.OpenRoot(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	defer srcRoot.Close()
+	dstRoot, err := openRootMk(filepath.Dir(dst))
+	if err != nil {
+		return err
+	}
+	defer dstRoot.Close()
+	if err := copyFileIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst)); err != nil {
+		return err
+	}
+	chownForMCIn(dstRoot, filepath.Base(dst))
+	return nil
 }

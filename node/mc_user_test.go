@@ -131,30 +131,30 @@ func TestEveryContainerBuildSiteSetsTheUser(t *testing.T) {
 // tenant's container the very files running non-root took away from it, and
 // nothing would look wrong until a plugin rewrote .active_server.
 func TestOnlyTheDuplicatingCopyHandsFilesOver(t *testing.T) {
-	b, err := os.ReadFile("installer.go")
+	b, err := os.ReadFile("rootfs.go")
 	if err != nil {
-		t.Fatalf("read installer.go: %v", err)
+		t.Fatalf("read rootfs.go: %v", err)
 	}
 	src := string(b)
 
-	body, ok := cutFunc(src, "func copyFile(src, dst string) error {")
+	body, ok := cutFunc(src, "func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string) error {")
 	if !ok {
-		t.Fatal("copyFile is gone; move this assertion with it")
+		t.Fatal("copyFileIn is gone; move this assertion with it")
 	}
 	if strings.Contains(body, "chownForMC") {
-		t.Error("copyFile chowns, so copyTree does too - a storage move would hand " +
+		t.Error("copyFileIn chowns, so a verbatim MOVE does too - it would hand " +
 			".active_server and .dylaris-backups to the tenant's uid")
 	}
 
-	walk, ok := cutFunc(src, "func copyWalk(src, dst string, skipProtected bool) error {")
+	walk, ok := cutFunc(src, "func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool) error {")
 	if !ok {
-		t.Fatal("copyWalk is gone")
+		t.Fatal("copyWalkIn is gone")
 	}
-	if !strings.Contains(walk, "chownForMC") {
-		t.Error("copyWalk never hands a duplicated file to the container's uid")
+	if !strings.Contains(walk, "chownForMCIn") {
+		t.Error("copyWalkIn never hands a duplicated file to the container's uid")
 	}
-	if !strings.Contains(walk, "if skipProtected {") {
-		t.Error("copyWalk chowns unconditionally; copyTree must be excluded")
+	if !strings.Contains(walk, "if forTenant {") {
+		t.Error("copyWalkIn chowns unconditionally; the verbatim MOVE must be excluded")
 	}
 }
 

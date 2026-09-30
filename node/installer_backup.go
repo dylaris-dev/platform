@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -90,6 +89,12 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 	}
 	defer gr.Close()
 
+	root, err := openRootMk(destDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
 	var manifest []byte
 	tr := tar.NewReader(gr)
 	for {
@@ -112,27 +117,23 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 			continue
 		}
 
-		// Path-traversal guard. An archive is a file a user supplied, so an
-		// entry may name "..", an absolute path, or a symlink pointing out of
-		// the tree. Same clean+prefix check the restore path applies, for the
-		// same reason: this writes into a directory that is bind-mounted into a
-		// tenant's container.
-		cleanPath := filepath.Join(destDir, filepath.Clean("/"+hdr.Name))
-		if !strings.HasPrefix(cleanPath, destDir+string(os.PathSeparator)) && cleanPath != destDir {
+		// The entry is created THROUGH a Root at destDir, so a symlink planted
+		// there (destDir is bind-mounted into the tenant's container) cannot be
+		// followed out; extractRel folds away "..", absolute names and the root
+		// itself.
+		name, skip := extractSkip(destDir, hdr.Name)
+		if skip {
 			log.Printf("backup import: skipping unsafe entry %q", hdr.Name)
 			continue
 		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(cleanPath, os.FileMode(hdr.Mode)); err != nil {
+			if err := root.MkdirAll(name, os.FileMode(hdr.Mode)); err != nil {
 				return nil, fmt.Errorf("mkdir: %w", err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(cleanPath), 0o755); err != nil {
-				return nil, fmt.Errorf("mkdir: %w", err)
-			}
-			out, oerr := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(hdr.Mode))
+			out, oerr := createIn(root, name, os.FileMode(hdr.Mode))
 			if oerr != nil {
 				return nil, fmt.Errorf("create %s: %w", hdr.Name, oerr)
 			}

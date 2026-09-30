@@ -193,8 +193,13 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 	}
 	defer os.RemoveAll(tmp)
 
+	tmpRoot, err := os.OpenRoot(tmp)
+	if err != nil {
+		return err
+	}
+	defer tmpRoot.Close()
 	mrpackPath := filepath.Join(tmp, "pack.mrpack")
-	if _, err := downloadFileBounded(cfg.URL, mrpackPath, maxMrpackSize); err != nil {
+	if _, err := downloadBoundedInto(tmpRoot, "pack.mrpack", cfg.URL, maxMrpackSize); err != nil {
 		return fmt.Errorf("download .mrpack: %w", err)
 	}
 
@@ -319,6 +324,12 @@ func extractOverrides(mrpackPath, destDir string) error {
 	}
 	defer rd.Close()
 
+	root, err := openRootMk(destDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
 	prefixes := []string{"overrides/", "server-overrides/"}
 	for _, prefix := range prefixes {
 		for _, f := range rd.File {
@@ -326,41 +337,32 @@ func extractOverrides(mrpackPath, destDir string) error {
 				continue
 			}
 			rel := strings.TrimPrefix(f.Name, prefix)
-			if rel == "" {
-				continue
-			}
-			// resolveExtractPath, not a "..' substring check: destDir is a
-			// directory the tenant can plant a symlink in before the install
-			// runs, and os.Create follows it on the node's side. See its doc.
-			dst, err := resolveExtractPath(destDir, rel)
-			if err != nil {
-				return fmt.Errorf("unsafe path in mrpack: %s: %w", f.Name, err)
+			// The Root is the runtime boundary; extractSkip drops an entry whose
+			// name escapes destDir lexically or through a link already planted
+			// there (destDir is tenant-writable before the install runs).
+			// Overrides fail the install rather than silently drop an entry -
+			// a modpack that cannot lay down a file is a broken pack, not a
+			// warning. (The upload-zip extractor skips instead; that is a
+			// user-assembled archive, not a resolved pack.)
+			name, skip := extractSkip(destDir, rel)
+			if skip {
+				return fmt.Errorf("unsafe path in mrpack: %s", f.Name)
 			}
 			if f.FileInfo().IsDir() {
-				if err := os.MkdirAll(dst, 0o755); err != nil {
+				if err := root.MkdirAll(name, 0o755); err != nil {
 					return err
 				}
 				continue
-			}
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				return err
 			}
 			rc, err := f.Open()
 			if err != nil {
 				return err
 			}
-			out, err := os.Create(dst)
-			if err != nil {
-				rc.Close()
-				return err
-			}
-			if _, err := io.Copy(out, rc); err != nil {
-				rc.Close()
-				out.Close()
-				return err
-			}
+			werr := writeFileInto(root, name, 0o644, rc, 0)
 			rc.Close()
-			out.Close()
+			if werr != nil {
+				return werr
+			}
 		}
 	}
 	return nil
@@ -372,45 +374,49 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 	if len(f.Downloads) == 0 {
 		return 0, fmt.Errorf("no download URLs")
 	}
-	// Same guard as extractOverrides above: the manifest names the path, the
-	// tenant owns the directory it lands in.
-	dst, err := resolveExtractPath(destDir, f.Path)
+	// The manifest names the path, the tenant owns the directory it lands in, so
+	// the file is created THROUGH a Root at destDir; extractRel folds traversal.
+	name, err := extractRel(f.Path)
 	if err != nil {
 		return 0, fmt.Errorf("unsafe path %q: %w", f.Path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	root, err := openRootMk(destDir)
+	if err != nil {
 		return 0, err
 	}
+	defer root.Close()
+
 	var lastErr error
 	for _, u := range f.Downloads {
 		if err := validateMrpackURL(u); err != nil {
 			lastErr = err
 			continue
 		}
-		tmp := dst + ".part"
-		n, err := downloadFileBounded(u, tmp, modpackFileCap(f.FileSize))
+		tmp := name + ".part"
+		n, err := downloadBoundedInto(root, tmp, u, modpackFileCap(f.FileSize))
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		// Verify sha512 if provided.
 		if want := f.Hashes["sha512"]; want != "" {
-			got, err := hashFile(tmp)
+			got, err := hashInRoot(root, tmp)
 			if err != nil {
-				os.Remove(tmp)
+				root.Remove(tmp)
 				lastErr = err
 				continue
 			}
 			if !strings.EqualFold(got, want) {
-				os.Remove(tmp)
+				root.Remove(tmp)
 				lastErr = fmt.Errorf("sha512 mismatch for %s", f.Path)
 				continue
 			}
 		}
-		if err := os.Rename(tmp, dst); err != nil {
-			os.Remove(tmp)
+		if err := root.Rename(tmp, name); err != nil {
+			root.Remove(tmp)
 			return 0, err
 		}
+		chownForMCIn(root, name)
 		return n, nil
 	}
 	return 0, lastErr
@@ -427,7 +433,7 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 // to the cap and reported as a successful download: for a mod file with no
 // sha512 in the manifest, a corrupt jar was then renamed into place as if it
 // were the real one.
-func downloadFileBounded(url, dst string, maxBytes int64) (int64, error) {
+func downloadBoundedInto(root *os.Root, name, url string, maxBytes int64) (int64, error) {
 	client := &http.Client{Timeout: 5 * time.Minute, Transport: uaTransport{base: http.DefaultTransport}}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -437,7 +443,7 @@ func downloadFileBounded(url, dst string, maxBytes int64) (int64, error) {
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	out, err := os.Create(dst)
+	out, err := createIn(root, name, 0o644)
 	if err != nil {
 		return 0, err
 	}
@@ -448,20 +454,21 @@ func downloadFileBounded(url, dst string, maxBytes int64) (int64, error) {
 	closeErr := out.Close()
 	switch {
 	case copyErr != nil:
-		os.Remove(dst)
+		root.Remove(name)
 		return 0, copyErr
 	case closeErr != nil:
-		os.Remove(dst)
+		root.Remove(name)
 		return 0, closeErr
 	case n > maxBytes:
-		os.Remove(dst)
+		root.Remove(name)
 		return 0, fmt.Errorf("download exceeds its %d byte limit", maxBytes)
 	}
 	return n, nil
 }
 
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
+// hashInRoot returns the sha512 hex of name inside root.
+func hashInRoot(root *os.Root, name string) (string, error) {
+	f, err := root.Open(name)
 	if err != nil {
 		return "", err
 	}

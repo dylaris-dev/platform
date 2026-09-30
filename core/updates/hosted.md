@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Installing a modpack, an upload or a backup stays inside your server's own
+  directory,** finishing today's file-access hardening. Update your node to get it. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.30
 
 ### Features

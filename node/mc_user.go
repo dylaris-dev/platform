@@ -124,22 +124,3 @@ func ensureSubServerOwnership(subDir string) error {
 	log.Printf("mc-user: %d paths under %s now belong to uid %d", n, subDir, uid)
 	return nil
 }
-
-// chownForMC gives one freshly written path to the container's uid.
-//
-// For the writes that land while a server is RUNNING - an upload over SFTP or
-// beam, a file saved from the panel. Those are created by the node as root, and
-// without this the server can read the file and not modify it, which is the kind
-// of failure that surfaces as "the plugin cannot save its config" three days
-// later.
-//
-// Errors are logged, never returned: the write itself succeeded, and failing the
-// caller would turn a permissions nuisance into a failed upload.
-func chownForMC(path string) {
-	if mcUser() == 0 {
-		return
-	}
-	if err := os.Lchown(path, mcUser(), mcUser()); err != nil && !os.IsNotExist(err) {
-		log.Printf("mc-user: cannot hand %s to uid %d: %v", path, mcUser(), err)
-	}
-}

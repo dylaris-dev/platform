@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -163,6 +162,20 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 	defer gr.Close()
+	stageRoot, err := openRootMk(stageDir)
+	if err != nil {
+		stageCleanup()
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open stage: "+err.Error())
+		return
+	}
+	stageClosed := false
+	closeStage := func() {
+		if !stageClosed {
+			stageRoot.Close()
+			stageClosed = true
+		}
+	}
+	defer closeStage()
 	tr := tar.NewReader(gr)
 
 	extracted := 0
@@ -184,27 +197,23 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		if isManifestEntry(hdr.Name) {
 			continue
 		}
-		// Path-traversal guard — entries can name "..", absolute paths,
-		// etc. The clean+prefix check rejects anything that escapes stageDir.
-		cleanPath := filepath.Join(stageDir, filepath.Clean("/"+hdr.Name))
-		if !strings.HasPrefix(cleanPath, stageDir+string(os.PathSeparator)) && cleanPath != stageDir {
+		// Entries are created THROUGH a Root at stageDir, so any residual link
+		// or traversal is refused there; extractRel folds "..", absolute names
+		// and the root itself.
+		name, skip := extractSkip(stageDir, hdr.Name)
+		if skip {
 			log.Printf("Restore %d: skipping unsafe entry %q", cmd.RunID, hdr.Name)
 			continue
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(cleanPath, os.FileMode(hdr.Mode)); err != nil {
+			if err := stageRoot.MkdirAll(name, os.FileMode(hdr.Mode)); err != nil {
 				stageCleanup()
 				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "mkdir: "+err.Error())
 				return
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(cleanPath), 0o755); err != nil {
-				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "mkdir parent: "+err.Error())
-				return
-			}
-			f, ferr := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(hdr.Mode))
+			f, ferr := createIn(stageRoot, name, os.FileMode(hdr.Mode))
 			if ferr != nil {
 				stageCleanup()
 				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open file: "+ferr.Error())
@@ -227,6 +236,12 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			// Skip block/char devices etc.
 		}
 	}
+
+	// Close the stage Root BEFORE the swap: the swap renames stageDir itself,
+	// and on Windows an open handle on a directory blocks renaming it. The Root
+	// was only needed to write the entries, which is done. Idempotent, so the
+	// deferred close on an error path does not double-close.
+	closeStage()
 
 	if extracted == 0 {
 		stageCleanup()

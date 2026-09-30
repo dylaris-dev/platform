@@ -133,28 +133,32 @@ func TestExtractOverridesDoesNotFollowAPlantedSymlink(t *testing.T) {
 	}
 }
 
-// resolveExtractPath is what the three extractors share, so pin its rules
-// directly: traversal, absolute-looking names, an entry that resolves to destDir
-// itself, and the ordinary case that must keep working.
-func TestResolveExtractPath(t *testing.T) {
-	dest := t.TempDir()
-
-	for _, name := range []string{"", "   ", ".", "..", "../escape", "a/../../escape"} {
-		if p, err := resolveExtractPath(dest, name); err == nil {
-			t.Errorf("entry %q was accepted and resolved to %q", name, p)
+// extractRel is what the three extractors share to name an entry inside the
+// extraction Root: traversal and the destination itself are rejected here, the
+// ordinary case keeps working, and any residual link is refused by the Root at
+// creation (covered by the extractor tests above).
+func TestExtractRel(t *testing.T) {
+	for _, name := range []string{"", "   ", ".", "..", "/", "/.."} {
+		if got, err := extractRel(name); err == nil {
+			t.Errorf("entry %q was accepted and named %q", name, got)
 		}
 	}
-
-	// A leading slash is not traversal: filepath.Join cleans it away and the
-	// entry lands inside destDir, which is what every zip tool does.
-	for _, name := range []string{"server.jar", "config/paper.yml", "/etc/passwd"} {
-		p, err := resolveExtractPath(dest, name)
+	// A leading slash is not traversal: it is cleaned away and the entry lands
+	// inside the Root, which is what every zip tool does. Traversal collapses to
+	// a plain name.
+	for name, want := range map[string]string{
+		"server.jar":       "server.jar",
+		"config/paper.yml": "config/paper.yml",
+		"/etc/passwd":      "etc/passwd",
+		"a/../b":           "b",
+	} {
+		got, err := extractRel(name)
 		if err != nil {
 			t.Errorf("ordinary entry %q was refused: %v", name, err)
 			continue
 		}
-		if !strings.HasPrefix(p, filepath.Clean(dest)+string(os.PathSeparator)) {
-			t.Errorf("entry %q resolved outside destDir: %q", name, p)
+		if got != want {
+			t.Errorf("entry %q named %q, want %q", name, got, want)
 		}
 	}
 }

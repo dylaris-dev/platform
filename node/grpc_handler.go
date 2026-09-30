@@ -146,7 +146,7 @@ func resolveWithinDir(dataPath, reqPath string) (string, error) {
 // bind-mounted into it), and the link text is resolved on the NODE's side, so it
 // can name a path that exists only there - .node_secret, another tenant's server
 // directory, /proc/self/environ. The archive walkers had their own guard for
-// exactly this (zipEntryInfo); the boundary itself did not.
+// exactly this; the boundary itself did not.
 //
 // One rule, no per-operation exceptions. Deleting or renaming a link never
 // touches its target and would be safe to allow, but a second, laxer variant is
@@ -189,48 +189,14 @@ func withinRoot(root, abs string) bool {
 	return cleanAbs == cleanRoot || strings.HasPrefix(cleanAbs, cleanRoot+string(os.PathSeparator))
 }
 
-// resolveZipRoot prepares the symlink boundary for zipEntryInfo. Resolving the
-// root once matters: a STORAGE_PATHS entry that is itself a symlink would
-// otherwise make every contained link look like an escape, because zipEntryInfo
-// compares against an EvalSymlinks'd target.
+// resolveZipRoot resolves the lexical root once for the symlink check below.
+// A STORAGE_PATHS entry that is itself a symlink would otherwise make every
+// contained link look like an escape.
 func resolveZipRoot(root string) string {
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		return r
 	}
 	return filepath.Clean(root)
-}
-
-// zipEntryInfo decides whether a walked path belongs in an archive and which
-// FileInfo describes it. Despite the name it is not zip-specific: the backup
-// tar builder in backup_worker.go walks the same trees and calls it too.
-//
-// This closes a symlink hole shared by every archive path here: filepath.Walk
-// reports links via Lstat, but os.Open FOLLOWS them, so a link planted inside a
-// tenant's server directory would have its target read and written into the
-// archive - an arbitrary-file-read out of that directory, dressed up as a folder
-// download. A tenant can plant one: the server directory is bind-mounted into
-// their Minecraft container and reachable over SFTP.
-//
-// Contained links are still archived, so this is not a blanket "drop all
-// symlinks" that would break legitimate layouts.
-func zipEntryInfo(resolvedRoot, path string, info os.FileInfo) (os.FileInfo, bool) {
-	if info.Mode()&os.ModeSymlink == 0 {
-		return info, true
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return nil, false // dangling: nothing to archive
-	}
-	if !withinRoot(resolvedRoot, resolved) {
-		return nil, false // escapes the server directory
-	}
-	target, err := os.Stat(resolved)
-	// Walk does not descend into symlinked directories, so one added as a file
-	// would fail on io.Copy. Skip it rather than write a half-entry.
-	if err != nil || target.IsDir() {
-		return nil, false
-	}
-	return target, true
 }
 
 // serverDir returns the server's data directory, the root every path guard in

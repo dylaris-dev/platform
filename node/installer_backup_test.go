@@ -124,6 +124,44 @@ func TestInstallFromBackupArchive_RefusesToWriteOutsideTheServer(t *testing.T) {
 	}
 }
 
+// A symlink already PLANTED in the destination (the tenant writes there over
+// SFTP or from inside their container) must not let an entry under it escape.
+// The lexical traversal guard never sees this - the entry name is clean - so it
+// is the Root at write time that refuses it.
+func TestInstallFromBackupArchive_DoesNotFollowAPlantedSymlink(t *testing.T) {
+	parent := t.TempDir()
+	outside := filepath.Join(parent, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(outside, "loaded.jar")
+	if err := os.WriteFile(victim, []byte("ORIGINAL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(parent, "sub")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, outside, filepath.Join(dir, "escape"))
+
+	writeImportArchive(t, dir,
+		[]tar.Header{
+			{Name: "escape/loaded.jar", Typeflag: tar.TypeReg},
+			{Name: "ok.txt", Typeflag: tar.TypeReg},
+		},
+		[][]byte{[]byte("ATTACKER"), []byte("yes")})
+
+	if _, err := installFromBackupArchive(dir); err != nil {
+		t.Fatalf("installFromBackupArchive: %v", err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "ORIGINAL" {
+		t.Fatalf("wrote through a planted symlink out of the server dir: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ok.txt")); err != nil {
+		t.Errorf("the safe entry was dropped: %v", err)
+	}
+}
+
 // A link in a user-supplied archive is a write primitive aimed wherever its
 // target says. Nothing a Minecraft server needs to run depends on one.
 func TestInstallFromBackupArchive_DropsLinks(t *testing.T) {

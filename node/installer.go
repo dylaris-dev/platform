@@ -557,40 +557,10 @@ func DetectServerJar(destDir string) string {
 	return "server.jar"
 }
 
-// resolveExtractPath resolves one archive entry against destDir with the same
-// guard the node's file APIs use.
-//
-// The extractors had a lexical prefix check only, and lexical containment is not
-// containment here: destDir is a directory the tenant writes to BEFORE the
-// extraction runs - over SFTP, over beam, and from inside their own Minecraft
-// container, which has the server directory bind-mounted. A symlink planted
-// there is followed by os.OpenFile/os.Create on the NODE's side, so an entry
-// under it lands wherever the link points: a neighbour's server directory on the
-// same storage path, or anything else the node process can write.
-//
-// linkStaysWithin (grpc_handler.go) was written for exactly this and its own doc
-// comment names the attack; resolveWithinDir is the lexical check plus that one.
-// Every read/write path in the file API takes it. The three extractors did not.
-//
-// An entry resolving to destDir itself is refused: resolveWithinDir permits the
-// root (listing needs it) and the previous prefix check did not, so keeping the
-// stricter rule here avoids changing what an empty entry name does.
-func resolveExtractPath(destDir, name string) (string, error) {
-	if strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf("empty entry name")
-	}
-	p, err := resolveWithinDir(destDir, filepath.FromSlash(name))
-	if err != nil {
-		return "", err
-	}
-	if filepath.Clean(p) == filepath.Clean(destDir) {
-		return "", fmt.Errorf("entry resolves to the destination directory itself")
-	}
-	return p, nil
-}
-
-// extractZipToDir extracts a ZIP archive into destDir, guarding against path
-// traversal and against symlinks already planted in destDir.
+// extractZipToDir extracts a ZIP archive into destDir. Entries are created
+// THROUGH an os.Root at destDir, so a symlink planted in destDir (over SFTP,
+// beam, or from inside the tenant's container) cannot be followed out of it,
+// and traversal names are folded away by extractRel first.
 func extractZipToDir(zipPath, destDir string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -598,158 +568,47 @@ func extractZipToDir(zipPath, destDir string) error {
 	}
 	defer r.Close()
 
-	destDir = filepath.Clean(destDir)
+	root, err := openRootMk(destDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 
 	for _, f := range r.File {
-		fPath, err := resolveExtractPath(destDir, f.Name)
-		if err != nil {
-			log.Printf("Skipping unsafe zip entry %q: %v", f.Name, err)
+		name, skip := extractSkip(destDir, f.Name)
+		if skip {
+			log.Printf("Skipping unsafe zip entry %q", f.Name)
 			continue
 		}
-
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(fPath, 0755)
+			root.MkdirAll(name, 0o755)
 			continue
 		}
-
-		if err := os.MkdirAll(filepath.Dir(fPath), 0755); err != nil {
-			return err
-		}
-
-		outFile, err := os.OpenFile(fPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
 		rc, err := f.Open()
 		if err != nil {
-			outFile.Close()
 			return err
 		}
-
-		_, copyErr := io.Copy(outFile, rc)
+		werr := writeFileInto(root, name, f.Mode(), rc, 0)
 		rc.Close()
-		outFile.Close()
-		if copyErr != nil {
-			return copyErr
+		if werr != nil {
+			return werr
 		}
 	}
 	return nil
 }
 
-// copyFile copies a single file from src to dst.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
+// copyDir DUPLICATES src into dst for a user: protected entries dropped,
+// everything handed to the container's uid, both ends confined through an
+// os.Root (see copyDirInto in rootfs.go).
+func copyDir(src, dst string) error { return copyDirInto(src, dst) }
 
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
+// copyTree copies src into dst VERBATIM, protected entries included. Only a
+// whole-server MOVE may use it.
+func copyTree(src, dst string) error { return copyTreeInto(src, dst) }
 
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
-}
-
-// copyDir recursively copies src directory into dst, DUPLICATING it for a user.
-//
-// Protected entries are skipped. isProtectedFile guards the destination string
-// a copy request names, which is blind to what a directory copy reaches on its
-// own: a copy rooted anywhere above them walks straight into .active_server,
-// .dylaris.json, .node_config.json and .dylaris-backups and rewrites them.
-//
-// That last one decides whether a mistake is recoverable. The backup archives
-// live inside the server directory, so the self-copy that zeroed the test
-// server's world zeroed both of its backups in the same walk, and the restore
-// died on "gzip open: EOF". Nothing wants any of these duplicated into a copy
-// either, so skipping is right for the installer's uses of this helper too.
-func copyDir(src, dst string) error {
-	return copyWalk(src, dst, true)
-}
-
-// copyTree copies src into dst VERBATIM, protected entries included.
-//
-// Only a whole-directory MOVE may use this. Relocating a server to another
-// storage path is not a duplication: the destination becomes the server, so it
-// needs .active_server (which sub-server runs), .node_config.json (what the
-// container is recreated from) and .dylaris-backups (the archives) or the
-// server arrives crippled at the new path and the source is deleted anyway.
-func copyTree(src, dst string) error {
-	return copyWalk(src, dst, false)
-}
-
-func copyWalk(src, dst string, skipProtected bool) error {
-	// The boundary is the copy source. A walk reaches entries the caller never
-	// named, and copyFile below FOLLOWS a link, so without this a link planted
-	// anywhere in the tree materialises its target as a REAL file in the
-	// destination - which for a copy inside a server directory is a file the
-	// tenant can then download. Same guard the archive walkers take.
-	resolvedRoot := resolveZipRoot(src)
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		if skipProtected && rel != "." && isProtectedFile(rel) {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if rel != "." {
-			var ok bool
-			if info, ok = zipEntryInfo(resolvedRoot, path, info); !ok {
-				return nil
-			}
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			if err := os.MkdirAll(target, info.Mode()); err != nil {
-				return err
-			}
-			if skipProtected {
-				chownForMC(target)
-			}
-			return nil
-		}
-		if err := copyFile(path, target); err != nil {
-			return err
-		}
-		// Only on the copyDir path, and the distinction is the point. copyTree
-		// carries the protected entries deliberately - it is a whole-server MOVE
-		// - and handing .active_server or .dylaris-backups to the container's uid
-		// would give away exactly what running non-root took away. A moved
-		// server's sub-server directory is chowned at its next start instead.
-		if skipProtected {
-			chownForMC(target)
-		}
-		return nil
-	})
-}
-
-// copyFileForTenant is copyFile plus the ownership the container needs.
-//
-// For the direct single-file copies, which all land inside a server's own data.
-// copyFile itself deliberately does NOT chown: copyTree reaches it too, and that
-// path copies the node's own files on purpose.
-func copyFileForTenant(src, dst string) error {
-	if err := copyFile(src, dst); err != nil {
-		return err
-	}
-	chownForMC(dst)
-	return nil
-}
+// copyFileForTenant copies one file into a server's own data and hands it to
+// the container's uid.
+func copyFileForTenant(src, dst string) error { return copyFileInto(src, dst) }
 
 // downloadFile downloads a URL to a local file path.
 func downloadFile(url, destPath string) error {
@@ -773,7 +632,15 @@ func downloadFileWithin(url, destPath string, stall time.Duration) error {
 // downloadWith is the shared body: client chooses the dial policy, maxBytes > 0
 // caps the body (0 = no cap).
 func downloadWith(client *http.Client, url, destPath string, stall time.Duration, maxBytes int64) error {
-	out, err := os.Create(destPath)
+	// Created THROUGH a Root at the destination's directory so a symlink planted
+	// at destPath (the sub-server dir is tenant-writable) is refused rather than
+	// followed. The directory is node-chosen and already made by the installer.
+	root, err := os.OpenRoot(filepath.Dir(destPath))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	out, err := root.Create(filepath.Base(destPath))
 	if err != nil {
 		return err
 	}

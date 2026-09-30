@@ -53,13 +53,18 @@ func TestDownloadFileBoundedRefusesAnOversizedBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dst := filepath.Join(t.TempDir(), "oversized.jar")
-	n, err := downloadFileBounded(srv.URL, dst, cap)
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	n, err := downloadBoundedInto(root, "oversized.jar", srv.URL, cap)
 	if err == nil {
 		t.Fatalf("a %d-byte body under a %d-byte cap was accepted (wrote %d bytes)", cap*4, cap, n)
 	}
-	if _, statErr := os.Stat(dst); !os.IsNotExist(statErr) {
-		t.Errorf("the rejected download was left on disk at %s", dst)
+	if _, statErr := os.Stat(filepath.Join(dir, "oversized.jar")); !os.IsNotExist(statErr) {
+		t.Errorf("the rejected download was left on disk")
 	}
 }
 
@@ -71,17 +76,22 @@ func TestDownloadFileBoundedAcceptsExactlyTheCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dst := filepath.Join(t.TempDir(), "exact.jar")
-	n, err := downloadFileBounded(srv.URL, dst, cap)
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	n, err := downloadBoundedInto(root, "exact.jar", srv.URL, cap)
 	if err != nil {
 		t.Fatalf("a body of exactly the cap was rejected: %v", err)
 	}
 	if n != cap {
 		t.Errorf("reported %d bytes written, want %d", n, cap)
 	}
-	info, err := os.Stat(dst)
+	info, err := os.Stat(filepath.Join(dir, "exact.jar"))
 	if err != nil {
-		t.Fatalf("stat %s: %v", dst, err)
+		t.Fatalf("stat: %v", err)
 	}
 	if info.Size() != cap {
 		t.Errorf("file is %d bytes on disk, want %d", info.Size(), cap)

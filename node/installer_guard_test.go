@@ -135,7 +135,12 @@ func TestInstallerDownloadsSendUserAgent(t *testing.T) {
 	if err := downloadFileGuarded(srv.URL, filepath.Join(dir, "b"), 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := downloadFileBounded(srv.URL, filepath.Join(dir, "c"), 100); err != nil {
+	croot, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer croot.Close()
+	if _, err := downloadBoundedInto(croot, "c", srv.URL, 100); err != nil {
 		t.Fatal(err)
 	}
 	var v map[string]any
