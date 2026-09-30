@@ -9,8 +9,10 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -27,11 +29,25 @@ const (
 	// backlog (e.g. Core was down for a day with hourly tasks queued) can't
 	// flood the queue in a single sweep.
 	scheduledTaskBatchLimit = 100
+
+	// ScheduledTaskMaxCron matches the scheduled_tasks.schedule_cron column.
+	ScheduledTaskMaxCron = 128
 )
 
+// skipError marks a firing that was deliberately not carried out because the
+// server was in no state to take it - stopped, still being set up, suspended.
+// It is recorded as "skipped" rather than "error": nothing is broken, and the
+// task runs again on its next time.
+type skipError struct{ msg string }
+
+func (e skipError) Error() string { return e.msg }
+
+func skipped(format string, a ...any) error { return skipError{fmt.Sprintf(format, a...)} }
+
 // ScheduledTaskCronParser is the cron flavour we accept from users. Standard
-// 5-field UNIX cron in UTC — no seconds, no exotic descriptors. The robfig
-// parser also accepts "@daily", "@hourly" etc. as a convenience.
+// 5-field UNIX cron — no seconds, no exotic descriptors. The robfig parser also
+// accepts "@daily", "@hourly" etc. as a convenience. Always evaluated in UTC,
+// which ComputeNextRun enforces: the parser on its own uses the HOST's zone.
 var ScheduledTaskCronParser = cron.NewParser(
 	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 )
@@ -75,8 +91,27 @@ func (s *ScheduledTaskService) Start(ctx context.Context) {
 // ComputeNextRun parses a cron string and returns the next firing time from
 // `from`. Exported so handlers can validate + preview cron strings before
 // saving — they don't need to re-import the cron lib.
+//
+// Schedules run in UTC, as the panel says. robfig's parser evaluates a spec in
+// time.Local unless the spec names a zone, so the UTC promise used to hold only
+// because the production image has no TZ set. It also let a user pick any zone
+// with a TZ= or CRON_TZ= prefix, and "TZ=UTC" without a following space makes
+// the parser slice out of range and panic mid-request. So a user-supplied zone
+// is refused here, and UTC is named for the parser explicitly.
 func ComputeNextRun(cronExpr string, from time.Time) (time.Time, error) {
-	sched, err := ScheduledTaskCronParser.Parse(cronExpr)
+	spec := strings.TrimSpace(cronExpr)
+	if spec == "" {
+		return time.Time{}, fmt.Errorf("invalid cron: empty schedule")
+	}
+	// The column is VARCHAR(128). Refused here so an overlong but valid
+	// schedule is a 400, not a failed insert answered with a 500.
+	if len(spec) > ScheduledTaskMaxCron {
+		return time.Time{}, fmt.Errorf("invalid cron: longer than %d characters", ScheduledTaskMaxCron)
+	}
+	if strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
+		return time.Time{}, fmt.Errorf("invalid cron: a time zone cannot be set, schedules run in UTC")
+	}
+	sched, err := ScheduledTaskCronParser.Parse("CRON_TZ=UTC " + spec)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid cron: %w", err)
 	}
@@ -96,33 +131,54 @@ func (s *ScheduledTaskService) runDue(ctx context.Context) {
 
 	publishServers := false
 	for _, t := range due {
-		err := s.execute(ctx, &t)
 		next, parseErr := ComputeNextRun(t.ScheduleCron, now)
-		// If the cron string somehow became invalid (e.g. someone edited
-		// the DB by hand), disable the row instead of looping forever.
-		var nextPtr *time.Time
-		status := "ok"
-		errMsg := ""
-		if err != nil {
-			status = "error"
-			errMsg = err.Error()
-		}
 		if parseErr != nil {
-			status = "error"
-			errMsg = parseErr.Error()
+			// The cron string somehow became invalid (e.g. someone edited the
+			// DB by hand): disable the row instead of looping forever.
 			// Disabling is the whole remedy for an unparseable schedule. If it
 			// does not stick the task stays enabled and errors on every tick
 			// from here on, so the failure has to be visible.
 			if derr := s.store.SetScheduledTaskEnabled(t.ID, false, nil); derr != nil {
 				logErrf("scheduled-tasks", "task #%d has an unparseable schedule but could not be disabled; it will keep failing every tick: %v", t.ID, derr)
 			}
-		} else {
-			nextPtr = &next
+			if recErr := s.store.RecordScheduledTaskRun(t.ID, now, "error", parseErr.Error(), nil); recErr != nil {
+				logErrf("scheduled-tasks", "record run for #%d failed: %v", t.ID, recErr)
+			}
+			continue
 		}
-		if recErr := s.store.RecordScheduledTaskRun(t.ID, now, status, errMsg, nextPtr); recErr != nil {
+
+		// Claim the firing BEFORE carrying it out. Core runs on every node and
+		// the leader lease can change hands in the middle of a tick: a leader
+		// that stalls past its TTL still believes it leads until its next
+		// refresh, and the new leader lists the same due rows. Moving next_run
+		// on only if it still holds the value this replica read makes exactly
+		// one of them the one that fires.
+		var dueAt time.Time
+		if t.NextRun != nil {
+			dueAt = *t.NextRun
+		}
+		claimed, cerr := s.store.ClaimScheduledTaskRun(t.ID, dueAt, next)
+		if cerr != nil {
+			logErrf("scheduled-tasks", "claim #%d failed: %v", t.ID, cerr)
+			continue
+		}
+		if !claimed {
+			continue // another replica fired it
+		}
+
+		err := s.execute(ctx, &t)
+		status, errMsg := "ok", ""
+		var skip skipError
+		switch {
+		case errors.As(err, &skip):
+			status, errMsg = "skipped", err.Error()
+		case err != nil:
+			status, errMsg = "error", err.Error()
+		}
+		if recErr := s.store.RecordScheduledTaskRun(t.ID, now, status, errMsg, &next); recErr != nil {
 			logErrf("scheduled-tasks", "record run for #%d failed: %v", t.ID, recErr)
 		}
-		if t.TaskType == "restart" {
+		if t.TaskType == "restart" && status == "ok" {
 			publishServers = true
 		}
 	}
@@ -162,14 +218,29 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 		// srv.Status is checked for parity with that handler; see its comment for
 		// why the value has no producer today.
 		if srv.Status == "suspended" {
-			return fmt.Errorf("server is suspended; restart skipped")
+			return skipped("server is suspended; restart skipped")
 		}
 		b, berr := s.store.GetUserBilling(srv.OwnerID)
 		if berr != nil {
 			return fmt.Errorf("owner billing status unavailable, restart skipped: %w", berr)
 		}
 		if b.Status == "suspended" {
-			return fmt.Errorf("owner account is suspended for non-payment; restart skipped")
+			return skipped("owner account is suspended for non-payment; restart skipped")
+		}
+		// A scheduled restart restarts a RUNNING server and nothing else - the
+		// same rule the power-action handler enforces with a 409. Without it the
+		// nightly restart of a server its owner had deliberately stopped wrote
+		// desired_state=online and started it again, and it ran against a server
+		// still in setup, out of disk, or inside the post-install cooldown the
+		// handler guards with a 429.
+		if srv.Status != "online" {
+			return skipped("server is %s, not running; restart skipped", statusOrUnknown(srv.Status))
+		}
+		if s.redis != nil {
+			cooldown := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+			if ttl, terr := s.redis.TTL(ctx, cooldown).Result(); terr == nil && ttl > 0 {
+				return skipped("server is finishing an install; restart skipped")
+			}
 		}
 
 		node, err := s.store.GetNodeByID(srv.NodeID)
@@ -209,7 +280,7 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 		// - a person typing there can see the state and means it. What makes
 		// this different is that it repeats unattended.
 		if srv.Status != "online" {
-			return fmt.Errorf("server is %s, not accepting commands; message not sent", srv.Status)
+			return skipped("server is %s, not accepting commands; message not sent", statusOrUnknown(srv.Status))
 		}
 		// Same path as the live Console "send command" handler — push into
 		// the per-server stdin queue. Node forwards to the container.
@@ -223,4 +294,13 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 	default:
 		return fmt.Errorf("unknown task type %q", t.TaskType)
 	}
+}
+
+// statusOrUnknown names a server status for a skip message; an empty one would
+// read as "server is , not running".
+func statusOrUnknown(status string) string {
+	if status == "" {
+		return "in an unknown state"
+	}
+	return status
 }

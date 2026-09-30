@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A scheduled restart no longer starts a server you stopped on purpose.** The run is shown
+  as "skipped" instead. Nothing for you to update.
+- **Schedules always run in UTC,** as the panel says. Nothing for you to update.
+
 ## 2026.09.30.2
 
 ### Features

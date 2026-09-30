@@ -22,7 +22,9 @@ export interface ScheduledTask {
     enabled: boolean;
     nextRun?: string;
     lastRun?: string;
-    lastStatus: '' | 'ok' | 'error';
+    // 'skipped': the server was in no state to take the firing (stopped,
+    // in setup, suspended). Not a failure; lastError says why.
+    lastStatus: '' | 'ok' | 'error' | 'skipped';
     lastError?: string;
     createdBy?: string;
     createdAt: string;

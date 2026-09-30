@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A scheduled restart no longer starts a server that was stopped on purpose,** nor one in
+  setup, out of disk or finishing an install; the run shows as skipped. `core`
+- **Schedules always run in UTC,** as the panel says; a time zone in a schedule is refused
+  instead of being honoured, or crashing the request. `core`
+- **A schedule can no longer fire twice** when Core instances hand leadership over. `core`
+
 ## 2026.09.30.2
 
 ### Features

@@ -170,6 +170,22 @@ func (s *PostgresStore) ListDueScheduledTasks(now time.Time, limit int) ([]model
 	return out, rows.Err()
 }
 
+// ClaimScheduledTaskRun moves next_run on from dueAt to next, but only while the
+// row still holds dueAt and is enabled. It reports whether THIS call made the
+// move, which is what decides which Core replica fires a due task.
+func (s *PostgresStore) ClaimScheduledTaskRun(id int, dueAt, next time.Time) (bool, error) {
+	res, err := s.db.Exec(`UPDATE scheduled_tasks SET next_run=$3, updated_at=NOW()
+		WHERE id=$1 AND enabled = TRUE AND next_run = $2`, id, dueAt, next)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 func (s *PostgresStore) RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error {
 	var nr interface{}
 	if nextRun != nil {

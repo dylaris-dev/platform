@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Clock, Plus, Pencil, Trash2, Play, Square, X, RotateCcw, AlertTriangle, CheckCircle2, MessageSquare, RefreshCw } from 'lucide-react';
+import { Clock, Plus, Pencil, Trash2, Play, Square, X, RotateCcw, AlertTriangle, CheckCircle2, MessageSquare, RefreshCw, SkipForward } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -249,6 +249,12 @@ export default function ServerConfigScheduledPage() {
                                         <span className="mono-label bg-(--error-ghost) px-1.5 rounded-sm text-(--error-light) flex items-center gap-1" title={t.lastError || ''}>
                                             <AlertTriangle size={9} />
                                             error
+                                        </span>
+                                    )}
+                                    {t.lastStatus === 'skipped' && (
+                                        <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-07) flex items-center gap-1" title={t.lastError || ''}>
+                                            <SkipForward size={9} />
+                                            skipped
                                         </span>
                                     )}
                                     {t.lastStatus === 'ok' && (

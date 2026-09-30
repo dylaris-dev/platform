@@ -649,6 +649,10 @@ type Store interface {
 	DeleteScheduledTask(id int) error
 	SetScheduledTaskEnabled(id int, enabled bool, nextRun *time.Time) error
 	ListDueScheduledTasks(now time.Time, limit int) ([]models.ScheduledTask, error)
+	// ClaimScheduledTaskRun advances next_run from dueAt to next only if the row
+	// still holds dueAt, and reports whether this call won - so two Core
+	// replicas never both fire one task.
+	ClaimScheduledTaskRun(id int, dueAt, next time.Time) (bool, error)
 	RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error
 
 	// --- RCON config ---

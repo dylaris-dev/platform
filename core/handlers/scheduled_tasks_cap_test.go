@@ -188,3 +188,51 @@ func TestScheduledTaskUpdateChecksTheResultingType(t *testing.T) {
 		}
 	})
 }
+
+// Switching a task OFF performs nothing, so it does not need the task's action
+// right - but switching it back ON is exactly the re-enable the cap check exists
+// to stop. A delegate with schedule.write and no power.restart could otherwise
+// not pause the owner's restart task, only delete it.
+func TestScheduledTaskDisablingNeedsNoActionRight(t *testing.T) {
+	scheduleOnly := []string{"schedule.read", "schedule.write"}
+	off, on := false, true
+
+	t.Run("pausing a restart task", func(t *testing.T) {
+		fs := &schedCapStore{
+			friendCaps: scheduleOnly,
+			task:       &models.ScheduledTask{ID: 7, ServerID: 1, Name: "t", TaskType: "restart", ScheduleCron: "0 4 * * *", Enabled: true},
+		}
+		rec := httptest.NewRecorder()
+		schedCapHandler(fs).Update(rec, schedCapReq(http.MethodPatch, "/api/servers/1/scheduled-tasks/7", "friend-1",
+			scheduledTaskRequest{Enabled: &off}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("switching it back on still needs power.restart", func(t *testing.T) {
+		fs := &schedCapStore{
+			friendCaps: scheduleOnly,
+			task:       &models.ScheduledTask{ID: 7, ServerID: 1, Name: "t", TaskType: "restart", ScheduleCron: "0 4 * * *", Enabled: false},
+		}
+		rec := httptest.NewRecorder()
+		schedCapHandler(fs).Update(rec, schedCapReq(http.MethodPatch, "/api/servers/1/scheduled-tasks/7", "friend-1",
+			scheduledTaskRequest{Enabled: &on}))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("disabling plus any other change is not a pure disable", func(t *testing.T) {
+		fs := &schedCapStore{
+			friendCaps: scheduleOnly,
+			task:       &models.ScheduledTask{ID: 7, ServerID: 1, Name: "t", TaskType: "restart", ScheduleCron: "0 4 * * *", Enabled: true},
+		}
+		rec := httptest.NewRecorder()
+		schedCapHandler(fs).Update(rec, schedCapReq(http.MethodPatch, "/api/servers/1/scheduled-tasks/7", "friend-1",
+			scheduledTaskRequest{Enabled: &off, ScheduleCron: "0 5 * * *"}))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+		}
+	})
+}

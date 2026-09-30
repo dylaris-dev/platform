@@ -31,6 +31,10 @@ type schedTaskFakeStore struct {
 	statusCalls  []schedStatusCall
 	enabledCalls []schedEnabledCall
 	runRecords   []schedRunRecord
+
+	// claimLost makes ClaimScheduledTaskRun answer "another replica won".
+	claimLost map[int]bool
+	claims    []int
 }
 
 type schedDesiredCall struct {
@@ -99,6 +103,11 @@ func (f *schedTaskFakeStore) SetScheduledTaskEnabled(id int, enabled bool, nextR
 	return nil
 }
 
+func (f *schedTaskFakeStore) ClaimScheduledTaskRun(id int, dueAt, next time.Time) (bool, error) {
+	f.claims = append(f.claims, id)
+	return !f.claimLost[id], nil
+}
+
 func (f *schedTaskFakeStore) RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error {
 	f.runRecords = append(f.runRecords, schedRunRecord{id, status, errMsg, nextRun})
 	return nil
@@ -161,7 +170,7 @@ func TestRunDue_NoDueTasks_NoOp(t *testing.T) {
 
 func TestRunDue_RestartTask_Success(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5}},
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: "online"}},
 		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
 		due: []models.ScheduledTask{
 			{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *"},
@@ -287,7 +296,7 @@ func TestRunDue_ServerNotFound_RecordsError(t *testing.T) {
 
 func TestRunDue_RestartTask_NodeNotFound_RecordsError(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5}},
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: "online"}},
 		// nodes map deliberately empty -> GetNodeByID fails
 		due: []models.ScheduledTask{
 			{ID: 301, ServerID: 1, TaskType: "restart", ScheduleCron: "@hourly"},
@@ -308,7 +317,7 @@ func TestRunDue_RestartTask_NodeNotFound_RecordsError(t *testing.T) {
 // the node must not leave the server looking like it is starting.
 func TestRunDue_RestartTask_QueueNil(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5}},
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: "online"}},
 		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
 		due: []models.ScheduledTask{
 			{ID: 302, ServerID: 1, TaskType: "restart", ScheduleCron: "@hourly"},
@@ -362,7 +371,7 @@ func TestRunDue_InvalidCron_DisablesTaskAndOverridesOKStatus(t *testing.T) {
 
 func TestRunDue_PublishesServersChangedOnlyOnRestart(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5}},
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: "online"}},
 		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
 		due: []models.ScheduledTask{
 			{ID: 500, ServerID: 1, TaskType: "restart", ScheduleCron: "@hourly"},
@@ -453,7 +462,7 @@ func TestRunDue_SayOnly_DoesNotPublishServersChanged(t *testing.T) {
 
 func TestRunDue_RestartTask_SuspendedOwner_IsSkipped(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, OwnerID: "owner-1"}},
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, OwnerID: "owner-1", Status: "online"}},
 		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
 		billing: map[string]*store.UserBilling{"owner-1": {UserID: "owner-1", Status: "suspended"}},
 		due: []models.ScheduledTask{
@@ -488,8 +497,9 @@ func TestRunDue_RestartTask_SuspendedOwner_IsSkipped(t *testing.T) {
 	if len(fs.runRecords) != 1 {
 		t.Fatalf("runRecords = %+v, want 1 entry", fs.runRecords)
 	}
-	if fs.runRecords[0].status != "error" {
-		t.Errorf("status = %q, want error", fs.runRecords[0].status)
+	// "skipped", not "error": nothing is broken, the owner is suspended.
+	if fs.runRecords[0].status != "skipped" {
+		t.Errorf("status = %q, want skipped", fs.runRecords[0].status)
 	}
 	if !strings.Contains(fs.runRecords[0].errMsg, "suspended") {
 		t.Errorf("errMsg = %q, want it to mention the suspension", fs.runRecords[0].errMsg)
@@ -507,7 +517,7 @@ func TestRunDue_RestartTask_SuspendedOwner_IsSkipped(t *testing.T) {
 // one firing costs a deferred restart the next tick retries.
 func TestRunDue_RestartTask_BillingUnreadable_IsSkipped(t *testing.T) {
 	fs := &schedTaskFakeStore{
-		servers:    map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, OwnerID: "owner-1"}},
+		servers:    map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, OwnerID: "owner-1", Status: "online"}},
 		nodes:      map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
 		billingErr: errors.New("db down"),
 		due: []models.ScheduledTask{
@@ -603,7 +613,7 @@ func TestRunDue_SayTask_OnlyQueuesToARunningServer(t *testing.T) {
 			rr := fs.runRecords[0]
 			wantStatus := "ok"
 			if !tt.wantQueue {
-				wantStatus = "error"
+				wantStatus = "skipped"
 			}
 			if rr.status != wantStatus {
 				t.Errorf("recorded status = %q, want %q: a firing that was not delivered must not read as ok", rr.status, wantStatus)
@@ -617,5 +627,120 @@ func TestRunDue_SayTask_OnlyQueuesToARunningServer(t *testing.T) {
 				t.Error("next run was cleared; the task would stop firing once the server came back")
 			}
 		})
+	}
+}
+
+// A scheduled restart restarts a RUNNING server and nothing else, the rule the
+// power-action handler answers with a 409. It used to start a server its owner
+// had stopped on purpose, writing desired_state=online, and to run against a
+// server in setup or out of disk.
+func TestRunDue_RestartTask_OnlyRestartsARunningServer(t *testing.T) {
+	for _, status := range []string{"stopped", "offline", "pending_setup", "disk_full", "installing", ""} {
+		t.Run("status="+status, func(t *testing.T) {
+			fs := &schedTaskFakeStore{
+				servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: status}},
+				nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
+				due:     []models.ScheduledTask{{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *"}},
+			}
+			svc, done := newSchedTestService(t, fs)
+			defer done()
+
+			svc.runDue(context.Background())
+
+			if len(fs.desiredCalls) != 0 || len(fs.statusCalls) != 0 {
+				t.Errorf("a %q server was touched: desired=%+v status=%+v", status, fs.desiredCalls, fs.statusCalls)
+			}
+			if n := svc.redis.XLen(context.Background(), "dylaris:node:node-tok-5:cmds").Val(); n != 0 {
+				t.Errorf("a restart was queued for a %q server", status)
+			}
+			if len(fs.runRecords) != 1 || fs.runRecords[0].status != "skipped" {
+				t.Fatalf("run records = %+v, want one skipped", fs.runRecords)
+			}
+			if fs.runRecords[0].nextRun == nil {
+				t.Error("a skipped firing must still move next_run on")
+			}
+		})
+	}
+}
+
+// The handler refuses a power action inside the post-install cooldown (429);
+// the schedule has to as well.
+func TestRunDue_RestartTask_SkippedDuringInstallCooldown(t *testing.T) {
+	fs := &schedTaskFakeStore{
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: "online"}},
+		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
+		due:     []models.ScheduledTask{{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *"}},
+	}
+	svc, done := newSchedTestService(t, fs)
+	defer done()
+	svc.redis.Set(context.Background(), "dylaris:server:srv-1:install-start", "1", 30*time.Second)
+
+	svc.runDue(context.Background())
+
+	if n := svc.redis.XLen(context.Background(), "dylaris:node:node-tok-5:cmds").Val(); n != 0 {
+		t.Error("a restart was queued inside the install cooldown")
+	}
+	if len(fs.runRecords) != 1 || fs.runRecords[0].status != "skipped" {
+		t.Fatalf("run records = %+v, want one skipped", fs.runRecords)
+	}
+}
+
+// Two Core replicas can list the same due row across a leader handover. Only
+// the one whose claim moves next_run fires; the other does nothing at all.
+func TestRunDue_LostClaimDoesNotFire(t *testing.T) {
+	due := time.Date(2026, 9, 30, 4, 0, 0, 0, time.UTC)
+	fs := &schedTaskFakeStore{
+		servers:   map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: "online"}},
+		nodes:     map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
+		due:       []models.ScheduledTask{{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *", NextRun: &due}},
+		claimLost: map[int]bool{100: true},
+	}
+	svc, done := newSchedTestService(t, fs)
+	defer done()
+
+	svc.runDue(context.Background())
+
+	if len(fs.claims) != 1 {
+		t.Fatalf("claims = %v, want one attempt", fs.claims)
+	}
+	if n := svc.redis.XLen(context.Background(), "dylaris:node:node-tok-5:cmds").Val(); n != 0 {
+		t.Error("a task whose claim was lost still fired")
+	}
+	if len(fs.runRecords) != 0 || len(fs.desiredCalls) != 0 {
+		t.Errorf("a lost claim still wrote: records=%+v desired=%+v", fs.runRecords, fs.desiredCalls)
+	}
+}
+
+// Schedules run in UTC whatever the host's zone is. robfig evaluates a spec in
+// time.Local unless it names a zone, so this held only because the production
+// image happens to have no TZ set.
+func TestComputeNextRun_IsUTCRegardlessOfHostZone(t *testing.T) {
+	orig := time.Local
+	time.Local = time.FixedZone("UTC+5", 5*3600)
+	defer func() { time.Local = orig }()
+
+	from := time.Date(2026, 7, 15, 10, 15, 30, 0, time.UTC)
+	got, err := ComputeNextRun("@daily", from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("@daily from %v = %v, want %v (UTC midnight)", from, got, want)
+	}
+}
+
+// A zone cannot be chosen, and "TZ=UTC" with no space after it used to panic
+// inside the parser mid-request; every one of these is a plain error now.
+func TestComputeNextRun_RefusesZonesAndOverlongSpecs(t *testing.T) {
+	from := time.Date(2026, 7, 15, 10, 15, 30, 0, time.UTC)
+	long := strings.Repeat("0,", 70) + "0 * * * *"
+	for _, spec := range []string{"TZ=UTC", "TZ=Europe/Berlin 0 4 * * *", "CRON_TZ=UTC @daily", "", "   ", long} {
+		if _, err := ComputeNextRun(spec, from); err == nil {
+			t.Errorf("ComputeNextRun(%q) was accepted", spec)
+		}
+	}
+	// Surrounding whitespace is not a different schedule.
+	if _, err := ComputeNextRun("  0 4 * * *  ", from); err != nil {
+		t.Errorf("a padded schedule was refused: %v", err)
 	}
 }

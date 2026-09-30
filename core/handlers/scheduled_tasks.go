@@ -236,6 +236,15 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// Create trims the schedule and Update did not, so a PATCH stored one with
+	// padding a POST would have cleaned.
+	req.ScheduleCron = strings.TrimSpace(req.ScheduleCron)
+	// A patch that only switches the task OFF carries out nothing, so it does
+	// not need the right to perform the task's action. Without this, a delegate
+	// holding schedule.write but not power.restart could not pause the owner's
+	// restart task, only delete it (and only with schedule.delete).
+	onlyDisabling := req.Enabled != nil && !*req.Enabled &&
+		req.Name == "" && req.TaskType == "" && req.Payload == "" && req.ScheduleCron == ""
 	// Apply the patch onto a copy first, then validate the RESULT with the same
 	// rules Create uses. Validating the request alone would miss the combination
 	// that only a patch can reach - changing taskType to "say" while leaving the
@@ -257,7 +266,7 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// "restart" one is how schedule.write would otherwise still reach a power
 	// action, and a patch that leaves the type alone must still not let someone
 	// who lost the capability re-enable the task.
-	if h.refuseWithoutTaskCap(w, r, serverID, existing.TaskType) {
+	if !onlyDisabling && h.refuseWithoutTaskCap(w, r, serverID, existing.TaskType) {
 		return
 	}
 	if req.Enabled != nil {
