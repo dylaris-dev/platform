@@ -255,7 +255,8 @@ func resolveJavaImage(requested, stored string) string {
 // installFabric and installForge use it as the mcVersion in their meta lookup
 // (both resolve the LOADER when it is blank, so only Version is required),
 // installNeoForge is passed Loader as its version, and installFromLibrary
-// needs a local path or a fallback URL.
+// needs the file's path in the library, which SetupServer resolves into a
+// signed Core download URL.
 //
 // The type allowlist is validate.IsInstallerType, which already existed and
 // had no caller at all. Reusing it rather than restating the set here is the
@@ -287,8 +288,11 @@ func validateInstallerRequest(typ, version, loader, url, path string) string {
 			return "installer.loader is required for neoforge"
 		}
 	case "library":
-		if strings.TrimSpace(path) == "" && strings.TrimSpace(url) == "" {
-			return "installer.path or installer.url is required for library"
+		// A library file is named by its path in the library. A bare URL used
+		// to be accepted here too, which made "library" a way to have the node
+		// download anything at all into the server.
+		if strings.TrimSpace(path) == "" {
+			return "installer.path is required for library"
 		}
 	}
 	return ""
@@ -402,6 +406,19 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		req.Installer.McVersion = res.MCVersion
 		req.Installer.Version = res.Build
 		req.Installer.URL = res.URL
+	}
+
+	// A library file is resolved into the signed Core URL the node downloads
+	// it from, before anything is written. The node is never sent the path:
+	// it used to copy whatever that path named on its own disk.
+	if req.Installer.Type == "library" {
+		u, code, msg := resolveLibraryInstall(r.Context(), h.state, req.Installer.Path, isAdmin)
+		if code != 0 {
+			sendJSONError(w, msg, code)
+			return
+		}
+		req.Installer.URL = u
+		req.Installer.Path = ""
 	}
 
 	// Enforce sub-server limit. Skipped during first setup only - the comment
@@ -606,6 +623,12 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// reinstallableInstallers are the sources a reinstall may name: the ones the
+// node installs from a type and a version alone.
+var reinstallableInstallers = map[string]bool{
+	"paper": true, "vanilla": true, "fabric": true, "forge": true, "neoforge": true,
+}
+
 // ReinstallServer: Reinstalls the active sub-server (version update)
 func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -626,9 +649,6 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			Version   string `json:"version"`
 			McVersion string `json:"mcVersion"`
 			Loader    string `json:"loader"`
-			URL       string `json:"url"`
-			Path      string `json:"path"`
-			Structure string `json:"structure"`
 		} `json:"installer"`
 		JavaImage     string `json:"javaImage"`
 		ExtraJvmFlags string `json:"extraJvmFlags"`
@@ -652,6 +672,35 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 
 	if srv.Status == "pending_setup" {
 		sendJSONError(w, "Server must be set up before reinstalling", 400)
+		return
+	}
+
+	// What is sent to the node is what was validated: the request's fields,
+	// each falling back to what the server already runs. The node used to get
+	// the raw request fields while only the database got the fallbacks, and it
+	// deletes the server's jars before it looks at the installer - so a
+	// reinstall naming no type left a server with no jar at all.
+	installerType := req.Installer.Type
+	if installerType == "" {
+		installerType = srv.InstallerType
+	}
+	mcVersion := req.Installer.McVersion
+	if mcVersion == "" {
+		mcVersion = srv.MinecraftVersion
+	}
+	buildNumber := req.Installer.Version
+	if buildNumber == "" {
+		buildNumber = srv.BuildNumber
+	}
+	// Reinstall updates the server software in place. Every other source -
+	// library, modpacks, packs, Technic, uploads - is resolved and authorized
+	// by setup, and this route used to pass them to the node unchecked.
+	if !reinstallableInstallers[installerType] {
+		sendJSONError(w, "Reinstall updates the server software (paper, vanilla, fabric, forge or neoforge). Use setup for any other install source.", 400)
+		return
+	}
+	if msg := validateInstallerRequest(installerType, buildNumber, req.Installer.Loader, "", ""); msg != "" {
+		sendJSONError(w, msg, 400)
 		return
 	}
 
@@ -687,19 +736,6 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
 
 	// Update DB (start_command is display-only; node builds the real command)
-	installerType := req.Installer.Type
-	if installerType == "" {
-		installerType = srv.InstallerType
-	}
-	mcVersion := req.Installer.McVersion
-	if mcVersion == "" {
-		mcVersion = srv.MinecraftVersion
-	}
-	buildNumber := req.Installer.Version
-	if buildNumber == "" {
-		buildNumber = srv.BuildNumber
-	}
-
 	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, installerType, mcVersion, buildNumber); err != nil {
 		sendJSONError(w, "Failed to update server", 500)
 		return
@@ -725,12 +761,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			"activeSubServer": subName,
 		}
 		installerPayload := map[string]interface{}{
-			"type":      req.Installer.Type,
-			"version":   req.Installer.Version,
-			"loader":    req.Installer.Loader,
-			"url":       req.Installer.URL,
-			"path":      req.Installer.Path,
-			"structure": req.Installer.Structure,
+			"type":    installerType,
+			"version": buildNumber,
+			"loader":  req.Installer.Loader,
 		}
 
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "reinstall", configPayload, installerPayload); err != nil {
@@ -750,7 +783,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		// correct for a same-pack reinstall); this call therefore refreshes the
 		// external-modpack URL case and clears when switching to a non-modpack
 		// installer. The panel reinstalls a pack via /setup, not this route.
-		go h.snapshotModpackContents(serverID, subName, installerType, nil, req.Installer.URL)
+		go h.snapshotModpackContents(serverID, subName, installerType, nil, "")
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)

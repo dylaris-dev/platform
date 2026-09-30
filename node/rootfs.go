@@ -315,23 +315,3 @@ func copyTreeAt(src, dst string, forTenant bool) error {
 	defer dstRoot.Close()
 	return copyWalkIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst), forTenant)
 }
-
-// copyFileInto copies the single file src to dst, confined to their parents and
-// handed to the container's uid.
-func copyFileInto(src, dst string) error {
-	srcRoot, err := os.OpenRoot(filepath.Dir(src))
-	if err != nil {
-		return err
-	}
-	defer srcRoot.Close()
-	dstRoot, err := openRootMk(filepath.Dir(dst))
-	if err != nil {
-		return err
-	}
-	defer dstRoot.Close()
-	if err := copyFileIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst)); err != nil {
-		return err
-	}
-	chownForMCIn(dstRoot, filepath.Base(dst))
-	return nil
-}

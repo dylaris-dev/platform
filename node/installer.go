@@ -130,7 +130,7 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 		if config.URL == "" {
 			return nil, fmt.Errorf("import type requires a URL")
 		}
-		return nil, installFromURL(destDir, config.URL)
+		return nil, installFromURL(destDir, config.URL, downloadImportGuarded)
 	case "upload":
 		// Files pre-uploaded via HTTP to the sub-server directory — nothing to do here.
 		log.Printf("Upload type: files already in %s, skipping installer", destDir)
@@ -421,41 +421,34 @@ func installVanilla(dir, version string) error {
 	return downloadFile(versionInfo.Downloads.Server.URL, filepath.Join(dir, "server.jar"))
 }
 
-// installFromLibrary copies a library file (JAR or ZIP) into the server directory.
-// localPath takes priority; fallbackURL is used when localPath is empty.
-func installFromLibrary(destDir, localPath, fallbackURL string) error {
+// installFromLibrary downloads a library file from Core. The library lives in
+// Core's storage and never on the node, so a request naming a local path is
+// refused: that path used to be copied into the server as given, which put any
+// file the node could read - its environment, another tenant's world - into the
+// requester's server.
+func installFromLibrary(destDir, localPath, url string) error {
 	if localPath != "" {
-		return installFromLocalFile(destDir, localPath)
+		return fmt.Errorf("library installer: a local path is not accepted; update Core so it sends a download URL")
 	}
-	if fallbackURL != "" {
-		return installFromURL(destDir, fallbackURL)
+	if url == "" {
+		return fmt.Errorf("library installer: no download URL provided")
 	}
-	return fmt.Errorf("library installer: no path or URL provided")
+	if err := validateCoreURL(url); err != nil {
+		return fmt.Errorf("library installer: %w", err)
+	}
+	return installFromURL(destDir, url, downloadFile)
 }
 
-// installFromLocalFile copies a local file (JAR or ZIP) or directory into destDir.
-func installFromLocalFile(destDir, srcPath string) error {
-	info, err := os.Stat(srcPath)
-	if err != nil {
-		return fmt.Errorf("library source not found: %v", err)
-	}
-	if info.IsDir() {
-		log.Printf("Copying directory from library: %s", srcPath)
-		return copyDir(srcPath, destDir)
-	}
-	lower := strings.ToLower(srcPath)
-	if strings.HasSuffix(lower, ".zip") {
-		log.Printf("Extracting ZIP from library: %s", srcPath)
-		return extractZipToDir(srcPath, destDir)
-	}
-	// Assume it's a JAR or similar — place it as server.jar
-	log.Printf("Copying JAR from library: %s", srcPath)
-	return copyFileForTenant(srcPath, filepath.Join(destDir, "server.jar"))
+// downloadImportGuarded fetches a caller-supplied URL through the client that
+// refuses every non-public address. The response lands in the tenant's server,
+// so an unguarded fetch read whatever the node reaches on the private network.
+func downloadImportGuarded(url, destPath string) error {
+	return downloadFileGuarded(url, destPath, 0)
 }
 
 // installFromURL downloads a file from a URL and places it in destDir.
 // ZIPs are extracted automatically; other files are saved as server.jar.
-func installFromURL(destDir, url string) error {
+func installFromURL(destDir, url string, download func(url, destPath string) error) error {
 	lower := strings.ToLower(url)
 
 	var destPath string
@@ -466,7 +459,7 @@ func installFromURL(destDir, url string) error {
 	}
 
 	log.Printf("Downloading from URL: %s ...", url)
-	if err := downloadFile(url, destPath); err != nil {
+	if err := download(url, destPath); err != nil {
 		return err
 	}
 
@@ -605,10 +598,6 @@ func copyDir(src, dst string) error { return copyDirInto(src, dst) }
 // copyTree copies src into dst VERBATIM, protected entries included. Only a
 // whole-server MOVE may use it.
 func copyTree(src, dst string) error { return copyTreeInto(src, dst) }
-
-// copyFileForTenant copies one file into a server's own data and hands it to
-// the container's uid.
-func copyFileForTenant(src, dst string) error { return copyFileInto(src, dst) }
 
 // downloadFile downloads a URL to a local file path.
 func downloadFile(url, destPath string) error {

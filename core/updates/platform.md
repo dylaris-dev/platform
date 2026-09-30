@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30.5
+
+### Features
+- **Installing a server from the library works on any node.** The node used to look for
+  the file on its own disk, where the library never is; it now downloads it from Core. `core` `node`
+
+### Breaking
+- **Library installs need Core's public URL set to an https address,** because the node
+  downloads the file from there, as it does a built pack. Without one it is refused. `core`
+- **The reinstall API accepts only paper, vanilla, fabric, forge and neoforge.** Every
+  other install source goes through setup, which resolves and checks it. `core`
+
+### Security
+- **A library setup could copy any file on the node into the server,** such as the node's
+  environment or another server's world, for anyone allowed to change server settings. `core` `node`
+- **Install downloads can no longer reach the node's private network.** Reinstall passed
+  any URL through unchecked; the node now refuses non-public addresses for them. `core` `node`
+
+### Fixes
+- **A reinstall that names no type or version now keeps the server's own.** It used to
+  delete the server's jars and then fail, leaving a server that could not start. `core`
+
 ## 2026.09.30.4
 
 ### Features

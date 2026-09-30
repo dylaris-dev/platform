@@ -107,6 +107,10 @@ var ExemptRoutes = map[string]bool{
 	// storage key carries an HMAC of CLUSTER_SECRET, which is the credential;
 	// the handler serves modpacks/ keys only, and the route is rate limited.
 	"/mirror/{rest:.*}": true,
+	// Its library sibling: a node downloads one library file it was told to
+	// install. The URL carries an HMAC of CLUSTER_SECRET over the path and an
+	// expiry, which is the credential; same limiter.
+	"/mirror/library/{exp}/{sig}/{rest:.*}": true,
 
 	// --- AUTHED-EXEMPT (AuthMiddleware only; in-handler filter / self / helper) ---
 

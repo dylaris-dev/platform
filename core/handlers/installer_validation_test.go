@@ -44,9 +44,10 @@ func TestValidateInstallerRequest(t *testing.T) {
 		{name: "neoforge needs a loader", typ: "neoforge", version: "1.21.4"},
 		{name: "neoforge with a loader", typ: "neoforge", loader: "21.4.10-beta", ok: true},
 
-		{name: "library needs a path or url", typ: "library"},
+		{name: "library needs a path", typ: "library"},
 		{name: "library with a path", typ: "library", path: "servers/paper.jar", ok: true},
-		{name: "library with a fallback url", typ: "library", url: "https://example.com/p.jar", ok: true},
+		// A bare URL made "library" a way to have the node download anything.
+		{name: "library with only a url", typ: "library", url: "https://example.com/p.jar"},
 
 		// These carry no field this function can check; their own paths do.
 		{name: "upload", typ: "upload", ok: true},

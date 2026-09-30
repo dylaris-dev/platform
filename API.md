@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **510 routes** in 50 sections: 226 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
-- **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **106** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **511 routes** in 51 sections: 227 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
+- **31** accept no credential at all; read the Gates column before assuming any of them is open.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **106** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **20** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -189,6 +189,7 @@ can still show what exists.
 - [/api/versions](#apiversions) (2)
 - [/api/warp](#apiwarp) (21)
 - [/healthz](#healthz) (1)
+- [/mirror/library](#mirrorlibrary) (1)
 - [/mirror/{rest:.*}](#mirrorrest) (1)
 
 ## /api/admin
@@ -944,6 +945,12 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/healthz` | **none** | _public_ | - | `HealthHandler.Healthz` | Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load balancers). |
+
+## /mirror/library
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/mirror/library/{exp}/{sig}/{rest:.*}` | **none** | _public_ | Limit | `LibraryHandler.LibraryMirror` | streams one library file to a node installing it. |
 
 ## /mirror/{rest:.*}
 

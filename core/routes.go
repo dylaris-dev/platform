@@ -652,6 +652,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// route served the Technic launcher. Its own rate-limiter instance, not a
 	// shared one: a client exhausting one budget must not lock another.
 	mirrorLimiter := handlers.NewIPRateLimiter()
+	// A library file a node installs, on the same limiter. Registered BEFORE
+	// the pack route, whose pattern would otherwise take it. The URL carries a
+	// signature over the path and an expiry; the handler serves that one file.
+	r.HandleFunc("/mirror/library/{exp}/{sig}/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, libraryHandler.LibraryMirror)).Methods("GET")
 	r.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, packsHandler.ModpackMirror)).Methods("GET")
 
 	// --- PUBLIC SHARE-LINK DOWNLOAD ---

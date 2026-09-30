@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30.5
+
+### Features
+- **Installing a server from the library now works on your node.** `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- **Update your node.** A member with settings rights on one of your servers could have
+  a file from anywhere on your node copied into that server. It is closed on our side,
+  and the updated node refuses it on its own as well. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.30.4
 
 ### Features

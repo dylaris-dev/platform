@@ -138,6 +138,11 @@ func loadExtraModpackHosts() {
 // read without synchronization from then on.
 var coreMirrorHost atomic.Value // string
 
+func coreMirrorHostValue() string {
+	h, _ := coreMirrorHost.Load().(string)
+	return h
+}
+
 // setCoreMirrorHost records what Core named. Empty means "Core names none",
 // never "forget the one you have" - the same rule as the Redis address on the
 // same message, so an older Core (or a replica that has no public URL
@@ -178,6 +183,23 @@ func validateMrpackArchiveURL(u string) error {
 	return err
 }
 
+// validateCoreURL accepts only a URL on the host Core named for itself, for
+// files Core serves from its own storage (the library).
+func validateCoreURL(u string) error {
+	host, err := mrpackURLHost(u)
+	if err != nil {
+		return err
+	}
+	mirror, _ := coreMirrorHost.Load().(string)
+	if mirror == "" {
+		return fmt.Errorf("Core has not named a public address to this node; it is told one when it connects")
+	}
+	if host != mirror {
+		return fmt.Errorf("url host %q is not Core's address", host)
+	}
+	return nil
+}
+
 func installModpack(destDir string, cfg InstallerConfig) error {
 	if cfg.URL == "" {
 		return fmt.Errorf("modpack installer requires URL")
@@ -199,7 +221,13 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 	}
 	defer tmpRoot.Close()
 	mrpackPath := filepath.Join(tmp, "pack.mrpack")
-	if _, err := downloadBoundedInto(tmpRoot, "pack.mrpack", cfg.URL, maxMrpackSize); err != nil {
+	// Only Core's own archive may come from a non-public address: a self-hosted
+	// Core often has one. Everything a pack author chose goes through the guard.
+	fetch := downloadBoundedGuarded
+	if host, _ := mrpackURLHost(cfg.URL); host != "" && host == coreMirrorHostValue() {
+		fetch = downloadBoundedInto
+	}
+	if _, err := fetch(tmpRoot, "pack.mrpack", cfg.URL, maxMrpackSize); err != nil {
 		return fmt.Errorf("download .mrpack: %w", err)
 	}
 
@@ -393,7 +421,7 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 			continue
 		}
 		tmp := name + ".part"
-		n, err := downloadBoundedInto(root, tmp, u, modpackFileCap(f.FileSize))
+		n, err := downloadBoundedGuarded(root, tmp, u, modpackFileCap(f.FileSize))
 		if err != nil {
 			lastErr = err
 			continue
@@ -434,7 +462,18 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 // sha512 in the manifest, a corrupt jar was then renamed into place as if it
 // were the real one.
 func downloadBoundedInto(root *os.Root, name, url string, maxBytes int64) (int64, error) {
-	client := &http.Client{Timeout: 5 * time.Minute, Transport: uaTransport{base: http.DefaultTransport}}
+	return downloadBoundedWith(&http.Client{Timeout: 5 * time.Minute, Transport: uaTransport{base: http.DefaultTransport}}, root, name, url, maxBytes)
+}
+
+// downloadBoundedGuarded is downloadBoundedInto through the client that refuses
+// every non-public address. The host allowlist only covers the FIRST URL: a
+// redirect from an allowlisted host could otherwise point the node at its
+// private network, and the response lands in the tenant's server.
+func downloadBoundedGuarded(root *os.Root, name, url string, maxBytes int64) (int64, error) {
+	return downloadBoundedWith(&http.Client{Timeout: 5 * time.Minute, Transport: guardedDownloadClient.Transport}, root, name, url, maxBytes)
+}
+
+func downloadBoundedWith(client *http.Client, root *os.Root, name, url string, maxBytes int64) (int64, error) {
 	resp, err := client.Get(url)
 	if err != nil {
 		return 0, err

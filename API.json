@@ -2502,6 +2502,16 @@
     },
     {
       "method": "GET",
+      "path": "/mirror/library/{exp}/{sig}/{rest:.*}",
+      "auth": "none",
+      "authorization": "public",
+      "description": "streams one library file to a node installing it.",
+      "handler": "LibraryHandler.LibraryMirror",
+      "group": "mirror",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/mirror/{rest:.*}",
       "auth": "none",
       "authorization": "public",
@@ -5092,9 +5102,9 @@
     }
   ],
   "counts": {
-    "total": 511,
+    "total": 512,
     "byAuth": {
-      "none": 30,
+      "none": 31,
       "session": 465,
       "user API key": 10,
       "warp key": 6
@@ -5118,7 +5128,7 @@
       "library": 6,
       "maintenance": 1,
       "me": 27,
-      "mirror": 1,
+      "mirror": 2,
       "modrinth": 6,
       "modules": 6,
       "nodes": 14,

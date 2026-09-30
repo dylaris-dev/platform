@@ -32,6 +32,9 @@ import (
 //     not a stored ciphertext. Changing the secret changes where a pack build's
 //     .mrpack LIVES, so a rotation has to re-key the OBJECTS in storage, which
 //     is a data move rather than a column update.
+//   - The library download signature (purpose "library-mirror") is an HMAC
+//     over a path and an expiry that lives a day at most and is stored nowhere.
+//     A rotation invalidates the URLs already handed out, and nothing else.
 //   - The warp leader WireGuard identity is derived from CLUSTER_SECRET and
 //     stored nowhere at all, so there is nothing to re-encrypt. It is why the
 //     old secret has to travel inside a bundle.
@@ -48,6 +51,9 @@ const (
 // mrpackPathPurpose is listed so the coverage test below can account for it by
 // name. It is deliberately not resealable; see the comment above.
 const mrpackPathPurpose = "mrpack-path"
+
+// libraryMirrorPurpose, likewise listed only so the coverage test can name it.
+const libraryMirrorPurpose = "library-mirror"
 
 // ResealBucket is what happened to one group of values.
 type ResealBucket struct {
