@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -393,6 +394,14 @@ func (v *virtualFS) resolve(path string) (string, string, sftpServerRef, error) 
 	return full, rel, ref, nil
 }
 
+// openRoot opens the server directory resolve landed in as an os.Root. The
+// operation then runs through it, so it stays inside the directory even if a
+// name changes between resolve's check and the operation (see rootfs.go).
+// Files opened through the Root stay valid after it is closed.
+func (v *virtualFS) openRoot(ref sftpServerRef) (*os.Root, error) {
+	return os.OpenRoot(v.storageMgr.GetServerDir(ref.UUID))
+}
+
 // protectedRel reports whether a resolved SFTP path names a platform-managed
 // entry. "." is the server directory itself, which every client stats while
 // navigating, so it is not treated as protected here - the operations that
@@ -414,7 +423,12 @@ func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 	if protectedRel(rel) {
 		return nil, os.ErrPermission
 	}
-	return os.Open(realPath)
+	root, err := v.openRoot(ref)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Open(filepath.ToSlash(rel))
 }
 
 func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
@@ -428,8 +442,13 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if protectedRel(rel) {
 		return nil, os.ErrPermission
 	}
+	root, err := v.openRoot(ref)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	f, err := os.OpenFile(realPath, flags, 0644)
+	f, err := root.OpenFile(filepath.ToSlash(rel), flags, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +456,12 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	// uploaded into a RUNNING server would be one the server can read and not
 	// modify - which surfaces days later as a plugin that cannot save its own
 	// config. The start-time pass repairs this, but only at the next start.
-	chownForMC(realPath)
+	// On the open file, not by name.
+	if mcUser() != 0 {
+		if err := f.Chown(mcUser(), mcUser()); err != nil {
+			log.Printf("mc-user: cannot hand %s to uid %d: %v", rel, mcUser(), err)
+		}
+	}
 	// Without Redis there is nothing to meter against — behave as before.
 	if v.rdb == nil {
 		return f, nil
@@ -534,7 +558,12 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if protectedRel(rel) {
 			return os.ErrPermission
 		}
-		return os.Mkdir(realPath, 0755)
+		root, err := v.openRoot(ref)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return root.Mkdir(filepath.ToSlash(rel), 0755)
 	// pkg/sftp reports RMDIR as its own method, and it was not handled at all:
 	// it fell through to the "unsupported operation" default, so a client could
 	// create a directory over SFTP and then never delete it. os.Remove is the
@@ -555,7 +584,12 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if protectedRel(rel) {
 			return os.ErrPermission
 		}
-		return os.Remove(realPath)
+		root, err := v.openRoot(ref)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return root.Remove(filepath.ToSlash(rel))
 	case "Rename":
 		src, srcRel, srcRef, err := v.resolve(r.Filepath)
 		if err != nil || src == "" {
@@ -583,7 +617,18 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if protectedRel(dstRel) {
 			return os.ErrPermission
 		}
-		return os.Rename(src, dst)
+		// A rename runs inside ONE Root, so it cannot span two servers. It used
+		// to, as a plain path rename; moving files between servers is still
+		// possible as a download and an upload.
+		if srcRef.UUID != dstRef.UUID {
+			return os.ErrPermission
+		}
+		root, err := v.openRoot(srcRef)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return root.Rename(filepath.ToSlash(srcRel), filepath.ToSlash(dstRel))
 	case "Setstat":
 		return nil // ignore chmod/chown
 	}
@@ -648,7 +693,12 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		if protectedRel(rel) {
 			return nil, os.ErrNotExist
 		}
-		entries, err := os.ReadDir(realPath)
+		root, err := v.openRoot(ref)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(rel))
 		if err != nil {
 			return nil, err
 		}
@@ -683,7 +733,12 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		if protectedRel(rel) {
 			return nil, os.ErrNotExist
 		}
-		fi, err := os.Lstat(realPath)
+		root, err := v.openRoot(ref)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		fi, err := root.Lstat(filepath.ToSlash(rel))
 		if err != nil {
 			return nil, err
 		}

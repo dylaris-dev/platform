@@ -252,7 +252,7 @@ func TestZipDownload_SymlinkEscapingRootIsOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A link that stays inside the tenant's own directory is legitimate.
-	if err := os.Symlink(filepath.Join(root, "server.properties"), filepath.Join(root, "plugins", "inside.txt")); err != nil {
+	if err := os.Symlink(filepath.Join("..", "server.properties"), filepath.Join(root, "plugins", "inside.txt")); err != nil {
 		t.Fatal(err)
 	}
 

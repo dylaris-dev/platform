@@ -68,7 +68,7 @@ func TestBackupArchiveSurvivesASymlinkInTheServerDirectory(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(serverRoot, "server.properties"), filepath.Join(serverRoot, "plugins", "inside.txt")); err != nil {
+	if err := os.Symlink(filepath.Join("..", "server.properties"), filepath.Join(serverRoot, "plugins", "inside.txt")); err != nil {
 		t.Fatal(err)
 	}
 

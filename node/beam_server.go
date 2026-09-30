@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -344,8 +345,11 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager) {
 				// levels down, where nothing ever looked. A kill mid-stream then
 				// left the partial file on the server's disk for good, counting
 				// against its limit.
-				serverDir := filepath.Join(base, e.Name())
-				_ = filepath.WalkDir(serverDir, func(path string, d fs.DirEntry, err error) error {
+				root, err := os.OpenRoot(filepath.Join(base, e.Name()))
+				if err != nil {
+					continue
+				}
+				_ = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 					if err != nil || d.IsDir() {
 						// A directory that cannot be read is skipped, not fatal:
 						// one unreadable corner must not stop the rest of the sweep.
@@ -358,11 +362,12 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager) {
 					if ierr != nil || now.Sub(info.ModTime()) < grace {
 						return nil
 					}
-					if rerr := os.Remove(path); rerr == nil {
-						log.Printf("beam-server: sweeper removed stale temp %s", path)
+					if rerr := root.Remove(name); rerr == nil {
+						log.Printf("beam-server: sweeper removed stale temp %s/%s", e.Name(), name)
 					}
 					return nil
 				})
+				root.Close()
 			}
 		}
 	}
@@ -471,10 +476,6 @@ func (s *beamServer) validateBeamPath(reqPath, serverUUID string) (string, error
 	return s.validateBeamPathOp(reqPath, serverUUID, "write")
 }
 
-func (s *beamServer) validateBeamPathRead(reqPath, serverUUID string) (string, error) {
-	return s.validateBeamPathOp(reqPath, serverUUID, "read")
-}
-
 func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string, error) {
 	if serverUUID == "" {
 		return "", fmt.Errorf("server_uuid required")
@@ -507,6 +508,30 @@ func (s *beamServer) validateBeamPathOp(reqPath, serverUUID, op string) (string,
 		}
 	}
 	return cleanPath, nil
+}
+
+// jailBeam is validateBeamPathOp plus the server directory opened as an
+// os.Root, so the operation itself cannot be walked out of the directory by a
+// link the tenant swaps in after the check (see rootfs.go). The caller closes
+// the Root and operates on the returned name through it.
+func (s *beamServer) jailBeam(reqPath, serverUUID, op string) (*os.Root, string, error) {
+	abs, err := s.validateBeamPathOp(reqPath, serverUUID, op)
+	if err != nil {
+		return nil, "", err
+	}
+	serverDir := s.storageMgr.GetServerDir(serverUUID)
+	if op == "write" {
+		return openJailedForWrite(serverDir, reqPath)
+	}
+	name, err := rootName(serverDir, abs)
+	if err != nil {
+		return nil, "", err
+	}
+	root, err := os.OpenRoot(serverDir)
+	if err != nil {
+		return nil, "", err
+	}
+	return root, name, nil
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────
@@ -657,14 +682,18 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 		return &pb.BeamFileListResp{}, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	dirPath, err := s.validateBeamPathRead(req.Path, serverUUID)
+	root, dirName, err := s.jailBeam(req.Path, serverUUID, "read")
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return &pb.BeamFileListResp{Files: []*pb.BeamFileInfo{}}, nil
+		}
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
+	defer root.Close()
 
-	entries, err := os.ReadDir(dirPath)
+	entries, err := fs.ReadDir(root.FS(), dirName)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return &pb.BeamFileListResp{Files: []*pb.BeamFileInfo{}}, nil
 		}
 		return nil, status.Errorf(codes.Internal, "read dir: %v", err)
@@ -706,12 +735,13 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	filePath, err := s.validateBeamPathRead(req.Path, serverUUID)
+	root, name, err := s.jailBeam(req.Path, serverUUID, "read")
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
 	}
+	defer root.Close()
 
-	data, err := os.ReadFile(filePath)
+	data, err := root.ReadFile(name)
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
 	}
@@ -724,10 +754,11 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	filePath, err := s.validateBeamPath(req.Path, serverUUID)
+	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	defer root.Close()
 
 	// A direct content save writes bytes to the server dir just like an upload,
 	// so the same admin caps apply — otherwise it would be a way to write past
@@ -744,7 +775,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
 
-	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
+	if err := root.WriteFile(name, []byte(req.Content), 0644); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 	s.recordBeamDailyUsage(ctx, username, size)
@@ -757,20 +788,18 @@ func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	filePath, err := s.validateBeamPath(req.Path, serverUUID)
+	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	defer root.Close()
 
 	if req.IsDir {
-		if err := os.MkdirAll(filePath, 0755); err != nil {
+		if err := root.MkdirAll(name, 0755); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
-		}
-		f, err := os.Create(filePath)
+		f, err := createIn(root, name, 0644)
 		if err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
@@ -785,12 +814,13 @@ func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	filePath, err := s.validateBeamPath(req.Path, serverUUID)
+	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	defer root.Close()
 
-	if err := os.RemoveAll(filePath); err != nil {
+	if err := root.RemoveAll(name); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
@@ -802,10 +832,11 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	oldPath, err := s.validateBeamPath(req.OldPath, serverUUID)
+	root, oldName, err := s.jailBeam(req.OldPath, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	defer root.Close()
 
 	// The DESTINATION goes through the same guard, which validateBeamPath's own
 	// doc comment already lists rename under. It did not: NewName went straight
@@ -824,8 +855,12 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	newName, err := rootName(s.storageMgr.GetServerDir(serverUUID), newPath)
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
 
-	if err := os.Rename(oldPath, newPath); err != nil {
+	if err := root.Rename(oldName, newName); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
@@ -848,20 +883,30 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 	if err := validateCopyPaths(req.SrcPath, req.DstPath, srcPath, dstPath); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	root, srcName, err := s.jailBeam(req.SrcPath, serverUUID, "write")
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
+	defer root.Close()
+	dstName, err := rootName(s.storageMgr.GetServerDir(serverUUID), dstPath)
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
 
-	stat, err := os.Stat(srcPath)
+	stat, err := root.Stat(srcName)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
 	if stat.IsDir() {
-		if err := copyDir(srcPath, dstPath); err != nil {
+		if err := copyWalkIn(root, srcName, root, dstName, true); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		if err := copyFileForTenant(srcPath, dstPath); err != nil {
+		if err := copyFileIn(root, srcName, root, dstName); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
+		chownForMCIn(root, dstName)
 	}
 
 	return &pb.BeamOpResp{Success: true, Message: "copied"}, nil
@@ -875,12 +920,13 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 	}
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
-	filePath, err := s.validateBeamPathRead(req.Path, serverUUID)
+	root, name, err := s.jailBeam(req.Path, serverUUID, "read")
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
+	defer root.Close()
 
-	stat, err := os.Stat(filePath)
+	stat, err := root.Stat(name)
 	if err != nil {
 		return status.Errorf(codes.NotFound, "file not found")
 	}
@@ -892,13 +938,13 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 		if !req.ZipIfDir {
 			return status.Error(codes.InvalidArgument, "path is a directory; set zip_if_dir to download it as an archive")
 		}
-		root := s.storageMgr.GetServerDir(serverUUID)
-		return s.streamZip(stream, zipNameFor(filePath), func(zw *zip.Writer) error {
-			return addTreeToZip(zw, root, filePath, filePath)
+		display := filepath.Join(s.storageMgr.GetServerDir(serverUUID), filepath.FromSlash(name))
+		return s.streamZip(stream, zipNameFor(display), func(zw *zip.Writer) error {
+			return addTreeToZip(zw, root, name, name)
 		})
 	}
 
-	f, err := os.Open(filePath)
+	f, err := root.Open(name)
 	if err != nil {
 		return status.Errorf(codes.Internal, "open file: %v", err)
 	}
@@ -921,7 +967,7 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 				Offset: offset,
 			}
 			if first {
-				chunk.Filename = filepath.Base(filePath)
+				chunk.Filename = path.Base(name)
 				chunk.TotalSize = stat.Size()
 				first = false
 			}
@@ -987,9 +1033,12 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	username := s.extractUsername(ctx)
 	uploadID := readUploadIDFromContext(ctx)
 
-	var destPath string
+	// upRoot is the server directory the upload writes into, open for the
+	// whole stream; destName and tmpName are names inside it.
+	var upRoot *os.Root
+	var destName string
 	var tmpFile *os.File
-	var tmpPath string
+	var tmpName string
 	// declaredSize is the client's BeamUploadStart TotalSize. The disk-headroom,
 	// size-cap and daily-quota pre-checks are all evaluated against it, so the
 	// chunk loop MUST enforce that the actual bytes written never exceed it —
@@ -1008,6 +1057,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	completed := false
 
 	defer func() {
+		if upRoot != nil {
+			defer upRoot.Close()
+		}
 		if tmpFile == nil {
 			return
 		}
@@ -1020,11 +1072,11 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// Stable id present → keep the temp so a resume can pick up
 			// where this stream left off. Sweeper trims it if no resume
 			// comes within the grace window.
-			log.Printf("beam-server: upload %s interrupted, keeping partial temp %s for resume", uploadID, filepath.Base(tmpPath))
+			log.Printf("beam-server: upload %s interrupted, keeping partial temp %s for resume", uploadID, path.Base(tmpName))
 			return
 		}
-		os.Remove(tmpPath)
-		log.Printf("beam-server: upload aborted, removed partial temp %s", filepath.Base(tmpPath))
+		upRoot.Remove(tmpName)
+		log.Printf("beam-server: upload aborted, removed partial temp %s", path.Base(tmpName))
 	}()
 
 	for {
@@ -1042,12 +1094,18 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 
 		switch p := msg.Payload.(type) {
 		case *pb.BeamUploadMsg_Start:
+			if tmpFile != nil {
+				return status.Error(codes.FailedPrecondition, "upload already started")
+			}
 			remotePath := filepath.Join(p.Start.Path, p.Start.Filename)
-			resolved, err := s.validateBeamPath(remotePath, serverUUID)
+			root, name, err := s.jailBeam(remotePath, serverUUID, "write")
 			if err != nil {
 				return status.Error(codes.PermissionDenied, err.Error())
 			}
-			destPath = resolved
+			if upRoot != nil {
+				upRoot.Close()
+			}
+			upRoot, destName = root, name
 			declaredSize = p.Start.TotalSize
 
 			// Create the destination's parent dir if it doesn't exist yet. The
@@ -1055,7 +1113,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// path did not, so an upload into a not-yet-created sub-server dir
 			// (server import: .upload.zip lands before setup makes the dir)
 			// failed at temp-file creation. Mirror it here.
-			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			if err := mkdirParentIn(upRoot, destName); err != nil {
 				return status.Errorf(codes.Internal, "create dir: %v", err)
 			}
 
@@ -1083,24 +1141,24 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				// reattaches to the same file. RDWR so we don't truncate
 				// what previous chunks already wrote; O_CREATE so the
 				// very first Start makes it.
-				tmpPath = filepath.Join(filepath.Dir(destPath), ".beam-upload-"+uploadID)
-				f, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE, 0644)
+				tmpName = path.Join(path.Dir(destName), ".beam-upload-"+uploadID)
+				f, err := upRoot.OpenFile(tmpName, os.O_RDWR|os.O_CREATE, 0644)
 				if err != nil {
 					return status.Errorf(codes.Internal, "open temp: %v", err)
 				}
 				tmpFile = f
 				if info, statErr := f.Stat(); statErr == nil && info.Size() > 0 {
-					log.Printf("beam-server: upload %s resumed at offset %d (%s)", uploadID, info.Size(), filepath.Base(tmpPath))
+					log.Printf("beam-server: upload %s resumed at offset %d (%s)", uploadID, info.Size(), path.Base(tmpName))
 				}
 			} else {
 				// No uploadID → legacy single-shot path. Random suffix,
 				// dropped on any non-clean exit.
-				f, err := os.CreateTemp(filepath.Dir(destPath), ".beam-upload-*")
+				f, name, err := createTempIn(upRoot, path.Dir(destName), ".beam-upload-", "")
 				if err != nil {
 					return status.Errorf(codes.Internal, "create temp: %v", err)
 				}
 				tmpFile = f
-				tmpPath = f.Name()
+				tmpName = name
 			}
 
 		case *pb.BeamUploadMsg_Chunk:
@@ -1133,20 +1191,25 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	}
 
 	// EOF reached cleanly — promote temp to final.
-	if tmpFile != nil && destPath != "" {
+	if tmpFile != nil && destName != "" {
+		// Same reason as the SFTP write: handed to the container's uid so a file
+		// uploaded into a running server is one that server can modify. On the
+		// open file, not by name.
+		if mcUser() != 0 {
+			if err := tmpFile.Chown(mcUser(), mcUser()); err != nil {
+				log.Printf("mc-user: cannot hand %s to uid %d: %v", tmpName, mcUser(), err)
+			}
+		}
 		// Close before rename so Windows doesn't reject (no-op on Linux).
 		tmpFile.Close()
 		tmpFile = nil // skip the defer's removal — rename consumed it
-		// Same reason as the SFTP write: handed to the container's uid so a file
-		// uploaded into a running server is one that server can modify.
-		chownForMC(tmpPath)
-		if err := os.Rename(tmpPath, destPath); err != nil {
-			os.Remove(tmpPath)
+		if err := upRoot.Rename(tmpName, destName); err != nil {
+			upRoot.Remove(tmpName)
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}
 		// Count the completed upload against the user's daily quota by the final
 		// on-disk size, so a resumed multi-session upload is counted once.
-		if fi, statErr := os.Stat(destPath); statErr == nil {
+		if fi, statErr := upRoot.Stat(destName); statErr == nil {
 			s.recordBeamDailyUsage(ctx, username, fi.Size())
 		}
 	}
@@ -1235,18 +1298,20 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 		return err
 	}
 	serverUUID := s.extractServerUUID(stream.Context())
-	basePath, err := s.validateBeamPathRead(req.BasePath, serverUUID)
+	root, baseName, err := s.jailBeam(req.BasePath, serverUUID, "read")
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
+	defer root.Close()
 	if !req.SelectAll && len(req.Selected) == 0 {
 		return status.Error(codes.InvalidArgument, "no paths selected")
 	}
-	root := s.storageMgr.GetServerDir(serverUUID)
+	serverDir := s.storageMgr.GetServerDir(serverUUID)
+	basePath := filepath.Join(serverDir, filepath.FromSlash(baseName))
 
 	return s.streamZip(stream, zipNameFor(basePath), func(zw *zip.Writer) error {
 		if req.SelectAll {
-			return addTreeToZip(zw, root, basePath, basePath)
+			return addTreeToZip(zw, root, baseName, baseName)
 		}
 		for _, sel := range req.Selected {
 			// Containment per entry: `selected` is client-supplied, so each one
@@ -1255,9 +1320,13 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 			if err != nil {
 				continue
 			}
-			// Names stay relative to basePath so the archive reproduces the
+			selName, err := rootName(serverDir, selPath)
+			if err != nil {
+				continue
+			}
+			// Names stay relative to the base so the archive reproduces the
 			// layout the user selected, not an absolute tree.
-			if err := addTreeToZip(zw, root, basePath, selPath); err != nil {
+			if err := addTreeToZip(zw, root, baseName, selName); err != nil {
 				return err
 			}
 		}
@@ -1274,53 +1343,17 @@ func zipNameFor(path string) string {
 	return "download.zip"
 }
 
-// addTreeToZip writes target (a file or a whole directory) into zw with names
-// relative to nameBase.
-//
-// root is the server's data directory and is used ONLY as the symlink boundary
-// for zipEntryInfo (grpc_handler.go), which is shared with the control-plane zip
-// paths so both transports archive exactly the same thing.
-func addTreeToZip(zw *zip.Writer, root, nameBase, target string) error {
-	resolvedRoot := resolveZipRoot(root)
-
-	return filepath.Walk(target, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, relErr := filepath.Rel(nameBase, path)
-		if relErr != nil || rel == "." {
+// addTreeToZip writes target (a file or a whole directory, a name inside root)
+// into zw with names relative to nameBase. Same walker and entry writer as the
+// control-plane zip paths in grpc_handler.go, so both transports archive
+// exactly the same thing.
+func addTreeToZip(zw *zip.Writer, root *os.Root, nameBase, target string) error {
+	return walkRoot(root, target, func(name string, info fs.FileInfo) error {
+		rel := relTo(nameBase, name)
+		if rel == "." {
 			return nil
 		}
-
-		info, ok := zipEntryInfo(resolvedRoot, path, info)
-		if !ok {
-			return nil
-		}
-
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
-		}
-		header.Name = filepath.ToSlash(rel)
-		if info.IsDir() {
-			header.Name += "/"
-		} else {
-			header.Method = zip.Deflate
-		}
-		w, err := zw.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		_, err = io.Copy(w, f)
-		return err
+		return addZipEntry(zw, root, name, rel, info)
 	})
 }
 

@@ -84,7 +84,9 @@ func seedControlPlaneTree(t *testing.T) (*StreamHandler, string, string) {
 		}
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(root, "server.properties"), filepath.Join(root, "plugins", "inside.txt")); err != nil {
+	// Relative, because a Root refuses absolute links even when they point
+	// inside (see rootfs.go); a relative link is the contained form.
+	if err := os.Symlink(filepath.Join("..", "server.properties"), filepath.Join(root, "plugins", "inside.txt")); err != nil {
 		t.Fatal(err)
 	}
 	return h, uuid, secret
@@ -97,9 +99,13 @@ func seedControlPlaneTree(t *testing.T) (*StreamHandler, string, string) {
 func TestControlPlaneZip_SymlinkEscapingRootIsOmitted(t *testing.T) {
 	t.Run("streamDirAsZip", func(t *testing.T) {
 		h, uuid, _ := seedControlPlaneTree(t)
-		dir := filepath.Join(h.serverDir(uuid), "plugins")
+		root, err := os.OpenRoot(h.serverDir(uuid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
 		raw := collectZipFromStream(t, func(send func(*pb.NodeMessage) error) {
-			h.streamDirAsZip("r1", uuid, dir, send)
+			h.streamDirAsZip("r1", root, "plugins", "plugins.zip", send)
 		})
 		names, bodies := zipNamesAndBodies(t, raw)
 		if names["escape.txt"] {

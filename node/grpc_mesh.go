@@ -58,7 +58,7 @@ type pendingWrite struct {
 	serverUUID string
 	path       string
 	tempFile   *os.File
-	tempPath   string
+	tempName   string // relative to the server directory's Root
 	lastActive time.Time
 }
 
@@ -125,7 +125,7 @@ func (m *MeshManager) cleanupStalePendingWrites() {
 		if pw.lastActive.Before(threshold) {
 			log.Printf("gRPC Mesh: Cleaning up stale upload (request_id=%s, path=%s)", reqID, pw.path)
 			pw.tempFile.Close()
-			os.Remove(pw.tempPath)
+			m.handler.removeUploadTemp(pw.serverUUID, pw.tempName)
 			delete(m.pendingWrites, reqID)
 		}
 	}
@@ -396,7 +396,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				// instead of falling through, which would let a later
 				// TransferDone report success on a partial/corrupt file.
 				pw.tempFile.Close()
-				os.Remove(pw.tempPath)
+				m.handler.removeUploadTemp(pw.serverUUID, pw.tempName)
 				delete(m.pendingWrites, msg.RequestId)
 				m.writeMu.Unlock()
 				if errors.Is(err, syscall.EDQUOT) {
@@ -418,19 +418,15 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		delete(m.pendingWrites, msg.RequestId)
 		m.writeMu.Unlock()
 		if ok {
-			pw.tempFile.Close()
-			// Truncate to exact size (file may be sparse from WriteAt)
+			// Truncate to exact size (file may be sparse from WriteAt). On the
+			// open file, not by name: the name is the tenant's to swap.
 			if done.TotalBytes > 0 {
-				os.Truncate(pw.tempPath, done.TotalBytes)
+				pw.tempFile.Truncate(done.TotalBytes)
 			}
-			finalPath, err := m.handler.resolveFinalPath(pw.serverUUID, pw.path)
-			if err != nil {
-				log.Printf("gRPC Mesh: Resolve path failed (request_id=%s): %v", msg.RequestId, err)
-				os.Remove(pw.tempPath)
-				cc.send(errorMsg(msg.RequestId, 500, err.Error()))
-			} else if err := os.Rename(pw.tempPath, finalPath); err != nil {
+			pw.tempFile.Close()
+			if err := m.handler.commitUpload(pw.serverUUID, pw.path, pw.tempName); err != nil {
 				log.Printf("gRPC Mesh: Move file failed (request_id=%s): %v", msg.RequestId, err)
-				os.Remove(pw.tempPath)
+				m.handler.removeUploadTemp(pw.serverUUID, pw.tempName)
 				if errors.Is(err, syscall.EDQUOT) {
 					cc.send(errorMsg(msg.RequestId, 413, "Speicherlimit erreicht"))
 				} else {
@@ -449,7 +445,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// If this is a WriteReq, create temp file and register pending write
 	// BEFORE sending response so that chunks arriving immediately after won't be dropped.
 	if writeReq := msg.GetWriteReq(); writeReq != nil {
-		tempFile, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
+		tempFile, tempName, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
 		if err != nil {
 			log.Printf("gRPC Mesh: Failed to create temp file (request_id=%s): %v", msg.RequestId, err)
 			// Still let Handle() process to send error response
@@ -459,7 +455,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				serverUUID: msg.ServerUuid,
 				path:       writeReq.Path,
 				tempFile:   tempFile,
-				tempPath:   tempFile.Name(),
+				tempName:   tempName,
 				lastActive: time.Now(),
 			}
 			m.writeMu.Unlock()

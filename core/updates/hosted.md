@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.09.30
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A server can no longer reach files outside its own directory,** through the
+  panel file manager, SFTP, the Beam app or a backup. Update your node to get it. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.09.29.4
 
 ### Features

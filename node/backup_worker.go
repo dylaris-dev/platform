@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path"
@@ -358,7 +359,15 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 // Split out of RunBackup so the walk can be driven without Redis, a storage
 // manager or a live provider.
 func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclude []string, manifest []byte) (bool, error) {
-	resolvedRoot := resolveZipRoot(serverRoot)
+	root, err := os.OpenRoot(serverRoot)
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	startName, err := rootName(serverRoot, rootDir)
+	if err != nil {
+		return false, err
+	}
 	gw := gzip.NewWriter(w)
 	tw := tar.NewWriter(gw)
 	addedAny := false
@@ -371,12 +380,12 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 		return false, err
 	}
 
-	walkErr := filepath.Walk(rootDir, func(path string, info os.FileInfo, werr error) error {
-		if werr != nil {
-			return werr
-		}
-		rel, _ := filepath.Rel(rootDir, path)
-		rel = filepath.ToSlash(rel)
+	// walkRoot judges links through the Root: one that leaves the server, dangles
+	// or names a directory is skipped, one that stays inside is archived as its
+	// target. Archiving a link as a header-only entry and then copying its
+	// target's bytes into it used to abort every backup of that server.
+	walkErr := walkRoot(root, startName, func(name string, info fs.FileInfo) error {
+		rel := relTo(startName, name)
 		if rel == "." {
 			return nil
 		}
@@ -395,18 +404,6 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 		if len(include) > 0 && !matchAny(rel, include) {
 			return nil
 		}
-		// The same symlink guard the zip walkers take. Skipping it here was
-		// not a leak but a hard stop: Walk reports a link via Lstat, so
-		// FileInfoHeader emits a header-only symlink entry of size 0, and the
-		// os.Open below then FOLLOWS the link and copies the target's bytes
-		// into it. The tar writer answers that with ErrWriteTooLong, which
-		// aborts the walk - so one link anywhere under a server, planted over
-		// SFTP or from inside its own container, failed every backup of that
-		// server from then on.
-		info, ok := zipEntryInfo(resolvedRoot, path, info)
-		if !ok {
-			return nil
-		}
 		hdr, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err
@@ -416,7 +413,7 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 			return err
 		}
 		if !info.IsDir() {
-			f, err := os.Open(path)
+			f, err := root.Open(name)
 			if err != nil {
 				return err
 			}

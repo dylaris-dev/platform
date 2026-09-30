@@ -42,7 +42,7 @@ func TestSFTPDoesNotFollowALinkOutOfTheServerDirectory(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(base, "server.properties"), filepath.Join(base, "inside.txt")); err != nil {
+	if err := os.Symlink("server.properties", filepath.Join(base, "inside.txt")); err != nil {
 		t.Fatal(err)
 	}
 

@@ -3,10 +3,13 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -85,20 +88,21 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 		return
 	}
 
-	filePath, err := h.validatePath(readReq.Path, msg.ServerUuid)
+	root, name, err := h.jail(msg.ServerUuid, readReq.Path)
 	if err != nil {
-		sendFn(errorMsg(msg.RequestId, 403, err.Error()))
+		sendFn(jailError(msg.RequestId, err))
 		return
 	}
+	defer root.Close()
 
-	stat, err := os.Stat(filePath)
+	stat, err := root.Stat(name)
 	if err != nil {
 		sendFn(errorMsg(msg.RequestId, 404, "file not found"))
 		return
 	}
 
 	if stat.IsDir() && readReq.ZipIfDir {
-		h.streamDirAsZip(msg.RequestId, msg.ServerUuid, filePath, sendFn)
+		h.streamDirAsZip(msg.RequestId, root, name, zipName(msg.ServerUuid, name), sendFn)
 		return
 	}
 
@@ -107,7 +111,7 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 		return
 	}
 
-	h.streamFile(msg.RequestId, filePath, sendFn)
+	h.streamFile(msg.RequestId, root, name, sendFn)
 }
 
 // resolveWithinDir joins reqPath under dataPath and guarantees the result
@@ -238,32 +242,75 @@ func (h *StreamHandler) serverDir(serverUUID string) string {
 	return filepath.Join(h.baseDir, "dylaris_data", "servers", serverUUID)
 }
 
-// validatePath ensures the path stays within the server's data directory.
+// validatePath ensures the path stays within the server's data directory. It
+// only CHECKS: an operation on the returned string follows links again, so
+// anything that opens, writes or removes goes through jail instead.
 func (h *StreamHandler) validatePath(reqPath, serverUUID string) (string, error) {
 	if serverUUID == "" {
 		return "", fmt.Errorf("server_uuid required")
 	}
+	return resolveWithinDir(h.serverDir(serverUUID), reqPath)
+}
 
-	// Use StorageManager for dynamic path resolution if available
-	var dataPath string
-	if h.storageMgr != nil {
-		dataPath = h.storageMgr.GetServerDir(serverUUID)
-	} else {
-		dataPath = filepath.Join(h.baseDir, "dylaris_data", "servers", serverUUID)
+// jail checks reqPath and opens the server directory as an os.Root, so the
+// operation that follows cannot be walked out of it by a link the tenant swaps
+// in after the check (see rootfs.go). The caller closes the Root.
+func (h *StreamHandler) jail(serverUUID, reqPath string) (*os.Root, string, error) {
+	if serverUUID == "" {
+		return nil, "", fmt.Errorf("server_uuid required")
 	}
+	return openJailed(h.serverDir(serverUUID), reqPath)
+}
 
-	return resolveWithinDir(dataPath, reqPath)
+// jailForWrite is jail for an operation that writes; see openJailedForWrite.
+func (h *StreamHandler) jailForWrite(serverUUID, reqPath string) (*os.Root, string, error) {
+	if serverUUID == "" {
+		return nil, "", fmt.Errorf("server_uuid required")
+	}
+	return openJailedForWrite(h.serverDir(serverUUID), reqPath)
+}
+
+// jailError maps a jail failure: a server directory that does not exist is a
+// 404, everything else is the refusal it always was.
+func jailError(reqID string, err error) *pb.NodeMessage {
+	if errors.Is(err, fs.ErrNotExist) {
+		return errorMsg(reqID, 404, "not found")
+	}
+	return errorMsg(reqID, 403, err.Error())
+}
+
+// zipName is the download name for a zipped directory: the directory's own
+// name, and the server UUID for the server root, as before.
+func zipName(serverUUID, name string) string {
+	if name == "." {
+		return serverUUID + ".zip"
+	}
+	return path.Base(name) + ".zip"
+}
+
+// relTo is name relative to base, both Root names.
+func relTo(base, name string) string {
+	if base == "." {
+		return name
+	}
+	if name == base {
+		return "."
+	}
+	return strings.TrimPrefix(name, base+"/")
 }
 
 func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesReq) *pb.NodeMessage {
-	dirPath, err := h.validatePath(req.Path, serverUUID)
-	if err != nil {
+	root, name, err := h.jail(serverUUID, req.Path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return errorMsg(reqID, 403, err.Error())
 	}
-
-	entries, err := os.ReadDir(dirPath)
+	var entries []fs.DirEntry
+	if err == nil {
+		defer root.Close()
+		entries, err = fs.ReadDir(root.FS(), name)
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			// Return empty list for non-existent directories
 			return &pb.NodeMessage{
 				RequestId: reqID,
@@ -278,7 +325,7 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 	// Pre-build the file list and collect directory entries for concurrent size calculation
 	type dirEntry struct {
 		info *pb.FileInfo
-		path string
+		name string
 	}
 	files := make([]*pb.FileInfo, 0, len(entries))
 	var dirs []dirEntry
@@ -296,7 +343,7 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 			Size:  fi.Size(),
 		}
 		if e.IsDir() {
-			dirs = append(dirs, dirEntry{info: f, path: filepath.Join(dirPath, e.Name())})
+			dirs = append(dirs, dirEntry{info: f, name: path.Join(name, e.Name())})
 		}
 		files = append(files, f)
 	}
@@ -306,10 +353,10 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 		var wg sync.WaitGroup
 		for _, de := range dirs {
 			wg.Add(1)
-			go func(f *pb.FileInfo, p string) {
+			go func(f *pb.FileInfo, name string) {
 				defer wg.Done()
-				f.Size = dirSize(p)
-			}(de.info, de.path)
+				f.Size = dirSizeIn(root, name)
+			}(de.info, de.name)
 		}
 		wg.Wait()
 	}
@@ -322,10 +369,27 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 	}
 }
 
+// dirSizeIn sums the file sizes under name. It used to shell out to du on the
+// absolute path, which a directory swapped for a link would have pointed at a
+// tree outside the server. Links are counted as themselves, as du -P does.
+func dirSizeIn(root *os.Root, name string) int64 {
+	var size int64
+	fs.WalkDir(root.FS(), name, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
+}
+
 // streamFile streams a single file in 64KB chunks via sendFn.
 // Sends metadata TransferDone first (TotalBytes=0), then chunks, then final TransferDone.
-func (h *StreamHandler) streamFile(reqID, filePath string, sendFn func(*pb.NodeMessage) error) {
-	filename := filepath.Base(filePath)
+func (h *StreamHandler) streamFile(reqID string, root *os.Root, name string, sendFn func(*pb.NodeMessage) error) {
+	filename := path.Base(name)
 
 	// Send metadata first (filename for Content-Disposition header)
 	if err := sendFn(&pb.NodeMessage{
@@ -337,7 +401,7 @@ func (h *StreamHandler) streamFile(reqID, filePath string, sendFn func(*pb.NodeM
 		return
 	}
 
-	f, err := os.Open(filePath)
+	f, err := root.Open(name)
 	if err != nil {
 		sendFn(errorMsg(reqID, 500, fmt.Sprintf("open: %v", err)))
 		return
@@ -383,9 +447,7 @@ func (h *StreamHandler) streamFile(reqID, filePath string, sendFn func(*pb.NodeM
 
 // streamDirAsZip creates a zip of the directory using io.Pipe and streams chunks
 // as they are produced. Constant ~128KB RAM usage regardless of directory size.
-func (h *StreamHandler) streamDirAsZip(reqID, serverUUID, dirPath string, sendFn func(*pb.NodeMessage) error) {
-	resolvedRoot := resolveZipRoot(h.serverDir(serverUUID))
-	filename := filepath.Base(dirPath) + ".zip"
+func (h *StreamHandler) streamDirAsZip(reqID string, root *os.Root, dirName, filename string, sendFn func(*pb.NodeMessage) error) {
 
 	// Send metadata first (filename for Content-Disposition header)
 	if err := sendFn(&pb.NodeMessage{
@@ -402,46 +464,12 @@ func (h *StreamHandler) streamDirAsZip(reqID, serverUUID, dirPath string, sendFn
 	// Goroutine: walk directory and write zip data into the pipe
 	go func() {
 		zw := zip.NewWriter(pw)
-		err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			relPath, _ := filepath.Rel(dirPath, path)
+		err := walkRoot(root, dirName, func(name string, info fs.FileInfo) error {
+			relPath := relTo(dirName, name)
 			if relPath == "." {
 				return nil
 			}
-
-			info, ok := zipEntryInfo(resolvedRoot, path, info)
-			if !ok {
-				return nil
-			}
-
-			header, err := zip.FileInfoHeader(info)
-			if err != nil {
-				return err
-			}
-			header.Name = filepath.ToSlash(relPath)
-			if info.IsDir() {
-				header.Name += "/"
-			} else {
-				header.Method = zip.Deflate
-			}
-
-			writer, err := zw.CreateHeader(header)
-			if err != nil {
-				return err
-			}
-
-			if !info.IsDir() {
-				f, err := os.Open(path)
-				if err != nil {
-					return err
-				}
-				defer f.Close()
-				_, err = io.Copy(writer, f)
-				return err
-			}
-			return nil
+			return addZipEntry(zw, root, name, relPath, info)
 		})
 
 		zw.Close()
@@ -491,25 +519,52 @@ func (h *StreamHandler) streamDirAsZip(reqID, serverUUID, dirPath string, sendFn
 	})
 }
 
+// addZipEntry writes one walked entry into zw under relPath, reading the
+// file through the Root.
+func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.FileInfo) error {
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return err
+	}
+	header.Name = relPath
+	if info.IsDir() {
+		header.Name += "/"
+	} else {
+		header.Method = zip.Deflate
+	}
+	writer, err := zw.CreateHeader(header)
+	if err != nil || info.IsDir() {
+		return err
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(writer, f)
+	return err
+}
+
 // streamSelectiveZip zips only selected paths from a base directory using io.Pipe streaming.
 // If selectAll is true, zips everything (same as streamDirAsZip).
 // This is reusable for backup creation (same SelectiveReadReq message).
 func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.SelectiveReadReq, sendFn func(*pb.NodeMessage) error) {
-	basePath, err := h.validatePath(req.BasePath, serverUUID)
+	root, baseName, err := h.jail(serverUUID, req.BasePath)
 	if err != nil {
-		sendFn(errorMsg(reqID, 403, err.Error()))
+		sendFn(jailError(reqID, err))
 		return
 	}
+	defer root.Close()
 
 	// If select_all, just zip the whole directory
 	if req.SelectAll {
-		h.streamDirAsZip(reqID, serverUUID, basePath, sendFn)
+		h.streamDirAsZip(reqID, root, baseName, zipName(serverUUID, baseName), sendFn)
 		return
 	}
 
 	filename := "download.zip"
-	if base := filepath.Base(basePath); base != "." && base != "/" {
-		filename = base + ".zip"
+	if baseName != "." {
+		filename = path.Base(baseName) + ".zip"
 	}
 
 	// Send metadata first
@@ -522,7 +577,7 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 		return
 	}
 
-	resolvedRoot := resolveZipRoot(h.serverDir(serverUUID))
+	baseDir := filepath.Join(h.serverDir(serverUUID), filepath.FromSlash(baseName))
 	pr, pw := io.Pipe()
 
 	go func() {
@@ -530,83 +585,25 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 		var walkErr error
 
 		for _, sel := range req.Selected {
-			// Security: ensure each selected entry stays within basePath
+			// Security: ensure each selected entry stays within the base
 			// (trailing-separator containment, shared with validatePath).
-			selPath, err := resolveWithinDir(basePath, sel)
+			selAbs, err := resolveWithinDir(baseDir, sel)
 			if err != nil {
 				continue
 			}
-
-			// Lstat, not Stat: a selected entry that is ITSELF a symlink has to
-			// be judged as a link, and Stat would already have followed it past
-			// the containment check below.
-			linkInfo, err := os.Lstat(selPath)
+			selName, err := rootName(h.serverDir(serverUUID), selAbs)
 			if err != nil {
 				continue
 			}
-			stat, ok := zipEntryInfo(resolvedRoot, selPath, linkInfo)
-			if !ok {
-				continue
-			}
-
-			if stat.IsDir() {
-				// Walk entire subdirectory
-				walkErr = filepath.Walk(selPath, func(path string, info os.FileInfo, err error) error {
-					if err != nil {
-						return err
-					}
-					relPath, _ := filepath.Rel(basePath, path)
-					info, ok := zipEntryInfo(resolvedRoot, path, info)
-					if !ok {
-						return nil
-					}
-					header, err := zip.FileInfoHeader(info)
-					if err != nil {
-						return err
-					}
-					header.Name = filepath.ToSlash(relPath)
-					if info.IsDir() {
-						header.Name += "/"
-					} else {
-						header.Method = zip.Deflate
-					}
-					writer, err := zw.CreateHeader(header)
-					if err != nil {
-						return err
-					}
-					if !info.IsDir() {
-						f, err := os.Open(path)
-						if err != nil {
-							return err
-						}
-						defer f.Close()
-						_, err = io.Copy(writer, f)
-						return err
-					}
+			walkErr = walkRoot(root, selName, func(name string, info fs.FileInfo) error {
+				rel := relTo(baseName, name)
+				if rel == "." {
 					return nil
-				})
-				if walkErr != nil {
-					break
 				}
-			} else {
-				// Single file
-				relPath, _ := filepath.Rel(basePath, selPath)
-				header, err := zip.FileInfoHeader(stat)
-				if err != nil {
-					continue
-				}
-				header.Name = filepath.ToSlash(relPath)
-				header.Method = zip.Deflate
-				writer, err := zw.CreateHeader(header)
-				if err != nil {
-					continue
-				}
-				f, err := os.Open(selPath)
-				if err != nil {
-					continue
-				}
-				io.Copy(writer, f)
-				f.Close()
+				return addZipEntry(zw, root, name, rel, info)
+			})
+			if walkErr != nil {
+				break
 			}
 		}
 
@@ -660,14 +657,14 @@ func (h *StreamHandler) handleWrite(reqID, serverUUID string, req *pb.WriteFileR
 	if isProtectedFile(req.Path) {
 		return errorMsg(reqID, 403, "cannot modify protected file")
 	}
-	filePath, err := h.validatePath(req.Path, serverUUID)
+	root, name, err := h.jailForWrite(serverUUID, req.Path)
 	if err != nil {
-		return errorMsg(reqID, 403, err.Error())
+		return jailError(reqID, err)
 	}
+	defer root.Close()
 
 	// Ensure parent directory exists
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := mkdirParentIn(root, name); err != nil {
 		return errorMsg(reqID, 500, fmt.Sprintf("mkdir: %v", err))
 	}
 
@@ -677,58 +674,89 @@ func (h *StreamHandler) handleWrite(reqID, serverUUID string, req *pb.WriteFileR
 	}
 }
 
-// resolveFinalPath validates and returns the absolute path for a file write.
-// Creates parent directories as needed.
-func (h *StreamHandler) resolveFinalPath(serverUUID, path string) (string, error) {
-	filePath, err := h.validatePath(path, serverUUID)
-	if err != nil {
-		return "", err
-	}
-	os.MkdirAll(filepath.Dir(filePath), 0755)
-	return filePath, nil
-}
-
-// createUploadTemp opens the staging file for one inbound mesh upload.
+// createUploadTemp opens the staging file for one inbound mesh upload and
+// returns it with its name inside the server directory.
 //
 // It is created in the FINAL directory, not a shared temp dir: the transfer
-// completes with an os.Rename, and as soon as STORAGE_PATHS points at its own
+// completes with a rename, and as soon as STORAGE_PATHS points at its own
 // mount, a staging dir under the working directory is a different filesystem,
 // so that rename fails with EXDEV and every upload 500s. Same approach the beam
 // upload path already takes. The leading dot keeps the partial file out of the
 // way in the file browser.
-func (h *StreamHandler) createUploadTemp(serverUUID, path string) (*os.File, error) {
-	finalPath, err := h.resolveFinalPath(serverUUID, path)
-	if err != nil {
-		return nil, err
+//
+// The protected-name check comes FIRST. It used to run only in handleWrite,
+// after this: an upload to the server root itself resolved to the root, whose
+// parent is the STORAGE directory, and the staging file was created there -
+// outside every server - before the refusal arrived.
+func (h *StreamHandler) createUploadTemp(serverUUID, reqPath string) (*os.File, string, error) {
+	if isProtectedFile(reqPath) {
+		return nil, "", fmt.Errorf("cannot modify protected file")
 	}
-	f, err := os.CreateTemp(filepath.Dir(finalPath), ".upload-*.tmp")
+	root, name, err := h.jailForWrite(serverUUID, reqPath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	defer root.Close()
+	if err := mkdirParentIn(root, name); err != nil {
+		return nil, "", err
+	}
+	f, tempName, err := createTempIn(root, path.Dir(name), ".upload-", ".tmp")
+	if err != nil {
+		return nil, "", err
 	}
 	// Chowned as the TEMP file, because the rename that follows carries the
 	// ownership with it. Doing it after the rename would be a second window in
-	// which the finished file is root's.
-	chownForMC(f.Name())
-	return f, nil
+	// which the finished file is root's. On the open file, not by name.
+	if mcUser() != 0 {
+		if err := f.Chown(mcUser(), mcUser()); err != nil {
+			log.Printf("mc-user: cannot hand %s to uid %d: %v", tempName, mcUser(), err)
+		}
+	}
+	return f, tempName, nil
+}
+
+// commitUpload moves a finished staging file onto the requested path.
+func (h *StreamHandler) commitUpload(serverUUID, reqPath, tempName string) error {
+	if isProtectedFile(reqPath) {
+		return fmt.Errorf("cannot modify protected file")
+	}
+	root, name, err := h.jailForWrite(serverUUID, reqPath)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := mkdirParentIn(root, name); err != nil {
+		return err
+	}
+	return root.Rename(tempName, name)
+}
+
+// removeUploadTemp discards a staging file that will not be committed.
+func (h *StreamHandler) removeUploadTemp(serverUUID, tempName string) {
+	root, err := os.OpenRoot(h.serverDir(serverUUID))
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	root.Remove(tempName)
 }
 
 func (h *StreamHandler) handleCreate(reqID, serverUUID string, req *pb.CreateFileReq) *pb.NodeMessage {
 	if isProtectedFile(req.Path) {
 		return errorMsg(reqID, 403, "cannot modify protected file")
 	}
-	fullPath, err := h.validatePath(req.Path, serverUUID)
+	root, name, err := h.jailForWrite(serverUUID, req.Path)
 	if err != nil {
-		return errorMsg(reqID, 403, err.Error())
+		return jailError(reqID, err)
 	}
+	defer root.Close()
 
 	if req.IsDir {
-		if err := os.MkdirAll(fullPath, 0755); err != nil {
+		if err := root.MkdirAll(name, 0755); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("mkdir: %v", err))
 		}
 	} else {
-		dir := filepath.Dir(fullPath)
-		os.MkdirAll(dir, 0755)
-		f, err := os.Create(fullPath)
+		f, err := createIn(root, name, 0o644)
 		if err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("create: %v", err))
 		}
@@ -736,7 +764,7 @@ func (h *StreamHandler) handleCreate(reqID, serverUUID string, req *pb.CreateFil
 	}
 	// Created by the node as root, into a server that runs as uid 1000. Without
 	// this the panel can create a file the server cannot then write.
-	chownForMC(fullPath)
+	chownForMCIn(root, name)
 
 	return &pb.NodeMessage{
 		RequestId: reqID,
@@ -748,12 +776,13 @@ func (h *StreamHandler) handleDelete(reqID, serverUUID string, req *pb.DeleteFil
 	if isProtectedFile(req.Path) {
 		return errorMsg(reqID, 403, "cannot delete protected file")
 	}
-	fullPath, err := h.validatePath(req.Path, serverUUID)
+	root, name, err := h.jail(serverUUID, req.Path)
 	if err != nil {
-		return errorMsg(reqID, 403, err.Error())
+		return jailError(reqID, err)
 	}
+	defer root.Close()
 
-	if err := os.RemoveAll(fullPath); err != nil {
+	if err := root.RemoveAll(name); err != nil {
 		return errorMsg(reqID, 500, fmt.Sprintf("delete: %v", err))
 	}
 
@@ -767,15 +796,18 @@ func (h *StreamHandler) handleRename(reqID, serverUUID string, req *pb.RenameFil
 	if isProtectedFile(req.OldPath) {
 		return errorMsg(reqID, 403, "cannot rename protected file")
 	}
-	oldPath, err := h.validatePath(req.OldPath, serverUUID)
+	root, oldName, err := h.jail(serverUUID, req.OldPath)
 	if err != nil {
-		return errorMsg(reqID, 403, err.Error())
+		return jailError(reqID, err)
 	}
+	defer root.Close()
 
 	// New name is just the filename, keep same parent directory
-	dir := filepath.Dir(oldPath)
 	newName := sanitizeFilename(req.NewName)
-	if newName == "" {
+	// "." and ".." survive sanitizeFilename and are not file names: joined to
+	// the parent they name the parent itself or ITS parent. Only the kernel
+	// refusing to rename onto a non-empty directory stopped that before.
+	if newName == "" || newName == "." || newName == ".." {
 		return errorMsg(reqID, 400, "invalid filename")
 	}
 	// The destination gets the same check as the source, not a hand-picked
@@ -786,9 +818,8 @@ func (h *StreamHandler) handleRename(reqID, serverUUID string, req *pb.RenameFil
 	if isProtectedFile(newName) {
 		return errorMsg(reqID, 403, "cannot use protected filename")
 	}
-	newPath := filepath.Join(dir, newName)
 
-	if err := os.Rename(oldPath, newPath); err != nil {
+	if err := root.Rename(oldName, path.Join(path.Dir(oldName), newName)); err != nil {
 		return errorMsg(reqID, 500, fmt.Sprintf("rename: %v", err))
 	}
 
@@ -813,20 +844,30 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 	if err := validateCopyPaths(req.SrcPath, req.DstPath, srcPath, dstPath); err != nil {
 		return errorMsg(reqID, 400, err.Error())
 	}
+	root, srcName, err := h.jail(serverUUID, req.SrcPath)
+	if err != nil {
+		return jailError(reqID, err)
+	}
+	defer root.Close()
+	dstName, err := rootName(h.serverDir(serverUUID), dstPath)
+	if err != nil {
+		return errorMsg(reqID, 403, err.Error())
+	}
 
-	stat, err := os.Stat(srcPath)
+	stat, err := root.Stat(srcName)
 	if err != nil {
 		return errorMsg(reqID, 404, "source not found")
 	}
 
 	if stat.IsDir() {
-		if err := copyDir(srcPath, dstPath); err != nil {
+		if err := copyWalkIn(root, srcName, root, dstName, true); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy dir: %v", err))
 		}
 	} else {
-		if err := copyFileForTenant(srcPath, dstPath); err != nil {
+		if err := copyFileIn(root, srcName, root, dstName); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy file: %v", err))
 		}
+		chownForMCIn(root, dstName)
 	}
 
 	return &pb.NodeMessage{
