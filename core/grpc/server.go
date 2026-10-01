@@ -939,9 +939,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		}
 
 		// Close the streaming channel when the final TransferDone arrives.
-		// Metadata TransferDone has Filename set and TotalBytes==0 (sent before chunks).
-		// Final TransferDone has no Filename (TotalBytes>0 for non-empty, ==0 for empty files).
-		if done := msg.GetTransferDone(); done != nil && (done.TotalBytes > 0 || done.Filename == "") {
+		if IsFinalTransferDone(msg) {
 			conn.CloseStreamingRequest(msg.RequestId)
 		}
 	}

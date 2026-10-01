@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"sort"
@@ -198,19 +197,18 @@ func (h *RconHandler) readNodeFileString(nodeID int, serverUUID, relPath string)
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
-	var buf bytes.Buffer
-	for resp := range ch {
-		if errResp := resp.GetError(); errResp != nil {
-			if errResp.Code == 404 {
-				return "", false, nil
-			}
-			return "", false, fmt.Errorf("node read error: %s", errResp.Message)
+	// server.properties is a few KB; the bound only stops a path that is not.
+	data, errResp, rerr := collectNodeFile(ch, 1<<20)
+	if errResp != nil {
+		if errResp.Code == 404 {
+			return "", false, nil
 		}
-		if chunk := resp.GetChunk(); chunk != nil {
-			buf.Write(chunk.Data)
-		}
+		return "", false, fmt.Errorf("node read error: %s", errResp.Message)
 	}
-	return buf.String(), true, nil
+	if rerr != nil {
+		return "", false, rerr
+	}
+	return string(data), true, nil
 }
 
 // writeNodeFileString writes content to a node file over the gRPC file API

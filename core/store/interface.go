@@ -209,7 +209,7 @@ type Store interface {
 	// --- Refused node connections (panel-driven re-admission) ---
 	RecordNodeJoinAttempt(a models.NodeJoinAttempt) error
 	ListNodeJoinAttempts() ([]models.NodeJoinAttempt, error)
-	ApproveNodeJoinAttempt(nodeToken, approvedBy string) (bool, error)
+	ApproveNodeJoinAttempt(nodeToken, peerIP, presentedKey, approvedBy string) (bool, error)
 	ApproveNodeJoinAttemptForKey(nodeToken, keyFingerprint, approvedBy string) (bool, error)
 	GetNodeJoinAttempt(nodeToken string) (*models.NodeJoinAttempt, error)
 	// ArmNodeJoinApproval is the roll-key half: the same admission, bound to the

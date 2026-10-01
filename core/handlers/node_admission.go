@@ -353,6 +353,23 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		sendJSONError(w, "This machine belongs to a customer. They admit it themselves under My infrastructure, with the fingerprint their machine logs.", http.StatusConflict)
 		return
 	}
+	// The admission is for the attempt the operator was shown. Anyone who knows
+	// the id can knock and rewrite the row, so it is checked here, before the
+	// node's login is revoked, and again by the write itself.
+	var seen struct {
+		PeerIP       string `json:"peerIp"`
+		PresentedKey string `json:"presentedKey"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&seen); err != nil || seen.PeerIP == "" {
+		sendJSONError(w, "Say which attempt you are admitting: its address and key, as listed.", http.StatusBadRequest)
+		return
+	}
+	staleView := "That attempt changed since the list was loaded. Reload it and check the address and key again."
+	if cur, err := h.state.Store.GetNodeJoinAttempt(token); err != nil || cur == nil ||
+		cur.PeerIP != seen.PeerIP || cur.PresentedKey != seen.PresentedKey {
+		sendJSONError(w, staleView, http.StatusConflict)
+		return
+	}
 	if err := h.revokeNodeLogin(node.ID, false); err != nil {
 		log.Printf("approve-join: %v", err)
 		sendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
@@ -362,16 +379,16 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
 	uid := byonCallerID(r)
-	armed, err := h.state.Store.ApproveNodeJoinAttempt(token, uid)
+	armed, err := h.state.Store.ApproveNodeJoinAttempt(token, seen.PeerIP, seen.PresentedKey, uid)
 	if err != nil {
 		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	if !armed {
-		// No row, or a row with no observed address. Both mean there is nothing
-		// to bind the admission to, and admitting an identity from anywhere is
-		// exactly what this must not do.
-		sendJSONError(w, "That attempt is no longer listed, or Core never saw an address for it. Wait for the node to try again.", http.StatusConflict)
+		// No row, a row with no observed address, or one rewritten since the
+		// check above. There is nothing the operator actually saw to bind the
+		// admission to.
+		sendJSONError(w, staleView, http.StatusConflict)
 		return
 	}
 	if uid != "" {

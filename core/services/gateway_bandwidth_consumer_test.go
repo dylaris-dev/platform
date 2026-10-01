@@ -1,11 +1,15 @@
 package services
 
 import (
+	"context"
 	"fmt"
 
 	"dylaris-pkg/protocol"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestAggregateByHost(t *testing.T) {
@@ -194,4 +198,43 @@ func TestAccumulationIsBoundedByTheMetricNameCap(t *testing.T) {
 	if _, bad := b[0].Counters["bad name!"]; bad {
 		t.Error("an invalid metric name was accumulated")
 	}
+}
+
+// A link writes only its own stream but named itself in the record: posting
+// as a real edge replaced that edge's counters.
+func TestALinkStreamSpeaksOnlyAsThatLink(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	data, _ := protocol.MarshalGatewayStats(protocol.GatewayStats{
+		TS: time.Now().Unix(), Component: "edge", ID: "edge-1", Counters: map[string]int64{"handover_dropped": 50},
+	})
+	stream := "dylaris:link:tok-a:stats"
+	rdb.XAdd(t.Context(), &redis.XAddArgs{Stream: stream, Values: map[string]interface{}{"data": string(data)}})
+
+	s := NewGatewayBandwidthConsumerService(nil, rdb, "core-1")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go s.consume(ctx, stream)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		_, asEdge := s.latest["edge:edge-1"]
+		_, asLink := s.latest["link:tok-a"]
+		s.mu.Unlock()
+		if asEdge {
+			t.Fatal("a link's record was taken as an edge's")
+		}
+		if asLink {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the link's record never arrived")
 }

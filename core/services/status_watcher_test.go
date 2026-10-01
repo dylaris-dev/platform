@@ -30,6 +30,15 @@ type statusWatcherFakeStore struct {
 	portCalls   []portCall
 }
 
+// Every fixture server lives on node 7, whose token is "5" - the token the
+// port keys below are written under.
+func (f *statusWatcherFakeStore) GetNodeByID(id int) (*models.Node, error) {
+	if id == 7 {
+		return &models.Node{ID: 7, Token: "5"}, nil
+	}
+	return nil, errors.New("node not found")
+}
+
 type portCall struct {
 	id                      int
 	hostPort, containerPort int
@@ -187,9 +196,9 @@ func TestScan_MalformedKey_LeftUntouchedAndSkipped(t *testing.T) {
 func TestSyncPortsFromRedis(t *testing.T) {
 	fs := &statusWatcherFakeStore{
 		serversByUUID: map[string]models.Server{
-			"srv-changed":           {ID: 10, HostPort: 25565, ContainerPort: 25565},
-			"srv-same":              {ID: 11, HostPort: 25580, ContainerPort: 25565},
-			"srv-default-container": {ID: 12, HostPort: 1000, ContainerPort: 0},
+			"srv-changed":           {ID: 10, NodeID: 7, HostPort: 25565, ContainerPort: 25565},
+			"srv-same":              {ID: 11, NodeID: 7, HostPort: 25580, ContainerPort: 25565},
+			"srv-default-container": {ID: 12, NodeID: 7, HostPort: 1000, ContainerPort: 0},
 		},
 	}
 	svc := newStatusWatcherTest(t, fs)
@@ -231,7 +240,7 @@ func TestSyncPortsFromRedis(t *testing.T) {
 func TestSyncPortsFromRedis_NoChanges_ReturnsFalse(t *testing.T) {
 	fs := &statusWatcherFakeStore{
 		serversByUUID: map[string]models.Server{
-			"srv-1": {ID: 1, HostPort: 25565, ContainerPort: 25565},
+			"srv-1": {ID: 1, NodeID: 7, HostPort: 25565, ContainerPort: 25565},
 		},
 	}
 	svc := newStatusWatcherTest(t, fs)
@@ -318,5 +327,20 @@ func TestPublishServerStateKeys_LiveStatusIsDurableAndSurvivesTheStatusScan(t *t
 	}
 	if ttl, _ := svc.redis.TTL(ctx, "dylaris:server:srv-a:live_status").Result(); ttl <= 0 {
 		t.Errorf("live_status TTL = %v, want a positive expiry so a deleted server's key ages out", ttl)
+	}
+}
+
+// Every node may write under its own token, and the server was taken from the
+// end of the key alone: one node could rewrite the host port of any server.
+func TestSyncPortsIgnoresAnotherNodesKey(t *testing.T) {
+	fs := &statusWatcherFakeStore{
+		serversByUUID: map[string]models.Server{
+			"victim": {ID: 20, NodeID: 7, HostPort: 25565, ContainerPort: 25565},
+		},
+	}
+	svc := newStatusWatcherTest(t, fs)
+	svc.redis.Set(context.Background(), "dylaris:node:attacker-token:port:victim", "1", 0)
+	if svc.syncPortsFromRedis(context.Background()) || len(fs.portCalls) != 0 {
+		t.Fatalf("a foreign node's key rewrote the port: %+v", fs.portCalls)
 	}
 }

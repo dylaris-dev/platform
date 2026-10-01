@@ -140,6 +140,7 @@ func (s *StatusWatcherService) publishServersChanged(ctx context.Context) {
 // single servers.changed event per scan instead of one per row.
 func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) bool {
 	changed := false
+	tokenOf := map[int]string{} // node id -> token, read once per scan
 	var cursor uint64
 	for {
 		keys, next, err := s.redis.Scan(ctx, cursor, "dylaris:node:*:port:*", 100).Result()
@@ -153,6 +154,7 @@ func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) bool {
 				continue
 			}
 			serverUUID := parts[1]
+			keyToken := strings.TrimPrefix(parts[0], "dylaris:node:")
 
 			portStr, err := s.redis.Get(ctx, key).Result()
 			if err != nil {
@@ -165,6 +167,20 @@ func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) bool {
 
 			srv, err := s.store.GetServerByUUID(serverUUID)
 			if err != nil {
+				continue
+			}
+			// Only the node the server lives on speaks for its port. Every node
+			// may write under its own token, and the server was taken from the
+			// end of the key alone: one node could rewrite the host port of any
+			// server on the platform, every five seconds.
+			tok, seen := tokenOf[srv.NodeID]
+			if !seen {
+				if n, nerr := s.store.GetNodeByID(srv.NodeID); nerr == nil && n != nil {
+					tok = n.Token
+				}
+				tokenOf[srv.NodeID] = tok
+			}
+			if tok == "" || tok != keyToken {
 				continue
 			}
 

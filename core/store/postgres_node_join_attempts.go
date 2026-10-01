@@ -95,15 +95,20 @@ func (s *PostgresStore) ListNodeJoinAttempts() ([]models.NodeJoinAttempt, error)
 // approves the machine they were shown. Passing it in would let the two drift
 // between the render and the click - and it is the only field on that screen
 // that cannot be forged, so it is the one that must not be re-supplied.
-func (s *PostgresStore) ApproveNodeJoinAttempt(nodeToken, approvedBy string) (bool, error) {
+//
+// peerIP and presentedKey are what the operator was SHOWN. The row is rewritten
+// by whoever knocks with the node's id, so binding to the row as it is at the
+// moment of the write admitted whoever knocked between the operator reading it
+// and clicking.
+func (s *PostgresStore) ApproveNodeJoinAttempt(nodeToken, peerIP, presentedKey, approvedBy string) (bool, error) {
 	res, err := s.db.Exec(`
 		UPDATE node_join_attempts
 		SET approved_until = NOW() + $2::interval,
 			approved_from_ip = peer_ip,
 			approved_key = presented_key,
 			approved_by = $3
-		WHERE node_token = $1 AND peer_ip <> ''`,
-		nodeToken, nodeJoinApprovalWindow.String(), approvedBy)
+		WHERE node_token = $1 AND peer_ip <> '' AND peer_ip = $4 AND presented_key = $5`,
+		nodeToken, nodeJoinApprovalWindow.String(), approvedBy, peerIP, presentedKey)
 	if err != nil {
 		return false, err
 	}

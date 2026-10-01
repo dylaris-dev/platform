@@ -255,10 +255,14 @@ func (f *rollSecretFakeStore) GetNodeByToken(token string) (*models.Node, error)
 	return f.node, nil
 }
 
-func (f *rollSecretFakeStore) ApproveNodeJoinAttempt(token, by string) (bool, error) {
+func (f *rollSecretFakeStore) ApproveNodeJoinAttempt(token, peerIP, key, by string) (bool, error) {
 	f.ops = append(f.ops, "arm")
 	f.armToken, f.armBy = token, by
 	return true, nil
+}
+
+func (f *rollSecretFakeStore) GetNodeJoinAttempt(token string) (*models.NodeJoinAttempt, error) {
+	return &models.NodeJoinAttempt{NodeToken: token, PeerIP: "203.0.113.9", PresentedKey: "k1"}, nil
 }
 
 func (f *rollSecretFakeStore) ArmNodeJoinApproval(token, fromIP, by string) (bool, error) {
@@ -347,7 +351,8 @@ func TestAdminActionsReplaceTheKeyAndOnlyResetRotatesAKeyNodesSecret(t *testing.
 			h.RollSecret(w, rollSecretReq("5"))
 		}},
 		{"approve", func(h *NodeAdmissionHandler, w http.ResponseWriter) {
-			r := httptest.NewRequest("POST", "/api/admin/nodes/join-attempts/node-abc/approve", nil)
+			r := httptest.NewRequest("POST", "/api/admin/nodes/join-attempts/node-abc/approve",
+				strings.NewReader(`{"peerIp":"203.0.113.9","presentedKey":"k1"}`))
 			h.ApproveJoinAttempt(w, mux.SetURLVars(r, map[string]string{"token": "node-abc"}))
 		}},
 	}
@@ -407,5 +412,23 @@ func TestAddCIDR_InvalidJSON(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The attempt row is rewritten by whoever knocks with the node's id. Admitting
+// it took the row as it was at the click, not as the operator had seen it.
+func TestAdmitRefusesAnAttemptThatChangedSinceItWasShown(t *testing.T) {
+	for _, body := range []string{
+		`{"peerIp":"198.51.100.1","presentedKey":"k1"}`, // another address knocked since
+		`{"peerIp":"203.0.113.9","presentedKey":"k2"}`,  // another key knocked since
+		`{}`, // nothing said about what was seen
+	} {
+		fs := &rollSecretFakeStore{node: &models.Node{ID: 5, Token: "node-abc"}}
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/admin/nodes/join-attempts/node-abc/approve", strings.NewReader(body))
+		NewNodeAdmissionHandler(&AppState{Store: fs}).ApproveJoinAttempt(rec, mux.SetURLVars(r, map[string]string{"token": "node-abc"}))
+		if rec.Code == http.StatusOK || len(fs.ops) != 0 {
+			t.Errorf("%s: status %d, ops %v; want a refusal that touches nothing", body, rec.Code, fs.ops)
+		}
 	}
 }

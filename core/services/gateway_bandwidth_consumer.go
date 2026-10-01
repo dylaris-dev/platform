@@ -295,6 +295,14 @@ func (s *GatewayBandwidthConsumerService) DrainCounters() []CounterBatch {
 // so an unknown-version record is ignored (acked, not stored).
 func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey string) {
 	group := gwbwGroup + "-" + s.coreID
+	// A link runs on the customer's machine and may write only its own stream;
+	// what it says it is was taken as said, so a link could post as a real
+	// edge and replace that edge's counters. The stream decides, as the
+	// route-only stats endpoint already does.
+	linkID := ""
+	if strings.HasPrefix(streamKey, "dylaris:link:") {
+		linkID = strings.TrimSuffix(strings.TrimPrefix(streamKey, "dylaris:link:"), ":stats")
+	}
 	s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0")
 	log.Printf("Gateway bandwidth consumer started for %s", streamKey)
 	for {
@@ -344,6 +352,9 @@ func (s *GatewayBandwidthConsumerService) consume(ctx context.Context, streamKey
 				gs, known, perr := protocol.ParseGatewayStats([]byte(data))
 				if perr != nil || !known || gs.ID == "" {
 					continue // bad json or unknown version: ack + drop
+				}
+				if linkID != "" {
+					gs.Component, gs.ID = "link", linkID
 				}
 				s.mu.Lock()
 				key := gs.Component + ":" + gs.ID

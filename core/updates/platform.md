@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.9
+
+### Features
+- Nothing.
+
+### Breaking
+- **Admitting a connection attempt needs the attempt's address and key in the request body.**
+  The panel sends them; a script calling the endpoint must too. `core` `panel`
+
+### Security
+- **A node could speak for another node:** report the port of a server it does not host, mark
+  another node offline, or feed placement its numbers. Core now trusts the key a node writes, not its claim. `core`
+- **A customer's link could post its telemetry as one of your edges.** The stream now decides. `core`
+- **Admitting a connection attempt admits the address and key you were shown.** If the attempt
+  changed in between, Core refuses and asks you to reload. `core` `panel`
+
+### Fixes
+- **Large downloads from a node to a slow browser arrived corrupted** while reporting success.
+  They now arrive whole, and a transfer cut short fails visibly instead of saving a partial file. `core`
+- **Opening a file in the editor is capped at 10 MB,** and a node's error no longer signs the
+  visitor out. Restoring a node-local backup refuses an archive cut short. `core`
+
 ## 2026.10.01.8
 
 ### Features

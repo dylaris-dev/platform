@@ -266,6 +266,7 @@ type nodeLocalReader struct {
 	ctx      context.Context
 	ch       <-chan *pb.NodeMessage
 	registry *nodegrpc.Registry
+	complete bool
 	nodeID   int
 	reqID    string
 
@@ -285,8 +286,17 @@ func (r *nodeLocalReader) Read(p []byte) (int, error) {
 			return 0, r.err
 		case msg, ok := <-r.ch:
 			if !ok {
+				// Only the final TransferDone makes the end an end. Without it
+				// the node went away or the read stalled and was ended, and a
+				// restore from a truncated archive must fail, not finish.
 				r.err = io.EOF
+				if !r.complete {
+					r.err = io.ErrUnexpectedEOF
+				}
 				return 0, r.err
+			}
+			if nodegrpc.IsFinalTransferDone(msg) {
+				r.complete = true
 			}
 			if e := msg.GetError(); e != nil {
 				r.err = fmt.Errorf("node backup-open error: %s", e.Message)

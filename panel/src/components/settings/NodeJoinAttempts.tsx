@@ -72,7 +72,7 @@ export default function NodeJoinAttempts({ onAdmitted }: { onAdmitted: () => voi
         }))) return;
         setBusyToken(a.nodeToken);
         await runApprove(async () => {
-            const res = await approveNodeJoinAttempt(a.nodeToken);
+            const res = await approveNodeJoinAttempt(a);
             setBusyToken(null);
             if (!res.success) { setError(res.message || 'Could not admit the node.'); return; }
             setError(null);

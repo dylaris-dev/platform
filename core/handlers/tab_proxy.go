@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	nodegrpc "dylaris-core/grpc"
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
@@ -229,8 +230,18 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 
 	headerWritten := false
 	flusher, canFlush := w.(http.Flusher)
+	complete := false
+	defer func() {
+		// A page cut short must not read as the whole page.
+		if !complete && headerWritten {
+			panic(http.ErrAbortHandler)
+		}
+	}()
 
 	for resp := range ch {
+		if nodegrpc.IsFinalTransferDone(resp) {
+			complete = true
+		}
 		if e := resp.GetError(); e != nil {
 			if !headerWritten {
 				proxyUpstreamError(w, tab, int(e.Code), e.Message)
@@ -250,7 +261,12 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 			// response and one declaring a length both arrive intact, and the
 			// browser gets the same bytes the container sent.
 			writeProxyHeaders(w, hd.Headers, false)
-			w.WriteHeader(int(hd.StatusCode))
+			// A status outside the HTTP range made WriteHeader panic.
+			status := int(hd.StatusCode)
+			if status < 100 || status > 599 {
+				status = http.StatusBadGateway
+			}
+			w.WriteHeader(status)
 			headerWritten = true
 			continue
 		}

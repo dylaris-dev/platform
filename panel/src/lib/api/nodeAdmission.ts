@@ -130,11 +130,13 @@ export async function listNodeJoinAttempts(): Promise<{ success: boolean; attemp
 }
 
 /** Admits this identity from the address the attempt came from, briefly. */
-export async function approveNodeJoinAttempt(nodeToken: string): Promise<{ success: boolean; note?: string; message?: string }> {
+/** Admits the attempt as listed: Core refuses if its address or key changed since. */
+export async function approveNodeJoinAttempt(attempt: { nodeToken: string; peerIp: string; presentedKey?: string }): Promise<{ success: boolean; note?: string; message?: string }> {
     try {
-        const res = await fetch(`${API_URL}/admin/nodes/join-attempts/${encodeURIComponent(nodeToken)}/approve`, {
+        const res = await fetch(`${API_URL}/admin/nodes/join-attempts/${encodeURIComponent(attempt.nodeToken)}/approve`, {
             method: 'POST',
-            headers: getAuthHeader(),
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ peerIp: attempt.peerIp, presentedKey: attempt.presentedKey ?? '' }),
         });
         return (await handleResponse(res)) as { success: boolean; note?: string; message?: string };
     } catch (err) {

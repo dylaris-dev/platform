@@ -225,8 +225,33 @@ func (conn *NodeConnection) Send(msg *pb.NodeMessage) error {
 	return conn.Stream.Send(msg)
 }
 
+// routeWait is how long RouteResponse waits for a reader to make room, and
+// routePoll how often it looks.
+var (
+	routeWait = 30 * time.Second
+	routePoll = 2 * time.Millisecond
+)
+
+// IsFinalTransferDone reports whether msg is the TransferDone that ends a
+// chunked transfer. The metadata TransferDone sent BEFORE the chunks has a
+// Filename and TotalBytes==0; the final one has no Filename, or TotalBytes>0
+// (a zip names its file in both). A transfer whose channel closes without this
+// message did not complete.
+func IsFinalTransferDone(msg *pb.NodeMessage) bool {
+	done := msg.GetTransferDone()
+	return done != nil && (done.TotalBytes > 0 || done.Filename == "")
+}
+
 // RouteResponse delivers an incoming message to the waiting handler via request_id.
 // Returns false if no handler is waiting (message is dropped).
+//
+// A full channel is waited on, not skipped. It used to drop the message, and a
+// chunk is a piece of a file: a download to a browser slower than the node
+// lost every chunk past the 64 buffered ones and still completed with 200,
+// a corrupt file. Waiting slows this node's read loop to the slow reader's
+// pace, which is what TCP would do. A reader that takes nothing for routeWait
+// has its transfer ENDED instead - closed without the final TransferDone,
+// which every consumer reads as incomplete.
 //
 // The lock is held ACROSS the send, not just across the map lookup. Every path
 // that closes a pending channel (Register replacing a reconnecting node's old
@@ -241,22 +266,32 @@ func (conn *NodeConnection) Send(msg *pb.NodeMessage) error {
 // take the Core process down.
 //
 // Holding the mutex across the send is safe because the send is the
-// non-blocking form: it either lands in the buffered channel or falls to
-// default immediately, so this never sleeps while holding the lock.
+// non-blocking form; the wait for room happens with the lock RELEASED, and the
+// entry is looked up again each time, so a reader that gave up (CleanupRequest)
+// or a connection that closed ends the wait at once.
 func (conn *NodeConnection) RouteResponse(msg *pb.NodeMessage) bool {
-	conn.mu.Lock()
-	defer conn.mu.Unlock()
-
-	ch, ok := conn.pending[msg.RequestId]
-	if !ok || ch == nil {
-		return false
-	}
-
-	select {
-	case ch <- msg:
-		return true
-	default:
-		return false
+	deadline := time.Now().Add(routeWait)
+	for {
+		conn.mu.Lock()
+		ch, ok := conn.pending[msg.RequestId]
+		if !ok || ch == nil {
+			conn.mu.Unlock()
+			return false
+		}
+		select {
+		case ch <- msg:
+			conn.mu.Unlock()
+			return true
+		default:
+		}
+		if time.Now().After(deadline) {
+			close(ch)
+			delete(conn.pending, msg.RequestId)
+			conn.mu.Unlock()
+			return false
+		}
+		conn.mu.Unlock()
+		time.Sleep(routePoll)
 	}
 }
 

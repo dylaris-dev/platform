@@ -119,10 +119,10 @@ func (s *StatsConsumerService) scanNodes() {
 		if err != nil {
 			continue
 		}
-		var hb struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal([]byte(val), &hb); err != nil || hb.ID == "" {
+		// The id must be the key's own: a node that wrote a fresh id every scan
+		// started one consumer, and one stream, per id it ever named.
+		hb := heartbeatUnderKey(key, val)
+		if hb == nil {
 			continue
 		}
 

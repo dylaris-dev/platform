@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"dylaris-core/models"
@@ -1103,7 +1102,7 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, int(errResp.Code))
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -1180,20 +1179,19 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
-	var buf bytes.Buffer
-	for resp := range ch {
-		if errResp := resp.GetError(); errResp != nil {
-			sendJSONError(w, errResp.Message, int(errResp.Code))
-			return
-		}
-		if chunk := resp.GetChunk(); chunk != nil {
-			buf.Write(chunk.Data)
-		}
+	data, errResp, rerr := collectNodeFile(ch, maxOpenFileBytes)
+	if errResp != nil {
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		return
+	}
+	if rerr != nil {
+		sendJSONError(w, rerr.Error(), readErrStatus(rerr))
+		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"content": buf.String(),
+		"content": string(data),
 	})
 }
 
@@ -1239,7 +1237,7 @@ func inspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.In
 		return nil, fmt.Errorf("node communication error: %w", err)
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		code := int(errResp.Code)
+		code := nodeErrorStatus(errResp.Code)
 		if code == 0 {
 			code = 500
 		}

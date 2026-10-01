@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/validate"
@@ -297,7 +297,7 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		if errResp.Code == 403 {
 			sendJSONError(w, errResp.Message, http.StatusForbidden)
 		} else {
-			sendJSONError(w, errResp.Message, int(errResp.Code))
+			sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		}
 		return
 	}
@@ -359,20 +359,17 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
-	// Collect all chunks into a buffer
-	var buf bytes.Buffer
-	for resp := range ch {
-		if errResp := resp.GetError(); errResp != nil {
-			sendJSONError(w, errResp.Message, int(errResp.Code))
-			return
-		}
-		if chunk := resp.GetChunk(); chunk != nil {
-			buf.Write(chunk.Data)
-		}
-		// TransferDone signals end — channel will be closed by registry
+	data, errResp, rerr := collectNodeFile(ch, maxOpenFileBytes)
+	if errResp != nil {
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		return
+	}
+	if rerr != nil {
+		sendJSONError(w, rerr.Error(), readErrStatus(rerr))
+		return
 	}
 
-	content := buf.String()
+	content := string(data)
 	if viaDemoBypass {
 		// Any authenticated user can reach this via the demo bypass, not just
 		// the owner, so only the two files the demo exists to show come back.
@@ -454,7 +451,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, int(errResp.Code))
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -542,7 +539,7 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, int(errResp.Code))
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -596,7 +593,7 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, int(errResp.Code))
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -654,7 +651,7 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, int(errResp.Code))
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -705,7 +702,7 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, int(errResp.Code))
+		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -767,12 +764,16 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 	flusher, canFlush := w.(http.Flusher)
 	budget := newDownloadBudget(h.getTransferLimit(r, "download"))
 
+	complete := false
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
 			if !headerWritten {
-				http.Error(w, errResp.Message, int(errResp.Code))
+				http.Error(w, errResp.Message, nodeErrorStatus(errResp.Code))
 			}
 			return
+		}
+		if nodegrpc.IsFinalTransferDone(resp) {
+			complete = true
 		}
 
 		// Metadata TransferDone (TotalBytes=0): set headers before any data
@@ -803,6 +804,7 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 
 		// Final TransferDone (TotalBytes>0): transfer complete, channel will close
 	}
+	refuseIncomplete(w, complete, bodyStarted)
 }
 
 // SelectiveDownloadHandler handles selective folder downloads.
@@ -871,12 +873,16 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 	flusher, canFlush := w.(http.Flusher)
 	budget := newDownloadBudget(h.getTransferLimit(r, "download"))
 
+	complete := false
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
 			if !headerWritten {
-				http.Error(w, errResp.Message, int(errResp.Code))
+				http.Error(w, errResp.Message, nodeErrorStatus(errResp.Code))
 			}
 			return
+		}
+		if nodegrpc.IsFinalTransferDone(resp) {
+			complete = true
 		}
 
 		if done := resp.GetTransferDone(); done != nil && done.TotalBytes == 0 {
@@ -904,6 +910,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 			}
 		}
 	}
+	refuseIncomplete(w, complete, bodyStarted)
 }
 
 // UploadFileHandler handles uploads — receives files via HTTP multipart,
@@ -1049,7 +1056,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		if errResp := resp.GetError(); errResp != nil {
 			file.Close()
-			sendJSONError(w, errResp.Message, int(errResp.Code))
+			sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 			return
 		}
 

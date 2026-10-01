@@ -46,8 +46,12 @@ func TestIntegrationResetPairingDisarmsAnEarlierAdmission(t *testing.T) {
 		t.Error("the refused re-pair is not listed under Connection attempts")
 	}
 
+	// An Admit for an attempt other than the one listed arms nothing.
+	if armed, err := st.ApproveNodeJoinAttempt(f.node.Token, "198.51.100.1", "", ""); err != nil || armed {
+		t.Fatalf("Admit for an address that did not knock = (%v, %v), want not armed", armed, err)
+	}
 	// Admit after the Reset: armed again, and consumed exactly once.
-	if armed, err := st.ApproveNodeJoinAttempt(f.node.Token, ""); err != nil || !armed {
+	if armed, err := st.ApproveNodeJoinAttempt(f.node.Token, addr, "", ""); err != nil || !armed {
 		t.Fatalf("Admit after the Reset = (%v, %v), want armed", armed, err)
 	}
 	if ok, err := st.ConsumeNodeJoinApproval(f.node.Token, addr, ""); err != nil || !ok {

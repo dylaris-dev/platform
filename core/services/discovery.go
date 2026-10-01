@@ -126,13 +126,30 @@ func LoadHeartbeats(ctx context.Context, r *redis.Client) map[string]*NodeHeartb
 		if err != nil {
 			continue
 		}
-		var hb NodeHeartbeat
-		if err := json.Unmarshal([]byte(val), &hb); err != nil {
-			continue
+		if hb := heartbeatUnderKey(key, val); hb != nil {
+			out[hb.ID] = hb
 		}
-		out[hb.ID] = &hb
 	}
 	return out
+}
+
+// maxHeartbeatBytes bounds a heartbeat Core will parse. A real one is a few KB.
+const maxHeartbeatBytes = 1 << 20
+
+// heartbeatUnderKey parses a heartbeat and keeps it only if it names the node
+// whose key it sits in. The Redis ACL lets a node write its OWN discovery key,
+// not choose the id inside it: a heartbeat carrying another node's id was taken
+// as that node's - its free RAM and storage for placement, and, with a bad
+// signature, a rejection that marked the other node offline every scan.
+func heartbeatUnderKey(key, val string) *NodeHeartbeat {
+	if len(val) > maxHeartbeatBytes {
+		return nil
+	}
+	var hb NodeHeartbeat
+	if json.Unmarshal([]byte(val), &hb) != nil || hb.ID == "" || key != "dylaris:discovery:"+hb.ID {
+		return nil
+	}
+	return &hb
 }
 
 // LoadHeartbeat reads ONE node's heartbeat by token. Prefer it over
@@ -322,10 +339,11 @@ func (s *DiscoveryService) scanNodes() {
 			continue
 		}
 
-		var hb NodeHeartbeat
-		if err := json.Unmarshal([]byte(val), &hb); err != nil {
+		hbp := heartbeatUnderKey(key, val)
+		if hbp == nil {
 			continue
 		}
+		hb := *hbp
 
 		// 2. Security Check. Redis ACL is mandatory: the raw cluster secret is never
 		// on the wire. A new node is created only via the gRPC enroll path (never from
