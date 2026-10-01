@@ -32,7 +32,7 @@ func suspendedForNonPayment(state *AppState, r *http.Request, ownerID string) bo
 	if state == nil || state.Store == nil || ownerID == "" {
 		return false
 	}
-	if r != nil && IsAdmin(r) {
+	if r != nil && operatorOverride(r) {
 		return false
 	}
 	b, err := state.Store.GetUserBilling(ownerID)
@@ -41,6 +41,15 @@ func suspendedForNonPayment(state *AppState, r *http.Request, ownerID string) bo
 
 // refuseIfSuspended is suspendedForNonPayment plus the 403, so a call site is
 // one if-statement. It reports whether the request was answered.
+// operatorOverride reports whether an operator's bypass of a tenant-facing
+// guard applies to this request: an admin in a panel session, never an API key.
+// The panel asks an operator to confirm these overrides; a key has nobody to
+// ask, so an automation script holding an operator's key started suspended
+// customers' servers and acted inside installs and moves without a word.
+func operatorOverride(r *http.Request) bool {
+	return IsAdmin(r) && APIKeyFromContext(r) == nil
+}
+
 func refuseIfSuspended(w http.ResponseWriter, r *http.Request, state *AppState, srv *models.Server) bool {
 	if srv == nil || !suspendedForNonPayment(state, r, srv.OwnerID) {
 		return false

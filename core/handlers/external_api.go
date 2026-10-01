@@ -233,6 +233,12 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
+	// The same filters the panel's own list applies. Without them a grant row
+	// that carries no capability - an invite with nothing ticked - still put
+	// the full server record (start command, JVM flags, ports, node) in front
+	// of a key that only had to name the server.
+	servers = FilterServersByRegion(servers, LoadEffectivePermissions(h.state, ownerID), ownerID)
+	servers = applyResolvedTabPermissions(h.state, servers, ownerID, owner.Username)
 	out := make([]models.Server, 0, len(allowed))
 	for _, s := range servers {
 		if inScope[s.UUID] {

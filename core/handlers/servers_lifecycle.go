@@ -1127,7 +1127,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if srv.Status == "suspended" && !isAdmin {
+	if srv.Status == "suspended" && !operatorOverride(r) {
 		sendJSONError(w, "Server is suspended. Action blocked.", 403)
 		return
 	}
@@ -1164,7 +1164,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// economise - but do not read it as evidence that per-server suspension
 	// exists.
 	suspendOverride := ""
-	if isAdmin && (req.Action == "start" || req.Action == "restart") {
+	if operatorOverride(r) && (req.Action == "start" || req.Action == "restart") {
 		if srv.Status == "suspended" {
 			suspendOverride = "server_suspended"
 		} else if b, err := h.state.Store.GetUserBilling(srv.OwnerID); err == nil && b.Status == "suspended" {
@@ -1181,7 +1181,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// key is checked on setup + reinstall to debounce double-clicks; we
 	// gate power actions on it too. Admins bypass but the frontend prompts
 	// for an explicit confirmation.
-	if !isAdmin {
+	if !operatorOverride(r) {
 		cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
 		if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
 			sendJSONError(w, fmt.Sprintf("Server is finishing install — please wait %d seconds", int(ttl.Seconds())), 429)
@@ -1225,7 +1225,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	}
 	// A move between nodes is driven by Core, not held on the node for its
 	// whole length. Operators may still act on a migration that is stuck.
-	if srv.Status == "migrating" && !isAdmin {
+	if srv.Status == "migrating" && !operatorOverride(r) {
 		sendJSONError(w, "Server is being moved to another node. Try again when the move has finished.", 409)
 		return
 	}

@@ -289,6 +289,9 @@ type Store interface {
 	ListBackupRuns(jobID int, limit int) ([]models.BackupRun, error)
 	GetBackupRun(id int) (*models.BackupRun, error)
 	CreateBackupRun(r *models.BackupRun) (int, error)
+	// StartBackupRunIfIdle creates the run only while the job has none
+	// running; false means one is already in progress.
+	StartBackupRunIfIdle(r *models.BackupRun) (int, bool, error)
 	UpdateBackupRunStatus(id int, status, errorMsg string, sizeBytes int64, storageKey string, completed time.Time) error
 	DeleteBackupRun(id int) error
 	PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error)

@@ -91,6 +91,9 @@ func (f *apiKeysAuthFakeStore) GetAPIKeyByHash(hash string) (*models.APIKey, err
 
 func (f *apiKeysAuthFakeStore) TouchAPIKey(id int) error { return nil }
 
+// The external server list applies the panel's region filter.
+func (f *apiKeysAuthFakeStore) GetUserRegionIDs(string) ([]string, error) { return nil, nil }
+
 func (f *apiKeysAuthFakeStore) GetUserByID(id string) (*models.User, error) {
 	if f.getUserErr != nil {
 		return nil, f.getUserErr
@@ -662,8 +665,9 @@ func TestAPIKeysCreate_NonAdminWithoutPowerAccessForbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "No rcon.exec access to server: srv-1") {
-		t.Fatalf("body = %s, want 'No rcon.exec access to server: srv-1'", rec.Body.String())
+	// No access at all to the server: refused before the per-capability check.
+	if !strings.Contains(rec.Body.String(), "No access to server: srv-1") {
+		t.Fatalf("body = %s, want 'No access to server: srv-1'", rec.Body.String())
 	}
 	if len(fs.createCalls) != 0 {
 		t.Fatalf("expected no CreateAPIKey call, got %+v", fs.createCalls)

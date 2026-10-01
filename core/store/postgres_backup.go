@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"dylaris-core/models"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/lib/pq"
@@ -428,6 +429,24 @@ func (s *PostgresStore) CreateBackupRun(r *models.BackupRun) (int, error) {
 		r.JobID, r.Status, r.StorageKey, nullableInt(r.StorageID),
 	).Scan(&id)
 	return id, err
+}
+
+// StartBackupRunIfIdle creates a running run for a job only while that job has
+// no run in progress, and reports whether it did. One statement, so two
+// triggers at the same moment cannot both pass a check made beforehand.
+func (s *PostgresStore) StartBackupRunIfIdle(r *models.BackupRun) (int, bool, error) {
+	var id int
+	err := s.db.QueryRow(
+		`INSERT INTO backup_runs (job_id, status, storage_key, storage_id)
+		 SELECT $1, $2, $3, $4
+		 WHERE NOT EXISTS (SELECT 1 FROM backup_runs WHERE job_id = $1 AND status = 'running')
+		 RETURNING id`,
+		r.JobID, r.Status, r.StorageKey, nullableInt(r.StorageID),
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, err == nil, err
 }
 
 func (s *PostgresStore) UpdateBackupRunStatus(id int, status, errorMsg string, sizeBytes int64, storageKey string, completed time.Time) error {

@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.7
+
+### Features
+- Nothing.
+
+### Breaking
+- **An operator's API key no longer carries the operator overrides** the panel asks to confirm:
+  it cannot start suspended servers or act during installs and moves. `core`
+- **A key's rate is capped at 600 requests a minute,** and a backup job runs once at a time;
+  a trigger while it runs is refused. `core`
+
+### Security
+- **Recovering an account now revokes its API keys** - a reset by mail, or an operator setting
+  the password or resetting 2FA. A key minted by an intruder used to keep working. `core`
+- **Console, RCON and backup actions taken with a key are on the server's audit trail.** They
+  left no record before. `core`
+- **The operator's list of allowed key permissions is enforced on every request,** and a key
+  can only name servers its creator has access to. `core`
+- **The external server list filters like the panel's,** and the demo account cannot write
+  through a key. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.01.6
 
 ### Features

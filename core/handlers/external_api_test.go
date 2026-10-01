@@ -170,9 +170,9 @@ func TestListExternalServers_FiltersToTheKeyAllowlist(t *testing.T) {
 	owner := &models.User{ID: "owner-1", Username: "owner"}
 	fs := externalFixture(nil, []string{"uuid-a"}, owner, nil)
 	fs.ownedServers = []models.Server{
-		{ID: 10, UUID: "uuid-a", Name: "in-scope"},
-		{ID: 20, UUID: "uuid-b", Name: "sibling"},
-		{ID: 30, UUID: "uuid-c", Name: "another"},
+		{ID: 10, UUID: "uuid-a", Name: "in-scope", OwnerID: "owner-1"},
+		{ID: 20, UUID: "uuid-b", Name: "sibling", OwnerID: "owner-1"},
+		{ID: 30, UUID: "uuid-c", Name: "another", OwnerID: "owner-1"},
 	}
 	h := newAPIKeysAuthHandler(fs)
 	wrapped := h.APIKeyOwnerRoute("")(h.ListExternalServers)

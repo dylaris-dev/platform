@@ -436,7 +436,10 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEvent2FAAdminReset, actorID, id, nil)
+	// A second factor is reset because the account is not in its owner's
+	// hands; the API keys are a way in that needs neither factor.
+	revoked := revokeAllAPIKeys(h.state, id, "admin 2FA reset")
+	LogIdentityAudit(h.state, r, AuditEvent2FAAdminReset, actorID, id, map[string]interface{}{"api_keys_revoked": revoked})
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

@@ -67,6 +67,9 @@ func (f *presignedOnlyStore) GetSetting(key string) (string, error) {
 }
 func (f *presignedOnlyStore) GetUserByUsername(string) (*models.User, error) { return nil, nil }
 func (f *presignedOnlyStore) CreateBackupRun(*models.BackupRun) (int, error) { return 2, nil }
+func (f *presignedOnlyStore) StartBackupRunIfIdle(*models.BackupRun) (int, bool, error) {
+	return 2, true, nil
+}
 func (f *presignedOnlyStore) UpdateBackupRunStatus(id int, status, msg string, _ int64, _ string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -427,21 +427,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	// An operator sets someone's password because the account is not in its
 	// owner's hands any more. The password change ended the sessions; the API
 	// keys are the other way in, and they used to keep working.
-	revoked := 0
-	if keys, kerr := h.state.Store.ListAPIKeysByUser(id); kerr == nil {
-		for _, k := range keys {
-			if k.RevokedAt != nil {
-				continue
-			}
-			if rerr := h.state.Store.RevokeAPIKey(k.ID, id); rerr != nil {
-				log.Printf("admin password reset: revoke API key %d of %s: %v", k.ID, id, rerr)
-				continue
-			}
-			revoked++
-		}
-	} else {
-		log.Printf("admin password reset: list API keys of %s: %v", id, kerr)
-	}
+	revoked := revokeAllAPIKeys(h.state, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked})
 

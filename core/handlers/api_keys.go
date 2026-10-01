@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -134,7 +136,10 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			res, rerr := h.state.Authz.Resolve(identity, srv.ID)
-			if rerr != nil {
+			// Resolve answers "no capabilities", not an error, for a server the
+			// caller cannot reach, so the error alone let any server's uuid into
+			// a key's scope. Holding something on the server is the floor for naming it.
+			if rerr != nil || !res.HasAnyServerCap() {
 				sendJSONError(w, "No access to server: "+serverUUID, http.StatusForbidden)
 				return
 			}
@@ -168,6 +173,13 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	rate := req.RatePerMin
 	if rate <= 0 {
 		rate = 60
+	}
+	// Any positive number used to be taken, so a key could carry a limit of a
+	// million a minute - the per-key limit switched off, leaving only the
+	// per-IP one, which a caller with several addresses does not meet.
+	if rate > maxKeyRatePerMin {
+		sendJSONError(w, fmt.Sprintf("ratePerMin can be at most %d", maxKeyRatePerMin), http.StatusBadRequest)
+		return
 	}
 	k := &models.APIKey{
 		UserID:  userID,
@@ -485,7 +497,37 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// Inject the key so an owner-scoped handler can bind its query to
 			// the key's realm and allowlist. Without this the handler has no way
 			// to tell whose data it may return.
-			next(w, r.WithContext(context.WithValue(r.Context(), apiKeyCtxKey{}, &apiKeyCtx{key: key, serverAllowed: serverAllowed})))
+			r = r.WithContext(context.WithValue(r.Context(), apiKeyCtxKey{}, &apiKeyCtx{key: key, serverAllowed: serverAllowed}))
+
+			// The demo account is read-only, and AuthMiddleware is where that is
+			// enforced - which a key request never passes through.
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				if demo, derr := isDemoAccountChecked(h.state, key.UserID); derr != nil || demo {
+					sendJSONError(w, "This account is read-only", http.StatusForbidden)
+					return
+				}
+			}
+
+			// A server action taken with a key is on the server's audit trail,
+			// as the same action taken in the panel is. The panel records it in
+			// RequireCap, which these routes never pass through: a console
+			// command, an RCON call or a backup trigger by key left no record.
+			if c, known := authz.Get(requiredPerm); known && shape == keyRouteServer && c.Scope == authz.ScopeServer &&
+				c.Verb != authz.VerbRead && r.Method != http.MethodGet && r.Method != http.MethodHead {
+				sw := &keyStatusWriter{ResponseWriter: w}
+				next(sw, r)
+				if sw.status >= 200 && sw.status < 300 {
+					if srv, serr := h.state.Store.GetServerByUUID(uuidVar); serr == nil && srv != nil {
+						LogServerAudit(h.state, r, srv.ID, requiredPerm, key.UserID, "", map[string]interface{}{
+							"method": r.Method,
+							"path":   r.URL.Path,
+							"apiKey": key.ID,
+						})
+					}
+				}
+				return
+			}
+			next(w, r)
 		}
 	}
 }
@@ -535,6 +577,17 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 
 	if requiredPerm == "" {
 		return true // nothing to re-check; the gate above was the point
+	}
+
+	// The operator's list of what a user key may carry, applied now as well
+	// as at mint: a capability taken off the list kept working on every key
+	// already minted with it, and so did the keys of a demoted admin, whose
+	// capabilities were never checked against the list at all.
+	if !owner.IsAdmin {
+		if allowed := h.allowedUserKeyCaps(r); allowed != nil && !allowed[requiredPerm] {
+			sendJSONError(w, "This platform no longer allows that permission on a user key", http.StatusForbidden)
+			return false
+		}
 	}
 
 	// serverID 0 means "the owner's own realm", which is exactly what an
@@ -634,4 +687,63 @@ func generateNodeWarpIdentity() (string, error) {
 		return "", err
 	}
 	return "node-" + hex.EncodeToString(b), nil
+}
+
+// maxKeyRatePerMin bounds the per-key request rate a key may be minted with.
+const maxKeyRatePerMin = 600
+
+// keyStatusWriter remembers the status a key-authed handler answered with.
+type keyStatusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *keyStatusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *keyStatusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *keyStatusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// revokeAllAPIKeys revokes every live key of an account and returns how many.
+// It runs on each way an account is RECOVERED - a reset by mail, an operator
+// setting the password or resetting the second factor - because each of them
+// means the account was out of its owner's hands, and a key minted in that
+// time is a way back in that no session check sees. A voluntary password
+// change in the profile does not call it: the owner is signed in and holds
+// their keys.
+func revokeAllAPIKeys(state *AppState, userID, why string) int {
+	if state == nil || state.Store == nil {
+		return 0
+	}
+	keys, err := state.Store.ListAPIKeysByUser(userID)
+	if err != nil {
+		log.Printf("%s: list API keys of %s: %v", why, userID, err)
+		return 0
+	}
+	revoked := 0
+	for _, k := range keys {
+		if k.RevokedAt != nil {
+			continue
+		}
+		if rerr := state.Store.RevokeAPIKey(k.ID, userID); rerr != nil {
+			log.Printf("%s: revoke API key %d of %s: %v", why, k.ID, userID, rerr)
+			continue
+		}
+		revoked++
+	}
+	return revoked
 }

@@ -54,6 +54,9 @@ func validSubServer(w http.ResponseWriter, sub *string) bool {
 // match on the message, since both messages embed live figures.
 var errBackupQuotaReached = errors.New("backup quota reached")
 
+// errBackupAlreadyRunning refuses a trigger while the job has a run in progress.
+var errBackupAlreadyRunning = errors.New("a backup of this job is already running")
+
 // backupQuotaRefusal renders one of the two quota refusals.
 //
 // A cap of ZERO is a different situation from a quota that filled up, and the
@@ -535,7 +538,7 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 		// A quota refusal is the system working, not failing. Answering 500 put
 		// a policy decision in the same bucket as a broken queue, which is what
 		// an operator's alerting and any API client both key off.
-		if errors.Is(err, errBackupQuotaReached) || errors.Is(err, services.ErrNodeUpdateRequired) {
+		if errors.Is(err, errBackupQuotaReached) || errors.Is(err, services.ErrNodeUpdateRequired) || errors.Is(err, errBackupAlreadyRunning) {
 			sendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -1062,7 +1065,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	}
 
 	storageKey := services.NewBackupStorageKey(srv.UUID, job.ID, time.Now())
-	runID, err := h.state.Store.CreateBackupRun(&models.BackupRun{
+	// One run per job at a time. A manual trigger used to start another run
+	// beside one already in progress, every time - a loop through the API ran
+	// as many archive-and-upload passes of one server in parallel as it liked,
+	// on a node that works through eight commands at once for every tenant.
+	runID, started, err := h.state.Store.StartBackupRunIfIdle(&models.BackupRun{
 		JobID:  job.ID,
 		Status: "running",
 		// Recorded from the storage this dispatch resolved, so the archive stays
@@ -1072,6 +1079,9 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	})
 	if err != nil {
 		return 0, err
+	}
+	if !started {
+		return 0, errBackupAlreadyRunning
 	}
 
 	// Mark scheduled bookkeeping. Manual triggers don't change the next-run.

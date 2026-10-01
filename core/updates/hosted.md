@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.7
+
+### Features
+- Nothing.
+
+### Breaking
+- **A backup job runs once at a time.** Triggering it while it runs is refused instead of
+  starting a second copy.
+
+### Security
+- **Resetting your password by mail now revokes your API keys,** so a key someone else made
+  while they had your account stops working.
+- **Console and backup actions taken with an API key now appear in your server's audit log.**
+
+### Fixes
+- Nothing.
+
 ## 2026.10.01.6
 
 ### Features
