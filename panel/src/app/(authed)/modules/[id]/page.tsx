@@ -15,7 +15,15 @@ export default function CustomModulePage() {
                 <div className="text-center text-(--base-06)">Module not found.</div>
             ) : m.type === 'iframe' && m.url ? (
                 <div className="w-full h-full rounded-xl overflow-hidden border border-(--base-03)">
-                    <iframe src={m.url} className="w-full h-full" title={m.name} />
+                    {/* Sandboxed like a custom tab: a third-party page must not
+                        navigate the panel or open windows unasked. */}
+                    <iframe
+                        src={m.url}
+                        className="w-full h-full"
+                        title={m.name}
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+                        referrerPolicy="no-referrer"
+                    />
                 </div>
             ) : (
                 <PlaceholderView viewName={m.name} />

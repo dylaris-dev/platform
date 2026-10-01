@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
 
 import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
@@ -796,11 +796,16 @@ export default function ServerContentPage() {
                                                         : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:bg-(--base-03) hover:border-(--base-04) hover:text-(--base-09)'
                                                 }`}
                                             >
-                                                {/* Category icon is a trusted inline SVG proxied from Modrinth. */}
+                                                {/* The icon is an SVG from Modrinth's API. It used to be
+                                                    inserted as raw HTML on the panel's origin, which put
+                                                    whatever that response held - a style block, a form, a
+                                                    full-page link - into the panel. Used as a mask it is an
+                                                    image: it cannot run, style or link anything, and it still
+                                                    takes the text colour the way the inline SVG did. */}
                                                 <span
-                                                    className="shrink-0 [&_svg]:w-4 [&_svg]:h-4"
+                                                    className="shrink-0 w-4 h-4 bg-current"
                                                     aria-hidden="true"
-                                                    dangerouslySetInnerHTML={{ __html: cat.icon }}
+                                                    style={categoryIconMask(cat.icon)}
                                                 />
                                                 <span className="truncate">{categoryLabel(cat.name)}</span>
                                             </button>
@@ -1327,4 +1332,20 @@ function ModListRow({
             </div>
         </div>
     );
+}
+
+// categoryIconMask turns an SVG string into a CSS mask: an image the browser
+// draws, never markup it parses into the page.
+function categoryIconMask(svg: string): CSSProperties {
+    const url = `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
+    return {
+        maskImage: url,
+        WebkitMaskImage: url,
+        maskSize: 'contain',
+        WebkitMaskSize: 'contain',
+        maskRepeat: 'no-repeat',
+        WebkitMaskRepeat: 'no-repeat',
+        maskPosition: 'center',
+        WebkitMaskPosition: 'center',
+    };
 }

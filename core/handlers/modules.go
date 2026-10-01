@@ -153,6 +153,15 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "System modules cannot be created via API", 403)
 		return
 	}
+	// An iframe module is shown to every user it is visible to. Its address
+	// was taken as sent - only the form said "url" - so the same rule as a
+	// custom tab's applies: a parsable http or https address.
+	if req.Type == "iframe" || req.URL != "" {
+		if err := validateTabURL(req.URL); err != nil {
+			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	id, err := h.state.Store.CreateModule(&req)
 	if err != nil {

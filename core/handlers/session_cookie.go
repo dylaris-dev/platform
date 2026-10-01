@@ -22,6 +22,28 @@ import (
 
 const sessionCookieName = "dylaris_session"
 
+// secureSessionCookieName is the session cookie's name over HTTPS. The __Host-
+// prefix makes the browser refuse any cookie of that name that carries a
+// Domain, is not Secure or is not Path=/ - so nothing but this host can set it.
+//
+// The plain name could be set from a sibling host. Tenant tab content is
+// served from <label>.<suffix>, under the same registrable domain as the panel
+// by design, and a container's script could write dylaris_session with
+// Domain=<that domain> and a longer path: the browser sends it ahead of the
+// real one, so the victim's requests ran in the attacker's account, or a
+// junk value locked them out until they cleared the parent domain's cookies.
+// Over HTTPS the plain name is no longer read at all; a fallback to it would
+// keep the hole open. Plain-HTTP installs cannot use the prefix and keep it.
+const secureSessionCookieName = "__Host-" + sessionCookieName
+
+// sessionCookieNameFor is the session cookie's name on this request's scheme.
+func sessionCookieNameFor(r *http.Request) string {
+	if requestIsHTTPS(r) {
+		return secureSessionCookieName
+	}
+	return sessionCookieName
+}
+
 // signedInHintName is a companion cookie carrying no secret at all - just the
 // fact that a session exists.
 //
@@ -45,7 +67,7 @@ const signedInHintName = "dylaris_signed_in"
 func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, maxAgeSeconds int) {
 	secure := requestIsHTTPS(r)
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     sessionCookieNameFor(r),
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
@@ -80,12 +102,16 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, maxA
 // rather than as a signed-out state.
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	secure := requestIsHTTPS(r)
-	for _, name := range []string{sessionCookieName, signedInHintName} {
+	names := []string{sessionCookieName, signedInHintName}
+	if secure {
+		names = append(names, secureSessionCookieName)
+	}
+	for _, name := range names {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,
 			Value:    "",
 			Path:     "/",
-			HttpOnly: name == sessionCookieName,
+			HttpOnly: name != signedInHintName,
 			Secure:   secure,
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   -1,
@@ -95,7 +121,7 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 
 // sessionTokenFromCookie returns the JWT the browser sent, or "".
 func sessionTokenFromCookie(r *http.Request) string {
-	c, err := r.Cookie(sessionCookieName)
+	c, err := r.Cookie(sessionCookieNameFor(r))
 	if err != nil || c == nil {
 		return ""
 	}

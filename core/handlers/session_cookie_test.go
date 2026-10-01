@@ -28,7 +28,7 @@ func TestSessionCookieAttributes(t *testing.T) {
 	r.TLS = &tlsDummy
 	setSessionCookie(rec, r, "the-jwt", 3600)
 
-	c := cookieByName(rec, sessionCookieName)
+	c := cookieByName(rec, secureSessionCookieName)
 	if c == nil {
 		t.Fatal("no session cookie was set")
 	}
@@ -91,7 +91,7 @@ func TestSecureFollowsTheScheme(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			setSessionCookie(rec, r, "t", 60)
-			if got := cookieByName(rec, sessionCookieName).Secure; got != tt.wantSecure {
+			if got := cookieByName(rec, sessionCookieNameFor(r)).Secure; got != tt.wantSecure {
 				t.Errorf("Secure = %v, want %v", got, tt.wantSecure)
 			}
 		})
@@ -262,5 +262,46 @@ func TestWailsOriginNeedsBothTheOriginAndTheHost(t *testing.T) {
 				t.Errorf("isWailsOrigin = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// A tenant's tab content is served from a sibling host under the panel's own
+// domain, and its script could set dylaris_session with that domain: the
+// browser sent it ahead of the real cookie, running the victim's requests in
+// the attacker's account. Over HTTPS the session lives under the __Host- name,
+// which no other host can set, and the plain name is not read at all.
+func TestAThrownSessionCookieIsIgnoredOverHTTPS(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "https://panel.example.com/api/servers", nil)
+	r.TLS = &tlsDummy
+	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "attackers-jwt"})
+	if got := sessionTokenFromCookie(r); got != "" {
+		t.Fatalf("the thrown cookie was read over https: %q", got)
+	}
+	r.AddCookie(&http.Cookie{Name: secureSessionCookieName, Value: "victims-jwt"})
+	if got := sessionTokenFromCookie(r); got != "victims-jwt" {
+		t.Fatalf("session = %q, want the __Host- cookie", got)
+	}
+
+	plain := httptest.NewRequest(http.MethodGet, "http://panel.example.com/api/servers", nil)
+	plain.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "selfhost-jwt"})
+	if got := sessionTokenFromCookie(plain); got != "selfhost-jwt" {
+		t.Fatalf("a plain-http install lost its session cookie: %q", got)
+	}
+}
+
+// HSTS was set nowhere and nosniff only on a few responses.
+func TestSecurityHeadersOnPanelAndAPIResponses(t *testing.T) {
+	h := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	r := httptest.NewRequest(http.MethodGet, "https://panel.example.com/api/servers", nil)
+	r.TLS = &tlsDummy
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Header().Get("Strict-Transport-Security") == "" || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("headers = %v, want HSTS and nosniff over https", rec.Header())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://panel.example.com/", nil))
+	if rec.Header().Get("Strict-Transport-Security") != "" {
+		t.Fatal("HSTS was sent over plain http, which a self-host on http could never undo")
 	}
 }

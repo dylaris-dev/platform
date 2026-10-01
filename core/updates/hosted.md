@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.8
+
+### Features
+- Nothing.
+
+### Breaking
+- **You will need to sign in once more after this update.**
+
+### Security
+- **A page shown in a server's custom tab could tamper with the panel session** of people
+  viewing it. The session cookie can no longer be set from those pages.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.01.7
 
 ### Features

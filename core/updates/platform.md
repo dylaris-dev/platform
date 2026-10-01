@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.8
+
+### Features
+- Nothing.
+
+### Breaking
+- **Everyone signs in once more after this update.** Over HTTPS the session cookie has a new
+  name, and the old one is no longer read; plain-HTTP installs keep the old name. `core`
+
+### Security
+- **A custom tab's page could set the panel's session cookie** from its sibling host and run
+  a visitor's requests in the tenant's account, or lock them out. The cookie now carries
+  the `__Host-` prefix, which no other host can set. `core`
+- **HSTS and nosniff are sent on every panel and API response over HTTPS.** Neither was. `core`
+- **Modrinth category icons are no longer inserted into the panel as raw HTML,** and iframe
+  modules need an http(s) address and are sandboxed like custom tabs. `core` `panel`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.01.7
 
 ### Features
