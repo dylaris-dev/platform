@@ -1000,12 +1000,13 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		canReplyFlag = settings.WatchersDefaultCanReply
 	}
 	uid := userID
-	if err := h.state.Store.AddTicketWatcher(&models.TicketWatcher{
+	added, err := h.state.Store.AddTicketWatcher(&models.TicketWatcher{
 		TicketID: id,
 		UserID:   target,
 		CanReply: canReplyFlag,
 		AddedBy:  &uid,
-	}); err != nil {
+	})
+	if err != nil {
 		sendJSONError(w, "Failed to add watcher", http.StatusInternalServerError)
 		return
 	}
@@ -1020,8 +1021,11 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	// Notify the user being CC'd, unless they added themselves.
-	if target != userID {
+	// Notify the user being CC'd, unless they added themselves - and only the
+	// first time. Adding an existing watcher again is an update, and it used
+	// to notify on every call: anyone could send any user an unbounded stream
+	// of "Added to ticket" notices under a title of their choosing.
+	if added && target != userID {
 		link := "/tickets/" + strconv.Itoa(id)
 		EmitTicketNotification(h.state, []string{target},
 			NotifyTypeTicketWatcherAdd,

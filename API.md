@@ -336,7 +336,7 @@ can still show what exists.
 | POST | `/api/auth/login` | **none** | _public_ | Limit, LimitBody | `AuthHandler.LoginHandler` | issues the session JWT. |
 | POST | `/api/auth/logout` | **none** | _public_ | Limit | `AuthHandler.Logout` | drops the session cookie. |
 | GET | `/api/auth/profile` | session | _no capability_ | - | `AuthHandler.GetProfileHandler` | the calling user's own row, with the password hash cleared before it is written out. |
-| PUT | `/api/auth/profile` | session | _no capability_ | - | `AuthHandler.UpdateProfileHandler` | updates the calling user's own profile. |
+| PUT | `/api/auth/profile` | session | _no capability_ | Limit | `AuthHandler.UpdateProfileHandler` | updates the calling user's own profile. |
 | POST | `/api/auth/register` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.Register` | public, gated on auth.registration_enabled. |
 | GET | `/api/auth/registration-status` | **none** | _public_ | - | `RegistrationHandler.RegistrationStatus` | public. |
 | POST | `/api/auth/resend-verification` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.ResendVerification` | public. |

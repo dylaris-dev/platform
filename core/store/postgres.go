@@ -2426,7 +2426,11 @@ func (s *PostgresStore) GetUserByEmail(email string) (*models.User, error) {
 }
 
 func (s *PostgresStore) GetUserByEmailVerificationToken(token string) (*models.User, error) {
-	query := `SELECT ` + userSelectCols + ` FROM users WHERE email_verification_token = $1 AND email_verification_token IS NOT NULL`
+	// A verification link lives a week. It had no expiry at all, so a link in an
+	// old or leaked mailbox archive verified the address for as long as nobody
+	// asked for a new one. Expired reads like invalid; the user can resend.
+	query := `SELECT ` + userSelectCols + ` FROM users WHERE email_verification_token = $1 AND email_verification_token IS NOT NULL
+		AND email_verification_sent_at > NOW() - INTERVAL '7 days'`
 	return scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
 }
 
@@ -2495,6 +2499,27 @@ func (s *PostgresStore) GetUserByPasswordResetToken(token string) (*models.User,
 		  AND password_reset_token IS NOT NULL
 		  AND (password_reset_expires_at IS NULL OR password_reset_expires_at > NOW())`
 	return scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
+}
+
+// ResetPasswordWithToken sets the password only while the row still holds this
+// reset token unexpired, spending the token in the same statement, and reports
+// whether it did.
+//
+// The reset used to read the user by token and then write the password by id.
+// Two requests with one link both got through - the last password won - and so
+// did a request that was already past the read when a new link was issued or
+// the address changed, both of which are meant to kill the old link.
+func (s *PostgresStore) ResetPasswordWithToken(userID, token, hashedPassword string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE users SET password = $3,
+		password_reset_token = NULL, password_reset_expires_at = NULL
+		WHERE id = $1 AND password_reset_token = $2
+		  AND (password_reset_expires_at IS NULL OR password_reset_expires_at > NOW())`,
+		userID, hashAuthToken(token), hashedPassword)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // SetPasswordResetToken issues a reset token for userID, but only when any

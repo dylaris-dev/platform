@@ -34,6 +34,9 @@ type Store interface {
 	ListUsernameCaseCollisions() ([][]string, error)
 	SetUserMinecraftUsername(userID, mc string) error
 	UpdateUserPassword(id string, hashedPassword string) error
+	// ResetPasswordWithToken sets the password only if the reset token is still
+	// on the row and unexpired, spending it in the same write.
+	ResetPasswordWithToken(userID, token, hashedPassword string) (bool, error)
 	DeleteUser(id string) error
 	ListUsers() ([]models.User, error)
 	CountUsers() (int, error)
@@ -538,7 +541,8 @@ type Store interface {
 
 	// Watchers
 	ListTicketWatchers(ticketID int) ([]models.TicketWatcher, error)
-	AddTicketWatcher(w *models.TicketWatcher) error
+	// AddTicketWatcher reports whether the watcher is new (false: updated).
+	AddTicketWatcher(w *models.TicketWatcher) (bool, error)
 	RemoveTicketWatcher(ticketID int, userID string) (removed bool, err error)
 	IsTicketWatcher(ticketID int, userID string) (bool, error)
 

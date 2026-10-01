@@ -68,10 +68,17 @@ func TestIntegrationRemoveTicketWatcherReportsWhetherARowWent(t *testing.T) {
 
 	// And the real removal still reports itself, or the fix would have turned
 	// every legitimate call into a 404.
-	if err := st.AddTicketWatcher(&models.TicketWatcher{
+	if inserted, err := st.AddTicketWatcher(&models.TicketWatcher{
 		TicketID: ticketID, UserID: stranger.ID, CanReply: false,
-	}); err != nil {
-		t.Fatalf("AddTicketWatcher: %v", err)
+	}); err != nil || !inserted {
+		t.Fatalf("AddTicketWatcher: inserted=%v err=%v, want a new row", inserted, err)
+	}
+	// Adding the same watcher again is an update. It used to notify the
+	// watcher on every call, which made it a way to flood any user.
+	if inserted, err := st.AddTicketWatcher(&models.TicketWatcher{
+		TicketID: ticketID, UserID: stranger.ID, CanReply: true,
+	}); err != nil || inserted {
+		t.Fatalf("AddTicketWatcher again: inserted=%v err=%v, want an update", inserted, err)
 	}
 	removed, err = st.RemoveTicketWatcher(ticketID, stranger.ID)
 	if err != nil {

@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **Verification links expire after seven days,** and an account may change its email address
+  once a minute. An expired link reads as invalid and a new one can be requested. `core`
+
+### Security
+- **Sending mail had no timeout.** A relay that accepted the connection and went quiet hung
+  password resets, registrations and the billing pass that suspends accounts. `core`
+- **Reset, verification and registration mail goes out in the background,** so the response
+  time no longer tells which email addresses are registered. `core`
+- **A password reset link now works exactly once,** spent in the same write as the new
+  password; two requests with one link both used to succeed. `core`
+- **The profile save is rate limited.** It could mail strangers without end through address
+  changes, and let a stolen session guess the account password. `core`
+
+### Fixes
+- **Adding an existing ticket watcher again no longer notifies them each time.** `core`
+
 ## 2026.10.01.5
 
 ### Features

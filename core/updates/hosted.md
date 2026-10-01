@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Password reset links now work exactly once,** and email verification links expire after
+  seven days.
+
+### Fixes
+- **Adding someone to a ticket again no longer sends them another notification.**
+
 ## 2026.10.01.5
 
 ### Features

@@ -197,12 +197,14 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to persist verification token", http.StatusInternalServerError)
 			return
 		}
-		// Send synchronously so the client gets a real result. Mail failures
-		// don't roll back the user — they can re-request verification.
-		if err := sendVerificationEmail(h.state, user.Email, user.Username, token); err != nil {
-			services.ReportOperatorError("registration", "send verification email to %s failed: %v", user.Email, err)
-			// Still report success — the account exists, user can resend.
-		}
+		// In the background, like the other anonymous senders: the result was
+		// never shown (the account exists either way and the user can resend),
+		// and waiting for the relay only made the request hang with it.
+		go func(email, username string) {
+			if err := sendVerificationEmail(h.state, email, username, token); err != nil {
+				services.ReportOperatorError("registration", "send verification email to %s failed: %v", email, err)
+			}
+		}(user.Email, user.Username)
 	} else {
 		// Verification not required → mark verified immediately so the user
 		// can log in right away.
@@ -331,9 +333,14 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 		sendJSONError(w, "Failed to persist token", http.StatusInternalServerError)
 		return
 	}
-	if err := sendVerificationEmail(h.state, user.Email, user.Username, token); err != nil {
-		services.ReportOperatorError("registration", "resend verification to %s failed: %v", user.Email, err)
-	}
+	// In the background: an unverified account answered after a mail round
+	// trip and every other case at once, which told a caller measuring time
+	// which addresses are registered and still unverified.
+	go func(email, username string) {
+		if err := sendVerificationEmail(h.state, email, username, token); err != nil {
+			services.ReportOperatorError("registration", "resend verification to %s failed: %v", email, err)
+		}
+	}(user.Email, user.Username)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

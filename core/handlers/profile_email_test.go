@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 
@@ -149,5 +153,34 @@ func TestARefusedAddressDoesNotLeaveAHalfDoneRename(t *testing.T) {
 	}
 	if len(st.renames) != 0 {
 		t.Errorf("the rename went through although the save was refused: %v", st.renames)
+	}
+}
+
+// Each address change mails the new address. Switching between two strangers'
+// addresses in a loop sent them mail from this domain without end; one change
+// per verification-mail window now.
+func TestTheProfileCannotChangeTheAddressAgainWithinAMinute(t *testing.T) {
+	st := newProfileStore(t, true)
+	just := time.Now().Add(-10 * time.Second)
+	st.users["u-me"].EmailVerificationSentAt = &just
+	w := saveProfile(t, st, map[string]interface{}{"email": "fresh@example.test"})
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 429: %s", w.Code, w.Body.String())
+	}
+	if len(st.setEmailCalls) != 0 {
+		t.Fatal("the refused change was written anyway")
+	}
+}
+
+// The profile save checks the current password on every call; a stolen
+// session could guess it without limit, and an address change sends mail.
+func TestTheProfileSaveIsRateLimited(t *testing.T) {
+	src, err := os.ReadFile("../routes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^.*HandleFunc\("/auth/profile".*UpdateProfileHandler.*$`).FindString(string(src))
+	if m == "" || !strings.Contains(m, "authLimiter.Limit(") {
+		t.Fatalf("PUT /auth/profile has no rate limiter: %q", m)
 	}
 }

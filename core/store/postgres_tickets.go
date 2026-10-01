@@ -434,14 +434,18 @@ func (s *PostgresStore) ListTicketWatchers(ticketID int) ([]models.TicketWatcher
 	return out, nil
 }
 
-func (s *PostgresStore) AddTicketWatcher(w *models.TicketWatcher) error {
-	_, err := s.db.Exec(
+// AddTicketWatcher adds or updates a watcher and reports whether the row is
+// new. xmax is 0 only on a freshly inserted row.
+func (s *PostgresStore) AddTicketWatcher(w *models.TicketWatcher) (bool, error) {
+	var inserted bool
+	err := s.db.QueryRow(
 		`INSERT INTO ticket_watchers (ticket_id, user_id, can_reply, added_by)
 		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (ticket_id, user_id) DO UPDATE SET can_reply = EXCLUDED.can_reply`,
+		 ON CONFLICT (ticket_id, user_id) DO UPDATE SET can_reply = EXCLUDED.can_reply
+		 RETURNING (xmax = 0)`,
 		w.TicketID, w.UserID, w.CanReply, w.AddedBy,
-	)
-	return err
+	).Scan(&inserted)
+	return inserted, err
 }
 
 // RemoveTicketWatcher reports whether a row actually went away. The caller

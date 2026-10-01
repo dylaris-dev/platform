@@ -813,6 +813,13 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 					return
 				}
 			}
+			// One address change per verification-mail window. Each change
+			// mails the new address, and switching between two strangers'
+			// addresses in a loop sent them mail from this domain without end.
+			if !verificationResendAllowed(user.EmailVerificationSentAt, time.Now(), resendVerificationCooldown) {
+				sendJSONError(w, "Please wait a minute before changing your address again", http.StatusTooManyRequests)
+				return
+			}
 			emailChanged = true
 		}
 	}

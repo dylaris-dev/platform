@@ -1078,7 +1078,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/authz/presets", authHandler.AuthMiddleware(authzHandler.Presets)).Methods("GET")
 	api.HandleFunc("/authz/mode", authHandler.AuthMiddleware(permissionsModeHandler.GetMode)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
-	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.UpdateProfileHandler)).Methods("PUT")
+	// Rate limited like the public auth routes: each call checks the current
+	// password (a stolen session could otherwise guess it without limit) and
+	// an address change sends a mail.
+	api.HandleFunc("/auth/profile", authLimiter.Limit(10, authHandler.AuthMiddleware(authHandler.UpdateProfileHandler))).Methods("PUT")
 	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
 	// The three below compare the account password, so they are rate- and
 	// body-limited like every other credential endpoint: an authenticated

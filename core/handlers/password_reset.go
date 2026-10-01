@@ -97,15 +97,21 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := sendPasswordResetEmail(h.state, user.Email, user.Username, token, policy.PasswordResetLinkTTLMinutes); err != nil {
-		// Mail failed but the token is stored — the user can retry. Not
-		// surfaced to the caller: silent-success is the rule, so that the
-		// endpoint cannot be used to tell a real address from an invented one.
-		// That is also why this goes to the operator's error stream and not
-		// only to the log - the requester is told nothing by design, so the
-		// operator is the only one left who can learn that resets are dead.
-		services.ReportOperatorError("password-reset", "send to %s failed: %v", user.Email, err)
-	}
+	// Sent in the background. The answer is the same either way, but the TIME
+	// it took was not: an unknown address answered at once and a real one
+	// after a full mail round trip, which told anyone measuring which
+	// addresses are on file. A relay that hangs no longer hangs the request.
+	//
+	// A failure is not surfaced to the caller: silent-success is the rule, so
+	// that the endpoint cannot be used to tell a real address from an invented
+	// one. That is also why it goes to the operator's error stream and not
+	// only to the log - the requester is told nothing by design, so the
+	// operator is the only one left who can learn that resets are dead.
+	go func(email, username string, ttl int) {
+		if err := sendPasswordResetEmail(h.state, email, username, token, ttl); err != nil {
+			services.ReportOperatorError("password-reset", "send to %s failed: %v", email, err)
+		}
+	}(user.Email, user.Username, policy.PasswordResetLinkTTLMinutes)
 
 	LogIdentityAudit(h.state, r, AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{
 		"email":       user.Email,
@@ -233,8 +239,15 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// password lands. This used to be two calls, ordered so a crash between
 	// them left the token consumable - which also meant a failed clear left a
 	// live link behind. Atomic is both simpler and stricter.
-	if err := h.state.Store.UpdateUserPassword(user.ID, string(hashed)); err != nil {
+	ok, err := h.state.Store.ResetPasswordWithToken(user.ID, req.Token, string(hashed))
+	if err != nil {
 		sendJSONError(w, "Failed to update password", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		// Spent by a concurrent reset, replaced by a newer link, or ended by
+		// an address change since it was read above.
+		sendJSONError(w, "Reset link is invalid or expired", http.StatusGone)
 		return
 	}
 

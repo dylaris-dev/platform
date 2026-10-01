@@ -129,15 +129,9 @@ func Send(cfg *SMTPConfig, msg Message) error {
 	switch cfg.Encryption {
 	case "tls":
 		// Implicit TLS — direct TLS connection on (usually) port 465.
-		tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12}
-		conn, err := tls.Dial("tcp", addr, tlsCfg)
+		client, err := smtpClient(addr, cfg.Host, true)
 		if err != nil {
-			return fmt.Errorf("tls dial: %w", err)
-		}
-		defer conn.Close()
-		client, err := smtp.NewClient(conn, cfg.Host)
-		if err != nil {
-			return fmt.Errorf("smtp client: %w", err)
+			return err
 		}
 		defer client.Quit()
 		if auth != nil {
@@ -149,9 +143,9 @@ func Send(cfg *SMTPConfig, msg Message) error {
 
 	case "none":
 		// Plaintext — only acceptable on trusted private networks (vRack etc).
-		client, err := smtp.Dial(addr)
+		client, err := smtpClient(addr, cfg.Host, false)
 		if err != nil {
-			return fmt.Errorf("dial: %w", err)
+			return err
 		}
 		defer client.Quit()
 		if auth != nil {
@@ -162,9 +156,9 @@ func Send(cfg *SMTPConfig, msg Message) error {
 		return sendDATA(client, from, msg.To, raw)
 
 	default: // "starttls"
-		client, err := smtp.Dial(addr)
+		client, err := smtpClient(addr, cfg.Host, false)
 		if err != nil {
-			return fmt.Errorf("dial: %w", err)
+			return err
 		}
 		defer client.Quit()
 		tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12}
@@ -191,6 +185,42 @@ func Send(cfg *SMTPConfig, msg Message) error {
 		}
 		return sendDATA(client, from, msg.To, raw)
 	}
+}
+
+// The SMTP exchange had no timeout at all: no dial timeout and no deadline on
+// the connection. A relay that accepted the connection and then said nothing
+// held the caller forever - and the callers are a password reset, a
+// registration, an email verification and the billing pass that suspends
+// accounts, which stopped at the first such mail. These bound every send.
+var (
+	smtpDialTimeout    = 10 * time.Second
+	smtpSessionTimeout = 60 * time.Second
+)
+
+// smtpClient opens the connection with a dial timeout and puts the whole
+// exchange - greeting, STARTTLS, AUTH, DATA - under one deadline.
+func smtpClient(addr, host string, implicitTLS bool) (*smtp.Client, error) {
+	d := &net.Dialer{Timeout: smtpDialTimeout}
+	var conn net.Conn
+	var err error
+	if implicitTLS {
+		conn, err = tls.DialWithDialer(d, "tcp", addr, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	} else {
+		conn, err = d.Dial("tcp", addr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(smtpSessionTimeout)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("set deadline: %w", err)
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("smtp client: %w", err)
+	}
+	return client, nil
 }
 
 func sendDATA(client *smtp.Client, from, to string, body []byte) error {
