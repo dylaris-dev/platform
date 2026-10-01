@@ -26,6 +26,7 @@ type lastAdminFakeStore struct {
 
 func (f *lastAdminFakeStore) GetUserByID(string) (*models.User, error) {
 	u := f.target
+	u.Password = testReauthHash // the acting admin re-authenticates
 	return &u, nil
 }
 func (f *lastAdminFakeStore) ListUsers() ([]models.User, error) {
@@ -41,7 +42,7 @@ func (f *lastAdminFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) err
 func (f *lastAdminFakeStore) DeleteUser(string) error { f.deleted = true; return nil }
 
 func lastAdminRequest() *http.Request {
-	req := httptest.NewRequest(http.MethodDelete, "/api/users/"+targetID, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/users/"+targetID, strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
 	ctx := context.WithValue(req.Context(), "username", "someone-else")
 	ctx = context.WithValue(ctx, "userID", "actor-id")
 	// An admin: the last-admin rule is the question here. A non-admin may not

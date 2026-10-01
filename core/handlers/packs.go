@@ -285,7 +285,7 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.ID = id
-	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
+	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
 
@@ -333,7 +333,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to update build", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
+	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
 
@@ -361,6 +361,6 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to delete build", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
+	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

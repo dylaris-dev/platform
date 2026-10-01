@@ -22,7 +22,8 @@ type deleteUserFakeStore struct {
 }
 
 func (f *deleteUserFakeStore) GetUserByID(id string) (*models.User, error) {
-	return &models.User{ID: id, Username: "customer", Email: "customer@example.test"}, nil
+	// The password is the acting admin's: deleting re-authenticates now.
+	return &models.User{ID: id, Username: "customer", Email: "customer@example.test", Password: testReauthHash}, nil
 }
 
 func (f *deleteUserFakeStore) DeleteUser(string) error { return f.deleteErr }
@@ -50,7 +51,7 @@ func (f *deleteUserFakeStore) InsertAuditIdentity(e *models.AuditEventIdentity) 
 }
 
 func deleteUserRequest() *http.Request {
-	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
 	ctx := context.WithValue(req.Context(), "username", "admin")
 	ctx = context.WithValue(ctx, "userID", "admin-id")
 	ctx = context.WithValue(ctx, "isAdmin", true)
@@ -220,5 +221,23 @@ func TestARefusedDeleteWritesNoRow(t *testing.T) {
 		if row.EventType == AuditEventUserHardDeleted {
 			t.Fatal("a refused delete was recorded as a deletion")
 		}
+	}
+}
+
+// Deletion removes an account for good with everything it holds, yet it was
+// the one account action that did not ask the administrator to prove it is
+// them. Without the re-proof nothing is torn down and nothing is deleted.
+func TestDeleteUserNeedsTheAdministratorToReauthenticate(t *testing.T) {
+	fake := &deleteUserFakeStore{}
+	h := NewUserHandler(&AppState{Store: fake})
+	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", nil)
+	ctx := context.WithValue(req.Context(), "username", "admin")
+	ctx = context.WithValue(ctx, "userID", "admin-id")
+	ctx = context.WithValue(ctx, "isAdmin", true)
+	req = mux.SetURLVars(req.WithContext(ctx), map[string]string{"id": "11111111-1111-1111-1111-111111111111"})
+	rec := httptest.NewRecorder()
+	h.DeleteUser(rec, req)
+	if rec.Code == http.StatusOK || len(fake.auditRows) != 0 {
+		t.Fatalf("a delete without re-authentication: status %d, audit rows %d; want it refused", rec.Code, len(fake.auditRows))
 	}
 }

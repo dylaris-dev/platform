@@ -211,7 +211,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": packID})
+	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
 	json.NewEncoder(w).Encode(publishModrinthResponse{
 		Success:           true,

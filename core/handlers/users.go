@@ -287,6 +287,17 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Deletion is the most destructive account action and cannot be undone -
+	// it tears down link kits, BYON nodes and addresses - yet it was the one
+	// that skipped the re-proof a password, email, role or 2FA change asks for.
+	var reauth adminReauthRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&reauth)
+	}
+	if !requireAdminReauth(w, r, h.state, reauth) {
+		return
+	}
+
 	// Everything the account HOLDS, before the row that owns it goes: its
 	// route-only link kits (durable revoke, tunnel key) and its
 	// protected addresses.
@@ -413,8 +424,26 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Failed to update password", 500)
 		return
 	}
+	// An operator sets someone's password because the account is not in its
+	// owner's hands any more. The password change ended the sessions; the API
+	// keys are the other way in, and they used to keep working.
+	revoked := 0
+	if keys, kerr := h.state.Store.ListAPIKeysByUser(id); kerr == nil {
+		for _, k := range keys {
+			if k.RevokedAt != nil {
+				continue
+			}
+			if rerr := h.state.Store.RevokeAPIKey(k.ID, id); rerr != nil {
+				log.Printf("admin password reset: revoke API key %d of %s: %v", k.ID, id, rerr)
+				continue
+			}
+			revoked++
+		}
+	} else {
+		log.Printf("admin password reset: list API keys of %s: %v", id, kerr)
+	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventPasswordSetByAdmin, actorID, id, nil)
+	LogIdentityAudit(h.state, r, AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Password updated"})
 }

@@ -123,7 +123,7 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "added": added})
 }
 
@@ -299,7 +299,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to attach", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "modversionId": mvID, "linked": mv.ModrinthProjectID != ""})
 }
 
@@ -316,7 +316,7 @@ func (h *PacksHandler) RemoveContent(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to remove", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
@@ -353,7 +353,7 @@ func (h *PacksHandler) SetSide(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to set side", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 

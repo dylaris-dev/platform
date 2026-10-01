@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.5
+
+### Features
+- Nothing.
+
+### Breaking
+- **Deleting a user now asks the administrator to sign in again,** like a password, email or
+  role change already does. `core` `panel`
+
+### Security
+- **An admin password reset now revokes the account's API keys.** It ended the sessions, and
+  the keys kept working. `core`
+- **Staff can no longer set their own permissions or support team,** or rename themselves past
+  the cooldown, through the admin routes. `core`
+- **Pack and ticket events no longer reach every signed-in session** with other tenants' ids;
+  pack events go to the pack's owner. `core`
+
+### Fixes
+- **The online-players list is served from a short cache** instead of one RCON call per
+  request. `core`
+
 ## 2026.10.01.4
 
 ### Features

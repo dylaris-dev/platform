@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Live updates about your modpacks now go to you only.** Other accounts used to receive
+  their ids and when they changed.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.01.4
 
 ### Features

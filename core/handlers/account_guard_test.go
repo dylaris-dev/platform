@@ -372,3 +372,65 @@ func TestAdminAccountActionsRefuseWithoutTheirPassword(t *testing.T) {
 		})
 	}
 }
+
+func (f *guardFakeStore) SetUserPermissionFlags(id string, _, _ bool, _ string) error {
+	f.touched = append(f.touched, id)
+	return nil
+}
+func (f *guardFakeStore) UsernameTaken(string, string) (bool, error) { return false, nil }
+func (f *guardFakeStore) RenameUser(id, _, _ string) error {
+	f.touched = append(f.touched, id)
+	return nil
+}
+
+// mayManageAccount passes on yourself. Through the admin routes that let a
+// staff member put themselves in any support team - which decides the tickets
+// they see - and rename themselves past the profile's cooldown.
+func TestStaffCannotSetTheirOwnTeamOrRenameThemselves(t *testing.T) {
+	fs := newGuardFakeStore()
+	fs.users[guardStaff].Password = testReauthHash // a valid re-proof, so only the self rule can refuse
+	h := NewUserHandler(guardState(fs))
+	rec := httptest.NewRecorder()
+	h.SetUserPermissionsHandler(rec, guardRequest("PUT", guardStaff, false, guardStaff,
+		`{"canDeleteServers":false,"canChangeResources":false,"supportTeam":"billing","reauth":{"password":"`+testReauthPassword+`"}}`))
+	if rec.Code != http.StatusForbidden || len(fs.touched) != 0 {
+		t.Fatalf("own permissions: status %d, touched %v; want 403 and nothing written", rec.Code, fs.touched)
+	}
+
+	rh := &UsernameHistoryHandler{state: guardState(fs)}
+	rec = httptest.NewRecorder()
+	rh.AdminRename(rec, guardRequest("PATCH", guardStaff, false, guardStaff, `{"username":"staff2"}`))
+	if rec.Code != http.StatusForbidden || len(fs.touched) != 0 {
+		t.Fatalf("own rename: status %d, touched %v; want 403 and nothing written", rec.Code, fs.touched)
+	}
+}
+
+type keyedGuardStore struct {
+	*guardFakeStore
+	keys    []models.APIKey
+	revoked []int
+}
+
+func (f *keyedGuardStore) ListAPIKeysByUser(string) ([]models.APIKey, error) { return f.keys, nil }
+func (f *keyedGuardStore) RevokeAPIKey(id int, _ string) error {
+	f.revoked = append(f.revoked, id)
+	return nil
+}
+
+// An operator sets someone's password because the account is no longer in its
+// owner's hands. The sessions ended with it; the API keys kept working.
+func TestAnAdminPasswordResetRevokesTheAccountsAPIKeys(t *testing.T) {
+	base := newGuardFakeStore()
+	base.users[guardAdmin].Password = testReauthHash
+	fs := &keyedGuardStore{guardFakeStore: base, keys: []models.APIKey{{ID: 7}, {ID: 8}}}
+	h := NewUserHandler(&AppState{Store: fs, Authz: authz.NewResolver(fs)})
+	rec := httptest.NewRecorder()
+	h.ResetUserPassword(rec, guardRequest("PUT", guardAdmin, true, guardMember,
+		`{"password":"a-brand-new-password","reauth":{"password":"`+testReauthPassword+`"}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.revoked) != 2 {
+		t.Fatalf("revoked keys %v, want both of the account's keys", fs.revoked)
+	}
+}

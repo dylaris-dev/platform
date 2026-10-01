@@ -27,7 +27,7 @@ type deleteRoutesFakeStore struct {
 }
 
 func (f *deleteRoutesFakeStore) GetUserByID(id string) (*models.User, error) {
-	return &models.User{ID: id, Username: "customer"}, nil
+	return &models.User{ID: id, Username: "customer", Password: testReauthHash}, nil
 }
 func (f *deleteRoutesFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
 	return f.routes, f.routesErr

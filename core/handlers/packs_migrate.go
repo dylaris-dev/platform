@@ -144,7 +144,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		copiedUploads = append(copiedUploads, migratedItem{ModversionID: mvID, Title: e.PrettyName, Version: e.Version})
 	}
 
-	h.state.Events.Publish(r.Context(), "pack_builds.changed", map[string]interface{}{"packId": source.PackID})
+	publishPackEvent(r, h.state, "pack_builds.changed", source.PackID, map[string]interface{}{"packId": source.PackID})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     true,

@@ -292,7 +292,8 @@ export const getUsers = () => fetchAPI('/users');
  *  mirroring that rule here and costs nothing when it is not needed. */
 export const createUser = (data: Partial<User> & { allRegions?: boolean; regionsExplicit?: string[] }, reauth?: Reauth) =>
     fetchAPI('/users', { method: 'POST', body: JSON.stringify({ ...data, reauth }) });
-export const deleteUser = (id: string) => fetchAPI(`/users/${id}`, { method: 'DELETE' });
+export const deleteUser = (id: string, reauth?: Reauth) =>
+    fetchAPI(`/users/${id}`, { method: 'DELETE', body: JSON.stringify({ reauth }) });
 export const cancelUserDeletion = (id: string) => fetchAPI(`/admin/users/${id}/cancel-deletion`, { method: 'POST' });
 export const setUserRole = (id: string, role: 'user' | 'support' | 'admin', reauth?: Reauth) =>
     fetchAPI(`/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role, reauth }) });

@@ -151,6 +151,13 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "You cannot change the permissions of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
+	// mayManageAccount passes on yourself, and the support team decides which
+	// tickets a staff member sees: a staff member could move themselves into
+	// any team, or through all of them, past the cross-team visibility setting.
+	if !IsAdmin(r) && actingOnSelf(r, id) {
+		sendJSONError(w, "Your own permissions and support team are set by another administrator", http.StatusForbidden)
+		return
+	}
 	// Resource changes are a right of their own; a delegated users.write must
 	// not hand it out, to someone else or to the caller themselves. Only a
 	// change from off to on hands it out: the panel re-sends the current value.

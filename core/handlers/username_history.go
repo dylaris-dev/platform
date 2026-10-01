@@ -88,6 +88,12 @@ func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Requ
 		sendJSONError(w, "You cannot rename an account with more rights than yours", http.StatusForbidden)
 		return
 	}
+	// Through the admin route a staff member's own rename skipped the cooldown
+	// the profile applies to everyone else.
+	if !IsAdmin(r) && actingOnSelf(r, targetID) {
+		sendJSONError(w, "Change your own username from your profile", http.StatusForbidden)
+		return
+	}
 	if taken, _ := h.state.Store.UsernameTaken(req.Username, targetID); taken {
 		sendJSONError(w, "Username already taken", http.StatusConflict)
 		return

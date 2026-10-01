@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -130,9 +131,30 @@ func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	// Each call was an RCON round trip to the server, with nothing in between:
+	// every open players tab, every poll, every read-only account. One answer
+	// now serves everyone asking within a few seconds.
+	cacheKey := fmt.Sprintf("dylaris:server:%s:players-online", srv.UUID)
+	if h.state.Redis != nil {
+		if cached, cerr := h.state.Redis.Get(r.Context(), cacheKey).Bytes(); cerr == nil {
+			var resp rconResponse
+			if json.Unmarshal(cached, &resp) == nil {
+				writeRconResponse(w, resp)
+				return
+			}
+		}
+	}
 	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: "list"})
+	if resp.Success && h.state.Redis != nil {
+		if b, merr := json.Marshal(resp); merr == nil {
+			h.state.Redis.Set(r.Context(), cacheKey, b, playersOnlineCacheTTL)
+		}
+	}
 	writeRconResponse(w, resp)
 }
+
+// playersOnlineCacheTTL is how long one roster answers every caller.
+const playersOnlineCacheTTL = 3 * time.Second
 
 type playerActionRequest struct {
 	Action  string `json:"action"`

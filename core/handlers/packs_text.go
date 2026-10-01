@@ -167,7 +167,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	if oldKey != newKey {
 		h.deleteIfUnreferenced(r.Context(), prov, oldKey)
 	}
-	h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 

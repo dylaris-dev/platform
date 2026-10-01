@@ -26,6 +26,12 @@ import (
 // a role lookup error and would make a stronger account look powerless. A
 // lookup that fails refuses. The caller's side may stay lenient: reading the
 // caller as weaker than they are only refuses more.
+// actingOnSelf reports whether the request is aimed at the caller's own account.
+func actingOnSelf(r *http.Request, targetID string) bool {
+	actorID, _ := r.Context().Value("userID").(string)
+	return actorID != "" && actorID == targetID
+}
+
 func mayManageAccount(state *AppState, r *http.Request, target *models.User) bool {
 	if IsAdmin(r) {
 		return true

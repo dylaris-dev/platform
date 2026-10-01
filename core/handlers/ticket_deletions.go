@@ -143,10 +143,10 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	h.state.Events.Publish(r.Context(), "tickets.deleted", map[string]interface{}{
-		"ticketId":  id,
-		"deletedBy": actorID,
-	})
+	// No ids: this stream reaches every signed-in session, and which ticket
+	// went and who removed it is not theirs to know. Nothing reads them; a
+	// list that cares refetches.
+	h.state.Events.Publish(r.Context(), "tickets.deleted", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

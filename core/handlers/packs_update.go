@@ -107,7 +107,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if upgraded > 0 {
-		h.state.Events.Publish(r.Context(), "pack_content.changed", map[string]interface{}{"buildId": build.ID})
+		publishPackEvent(r, h.state, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "upgraded": upgraded, "results": results})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -23,7 +24,7 @@ type userDeleteWarpStore struct {
 }
 
 func (f *userDeleteWarpStore) GetUserByID(id string) (*models.User, error) {
-	return &models.User{ID: id, Username: "victim"}, nil
+	return &models.User{ID: id, Username: "victim", Password: testReauthHash}, nil
 }
 func (f *userDeleteWarpStore) CountServersByOwner(string) (int, error) { return 0, nil }
 func (f *userDeleteWarpStore) ListAllWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
@@ -56,7 +57,7 @@ func TestDeleteUser_HandsTheOverlayTeardownDown(t *testing.T) {
 	peers := &userDeleteWarpPeers{}
 	h := NewUserHandler(&AppState{Store: fs, WarpPeers: peers})
 
-	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+victimID, nil)
+	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+victimID, strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
 	ctx := context.WithValue(r.Context(), "userID", "admin-id")
 	ctx = context.WithValue(ctx, "username", "admin")
 	ctx = context.WithValue(ctx, "isAdmin", true)
