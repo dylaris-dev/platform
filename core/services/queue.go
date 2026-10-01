@@ -174,11 +174,25 @@ func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, ser
 	return err
 }
 
+// migrateTargetConfig is the Config of a command that lands a server on a new
+// node: its uuid and the disk limit the target applies to it.
+func migrateTargetConfig(serverUUID string, diskLimitMB int64) map[string]interface{} {
+	return map[string]interface{}{
+		"uuid":   serverUUID,
+		"docker": map[string]interface{}{"diskLimit": diskLimitMB},
+	}
+}
+
 // SendMigrateInCommand queues a migrate_in (auto-move) command. The target node
 // pulls the staged archive from sourceNodeID using token, verifies it against
 // expectedSha256, and extracts it. The move parameters ride as top-level fields
 // (matching the node's NodeCommand shape), not inside Config.
-func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string) error {
+//
+// diskLimitMB travels in Config the way create and update_resources carry it,
+// so the target puts the arriving directory under its quota. It never did: a
+// moved server ran with no disk limit on its new node until someone next
+// changed its resources.
+func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string, diskLimitMB int64) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateInCmd struct {
@@ -200,7 +214,7 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 	}
 	cmd := migrateInCmd{
 		Action:           "migrate_in",
-		Config:           map[string]interface{}{"uuid": serverUUID},
+		Config:           migrateTargetConfig(serverUUID, diskLimitMB),
 		SourceNodeID:     sourceNodeID,
 		MigrateToken:     token,
 		ExpectedSha256:   expectedSha256,
@@ -246,7 +260,7 @@ func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, 
 // fallback). The target node downloads from the pre-signed GET URL, verifies the
 // archive against expectedSha256, extracts it, and reports phase "transferred" —
 // the same terminal phase as migrate_in, so cutover proceeds identically.
-func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, getURL, expectedSha256 string, expectedSize int64) error {
+func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, getURL, expectedSha256 string, expectedSize int64, diskLimitMB int64) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migratePullR2Cmd struct {
@@ -259,7 +273,7 @@ func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, 
 	}
 	cmd := migratePullR2Cmd{
 		Action:          "migrate_pull_r2",
-		Config:          map[string]interface{}{"uuid": serverUUID},
+		Config:          migrateTargetConfig(serverUUID, diskLimitMB),
 		PresignedGetURL: getURL,
 		ExpectedSha256:  expectedSha256,
 		ExpectedSize:    expectedSize,

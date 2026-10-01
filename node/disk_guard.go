@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -47,6 +48,23 @@ func recordDiskLimit(ctx context.Context, rdb *redis.Client, uuid string, limitM
 		return
 	}
 	rdb.Set(ctx, diskLimitKey(uuid), limitMB, 0)
+}
+
+// applyDiskLimit puts a server's directory under the quota of the filesystem it
+// lives on NOW and enforces limitMB there. A server that moved - to this node,
+// or to another storage path on it - arrived on a filesystem whose quota never
+// heard of it, and ran with no disk limit until someone changed its resources.
+func applyDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet, uuid string, limitMB int64) {
+	if quota == nil || uuid == "" {
+		return
+	}
+	if err := quota.AssignQuota(uuid); err != nil {
+		log.Printf("quota: assign %s: %v", uuid, err)
+	}
+	recordDiskLimit(ctx, rdb, uuid, limitMB)
+	if err := quota.SetLimit(uuid, limitMB); err != nil {
+		log.Printf("quota: limit %s: %v", uuid, err)
+	}
 }
 
 // forgetDiskLimit drops the cached limit for a server that is going away.

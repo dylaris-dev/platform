@@ -434,7 +434,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// endpoint via dylaris:migration:endpoint:<sourceNodeID>.
 	// See migrationSourceLANIPs for who is handed the source's LAN addresses.
 	sourcePrivateIPs := migrationSourceLANIPs(sourceNode, targetNode)
-	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256, meta.Size, sourcePrivateIPs); err != nil {
+	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256, meta.Size, sourcePrivateIPs, srv.DiskLimit); err != nil {
 		log.Printf("migration %s: migrate_in queue failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
 		return
@@ -890,7 +890,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	}
 
 	// Target downloads from R2, verifies the hash, extracts. Reports "transferred".
-	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, getURL, expectedSha256, expectedSize); err != nil {
+	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, getURL, expectedSha256, expectedSize, srv.DiskLimit); err != nil {
 		return fmt.Errorf("queue migrate_pull_r2: %w", err)
 	}
 	if phase, nerr := o.waitForNodePhase(ctx, targetNode.Token, srv.UUID, "transferred", migrationR2PhaseTimeout); phase != "transferred" {

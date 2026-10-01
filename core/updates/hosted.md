@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Uploads to a stopped server now count against its disk limit.** A stopped server used
+  to accept any amount and could fill your node. `node`
+
+### Fixes
+- **A server moved to another node keeps its disk limit.** `node`
+- **The storage-limit message on uploads is in English.**
+
 ## 2026.10.01
 
 ### Features

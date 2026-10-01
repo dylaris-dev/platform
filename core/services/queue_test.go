@@ -257,7 +257,7 @@ func TestSendMigrateInCommand(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, []string{"10.0.0.5", "192.168.1.10"}); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, []string{"10.0.0.5", "192.168.1.10"}, 2048); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
@@ -268,6 +268,11 @@ func TestSendMigrateInCommand(t *testing.T) {
 	cfg, _ := got["config"].(map[string]interface{})
 	if cfg["uuid"] != "server-uuid" {
 		t.Errorf("config.uuid = %v, want server-uuid", cfg["uuid"])
+	}
+	// The disk limit the target applies to the arriving directory; a moved
+	// server used to run with none on its new node.
+	if d, _ := cfg["docker"].(map[string]interface{}); d == nil || d["diskLimit"] != float64(2048) {
+		t.Errorf("config.docker = %v, want diskLimit 2048", cfg["docker"])
 	}
 	if got["sourceNodeId"] != "source-node-id" {
 		t.Errorf("sourceNodeId = %v, want source-node-id", got["sourceNodeId"])
@@ -293,7 +298,7 @@ func TestSendMigrateInCommand_OmitsEmptySourcePrivateIPs(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, nil); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, nil, 0); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
@@ -328,7 +333,7 @@ func TestSendMigratePullR2Command(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "https://example.com/get-url", "cafebabe", 8192); err != nil {
+	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "https://example.com/get-url", "cafebabe", 8192, 2048); err != nil {
 		t.Fatalf("SendMigratePullR2Command: %v", err)
 	}
 
@@ -339,6 +344,11 @@ func TestSendMigratePullR2Command(t *testing.T) {
 	cfg, _ := got["config"].(map[string]interface{})
 	if cfg["uuid"] != "server-uuid" {
 		t.Errorf("config.uuid = %v, want server-uuid", cfg["uuid"])
+	}
+	// The disk limit the target applies to the arriving directory; a moved
+	// server used to run with none on its new node.
+	if d, _ := cfg["docker"].(map[string]interface{}); d == nil || d["diskLimit"] != float64(2048) {
+		t.Errorf("config.docker = %v, want diskLimit 2048", cfg["docker"])
 	}
 	if got["presignedGetUrl"] != "https://example.com/get-url" {
 		t.Errorf("presignedGetUrl = %v, want https://example.com/get-url", got["presignedGetUrl"])

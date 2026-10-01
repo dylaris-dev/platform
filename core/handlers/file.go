@@ -970,7 +970,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 				}
 				if diskInfo.Total+totalUploadSize > diskInfo.Limit {
 					sendJSONError(w, fmt.Sprintf(
-						"Speicherlimit erreicht — %s frei, Upload ist %s",
+						"Storage limit reached: %s free, the upload is %s.",
 						formatBytesHuman(freeBytes),
 						formatBytesHuman(totalUploadSize),
 					), http.StatusRequestEntityTooLarge)

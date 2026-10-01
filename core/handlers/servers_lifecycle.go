@@ -94,13 +94,18 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// BYON placement scoping: a tenant may only deploy on their OWN node. Gated by
-	// feature_byon_enabled, so with BYON off this is a no-op and placement behaves
-	// as today. Auto-placement is already owner-scoped above; this gate covers the
-	// explicit-nodeId path and is belt-and-suspenders. ownershipInForce rather
-	// than byonActive: an unreadable flag must not skip the ownership check.
-	if ownershipInForce(h.state, r) && !canPlaceOnNode(h.state, r, node) {
-		sendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
+	// Placement: a tenant may only deploy on their OWN node, and every other
+	// node is operator territory (canPlaceOnNode). This used to run only while
+	// BYON ownership was in force, so with BYON off - the default - any signed-in
+	// user could create a server on any node, with any memory and no plan to
+	// limit it. canPlaceOnNode already answered that case ("operator territory,
+	// admins only"); nothing asked it.
+	if !canPlaceOnNode(h.state, r, node) {
+		if ownershipInForce(h.state, r) {
+			sendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
+		} else {
+			sendJSONError(w, "Only an administrator can create servers on this platform's nodes", http.StatusForbidden)
+		}
 		return
 	}
 

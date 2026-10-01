@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **With BYON switched off, only an administrator can create servers.** Every node is the
+  operator's then, and there is no plan to limit what a user creates on it. `core`
+
+### Security
+- **With BYON off, any signed-in user could create a server on any node,** with any amount
+  of memory: the node check only ran while BYON was on. `core`
+- **Uploads to a stopped server now count against its disk limit.** Usage was only measured
+  while a server ran, so a stopped one accepted any amount and could fill the node. `node`
+
+### Fixes
+- **A server moved to another node or storage path keeps its disk limit.** It ran with none
+  there until its resources were next changed. `core` `node`
+- **The storage-limit message on uploads is in English.** It was German. `core` `node`
+
 ## 2026.10.01
 
 ### Features

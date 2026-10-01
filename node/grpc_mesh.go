@@ -428,7 +428,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				log.Printf("gRPC Mesh: Move file failed (request_id=%s): %v", msg.RequestId, err)
 				m.handler.removeUploadTemp(pw.serverUUID, pw.tempName)
 				if errors.Is(err, syscall.EDQUOT) {
-					cc.send(errorMsg(msg.RequestId, 413, "Speicherlimit erreicht"))
+					cc.send(errorMsg(msg.RequestId, 413, "Storage limit reached"))
 				} else {
 					cc.send(errorMsg(msg.RequestId, 500, err.Error()))
 				}

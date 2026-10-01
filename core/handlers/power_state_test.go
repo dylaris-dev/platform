@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/models"
@@ -107,5 +108,22 @@ func TestRefusedSetupWritesNothing(t *testing.T) {
 		if c.status == "installing" {
 			t.Fatal("the refused setup marked the server installing")
 		}
+	}
+}
+
+// With BYON off - the default - any signed-in user could create a server on
+// any node, with any memory and no plan to limit it. canPlaceOnNode already
+// said such nodes are operator territory; create never asked it then.
+func TestCreateOnAPlatformNodeIsForOperatorsWhenBYONIsOff(t *testing.T) {
+	h, _ := powerStateFixture(t, "stopped")
+	body := `{"uuid":"0f0e0d0c-0b0a-4908-8706-050403020100","name":"x","nodeId":"7","docker":{"ram":500000,"cpuLimit":0,"diskLimit":0}}`
+	r := httptest.NewRequest("POST", "/api/servers", strings.NewReader(body))
+	ctx := context.WithValue(r.Context(), "username", "mallory")
+	ctx = context.WithValue(ctx, "isAdmin", false)
+	ctx = context.WithValue(ctx, "userID", "u9")
+	rec := httptest.NewRecorder()
+	h.CreateServer(rec, r.WithContext(ctx))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a non-admin create on a platform node with BYON off: status %d, want 403: %s", rec.Code, rec.Body.String())
 	}
 }

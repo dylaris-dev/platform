@@ -1548,12 +1548,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			resActiveBytes, _ := os.ReadFile(filepath.Join(resServerPath, ".active_server"))
 			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
 		}
-		if quota != nil {
-			recordDiskLimit(ctx, rdb, cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
-			if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
-				log.Printf("Quota limit update warning for %s: %v", cmd.Config.UUID, err)
-			}
-		}
+		// Assigned again before the limit: a server that arrived by a move was
+		// never registered with this filesystem's quota, so a limit set on it
+		// alone enforced nothing.
+		applyDiskLimit(ctx, rdb, quota, cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 
 	case "delete":
 		// Mirrors the delete_sub_server guard below. This one deletes a whole
@@ -1864,6 +1862,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("migrate_storage %s: ContainerRemove: %v (probably gone already - the next start recreates it)", cmd.Config.UUID, rmErr)
 		}
 
+		// The new path may be another filesystem with its own quota. The limit
+		// is the one this node already enforced, from its cache.
+		applyDiskLimit(ctx, rdb, quota, cmd.Config.UUID, loadDiskLimit(ctx, rdb, cmd.Config.UUID))
+
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
 
@@ -1875,6 +1877,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Target side: pull the staged archive and extract it. No
 		// container start here — the orchestrator sends start next.
 		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
+		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.
@@ -1887,6 +1890,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
 		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
+		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 
 	case "backup_run":
 		// Re-decode the full payload — BackupRunCommand has many fields
@@ -1967,6 +1971,23 @@ const busyStatusTTL = 30 * time.Second
 //
 // ttl is a parameter only so the tests can drive the refresh loop; every caller
 // passes busyStatusTTL.
+// applyMovedDiskLimit applies the limit a move command carried, once the
+// server's directory is on this node. A Core that predates the field sends
+// none, and "none" here means "not told", not "unlimited": that case keeps
+// whatever this node already knew instead of clearing it.
+func applyMovedDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet, serverDir, uuid string, limitMB int64) {
+	if serverDir == "" {
+		return
+	}
+	if _, err := os.Stat(serverDir); err != nil {
+		return
+	}
+	if limitMB <= 0 {
+		limitMB = loadDiskLimit(ctx, rdb, uuid)
+	}
+	applyDiskLimit(ctx, rdb, quota, uuid, limitMB)
+}
+
 // discardIfDeleted removes what an install wrote after its server was deleted
 // under it, and reports whether it did. The installer recreates the directory
 // the delete had just removed; left there it would hold disk for a server that

@@ -260,6 +260,13 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				return
 			case <-t.C:
 				releaseResolvedDiskHolds(ctx, rdb, quota)
+				if containers, err := dm.ListRunningMCContainers(); err == nil {
+					running := make(map[string]bool, len(containers))
+					for _, c := range containers {
+						running[c.UUID] = true
+					}
+					publishStoppedDiskUsage(ctx, rdb, quota, running)
+				}
 			}
 		}
 	}()
@@ -644,6 +651,67 @@ func dirSize(path string) int64 {
 		return nil
 	})
 	return size
+}
+
+// stoppedDiskUsageTTL outlives two sweeps, so one slow sweep does not leave a
+// gap in which an upload finds no usage and goes through unchecked.
+const stoppedDiskUsageTTL = 3 * diskFallbackInterval
+
+// publishStoppedDiskUsage measures every server on this node whose container is
+// not running, and publishes it where a running server's collector does.
+//
+// Usage was only ever measured for RUNNING containers, and the key expires ten
+// minutes after the last measurement. Every upload check - the panel's, Beam's
+// and SFTP's - reads that key and lets the upload through when it is missing,
+// so a stopped server's owner could fill the node's disk for every tenant on
+// it. Stopped is exactly when files get uploaded.
+func publishStoppedDiskUsage(ctx context.Context, rdb *redis.Client, quota *QuotaSet, running map[string]bool) {
+	if rdb == nil || globalStorageMgr == nil {
+		return
+	}
+	for _, base := range globalStorageMgr.Paths() {
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			uuid := e.Name()
+			if !e.IsDir() || running[uuid] || !looksLikeServerUUID(uuid) {
+				continue
+			}
+			// Only where this server actually lives: a copy left on another
+			// path would publish the wrong number.
+			if globalStorageMgr.GetServerDir(uuid) != filepath.Join(base, uuid) {
+				continue
+			}
+			usage := getDiskUsage(ctx, rdb, uuid, quota)
+			if usage == nil {
+				continue
+			}
+			data, _ := json.Marshal(usage)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", uuid), string(data), stoppedDiskUsageTTL)
+		}
+	}
+}
+
+// looksLikeServerUUID keeps the sweep to server directories: 8-4-4-4-12 hex.
+func looksLikeServerUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // releaseResolvedDiskHolds lifts the disk guard's hold on any server this node
