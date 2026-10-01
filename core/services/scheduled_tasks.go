@@ -254,6 +254,12 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 			if ttl, terr := s.redis.TTL(ctx, cooldown).Result(); terr == nil && ttl > 0 {
 				return skipped("server is finishing an install; restart skipped")
 			}
+			// The same wait the power endpoint makes: the node is installing,
+			// restoring or moving this server and would run the restart in
+			// the middle of it.
+			if busy, berr := s.redis.Get(ctx, fmt.Sprintf("dylaris:server:%s:node_busy", srv.UUID)).Result(); berr == nil && busy != "" {
+				return skipped("the node is still working on this server (%s); restart skipped", busy)
+			}
 		}
 
 		node, err := s.store.GetNodeByID(srv.NodeID)

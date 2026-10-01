@@ -685,6 +685,28 @@ func TestRunDue_RestartTask_SkippedDuringInstallCooldown(t *testing.T) {
 	}
 }
 
+// The node's busy key outlives the 30s cooldown: a Forge install, a restore or
+// a move holds it for minutes, and a restart in the middle of one runs anyway.
+func TestRunDue_RestartTask_SkippedWhileTheNodeIsBusy(t *testing.T) {
+	fs := &schedTaskFakeStore{
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, Status: "online"}},
+		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
+		due:     []models.ScheduledTask{{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *"}},
+	}
+	svc, done := newSchedTestService(t, fs)
+	defer done()
+	svc.redis.Set(context.Background(), "dylaris:server:srv-1:node_busy", "installing", 0)
+
+	svc.runDue(context.Background())
+
+	if n := svc.redis.XLen(context.Background(), "dylaris:node:node-tok-5:cmds").Val(); n != 0 {
+		t.Error("a restart was queued while the node was busy with the server")
+	}
+	if len(fs.runRecords) != 1 || fs.runRecords[0].status != "skipped" {
+		t.Fatalf("run records = %+v, want one skipped", fs.runRecords)
+	}
+}
+
 // Two Core replicas can list the same due row across a leader handover. Only
 // the one whose claim moves next_run fires; the other does nothing at all.
 func TestRunDue_LostClaimDoesNotFire(t *testing.T) {

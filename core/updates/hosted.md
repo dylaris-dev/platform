@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Changing a server's resources no longer starts it when it was stopped.** `node`
+- **Deleting a server while it installs no longer leaves it running on your node.** `node`
+- **Start, stop and kill now wait while a server is being installed or restored,** instead
+  of being undone by it, and a stop can no longer be reversed a few seconds later.
+
 ## 2026.09.30.5
 
 ### Features

@@ -23,10 +23,12 @@ import (
 // installFakeStore is the power-handler fake plus what setup and reinstall write.
 type installFakeStore struct {
 	serverPowerFakeStore
-	disabled []string
+	disabled    []string
+	setupWrites int
 }
 
 func (f *installFakeStore) UpdateServerSetup(int, string, string, string, string, string, string, string) error {
+	f.setupWrites++
 	return nil
 }
 func (f *installFakeStore) UpsertSubServerInstall(models.SubServerInstall) error { return nil }

@@ -688,7 +688,12 @@ func (s *BillingLifecycleService) stopTenantServers(ctx context.Context, userID 
 		if err := beamauth.BumpAccessEpoch(ctx, s.redis, srv.UUID); err != nil {
 			log.Printf("billing lifecycle: beam access stamp for %s: %v", srv.UUID, err)
 		}
-		if srv.Status != "online" {
+		// Every server meant to run, not only the ones whose status reads
+		// "online" this instant. A server starting, restarting after a crash or
+		// finishing an install kept desired_state "online", so the reconciler
+		// or the end of the install brought it up again for a tenant who had
+		// been cut off, until the next hourly pass.
+		if srv.DesiredState != "online" && srv.Status != "online" {
 			continue
 		}
 		node, err := s.store.GetNodeByID(srv.NodeID)
@@ -699,6 +704,14 @@ func (s *BillingLifecycleService) stopTenantServers(ctx context.Context, userID 
 		// race means the stop is undone rather than merely delayed.
 		if err := s.store.UpdateServerDesiredState(srv.ID, "stopped"); err != nil {
 			log.Printf("billing lifecycle: desired_state for %s: %v — NOT sending the stop, the node reconciler would restart it", srv.UUID, err)
+			continue
+		}
+		PublishDesiredState(ctx, s.redis, srv.UUID, "stopped")
+		// A stop only where a container can be running; the rest only needed
+		// the desired state, which is what keeps them down.
+		switch srv.Status {
+		case "online", "starting", "restarting":
+		default:
 			continue
 		}
 		if err := s.store.UpdateServerStatus(srv.ID, "stopping"); err != nil {

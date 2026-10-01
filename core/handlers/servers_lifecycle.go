@@ -454,12 +454,24 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	}
 	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
 
-	// Update DB (start_command is display-only; store combined flags in extra_jvm_flags)
-	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, req.Installer.Type, req.Installer.McVersion, req.Installer.Version); err != nil {
-		sendJSONError(w, "Failed to update server", 500)
+	// Update DB (start_command is display-only; store combined flags in extra_jvm_flags).
+	//
+	// Written only once every check below has passed, right before the
+	// command goes out. It used to be written first, so a setup refused
+	// afterwards - a foreign pack, modpacks switched off, an unknown node -
+	// answered 403 or 404 and still left the server "installing" under a
+	// sub-server name that existed nowhere, with no install on its way.
+	recordSetup := func() bool {
+		if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, req.Installer.Type, req.Installer.McVersion, req.Installer.Version); err != nil {
+			sendJSONError(w, "Failed to update server", 500)
+			return false
+		}
+		h.state.Store.UpdateServerStatus(serverID, "installing")
+		return true
+	}
+	if h.state.Queue == nil && !recordSetup() {
 		return
 	}
-	h.state.Store.UpdateServerStatus(serverID, "installing")
 
 	// Node command
 	if h.state.Queue != nil {
@@ -588,6 +600,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if !recordSetup() {
+			return
+		}
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
 			sendJSONError(w, "Failed to queue setup", 500)
@@ -1189,6 +1204,27 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// The node is in the middle of an install, a restore or a move of this
+	// server. It runs power commands in parallel with that work and nothing
+	// orders them, so a start went into a half-installed directory and a stop
+	// or kill was simply undone when the install finished by starting the
+	// server. The node's busy key is the truth here rather than the status
+	// column: it exists only while the node is actually working and expires
+	// on its own if the node dies, where a status left behind by a lost
+	// update would refuse power actions for good.
+	if h.state.Redis != nil {
+		if busy, err := h.state.Redis.Get(context.Background(), nodeBusyKey(srv.UUID)).Result(); err == nil && busy != "" {
+			sendJSONError(w, "The node is still working on this server ("+busy+"). Try again when it has finished.", 409)
+			return
+		}
+	}
+	// A move between nodes is driven by Core, not held on the node for its
+	// whole length. Operators may still act on a migration that is stuck.
+	if srv.Status == "migrating" && !isAdmin {
+		sendJSONError(w, "Server is being moved to another node. Try again when the move has finished.", 409)
+		return
+	}
+
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		sendJSONError(w, "Node not found", 404)
@@ -1200,6 +1236,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	case "start", "restart":
 		newStatus = "starting"
 		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
 		// MC reads server.properties at boot and nowhere else, so this is the
 		// one moment the stored RCON config can be made true for whichever
 		// sub-server is about to run. See rconNeedsStamping for why it can be
@@ -1221,6 +1258,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	case "stop", "kill":
 		newStatus = "stopping"
 		h.state.Store.UpdateServerDesiredState(srv.ID, "stopped")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "stopped")
 	}
 	h.state.Store.UpdateServerStatus(srv.ID, newStatus)
 

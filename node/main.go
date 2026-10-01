@@ -1330,6 +1330,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		installerCfg.ServerUUID = cmd.Config.UUID
 
 		manifest, err := InstallServer(serverPath, subName, installerCfg)
+		if discardIfDeleted(cmd.Config.UUID, serverPath) {
+			return
+		}
 		if err != nil {
 			log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
@@ -1539,7 +1542,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err := dm.UpdateResources(cmd.Config); err != nil {
 			log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
 		} else {
-			log.Printf("Server %s resources updated and restarted", cmd.Config.UUID)
+			log.Printf("Server %s resources updated", cmd.Config.UUID)
 			resServerPath := storage.GetServerDir(cmd.Config.UUID)
 			saveNodeConfig(resServerPath, cmd.Config)
 			resActiveBytes, _ := os.ReadFile(filepath.Join(resServerPath, ".active_server"))
@@ -1561,6 +1564,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		log.Printf("Deleting Server %s ...", cmd.Config.UUID)
+		// First, so an install still running for it cannot start it again.
+		markServerDeleted(cmd.Config.UUID)
 		dm.PowerAction(cmd.Config.UUID, "delete")
 
 		if quota != nil {
@@ -1780,7 +1785,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		installerCfg.JavaImage = cmd.Config.Docker.Image
 		installerCfg.ServerUUID = cmd.Config.UUID
 
-		if _, err := InstallServer(serverPath, subName, installerCfg); err != nil {
+		_, err := InstallServer(serverPath, subName, installerCfg)
+		if discardIfDeleted(cmd.Config.UUID, serverPath) {
+			return
+		}
+		if err != nil {
 			log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			return
@@ -1958,6 +1967,21 @@ const busyStatusTTL = 30 * time.Second
 //
 // ttl is a parameter only so the tests can drive the refresh loop; every caller
 // passes busyStatusTTL.
+// discardIfDeleted removes what an install wrote after its server was deleted
+// under it, and reports whether it did. The installer recreates the directory
+// the delete had just removed; left there it would hold disk for a server that
+// no longer exists.
+func discardIfDeleted(uuid, serverPath string) bool {
+	if !serverDeleted(uuid) {
+		return false
+	}
+	log.Printf("install for %s finished after the server was deleted; discarding what it wrote", uuid)
+	if serverPath != "" {
+		os.RemoveAll(serverPath)
+	}
+	return true
+}
+
 func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) func() {
 	statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
 	busyKey := nodeBusyKey(uuid)

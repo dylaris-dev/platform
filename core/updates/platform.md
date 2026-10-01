@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01
+
+### Features
+- Nothing.
+
+### Breaking
+- **Power actions wait while the node installs, restores or moves a server.** They are
+  refused with a message instead of running alongside that work and being undone by it. `core`
+
+### Security
+- **A suspension now stops every server that is meant to run.** Servers that were starting,
+  restarting or installing at the cutoff used to stay up until the next hourly pass. `core`
+
+### Fixes
+- **A resource change or a routing-mode switch no longer starts stopped servers,** including
+  those of suspended tenants and those Core keeps down because their disk is full. `node`
+- **A server deleted during an install no longer comes back** as a running container with
+  no server behind it, holding its memory and port. `node`
+- **A stop or kill can no longer be undone seconds later,** a final status can no longer be
+  lost, and a refused setup no longer leaves a server "installing". `core`
+
 ## 2026.09.30.5
 
 ### Features

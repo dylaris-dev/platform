@@ -960,6 +960,11 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	if config.Docker.Image == "" {
 		return "", fmt.Errorf("server image is required")
 	}
+	// Every path that builds a server container comes through here, so this is
+	// where a server deleted while other work for it was running stays deleted.
+	if serverDeleted(config.UUID) {
+		return "", fmt.Errorf("server %s was deleted on this node; not creating a container for it", config.UUID)
+	}
 	if moved := normalizeImageRef(config.Docker.Image); moved != config.Docker.Image {
 		log.Printf("image %s has moved to %s (registry owner change); creating mc_%s with the new reference",
 			config.Docker.Image, moved, config.UUID)
@@ -1207,8 +1212,15 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) error {
 		} else if config.Docker.Command == "" && len(info.Config.Cmd) > 0 {
 			config.Docker.Command = strings.Join(info.Config.Cmd, " ")
 		}
+		// A resource change leaves the server as it was. It used to end
+		// running whatever it had been: a routing-mode switch sends this to
+		// every server, so each stopped one started - including servers of
+		// suspended tenants and ones Core keeps down because their disk is full.
+		return dm.RecreateKeepingRunState(config)
 	}
 
+	// No container at all is the server arriving on this node by a move, and
+	// the move sends this to bring it up with its new cores.
 	return dm.RecreateWithCommand(config)
 }
 

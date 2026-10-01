@@ -66,7 +66,11 @@ func (s *StatusWatcherService) scan() {
 			}
 			uuid := parts[2]
 
-			newStatus, err := s.redis.Get(ctx, key).Result()
+			// Read and removed in one step. A GET here and a DEL after the
+			// database write lost whatever the node wrote in between: a final
+			// "stopped" landing in that gap was deleted unread, and nothing
+			// writes "stopped" again, so the server sat in "stopping" for good.
+			newStatus, err := s.redis.GetDel(ctx, key).Result()
 			if err != nil {
 				continue
 			}
@@ -81,8 +85,6 @@ func (s *StatusWatcherService) scan() {
 				s.store.UpdateServerStatus(srv.ID, newStatus)
 				dirty = true
 			}
-
-			s.redis.Del(ctx, key)
 		}
 		cursor = next
 		if cursor == 0 {
@@ -257,6 +259,26 @@ func (s *StatusWatcherService) consumeReconcileFailures(ctx context.Context) boo
 // and Core owns it. A node event landing between two ticks is picked up by the
 // scan above before this runs, so the value published here is never staler than
 // one tick.
+// DesiredStateKey is where the node's reconciler reads what a server should be.
+func DesiredStateKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:desired_state", uuid)
+}
+
+const desiredStateTTL = 60 * time.Second
+
+// PublishDesiredState writes a changed desired state for the node straight
+// away. The scan above republishes every server on its own tick, which left up
+// to one tick in which the reconciler still read the OLD value: a kill landed,
+// the reconciler saw "online" and a stopped container, and started it again.
+func PublishDesiredState(ctx context.Context, rdb *redis.Client, uuid, state string) {
+	if rdb == nil {
+		return
+	}
+	if err := rdb.Set(ctx, DesiredStateKey(uuid), state, desiredStateTTL).Err(); err != nil {
+		log.Printf("publish desired_state for %s: %v (the next scan tick publishes it)", uuid, err)
+	}
+}
+
 func (s *StatusWatcherService) publishServerStateKeys(ctx context.Context) {
 	servers, err := s.store.ListServers("")
 	if err != nil {
@@ -265,7 +287,7 @@ func (s *StatusWatcherService) publishServerStateKeys(ctx context.Context) {
 
 	pipe := s.redis.Pipeline()
 	for _, srv := range servers {
-		pipe.Set(ctx, fmt.Sprintf("dylaris:server:%s:desired_state", srv.UUID), srv.DesiredState, 60*time.Second)
+		pipe.Set(ctx, DesiredStateKey(srv.UUID), srv.DesiredState, desiredStateTTL)
 		pipe.Set(ctx, fmt.Sprintf("dylaris:server:%s:live_status", srv.UUID), srv.Status, 60*time.Second)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
