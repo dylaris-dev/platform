@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import {
   Server, ServerStats, DiskUsage, BackupConfig, BackupUsage,
   getStatsHistory, getDiskUsage, getBackupConfig, getBackupUsage,
 } from '@/lib/api';
-import { createEventSource } from '@/lib/sse';
+import { subscribeEventSource } from '@/lib/sse';
 import { latestValue } from '@/lib/statsSeries';
 
 import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive } from 'lucide-react';
@@ -72,27 +72,16 @@ export default function OverviewView({ server }: OverviewViewProps) {
   const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
   const [backupConfig, setBackupConfig] = useState<BackupConfig | null>(null);
   const [backupUsage, setBackupUsage] = useState<BackupUsage | null>(null);
-  const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     setLiveData([]);
 
-    let es: EventSource | null = null;
-    let cancelled = false;
-    (async () => {
-      es = await createEventSource(`/servers/${server.id}/stats/stream`);
-      if (cancelled) { es.close(); return; }
-      esRef.current = es;
-
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data) as ServerStats;
-          setLiveData(prev => [...prev.slice(-59), data]);
-        } catch { /* ignore */ }
-      };
-    })().catch(() => { /* ticket mint failed — leave live data empty */ });
-
-    return () => { cancelled = true; es?.close(); };
+    return subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
+      try {
+        const data = JSON.parse(e.data) as ServerStats;
+        setLiveData(prev => [...prev.slice(-59), data]);
+      } catch { /* ignore */ }
+    });
   }, [server.id]);
 
   useEffect(() => {

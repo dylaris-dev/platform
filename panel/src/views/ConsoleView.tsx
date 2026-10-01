@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
-import { createEventSource } from '@/lib/sse';
+import { subscribeEventSource } from '@/lib/sse';
 import { levelClass, computeLineLevels } from '@/lib/consoleLog';
 import { Power, Send, Cpu, MemoryStick } from 'lucide-react';
 
@@ -89,16 +89,9 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   // Stats stream (was passed as prop from Dashboard previously)
   useEffect(() => {
     setLiveStats(null);
-    let es: EventSource | null = null;
-    let cancelled = false;
-    (async () => {
-      es = await createEventSource(`/servers/${server.id}/stats/stream`);
-      if (cancelled) { es.close(); return; }
-      es.onmessage = (e) => {
-        try { setLiveStats(JSON.parse(e.data) as ServerStats); } catch { /* ignore */ }
-      };
-    })().catch(() => { /* ticket mint failed — leave stats empty */ });
-    return () => { cancelled = true; es?.close(); };
+    return subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
+      try { setLiveStats(JSON.parse(e.data) as ServerStats); } catch { /* ignore */ }
+    });
   }, [server.id]);
 
   useEffect(() => {
@@ -107,19 +100,13 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     let historyLoaded = false;
 
     const subParam = activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : '';
-    let es: EventSource | null = null;
-    let cancelled = false;
-    (async () => {
-      es = await createEventSource(`/servers/${server.id}/console/stream${subParam}`);
-      if (cancelled) { es.close(); return; }
-      es.onmessage = (e) => {
-        if (!historyLoaded) {
-          pendingLines.push(e.data);
-        } else {
-          setLines(prev => [...prev.slice(-999), e.data]);
-        }
-      };
-    })().catch(() => { /* ticket mint failed — history still loads below */ });
+    const stopStream = subscribeEventSource(`/servers/${server.id}/console/stream${subParam}`, (e) => {
+      if (!historyLoaded) {
+        pendingLines.push(e.data);
+      } else {
+        setLines(prev => [...prev.slice(-999), e.data]);
+      }
+    });
 
     const historyUrl = `${API_URL}/servers/${server.id}/console/history${activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : ''}`;
     fetch(historyUrl)
@@ -134,10 +121,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         setLines(pendingLines.slice(-1000));
       });
 
-    return () => {
-      cancelled = true;
-      es?.close();
-    };
+    return stopStream;
   }, [server.id, activeSubServer]);
 
   useEffect(() => {

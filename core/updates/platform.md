@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **Console commands are refused while a server is not running,** and limited to 1,024
+  characters with no control characters. One sent to a stopped server used to run on its next start. `core`
+
+### Security
+- **A live-stream ticket opened every read endpoint and outlived a password change.** It now
+  opens the console, stats and event streams only, and ends with the password. `core`
+- **A node could write stats history for servers it does not host,** so a BYON machine could
+  fake another tenant's history. Only the node's own servers are recorded now. `core`
+- **Live streams end every five minutes and reconnect through the permission check,** so a
+  removed member or a revoked permission stops receiving console and stats output. `core` `panel`
+
+### Fixes
+- **The console resumes exactly where it left off after a reconnect,** without losing lines. `core` `panel`
+- **Starting a stopped server no longer runs commands that were waiting for it.** `core`
+- **The profiling page keeps watching for the result across stream reconnects.** `panel`
+
 ## 2026.10.01.2
 
 ### Features

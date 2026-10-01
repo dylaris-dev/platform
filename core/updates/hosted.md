@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Someone whose access to a server is removed stops seeing its console and stats** within
+  five minutes, and a live-stream link no longer opens anything else.
+- **A node can no longer write statistics for servers it does not host.**
+
+### Fixes
+- **Console commands to a stopped server are refused** instead of running on its next start.
+- **The console no longer drops lines when it reconnects.**
+
 ## 2026.10.01.2
 
 ### Features

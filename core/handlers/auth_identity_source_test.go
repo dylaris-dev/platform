@@ -157,7 +157,7 @@ func TestAuthMiddleware_SSETicketFailsClosed(t *testing.T) {
 				gotAdmin = r.Context().Value("isAdmin")
 			}
 
-			req := httptest.NewRequest(http.MethodGet, "/api/gateway/link-routes?ticket="+ticket, nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/system/events?ticket="+ticket, nil)
 			rec := httptest.NewRecorder()
 			h.AuthMiddleware(next)(rec, req)
 

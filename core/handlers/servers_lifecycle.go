@@ -1242,6 +1242,12 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		newStatus = "starting"
 		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
 		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
+		// A server that was stopped starts with nothing waiting on its stdin.
+		// The node's graceful stop pushes "stop" there and the console could
+		// queue more; whatever was left would run the moment it came up.
+		if req.Action == "start" && h.state.Redis != nil {
+			h.state.Redis.Del(r.Context(), fmt.Sprintf("dylaris:server:%s:input", srv.UUID))
+		}
 		// MC reads server.properties at boot and nowhere else, so this is the
 		// one moment the stored RCON config can be made true for whichever
 		// sub-server is about to run. See rconNeedsStamping for why it can be

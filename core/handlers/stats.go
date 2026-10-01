@@ -77,19 +77,29 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	}()
 	defer close(watchDone)
 
-	// Send buffered data first (Redis Stream via XRANGE)
-	entries, err := h.state.Redis.XRange(r.Context(), bufferKey, "-", "+").Result()
-	if err == nil {
-		for _, msg := range entries {
-			if data, ok := msg.Values["data"].(string); ok {
-				fmt.Fprintf(w, "data: %s\n\n", data)
+	ctx, cancel := streamContext(r)
+	defer cancel()
+
+	// Send buffered data first (Redis Stream via XRANGE) - on a first connect
+	// only. The id below marks a stream that has already done so, and the
+	// browser sends it back when it reconnects: streams end on a timer now,
+	// and replaying the buffer every time would draw it into the live graph
+	// again.
+	if r.Header.Get("Last-Event-ID") == "" {
+		entries, err := h.state.Redis.XRange(ctx, bufferKey, "-", "+").Result()
+		if err == nil {
+			for _, msg := range entries {
+				if data, ok := msg.Values["data"].(string); ok {
+					fmt.Fprintf(w, "data: %s\n\n", data)
+				}
 			}
 		}
-		flusher.Flush()
 	}
+	fmt.Fprintf(w, "id: live\n\n")
+	flusher.Flush()
 
 	// Subscribe to live updates
-	pubsub := h.state.Redis.Subscribe(r.Context(), liveKey)
+	pubsub := h.state.Redis.Subscribe(ctx, liveKey)
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -99,7 +109,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case msg, ok := <-ch:
 			if !ok {

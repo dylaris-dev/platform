@@ -8,7 +8,7 @@ import { systemEvents } from '@/lib/systemEvents';
 import { sendConsoleCommand } from '@/lib/api';
 import { listInstalledMods } from '@/lib/api/modrinth';
 import { listSparkProfiles, recordSparkProfile, deleteSparkProfile, SPARK_URL_RE, type SparkProfile } from '@/lib/api/spark';
-import { createEventSource } from '@/lib/sse';
+import { subscribeEventSource } from '@/lib/sse';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
@@ -47,7 +47,7 @@ export default function ServerConfigProfilingPage() {
     const [duration, setDuration] = useState(60);
     const [nowTick, setNowTick] = useState(Date.now());
 
-    const esRef = useRef<EventSource | null>(null);
+    const stopStreamRef = useRef<(() => void) | null>(null);
 
     // useCallback is load-bearing here, not tidiness: this is in the dependency
     // array of the effect that opens the console SSE stream, and a 1s ticker
@@ -104,42 +104,32 @@ export default function ServerConfigProfilingPage() {
     // ----- Console SSE watcher: matches spark URLs during an active profile -----
     useEffect(() => {
         if (!active) {
-            esRef.current?.close();
-            esRef.current = null;
+            stopStreamRef.current?.();
+            stopStreamRef.current = null;
             return;
         }
-        let es: EventSource | null = null;
-        let cancelled = false;
-        (async () => {
-            es = await createEventSource(`/servers/${serverId}/console/stream`);
-            if (cancelled) { es.close(); return; }
-            esRef.current = es;
-            es.onmessage = (e) => {
-                const m = e.data && SPARK_URL_RE.exec(e.data);
-                if (m && active) {
-                    const captured = m[0];
-                    const startedISO = new Date(active.startedAt).toISOString();
-                    recordSparkProfile(serverId, captured, startedISO).then(res => {
-                        if (res.success) {
-                            showToast('Profile URL captured.', true);
-                            refresh();
-                        }
-                    });
-                    // First URL ends the active run; spark may print the URL on
-                    // its own timeout OR when we issued `stop`.
-                    setActive(null);
-                    es!.close();
-                    esRef.current = null;
-                }
-            };
-            es.onerror = () => {
-                // Console stream blip — don't kill the active profile, just
-                // let the next render reattach.
-                es!.close();
-                esRef.current = null;
-            };
-        })().catch(() => { /* ticket mint failed — next render reattaches */ });
-        return () => { cancelled = true; es?.close(); esRef.current = null; };
+        // Kept open across the stream's periodic reconnects: a profile can
+        // run longer than one stream lives, and its URL arrives at the end.
+        const stop = subscribeEventSource(`/servers/${serverId}/console/stream`, (e) => {
+            const m = e.data && SPARK_URL_RE.exec(e.data);
+            if (m && active) {
+                const captured = m[0];
+                const startedISO = new Date(active.startedAt).toISOString();
+                recordSparkProfile(serverId, captured, startedISO).then(res => {
+                    if (res.success) {
+                        showToast('Profile URL captured.', true);
+                        refresh();
+                    }
+                });
+                // First URL ends the active run; spark may print the URL on
+                // its own timeout OR when we issued `stop`.
+                setActive(null);
+                stop();
+                stopStreamRef.current = null;
+            }
+        });
+        stopStreamRef.current = stop;
+        return () => { stop(); stopStreamRef.current = null; };
     }, [active, serverId, refresh, showToast]);
 
     // ----- Start / stop -----

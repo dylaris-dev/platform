@@ -259,14 +259,17 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// client-supplied. The ticket TTL is refreshed on every accepted
 		// request, giving a sliding window so native EventSource reconnects
 		// keep working with the same ?ticket=.
-		if authHeader == "" && r.Method == http.MethodGet && h.state.Redis != nil {
+		if authHeader == "" && r.Method == http.MethodGet && h.state.Redis != nil && sseTicketPaths.MatchString(r.URL.Path) {
 			if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 				key := "sse:ticket:" + ticket
-				if username, err := h.state.Redis.Get(r.Context(), key).Result(); err == nil && username != "" {
+				if stored, err := h.state.Redis.Get(r.Context(), key).Result(); err == nil && stored != "" {
+					username, ticketFp, legacy := parseSSETicket(stored)
 					w.Header().Set("Referrer-Policy", "no-referrer")
 					w.Header().Set("Cache-Control", "no-store")
 					// Sliding window: keep long-lived streams alive.
-					h.state.Redis.Expire(r.Context(), key, sseTicketTTL)
+					if !legacy {
+						h.state.Redis.Expire(r.Context(), key, sseTicketTTL)
+					}
 
 					// FAIL CLOSED, same rule as the Bearer path below.
 					//
@@ -297,6 +300,13 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 						if uerr != nil {
 							log.Printf("auth: could not resolve SSE ticket holder %q: %v", username, uerr)
 							sendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
+							return
+						}
+						// The same rule the session token follows: a ticket minted
+						// under an older password is over.
+						if ticketFp != "" && ticketFp != passwordFingerprint(user.Password) {
+							h.state.Redis.Del(r.Context(), key)
+							sendJSONError(w, "Your password changed - please sign in again", http.StatusUnauthorized)
 							return
 						}
 						isAdmin = user.IsAdmin

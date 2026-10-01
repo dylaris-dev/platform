@@ -127,3 +127,18 @@ func TestCreateOnAPlatformNodeIsForOperatorsWhenBYONIsOff(t *testing.T) {
 		t.Fatalf("a non-admin create on a platform node with BYON off: status %d, want 403: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A "stop" left in a stopped server's input - the node's graceful stop puts
+// one there - ran the moment the server next came up and shut it down again.
+func TestStartBeginsWithAnEmptyInputQueue(t *testing.T) {
+	h, _ := powerStateFixture(t, "stopped")
+	h.state.Redis.RPush(context.Background(), "dylaris:server:srv-uuid:input", "stop")
+	rec := httptest.NewRecorder()
+	h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := h.state.Redis.LLen(context.Background(), "dylaris:server:srv-uuid:input").Val(); n != 0 {
+		t.Fatalf("%d stale command(s) left for the server to run on start", n)
+	}
+}
