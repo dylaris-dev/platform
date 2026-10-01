@@ -71,6 +71,26 @@ func NewMemberHandler(state *AppState) *MemberHandler {
 // is - per-server row, proxy-inherited, account-wide, server role - rather than
 // the one table this happened to read. Same lesson as the SFTP grant lookup:
 // the resolver is the authority, a grant table is not.
+// mayReplaceMemberAccess is true for the owner, an operator on the platform's
+// own machine, and a member who may also remove members.
+func (h *MemberHandler) mayReplaceMemberAccess(r *http.Request, serverID int) bool {
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		return false
+	}
+	if srv.OwnerID == userID || (isAdmin && !h.state.NodeOwnedByOther(srv.NodeID, userID)) {
+		return true
+	}
+	if h.state.Authz == nil {
+		return false
+	}
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	return rerr == nil && res.HasCap("members.delete")
+}
+
 func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[string]bool) map[string]bool {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
@@ -337,6 +357,14 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		return
 	}
 	if refuseBadPermissionMap(w, req.Permissions) {
+		return
+	}
+
+	// Replacing a member's set can take their access away as surely as
+	// removing them, which needs members.delete - the same rule /api/grants
+	// applies to overwriting a grant. This is the older route to the same row.
+	if !h.mayReplaceMemberAccess(r, serverID) {
+		sendJSONError(w, "Changing an existing member's access needs the right to remove members", http.StatusForbidden)
 		return
 	}
 

@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.01.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A demoted admin kept every staff capability** through the admin panel role and any per-user
+  overrides, which stayed assigned. A role change now resets both. `core`
+- **A profile save could undo an admin's demotion, password reset or 2FA reset** made while it
+  ran, because it wrote the whole account row back. It now writes only its own fields. `core`
+- **A member holding members.write could let a grant flow down to child servers** they cannot
+  reach, and overwrite a stronger member's grant. Both now need the owner or members.delete. `core`
+- **An email change now ends any outstanding password-reset link,** and a billing change can no
+  longer be aimed at an account with more rights than the operator's own. `core`
+
+### Fixes
+- **An admin created in the panel is no longer demoted by the next save of their permissions,**
+  and no account can be created with two-factor sign-in it can never complete. `core`
+- **Creating an account, setting a password and changing a billing status now appear in the
+  identity log.** They left no record before. `core` `panel`
+
 ## 2026.10.01.3
 
 ### Features

@@ -120,6 +120,7 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	// customer's name - an admin could invite themselves or anyone else in.
 	adminHere := idn.IsAdmin && (srv == nil || !h.state.NodeOwnedByOther(srv.NodeID, idn.UserID))
 	isOwnerOrAdmin := adminHere || req.ServerID == nil || (srv != nil && srv.OwnerID == idn.UserID)
+	var delegatorRes *authz.Resolution
 	if req.ServerID != nil && !isOwnerOrAdmin {
 		res, rerr := h.state.Authz.Resolve(idn, *req.ServerID)
 		if rerr != nil {
@@ -135,6 +136,17 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 			sendJSONError(w, "Cannot grant capabilities you do not hold", 403)
 			return
 		}
+		// "inherit" makes a grant flow down to every child server, which
+		// widens it across the server tree rather than within this server -
+		// the owner's call, the same rule the invite path (members.go,
+		// callerMayDelegate) has always made. This path skipped it, so a
+		// member could hand a second account rights on child servers they
+		// cannot reach themselves.
+		if req.Inherit {
+			sendJSONError(w, "Only the owner can let a grant flow down to child servers", 403)
+			return
+		}
+		delegatorRes = res
 	}
 
 	// Read before the upsert: it is what tells a first grant apart from a change
@@ -144,6 +156,13 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		if g, gerr := h.state.Store.GetServerGrant(*req.ServerID, target.ID); gerr == nil && g != nil {
 			hadGrant = true
 		}
+	}
+	// Writing over someone's grant can take their access away as surely as
+	// revoking it, and revoking needs members.delete. A member holding only
+	// members.write could empty a co-admin's grant this way.
+	if hadGrant && delegatorRes != nil && !delegatorRes.HasCap("members.delete") {
+		sendJSONError(w, "Changing an existing member's access needs the right to remove members", 403)
+		return
 	}
 
 	ov := store.CapOverrides{Grant: req.GrantCaps, Deny: req.DenyCaps}

@@ -24,6 +24,7 @@ type grantFakeStore struct {
 	target      *models.User
 	server      *models.Server
 	actorGrant  *store.ServerGrant // returned by GetServerGrant for the actor
+	targetGrant *store.ServerGrant // returned by GetServerGrant for anyone else
 	serverRole  *store.ServerRole
 	upserts     []upsertCall
 	deleteCalls int
@@ -79,11 +80,15 @@ func (f *grantFakeStore) GetServerByID(int) (*models.Server, error) {
 func (f *grantFakeStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error) {
 	return nil, store.CapOverrides{}, nil
 }
-func (f *grantFakeStore) GetServerGrant(int, string) (*store.ServerGrant, error) {
-	if f.actorGrant == nil {
+func (f *grantFakeStore) GetServerGrant(_ int, userID string) (*store.ServerGrant, error) {
+	g := f.targetGrant
+	if f.actorGrant != nil && f.actorGrant.UserID == userID {
+		g = f.actorGrant
+	}
+	if g == nil {
 		return nil, sql.ErrNoRows
 	}
-	return f.actorGrant, nil
+	return g, nil
 }
 func (f *grantFakeStore) GetAccountGrant(string, string) (*store.ServerGrant, error) {
 	return nil, sql.ErrNoRows
@@ -576,4 +581,54 @@ func fencedGrantState(fs *grantFakeStore) *AppState {
 	st.FeatureFlags = services.NewFeatureFlags(fs)
 	st.Authz.SetForeignNode(st.NodeOwnedByOther)
 	return st
+}
+
+// The invite path has always kept "inherit" to the owner; this path did not,
+// so a member could give a second account rights on every child server.
+func TestAssignGrant_NonOwnerCannotLetAGrantFlowDown(t *testing.T) {
+	sid := 42
+	fs := &grantFakeStore{
+		target: &models.User{ID: friendC, Username: "friend"},
+		server: serverOwnedBy(ownerA),
+		actorGrant: &store.ServerGrant{ServerID: &sid, UserID: actorB,
+			CapOverrides: store.CapOverrides{Grant: []string{"members.write", "files.delete"}}},
+	}
+	h := NewServerRolesHandler(grantState(fs))
+	rec := httptest.NewRecorder()
+	h.AssignGrant(rec, grantReq("POST", actorB, false, map[string]interface{}{
+		"username": "friend", "serverId": 42, "grantCaps": []string{"files.delete"}, "inherit": true,
+	}))
+	if rec.Code != http.StatusForbidden || len(fs.upserts) != 0 {
+		t.Fatalf("status = %d, upserts %d; want 403 and nothing written", rec.Code, len(fs.upserts))
+	}
+}
+
+// Writing over a grant can take access away as surely as revoking it, which
+// needs members.delete.
+func TestAssignGrant_OverwritingAGrantNeedsTheRightToRemove(t *testing.T) {
+	sid := 42
+	for _, tc := range []struct {
+		caps []string
+		want int
+	}{
+		{[]string{"members.write", "files.delete"}, http.StatusForbidden},
+		{[]string{"members.write", "members.delete", "files.delete"}, http.StatusOK},
+	} {
+		fs := &grantFakeStore{
+			target: &models.User{ID: friendC, Username: "friend"},
+			server: serverOwnedBy(ownerA),
+			actorGrant: &store.ServerGrant{ServerID: &sid, UserID: actorB,
+				CapOverrides: store.CapOverrides{Grant: tc.caps}},
+			targetGrant: &store.ServerGrant{ServerID: &sid, UserID: friendC,
+				CapOverrides: store.CapOverrides{Grant: []string{"files.delete", "power.start"}}},
+		}
+		h := NewServerRolesHandler(grantState(fs))
+		rec := httptest.NewRecorder()
+		h.AssignGrant(rec, grantReq("POST", actorB, false, map[string]interface{}{
+			"username": "friend", "serverId": 42, "grantCaps": []string{"files.delete"},
+		}))
+		if rec.Code != tc.want {
+			t.Errorf("caller caps %v: status %d, want %d: %s", tc.caps, rec.Code, tc.want, rec.Body.String())
+		}
+	}
 }

@@ -279,38 +279,37 @@ func (s *PostgresStore) CreateUser(u *models.User) error {
 	// happen through SetUserCanCreateModpacks.
 	// email_verified_at is written in the same row so an account an admin creates
 	// is never, even briefly, a row the verification gate refuses.
+	//
+	// role and panel_role_id are written with is_admin. They used to be left to
+	// the column default ('user') and a boot backfill, so until the next Core
+	// restart an admin created here was role 'user' - and the edit dialog,
+	// which sends the role with every save, demoted them on the first one.
+	//
+	// 2FA is never on at creation: it needs a secret, and this row has none,
+	// so an account created with it set could never sign in.
+	role := "user"
+	if u.IsAdmin {
+		role = "admin"
+	}
 	query := `INSERT INTO users
 		(username, password, email, minecraft_username, is_admin, is_2fa_enabled,
-		 totp_secret, totp_backup_codes, permissions, email_verified_at)
-		VALUES ($1, $2, $3, $4, $5, $6, '', '[]'::jsonb, $7, $8)
+		 totp_secret, totp_backup_codes, permissions, email_verified_at, role, panel_role_id)
+		VALUES ($1, $2, $3, $4, $5, FALSE, '', '[]'::jsonb, $6, $7, $8::text,
+		 (SELECT id FROM panel_roles WHERE name = $8::text AND is_system AND $8::text = 'admin'))
 		RETURNING id`
-	return s.db.QueryRow(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.EmailVerifiedAt).Scan(&u.ID)
+	return s.db.QueryRow(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Permissions, u.EmailVerifiedAt, role).Scan(&u.ID)
 }
 
-// UpdateUser rewrites the user row. NOTE: any username change made via this
-// path bypasses the username audit trail (user_username_history) and the
-// cooldown policy. Callers MUST route user-initiated and admin-initiated
-// rename flows through RenameUser instead; this method is for non-username
-// field updates.
-func (s *PostgresStore) UpdateUser(u *models.User) error {
-	// can_create_modpacks_manual is derived, not passed in: the right-hand side
-	// sees the PRE-update row, so the marker is set exactly when this write
-	// actually changes the value. Today the only caller round-trips a row it just
-	// read, so nothing flips - but the marker is what protects a per-user decision
-	// from the platform authoring toggle, and a future caller writing this column
-	// without it would silently reopen that hole.
-	//
-	// The reset-token clear uses the same pre-update read: this is the profile
-	// save, which rewrites the password column on EVERY call (the caller
-	// round-trips the row), so an unconditional clear would drop a valid reset
-	// link because someone edited their email. Only an actual password CHANGE
-	// invalidates the link - see UpdateUserPassword for why it does.
-	query := `UPDATE users SET username = $1, password = $2, email = $3, minecraft_username = $4, is_admin = $5, is_2fa_enabled = $6, permissions = $7, can_create_modpacks = $8,
-		can_create_modpacks_manual = (can_create_modpacks_manual OR can_create_modpacks IS DISTINCT FROM $8),
-		password_reset_token      = CASE WHEN password IS DISTINCT FROM $2 THEN NULL ELSE password_reset_token END,
-		password_reset_expires_at = CASE WHEN password IS DISTINCT FROM $2 THEN NULL ELSE password_reset_expires_at END
-		WHERE id = $9`
-	_, err := s.db.Exec(query, u.Username, u.Password, u.Email, u.MinecraftUsername, u.IsAdmin, u.Is2FAEnabled, u.Permissions, u.CanCreateModpacks, u.ID)
+// SetUserMinecraftUsername writes the one column the profile form owns beside
+// the password and the email, each of which has its own write.
+//
+// The profile save used to go through a whole-row UpdateUser that wrote back
+// is_admin, is_2fa_enabled, the password and the permissions from a row it had
+// read before a bcrypt check. An admin demoted, a password reset or a 2FA
+// reset landing in that gap was written over by the save - a demoted admin
+// looping their own profile save could restore is_admin.
+func (s *PostgresStore) SetUserMinecraftUsername(userID, mc string) error {
+	_, err := s.db.Exec(`UPDATE users SET minecraft_username = $2 WHERE id = $1`, userID, mc)
 	return err
 }
 
@@ -446,8 +445,24 @@ func (s *PostgresStore) SetUserRole(userID string, role string) error {
 	if role != "user" && role != "support" && role != "admin" {
 		return fmt.Errorf("invalid role: %s", role)
 	}
+	// The panel role moves with the role, and only when the role actually
+	// changes (the right-hand side reads the row as it was). Every admin holds
+	// the seeded "admin" panel role, which carries every staff capability, and
+	// a demotion used to leave it in place: is_admin went false and the
+	// resolver kept granting users.write, panelroles.write and the rest from
+	// the panel role. A save that leaves the role alone - the edit dialog
+	// sends it with every flag change - keeps a panel role assigned on its own.
+	// Per-user capability overrides go with a role change too: the resolver
+	// honours them without any panel role, so a demotion left any staff
+	// capability granted that way in place.
 	_, err := s.db.Exec(
-		`UPDATE users SET role = $1, is_admin = $2 WHERE id = $3`,
+		`UPDATE users SET role = $1::text, is_admin = $2,
+		   panel_role_id = CASE WHEN role IS DISTINCT FROM $1::text
+		     THEN (SELECT id FROM panel_roles WHERE name = $1::text AND is_system AND $1::text IN ('admin', 'support'))
+		     ELSE panel_role_id END,
+		   panel_cap_overrides = CASE WHEN role IS DISTINCT FROM $1::text
+		     THEN '{}'::jsonb ELSE panel_cap_overrides END
+		 WHERE id = $3`,
 		role, role == "admin", userID,
 	)
 	return err
@@ -2453,7 +2468,8 @@ func (s *PostgresStore) MarkEmailVerified(userID string) error {
 func (s *PostgresStore) SetUserEmail(userID, email string) error {
 	_, err := s.db.Exec(
 		`UPDATE users SET email = $2, email_verified_at = NULL,
-		   email_verification_token = NULL, email_verification_sent_at = NULL
+		   email_verification_token = NULL, email_verification_sent_at = NULL,
+		   password_reset_token = NULL, password_reset_expires_at = NULL
 		 WHERE id = $1`,
 		userID, email,
 	)

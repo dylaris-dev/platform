@@ -116,3 +116,20 @@ func TestUpdateMemberPermissionsRefusesWhatTheInviteRefuses(t *testing.T) {
 		})
 	}
 }
+
+// Replacing a member's set can strip them as surely as removing them, which
+// needs members.delete. /api/grants enforces that; this older route to the same
+// row did not, so a member holding only members.write could empty a stronger
+// member's access here.
+func TestUpdateMemberPermissionsNeedsTheRightToRemove(t *testing.T) {
+	fs := &patchPermsStore{}
+	h := NewMemberHandler(&AppState{Store: fs})
+	r := patchReq(`{"permissions":{}}`)
+	ctx := context.WithValue(r.Context(), "userID", "member-1")
+	ctx = context.WithValue(ctx, "username", "member")
+	rec := httptest.NewRecorder()
+	h.UpdateMemberPermissions(rec, r.WithContext(ctx))
+	if rec.Code != http.StatusForbidden || fs.updated {
+		t.Fatalf("a non-owner without members.delete: status %d, written %v; want 403 and nothing written", rec.Code, fs.updated)
+	}
+}

@@ -32,7 +32,7 @@ type Store interface {
 	CreateUser(user *models.User) error
 	UsernameTaken(username, excludeUserID string) (bool, error)
 	ListUsernameCaseCollisions() ([][]string, error)
-	UpdateUser(user *models.User) error
+	SetUserMinecraftUsername(userID, mc string) error
 	UpdateUserPassword(id string, hashedPassword string) error
 	DeleteUser(id string) error
 	ListUsers() ([]models.User, error)

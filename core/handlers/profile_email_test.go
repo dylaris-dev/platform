@@ -16,8 +16,9 @@ import (
 // profileFakeStore is the admin-email fake plus what the profile save touches.
 type profileFakeStore struct {
 	emailFakeStore
-	updates []models.User
-	renames []string
+	passwordWrites []string
+	mcWrites       []string
+	renames        []string
 }
 
 func (f *profileFakeStore) GetUserByUsername(name string) (*models.User, error) {
@@ -29,8 +30,12 @@ func (f *profileFakeStore) GetUserByUsername(name string) (*models.User, error) 
 	}
 	return nil, nil
 }
-func (f *profileFakeStore) UpdateUser(u *models.User) error {
-	f.updates = append(f.updates, *u)
+func (f *profileFakeStore) UpdateUserPassword(id, hash string) error {
+	f.passwordWrites = append(f.passwordWrites, hash)
+	return nil
+}
+func (f *profileFakeStore) SetUserMinecraftUsername(id, mc string) error {
+	f.mcWrites = append(f.mcWrites, mc)
 	return nil
 }
 func (f *profileFakeStore) GetUserAccountPolicy() (bool, int, error) { return true, 0, nil }
@@ -87,7 +92,7 @@ func TestTheProfileCannotClaimAnotherAccountsAddress(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409: %s", w.Code, w.Body.String())
 	}
-	if len(st.updates) != 0 || len(st.setEmailCalls) != 0 {
+	if len(st.passwordWrites)+len(st.mcWrites) != 0 || len(st.setEmailCalls) != 0 {
 		t.Error("the refused change was written anyway")
 	}
 }

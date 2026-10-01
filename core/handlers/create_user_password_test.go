@@ -22,9 +22,14 @@ type createUserFakeStore struct {
 
 	created *models.User
 	taken   bool
+	audits  []string
 }
 
 func (f *createUserFakeStore) GetSetting(string) (string, error) { return "", nil }
+func (f *createUserFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error {
+	f.audits = append(f.audits, ev.EventType)
+	return nil
+}
 
 // The create path now asks whether the name is claimed, without case. This fake
 // says no; the taken case has its own test below.
@@ -66,6 +71,10 @@ func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 	}
 	if fake.created == nil {
 		t.Fatal("nothing reached the store")
+	}
+	// Creating an account - possibly an admin - left no record before.
+	if len(fake.audits) != 1 || fake.audits[0] != AuditEventUserCreated {
+		t.Errorf("audit events = %v, want one %q", fake.audits, AuditEventUserCreated)
 	}
 	if fake.created.Password == "" {
 		t.Fatal("the account was persisted with an empty password")

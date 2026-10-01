@@ -61,7 +61,14 @@ const (
 	AuditEventUserRoleChanged        = "user_role_changed"
 	AuditEventUserPermissionsChanged = "user_permissions_changed"
 	AuditEventUserPanelRoleChanged   = "user_panel_role_changed"
-	AuditEventMaintenanceToggled     = "maintenance_toggled"
+	// Actions an operator takes on an account that left no record before: an
+	// admin setting someone's password is taking the account over, creating
+	// one can create an admin, and a billing change can stop every server the
+	// account owns.
+	AuditEventUserCreated          = "user_created"
+	AuditEventPasswordSetByAdmin   = "password_set_by_admin"
+	AuditEventBillingStatusChanged = "billing_status_changed"
+	AuditEventMaintenanceToggled   = "maintenance_toggled"
 
 	// Moving the platform's own data. These used to be filed under
 	// maintenance_toggled, all five of them, with the real action buried in a

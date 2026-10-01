@@ -191,6 +191,8 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		// roll back; admin can fix the assignment from the user settings panel.
 		log.Printf("CreateUser: SetUserRegions failed for userID=%s: %v", req.User.ID, err)
 	}
+	creatorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -411,6 +413,8 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Failed to update password", 500)
 		return
 	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventPasswordSetByAdmin, actorID, id, nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Password updated"})
 }

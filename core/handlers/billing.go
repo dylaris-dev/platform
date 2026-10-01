@@ -237,6 +237,21 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// The rule every other account action follows. plans.write is not an
+	// admin capability, and a suspension stops every server the account owns
+	// and revokes its link kits for good - it was the one action a holder could
+	// aim at an admin or at staff with more rights than their own.
+	if h.state.Store != nil {
+		target, terr := h.state.Store.GetUserByID(userID)
+		if terr != nil || target == nil {
+			sendJSONError(w, "User not found", http.StatusNotFound)
+			return
+		}
+		if !mayManageAccount(h.state, r, target) {
+			sendJSONError(w, "You cannot change the billing state of an account with more rights than yours", http.StatusForbidden)
+			return
+		}
+	}
 	var err error
 	switch req.Status {
 	case "past_due":
@@ -253,6 +268,8 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": req.Status})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": req.Status})
 }
 

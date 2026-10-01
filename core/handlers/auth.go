@@ -875,7 +875,11 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
 			return
 		}
-		hashed, _ := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), bcrypt.DefaultCost)
+		hashed, herr := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), bcrypt.DefaultCost)
+		if herr != nil {
+			sendJSONError(w, "Update failed", 500)
+			return
+		}
 		user.Password = string(hashed)
 		passwordChanged = true
 	}
@@ -891,11 +895,24 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		user.MinecraftUsername = mc
 	}
 
-	// Username column is idempotent here — RenameUser already wrote it (plus
-	// history row + last_username_change) in its own transaction.
-	if err := h.state.Store.UpdateUser(user); err != nil {
-		sendJSONError(w, "Update failed", 500)
-		return
+	// Each field the form owns gets its own write; the username went through
+	// RenameUser above and the email goes through SetUserEmail below. This
+	// used to be one whole-row save from the row read before the bcrypt check,
+	// which wrote back is_admin, the 2FA state, the password and the
+	// permissions as they were then: a demotion, a password reset or a 2FA
+	// reset an admin made in that gap was undone, and a demoted admin looping
+	// their own profile save could get is_admin back.
+	if passwordChanged {
+		if err := h.state.Store.UpdateUserPassword(user.ID, user.Password); err != nil {
+			sendJSONError(w, "Update failed", 500)
+			return
+		}
+	}
+	if req.MinecraftUsername != nil {
+		if err := h.state.Store.SetUserMinecraftUsername(user.ID, user.MinecraftUsername); err != nil {
+			sendJSONError(w, "Update failed", 500)
+			return
+		}
 	}
 
 	// A new address is unproven, exactly as when an admin types one: the badge

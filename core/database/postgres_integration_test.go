@@ -870,10 +870,9 @@ func TestIntegrationShareExpiryWrites(t *testing.T) {
 // link-holder's password worked afterwards - the defensive action handed the
 // account over.
 //
-// It lives here because the guard IS the SQL: UpdateUserPassword nulls the
-// columns in the same UPDATE, and UpdateUser does it only when the password
-// column actually changes, through a CASE over the PRE-update row that no fake
-// can answer for.
+// It lives here because the guard IS the SQL: UpdateUserPassword and
+// SetUserEmail null the columns in the same UPDATE, and no fake can answer
+// for that.
 func TestIntegrationPasswordChangeSpendsResetLink(t *testing.T) {
 	db, st := integrationDB(t)
 	f := newFixture(t, st)
@@ -914,33 +913,22 @@ func TestIntegrationPasswordChangeSpendsResetLink(t *testing.T) {
 		}
 	})
 
-	t.Run("a profile save that CHANGES the password spends it", func(t *testing.T) {
+	// An email is changed because the old mailbox is lost or compromised; a
+	// link already sitting there must not still take the account over.
+	t.Run("an email change spends it", func(t *testing.T) {
 		issue(t, uniqueName("tok_"))
-		u, err := st.GetUserByID(f.user.ID)
-		if err != nil || u == nil {
-			t.Fatalf("GetUserByID: %v", err)
-		}
-		u.Password = "$2a$10$profilechangedprofilechangedprofilechangedprofilechang"
-		if err := st.UpdateUser(u); err != nil {
-			t.Fatalf("UpdateUser: %v", err)
+		if err := st.SetUserEmail(f.user.ID, uniqueName("moved_")+"@example.test"); err != nil {
+			t.Fatalf("SetUserEmail: %v", err)
 		}
 		if hasToken(t) {
-			t.Error("the reset link survived a self-service password change")
+			t.Error("the reset link survived an email change - the old mailbox can still take the account over")
 		}
 	})
 
-	t.Run("a profile save that does NOT touch the password keeps it", func(t *testing.T) {
-		// The profile save rewrites the password column on every call (the
-		// caller round-trips the row), so an unconditional clear would drop a
-		// valid link because someone edited their email address.
+	t.Run("a Minecraft-name change keeps it", func(t *testing.T) {
 		issue(t, uniqueName("tok_"))
-		u, err := st.GetUserByID(f.user.ID)
-		if err != nil || u == nil {
-			t.Fatalf("GetUserByID: %v", err)
-		}
-		u.MinecraftUsername = "Notch"
-		if err := st.UpdateUser(u); err != nil {
-			t.Fatalf("UpdateUser: %v", err)
+		if err := st.SetUserMinecraftUsername(f.user.ID, "Notch"); err != nil {
+			t.Fatalf("SetUserMinecraftUsername: %v", err)
 		}
 		if !hasToken(t) {
 			t.Error("editing an unrelated profile field invalidated the reset link the user is waiting on")
