@@ -114,7 +114,13 @@ func TestAnOperatorKeyDoesNotOverrideTenantGuards(t *testing.T) {
 
 type resetRevokeStore struct {
 	store.Store
-	revoked []int
+	revoked    []int
+	sshDropped []string
+}
+
+func (f *resetRevokeStore) DeleteAllSSHKeys(uid string) (int, error) {
+	f.sshDropped = append(f.sshDropped, uid)
+	return 1, nil
 }
 
 func (f *resetRevokeStore) GetSetting(string) (string, error) { return "", nil }
@@ -146,5 +152,9 @@ func TestAPasswordResetByLinkRevokesTheAccountsKeys(t *testing.T) {
 	}
 	if len(fs.revoked) != 1 || fs.revoked[0] != 3 {
 		t.Fatalf("revoked %v, want the one live key", fs.revoked)
+	}
+	// The SFTP keys are the same way back in, without even the session check.
+	if len(fs.sshDropped) != 1 || fs.sshDropped[0] != "u1" {
+		t.Fatalf("SSH keys removed for %v, want u1", fs.sshDropped)
 	}
 }

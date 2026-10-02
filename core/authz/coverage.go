@@ -128,14 +128,18 @@ var ExemptRoutes = map[string]bool{
 	"/api/authz/mode":    true, // authed; read-only delegation mode, owner-inclusive
 
 	// Caller's own metered usage / billing / history / regions.
-	"/api/me/usage":               true, // authed; own usage
-	"/api/me/billing":             true, // authed; own billing
-	"/api/me/entitlement":         true, // authed; own entitlement (what I may use)
-	"/api/me/username-history":    true, // authed; own history
-	"/api/me/regions":             true, // authed; own region assignment
-	"/api/me/security-questions":  true, // authed; own security questions
-	"/api/me/updates-seen":        true, // authed; own update-feed badge marker
-	"/api/me/servers/via-tickets": true, // authed; own tickets sidebar
+	"/api/me/usage":              true, // authed; own usage
+	"/api/me/billing":            true, // authed; own billing
+	"/api/me/entitlement":        true, // authed; own entitlement (what I may use)
+	"/api/me/username-history":   true, // authed; own history
+	"/api/me/regions":            true, // authed; own region assignment
+	"/api/me/security-questions": true, // authed; own security questions
+	// Own SFTP keys only - the handler takes the caller's userID and no route
+	// names another account. Adding one re-proves password and second factor.
+	"/api/me/ssh-keys":             true, // authed; own SSH keys
+	"/api/me/ssh-keys/{id:[0-9]+}": true, // authed; own SSH key
+	"/api/me/updates-seen":         true, // authed; own update-feed badge marker
+	"/api/me/servers/via-tickets":  true, // authed; own tickets sidebar
 
 	// The caller's OWN machine. Not capability-gated on purpose: no customer
 	// holds nodes.delete, and these two answer ONLY for a node whose owner_id is

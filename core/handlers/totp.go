@@ -439,7 +439,8 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	// A second factor is reset because the account is not in its owner's
 	// hands; the API keys are a way in that needs neither factor.
 	revoked := revokeAllAPIKeys(h.state, id, "admin 2FA reset")
-	LogIdentityAudit(h.state, r, AuditEvent2FAAdminReset, actorID, id, map[string]interface{}{"api_keys_revoked": revoked})
+	sshRevoked := revokeAllSSHKeys(h.state, id, "admin 2FA reset")
+	LogIdentityAudit(h.state, r, AuditEvent2FAAdminReset, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

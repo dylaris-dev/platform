@@ -295,6 +295,14 @@ type Store interface {
 	UpdateBackupRunStatus(id int, status, errorMsg string, sizeBytes int64, storageKey string, completed time.Time) error
 	DeleteBackupRun(id int) error
 	PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error)
+
+	// --- SSH keys an account signs in to SFTP with ---
+	ListSSHKeysByUser(userID string) ([]models.SSHKey, error)
+	// ListAllSSHKeys is every account's keys by user id, for the SFTP sync.
+	ListAllSSHKeys() (map[string][]string, error)
+	AddSSHKey(k *models.SSHKey, maxPerUser int) (added bool, err error)
+	DeleteSSHKey(userID string, id int) (found bool, err error)
+	DeleteAllSSHKeys(userID string) (int, error)
 	// BackupRunRestoring reports whether a queued or running restore (requested
 	// in the last six hours) is waiting on the run's archive.
 	BackupRunRestoring(runID int) (bool, error)

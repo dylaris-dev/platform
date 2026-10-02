@@ -87,33 +87,23 @@ func TestSaveFileContent_EnforcesUploadLimits(t *testing.T) {
 	}
 }
 
-// TestSFTPWriteCeiling pins that the SFTP write ceiling is the minimum of the
-// enforced limits and reports which one is tightest.
-func TestSFTPWriteCeiling(t *testing.T) {
+// TestSFTPWriteLimits pins the three limits apart: a size cap per file, the
+// disk headroom per server, the daily quota per account.
+func TestSFTPWriteLimits(t *testing.T) {
 	rdb, mr := newNodeTestRedis(t)
 	ctx := context.Background()
 	const uuid = "srv-1"
 
-	if ceil, _ := sftpWriteCeiling(ctx, nil, uuid, "u"); ceil != -1 {
-		t.Errorf("nil rdb ceil = %d, want -1 (unlimited)", ceil)
+	if lim := sftpWriteLimits(ctx, nil, uuid, "u"); lim.file != nil || lim.disk != -1 || lim.daily != nil {
+		t.Errorf("nil rdb = %+v, want no limits", lim)
 	}
-
 	mr.Set(quota.MaxUploadBytesKey, "500")
-	if ceil, reason := sftpWriteCeiling(ctx, rdb, uuid, "u"); ceil != 500 || reason != "per-upload size limit" {
-		t.Errorf("size cap only: (%d, %q), want (500, per-upload size limit)", ceil, reason)
-	}
-
-	// Disk headroom tighter: 1000 limit - 900 used = 100.
 	mr.Set("dylaris:server:"+uuid+":stats:disk", `{"total":900,"limit":1000}`)
-	if ceil, reason := sftpWriteCeiling(ctx, rdb, uuid, "u"); ceil != 100 || reason != "server disk limit" {
-		t.Errorf("disk tighter: (%d, %q), want (100, server disk limit)", ceil, reason)
-	}
-
-	// Daily quota tightest: 1000 limit - 950 used = 50.
 	mr.Set(quota.DailyUploadBytesKey, "1000")
 	mr.Set(quota.DailyKey("u", time.Now()), "950")
-	if ceil, reason := sftpWriteCeiling(ctx, rdb, uuid, "u"); ceil != 50 || reason != "daily upload quota" {
-		t.Errorf("quota tightest: (%d, %q), want (50, daily upload quota)", ceil, reason)
+	lim := sftpWriteLimits(ctx, rdb, uuid, "u")
+	if lim.file == nil || *lim.file != 500 || lim.disk != 100 || lim.daily == nil || *lim.daily != 50 {
+		t.Errorf("limits = file %v disk %d daily %v, want 500/100/50", lim.file, lim.disk, lim.daily)
 	}
 }
 

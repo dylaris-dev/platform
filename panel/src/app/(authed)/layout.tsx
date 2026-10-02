@@ -24,7 +24,7 @@ import UploadManagerWidget from '@/components/UploadManagerWidget';
 import BeamDownloadButton from '@/components/BeamDownloadButton';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
 
@@ -255,6 +255,12 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                     className="dropdown-item"
                                 >
                                     <Key size={20} className="mr-3" /> API Keys
+                                </GuardedLink>
+                                <GuardedLink
+                                    href="/account/ssh-keys"
+                                    className="dropdown-item"
+                                >
+                                    <KeyRound size={20} className="mr-3" /> SSH keys
                                 </GuardedLink>
                                 <GuardedLink
                                     href="/account/modrinth"

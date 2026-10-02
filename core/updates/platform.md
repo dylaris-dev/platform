@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Accounts with two-factor authentication sign in to SFTP with an SSH key, not their password,**
+  added under Account > SSH keys. Key sign-in needs the updated node. `core` `node` `panel`
+- **Accounts suspended for non-payment no longer reach SFTP or the panel's upload,** as Beam
+  already refused them. Downloads and deletes stay open. `core`
+
+### Security
+- **An open SFTP session ends within about a minute when its password or key changes,** and
+  loses a server when access to it is withdrawn. It used to run until the client left. `node`
+- **SFTP sign-in limits count per address and per account,** IPv6 by /64, and unknown names are
+  answered like wrong passwords. Handshakes time out and connections are capped. `node`
+- **Recovering an account removes its SSH keys,** like its API keys. `core`
+
+### Fixes
+- **SFTP changes now appear in the server's audit trail.** `core` `node`
+- **Resumed uploads and in-place edits no longer empty the file first,** parallel uploads share
+  one daily quota, and two servers of the same name are both reachable. `node`
+
 ## 2026.10.02
 
 ### Features

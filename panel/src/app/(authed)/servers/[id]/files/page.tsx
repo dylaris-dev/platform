@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from 'react';
+import Link from 'next/link';
 
 import { Terminal, Globe, FolderOpen, Copy, Loader2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
@@ -72,6 +73,10 @@ export default function ServerFilesPage() {
                                     <span>25520</span>
                                     <span className="text-(--base-05)">·</span>
                                     <span>{user?.username}</span>
+                                </div>
+                                <div className="text-xs text-(--base-06) mt-0.5">
+                                    Using two-factor authentication? Sign in with an SSH key from{' '}
+                                    <Link href="/account/ssh-keys" className="text-(--accent-light) hover:underline">Account &gt; SSH keys</Link>.
                                 </div>
                             </div>
                             <button

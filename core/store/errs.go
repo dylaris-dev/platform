@@ -21,6 +21,8 @@ var (
 	// ErrWarpKeyNodeTaken is returned by BindWarpAPIKey when the machine already
 	// has a live key bound (idx_warp_api_keys_bound_node). Handlers map it to 409.
 	ErrWarpKeyNodeTaken = errors.New("machine already has a live key bound")
+	// ErrSSHKeyExists is an SSH key the account already holds.
+	ErrSSHKeyExists = errors.New("this key is already on the account")
 )
 
 // isUniqueViolation reports whether err is a Postgres unique-constraint

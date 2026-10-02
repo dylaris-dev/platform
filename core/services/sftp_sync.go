@@ -168,6 +168,48 @@ func sftpNodeServersKey(node models.Node, username string) string {
 	return "sftp:node:" + node.Token + ":user:" + username
 }
 
+// sftpNodeKeysKey holds the SSH public keys (authorized_keys lines) an account
+// may sign in to this node's SFTP with. Under sftp:node:<token>: so the grant
+// the node already has covers it, and a separate key rather than a new shape
+// for sftp:auth, which a node one release behind would read as a bcrypt hash.
+func sftpNodeKeysKey(node models.Node, username string) string {
+	return "sftp:node:" + node.Token + ":keys:" + username
+}
+
+// sftpPasswordAllowed reports whether an account may sign in to SFTP with its
+// password. SFTP has nowhere to ask for a second factor, so an account that has
+// one - or that the platform requires to have one - signs in with a key
+// instead. Publishing its hash let the password alone open every file the
+// account could reach, which is exactly the theft the second factor is for.
+func sftpPasswordAllowed(u models.User, p sftpAuthPolicy) bool {
+	if u.Password == "" || u.Is2FAEnabled {
+		return false
+	}
+	return !p.require2FAForAll && !(u.IsAdmin && p.require2FAForAdmins)
+}
+
+// sftpLoginAllowed reports whether an account may use SFTP at all: not while
+// the platform requires a verified address it has not confirmed - the panel
+// refuses that sign-in outright (admins excepted, as there).
+func sftpLoginAllowed(u models.User, p sftpAuthPolicy) bool {
+	return !(p.emailVerifyRequired && !u.IsAdmin && u.EmailVerifiedAt == nil)
+}
+
+// sftpAuthPolicy is the part of the panel's sign-in policy SFTP has to follow.
+// Read from the same settings handlers.LoadAuthPolicy reads.
+type sftpAuthPolicy struct {
+	require2FAForAll, require2FAForAdmins, emailVerifyRequired bool
+}
+
+func loadSFTPAuthPolicy(st store.Store) sftpAuthPolicy {
+	is := func(key string) bool { v, _ := st.GetSetting(key); return v == "true" }
+	return sftpAuthPolicy{
+		require2FAForAll:    is("auth.require_2fa_for_all_users"),
+		require2FAForAdmins: is("auth.require_2fa_for_admins"),
+		emailVerifyRequired: is("auth.email_verify_required"),
+	}
+}
+
 // pruneStaleAuthKeys removes any sftp:auth:* key whose user is no longer in
 // the valid set. SCAN keeps it O(batch) instead of blocking Redis with KEYS.
 //
@@ -179,15 +221,29 @@ func sftpNodeServersKey(node models.Node, username string) string {
 // refresh is the correct fail-closed response there, and the 5-minute TTL still
 // applies - the prune exists to shorten the window after a revocation, not to
 // open one after a hiccup.
-func (s *SFTPSyncService) pruneStaleAuthKeys(ctx context.Context, valid map[string]bool, unknown []string) {
+//
+// The per-node server and key lists are pruned the same way. They used to be
+// left to their 5-minute TTL, so a revoked grant stayed on the node for up to
+// five minutes - and a node that re-reads the list to end a session on
+// revocation (sftp_server.go) can only be as quick as this.
+//
+// keepKeys leaves every published key list alone: this tick could not read the
+// keys, and pruning on that would end every key-signed session on the fleet.
+func (s *SFTPSyncService) pruneStaleAuthKeys(ctx context.Context, valid map[string]bool, unknown []string, keepKeys bool) {
+	for _, pattern := range []string{"sftp:auth:*", "sftp:node:*"} {
+		s.pruneStale(ctx, pattern, valid, unknown, keepKeys)
+	}
+}
+
+func (s *SFTPSyncService) pruneStale(ctx context.Context, pattern string, valid map[string]bool, unknown []string, keepKeys bool) {
 	var cursor uint64
 	for {
-		keys, next, err := s.redis.Scan(ctx, cursor, "sftp:auth:*", 100).Result()
+		keys, next, err := s.redis.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
 			return
 		}
 		for _, k := range keys {
-			if valid[k] || hasAnyPrefix(k, unknown) {
+			if valid[k] || hasAnyPrefix(k, unknown) || (keepKeys && strings.Contains(k, ":keys:")) {
 				continue
 			}
 			s.redis.Del(ctx, k)
@@ -227,16 +283,36 @@ func (s *SFTPSyncService) sync() {
 	// now go out per node, in step 2, to the nodes where the user actually has a
 	// server - which also means a user with no servers is published nowhere.
 	hashByUser := make(map[string]string, len(users))
+	policy := loadSFTPAuthPolicy(s.store)
+	// Who may use SFTP at all, and the keys of those who may. A key list that
+	// cannot be read this tick publishes none: a key that should be gone
+	// staying for a tick is worse than one that should be there missing for one.
+	blocked := make(map[string]bool)
+	keysByUser := make(map[string][]string)
+	allKeys, kerr := s.store.ListAllSSHKeys()
+	if kerr != nil {
+		log.Printf("SFTPSync: could not read SSH keys, publishing none this tick: %v", kerr)
+	}
 	// The admin flag has to come from here rather than from the access rows: an
 	// admin resolves as holding everything, and building the identity without it
 	// would resolve them as an ordinary user and drop their own access.
 	adminByUser := make(map[string]bool, len(users))
 	for _, u := range users {
-		if u.Password != "" {
+		adminByUser[u.Username] = u.IsAdmin
+		if !sftpLoginAllowed(u, policy) {
+			blocked[u.Username] = true
+			continue
+		}
+		if sftpPasswordAllowed(u, policy) {
 			hashByUser[u.Username] = u.Password
 		}
-		adminByUser[u.Username] = u.IsAdmin
+		if keys := allKeys[u.ID]; len(keys) > 0 {
+			keysByUser[u.Username] = keys
+		}
 	}
+	// Owners suspended for non-payment, the same cut-off Beam applies: their
+	// servers are not offered over SFTP to them or to anyone they invited.
+	suspended := newOwnerSuspension(s.store)
 	valid := make(map[string]bool, len(users))
 	// Drop auth keys for users that no longer exist (deleted or renamed). The
 	// TTL above already bounds this at 5 minutes; the prune is what closes the
@@ -265,7 +341,7 @@ func (s *SFTPSyncService) sync() {
 		accesses, err := s.store.GetSFTPAccessByNode(node.ID)
 		if err != nil {
 			log.Printf("SFTPSync: could not read SFTP access for node %s, leaving its published hashes in place: %v", node.Name, err)
-			unknown = append(unknown, redisacl.SFTPAuthKeyPrefix(node.Token))
+			unknown = append(unknown, redisacl.SFTPAuthKeyPrefix(node.Token), "sftp:node:"+node.Token+":")
 			continue
 		}
 
@@ -282,6 +358,9 @@ func (s *SFTPSyncService) sync() {
 		// doorbell and not on the door.
 		byUser := make(map[string][]sftpServerEntry)
 		for _, a := range accesses {
+			if blocked[a.Username] || suspended.of(a.ServerID) {
+				continue
+			}
 			ok, perms := s.mayUseSFTP(a, adminByUser[a.Username])
 			if !ok {
 				continue
@@ -331,7 +410,16 @@ func (s *SFTPSyncService) sync() {
 			if err != nil {
 				continue
 			}
-			pipe.Set(ctx, sftpNodeServersKey(node, username), data, 5*time.Minute)
+			listKey := sftpNodeServersKey(node, username)
+			pipe.Set(ctx, listKey, data, 5*time.Minute)
+			valid[listKey] = true
+			if keys, ok := keysByUser[username]; ok {
+				if kdata, err := json.Marshal(keys); err == nil {
+					keysKey := sftpNodeKeysKey(node, username)
+					pipe.Set(ctx, keysKey, kdata, 5*time.Minute)
+					valid[keysKey] = true
+				}
+			}
 			// The same TTL as the server list, for the same reason: if this sync
 			// stops, the credentials stop opening a session within 5 minutes
 			// rather than lingering.
@@ -352,5 +440,37 @@ func (s *SFTPSyncService) sync() {
 	// loop had just written. It also clears the old fleet-wide
 	// "sftp:auth:<username>" keys from before this was node-scoped, since those
 	// can never appear in `valid` again.
-	s.pruneStaleAuthKeys(ctx, valid, unknown)
+	s.pruneStaleAuthKeys(ctx, valid, unknown, kerr != nil)
+}
+
+// ownerSuspension answers "is this server's owner suspended for non-payment"
+// for one sync tick, reading each server and each owner once.
+type ownerSuspension struct {
+	st      store.Store
+	byOwner map[string]bool
+	byID    map[int]bool
+}
+
+func newOwnerSuspension(st store.Store) *ownerSuspension {
+	return &ownerSuspension{st: st, byOwner: map[string]bool{}, byID: map[int]bool{}}
+}
+
+// of fails OPEN on a read error, like the panel's own suspension check: a
+// billing read that fails must not take SFTP away from paying customers.
+func (o *ownerSuspension) of(serverID int) bool {
+	if v, ok := o.byID[serverID]; ok {
+		return v
+	}
+	v := false
+	if srv, err := o.st.GetServerByID(serverID); err == nil && srv != nil && srv.OwnerID != "" {
+		owner, seen := o.byOwner[srv.OwnerID]
+		if !seen {
+			b, berr := o.st.GetUserBilling(srv.OwnerID)
+			owner = berr == nil && b != nil && b.Status == "suspended"
+			o.byOwner[srv.OwnerID] = owner
+		}
+		v = owner
+	}
+	o.byID[serverID] = v
+	return v
 }

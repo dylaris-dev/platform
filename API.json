@@ -2471,6 +2471,33 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/me/ssh-keys",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "SSHKeysHandler.List",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/ssh-keys",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "SSHKeysHandler.Create",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/me/ssh-keys/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "SSHKeysHandler.Delete",
+      "group": "me",
+      "external": false
+    },
+    {
       "method": "PUT",
       "path": "/api/me/updates-seen",
       "auth": "session",
@@ -5102,10 +5129,10 @@
     }
   ],
   "counts": {
-    "total": 512,
+    "total": 515,
     "byAuth": {
       "none": 31,
-      "session": 465,
+      "session": 468,
       "user API key": 10,
       "warp key": 6
     },
@@ -5127,7 +5154,7 @@
       "infrastructure": 2,
       "library": 6,
       "maintenance": 1,
-      "me": 27,
+      "me": 30,
       "mirror": 2,
       "modrinth": 6,
       "modules": 6,

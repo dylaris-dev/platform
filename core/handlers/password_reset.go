@@ -255,7 +255,8 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// sessions ended with the password; the API keys did not, so a key minted
 	// by whoever had the account kept working.
 	revoked := revokeAllAPIKeys(h.state, user.ID, "password reset")
-	LogIdentityAudit(h.state, r, AuditEventPasswordResetCompleted, "", user.ID, map[string]interface{}{"api_keys_revoked": revoked})
+	sshRevoked := revokeAllSSHKeys(h.state, user.ID, "password reset")
+	LogIdentityAudit(h.state, r, AuditEventPasswordResetCompleted, "", user.ID, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

@@ -305,5 +305,8 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyDerivedModuleRows(db); err != nil {
 		return err
 	}
+	if err := applySSHKeysSchema(db); err != nil {
+		return err
+	}
 	return nil
 }

@@ -249,7 +249,10 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 		// and Core writes that into the sub-server's install record and mod
 		// rows - so a fleet-wide name would let one node restate another
 		// server's contents.
-		"&"+queue.SetupResultsChannel(token))
+		"&"+queue.SetupResultsChannel(token),
+		// What an SFTP session changed, for the server audit trail. Core
+		// checks the token against the server's node before writing a row.
+		"&"+queue.SFTPAuditChannel(token))
 	for _, u := range serverUUIDs {
 		rules = append(rules, "&dylaris:server:"+u+":stats:live")
 	}

@@ -899,6 +899,8 @@ func main() {
 	// What an installer FOUND, as opposed to what Core told it to do. Only a
 	// backup import reports anything; see services.SetupResultService.
 	services.NewSetupResultService(pgStore, redisClient, coreLeader).Start(bgCtx)
+	// What SFTP sessions changed, into the server audit trail.
+	services.NewSFTPAuditService(pgStore, redisClient, coreLeader).Start(bgCtx)
 
 	// Platform backups on their schedule, and the retention that prunes them.
 	// Without this the schedule field on the screen would be a control that

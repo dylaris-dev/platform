@@ -416,6 +416,7 @@ func (f *keyedGuardStore) RevokeAPIKey(id int, _ string) error {
 	f.revoked = append(f.revoked, id)
 	return nil
 }
+func (f *keyedGuardStore) DeleteAllSSHKeys(string) (int, error) { return 0, nil }
 
 // An operator sets someone's password because the account is no longer in its
 // owner's hands. The sessions ended with it; the API keys kept working.

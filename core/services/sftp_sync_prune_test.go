@@ -28,6 +28,24 @@ type sftpPruneFakeStore struct {
 	// that never saved the setting, which is what these cases are: they are
 	// about pruning and grants, not about whether SFTP is served at all.
 	fileMode string
+	// settings, keys, owners and billing are what the 2FA, key and suspension
+	// rules read; nil reads as nothing set.
+	settings  map[string]string
+	keys      map[string][]string
+	keysErr   error
+	owners    map[int]string
+	suspended map[string]bool
+}
+
+func (f *sftpPruneFakeStore) ListAllSSHKeys() (map[string][]string, error) { return f.keys, f.keysErr }
+func (f *sftpPruneFakeStore) GetServerByID(id int) (*models.Server, error) {
+	return &models.Server{ID: id, OwnerID: f.owners[id]}, nil
+}
+func (f *sftpPruneFakeStore) GetUserBilling(owner string) (*store.UserBilling, error) {
+	if f.suspended[owner] {
+		return &store.UserBilling{Status: "suspended"}, nil
+	}
+	return nil, nil
 }
 
 func (f *sftpPruneFakeStore) ListUsers() ([]models.User, error) { return f.users, nil }
@@ -36,7 +54,7 @@ func (f *sftpPruneFakeStore) GetSetting(key string) (string, error) {
 	if key == "file_access_mode" {
 		return f.fileMode, nil
 	}
-	return "", nil
+	return f.settings[key], nil
 }
 func (f *sftpPruneFakeStore) GetSFTPAccessByNode(nodeID int) ([]store.SFTPAccess, error) {
 	if err := f.accessErr[nodeID]; err != nil {
@@ -181,13 +199,12 @@ func TestSyncPublishesNothingForSFTPWhenFileAccessIsBeam(t *testing.T) {
 			t.Errorf("password hash %q is still published on a beam-only platform", k)
 		}
 	}
-	// The server list is left to its 5-minute TTL rather than scanned for on
-	// every tick. It opens nothing on its own, and a SCAN per skipped node per
-	// minute forever is a poor trade for five minutes of a list of server
-	// names. What must NOT happen is a refresh, which would keep it alive for
-	// as long as the platform stays on beam.
-	if ttl := mr.TTL(staleList); ttl <= 0 || ttl > 4*time.Minute {
-		t.Errorf("the stale server list was refreshed (ttl now %s); on a platform that stays on beam it would never age out", ttl)
+	// The server list goes too. It used to be left to its 5-minute TTL, but a
+	// node now re-reads it to end open sessions when access is withdrawn, so
+	// the list lingering is the session lingering. One SCAN per tick covers
+	// every node.
+	if mr.Exists(staleList) {
+		t.Errorf("the stale server list %q is still published on a beam-only platform", staleList)
 	}
 }
 

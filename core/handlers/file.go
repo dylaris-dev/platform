@@ -955,6 +955,11 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
+	// The cut-off Beam and SFTP apply: an upload is new data a suspended
+	// tenant's server takes on, and this route was the one way left to do it.
+	if srv, err := h.state.Store.GetServerByUUID(serverUUID); err == nil && refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
 
 	// Disk quota pre-check: reject upload if it would exceed the limit
 	if h.state.Redis != nil {

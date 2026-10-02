@@ -761,6 +761,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// already holds - which is exactly the situation the check exists for.
 	api.HandleFunc("/me/api-keys", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))))).Methods("POST")
 	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.delete")(apiKeysHandler.Revoke))).Methods("DELETE")
+	// The keys the caller signs in to SFTP with. Own account only, like the
+	// API keys above; adding one re-asks password and code, so it is throttled
+	// and body-capped for the same reason.
+	sshKeysHandler := handlers.NewSSHKeysHandler(appState)
+	api.HandleFunc("/me/ssh-keys", authHandler.AuthMiddleware(sshKeysHandler.List)).Methods("GET")
+	api.HandleFunc("/me/ssh-keys", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(sshKeysHandler.Create)))).Methods("POST")
+	api.HandleFunc("/me/ssh-keys/{id:[0-9]+}", authHandler.AuthMiddleware(sshKeysHandler.Delete)).Methods("DELETE")
 	// --- External API surface: Authorization: Bearer dyl_<key> ---
 	//
 	// A separate surface from the panel routes above, addressing servers by

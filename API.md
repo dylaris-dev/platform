@@ -133,10 +133,10 @@ can still show what exists.
 
 ## At a glance
 
-- **511 routes** in 51 sections: 227 GET, 157 POST, 38 PUT, 36 PATCH, 54 DELETE.
+- **514 routes** in 51 sections: 228 GET, 158 POST, 38 PUT, 36 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **106** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **20** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **109** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -156,7 +156,7 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (2)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (27)
+- [/api/me](#apime) (30)
 - [/api/modrinth](#apimodrinth) (6)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
@@ -522,6 +522,9 @@ can still show what exists.
 | GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
 | PUT | `/api/me/security-questions` | session | _no capability_ | Limit, LimitBody | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
 | GET | `/api/me/servers/via-tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |
+| GET | `/api/me/ssh-keys` | session | _no capability_ | - | `SSHKeysHandler.List` | - |
+| POST | `/api/me/ssh-keys` | session | _no capability_ | Limit, LimitBody | `SSHKeysHandler.Create` | - |
+| DELETE | `/api/me/ssh-keys/{id:[0-9]+}` | session | _no capability_ | - | `SSHKeysHandler.Delete` | - |
 | PUT | `/api/me/updates-seen` | session | _no capability_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge everything published so far, clearing this user's badge. |
 | GET | `/api/me/usage` | session | _no capability_ | - | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
 | GET | `/api/me/username-history` | session | _no capability_ | - | `UsernameHistoryHandler.Me` | the calling user's own past usernames. |
