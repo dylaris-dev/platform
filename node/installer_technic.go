@@ -78,16 +78,31 @@ func installTechnic(destDir string, cfg InstallerConfig) error {
 
 	// Created fresh with a random name: destDir is writable by the tenant, so a
 	// fixed name could already be a symlink pointing somewhere else.
-	stage, err := os.MkdirTemp(destDir, ".technic-stage-")
+	stageMade, err := os.MkdirTemp(destDir, ".technic-stage-")
 	if err != nil {
 		return fmt.Errorf("preparing the install failed: %w", err)
 	}
-	defer os.RemoveAll(stage)
-	dl, err := os.MkdirTemp(destDir, ".technic-dl-")
+	defer os.RemoveAll(stageMade)
+	dlMade, err := os.MkdirTemp(destDir, ".technic-dl-")
 	if err != nil {
 		return fmt.Errorf("preparing the install failed: %w", err)
 	}
-	defer os.RemoveAll(dl)
+	defer os.RemoveAll(dlMade)
+	// A random name cannot be planted in advance, but the tenant's server can
+	// swap the directory for a link once it exists, and everything below used
+	// to reach it by name - downloading, unpacking, renaming and removing as
+	// root wherever it then pointed. Each is opened once, refusing a link,
+	// and used through that open directory from here on.
+	stage, releaseStage, err := pinDir(destDir, filepath.Base(stageMade), false)
+	if err != nil {
+		return fmt.Errorf("preparing the install failed: %w", err)
+	}
+	defer releaseStage()
+	dl, releaseDL, err := pinDir(destDir, filepath.Base(dlMade), false)
+	if err != nil {
+		return fmt.Errorf("preparing the install failed: %w", err)
+	}
+	defer releaseDL()
 
 	budget := int64(technicUnpackMax)
 	if cfg.Variant == "client-solder" {
@@ -109,7 +124,7 @@ func installTechnic(destDir string, cfg InstallerConfig) error {
 		return fmt.Errorf("opening the server directory failed: %w", err)
 	}
 	defer root.Close()
-	stageName := filepath.Base(stage)
+	stageName := filepath.Base(stageMade)
 
 	if cfg.Variant == "server" {
 		if err := liftSoleDirectory(stage); err != nil {

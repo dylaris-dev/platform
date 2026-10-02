@@ -77,11 +77,12 @@ func installFromBackupArchive(destDir string) ([]byte, error) {
 // unpackBackupArchive extracts archivePath into destDir and returns the
 // manifest it carried, closing every handle it opened before it returns.
 func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
-	f, err := os.Open(archivePath)
+	f, err := openNoFollow(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("backup archive not found at %s: %w", backupImportArchiveName, err)
 	}
 	defer f.Close()
+	budget := restoreDiskBudget(destDir)
 
 	gr, err := gzip.NewReader(f)
 	if err != nil {
@@ -139,7 +140,7 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 			}
 			// Bounded by the header's own size rather than copied to EOF, so a
 			// lying header cannot fill the disk from a small archive.
-			if _, cerr := io.Copy(out, io.LimitReader(tr, hdr.Size)); cerr != nil {
+			if _, cerr := io.Copy(out, &budgetReader{r: io.LimitReader(tr, hdr.Size), left: &budget}); cerr != nil {
 				out.Close()
 				return nil, fmt.Errorf("write %s: %w", hdr.Name, cerr)
 			}

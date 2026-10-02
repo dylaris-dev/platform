@@ -337,3 +337,40 @@ func copyTreeAt(src, dst string, forTenant bool) error {
 	defer dstRoot.Close()
 	return copyWalkIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst), forTenant)
 }
+
+// errUnpackBudget ends an extraction that would fill the disk.
+var errUnpackBudget = errors.New("the archive unpacks to more than the free space this node can give it")
+
+// budgetReader fails once more than *left bytes have been read through it,
+// across every reader sharing left. An archive's sizes are its own claim, so
+// the count is of what actually comes out.
+type budgetReader struct {
+	r    io.Reader
+	left *int64
+}
+
+func (b *budgetReader) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if int64(n) > *b.left {
+		// Hand back only what fits: io.Copy writes the bytes of a read before
+		// it looks at the error.
+		n = int(max(*b.left, 0))
+		*b.left = -1
+		return n, errUnpackBudget
+	}
+	*b.left -= int64(n)
+	return n, err
+}
+
+// writeEULA accepts the EULA for a sub-server. Through a scope that follows
+// no link: eula.txt is a name the tenant can plant a link under, and a plain
+// write followed it - to the node's own config in the server root, or
+// further with a race.
+func writeEULA(serverPath, subName string) error {
+	root, leaf, err := writeScope(serverPath, path.Join(filepath.ToSlash(subName), "eula.txt"), false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.WriteFile(leaf, []byte("eula=true\n"), 0o644)
+}

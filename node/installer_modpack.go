@@ -209,11 +209,15 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 	}
 
 	log.Printf("modpack: downloading %s for %s", cfg.URL, destDir)
-	tmp := filepath.Join(destDir, mrpackTempDir)
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", tmp, err)
+	// A fixed name in a directory the tenant writes: a link planted under it
+	// was adopted by MkdirAll and followed by OpenRoot, and the node created
+	// pack.mrpack wherever it pointed. Opened without following a link.
+	defer os.RemoveAll(filepath.Join(destDir, mrpackTempDir))
+	tmp, releaseTmp, err := pinDir(destDir, mrpackTempDir, true)
+	if err != nil {
+		return fmt.Errorf("prepare %s: %w", mrpackTempDir, err)
 	}
-	defer os.RemoveAll(tmp)
+	defer releaseTmp()
 
 	tmpRoot, err := os.OpenRoot(tmp)
 	if err != nil {
@@ -346,11 +350,20 @@ func readMrpackIndex(path string) (*mrpackIndex, error) {
 // .mrpack zip and copies entries into destDir. server-overrides applies
 // on top so server-only tweaks override client values for the same path.
 func extractOverrides(mrpackPath, destDir string) error {
-	rd, err := zip.OpenReader(mrpackPath)
+	zf, err := openNoFollow(mrpackPath)
 	if err != nil {
 		return err
 	}
-	defer rd.Close()
+	defer zf.Close()
+	st, err := zf.Stat()
+	if err != nil {
+		return err
+	}
+	rd, err := zip.NewReader(zf, st.Size())
+	if err != nil {
+		return err
+	}
+	budget := restoreDiskBudget(destDir)
 
 	root, err := openRootMk(destDir)
 	if err != nil {
@@ -386,7 +399,7 @@ func extractOverrides(mrpackPath, destDir string) error {
 			if err != nil {
 				return err
 			}
-			werr := writeFileInto(root, name, 0o644, rc, 0)
+			werr := writeFileInto(root, name, 0o644, &budgetReader{r: rc, left: &budget}, 0)
 			rc.Close()
 			if werr != nil {
 				return werr

@@ -48,3 +48,5 @@ func pinDir(rootDir, rel string, mk bool) (string, func(), error) {
 	}
 	return p, func() {}, nil
 }
+
+func openNoFollow(p string) (*os.File, error) { return os.Open(p) }

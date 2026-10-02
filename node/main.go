@@ -1329,6 +1329,16 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		installerCfg.JavaImage = cmd.Config.Docker.Image
 		installerCfg.ServerUUID = cmd.Config.UUID
 
+		// The server is stopped BEFORE the install, not only when it is
+		// recreated at the end. Its container mounts the whole server
+		// directory, and the code in it - the tenant's plugins - could swap a
+		// directory for a link while the installer was writing, downloading
+		// and unpacking into it as root. A setup ends by recreating and
+		// starting the server anyway; this moves the stop to the start.
+		if dm != nil {
+			gracefulStop(rdb, cmd.Config.UUID, dm)
+		}
+
 		manifest, err := InstallServer(serverPath, subName, installerCfg)
 		if discardIfDeleted(cmd.Config.UUID, serverPath) {
 			return
@@ -1356,7 +1366,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// makes os.WriteFile (O_TRUNC) truncate the link's target instead. Fixed
 		// content, but truncating an arbitrary file the node can write is still a
 		// cross-tenant destroy.
-		eulaPath, err := resolveWithinDir(serverPath, filepath.Join(subName, "eula.txt"))
+		_, err = resolveWithinDir(serverPath, filepath.Join(subName, "eula.txt"))
 		if err != nil {
 			log.Printf("Refusing to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
 			// This return leaves the install half-done, so it is a failure like
@@ -1367,7 +1377,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, err)
 			return
 		}
-		if err := os.WriteFile(eulaPath, []byte("eula=true\n"), 0644); err != nil {
+		if err := writeEULA(serverPath, subName); err != nil {
 			log.Printf("Failed to write eula.txt for %s/%s: %v", cmd.Config.UUID, subName, err)
 		}
 

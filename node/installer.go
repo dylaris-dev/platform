@@ -555,11 +555,22 @@ func DetectServerJar(destDir string) string {
 // beam, or from inside the tenant's container) cannot be followed out of it,
 // and traversal names are folded away by extractRel first.
 func extractZipToDir(zipPath, destDir string) error {
-	r, err := zip.OpenReader(zipPath)
+	zf, err := openNoFollow(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip %s: %v", zipPath, err)
 	}
-	defer r.Close()
+	defer zf.Close()
+	st, err := zf.Stat()
+	if err != nil {
+		return err
+	}
+	r, err := zip.NewReader(zf, st.Size())
+	if err != nil {
+		return fmt.Errorf("failed to open zip %s: %v", zipPath, err)
+	}
+	// Bounded like a restore: nothing else stops an archive that unpacks to
+	// more than the disk holds, on a node without project quotas.
+	budget := restoreDiskBudget(destDir)
 
 	root, err := openRootMk(destDir)
 	if err != nil {
@@ -581,7 +592,7 @@ func extractZipToDir(zipPath, destDir string) error {
 		if err != nil {
 			return err
 		}
-		werr := writeFileInto(root, name, f.Mode(), rc, 0)
+		werr := writeFileInto(root, name, f.Mode(), &budgetReader{r: rc, left: &budget}, 0)
 		rc.Close()
 		if werr != nil {
 			return werr

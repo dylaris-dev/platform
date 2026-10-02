@@ -111,3 +111,12 @@ func pinDir(rootDir, rel string, mk bool) (string, func(), error) {
 	}
 	return fmt.Sprintf("/proc/self/fd/%d", dir.Fd()), func() { dir.Close() }, nil
 }
+
+// openNoFollow opens path for reading and refuses a link at its last
+// component. For an archive the tenant uploaded into their own directory: a
+// link planted under its name pointed the installer, running as root, at any
+// file on the host - another tenant's upload included - and unpacked it into
+// this server.
+func openNoFollow(p string) (*os.File, error) {
+	return os.OpenFile(p, os.O_RDONLY|unix.O_NOFOLLOW, 0)
+}

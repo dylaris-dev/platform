@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **A server is stopped when its setup begins,** not only when it restarts at the end, so a
+  Forge or modpack install keeps it offline for the length of the install. `node`
+
+### Security
+- **A link planted in a server could steer an install outside it:** the Technic installer's
+  work folders, the modpack work folder and eula.txt followed it. They no longer do. `node`
+- **An uploaded archive or backup import could be a link to another server's archive,** which
+  the installer then unpacked here. Archives are opened without following links. `node`
+- **Unpacking an upload, a modpack or a backup import stops before the disk fills,** as a
+  restore already did. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02.3
 
 ### Features

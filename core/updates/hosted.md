@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **A server is now stopped when its setup begins,** not only at the end. BYON nodes need the
+  update. `node`
+
+### Security
+- **Installs no longer follow links planted inside a server,** and unpacking stops before the
+  disk fills. BYON nodes need the update. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02.3
 
 ### Features
