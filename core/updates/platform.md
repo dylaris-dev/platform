@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **Writes through a linked folder inside a server are refused** in the panel, Beam and SFTP;
+  reading still follows links. An open Beam session ends after a day and must reconnect. `node`
+
+### Security
+- **A link inside a server let a save, upload or mod install write the node's own files,**
+  such as the config the container is rebuilt from. Writes no longer follow links. `node`
+- **An open Beam session kept its rights after access was withdrawn,** a password was reset or
+  a role changed. It now ends within seconds, and those changes now end its tickets. `core` `node`
+- **Parallel Beam uploads each had the whole daily quota and disk headroom,** and opening a
+  file as text had no size limit. Both are bounded now. `node`
+
+### Fixes
+- **Beam changes now appear in the server's audit trail.** `core` `node`
+
 ## 2026.10.02.2
 
 ### Features

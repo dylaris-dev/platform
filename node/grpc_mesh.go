@@ -125,7 +125,7 @@ func (m *MeshManager) cleanupStalePendingWrites() {
 		if pw.lastActive.Before(threshold) {
 			log.Printf("gRPC Mesh: Cleaning up stale upload (request_id=%s, path=%s)", reqID, pw.path)
 			pw.tempFile.Close()
-			m.handler.removeUploadTemp(pw.serverUUID, pw.tempName)
+			m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
 			delete(m.pendingWrites, reqID)
 		}
 	}
@@ -396,7 +396,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				// instead of falling through, which would let a later
 				// TransferDone report success on a partial/corrupt file.
 				pw.tempFile.Close()
-				m.handler.removeUploadTemp(pw.serverUUID, pw.tempName)
+				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
 				delete(m.pendingWrites, msg.RequestId)
 				m.writeMu.Unlock()
 				if errors.Is(err, syscall.EDQUOT) {
@@ -426,7 +426,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			pw.tempFile.Close()
 			if err := m.handler.commitUpload(pw.serverUUID, pw.path, pw.tempName); err != nil {
 				log.Printf("gRPC Mesh: Move file failed (request_id=%s): %v", msg.RequestId, err)
-				m.handler.removeUploadTemp(pw.serverUUID, pw.tempName)
+				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
 				if errors.Is(err, syscall.EDQUOT) {
 					cc.send(errorMsg(msg.RequestId, 413, "Storage limit reached"))
 				} else {

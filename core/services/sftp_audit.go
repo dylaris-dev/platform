@@ -16,6 +16,9 @@ import (
 // changed on a server.
 const ServerAuditEventSFTPChanges = "sftp.changes"
 
+// ServerAuditEventBeamChanges is the same for a change made through Beam.
+const ServerAuditEventBeamChanges = "beam.changes"
+
 // maxSFTPAuditPaths bounds what one record may put in the audit trail, whatever
 // the node sent.
 const maxSFTPAuditPaths = 50
@@ -86,11 +89,15 @@ func (s *SFTPAuditService) apply(channel string, rec queue.SFTPAuditRecord) {
 	if len(rec.Paths) > maxSFTPAuditPaths {
 		rec.Paths, rec.Truncated = rec.Paths[:maxSFTPAuditPaths], true
 	}
+	eventType, agent := ServerAuditEventSFTPChanges, "sftp"
+	if rec.Via == "beam" {
+		eventType, agent = ServerAuditEventBeamChanges, "beam"
+	}
 	ev := &models.ServerAuditEvent{
 		ServerID:  srv.ID,
-		EventType: ServerAuditEventSFTPChanges,
+		EventType: eventType,
 		IPAddress: rec.RemoteIP,
-		UserAgent: "sftp",
+		UserAgent: agent,
 		Metadata: map[string]interface{}{
 			"username": rec.Username, "writes": rec.Writes, "deletes": rec.Deletes,
 			"renames": rec.Renames, "mkdirs": rec.Mkdirs, "paths": rec.Paths, "truncated": rec.Truncated,

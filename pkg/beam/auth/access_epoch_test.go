@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -98,15 +99,28 @@ func TestAnUnreachableRedisDoesNotLockAnyoneOut(t *testing.T) {
 	}
 }
 
-// The stamp is kept only as long as a ticket could still be young enough for it
-// to matter. Anything older is refused by its own expiry.
-func TestTheStampExpiresWithTheTicketsItCouldRefuse(t *testing.T) {
+// Open sessions re-check the stamp, and the node caps a session at a day. A
+// stamp that expired while a session sat idle - it used to live 35 minutes -
+// answered "nothing changed" and gave a revoked session its rights back.
+func TestTheStampOutlivesTheLongestSession(t *testing.T) {
 	rdb, mr := epochFixture(t)
 	if err := BumpAccessEpoch(context.Background(), rdb, "srv-1"); err != nil {
 		t.Fatalf("bump: %v", err)
 	}
-	ttl := mr.TTL(AccessEpochKey("srv-1"))
-	if ttl <= BeamTicketTTL {
-		t.Errorf("stamp TTL %v does not outlive a ticket (%v); a ticket could survive the stamp that refuses it", ttl, BeamTicketTTL)
+	if ttl := mr.TTL(AccessEpochKey("srv-1")); ttl <= 24*time.Hour {
+		t.Errorf("stamp TTL %v does not outlive a day-long session", ttl)
+	}
+}
+
+// A ticket minted in the same second as the change cannot be told apart from
+// one minted just before it, and is refused.
+func TestATicketFromTheSameSecondAsTheChangeIsStale(t *testing.T) {
+	rdb, mr := epochFixture(t)
+	now := time.Now()
+	mr.Set(AccessEpochKey("srv-1"), strconv.FormatInt(now.Unix(), 10))
+	c := &BeamClaims{ServerUUID: "srv-1"}
+	c.IssuedAt = jwt.NewNumericDate(now)
+	if stale, err := TicketPredatesAccessChange(context.Background(), rdb, c); err != nil || !stale {
+		t.Fatalf("same-second ticket: stale=%v err=%v", stale, err)
 	}
 }

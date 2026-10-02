@@ -168,6 +168,9 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Server role not found", 404)
 		return
 	}
+	// A role's capabilities are every holder's: changing them changes who may
+	// reach the files of every server in this realm.
+	stampBeamAccessForOwner(r.Context(), h.state, owner)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: normalizeCaps(req.Capabilities)},
@@ -200,5 +203,6 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Server role not found", 404)
 		return
 	}
+	stampBeamAccessForOwner(r.Context(), h.state, owner)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

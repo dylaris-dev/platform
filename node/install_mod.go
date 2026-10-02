@@ -143,23 +143,24 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 	//
 	// Checked before MkdirAll on purpose - MkdirAll through a dangling link
 	// creates the target.
-	destDir, err := resolveWithinDir(serverPath, filepath.Join(pl.ActiveSubServer, pl.TargetDir))
-	if err != nil {
+	if _, err := resolveWithinDir(serverPath, filepath.Join(pl.ActiveSubServer, pl.TargetDir)); err != nil {
 		fail("%v", err)
 		return
 	}
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		fail("mkdir %s: %v", destDir, err)
-		return
-	}
-	// The .part file is the one the download actually opens, so it is the one
-	// that has to be clean; destFile is only ever reached by os.Rename, which
-	// does not follow a link.
-	tmpFile, err := resolveWithinDir(destDir, cleanName+".part")
+	// The check above reads the path once; the download takes seconds, and the
+	// tenant's container can swap "mods" for a link to anywhere in between -
+	// every os call below re-resolved the path and followed it. The directory
+	// is now opened once, with no link followed on the way, and everything
+	// below works inside that open directory (pinDir).
+	destDir, release, err := pinDir(serverPath, filepath.ToSlash(filepath.Join(pl.ActiveSubServer, pl.TargetDir)), true)
 	if err != nil {
-		fail("%v", err)
+		fail("open %s: %v", pl.TargetDir, err)
 		return
 	}
+	defer release()
+	// The .part file is opened with Remove + O_EXCL and destFile is only
+	// reached by os.Rename; neither follows a link at the leaf.
+	tmpFile := filepath.Join(destDir, cleanName+".part")
 	destFile := filepath.Join(destDir, cleanName)
 
 	if err := downloadModFile(pl.DownloadURL, tmpFile, pl.SHA512); err != nil {
@@ -185,11 +186,9 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 	// it exits and picks the new one up on the next start - which is also why an
 	// install has always only taken effect after a restart.
 	if pl.PreviousFileName != "" && pl.PreviousFileName != cleanName {
-		switch old, rerr := resolveWithinDir(destDir, pl.PreviousFileName); {
+		switch old := filepath.Join(destDir, pl.PreviousFileName); {
 		case !validate.IsPlainFileName(pl.PreviousFileName):
 			log.Printf("install_mod: not deleting previous %q: not a plain file name", pl.PreviousFileName)
-		case rerr != nil:
-			log.Printf("install_mod: previous %q: %v", pl.PreviousFileName, rerr)
 		default:
 			if err := os.Remove(old); err != nil && !os.IsNotExist(err) {
 				// Still reported as installed below, because it IS: the new jar is
@@ -201,7 +200,7 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 			}
 		}
 	}
-	log.Printf("install_mod: installed %s into %s", cleanName, destDir)
+	log.Printf("install_mod: installed %s into %s/%s", cleanName, pl.ActiveSubServer, pl.TargetDir)
 	reportModInstall(ctx, rdb, pl, "installed", "")
 }
 
@@ -259,11 +258,16 @@ func runRemoveMod(storage *StorageManager, payload string) {
 	// Same boundary as the install side: os.Remove does not follow the leaf, but
 	// a symlinked "mods" directory would still put the deletion outside the
 	// server root.
-	dir, err := resolveWithinDir(serverPath, filepath.Join(pl.ActiveSubServer, pl.TargetDir))
+	if _, err := resolveWithinDir(serverPath, filepath.Join(pl.ActiveSubServer, pl.TargetDir)); err != nil {
+		log.Printf("remove_mod: %v", err)
+		return
+	}
+	dir, release, err := pinDir(serverPath, filepath.ToSlash(filepath.Join(pl.ActiveSubServer, pl.TargetDir)), false)
 	if err != nil {
 		log.Printf("remove_mod: %v", err)
 		return
 	}
+	defer release()
 	path := filepath.Join(dir, cleanName)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("remove_mod: rm %s: %v", path, err)

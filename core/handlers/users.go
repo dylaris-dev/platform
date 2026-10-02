@@ -312,6 +312,10 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// Done BEFORE the user row goes, so a failure here leaves the account intact
 	// and the operator can retry: deleting the user first would strand all of it
 	// with no owner to look it up by.
+	//
+	// The Beam stamp goes first of all: once the grants are gone there is no
+	// list of what this account could reach left to stamp.
+	stampBeamAccessForUser(r.Context(), h.state, id)
 	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
 		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), h.state.WarpPeers, id); err != nil {
 		log.Printf("delete user %s: teardown: %v", id, err)
@@ -428,6 +432,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	// owner's hands any more. The password change ended the sessions; the API
 	// keys are the other way in, and they used to keep working.
 	revoked := revokeAllAPIKeys(h.state, id, "admin password reset")
+	stampBeamAccessForUser(r.Context(), h.state, id)
 	sshRevoked := revokeAllSSHKeys(h.state, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})

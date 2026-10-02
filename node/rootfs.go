@@ -75,7 +75,23 @@ func openJailedForWrite(rootDir, reqPath string) (*os.Root, string, error) {
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		return nil, "", err
 	}
-	return openJailed(rootDir, reqPath)
+	return openWriteScope(rootDir, reqPath, true)
+}
+
+// openWriteScope checks reqPath against rootDir like openJailed, and returns a
+// Root at the directory that holds it, reached without following a link (see
+// writeScope), with the name inside that Root. The caller closes the Root and
+// writes through it.
+func openWriteScope(rootDir, reqPath string, mkParents bool) (*os.Root, string, error) {
+	abs, err := resolveWithinDir(rootDir, reqPath)
+	if err != nil {
+		return nil, "", err
+	}
+	name, err := rootName(rootDir, abs)
+	if err != nil {
+		return nil, "", err
+	}
+	return writeScope(rootDir, name, mkParents)
 }
 
 // rootEntryInfo decides whether a walked entry belongs in an archive or a copy

@@ -105,17 +105,21 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// Same traversal + symlink boundary install_mod goes through: the mods
 	// directory is bind-mounted into the tenant's own container, so a symlink
 	// planted there would otherwise redirect every write and delete below.
-	modsDir, err := resolveWithinDir(serverPath, filepath.Join(subName, targetDir))
-	if err != nil {
+	if _, err := resolveWithinDir(serverPath, filepath.Join(subName, targetDir)); err != nil {
 		log.Printf("update_server_version: %v", err)
 		abandonVersionUpdate(ctx, rdb, pl.UUID, err.Error())
 		return
 	}
-	if err := os.MkdirAll(modsDir, 0o755); err != nil {
-		log.Printf("update_server_version: mkdir %s: %v", modsDir, err)
+	// Opened once, with no link followed, and worked in from here on: the
+	// downloads take long enough for the tenant to swap the directory for a
+	// link, and every path-based call below would have followed it (pinDir).
+	modsDir, releaseMods, err := pinDir(serverPath, filepath.ToSlash(filepath.Join(subName, targetDir)), true)
+	if err != nil {
+		log.Printf("update_server_version: open the mods directory: %v", err)
 		abandonVersionUpdate(ctx, rdb, pl.UUID, "the mods directory could not be created")
 		return
 	}
+	defer releaseMods()
 
 	// EVERY new jar is fetched and verified BEFORE anything is removed and
 	// before the server is even stopped.
@@ -246,10 +250,9 @@ func stageInstalls(modsDir string, files []versionUpdateFile, fetch func(url, ds
 		if err := validateModrinthURL(f.DownloadURL); err != nil {
 			return fail(err)
 		}
-		tmpFile, err := resolveWithinDir(modsDir, f.FileName+".part")
-		if err != nil {
-			return fail(err)
-		}
+		// A plain name in the pinned directory; the fetch opens it with
+		// Remove + O_EXCL, which does not follow a link at the leaf.
+		tmpFile := filepath.Join(modsDir, f.FileName+".part")
 		staged = append(staged, stagedJar{tmp: tmpFile, final: filepath.Join(modsDir, f.FileName)})
 		if err := fetch(f.DownloadURL, tmpFile, f.SHA512); err != nil {
 			return fail(fmt.Errorf("%s could not be fetched: %w", f.FileName, err))

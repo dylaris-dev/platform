@@ -54,3 +54,13 @@ func TestAnSFTPSessionsChangesReachTheServerAudit(t *testing.T) {
 		}
 	}
 }
+
+// A Beam change is recorded as one, not as SFTP.
+func TestABeamRecordIsWrittenAsABeamChange(t *testing.T) {
+	fs := &sftpAuditFakeStore{node: models.Node{Token: "n1"}}
+	NewSFTPAuditService(fs, nil, nil).apply(queue.SFTPAuditChannel("n1"),
+		queue.SFTPAuditRecord{ServerUUID: "srv", Username: "bob", Writes: 1, Via: "beam"})
+	if len(fs.written) != 1 || fs.written[0].EventType != ServerAuditEventBeamChanges || fs.written[0].UserAgent != "beam" {
+		t.Fatalf("rows = %+v", fs.written)
+	}
+}

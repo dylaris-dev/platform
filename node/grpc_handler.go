@@ -236,6 +236,15 @@ func (h *StreamHandler) jailForWrite(serverUUID, reqPath string) (*os.Root, stri
 	return openJailedForWrite(h.serverDir(serverUUID), reqPath)
 }
 
+// jailWrite is jailForWrite for an operation that must not create anything
+// on its way (delete, rename).
+func (h *StreamHandler) jailWrite(serverUUID, reqPath string) (*os.Root, string, error) {
+	if serverUUID == "" {
+		return nil, "", fmt.Errorf("server_uuid required")
+	}
+	return openWriteScope(h.serverDir(serverUUID), reqPath, false)
+}
+
 // jailError maps a jail failure: a server directory that does not exist is a
 // 404, everything else is the refusal it always was.
 func jailError(reqID string, err error) *pb.NodeMessage {
@@ -697,9 +706,11 @@ func (h *StreamHandler) commitUpload(serverUUID, reqPath, tempName string) error
 	return root.Rename(tempName, name)
 }
 
-// removeUploadTemp discards a staging file that will not be committed.
-func (h *StreamHandler) removeUploadTemp(serverUUID, tempName string) {
-	root, err := os.OpenRoot(h.serverDir(serverUUID))
+// removeUploadTemp discards a staging file that will not be committed. The
+// staging name is relative to the directory the upload targets (see
+// createUploadTemp), so it is reached the same way.
+func (h *StreamHandler) removeUploadTemp(serverUUID, reqPath, tempName string) {
+	root, _, err := h.jailWrite(serverUUID, reqPath)
 	if err != nil {
 		return
 	}
@@ -742,7 +753,7 @@ func (h *StreamHandler) handleDelete(reqID, serverUUID string, req *pb.DeleteFil
 	if isProtectedFile(req.Path) {
 		return errorMsg(reqID, 403, "cannot delete protected file")
 	}
-	root, name, err := h.jail(serverUUID, req.Path)
+	root, name, err := h.jailWrite(serverUUID, req.Path)
 	if err != nil {
 		return jailError(reqID, err)
 	}
@@ -762,7 +773,7 @@ func (h *StreamHandler) handleRename(reqID, serverUUID string, req *pb.RenameFil
 	if isProtectedFile(req.OldPath) {
 		return errorMsg(reqID, 403, "cannot rename protected file")
 	}
-	root, oldName, err := h.jail(serverUUID, req.OldPath)
+	root, oldName, err := h.jailWrite(serverUUID, req.OldPath)
 	if err != nil {
 		return jailError(reqID, err)
 	}
@@ -825,15 +836,21 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 		return errorMsg(reqID, 404, "source not found")
 	}
 
+	// The destination is written, so it is reached without following a link.
+	dstRoot, dstLeaf, err := writeScope(h.serverDir(serverUUID), dstName, true)
+	if err != nil {
+		return errorMsg(reqID, 403, err.Error())
+	}
+	defer dstRoot.Close()
 	if stat.IsDir() {
-		if err := copyWalkIn(root, srcName, root, dstName, true); err != nil {
+		if err := copyWalkIn(root, srcName, dstRoot, dstLeaf, true); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy dir: %v", err))
 		}
 	} else {
-		if err := copyFileIn(root, srcName, root, dstName); err != nil {
+		if err := copyFileIn(root, srcName, dstRoot, dstLeaf); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy file: %v", err))
 		}
-		chownForMCIn(root, dstName)
+		chownForMCIn(dstRoot, dstLeaf)
 	}
 
 	return &pb.NodeMessage{

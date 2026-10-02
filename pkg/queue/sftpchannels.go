@@ -44,4 +44,6 @@ type SFTPAuditRecord struct {
 	// node; Truncated says there were more.
 	Paths     []string `json:"paths"`
 	Truncated bool     `json:"truncated,omitempty"`
+	// Via is the transport: "" for SFTP, "beam" for Beam.
+	Via string `json:"via,omitempty"`
 }

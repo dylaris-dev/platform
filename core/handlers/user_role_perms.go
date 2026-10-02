@@ -90,10 +90,18 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// What the account reaches under its OLD role - every server, for an
+	// administrator - is listed now and stamped once the change is committed,
+	// so a ticket minted as the old role does not outlive it.
+	var reach []string
+	if req.Role != previousRole {
+		reach = beamReachOf(h.state, id)
+	}
 	if err := h.state.Store.SetUserRole(id, req.Role); err != nil {
 		sendJSONError(w, "Failed to update role", 500)
 		return
 	}
+	stampBeamUUIDs(r.Context(), h.state, reach)
 
 	LogIdentityAudit(h.state, r, AuditEventUserRoleChanged, actorID, id, map[string]interface{}{
 		"from": previousRole,

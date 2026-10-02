@@ -28,10 +28,13 @@ import (
 
 const accessEpochPrefix = "beam:access-epoch:"
 
-// AccessEpochTTL is deliberately just past the ticket lifetime. A ticket older
-// than its own expiry is refused for being expired, so a stamp older than that
-// answers nothing and would only grow Redis.
-const AccessEpochTTL = BeamTicketTTL + 5*time.Minute
+// AccessEpochTTL outlives every session a stamp has to end, not just the
+// ticket. It used to be just past the ticket's 30 minutes, which was enough
+// while only Authenticate read it; open sessions re-check it now (the node's
+// sessionLive), and a stamp that expired while a session sat idle answered
+// "nothing changed" and gave the revoked session its rights back. Sessions are
+// capped at a day on the node; a stamp is a few bytes per server.
+const AccessEpochTTL = 30 * 24 * time.Hour
 
 // AccessEpochKey is the stamp for one server. Exported because the Redis ACL
 // rules are built from the same prefix.
@@ -78,5 +81,8 @@ func TicketPredatesAccessChange(ctx context.Context, rdb *redis.Client, c *BeamC
 	if err != nil {
 		return false, err
 	}
-	return c.IssuedAt.Unix() < stamp, nil
+	// <= : the claim and the stamp are whole seconds, and a ticket minted in
+	// the same second as the change cannot be told apart from one minted just
+	// before it. Refusing it costs the holder a reconnect a second later.
+	return c.IssuedAt.Unix() <= stamp, nil
 }

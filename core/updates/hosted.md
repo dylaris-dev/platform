@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **Saving or uploading into a linked folder inside a server is refused;** reading still works.
+  BYON nodes need the update. `node`
+
+### Security
+- **A plugin could make the node overwrite its own files through a link.** Fixed; BYON nodes
+  need the update. `node`
+- **Removing someone's access now also ends their open Beam session.** BYON nodes need the
+  update. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02
 
 ### Features

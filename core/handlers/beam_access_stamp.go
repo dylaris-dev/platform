@@ -55,6 +55,45 @@ func stampBeamAccessForOwner(ctx context.Context, state *AppState, ownerUserID s
 	}
 }
 
+// stampBeamAccessForUser marks every server an account can reach - all of
+// them for an administrator. Used where the change is about the PERSON: a
+// password or second factor reset after the account left its owner's hands,
+// the account's deletion, a change of its role. Those paths stamped nothing,
+// so a ticket minted before them still opened sessions until it expired.
+func stampBeamAccessForUser(ctx context.Context, state *AppState, userID string) {
+	stampBeamUUIDs(ctx, state, beamReachOf(state, userID))
+}
+
+// beamReachOf lists the servers an account can reach now. Taken BEFORE a
+// change that shrinks it, and stamped after the change is committed, so no
+// ticket minted in between survives.
+func beamReachOf(state *AppState, userID string) []string {
+	if state == nil || state.Redis == nil || state.Store == nil || userID == "" {
+		return nil
+	}
+	u, err := state.Store.GetUserByID(userID)
+	if err != nil || u == nil {
+		log.Printf("beam access stamp: could not resolve user %s: %v", userID, err)
+		return nil
+	}
+	servers, err := state.Store.ListServersForUser(userID, u.IsAdmin)
+	if err != nil {
+		log.Printf("beam access stamp: could not list servers of %s: %v", userID, err)
+		return nil
+	}
+	out := make([]string, 0, len(servers))
+	for _, s := range servers {
+		out = append(out, s.UUID)
+	}
+	return out
+}
+
+func stampBeamUUIDs(ctx context.Context, state *AppState, uuids []string) {
+	for _, u := range uuids {
+		stampBeamAccessUUID(ctx, state, u)
+	}
+}
+
 func stampBeamAccessUUID(ctx context.Context, state *AppState, uuid string) {
 	if uuid == "" {
 		return

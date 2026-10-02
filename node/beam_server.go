@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -81,6 +82,101 @@ type beamServer struct {
 	// thing from a ticket granting none. Both are refused; only one is worth
 	// telling an operator to update Core about.
 	permsByPeer sync.Map // map[string]*fileperms.Perms
+
+	// sessionByPeer keeps the ticket a session authenticated with, so every
+	// operation can ask again whether access changed since (sessionLive). An
+	// open session used to keep its rights for as long as the connection
+	// lived - and the client's health pings kept it alive indefinitely.
+	sessionByPeer sync.Map // map[string]*beamSession
+
+	// inflight is the declared size of uploads in progress, per account
+	// ("u:<name>") and per server ("s:<uuid>"). The daily quota and the disk
+	// headroom were checked per upload against what was already BOOKED, and
+	// booking happens when an upload finishes - so N uploads started at once
+	// each saw the whole remaining allowance.
+	inflight sync.Map // map[string]*atomic.Int64
+}
+
+// maxBeamReadContent is the largest file ReadFileContent returns.
+const maxBeamReadContent = 10 << 20
+
+// beamMaxStreams bounds the RPCs one connection may run at once.
+const beamMaxStreams = 64
+
+// auditBeam sends one change made through Beam to Core's server audit trail,
+// on the channel SFTP uses. The panel's file operations were recorded there;
+// the same operations through Beam - the file path in production - were not.
+func (s *beamServer) auditBeam(ctx context.Context, serverUUID, kind, rel string) {
+	if s.rdb == nil || serverUUID == "" {
+		return
+	}
+	a := newSFTPAudit(s.extractUsername(ctx), beamPeerAddr(ctx))
+	a.via = "beam"
+	a.note(serverUUID, kind, rel)
+	publishSFTPAudit(s.rdb, a)
+}
+
+// reserveUpload adds n to the in-flight count under key and returns the new
+// total and a release. A nil release is never returned.
+func (s *beamServer) reserveUpload(key string, n int64) (int64, func()) {
+	v, _ := s.inflight.LoadOrStore(key, &atomic.Int64{})
+	c := v.(*atomic.Int64)
+	total := c.Add(n)
+	var once sync.Once
+	return total, func() { once.Do(func() { c.Add(-n) }) }
+}
+
+// beamSession is one authenticated connection's ticket and when its access
+// stamp was last read.
+type beamSession struct {
+	claims  *beamauth.BeamClaims
+	opened  time.Time
+	checked atomic.Int64 // unix nanoseconds
+}
+
+// beamRecheckEvery bounds how often a session's access stamp is read from
+// Redis; between reads an operation goes through on the last answer.
+var beamRecheckEvery = 10 * time.Second
+
+// beamMaxSession is the longest a session lives on one ticket. Access stamps
+// are kept longer than this, so a change can never age out from under an open
+// session; the client reconnects with a fresh ticket.
+var beamMaxSession = 24 * time.Hour
+
+// sessionLive reports whether the session on addr may still act. A stamp Core
+// set after its ticket was minted - a member removed, a password reset, a role
+// changed, an account suspended - ends it: the bindings are dropped and every
+// later call is refused until the client reconnects with a new ticket. Fails
+// open on a Redis fault, like the check at Authenticate.
+func (s *beamServer) sessionLive(ctx context.Context, addr string) bool {
+	v, ok := s.sessionByPeer.Load(addr)
+	if !ok {
+		return true
+	}
+	sess := v.(*beamSession)
+	now := time.Now().UnixNano()
+	expired := time.Since(sess.opened) > beamMaxSession
+	if !expired && now-sess.checked.Load() < int64(beamRecheckEvery) {
+		return true
+	}
+	// Its own context: the caller's can be cancelled by the client, and a read
+	// that fails because the CLIENT hung up must not count as Redis being down.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	stale, err := beamauth.TicketPredatesAccessChange(rctx, s.rdb, sess.claims)
+	if err != nil && !expired {
+		return true
+	}
+	if stale || expired {
+		log.Printf("beam: ending the session from %s: access to %s changed after its ticket was issued", addr, sess.claims.ServerUUID)
+		s.serverUUIDByPeer.Delete(addr)
+		s.usernameByPeer.Delete(addr)
+		s.permsByPeer.Delete(addr)
+		s.sessionByPeer.Delete(addr)
+		return false
+	}
+	sess.checked.Store(now)
+	return true
 }
 
 // beamConnKey carries the connection's remote address from TagConn through to
@@ -95,6 +191,7 @@ type beamConnCleaner struct {
 	uuid  *sync.Map
 	user  *sync.Map
 	perms *sync.Map
+	sess  *sync.Map
 }
 
 func (c *beamConnCleaner) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
@@ -113,6 +210,9 @@ func (c *beamConnCleaner) HandleConn(ctx context.Context, st stats.ConnStats) {
 			c.uuid.Delete(addr)
 			c.user.Delete(addr)
 			c.perms.Delete(addr)
+			if c.sess != nil {
+				c.sess.Delete(addr)
+			}
 		}
 	}
 }
@@ -160,7 +260,7 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 		jwtSecret:  jwtSecret,
 		nodeID:     nodeID,
 	}
-	srv := grpc.NewServer(grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer}))
+	srv := grpc.NewServer(grpc.MaxConcurrentStreams(beamMaxStreams), grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer, sess: &bs.sessionByPeer}))
 	pb.RegisterBeamNodeServiceServer(srv, bs)
 
 	log.Printf("beam-server: listening on %s (reachable via overlay; JWT-gated)", listenAddr)
@@ -234,8 +334,9 @@ func startBeamLANListener(ctx context.Context, bs *beamServer, nodeID string) {
 		return
 	}
 	tlsSrv := grpc.NewServer(
+		grpc.MaxConcurrentStreams(beamMaxStreams),
 		grpc.Creds(credentials.NewServerTLSFromCert(&cert)),
-		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer}),
+		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer, sess: &bs.sessionByPeer}),
 	)
 	pb.RegisterBeamNodeServiceServer(tlsSrv, bs)
 	log.Printf("beam-server: LAN fast-path (TLS, pinned) listening on %s, fp=%s", addr, fp[:16]+"...")
@@ -604,14 +705,15 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 	// The ticket is a bearer token with a 30 minute life that nothing re-reads,
 	// so taking somebody's access away used to leave an outstanding one working
 	// to its expiry. Core stamps the server when that changes; a ticket minted
-	// before the stamp does not open a new session. An already-open one is not
-	// torn down - that is the half this does not close, and it is stated in
-	// access_epoch.go.
+	// before the stamp does not open a new session, and an open one ends at its
+	// next operation (sessionLive).
 	//
 	// Fails OPEN on a Redis fault, like every other Redis read on this path: an
 	// outage must not stand between a customer and their own files, and what it
 	// reopens is the window that existed before.
-	stale, aerr := beamauth.TicketPredatesAccessChange(ctx, s.rdb, claims)
+	actx, acancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	stale, aerr := beamauth.TicketPredatesAccessChange(actx, s.rdb, claims)
+	acancel()
 	if aerr != nil {
 		log.Printf("beam: could not check the access stamp for %s, allowing: %v", claims.ServerUUID, aerr)
 	} else if stale {
@@ -633,6 +735,9 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 		// never authenticated" from "authenticated by a Core that sends no
 		// permissions".
 		s.permsByPeer.Store(p.Addr.String(), claims.Perms)
+		sess := &beamSession{claims: claims, opened: time.Now()}
+		sess.checked.Store(time.Now().UnixNano())
+		s.sessionByPeer.Store(p.Addr.String(), sess)
 	}
 	return &pb.BeamAuthResp{
 		Ok:         true,
@@ -657,6 +762,9 @@ func (s *beamServer) requireFilePerm(ctx context.Context, want func(fileperms.Pe
 	p, ok := peer.FromContext(ctx)
 	if !ok || p == nil || p.Addr == nil {
 		return status.Error(codes.PermissionDenied, "not authenticated")
+	}
+	if !s.sessionLive(ctx, p.Addr.String()) {
+		return status.Error(codes.PermissionDenied, "your access to this server changed - reconnect to get a new ticket")
 	}
 	v, found := s.permsByPeer.Load(p.Addr.String())
 	if !found {
@@ -741,9 +849,22 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 	}
 	defer root.Close()
 
-	data, err := root.ReadFile(name)
+	// The whole file is held in memory, about three times over by the time it
+	// is a message, and one member reading a world archive in parallel could
+	// take the node agent - and every tenant's console and files with it -
+	// down. Core caps opening a file at the same size; larger ones are
+	// downloaded.
+	f, err := root.Open(name)
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxBeamReadContent+1))
+	if err != nil {
+		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
+	}
+	if len(data) > maxBeamReadContent {
+		return &pb.BeamFileContentResp{Success: false, Message: "this file is too large to open here (over 10 MB); download it instead"}, nil
 	}
 
 	return &pb.BeamFileContentResp{Success: true, Content: string(data)}, nil
@@ -780,6 +901,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	}
 	s.recordBeamDailyUsage(ctx, username, size)
 
+	s.auditBeam(ctx, serverUUID, "write", req.Path)
 	return &pb.BeamOpResp{Success: true, Message: "saved"}, nil
 }
 
@@ -806,6 +928,7 @@ func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) 
 		f.Close()
 	}
 
+	s.auditBeam(ctx, serverUUID, "write", req.Path)
 	return &pb.BeamOpResp{Success: true, Message: "created"}, nil
 }
 
@@ -824,6 +947,7 @@ func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) 
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
+	s.auditBeam(ctx, serverUUID, "delete", req.Path)
 	return &pb.BeamOpResp{Success: true, Message: "deleted"}, nil
 }
 
@@ -832,11 +956,15 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	root, oldName, err := s.jailBeam(req.OldPath, serverUUID, "write")
+	oldPath, err := s.validateBeamPathOp(req.OldPath, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
-	defer root.Close()
+	serverDir := s.storageMgr.GetServerDir(serverUUID)
+	oldName, err := rootName(serverDir, oldPath)
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
 
 	// The DESTINATION goes through the same guard, which validateBeamPath's own
 	// doc comment already lists rename under. It did not: NewName went straight
@@ -860,10 +988,12 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
-	if err := root.Rename(oldName, newName); err != nil {
+	// Both parents are reached without following a link (see writeScope).
+	if err := renameNoFollow(serverDir, oldName, newName); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
+	s.auditBeam(ctx, serverUUID, "rename", req.OldPath+" -> "+req.NewName)
 	return &pb.BeamOpResp{Success: true, Message: "renamed"}, nil
 }
 
@@ -883,7 +1013,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 	if err := validateCopyPaths(req.SrcPath, req.DstPath, srcPath, dstPath); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
-	root, srcName, err := s.jailBeam(req.SrcPath, serverUUID, "write")
+	root, srcName, err := s.jailBeam(req.SrcPath, serverUUID, "read")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
@@ -892,6 +1022,12 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	// The destination is written, so it is reached without following a link.
+	dstRoot, dstLeaf, err := writeScope(s.storageMgr.GetServerDir(serverUUID), dstName, true)
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
+	defer dstRoot.Close()
 
 	stat, err := root.Stat(srcName)
 	if err != nil {
@@ -899,16 +1035,17 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 	}
 
 	if stat.IsDir() {
-		if err := copyWalkIn(root, srcName, root, dstName, true); err != nil {
+		if err := copyWalkIn(root, srcName, dstRoot, dstLeaf, true); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		if err := copyFileIn(root, srcName, root, dstName); err != nil {
+		if err := copyFileIn(root, srcName, dstRoot, dstLeaf); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
-		chownForMCIn(root, dstName)
+		chownForMCIn(dstRoot, dstLeaf)
 	}
 
+	s.auditBeam(ctx, serverUUID, "write", req.DstPath)
 	return &pb.BeamOpResp{Success: true, Message: "copied"}, nil
 }
 
@@ -1036,7 +1173,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	// upRoot is the server directory the upload writes into, open for the
 	// whole stream; destName and tmpName are names inside it.
 	var upRoot *os.Root
-	var destName string
+	var destName, auditPath string // auditPath: the requested path, for the audit trail
 	var tmpFile *os.File
 	var tmpName string
 	// declaredSize is the client's BeamUploadStart TotalSize. The disk-headroom,
@@ -1106,6 +1243,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				upRoot.Close()
 			}
 			upRoot, destName = root, name
+			auditPath = filepath.ToSlash(remotePath)
 			declaredSize = p.Start.TotalSize
 
 			// Create the destination's parent dir if it doesn't exist yet. The
@@ -1117,10 +1255,24 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				return status.Errorf(codes.Internal, "create dir: %v", err)
 			}
 
+			// A negative size would subtract from what every other upload is
+			// counted against.
+			if p.Start.TotalSize < 0 {
+				return status.Error(codes.InvalidArgument, "the upload size cannot be negative")
+			}
+			// Every upload of this server and of this account that is still in
+			// progress counts against the same headroom and quota as this one.
+			// Reserved before checking, so two Starts at once cannot both see
+			// room that only one of them has.
+			serverTotal, releaseServer := s.reserveUpload("s:"+serverUUID, p.Start.TotalSize)
+			defer releaseServer()
+			userTotal, releaseUser := s.reserveUpload("u:"+username, p.Start.TotalSize)
+			defer releaseUser()
+
 			// Disk-quota pre-check. The beam tunnel bypasses Core's HTTP body
 			// size cap and its disk precheck, so enforce the same server disk
 			// limit here against the declared upload size before streaming.
-			if err := s.checkBeamUploadDiskHeadroom(ctx, serverUUID, p.Start.TotalSize); err != nil {
+			if err := s.checkBeamUploadDiskHeadroom(ctx, serverUUID, serverTotal); err != nil {
 				return err
 			}
 
@@ -1132,8 +1284,10 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// Per-user daily upload quota (admin-configured). Best-effort
 			// pre-check against today's counter; the counter is bumped by the
 			// final on-disk size on successful completion below.
-			if err := s.checkBeamDailyQuota(ctx, username, p.Start.TotalSize); err != nil {
-				return err
+			if username != "" {
+				if err := s.checkBeamDailyQuota(ctx, username, userTotal); err != nil {
+					return err
+				}
 			}
 
 			if uploadID != "" {
@@ -1214,6 +1368,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		}
 	}
 
+	s.auditBeam(ctx, serverUUID, "write", auditPath)
 	return stream.SendAndClose(&pb.BeamOpResp{Success: true, Message: "uploaded"})
 }
 
@@ -1459,6 +1614,9 @@ func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq)
 func (s *beamServer) extractServerUUID(ctx context.Context) string {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p == nil || p.Addr == nil {
+		return ""
+	}
+	if !s.sessionLive(ctx, p.Addr.String()) {
 		return ""
 	}
 	v, ok := s.serverUUIDByPeer.Load(p.Addr.String())

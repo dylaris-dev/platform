@@ -773,7 +773,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if protectedRel(rel) {
 		return nil, os.ErrPermission
 	}
-	root, err := v.openRoot(ref)
+	root, leaf, err := writeScope(v.storageMgr.GetServerDir(ref.UUID), filepath.ToSlash(rel), false)
 	if err != nil {
 		return nil, err
 	}
@@ -789,7 +789,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if pf.Excl {
 		flags |= os.O_EXCL
 	}
-	f, err := root.OpenFile(filepath.ToSlash(rel), flags, 0644)
+	f, err := root.OpenFile(leaf, flags, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -962,12 +962,12 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if protectedRel(rel) {
 			return os.ErrPermission
 		}
-		root, err := v.openRoot(ref)
+		root, leaf, err := writeScope(v.storageMgr.GetServerDir(ref.UUID), filepath.ToSlash(rel), false)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		if err := root.Mkdir(filepath.ToSlash(rel), 0755); err != nil {
+		if err := root.Mkdir(leaf, 0755); err != nil {
 			return err
 		}
 		v.audit.note(ref.UUID, "mkdir", rel)
@@ -992,12 +992,12 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if protectedRel(rel) {
 			return os.ErrPermission
 		}
-		root, err := v.openRoot(ref)
+		root, leaf, err := writeScope(v.storageMgr.GetServerDir(ref.UUID), filepath.ToSlash(rel), false)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		if err := root.Remove(filepath.ToSlash(rel)); err != nil {
+		if err := root.Remove(leaf); err != nil {
 			return err
 		}
 		v.audit.note(ref.UUID, "delete", rel)
@@ -1035,12 +1035,7 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if srcRef.UUID != dstRef.UUID {
 			return os.ErrPermission
 		}
-		root, err := v.openRoot(srcRef)
-		if err != nil {
-			return err
-		}
-		defer root.Close()
-		if err := root.Rename(filepath.ToSlash(srcRel), filepath.ToSlash(dstRel)); err != nil {
+		if err := renameNoFollow(v.storageMgr.GetServerDir(srcRef.UUID), filepath.ToSlash(srcRel), filepath.ToSlash(dstRel)); err != nil {
 			return err
 		}
 		v.audit.note(srcRef.UUID, "rename", srcRel+" -> "+dstRel)
@@ -1055,12 +1050,12 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if err != nil || realPath == "" || !ref.Write || protectedRel(rel) {
 			return os.ErrPermission
 		}
-		root, err := v.openRoot(ref)
+		root, leaf, err := writeScope(v.storageMgr.GetServerDir(ref.UUID), filepath.ToSlash(rel), false)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		f, err := root.OpenFile(filepath.ToSlash(rel), os.O_WRONLY, 0)
+		f, err := root.OpenFile(leaf, os.O_WRONLY, 0)
 		if err != nil {
 			return err
 		}
@@ -1226,6 +1221,7 @@ func (n *namedFileInfo) Name() string { return n.name }
 // over SFTP were not.
 type sftpAudit struct {
 	username, addr string
+	via            string // "" = sftp
 	mu             sync.Mutex
 	byServer       map[string]*queue.SFTPAuditRecord
 }
@@ -1246,7 +1242,7 @@ func (a *sftpAudit) note(serverUUID, kind, rel string) {
 	defer a.mu.Unlock()
 	rec := a.byServer[serverUUID]
 	if rec == nil {
-		rec = &queue.SFTPAuditRecord{ServerUUID: serverUUID, Username: a.username, RemoteIP: a.addr}
+		rec = &queue.SFTPAuditRecord{ServerUUID: serverUUID, Username: a.username, RemoteIP: a.addr, Via: a.via}
 		a.byServer[serverUUID] = rec
 	}
 	switch kind {
@@ -1279,8 +1275,11 @@ func (a *sftpAudit) take() []*queue.SFTPAuditRecord {
 }
 
 // publishAudit sends what the connection changed since the last flush to Core.
-func (s *SFTPServer) publishAudit(a *sftpAudit) {
-	if a == nil || s.rdb == nil {
+func (s *SFTPServer) publishAudit(a *sftpAudit) { publishSFTPAudit(s.rdb, a) }
+
+// publishSFTPAudit sends what a has collected to Core, on this node's channel.
+func publishSFTPAudit(rdb *redis.Client, a *sftpAudit) {
+	if a == nil || rdb == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1290,7 +1289,7 @@ func (s *SFTPServer) publishAudit(a *sftpAudit) {
 		if err != nil {
 			continue
 		}
-		if err := s.rdb.Publish(ctx, queue.SFTPAuditChannel(s.nodeID), data).Err(); err != nil {
+		if err := rdb.Publish(ctx, queue.SFTPAuditChannel(nodeID), data).Err(); err != nil {
 			log.Printf("SFTP: audit record for %s could not be sent: %v", rec.ServerUUID, err)
 		}
 	}
