@@ -108,7 +108,7 @@ func queuedInstaller(t *testing.T, rdb *redis.Client) []map[string]any {
 }
 
 func setupBody(installer map[string]string) map[string]any {
-	return map[string]any{"subServerName": "main", "javaImage": "eclipse-temurin:21-jre", "installer": installer}
+	return map[string]any{"subServerName": "main", "javaImage": "ghcr.io/dylaris-dev/platform-mc-java21:latest", "installer": installer}
 }
 
 // The node used to be sent the library path and copied whatever that path
@@ -200,7 +200,7 @@ func TestReinstallSendsWhatItValidated(t *testing.T) {
 	for _, typ := range []string{"library", "modpack", "technic", "pack", "import", "upload"} {
 		rec := httptest.NewRecorder()
 		h.ReinstallServer(rec, installRequest("reinstall", map[string]any{
-			"javaImage": "eclipse-temurin:21-jre",
+			"javaImage": "ghcr.io/dylaris-dev/platform-mc-java21:latest",
 			"installer": map[string]string{"type": typ, "path": "/proc/self/environ", "url": "http://169.254.169.254/"},
 		}, true))
 		if rec.Code != http.StatusBadRequest {
@@ -212,7 +212,7 @@ func TestReinstallSendsWhatItValidated(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ReinstallServer(rec, installRequest("reinstall", map[string]any{"javaImage": "eclipse-temurin:21-jre"}, true))
+	h.ReinstallServer(rec, installRequest("reinstall", map[string]any{"javaImage": "ghcr.io/dylaris-dev/platform-mc-java21:latest"}, true))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reinstall with fallbacks: status %d: %s", rec.Code, rec.Body.String())
 	}

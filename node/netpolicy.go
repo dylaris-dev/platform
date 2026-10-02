@@ -71,7 +71,25 @@ const (
 // first line creates it when absent, so the delete cannot fail on a container
 // that has never been touched. That makes the whole script idempotent, which is
 // what lets the reconciler run it unconditionally.
-func netPolicyRuleset(allow []string) string {
+func netPolicyRuleset(allow []string) string { return netPolicyRulesetWith(allow, nil) }
+
+// netEgress is what a tenant container may NOT dial. Egress used to be
+// unfiltered, and a server's code reached the cloud metadata service, Core's
+// HTTP and gRPC ports and the node's own services directly - Core even took
+// its X-Forwarded-For as a proxy's. Everything else stays open: the internet,
+// the log-shipper's Redis, and the game port of other containers, which a
+// tenant's proxy dials (their ingress decides).
+type netEgress struct {
+	overlay   string // the shared network's subnet
+	redisIP   string // the one private address the container must reach
+	redisPort int
+	gamePort  int // the container port game servers listen on
+}
+
+// platformPortLow..High is the range the platform's own services listen in.
+const platformPortLow, platformPortHigh = 25500, 25599
+
+func netPolicyRulesetWith(allow []string, eg *netEgress) string {
 	var b strings.Builder
 	b.WriteString("table inet " + netPolicyTable + "\n")
 	b.WriteString("delete table inet " + netPolicyTable + "\n")
@@ -95,8 +113,55 @@ func netPolicyRuleset(allow []string) string {
 			b.WriteString("    ip6 saddr " + a + " accept\n")
 		}
 	}
-	b.WriteString("  }\n}\n")
+	b.WriteString("  }\n")
+	if eg != nil {
+		writeEgressChain(&b, eg)
+	}
+	b.WriteString("}\n")
 	return b.String()
+}
+
+// writeEgressChain renders the output chain. Every value is checked before it
+// is interpolated; one that does not parse drops the chain rather than the
+// container's network.
+func writeEgressChain(b *strings.Builder, eg *netEgress) {
+	_, overlay, err := net.ParseCIDR(eg.overlay)
+	if err != nil || overlay.IP.To4() == nil {
+		return
+	}
+	redis := net.ParseIP(eg.redisIP)
+	if redis == nil || redis.To4() == nil || eg.redisPort < 1 || eg.redisPort > 65535 {
+		return
+	}
+	b.WriteString("  chain output {\n")
+	b.WriteString("    type filter hook output priority 0; policy accept;\n")
+	b.WriteString("    ct state established,related accept\n")
+	b.WriteString("    oif lo accept\n")
+	b.WriteString(fmt.Sprintf("    ip daddr %s tcp dport %d accept\n", redis.String(), eg.redisPort))
+	b.WriteString("    ip daddr 169.254.0.0/16 drop\n")
+	b.WriteString(fmt.Sprintf("    ip daddr %s tcp dport { %s } drop\n", overlay.String(), platformPortSet(eg.gamePort)))
+	b.WriteString(fmt.Sprintf("    ip daddr %s accept\n", overlay.String()))
+	b.WriteString("    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 } drop\n")
+	b.WriteString("  }\n")
+}
+
+// platformPortSet is the platform's port range and Redis's port, minus the
+// game port, as an nft set.
+func platformPortSet(game int) string {
+	parts := []string{"6379"}
+	switch {
+	case game <= platformPortLow || game >= platformPortHigh:
+		if game == platformPortLow {
+			parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow+1, platformPortHigh))
+		} else if game == platformPortHigh {
+			parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow, platformPortHigh-1))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow, platformPortHigh))
+		}
+	default:
+		parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow, game-1), fmt.Sprintf("%d-%d", game+1, platformPortHigh))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func dedupeSorted(in []string) []string {
@@ -216,11 +281,11 @@ func shortUUID(u string) string {
 // The helper is the node's OWN image, which is already on every host that runs
 // a node - so this pulls nothing and adds no image to publish. It carries
 // nftables for exactly this (see the Dockerfile).
-func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName string, allow []string) error {
+func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName string, allow []string, eg *netEgress) error {
 	if dm.netPolicyImage == "" {
 		return fmt.Errorf("no helper image resolved")
 	}
-	script := netPolicyRuleset(allow)
+	script := netPolicyRulesetWith(allow, eg)
 	cfg := &container.Config{
 		Image: dm.netPolicyImage,
 		// The ruleset travels in the command, not on stdin: attaching a stream to

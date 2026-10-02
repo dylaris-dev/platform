@@ -37,6 +37,7 @@ var settingsReadWithoutWriter = map[string]string{
 	"branding.name":             "white-label override served to Beam; defaults to \"Dylaris\"",
 	"branding.logo_url":         "white-label override served to Beam; empty means no logo",
 	"byon.max_servers_per_core": "operator override for the BYON density cap; defaults to 2",
+	"runtime.allowed_images":    "operator override: further image prefixes a server may run, comma-separated; empty means only the platform's own",
 	"smtp.":                     "prefix; the full key is concatenated at runtime",
 	"smtp.default.":             "prefix; the full key is concatenated at runtime",
 }

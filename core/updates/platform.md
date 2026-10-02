@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **A server's runtime image must be one of the platform's Java images,** or match a prefix in
+  the `runtime.allowed_images` setting. Servers already on another image keep it. `core`
+- **Game servers can no longer reach the cloud metadata service, the platform's own ports or
+  private networks** other than their Redis. The internet and game ports stay open. `node`
+- **Game containers run with no capabilities, a 4096-process cap and an in-memory /tmp.**
+  The cap is in Settings > Placement; 0 still means unlimited. `core` `node`
+
+### Security
+- **An image of the tenant's choosing could become root in its container** and rewrite the
+  node's settings for that server, such as its RAM and CPU limits. `core` `node`
+- **A server's code could exhaust the host's processes or fill its disk through /tmp.** `node`
+- **Forge and NeoForge installers ran as root with no limits.** They run as the server does. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02.5
 
 ### Features

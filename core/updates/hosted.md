@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **Game servers can no longer reach private networks or the cloud metadata service;** the
+  internet stays open. A server's runtime is one of the offered Java versions. `node`
+
+### Security
+- **Game servers run with fewer privileges and limits on processes and scratch space.**
+  BYON nodes need the update. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02.5
 
 ### Features

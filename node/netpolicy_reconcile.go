@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -280,13 +283,20 @@ func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Clie
 		return
 	}
 
+	// One answer for every container this round. nil when any part cannot be
+	// determined: the ingress rules still go on, egress stays open, loudly.
+	eg, egErr := dm.egressPolicy()
+	if egErr != nil {
+		log.Printf("netpolicy: egress left OPEN this round: %v", egErr)
+	}
+
 	applied := 0
 	for _, c := range containers {
 		allow := append([]string{}, infra...)
 		allow = append(allow, dm.peerAddrs(policy[c.UUID])...)
 
 		applyCtx, cancel := context.WithTimeout(ctx, netPolicyApplyTimeout)
-		aerr := dm.applyNetPolicy(applyCtx, c.ContainerName, allow)
+		aerr := dm.applyNetPolicy(applyCtx, c.ContainerName, allow, eg)
 		cancel()
 		if aerr != nil {
 			dm.netPolicy.recordFailure(c.UUID, aerr)
@@ -324,4 +334,57 @@ func startNetPolicyReconciler(ctx context.Context, dm *DockerManager, rdb *redis
 			}
 		}
 	}()
+}
+
+// egressPolicy works out the shared network's subnet, the Redis address a
+// container's log-shipper dials and the game port.
+func (dm *DockerManager) egressPolicy() (*netEgress, error) {
+	netID, _, err := dm.ensureGlobalNetwork()
+	if err != nil {
+		return nil, err
+	}
+	insp, err := dm.cli.NetworkInspect(dm.ctx, netID, network.InspectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("inspect network: %w", err)
+	}
+	subnet := ""
+	for _, c := range insp.IPAM.Config {
+		if _, n, perr := net.ParseCIDR(c.Subnet); perr == nil && n.IP.To4() != nil {
+			subnet = n.String()
+			break
+		}
+	}
+	if subnet == "" {
+		return nil, errors.New("the shared network has no IPv4 subnet")
+	}
+	addr, err := dm.sidecarRedisAddr(netID, nodeRedis.current())
+	if err != nil {
+		return nil, err
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("redis address %q: %w", addr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("redis port %q: %w", portStr, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		ips, lerr := net.LookupIP(host)
+		if lerr != nil || len(ips) == 0 {
+			return nil, fmt.Errorf("resolve redis host %q: %v", host, lerr)
+		}
+		for _, cand := range ips {
+			if cand.To4() != nil {
+				ip = cand
+				break
+			}
+		}
+		if ip == nil {
+			return nil, fmt.Errorf("redis host %q has no IPv4 address", host)
+		}
+	}
+	_, _, _, gamePort, _, _ := getModes()
+	return &netEgress{overlay: subnet, redisIP: ip.String(), redisPort: port, gamePort: gamePort}, nil
 }

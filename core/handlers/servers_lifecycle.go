@@ -243,6 +243,49 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 // file not found in $PATH` - by which point the previous sub-server's container
 // is already gone. Reinstall had the fallback, setup did not; both go through
 // here now, and an empty result is a 400 at the caller.
+// The platform's own runtime images. A server's image is the tenant's
+// choice, and it was taken from any registry: an image of their own runs as
+// whatever it says, and one with a setuid binary was root in the container -
+// able to rewrite the node's files in /data that uid 1000 cannot. Further
+// prefixes an operator trusts go in the runtime.allowed_images setting.
+const platformImagePrefix = "ghcr.io/dylaris-dev/platform-mc-java"
+
+const javaImageRefused = "That runtime image is not allowed on this platform. Pick one of the offered Java versions."
+
+// javaImageAllowed reports whether a REQUESTED image may be set. An empty
+// request keeps the stored image, which is not re-judged: servers already on
+// another image keep running on it.
+func javaImageAllowed(st interface {
+	GetSetting(string) (string, error)
+}, requested string) bool {
+	img := strings.TrimSpace(requested)
+	if img == "" {
+		return true
+	}
+	if strings.ContainsAny(img, " \t\n") {
+		return false
+	}
+	if strings.HasPrefix(img, platformImagePrefix) {
+		return true
+	}
+	var prefixes []string
+	if st != nil {
+		if extra, err := st.GetSetting("runtime.allowed_images"); err == nil {
+			for _, p := range strings.Split(extra, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					prefixes = append(prefixes, p)
+				}
+			}
+		}
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(img, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveJavaImage(requested, stored string) string {
 	if img := strings.TrimSpace(requested); img != "" {
 		return img
@@ -368,6 +411,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 
 	// Refuse before anything is written or the container is touched - see
 	// resolveJavaImage.
+	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+		sendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		return
+	}
 	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
 	if javaImage == "" {
 		sendJSONError(w, "javaImage is required", 400)
@@ -743,6 +790,10 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Update image if provided
+	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+		sendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		return
+	}
 	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
 	if javaImage == "" {
 		sendJSONError(w, "javaImage is required", 400)
@@ -2114,6 +2165,10 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 	// The same resolver the install paths use, so an empty or unknown image
 	// falls back to what the server already runs rather than to nothing. An
 	// empty image is a container Docker builds with no entrypoint.
+	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+		sendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		return
+	}
 	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
 	if javaImage == "" {
 		sendJSONError(w, "javaImage is required", http.StatusBadRequest)

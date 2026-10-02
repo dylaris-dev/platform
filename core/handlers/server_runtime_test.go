@@ -72,7 +72,7 @@ func onlineServer() *models.Server {
 // installer, and must not rewrite the loader metadata on its way past.
 func TestUpdateServerRuntimeWritesOnlyTheRuntime(t *testing.T) {
 	fs := &runtimeFakeStore{srv: onlineServer()}
-	rw := runtimeRequest(t, fs, `{"javaImage":"eclipse-temurin:25-jre","extraJvmFlags":"  -Xmx1G  "}`)
+	rw := runtimeRequest(t, fs, `{"javaImage":"ghcr.io/dylaris-dev/platform-mc-java25:latest","extraJvmFlags":"  -Xmx1G  "}`)
 
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rw.Code, rw.Body.String())
@@ -83,7 +83,7 @@ func TestUpdateServerRuntimeWritesOnlyTheRuntime(t *testing.T) {
 	if fs.setupWritten {
 		t.Error("the wide setup writer was called; it would rewrite the installer metadata too")
 	}
-	if fs.gotImage != "eclipse-temurin:25-jre" {
+	if fs.gotImage != "ghcr.io/dylaris-dev/platform-mc-java25:latest" {
 		t.Errorf("image = %q, want the one that was sent", fs.gotImage)
 	}
 	if fs.gotFlags != "-Xmx1G" {
@@ -151,7 +151,7 @@ func TestUpdateServerRuntimeRefusesWhatItCannotApply(t *testing.T) {
 // the row is the reconciler's source of truth, so the settings still apply.
 func TestUpdateServerRuntimeSucceedsWithoutAQueue(t *testing.T) {
 	fs := &runtimeFakeStore{srv: onlineServer()}
-	rw := runtimeRequest(t, fs, `{"javaImage":"eclipse-temurin:25-jre"}`)
+	rw := runtimeRequest(t, fs, `{"javaImage":"ghcr.io/dylaris-dev/platform-mc-java25:latest"}`)
 
 	var body map[string]any
 	if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {

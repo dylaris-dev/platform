@@ -369,6 +369,10 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	}
 	targetDir := defaultTargetDirForLoader(loader)
 
+	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+		sendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		return
+	}
 	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
 	if javaImage == "" {
 		sendJSONError(w, "javaImage is required", http.StatusBadRequest)

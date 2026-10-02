@@ -670,9 +670,16 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 		AttachStderr: true,
 		Tty:          false,
 	}
+	// The installer runs the tenant's chosen Java image on the tenant's
+	// directory, and had nothing set at all: root by default, no memory or
+	// process limit. It gets the game server's own limits.
+	cc.User = mcUserSpec()
 	hc := &container.HostConfig{
-		Binds: []string{fmt.Sprintf("%s:/data", hostSubServerPath)},
+		Binds:     []string{fmt.Sprintf("%s:/data", hostSubServerPath)},
+		Resources: container.Resources{Memory: installerMemory, MemorySwap: installerMemory},
 	}
+	applyPidsLimit(hc)
+	hardenTenantContainer(hc)
 	resp, err := dm.cli.ContainerCreate(ctx, cc, hc, nil, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("installer container create: %w", err)
@@ -796,6 +803,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	}
 	applyPidsLimit(hc)
 	applyIOWeight(hc)
+	hardenTenantContainer(hc)
 
 	nc := serverEndpoints(netID, netName)
 
@@ -1043,6 +1051,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	}
 	applyPidsLimit(hc)
 	applyIOWeight(hc)
+	hardenTenantContainer(hc)
 
 	// Port binding: only in direct port mode (routing_mode != "gateway").
 	// Reuse an already-allocated port if one exists, otherwise allocate a new one.
@@ -1609,3 +1618,39 @@ func (dm *DockerManager) ReconcileRedisEnv() {
 		}
 	}
 }
+
+// installerMemory bounds a Forge/NeoForge installer run.
+const installerMemory = 2 << 30
+
+// tenantTmpfsSize bounds each in-memory scratch directory of a tenant
+// container. tmpfs pages count against the container's memory limit.
+const tenantTmpfsSize = "512m"
+
+// hardenTenantContainer applies what every container running tenant code
+// gets, whatever image it runs.
+//
+// No privilege can be gained inside (no-new-privileges) and none is held
+// (every capability dropped): the server runs as uid 1000, but an image with
+// a setuid binary - and the image is the tenant's choice - made it root with
+// Docker's default capabilities, and root in the container rewrites the
+// node's own files in /data, which uid 1000 cannot. Nothing the server does
+// needs a capability.
+//
+// The writable scratch paths are memory-backed and bounded. They were part of
+// the container's writable layer on the host disk, outside the server's disk
+// limit, and /tmp could fill the node.
+func hardenTenantContainer(hc *container.HostConfig) {
+	hc.SecurityOpt = append(hc.SecurityOpt, "no-new-privileges:true")
+	hc.CapDrop = []string{"ALL"}
+	opts := "rw,nosuid,nodev,size=" + tenantTmpfsSize
+	home := opts + ",uid=" + strconv.Itoa(mcUser()) + ",gid=" + strconv.Itoa(mcUser()) + ",mode=0700"
+	hc.Tmpfs = map[string]string{
+		"/tmp":          opts + ",mode=1777",
+		"/var/tmp":      opts + ",mode=1777",
+		"/home/dylaris": home,
+	}
+}
+
+// defaultPidsLimit is the process and thread cap of a tenant container until
+// an operator saves one. Generous for a modded server, fatal to a fork bomb.
+const defaultPidsLimit int64 = 4096

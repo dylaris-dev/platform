@@ -531,8 +531,11 @@ var defaultPlacementSettings = PlacementSettings{
 	RebalanceThreshold:   90,
 	PortMode:             "sequential",
 	ContainerPort:        25565,
-	PidsLimit:            0, // unlimited by default — opt-in anti fork-bomb cap
-	IOWeight:             0, // unset by default — opt-in blkio fair-share
+	// The node's own default (node/docker_mgr.go defaultPidsLimit). It was 0,
+	// unlimited, and saving this page wrote that 0 back - switching the node's
+	// cap off without anyone choosing to. 0 is still accepted as "unlimited".
+	PidsLimit: 4096,
+	IOWeight:  0, // unset by default — opt-in blkio fair-share
 }
 
 // GetPlacementSettings GET /api/settings/placement - PANEL settings.read (RequireCap at the route).

@@ -77,8 +77,9 @@ var (
 
 	// pidsLimit is the per-container process/thread cap (cgroup pids controller),
 	// loaded from Redis (dylaris:placement:pids_limit) and refreshed every 30s.
-	// 0 = unlimited (default). Anti fork-bomb / process-exhaustion guard. Note it
-	// counts threads too, so a too-low value would throttle heavy modded servers.
+	// 0 = unlimited; defaultPidsLimit until an operator saves a value. Anti
+	// fork-bomb guard. It counts threads too, so it must leave heavy modded
+	// servers room.
 	pidsLimit int64
 
 	// ioWeight is the per-container blkio relative weight (10–1000), loaded from
@@ -692,6 +693,10 @@ func parseConfig() {
 	}
 	portMode = "sequential" // default until loadModesFromRedis overrides
 	containerPort = 25565   // default MC port; admin can change globally in Settings → Nodes → Placement
+	// A process cap until an operator saves one. Unlimited was the default, and
+	// one fork bomb exhausted the host's pids for every tenant and the node.
+	// A saved 0 still means unlimited (Docker's own reading of 0).
+	pidsLimit = defaultPidsLimit
 	log.Printf("Port config: range=%d-%d (mode/container_port load from settings)", portRangeStart, portRangeEnd)
 
 	sftpPort = os.Getenv("SFTP_PORT")
