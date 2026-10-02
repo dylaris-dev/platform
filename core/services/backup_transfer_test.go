@@ -47,7 +47,11 @@ type transferFakeStore struct {
 	// none; usedBytes is what the owner already stores.
 	quotaGB   string
 	usedBytes int64
-	touches   int
+	// busy makes StartBackupRunIfIdle answer "a run is in progress";
+	// advanced counts SetBackupJobScheduled calls.
+	busy     bool
+	advanced int
+	touches  int
 }
 
 func newTransferFakeStore() *transferFakeStore {

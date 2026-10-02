@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02
+
+### Features
+- Nothing.
+
+### Breaking
+- **A backup job's sub-server cannot be changed once it has backups;** create a new job instead.
+
+### Security
+- **A file in a server's folder could freeze backups on a node.** Fixed; BYON nodes need the
+  update. `node`
+
+### Fixes
+- **Restoring a backup after changing its job's sub-server could replace the wrong folder.**
+  A restore now goes where the backup was taken. Fixed on our side; nothing to do.
+- **A failed restore no longer leaves your server stopped,** and a stopped server stays stopped
+  after a restore. BYON nodes need the update. `node`
+
 ## 2026.10.01.9
 
 ### Features

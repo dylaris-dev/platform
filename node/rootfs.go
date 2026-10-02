@@ -83,16 +83,22 @@ func openJailedForWrite(rootDir, reqPath string) (*os.Root, string, error) {
 // leaves it, dangles, or names a directory is skipped; one that stays inside is
 // taken as its target. Same rule the archive walkers always had, now judged at
 // the moment of use.
+//
+// Only a regular file or a directory is taken. A named pipe, a socket or a
+// device is something the tenant's server can create, and opening a pipe with
+// no writer blocks forever: one mkfifo held a backup worker for good, the
+// server stayed on save-off, and eight of them stopped every command on the
+// node. A socket failed every backup of its server.
 func rootEntryInfo(root *os.Root, name string, d fs.DirEntry) (fs.FileInfo, bool) {
 	if d.Type()&fs.ModeSymlink == 0 {
 		info, err := d.Info()
-		if err != nil {
+		if err != nil || !(info.Mode().IsRegular() || info.IsDir()) {
 			return nil, false
 		}
 		return info, true
 	}
 	target, err := root.Stat(name)
-	if err != nil || target.IsDir() {
+	if err != nil || !target.Mode().IsRegular() {
 		return nil, false
 	}
 	return target, true

@@ -45,7 +45,12 @@ type BackupScheduler struct {
 	// already carries for the over-limit sweep. Zero value false means
 	// self-host, where the operator's Settings, Backups allowance is the answer.
 	storeEnabled bool
+	// releaseVersion goes into each run's manifest, as on the manual path.
+	releaseVersion string
 }
+
+// SetReleaseVersion records the release written into scheduled runs' manifests.
+func (b *BackupScheduler) SetReleaseVersion(v string) { b.releaseVersion = v }
 
 // SetStoreEnabled mirrors config.StoreEnabled into the scheduler. Without it the
 // cron path would resolve a different allowance from the manual path for the
@@ -705,7 +710,11 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	}
 
 	storageKey := NewBackupStorageKey(srv.UUID, job.ID, time.Now())
-	runID, err := b.store.CreateBackupRun(&models.BackupRun{
+	// The same gate the manual trigger takes. A plain create started a second
+	// run of a job whose last one was still packing (an hourly job on a large
+	// world, or a manual run in progress): two archive passes of one server,
+	// and the first to finish switched saving back on under the second.
+	runID, started, err := b.store.StartBackupRunIfIdle(&models.BackupRun{
 		JobID:  job.ID,
 		Status: "running",
 		// Recorded now, from the storage this dispatch actually resolved, so the
@@ -715,6 +724,16 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	})
 	if err != nil {
 		return fmt.Errorf("create run: %w", err)
+	}
+	// Whatever happens to this run from here, the job is not due again until
+	// its next interval. Only a node too old for the storage advanced it
+	// before; any other lasting failure - a bucket that does not exist, a
+	// connection deleted under the job - made a new failed run every minute,
+	// and the 50-row run list pushed the good backups out of the panel.
+	defer b.advanceSchedule(job)
+	if !started {
+		log.Printf("backup-scheduler: job %d skipped, its previous run is still in progress", job.ID)
+		return nil
 	}
 
 	if b.queue == nil {
@@ -728,19 +747,20 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		// upload. Failing here names the reason; dispatching anyway would
 		// surface as the node's opaque "unknown provider" two hops later.
 		b.store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
-		// Advanced like a quota skip. A node that stays un-updated would
-		// otherwise get a new failed run on every one-minute tick instead of
-		// one per scheduled interval.
-		if errors.Is(err, ErrNodeUpdateRequired) {
-			if next := ComputeBackupNextRun(job.Schedule, time.Now()); next != nil {
-				b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
-			}
-		}
 		return err
 	}
 	subServer := ""
 	if job.SubServer != nil {
 		subServer = *job.SubServer
+	}
+	// Scheduled runs wrote no manifest, so restoring one left the install and
+	// mod rows as they were and could not say which sub-server it covered.
+	// Same bytes on the row and in the archive, as on the manual path.
+	manifest := EncodeBackupManifest(BuildBackupManifest(b.store, srv.ID, subServer, b.releaseVersion))
+	if len(manifest) > 0 {
+		if err := b.store.SetBackupRunManifest(runID, string(manifest)); err != nil {
+			log.Printf("backup manifest: run %d: %v", runID, err)
+		}
 	}
 	payload := map[string]interface{}{
 		"action":          "backup_run",
@@ -756,6 +776,9 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	if objectStorage {
 		payload["upload"] = BackupUploadMultipart
 	}
+	if len(manifest) > 0 {
+		payload["manifest"] = json.RawMessage(manifest)
+	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
 	if err := b.queue.SendRawCommand(ctx, node.Token, payload); err != nil {
@@ -763,15 +786,18 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 		return err
 	}
 
-	// Advance next_run_at so we don't re-dispatch on the next tick.
+	return nil
+}
+
+// advanceSchedule moves the job's next_run_at past now, so the next tick does
+// not dispatch it again.
+func (b *BackupScheduler) advanceSchedule(job models.BackupJob) {
 	next := ComputeBackupNextRun(job.Schedule, time.Now())
 	if next != nil {
 		b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
 	} else {
 		b.store.SetBackupJobScheduled(job.ID, time.Now(), time.Time{})
 	}
-
-	return nil
 }
 
 // NewBackupStorageKey names the archive of a new run, for the manual and the

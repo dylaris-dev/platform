@@ -20,6 +20,11 @@ type backupSubServerFakeStore struct {
 	store.Store
 	created *models.BackupJob
 	updated *models.BackupJob
+	runs    []models.BackupRun
+}
+
+func (f *backupSubServerFakeStore) ListBackupRuns(int, int) ([]models.BackupRun, error) {
+	return f.runs, nil
 }
 
 func (f *backupSubServerFakeStore) GetServerByID(id int) (*models.Server, error) {

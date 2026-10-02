@@ -51,7 +51,27 @@ func (f *transferFakeStore) CreateBackupRun(r *models.BackupRun) (int, error) {
 	return 2, nil
 }
 
-func (f *transferFakeStore) SetBackupJobScheduled(int, time.Time, time.Time) error { return nil }
+func (f *transferFakeStore) SetBackupJobScheduled(int, time.Time, time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.advanced++
+	return nil
+}
+
+func (f *transferFakeStore) StartBackupRunIfIdle(r *models.BackupRun) (int, bool, error) {
+	if f.busy {
+		return 0, false, nil
+	}
+	id, err := f.CreateBackupRun(r)
+	return id, err == nil, err
+}
+
+func (f *transferFakeStore) SetBackupRunManifest(int, string) error        { return nil }
+func (f *transferFakeStore) ListServerModSubServers(int) ([]string, error) { return nil, nil }
+func (f *transferFakeStore) GetSubServerInstall(int, string) (*models.SubServerInstall, error) {
+	return nil, nil
+}
+func (f *transferFakeStore) ListServerMods(int, string) ([]models.ServerMod, error) { return nil, nil }
 
 // Not node-local mode, so the per-server node-local cap stays out of the way.
 func (f *transferFakeStore) GetSetting(key string) (string, error) {

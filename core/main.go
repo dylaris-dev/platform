@@ -888,6 +888,7 @@ func main() {
 	backupScheduler.SetCoreStorage(appState.CoreStorageBackupBuilder())
 	backupScheduler.SetConnection(appState.ConnectionBackupBuilder())
 	backupScheduler.SetStoreEnabled(cfg.StoreEnabled)
+	backupScheduler.SetReleaseVersion(appState.ReleaseVersion)
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(bgCtx)
 

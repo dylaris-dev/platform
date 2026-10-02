@@ -5,9 +5,11 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -136,10 +138,22 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// sub-server restores too — a single container hosts every sub-server,
 	// so a Minecraft server with an open world file is racing us either
 	// way. Best to suspend and resume.
+	// The server comes back up only if it was running. Every failure after the
+	// stop returned without starting it again, and a success started it even
+	// when its owner had it stopped.
+	wasRunning := dm != nil && containerRunning(dm, cmd.ServerUUID)
 	if dm != nil {
 		log.Printf("Restore %d: stopping container %s", cmd.RunID, cmd.ServerUUID)
 		gracefulStop(rdb, cmd.ServerUUID, dm)
 	}
+	defer func() {
+		if wasRunning {
+			log.Printf("Restore %d: starting container %s again", cmd.RunID, cmd.ServerUUID)
+			if err := dm.RestartContainer(cmd.ServerUUID); err != nil {
+				log.Printf("Restore %d: container restart failed: %v", cmd.RunID, err)
+			}
+		}
+	}()
 
 	var body io.ReadCloser
 	switch {
@@ -178,6 +192,12 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	defer closeStage()
 	tr := tar.NewReader(gr)
 
+	// The stage sits beside the server, outside its disk limit, and the archive
+	// can come from a bucket the tenant writes to. Extraction stops before it
+	// would leave the disk below its reserve, which every other server here
+	// needs as much as this one.
+	budget := restoreDiskBudget(filepath.Dir(stageDir))
+	var written int64
 	extracted := 0
 	for {
 		hdr, terr := tr.Next()
@@ -219,7 +239,12 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open file: "+ferr.Error())
 				return
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			n, err := io.Copy(f, io.LimitReader(tr, budget-written+1))
+			written += n
+			if err == nil && written > budget {
+				err = errRestoreDiskBudget
+			}
+			if err != nil {
 				f.Close()
 				stageCleanup()
 				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "copy: "+err.Error())
@@ -227,7 +252,15 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			}
 			f.Close()
 			extracted++
-		case tar.TypeSymlink, tar.TypeLink:
+		case tar.TypeLink:
+			// The second name of a file archived once (see writeServerArchive).
+			// Both names go through the stage Root, so the link cannot reach
+			// out of it.
+			old, skipOld := extractSkip(stageDir, hdr.Linkname)
+			if skipOld || mkdirParentIn(stageRoot, name) != nil || stageRoot.Link(old, name) != nil {
+				log.Printf("restore: skipping link entry %q -> %q", hdr.Name, hdr.Linkname)
+			}
+		case tar.TypeSymlink:
 			// Skip links: an unvalidated link target could point outside the
 			// staging dir and escape on later access. MC server backups don't
 			// rely on links.
@@ -268,21 +301,17 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "swap stage: "+err.Error())
 		return
 	}
+	carried := true
 	if cmd.SubServer == "" {
 		if err := carryArchivesAcrossSwap(backupDir, targetDir); err != nil {
-			log.Printf("Restore %d: [warn] could not carry %s across the swap: %v", cmd.RunID, backupDirName, err)
+			// The stash still holds what could not be carried - the other
+			// backups among it. Deleting it would delete them.
+			carried = false
+			log.Printf("Restore %d: [warn] could not carry %s across the swap, keeping %s: %v", cmd.RunID, backupDirName, backupDir, err)
 		}
 	}
-	go os.RemoveAll(backupDir)
-
-	// Bring the container back up. For sub-server restores we also flip
-	// the active sub-server file if needed so the next start picks up
-	// whatever the archive contained.
-	if dm != nil {
-		log.Printf("Restore %d: restarting container %s", cmd.RunID, cmd.ServerUUID)
-		if err := dm.RestartContainer(cmd.ServerUUID); err != nil {
-			log.Printf("Restore %d: container restart failed: %v", cmd.RunID, err)
-		}
+	if carried {
+		go os.RemoveAll(backupDir)
 	}
 
 	reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
@@ -301,16 +330,53 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 // archives written before the backup side stopped nesting them contain a copy,
 // and it is stale by definition. Sub-server restores never call this - their
 // target is one level below the archives.
+//
+// The node's own files in the server root go the same way: the resource
+// limits, the active sub-server and the server's install record are the
+// node's state, not the tenant's, and the copy in an archive is as old as the
+// archive - a restore would otherwise bring back the RAM and CPU of before a
+// downgrade, for the reconciler to recreate the container with.
 func carryArchivesAcrossSwap(stashedRoot, restoredRoot string) error {
-	live := filepath.Join(stashedRoot, backupDirName)
-	if _, err := os.Stat(live); err != nil {
-		return nil // nothing to carry
+	for _, name := range nodeOwnedRootEntries {
+		live := filepath.Join(stashedRoot, name)
+		if _, err := os.Lstat(live); err != nil {
+			continue // nothing to carry
+		}
+		target := filepath.Join(restoredRoot, name)
+		if err := os.RemoveAll(target); err != nil {
+			return err
+		}
+		if err := os.Rename(live, target); err != nil {
+			return err
+		}
 	}
-	target := filepath.Join(restoredRoot, backupDirName)
-	if err := os.RemoveAll(target); err != nil {
-		return err
+	return nil
+}
+
+// nodeOwnedRootEntries are the names in a server root the node writes and the
+// tenant cannot (isProtectedFile).
+var nodeOwnedRootEntries = []string{backupDirName, ".node_config.json", ".active_server", ".dylaris.json"}
+
+// errRestoreDiskBudget ends an extraction that would fill the disk.
+var errRestoreDiskBudget = errors.New("the archive is larger than the free space this node can give it")
+
+// restoreDiskBudget is how many bytes an extraction into dir may write: the
+// free space, less a reserve of a twentieth of the disk. A variable for tests.
+var restoreDiskBudget = func(dir string) int64 {
+	total, free := getDiskSpace(dir)
+	if total == 0 {
+		return math.MaxInt64 - 1 // unknown: no bound rather than a refusal
 	}
-	return os.Rename(live, target)
+	if reserve := total / 20; free > reserve {
+		return int64(free - reserve)
+	}
+	return 0
+}
+
+// containerRunning reports whether the server's container is running now.
+func containerRunning(dm *DockerManager, uuid string) bool {
+	info, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+uuid)
+	return err == nil && info.State != nil && info.State.Running
 }
 
 // downloadBackup opens the archive on a filesystem provider. The caller is
@@ -334,6 +400,11 @@ func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, 
 	case "node-local":
 		archive := nodeLocalArchiveName(key)
 		full := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive)
+		// The same check list and download take: an archive is a regular file
+		// the node wrote, never a link to be followed.
+		if _, err := archiveInfo(full); err != nil {
+			return nil, err
+		}
 		return os.Open(full)
 
 	default:

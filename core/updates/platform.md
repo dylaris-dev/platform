@@ -8,6 +8,31 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02
+
+### Features
+- Nothing.
+
+### Breaking
+- **A backup job's sub-server cannot be changed once it has backups;** create a new job instead.
+  A restore no longer starts a server that was stopped before it. `core` `node`
+
+### Security
+- **A named pipe in a server's folder froze its backups, and eight of them every command on
+  the node.** Backups now take only files and folders. `node`
+- **A file linked under many names was backed up once per name,** and restoring an archive could
+  fill the node's disk. Each file is stored once, and a restore stops before the disk fills. `node`
+- **A restore brought back the node's own settings for the server,** such as RAM and CPU from
+  before a downgrade. They now stay as they are. `node`
+
+### Fixes
+- **Restoring a backup after its job was pointed at another sub-server replaced the wrong folder**
+  and could delete the other sub-servers. A restore now goes where the backup was taken. `core`
+- **Scheduled backups ran twice at once, and a storage that failed made a failed run every
+  minute** until good backups dropped off the list. Scheduled backups also record what they contain now. `core`
+- **A failed restore left the server stopped,** and retention could delete a backup while it was
+  being restored. `core` `node`
+
 ## 2026.10.01.9
 
 ### Features

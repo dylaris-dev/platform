@@ -454,6 +454,14 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		} else {
 			next.SubServer = &s
 		}
+		// A job's runs are restored into what the job covers, so what it covers
+		// cannot move under runs it already has. A different scope is a new job.
+		if deref(next.SubServer) != deref(job.SubServer) {
+			if runs, err := h.state.Store.ListBackupRuns(jobID, 1); err != nil || len(runs) > 0 {
+				sendJSONError(w, "This job already has backups, which restore into what it covers. Create a new job for a different sub-server.", http.StatusConflict)
+				return
+			}
+		}
 	}
 	if req.IncludePatterns != nil {
 		next.IncludePatterns = *req.IncludePatterns
@@ -726,9 +734,15 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, err.Error(), status)
 		return
 	}
-	subServer := ""
-	if job.SubServer != nil {
-		subServer = *job.SubServer
+	// The sub-server the ARCHIVE covers, not the one the job names today. A job
+	// can be re-pointed after it ran, and the node replaces the restore target
+	// wholesale: a run of one sub-server restored as the whole container
+	// replaced the server root with that sub-server and deleted the others.
+	// Runs without a manifest predate this and come from a job whose scope
+	// could not change once it had runs (UpdateJob), so the job still says it.
+	subServer := deref(job.SubServer)
+	if m, ok := services.DecodeBackupManifest(run.Manifest); ok {
+		subServer = m.Scope
 	}
 	payload := map[string]interface{}{
 		"action":     "backup_restore",
@@ -799,6 +813,10 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.hasServerAccess(r, job.ServerID, "backups.delete") {
 		sendJSONError(w, "Forbidden", 403)
+		return
+	}
+	if busy, err := h.state.Store.BackupRunRestoring(runID); err != nil || busy {
+		sendJSONError(w, "This backup is being restored. Delete it once the restore has finished.", http.StatusConflict)
 		return
 	}
 	// Best-effort object delete first; even if the storage is unreachable we

@@ -35,6 +35,7 @@ type presignedOnlyStore struct {
 	runUpdates     []string // "<id>:<status>:<message>"
 	restoreUpdates []string
 	deleted        []int
+	restoring      bool // a restore is waiting on the run
 }
 
 func (f *presignedOnlyStore) GetServerByID(id int) (*models.Server, error) {
@@ -88,6 +89,7 @@ func (f *presignedOnlyStore) DeleteBackupRun(id int) error {
 	return nil
 }
 func (f *presignedOnlyStore) SetBackupRunManifest(int, string) error { return nil }
+func (f *presignedOnlyStore) BackupRunRestoring(int) (bool, error)   { return f.restoring, nil }
 func (f *presignedOnlyStore) GetSubServerInstall(int, string) (*models.SubServerInstall, error) {
 	return nil, nil
 }

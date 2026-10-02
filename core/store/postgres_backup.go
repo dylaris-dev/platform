@@ -561,6 +561,25 @@ func (s *PostgresStore) DeleteBackupRun(id int) error {
 	return err
 }
 
+// backupRunRestoring is true for a run a restore is still waiting on. Retention
+// and a manual delete removed such an archive under the restore, which by then
+// had usually stopped the server: the download failed and the server stayed
+// down. Six hours, like the run reaper, so a restore whose result never
+// arrived does not pin the archive forever.
+const backupRunRestoring = `EXISTS (SELECT 1 FROM backup_restores br
+			WHERE br.run_id = backup_runs.id AND br.status IN ('queued', 'running')
+			AND br.requested_at > NOW() - INTERVAL '6 hours')`
+
+// BackupRunRestoring reports whether a restore is waiting on this run.
+func (s *PostgresStore) BackupRunRestoring(runID int) (bool, error) {
+	var busy bool
+	err := s.db.QueryRow(`SELECT `+backupRunRestoring+` FROM backup_runs WHERE id = $1`, runID).Scan(&busy)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return busy, err
+}
+
 func (s *PostgresStore) PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error) {
 	if keep < 0 {
 		keep = 0
@@ -568,6 +587,7 @@ func (s *PostgresStore) PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun,
 	rows, err := s.db.Query(
 		`SELECT `+backupRunCols+` FROM backup_runs
 		 WHERE job_id = $1 AND status = 'success'
+		   AND NOT `+backupRunRestoring+`
 		 ORDER BY started_at DESC
 		 OFFSET $2`,
 		jobID, keep,

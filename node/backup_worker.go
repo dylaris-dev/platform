@@ -384,6 +384,12 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 	// or names a directory is skipped, one that stays inside is archived as its
 	// target. Archiving a link as a header-only entry and then copying its
 	// target's bytes into it used to abort every backup of that server.
+	// The first archived name of each file, by identity. A file reached again -
+	// a hard link, or a symlink inside the server onto it - is written as a tar
+	// link to that name instead of a second copy. Without it a tenant's one
+	// gigabyte linked five thousand times, which costs them no quota, became
+	// five terabytes of upload, and a restore of it filled the node's disk.
+	seen := map[fileIdentity]string{}
 	walkErr := walkRoot(root, startName, func(name string, info fs.FileInfo) error {
 		rel := relTo(startName, name)
 		if rel == "." {
@@ -409,6 +415,17 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 			return err
 		}
 		hdr.Name = rel
+		if id, ok := identityOf(info); ok && !info.IsDir() {
+			if first, dup := seen[id]; dup {
+				hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeLink, first, 0
+				if err := tw.WriteHeader(hdr); err != nil {
+					return err
+				}
+				addedAny = true
+				return nil
+			}
+			seen[id] = rel
+		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
@@ -417,7 +434,7 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 			if err != nil {
 				return err
 			}
-			_, copyErr := io.Copy(tw, f)
+			copyErr := copyExactly(tw, f, hdr.Size)
 			f.Close()
 			if copyErr != nil {
 				return copyErr
@@ -637,4 +654,27 @@ func resolveServerRoot(sm *StorageManager, uuid string) string {
 		return filepath.Join("./dylaris_data/servers", uuid)
 	}
 	return sm.GetServerDir(uuid)
+}
+
+// copyExactly writes exactly size bytes of f: the size the tar header already
+// promised. A server keeps writing while it is backed up (save-off does not
+// stop the log), so a file that grew failed the whole backup with "write too
+// long" and one that shrank with "missed writing". A grown file is cut at the
+// size it had when it was listed; a shrunk one is padded with zeros.
+func copyExactly(w io.Writer, f io.Reader, size int64) error {
+	n, err := io.Copy(w, io.LimitReader(f, size))
+	if err != nil {
+		return err
+	}
+	if n < size {
+		_, err = io.CopyN(w, zeroReader{}, size-n)
+	}
+	return err
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }

@@ -29,6 +29,14 @@ func readArchive(t *testing.T, raw []byte) map[string]string {
 		if err != nil {
 			t.Fatalf("tar read: %v", err)
 		}
+		// A file archived once under another name: its content is that name's,
+		// which the walk has always written first.
+		if hdr.Typeflag == tar.TypeLink {
+			if body, ok := out[hdr.Linkname]; ok {
+				out[hdr.Name] = body
+			}
+			continue
+		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
