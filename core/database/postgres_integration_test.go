@@ -1184,3 +1184,36 @@ func TestIntegrationTabPatchWritesEveryParameter(t *testing.T) {
 		}
 	})
 }
+
+// Rotating a share link left the tab's content host where it was, and anyone
+// with the old link could keep using that host.
+func TestIntegrationRotatingAShareLinkMovesTheContentHost(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st)
+	var tabID int
+	if err := db.QueryRow(`INSERT INTO server_tabs
+		(server_id, name, icon, url, position, enabled, open_in_panel,
+		 mode, target_port, target_path, surface, visibility, share_token, proxy_host_label)
+		VALUES ($1,'rot','layout-grid','',0,true,true,'proxied',8100,'/','page','public',$2,$3)
+		RETURNING id`, f.server.ID, uniqueName("sh_"), uniqueName("lbl")).Scan(&tabID); err != nil {
+		t.Fatalf("insert tab: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM server_tabs WHERE id=$1`, tabID) })
+
+	newLabel := uniqueName("lbl")
+	if _, err := store.RotateTabShare(db, tabID, f.server.ID, uniqueName("sh_"), newLabel); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	var got sql.NullString
+	db.QueryRow(`SELECT proxy_host_label FROM server_tabs WHERE id=$1`, tabID).Scan(&got)
+	if got.String != newLabel {
+		t.Fatalf("label after rotation = %q, want the new one", got.String)
+	}
+	// A direct tab has no content host and must not get one.
+	db.Exec(`UPDATE server_tabs SET proxy_host_label=NULL WHERE id=$1`, tabID)
+	store.RotateTabShare(db, tabID, f.server.ID, uniqueName("sh_"), uniqueName("lbl"))
+	db.QueryRow(`SELECT proxy_host_label FROM server_tabs WHERE id=$1`, tabID).Scan(&got)
+	if got.Valid {
+		t.Fatalf("a tab without a content host got one: %q", got.String)
+	}
+}

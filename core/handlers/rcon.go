@@ -102,6 +102,7 @@ func (h *RconHandler) ExecForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req rconRequest
+	r.Body = http.MaxBytesReader(w, r.Body, consoleCommandMaxBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -122,6 +123,7 @@ func (h *RconHandler) ExecExternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req rconRequest
+	r.Body = http.MaxBytesReader(w, r.Body, consoleCommandMaxBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -137,6 +139,12 @@ func (h *RconHandler) execAgainstServer(ctx context.Context, serverID int, serve
 	}
 	if len(req.Command) > rconMaxCommandLen {
 		return rconResponse{Error: "command too long", status: http.StatusBadRequest}
+	}
+	// The same characters the console refuses.
+	for _, c := range req.Command {
+		if c < 0x20 || c == 0x7f {
+			return rconResponse{Error: "command contains control characters", status: http.StatusBadRequest}
+		}
 	}
 
 	enabled, port, password, err := h.state.Store.GetServerRconConfig(serverID)

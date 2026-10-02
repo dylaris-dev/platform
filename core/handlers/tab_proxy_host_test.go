@@ -117,16 +117,21 @@ func TestHostVisibility_RequiresAnActualLink(t *testing.T) {
 		name       string
 		visibility string
 		token      string
+		surface    string
 		want       string
 	}{
-		{"public and shared", "public", "tok123", "public"},
-		{"public but never shared", "public", "", "private"},
-		{"private with a token", "private", "tok123", "private"},
-		{"private", "private", "", "private"},
+		{"public and shared", "public", "tok123", "page", "public"},
+		{"public, shared, both surfaces", "public", "tok123", "both", "public"},
+		{"public but never shared", "public", "", "page", "private"},
+		{"private with a token", "private", "tok123", "page", "private"},
+		{"private", "private", "", "page", "private"},
+		// Switched to "panel only" after it was shared: the token stayed, and
+		// so did anonymous access to its content host.
+		{"panel-only tab that kept its token", "public", "tok123", "tab", "private"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tab := &proxyTab{Visibility: tc.visibility}
+			tab := &proxyTab{Visibility: tc.visibility, Surface: tc.surface}
 			if tc.token != "" {
 				tab.ShareToken = sql.NullString{String: tc.token, Valid: true}
 			}

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/protobuf/proto"
 )
 
 // CoreInfo is the heartbeat payload written by each Core instance to Redis.
@@ -47,9 +49,27 @@ type coreConnection struct {
 // send serializes all writes to this Core stream. gRPC streams are not safe
 // for concurrent Send; the WS bridge introduced the first background sender.
 func (cc *coreConnection) send(msg *pb.NodeMessage) error {
+	msg = boundForCore(msg)
 	cc.sendMu.Lock()
 	defer cc.sendMu.Unlock()
 	return cc.stream.Send(msg)
+}
+
+// coreMaxMessage is what Core's gRPC server accepts in one message (128 KB,
+// core/grpc/server.go), less room for the envelope.
+const coreMaxMessage = 120 * 1024
+
+// boundForCore replaces a message Core would refuse with an error for the same
+// request. Over the limit, Core does not refuse the one message: the whole
+// stream fails, and every transfer, console and tab of every tenant on this
+// node with it. A container that answered a tab request with 200 KB of headers
+// - or an error text quoting them - did exactly that, as often as it liked.
+func boundForCore(msg *pb.NodeMessage) *pb.NodeMessage {
+	if n := proto.Size(msg); n > coreMaxMessage {
+		log.Printf("gRPC Mesh: a reply of %d bytes for %s is over Core's limit, sending an error instead", n, msg.GetRequestId())
+		return errorMsg(msg.GetRequestId(), 502, fmt.Sprintf("the reply was too large to forward (%d bytes)", n))
+	}
+	return msg
 }
 
 // pendingWrite tracks an in-flight file write operation (WriteReq → Chunks → TransferDone).

@@ -20,7 +20,8 @@ import (
 // proxyHTTPClient does NOT follow redirects (Core forwards 3xx to the browser
 // as-is) and caps the round trip so an unresponsive container surfaces fast.
 var proxyHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
+	Timeout:   30 * time.Second,
+	Transport: proxyTransport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -196,4 +197,12 @@ func (h *StreamHandler) streamProxyResponse(reqID string, resp *http.Response, s
 		RequestId: reqID,
 		Payload:   &pb.NodeMessage_TransferDone{TransferDone: &pb.TransferDone{TotalBytes: offset}},
 	})
+}
+
+// proxyTransport is the default transport with the response headers bounded:
+// they travel to Core in one message, and Go's default allows 10 MB.
+func proxyTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxResponseHeaderBytes = 64 << 10
+	return t
 }

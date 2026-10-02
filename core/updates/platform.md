@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.5
+
+### Features
+- Nothing.
+
+### Breaking
+- **Rotating a tab's share link also moves the tab to a new address;** open copies of the tab
+  need a reload. `core`
+
+### Security
+- **A tab's page could crash a Core replica or the node agent with one huge WebSocket message,**
+  or cut every tenant on a node off from console and files with oversized headers. `core` `node`
+- **Rotating a share link, or making a tab panel-only, did not shut out holders of the old link.**
+  It does now. `core`
+- **A tab's page could lock its viewer out of other tabs or sign them out of the panel.** `core`
+
+### Fixes
+- **RCON commands are size-limited and refuse control characters,** as the console already did.
+  `core`
+- **One server can no longer hold every live tab connection on a node.** `node`
+
 ## 2026.10.02.4
 
 ### Features

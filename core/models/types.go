@@ -485,8 +485,9 @@ type Server struct {
 	// RCON config. RconEnabled controls whether the server writes
 	// enable-rcon=true to server.properties on next launch and whether the
 	// panel surfaces RCON-driven UIs (Players tab, /rcon endpoint). RconPort
-	// 0 = MC default 25575; RconPassword is stored separately (encrypted) and
-	// never serialized to JSON.
+	// 0 = MC default 25575; RconPassword is stored separately, in PLAINTEXT
+	// (servers.rcon_password - the server needs it verbatim in server.properties)
+	// and never serialized to JSON. The port is never published.
 	RconEnabled  bool            `json:"rconEnabled"`
 	RconPort     int             `json:"rconPort"`
 	RconPassword string          `json:"-"`

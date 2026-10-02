@@ -36,9 +36,13 @@ const maxWSMessageBytes = 8 * 1024 * 1024 // 8 MiB
 // the cap is rejected with a policy WsClose.
 const maxWSBridges = 256
 
+// maxWSBridgesPerServer keeps one server from taking every bridge on the node.
+const maxWSBridgesPerServer = 16
+
 // wsBridge tracks one open container WS for a request_id.
 type wsBridge struct {
 	conn      *websocket.Conn
+	server    string               // the server UUID it belongs to, for the per-server cap
 	owner     *coreConnection      // Core connection that opened this bridge (WS5 I1 reaper)
 	inbound   chan *pb.NodeMessage // Core->node WsFrame/WsClose for this request_id
 	done      chan struct{}
@@ -150,9 +154,15 @@ func (m *MeshManager) handleWSOpen(cc *coreConnection, reqID, serverUUID string,
 		return
 	}
 
-	bridge := &wsBridge{owner: cc, inbound: make(chan *pb.NodeMessage, 64), done: make(chan struct{})}
+	bridge := &wsBridge{owner: cc, server: serverUUID, inbound: make(chan *pb.NodeMessage, 64), done: make(chan struct{})}
 	m.wsMu.Lock()
-	if len(m.wsBridges) >= maxWSBridges {
+	perServer := 0
+	for _, b := range m.wsBridges {
+		if b.server == serverUUID {
+			perServer++
+		}
+	}
+	if len(m.wsBridges) >= maxWSBridges || perServer >= maxWSBridgesPerServer {
 		m.wsMu.Unlock()
 		// Bound concurrent bridges: reject beyond the cap with a policy WsClose
 		// so a flood of WsOpens cannot exhaust this node and starve co-tenants.
@@ -233,6 +243,10 @@ func (m *MeshManager) startWSPumps(cc *coreConnection, reqID, serverUUID string,
 			cc.send(&pb.NodeMessage{RequestId: reqID, Payload: &pb.NodeMessage_WsClose{WsClose: &pb.WsClose{Code: 1000, Reason: ""}}})
 			m.closeWSBridge(reqID)
 		}()
+		// One message is read whole into memory; unbounded, a container's
+		// single multi-gigabyte message took the node agent down for every
+		// tenant on it.
+		conn.SetReadLimit(maxWSMessageBytes)
 		for {
 			mt, data, err := conn.ReadMessage()
 			if err != nil {

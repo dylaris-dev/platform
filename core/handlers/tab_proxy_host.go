@@ -109,8 +109,12 @@ func (h *ProxyHandler) getTabByHostLabel(label string) (*proxyTab, error) {
 // is not what "public" meant when the only way to reach a tab was a share link
 // somebody had to hand out. So anonymity requires BOTH: marked public, and
 // actually carrying a share token.
+//
+// And a surface that is shared at all: a tab switched to "panel only" kept its
+// token, and its content host stayed open to anyone who knew it.
 func hostVisibility(tab *proxyTab) string {
-	if tab.Visibility == "public" && tab.ShareToken.Valid && tab.ShareToken.String != "" {
+	if tab.Visibility == "public" && tab.ShareToken.Valid && tab.ShareToken.String != "" &&
+		(tab.Surface == "page" || tab.Surface == "both") {
 		return "public"
 	}
 	return "private"

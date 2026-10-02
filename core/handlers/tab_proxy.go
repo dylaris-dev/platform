@@ -88,6 +88,9 @@ var coreResponseStrip = map[string]bool{
 	"cache-control": true,
 	"expires":       true,
 	"pragma":        true,
+	// Applies to the whole registrable domain: a tab's page could sign its
+	// viewer out of the panel.
+	"clear-site-data": true,
 }
 
 type ProxyHandler struct {
@@ -468,15 +471,24 @@ func shareTokenExpired(expires sql.NullTime, now time.Time) bool {
 // Public can apply the same read-only method gate InDashboard does - it is
 // meaningless (and always false) when authed is false.
 func (h *ProxyHandler) resolvePublicTicket(r *http.Request, tab *proxyTab) (authed, hasAccess, readOnly bool) {
-	c, err := r.Cookie(proxyCookieName)
-	if err != nil || c.Value == "" {
-		return false, false, false
+	// Every cookie of that name, not the first: a page on another tab's host
+	// can set one for the shared parent domain, and as the first one sent it
+	// locked the viewer out of every other tab. Parent-domain cookies are
+	// still not trusted for anything - each is checked against THIS tab.
+	for _, c := range r.Cookies() {
+		if c.Name != proxyCookieName || c.Value == "" {
+			continue
+		}
+		claims, err := h.auth.ParseTabProxyTicket(c.Value)
+		if err != nil {
+			continue
+		}
+		authed = true
+		if claims.ServerID == tab.ServerID && claims.TabID == tab.ID {
+			return true, true, claims.ReadOnly
+		}
 	}
-	claims, err := h.auth.ParseTabProxyTicket(c.Value)
-	if err != nil {
-		return false, false, false
-	}
-	return true, claims.ServerID == tab.ServerID && claims.TabID == tab.ID, claims.ReadOnly
+	return authed, false, false
 }
 
 const coreWSFragmentSize = 60 * 1024
@@ -617,7 +629,10 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 		})
 	}
 
-	// browser -> container (sole reader of bconn)
+	// browser -> container (sole reader of bconn). Bounded like the other
+	// direction: a message is read whole into memory, and one multi-gigabyte
+	// message from a tab's page took a Core replica down.
+	bconn.SetReadLimit(maxWSMessageBytes)
 	go func() {
 		defer closeAll()
 		for {

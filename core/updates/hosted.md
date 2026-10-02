@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.02.5
+
+### Features
+- Nothing.
+
+### Breaking
+- **Rotating a tab's share link also moves the tab to a new address.**
+
+### Security
+- **A tab's page could crash a node agent or cut everyone on a node off with oversized
+  messages.** BYON nodes need the update. `node`
+- **Rotating a share link now shuts out everyone who had the old one.** Fixed on our side;
+  nothing to do.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02.4
 
 ### Features

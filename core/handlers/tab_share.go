@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"dylaris-core/store"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -296,10 +297,15 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 	// out is dropped with the slug it belonged to - keeping it would mint a
 	// link that is dead the moment it is copied, which reads as a broken
 	// button. A future expiry is the owner's live choice and survives.
-	res, err := db.Exec(`UPDATE server_tabs
-		SET share_token=$3,
-		    share_expires_at = CASE WHEN share_expires_at <= now() THEN NULL ELSE share_expires_at END
-		WHERE id=$1 AND server_id=$2`, tabID, serverID, tok)
+	// The content host moves with the link. Rotating is what an owner does to
+	// lock out the people who had the old link, and the host they had been
+	// sent to - in the old link and in every page it served - stayed open.
+	label, lerr := generateProxyHostLabel()
+	if lerr != nil {
+		sendJSONError(w, "Failed to rotate the link", http.StatusInternalServerError)
+		return
+	}
+	res, err := store.RotateTabShare(db, tabID, serverID, tok, label)
 	if err != nil {
 		// The unique index on share_token is what decides this, not a SELECT
 		// before the write: two people picking the same slug at the same moment
