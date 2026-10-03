@@ -199,8 +199,14 @@ var catalog = []Capability{
 	// makes Core connect to a host the CALLER names. There is no field on a
 	// capability for saying that to whoever builds a role, so it is said here.
 	//
+	// It is more than that: it is full admin in all but name, like
+	// panelroles.write. It copies the whole database to a host the caller names
+	// (POST /api/admin/db/migration), and it sets the platform-backup passphrase
+	// and downloads or restores those backups - every account, hash and secret
+	// on the platform. Grant it to no one you would not make an admin.
+	//
 	// Today only 'admin' holds it - the seeded 'support' role excludes it by
-	// name. A custom role that includes it inherits this too.
+	// name. A custom role that includes it inherits all of this too.
 	{ID: "settings.write", Label: "Edit platform settings", Category: "Settings", Scope: ScopePanel, Verb: VerbWrite},
 
 	{ID: "plans.read", Label: "View plans", Category: "Plans", Scope: ScopePanel, Verb: VerbRead},

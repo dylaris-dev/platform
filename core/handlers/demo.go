@@ -218,6 +218,13 @@ func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "An admin cannot be the demo account", http.StatusBadRequest)
 		return
 	}
+	// Anyone can open a demo session, and it reads everything the account
+	// reads. A staff account there handed users.read, audit.read or a node's
+	// credentials to the public.
+	if caps, ok := strictPanelCaps(h.state, u.ID); !ok || len(caps) > 0 {
+		sendJSONError(w, "A staff account cannot be the demo account", http.StatusBadRequest)
+		return
+	}
 	if err := h.state.Store.SetSetting(demoAccountUUIDSetting, u.ID); err != nil {
 		sendJSONError(w, "Failed to save demo account", http.StatusInternalServerError)
 		return

@@ -125,6 +125,16 @@ func (h *TicketSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Reque
 
 // SaveSettings PUT /api/admin/settings/tickets - RequireCap("tickets.write") at the route.
 func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Request) {
+	// The operator's policy, not a support task. tickets.write is what the
+	// support role holds, and this screen turns off the team isolation that
+	// support is held inside, shortens the retention of the audit trail that
+	// watches support (1 day erased it on the next sweep), lifts the
+	// attachment quotas and switches on deletion. Same boundary the ticket
+	// migration tools already draw.
+	if !IsAdmin(r) {
+		sendJSONError(w, "Only an administrator can change the ticket settings", http.StatusForbidden)
+		return
+	}
 	var s TicketSettings
 	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **Only an admin can change a server's owner or the ticket settings.** Staff roles with
+  servers.write or tickets.write no longer can. Owner changes now appear in the identity log. `core` `panel`
+- **Staff with plans.write can no longer change their own account's entitlement, limits or
+  billing,** and a staff account cannot be the demo account. `core`
+
+### Security
+- **Staff with servers.write could take over any server on the platform's nodes,** by making
+  themselves its owner or moving it onto a node of their own. `core`
+- **The support role could switch off ticket team isolation and erase the ticket audit
+  trail** through the ticket settings. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03.3
 
 ### Features

@@ -79,3 +79,26 @@ func strictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
 	}
 	return caps, true
 }
+
+// guardAccountTerms is the rule for what an account is entitled to and
+// charged: entitlement grants, limit and billing overrides, billing status.
+// mayManageAccount, plus: not the caller's own account unless they are an
+// admin. plans.write is not an admin capability, and a holder granting
+// themselves BYON, unlimited limits or lifting their own suspension is spending
+// what nobody approved. Writes the refusal and returns false.
+func guardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
+	if actor, _ := r.Context().Value("userID").(string); !IsAdmin(r) && actor != "" && actor == userID {
+		sendJSONError(w, "You cannot change your own account's entitlement, limits or billing", http.StatusForbidden)
+		return false
+	}
+	target, err := state.Store.GetUserByID(userID)
+	if err != nil || target == nil {
+		sendJSONError(w, "User not found", http.StatusNotFound)
+		return false
+	}
+	if !mayManageAccount(state, r, target) {
+		sendJSONError(w, "You cannot change the terms of an account with more rights than yours", http.StatusForbidden)
+		return false
+	}
+	return true
+}

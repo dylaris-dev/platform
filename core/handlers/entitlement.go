@@ -91,6 +91,9 @@ func grantKinds(kind string) []string {
 // of colliding with the grant.
 func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
+	if !guardAccountTerms(w, r, h.state, userID) {
+		return
+	}
 	var req grantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -166,6 +169,9 @@ func (h *EntitlementHandler) subjectIsAdmin(userID string) bool {
 // "take back what I gave", not "cut them off" (that is the billing status).
 func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
+	if !guardAccountTerms(w, r, h.state, userID) {
+		return
+	}
 	// ?kind= takes back ONE of the two. Without it the whole grant goes, which
 	// is what every existing caller means and what the button used to do.
 	switch kind := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("kind"))); kind {

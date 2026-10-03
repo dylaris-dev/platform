@@ -25,6 +25,9 @@ func NewPlansHandler(state *AppState) *PlansHandler { return &PlansHandler{state
 
 func (h *PlansHandler) SetUserLimitOverrides(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
+	if !guardAccountTerms(w, r, h.state, userID) {
+		return
+	}
 	var req struct {
 		MaxNodes          *int64 `json:"maxNodes"`
 		MaxLinks          *int64 `json:"maxLinks"`

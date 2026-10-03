@@ -147,6 +147,14 @@ func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Demo account unavailable", http.StatusNotFound)
 		return
 	}
+	// Checked again here and not only when the account was designated: it can
+	// be given an admin flag or a staff role afterwards, and every public demo
+	// session would then hold it.
+	if caps, ok := strictPanelCaps(h.state, u.ID); u.IsAdmin || !ok || len(caps) > 0 {
+		log.Printf("demo login: the demo account %s holds staff rights, refusing", u.Username)
+		sendJSONError(w, "Demo account unavailable", http.StatusNotFound)
+		return
+	}
 	token, err := h.IssueToken(u.Username, false, u.Password)
 	if err != nil {
 		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)

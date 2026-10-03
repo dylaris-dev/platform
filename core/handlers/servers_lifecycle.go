@@ -1660,6 +1660,10 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Target node not found", 404)
 		return
 	}
+	if movesToAnotherOwner(h.state, r, srv, target) {
+		sendJSONError(w, "A server can only be moved to the platform's nodes or to its owner's own", http.StatusForbidden)
+		return
+	}
 	username, _ := r.Context().Value("username").(string)
 	h.queueMigration(w, r, srv, target, "manual", username)
 }
@@ -1722,7 +1726,21 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "You cannot place servers on the target node", 403)
 		return
 	}
+	if movesToAnotherOwner(h.state, r, srv, target) {
+		sendJSONError(w, "A server can only be moved to the platform's nodes or to its owner's own", http.StatusForbidden)
+		return
+	}
 	h.queueMigration(w, r, srv, target, "transfer", username)
+}
+
+// movesToAnotherOwner reports a move onto a node someone other than the
+// server's owner owns. foreignToCaller and canPlaceOnNode both answer yes for a
+// node the CALLER owns, so a staff member with servers.write (MoveServer), or
+// an admin (TransferServer), could put any customer's world on a machine of
+// their own - root on the box that now holds it. Only while ownership is in
+// force, like every other ownership rule: otherwise owner_id means nothing.
+func movesToAnotherOwner(state *AppState, r *http.Request, srv *models.Server, target *models.Node) bool {
+	return ownershipInForce(state, r) && target.OwnerID != nil && *target.OwnerID != srv.OwnerID
 }
 
 // queueMigration runs the shared validation + enqueue for both the admin move

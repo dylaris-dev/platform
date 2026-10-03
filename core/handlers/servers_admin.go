@@ -70,6 +70,16 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 
 // AdminUpdateServerOwner PATCH /api/admin/servers/{id}/owner — reassigns a server to a different user
 func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Request) {
+	// Admin-only, whatever servers.write says. The new owner gets the
+	// resolver's owner short-circuit - files, console, RCON, backups - so a
+	// staff member holding servers.write took any server on the platform's
+	// machines for themselves, an admin's included, and nothing recorded it.
+	// Servers do not move between accounts; this stays as the operator's
+	// escape hatch, on the record.
+	if !IsAdmin(r) {
+		sendJSONError(w, "Only an administrator can change a server's owner", http.StatusForbidden)
+		return
+	}
 	vars := mux.Vars(r)
 	serverID, _ := strconv.Atoi(vars["id"])
 
@@ -98,6 +108,15 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	if err := h.state.Store.UpdateServerOwner(serverID, &req.UserID); err != nil {
 		sendJSONError(w, "Failed to update owner", 500)
 		return
+	}
+	// On both accounts, so the trail of the one that LOST the server shows it.
+	actorID, _ := r.Context().Value("userID").(string)
+	meta := map[string]interface{}{
+		"serverId": serverID, "serverUuid": srv.UUID, "previousOwner": srv.OwnerID, "newOwner": req.UserID,
+	}
+	LogIdentityAudit(h.state, r, AuditEventServerOwnerChanged, actorID, srv.OwnerID, meta)
+	if req.UserID != srv.OwnerID {
+		LogIdentityAudit(h.state, r, AuditEventServerOwnerChanged, actorID, req.UserID, meta)
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)

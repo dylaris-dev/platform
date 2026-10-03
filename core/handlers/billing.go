@@ -241,16 +241,8 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	// admin capability, and a suspension stops every server the account owns
 	// and revokes its link kits for good - it was the one action a holder could
 	// aim at an admin or at staff with more rights than their own.
-	if h.state.Store != nil {
-		target, terr := h.state.Store.GetUserByID(userID)
-		if terr != nil || target == nil {
-			sendJSONError(w, "User not found", http.StatusNotFound)
-			return
-		}
-		if !mayManageAccount(h.state, r, target) {
-			sendJSONError(w, "You cannot change the billing state of an account with more rights than yours", http.StatusForbidden)
-			return
-		}
+	if h.state.Store != nil && !guardAccountTerms(w, r, h.state, userID) {
+		return
 	}
 	// An operator moving the account out of a suspension lifts their own hold;
 	// the store cannot (see store.UserBilling.AdminHold).
@@ -414,12 +406,15 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 // empty spec clears the override (falls back to the platform default).
 func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
+	if !guardAccountTerms(w, r, h.state, userID) {
+		return
+	}
 	var req struct {
 		GracePeriod   string `json:"gracePeriod"`
 		R2Retention   string `json:"r2Retention"`
 		NodeRetention string `json:"nodeRetention"`
 		// R2QuotaGb is a pointer so null clears the override (use platform default)
-		// while an explicit 0 means "unlimited for this user".
+		// while an explicit 0 is a cap of none (services.Limits).
 		R2QuotaGb *int64 `json:"r2QuotaGb"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

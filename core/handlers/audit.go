@@ -68,6 +68,7 @@ const (
 	AuditEventUserCreated          = "user_created"
 	AuditEventPasswordSetByAdmin   = "password_set_by_admin"
 	AuditEventBillingStatusChanged = "billing_status_changed"
+	AuditEventServerOwnerChanged   = "server_owner_changed"
 	AuditEventMaintenanceToggled   = "maintenance_toggled"
 
 	// Moving the platform's own data. These used to be filed under
