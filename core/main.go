@@ -174,6 +174,16 @@ func (a *aclHandshakeStore) NodeLimitReached(ownerID string) bool {
 	return services.AtOrOver(lim.MaxNodes, int64(cnt))
 }
 
+// OwnerSuspended answers the enroll path's billing check; fail-open on store
+// errors, like NodeLimitReached.
+func (a *aclHandshakeStore) OwnerSuspended(ownerID string) bool {
+	b, err := a.store.GetUserBilling(ownerID)
+	if err != nil || b == nil {
+		return false
+	}
+	return b.Status == "suspended" || store.OwnerCutOff(b, 0, services.OverLimitGrace, time.Now())
+}
+
 // CreatePlatformNode is CreateBYONNode without the owner binding: the row stays
 // owner_id NULL, which is what makes it an operator node rather than a tenant's.
 //

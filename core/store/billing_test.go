@@ -27,8 +27,8 @@ func TestGetUserBilling_Found(t *testing.T) {
 		"manual_entitlement", "manual_entitlement_expires_at",
 		"manual_entitlement_byon_expires_at", "manual_entitlement_route_expires_at",
 		"manual_entitlement_granted_at", "manual_entitlement_granted_by",
-		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "admin_hold", "updated_at",
-	}).AddRow("user-1", "past_due", grace, nil, "48h", "", "", nil, 5, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, now)
+		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "admin_hold", "held_status", "node_links_off", "updated_at",
+	}).AddRow("user-1", "past_due", grace, nil, "48h", "", "", nil, 5, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, "", false, now)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + userBillingCols + ` FROM user_billing WHERE user_id = $1`)).
 		WithArgs("user-1").
@@ -115,13 +115,8 @@ func TestSetUserBillingStatus_Upsert(t *testing.T) {
 	grace := time.Now().Add(48 * time.Hour)
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO user_billing (user_id, status, grace_until, suspended_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
-		ON CONFLICT (user_id) DO UPDATE SET
-			status       = EXCLUDED.status,
-			grace_until  = EXCLUDED.grace_until,
-			suspended_at = EXCLUDED.suspended_at,
-			updated_at   = NOW()`)).
-		WithArgs("user-1", "past_due", grace, nil).
+		VALUES ($1, $2, $3, $4, NOW())`)).
+		WithArgs("user-1", "past_due", grace, nil, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	if err := s.SetUserBillingStatus("user-1", "past_due", &grace, nil); err != nil {
@@ -143,13 +138,8 @@ func TestSetUserBillingStatus_ExecError(t *testing.T) {
 	boom := errors.New("write failed")
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO user_billing (user_id, status, grace_until, suspended_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
-		ON CONFLICT (user_id) DO UPDATE SET
-			status       = EXCLUDED.status,
-			grace_until  = EXCLUDED.grace_until,
-			suspended_at = EXCLUDED.suspended_at,
-			updated_at   = NOW()`)).
-		WithArgs("user-1", "suspended", nil, nil).
+		VALUES ($1, $2, $3, $4, NOW())`)).
+		WithArgs("user-1", "suspended", nil, nil, sqlmock.AnyArg()).
 		WillReturnError(boom)
 
 	err = s.SetUserBillingStatus("user-1", "suspended", nil, nil)
@@ -177,10 +167,10 @@ func TestListUserBillingByStatus_HappyPath(t *testing.T) {
 		"manual_entitlement", "manual_entitlement_expires_at",
 		"manual_entitlement_byon_expires_at", "manual_entitlement_route_expires_at",
 		"manual_entitlement_granted_at", "manual_entitlement_granted_by",
-		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "admin_hold", "updated_at",
+		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "admin_hold", "held_status", "node_links_off", "updated_at",
 	}).
-		AddRow("user-1", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, now).
-		AddRow("user-2", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, now)
+		AddRow("user-1", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, "", false, now).
+		AddRow("user-2", "suspended", nil, now, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, "", false, now)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + userBillingCols + ` FROM user_billing WHERE status = $1`)).
 		WithArgs("suspended").
@@ -219,9 +209,9 @@ func TestListUserBillingByStatus_ScanErrorPropagates(t *testing.T) {
 		"manual_entitlement", "manual_entitlement_expires_at",
 		"manual_entitlement_byon_expires_at", "manual_entitlement_route_expires_at",
 		"manual_entitlement_granted_at", "manual_entitlement_granted_by",
-		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "admin_hold", "updated_at",
+		"overlimit_since", "traffic_ceiling_gb", "traffic_billing_enabled", "backup_billing_enabled", "admin_hold", "held_status", "node_links_off", "updated_at",
 	}).
-		AddRow("user-1", "suspended", nil, nil, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, "not-a-time")
+		AddRow("user-1", "suspended", nil, nil, "", "", "", nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, int64(0), false, false, false, "", false, "not-a-time")
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + userBillingCols + ` FROM user_billing WHERE status = $1`)).
 		WithArgs("suspended").

@@ -332,12 +332,13 @@ func (linkRevokeFakeGateway) CreateServerRoute(uint, string, string, int) error 
 func (linkRevokeFakeGateway) CreateRouteViaLink(string, string, string, string, int) error {
 	return nil
 }
-func (linkRevokeFakeGateway) DeleteCoreOwnedRoute(string) error    { return nil }
-func (linkRevokeFakeGateway) DeleteRoute(string) error             { return nil }
-func (linkRevokeFakeGateway) DeleteServerRoutes(string) error      { return nil }
-func (linkRevokeFakeGateway) MigrateServerRoutes(uint, uint) error { return nil }
-func (linkRevokeFakeGateway) LinkToken(nodeID string) string       { return "tok-" + nodeID }
-func (linkRevokeFakeGateway) DiscoveryProof(nodeID string) string  { return "proof-" + nodeID }
+func (linkRevokeFakeGateway) DeleteCoreOwnedRoute(string) error     { return nil }
+func (linkRevokeFakeGateway) DeleteRoute(string) error              { return nil }
+func (linkRevokeFakeGateway) DeleteServerRoutes(string) error       { return nil }
+func (linkRevokeFakeGateway) MigrateServerRoutes(uint, uint) error  { return nil }
+func (linkRevokeFakeGateway) LinkToken(nodeID string) string        { return "tok-" + nodeID }
+func (linkRevokeFakeGateway) DiscoveryProof(nodeID string) string   { return "proof-" + nodeID }
+func (linkRevokeFakeGateway) SetNodeLinkEnabled(string, bool) error { return nil }
 
 // A kit key cannot enroll any more, but a kit from the warp era may still be an
 // overlay member, and revoking it must take that away as well.

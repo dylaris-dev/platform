@@ -35,7 +35,8 @@ type storeLinkFakeStore struct {
 	// billingStatus is what GetUserBilling reports; empty means active.
 	billingStatus string
 	// adminHold is what GetUserBilling reports as an operator's suspension.
-	adminHold bool
+	adminHold  bool
+	heldStatus string // what a write under the hold recorded underneath it
 
 	setUserPlanCalls []storeLinkSetPlanCall
 	setUserPlanErr   error
@@ -109,7 +110,27 @@ func TestProvision_PastDueNeverLiftsASuspension(t *testing.T) {
 	}
 }
 
+// SetUserBillingStatusIf records only a write the real statement would make:
+// one whose from admits the tenant's status.
+func (f *storeLinkFakeStore) SetUserBillingStatusIf(userID, status string, graceUntil, suspendedAt *time.Time, from []string) (bool, error) {
+	if from != nil {
+		ok := false
+		for _, s := range from {
+			ok = ok || s == f.billingStatus || (f.billingStatus == "" && s == "active")
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, f.SetUserBillingStatus(userID, status, graceUntil, suspendedAt)
+}
+
 func (f *storeLinkFakeStore) SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error {
+	if f.adminHold && f.setUserBillingStatusErr == nil {
+		// Under a hold the statement writes held_status, never status.
+		f.heldStatus = status
+		return nil
+	}
 	f.setUserBillingStatusCalls = append(f.setUserBillingStatusCalls, storeLinkBillingStatusCall{
 		userID: userID, status: status, hasGrace: graceUntil != nil, hasSuspend: suspendedAt != nil,
 	})
@@ -469,6 +490,11 @@ func TestStoreActivateLeavesAnOperatorsSuspension(t *testing.T) {
 		}
 		if activated == held {
 			t.Fatalf("held=%v: activated=%v", held, activated)
+		}
+		// ...while the payment is remembered underneath the hold, so lifting
+		// it finds the account paid up rather than whatever it was before.
+		if held && fs.heldStatus != "active" {
+			t.Fatalf("held: the payment was not recorded under the hold (held_status %q)", fs.heldStatus)
 		}
 		// What was bought still lands, so lifting the hold later finds it current.
 		if len(fs.entitlementCalls) != 1 {

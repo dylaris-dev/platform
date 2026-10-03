@@ -15,6 +15,7 @@ import (
 // it needs. Call counters let tests assert a step was (or was NOT) reached -
 // e.g. that Enroll never consumes the token when the node limit is hit.
 type fakeHandshakeStore struct {
+	suspended   map[string]bool
 	secretEnc   map[int]string
 	uuidsByNode map[int][]string
 
@@ -90,6 +91,8 @@ func (f *fakeHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool,
 	f.consumeCalls++
 	return f.consumeOwnerID, f.consumeOK, f.consumeErr
 }
+func (f *fakeHandshakeStore) OwnerSuspended(ownerID string) bool { return f.suspended[ownerID] }
+
 func (f *fakeHandshakeStore) NodeLimitReached(ownerID string) bool {
 	f.nodeLimitCalls++
 	return f.nodeLimitReached
@@ -233,6 +236,32 @@ func TestEnroll_NodeLimitReached_DoesNotConsumeToken(t *testing.T) {
 	// rejected enrollment leaves the token intact for a later, valid attempt.
 	if store.consumeCalls != 0 {
 		t.Error("hitting the node limit must not consume the enroll token")
+	}
+}
+
+// A token minted before the suspension enrolled a new machine for the
+// suspended tenant. Refused before it is spent, so it works once they are back;
+// an admin's platform token is not a tenant's and is not asked.
+func TestEnroll_ASuspendedOwnerEnrollsNothing(t *testing.T) {
+	store := newFakeHandshakeStore()
+	store.resolveOK = true
+	store.resolveOwnerID = "owner-1"
+	store.suspended = map[string]bool{"owner-1": true}
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+
+	_, _, _, _, err := h.Enroll(context.Background(), "hostname", "tok", "1.2.3.4")
+	if err != ErrOwnerCutOff {
+		t.Fatalf("err = %v, want ErrOwnerCutOff", err)
+	}
+	if store.consumeCalls != 0 {
+		t.Error("a refused enrollment spent the token")
+	}
+
+	platform := happyEnrollStore()
+	platform.resolvePlatform = true
+	platform.suspended = map[string]bool{platform.resolveOwnerID: true}
+	if _, _, _, _, err := NewHandshake(platform, newTestProvisioner(t), "cluster-secret").Enroll(context.Background(), "hostname", "tok", "1.2.3.4"); err == ErrOwnerCutOff {
+		t.Fatal("a platform token was refused for its minting admin's billing")
 	}
 }
 

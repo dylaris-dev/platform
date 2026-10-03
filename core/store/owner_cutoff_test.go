@@ -35,6 +35,13 @@ func TestOwnerCutOff(t *testing.T) {
 			false,
 		},
 		{
+			// An operator's hold has no grace: it waited 48 hours like a missed
+			// payment, with links and overlay admitted after a fraud suspension.
+			"held by an operator is cut off at once",
+			&UserBilling{Status: "suspended", AdminHold: true, SuspendedAt: timePtr(now.Add(-1 * time.Minute))},
+			true,
+		},
+		{
 			"suspended and exactly at the grace boundary (suspended_at+grace == now) is cut off",
 			&UserBilling{Status: "suspended", SuspendedAt: timePtr(now.Add(-grace))},
 			true,

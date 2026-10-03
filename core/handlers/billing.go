@@ -244,33 +244,45 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	if h.state.Store != nil && !guardAccountTerms(w, r, h.state, userID) {
 		return
 	}
+	status := req.Status
+	switch status {
+	case "active", "past_due", "suspended":
+	default:
+		sendJSONError(w, "Invalid status (active|past_due|suspended)", http.StatusBadRequest)
+		return
+	}
 	// An operator moving the account out of a suspension lifts their own hold;
-	// the store cannot (see store.UserBilling.AdminHold).
-	if h.state.Store != nil && (req.Status == "active" || req.Status == "past_due") {
-		if err := h.state.Store.SetUserBillingAdminHold(userID, false); err != nil {
+	// the store cannot (see store.UserBilling.AdminHold). Lifting it returns the
+	// account to what its payments say, which the hold remembered: "active"
+	// here used to mean active, so a tenant who had stopped paying while held,
+	// or had been held for not paying, came back with everything and stayed.
+	prior := ""
+	if h.state.Store != nil && status != "suspended" {
+		var err error
+		if prior, err = h.state.Store.LiftAdminHold(userID); err != nil {
 			sendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	var err error
-	switch req.Status {
-	case "past_due":
+	switch {
+	case prior != "":
+		status = prior
+		err = h.state.Billing.HoldLifted(userID, prior)
+	case status == "past_due":
 		err = h.state.Billing.EnterPastDue(userID)
-	case "active":
+	case status == "active":
 		err = h.state.Billing.Reactivate(userID)
-	case "suspended":
+	case status == "suspended":
 		err = h.state.Billing.SuspendNow(r.Context(), userID)
-	default:
-		sendJSONError(w, "Invalid status (active|past_due|suspended)", http.StatusBadRequest)
-		return
 	}
 	if err != nil {
 		sendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": req.Status})
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": req.Status})
+	LogIdentityAudit(h.state, r, AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": status, "requested": req.Status})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": status})
 }
 
 // GetBillingSettings GET /api/admin/settings/billing - RequireCap("plans.read")

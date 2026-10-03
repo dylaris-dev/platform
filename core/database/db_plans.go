@@ -57,6 +57,12 @@ func applyPlansSchema(db *sql.DB) error {
 		// An operator's suspension, which only an operator lifts. See
 		// store.UserBilling.AdminHold.
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS admin_hold BOOLEAN NOT NULL DEFAULT FALSE`,
+		// What the payment state is underneath an operator's hold. See
+		// store.UserBilling.HeldStatus.
+		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS held_status TEXT`,
+		// When the cutoff switched the tenant's node links off in the Hub. See
+		// services.setTenantNodeLinks.
+		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS node_links_off_at TIMESTAMPTZ`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_edge_gb BIGINT`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_relay_gb BIGINT`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS traffic_combined_gb BIGINT`,

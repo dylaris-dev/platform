@@ -420,16 +420,10 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 	case "activate":
 		// A suspension an operator imposed stays: paying, renewing or toggling a
 		// billing option on the store is not a review of why they were cut off.
-		// The entitlement below still follows the purchase, so lifting the hold
-		// later finds it current. Unreadable is refused, and the store retries.
-		b, berr := h.state.Store.GetUserBilling(req.UUID)
-		if berr != nil || b == nil {
-			sendJSONError(w, "Failed to read billing state", http.StatusInternalServerError)
-			return
-		}
-		if b.AdminHold {
-			log.Printf("store provision: %s is held by an operator, not reactivating", req.UUID)
-		} else if err := h.state.Billing.Reactivate(req.UUID); err != nil {
+		// Reactivate records the payment underneath the hold instead, so lifting
+		// it later finds the account paid up - and the entitlement below still
+		// follows the purchase.
+		if err := h.state.Billing.Reactivate(req.UUID); err != nil {
 			sendJSONError(w, "Failed to activate billing", http.StatusInternalServerError)
 			return
 		}
@@ -495,10 +489,7 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// Dunning never lifts a suspension. A failed payment retry reaching a
 		// tenant already cut off used to put them back into grace, with
 		// everything running again, on every retry Stripe made.
-		if b, err := h.state.Store.GetUserBilling(req.UUID); err == nil && b != nil && b.Status == "suspended" {
-			break
-		}
-		if err := h.state.Billing.EnterPastDue(req.UUID); err != nil {
+		if err := h.state.Billing.EnterPastDueUnlessSuspended(req.UUID); err != nil {
 			sendJSONError(w, "Failed to set past_due", http.StatusInternalServerError)
 			return
 		}

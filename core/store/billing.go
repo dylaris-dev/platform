@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"dylaris-core/models"
+
+	"github.com/lib/pq"
 )
 
 // UserBilling is one tenant's billing/lifecycle state. A missing row means
@@ -76,13 +78,33 @@ type UserBilling struct {
 	// an operator lifts. Without it the next "activate" from the store - a
 	// renewal, or the tenant toggling backup billing or resuming in the Stripe
 	// portal - put a tenant suspended for fraud or abuse straight back.
-	AdminHold bool      `json:"adminHold,omitempty"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	AdminHold bool `json:"adminHold,omitempty"`
+	// HeldStatus is the payment status underneath a hold: what the account was
+	// when the operator held it, moved on by every store or lifecycle write that
+	// arrives during the hold. Lifting the hold returns to it. Lifting used to
+	// set "active" outright, so a tenant who stopped paying while held - or was
+	// held BECAUSE they stopped paying - came back active and stayed that way:
+	// the store's "suspend" during the hold had been a no-op on an account that
+	// already read suspended, and the store does not send it twice.
+	HeldStatus string `json:"heldStatus,omitempty"`
+	// NodeLinksOff is set while the cutoff has the tenant's node links switched
+	// off in the Hub (services.setTenantNodeLinks), so only what the cutoff
+	// switched off is switched back on.
+	NodeLinksOff bool      `json:"-"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// PaymentStatus is the status the account's payments put it in, hold or not.
+func (b *UserBilling) PaymentStatus() string {
+	if b.AdminHold && b.HeldStatus != "" {
+		return b.HeldStatus
+	}
+	return b.Status
 }
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), COALESCE(admin_hold, FALSE), updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), COALESCE(admin_hold, FALSE), COALESCE(held_status, ''), node_links_off_at IS NOT NULL, updated_at`
 
 // SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
 // over a purchased cap. Touches ONLY that column: the row also carries the
@@ -127,7 +149,7 @@ func scanUserBilling(row interface {
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
 		&meKind, &meExp, &meByon, &meRoute, &meAt, &meBy, &overLimit,
-		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.AdminHold, &b.UpdatedAt); err != nil {
+		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.AdminHold, &b.HeldStatus, &b.NodeLinksOff, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if overLimit.Valid {
@@ -203,23 +225,103 @@ func (s *PostgresStore) SetUserBillingAdminHold(userID string, hold bool) error 
 
 // SetUserBillingStatus upserts the status + lifecycle timestamps, leaving the
 // per-user retention overrides untouched.
-//
-// While an operator's hold is set, nothing moves the row out of "suspended";
-// the operator clears the hold first (SetUserBillingAdminHold). Guarded here,
-// in the write, and not only by the callers reading the hold beforehand: a
-// store "activate" that read no hold and wrote after a force-suspend landed
-// would otherwise leave the tenant active with the hold still set.
 func (s *PostgresStore) SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error {
-	_, err := s.db.Exec(`
+	_, err := s.SetUserBillingStatusIf(userID, status, graceUntil, suspendedAt, nil)
+	return err
+}
+
+// SetUserBillingStatusIf is SetUserBillingStatus for a transition that is only
+// right FROM certain states: it writes only while the payment status is one of
+// from (nil: any), and reports whether it wrote. A caller that read the state
+// and then wrote raced every other writer in between - the lifecycle suspended
+// a tenant whose payment had landed after its read, and dunning re-opened a
+// grace window over a suspension that had landed after its read.
+//
+// While an operator's hold is set, nothing moves the row out of "suspended":
+// the write goes to held_status instead, which is where lifting the hold
+// returns to (see UserBilling.HeldStatus). Guarded here, in the write, and not
+// only by the callers reading the hold beforehand: a store "activate" that read
+// no hold and wrote after a force-suspend landed would otherwise leave the
+// tenant active with the hold still set.
+func (s *PostgresStore) SetUserBillingStatusIf(userID, status string, graceUntil, suspendedAt *time.Time, from []string) (bool, error) {
+	res, err := s.db.Exec(`
 		INSERT INTO user_billing (user_id, status, grace_until, suspended_at, updated_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
-			status       = EXCLUDED.status,
-			grace_until  = EXCLUDED.grace_until,
-			suspended_at = EXCLUDED.suspended_at,
+			status       = CASE WHEN user_billing.admin_hold THEN user_billing.status ELSE EXCLUDED.status END,
+			grace_until  = CASE WHEN user_billing.admin_hold THEN user_billing.grace_until ELSE EXCLUDED.grace_until END,
+			suspended_at = CASE WHEN user_billing.admin_hold THEN user_billing.suspended_at ELSE EXCLUDED.suspended_at END,
+			held_status  = CASE WHEN user_billing.admin_hold THEN EXCLUDED.status ELSE user_billing.held_status END,
 			updated_at   = NOW()
-		WHERE NOT (COALESCE(user_billing.admin_hold, FALSE) AND EXCLUDED.status <> 'suspended')`,
-		userID, status, graceUntil, suspendedAt)
+		WHERE $5::text[] IS NULL OR
+			(CASE WHEN user_billing.admin_hold THEN COALESCE(user_billing.held_status, user_billing.status)
+			      ELSE user_billing.status END) = ANY($5::text[])`,
+		userID, status, graceUntil, suspendedAt, pq.Array(from))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// PlaceAdminHold suspends the account under an operator's hold, remembering the
+// payment status underneath it. A hold placed over a hold keeps the first one's
+// memory: the status underneath is still what the payments say, not
+// "suspended by the operator".
+//
+// The grace deadline and an earlier suspension's date are kept, not reset:
+// lifting the hold returns to them. Resetting them gave a past_due tenant a
+// fresh grace window and a tenant already suspended for non-payment another
+// 48 hours before the cutoff applied again.
+func (s *PostgresStore) PlaceAdminHold(userID string, at time.Time) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, status, suspended_at, admin_hold, held_status, updated_at)
+		VALUES ($1, 'suspended', $2, TRUE, 'active', NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			held_status  = CASE WHEN user_billing.admin_hold THEN user_billing.held_status ELSE user_billing.status END,
+			admin_hold   = TRUE,
+			status       = 'suspended',
+			suspended_at = CASE WHEN user_billing.status = 'suspended' AND user_billing.suspended_at IS NOT NULL
+			                    THEN user_billing.suspended_at ELSE $2 END,
+			updated_at   = NOW()`,
+		userID, at)
+	return err
+}
+
+// LiftAdminHold clears an operator's hold, puts the account back in the payment
+// status that was underneath it - in the same statement, so no other write sees
+// a lifted hold over the operator's "suspended" - and returns that status (""
+// when no hold was set, or one placed before the status was remembered, which
+// leaves the status as it is). services.HoldLifted takes it from there.
+func (s *PostgresStore) LiftAdminHold(userID string) (string, error) {
+	var prior string
+	err := s.db.QueryRow(`
+		UPDATE user_billing u SET admin_hold = FALSE, held_status = NULL,
+			status = COALESCE(old.held_status, u.status), updated_at = NOW()
+		FROM (SELECT user_id, held_status FROM user_billing WHERE user_id = $1 FOR UPDATE) old
+		WHERE u.user_id = old.user_id AND u.admin_hold
+		RETURNING COALESCE(old.held_status, '')`, userID).Scan(&prior)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return prior, err
+}
+
+// MarkNodeLinksOff records that the cutoff switched the tenant's node links off,
+// reporting whether this call is the one that did (it was not marked before).
+func (s *PostgresStore) MarkNodeLinksOff(userID string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE user_billing SET node_links_off_at = NOW()
+		WHERE user_id = $1 AND node_links_off_at IS NULL`, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ClearNodeLinksOff forgets that the tenant's node links were switched off.
+func (s *PostgresStore) ClearNodeLinksOff(userID string) error {
+	_, err := s.db.Exec(`UPDATE user_billing SET node_links_off_at = NULL WHERE user_id = $1`, userID)
 	return err
 }
 

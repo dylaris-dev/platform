@@ -172,6 +172,7 @@ func (f *fakeACLHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bo
 	return "", false, nil
 }
 func (f *fakeACLHandshakeStore) NodeLimitReached(ownerID string) bool { return false }
+func (f *fakeACLHandshakeStore) OwnerSuspended(ownerID string) bool   { return false }
 func (f *fakeACLHandshakeStore) CreateBYONNode(token, address, ownerID, displayName string) (int, error) {
 	return 0, nil
 }

@@ -29,7 +29,6 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 	exempt := map[string]string{
 		"DeleteServer":    "deleting frees resources and is how a cut-off tenant leaves; blocking it would trap them",
 		"DeleteSubServer": "same as DeleteServer, one directory down",
-		"CreateServer":    "creation is gated by entitlement and placement, and an admin creating a server for a tenant is not the tenant asking for service",
 		"startBackupRun":  "the SCHEDULE keeps protecting a suspended tenant's data for the retention window; its on-demand caller TriggerJob carries the guard",
 	}
 
@@ -64,7 +63,7 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 						sends = true
 					}
 				case *ast.Ident:
-					if fun.Name == "refuseIfSuspended" || fun.Name == "suspendedForNonPayment" {
+					if fun.Name == "refuseIfSuspended" || fun.Name == "suspendedForNonPayment" || fun.Name == "ownerRefusal" {
 						guards = true
 					}
 				}

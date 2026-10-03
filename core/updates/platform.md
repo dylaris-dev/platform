@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A suspended BYON tenant's own machine no longer serves players through the gateway.** The
+  cutoff switches their node links off in the Hub and payment switches them back on; update the Hub too. `core`
+- **Lifting an operator's hold returns the account to what its payments say.** It used to make
+  the account active, so a tenant who had stopped paying came back with everything. `core`
+- **A cut-off account is refused everywhere.** Over-limit tenants can no longer start servers,
+  suspended ones cannot create servers, addresses or nodes, and a hold applies at once. `core`
+
+### Fixes
+- **A payment landing during the hourly billing pass no longer ends in a suspension,** and a
+  dunning retry no longer reopens the grace window over a fresh suspension. `core`
+
 ## 2026.10.03.8
 
 ### Features

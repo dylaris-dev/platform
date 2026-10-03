@@ -201,6 +201,12 @@ func OwnerCutOff(b *UserBilling, suspendGrace, overLimitGrace time.Duration, now
 	if b == nil {
 		return false
 	}
+	// An operator's hold has no grace (services.SuspendNow): it waited the
+	// payment grace anyway, and the tenant's links and overlay stayed admitted
+	// for 48 hours after a suspension for fraud.
+	if b.AdminHold && b.Status == "suspended" {
+		return true
+	}
 	if b.Status == "suspended" && b.SuspendedAt != nil && !now.Before(b.SuspendedAt.Add(suspendGrace)) {
 		return true
 	}

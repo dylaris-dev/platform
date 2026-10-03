@@ -298,7 +298,10 @@ func (s *BillingLifecycleService) runOnce(ctx context.Context) {
 		if b.GraceUntil == nil || now.Before(*b.GraceUntil) {
 			continue
 		}
-		if err := s.Suspend(ctx, b.UserID); err != nil {
+		// Only while still past_due: a payment landing after the list was read
+		// moved them to active, and suspending them anyway cut off a customer
+		// who had just paid - with nothing from the store to undo it.
+		if err := s.suspend(b.UserID, []string{"past_due"}); err != nil {
 			log.Printf("billing lifecycle: suspend %s: %v", b.UserID, err)
 		}
 	}
@@ -313,6 +316,9 @@ func (s *BillingLifecycleService) runOnce(ctx context.Context) {
 	// the payment path so an already-suspended tenant is skipped rather than
 	// warned about services that are not running.
 	s.enforceEntitlementLimits(ctx)
+	// After the over-limit pass: that pass is what clears overlimit_since, and
+	// a tenant it just cleared must not wait another hour for their links.
+	s.restoreNodeLinks(ctx)
 
 	s.cleanupExpiredR2(ctx)
 	// NOTE: node-connection retention teardown (drop the warp tunnel + revoke the
@@ -337,16 +343,26 @@ func (s *BillingLifecycleService) enforceSuspensions(ctx context.Context) {
 	}
 	now := time.Now()
 	for _, b := range suspended {
-		if b.SuspendedAt == nil || now.Before(b.SuspendedAt.Add(s.suspendGrace)) {
+		// An operator's hold has no grace: SuspendNow cut the tenant off at
+		// once, and anything that came back up afterwards - a start that passed
+		// the billing check just before the hold, or an operator's own override -
+		// ran for the full 48 hours this pass used to wait.
+		if !b.AdminHold && (b.SuspendedAt == nil || now.Before(b.SuspendedAt.Add(s.suspendGrace))) {
 			continue
+		}
+		cutoff := now
+		if b.SuspendedAt != nil && !b.AdminHold {
+			cutoff = b.SuspendedAt.Add(s.suspendGrace)
+		} else if b.SuspendedAt != nil {
+			cutoff = *b.SuspendedAt
 		}
 		// One line per enforced tenant per pass. Suspended tenants are few, so the
 		// hourly repeat is acceptable; no state is added just to silence it.
-		log.Printf("billing lifecycle: enforcing suspension cutoff for %s (suspended_at=%s, grace=%s)",
-			b.UserID, b.SuspendedAt.UTC().Format(time.RFC3339), s.suspendGrace)
+		log.Printf("billing lifecycle: enforcing suspension cutoff for %s (cutoff=%s, held=%v)",
+			b.UserID, cutoff.UTC().Format(time.RFC3339), b.AdminHold)
 		s.stopTenantServers(ctx, b.UserID)
 		s.suspendTenantLinks(ctx, b.UserID)
-		s.dropWarpPeersOnceStopped(ctx, b.UserID, b.SuspendedAt.Add(s.suspendGrace), now)
+		s.dropWarpPeersOnceStopped(ctx, b.UserID, cutoff, now)
 	}
 }
 
@@ -366,13 +382,14 @@ const maxStopDrain = 2 * time.Hour
 // panel showed "stopping" forever. Only the control path lingers, and not past
 // maxStopDrain, whatever the servers report.
 //
-// Not true of players, which this used to claim: a route-only link loses its
-// tunnel key in the same pass (suspendTenantLinks), but a BYON node's own link
-// sidecar re-writes its key with its own Redis login, and the ACL reconciler
-// keeps that login on. Players therefore still reach a server running on the
-// customer's machine until its stop lands. Closing that means switching the
-// sidecar's login off for a suspended owner without taking away the read
-// access (Beam) a suspended tenant keeps - left for the BYON work.
+// The node links go at the same moment, and for the same reason they wait: a
+// route-only link loses its tunnel key in the cutoff pass (suspendTenantLinks),
+// but a BYON node's own link sidecar is a discovered link in the Hub, and the
+// Hub re-wrote its tunnel key and every route behind it on each sync - which
+// any tenant's route change triggers. A customer who started their container
+// again on their own machine served players through our edges, on our
+// addresses, for as long as they liked. Switching the link off in the Hub drops
+// its routes, so it serves nobody whatever the machine does.
 func (s *BillingLifecycleService) dropWarpPeersOnceStopped(ctx context.Context, userID string, cutoff, now time.Time) {
 	if now.Before(cutoff.Add(maxStopDrain)) && s.byonServersStillUp(userID) {
 		log.Printf("billing lifecycle: %s: keeping the overlay until their own machines report their servers stopped (at most until %s)",
@@ -380,6 +397,93 @@ func (s *BillingLifecycleService) dropWarpPeersOnceStopped(ctx context.Context, 
 		return
 	}
 	s.suspendTenantWarpPeers(ctx, userID)
+	s.setTenantNodeLinks(userID, false)
+}
+
+// setTenantNodeLinks switches the links of every node the tenant owns off or on
+// in the Hub, and records it, so that switching on touches only links the
+// cutoff switched off - never one an operator switched off in the Hub. The mark
+// is written after the Hub was told, and cleared only once it was told again:
+// a push that failed is retried by the next pass (restoreNodeLinks) rather than
+// leaving a paying customer's routes down.
+func (s *BillingLifecycleService) setTenantNodeLinks(userID string, enabled bool) {
+	if s.gateway == nil {
+		return
+	}
+	b, err := s.store.GetUserBilling(userID)
+	if err != nil || b == nil || b.NodeLinksOff != enabled {
+		return // unreadable, or already where it should be
+	}
+	// Asked of THIS read, not of the list the caller worked from: a payment
+	// landing on another replica after the pass listed the tenant found the
+	// links still on, and switching them off now would leave a paying
+	// customer's players out until the next pass.
+	if cutOff := b.Status == "suspended" || store.OwnerCutOff(b, s.suspendGrace, OverLimitGrace, time.Now()); cutOff == enabled {
+		return
+	}
+	nodes, err := s.store.ListNodesByOwner(userID)
+	if err != nil {
+		log.Printf("billing lifecycle: %s: list nodes for their links: %v", userID, err)
+		return
+	}
+	for _, n := range nodes {
+		// Both links a node can have: the derived one its sidecar runs as, and
+		// a self-enrolled one (n.LinkToken). With only the one its routes follow
+		// switched off, the other stayed on and the node link learner moved
+		// the routes onto it. The Hub ignores a token with no link.
+		tokens := []string{s.gateway.LinkToken(n.Token)}
+		if n.LinkToken != "" && n.LinkToken != tokens[0] {
+			tokens = append(tokens, n.LinkToken)
+		}
+		for _, token := range tokens {
+			if err := s.gateway.SetNodeLinkEnabled(token, enabled); err != nil {
+				log.Printf("billing lifecycle: %s: switch node %d's link (enabled=%v): %v", userID, n.ID, enabled, err)
+				return
+			}
+		}
+	}
+	if enabled {
+		err = s.store.ClearNodeLinksOff(userID)
+	} else {
+		_, err = s.store.MarkNodeLinksOff(userID)
+	}
+	if err != nil {
+		log.Printf("billing lifecycle: %s: record node links enabled=%v: %v", userID, enabled, err)
+	}
+}
+
+// HoldLifted moves an account whose operator hold was just lifted on from the
+// payment status the hold remembered (LiftAdminHold already wrote it): paid up
+// gets its links back, past_due keeps the grace it had - or gets one, when the
+// dunning arrived during the hold - and suspended stays cut off.
+func (s *BillingLifecycleService) HoldLifted(userID, prior string) error {
+	switch prior {
+	case "active":
+		return s.Reactivate(userID)
+	case "past_due":
+		if err := s.EnterPastDue(userID); err != nil {
+			return err
+		}
+		s.setTenantNodeLinks(userID, true)
+	}
+	return nil
+}
+
+// restoreNodeLinks switches node links back on for every tenant the cutoff
+// switched off and who is no longer cut off. Reactivate does it at once; this
+// catches a push that failed there.
+func (s *BillingLifecycleService) restoreNodeLinks(ctx context.Context) {
+	all, err := s.store.ListUserBilling()
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for i := range all {
+		b := &all[i]
+		if b.NodeLinksOff && b.Status != "suspended" && !store.OwnerCutOff(b, s.suspendGrace, OverLimitGrace, now) {
+			s.setTenantNodeLinks(b.UserID, true)
+		}
+	}
 }
 
 // byonServersStillUp reports whether any of the tenant's servers on a machine
@@ -546,11 +650,23 @@ func (s *BillingLifecycleService) effectiveSpec(override, settingKey, def string
 // failed payment several times and every retry arrives here; resetting the
 // window on each one meant a customer who never paid was never suspended.
 func (s *BillingLifecycleService) EnterPastDue(userID string) error {
+	return s.enterPastDue(userID, nil)
+}
+
+// EnterPastDueUnlessSuspended is EnterPastDue for dunning, which never lifts a
+// suspension: a failed payment retry reaching a tenant already cut off used to
+// put them back into grace, with everything running again. Decided in the
+// write, so a suspension landing after a read is not undone either.
+func (s *BillingLifecycleService) EnterPastDueUnlessSuspended(userID string) error {
+	return s.enterPastDue(userID, []string{"active", "past_due"})
+}
+
+func (s *BillingLifecycleService) enterPastDue(userID string, from []string) error {
 	b, err := s.store.GetUserBilling(userID)
 	if err != nil {
 		return err
 	}
-	if b.Status == "past_due" && b.GraceUntil != nil {
+	if b.PaymentStatus() == "past_due" && (b.GraceUntil != nil || b.AdminHold) {
 		return nil
 	}
 	grace := s.effectiveSpec(b.GracePeriod, BillingGracePeriodKey, DefaultGracePeriod)
@@ -558,10 +674,13 @@ func (s *BillingLifecycleService) EnterPastDue(userID string) error {
 	if !ok {
 		until, _ = AddRetention(time.Now(), DefaultGracePeriod)
 	}
-	if err := s.store.SetUserBillingStatus(userID, "past_due", &until, nil); err != nil {
+	wrote, err := s.store.SetUserBillingStatusIf(userID, "past_due", &until, nil, from)
+	if err != nil {
 		return err
 	}
-	s.sendDunningEmail(userID, until)
+	if wrote && !b.AdminHold {
+		s.sendDunningEmail(userID, until)
+	}
 	return nil
 }
 
@@ -580,17 +699,27 @@ func (s *BillingLifecycleService) Reactivate(userID string) error {
 	if err := s.store.SetUserBillingStatus(userID, "active", nil, nil); err != nil {
 		return err
 	}
+	// Read AFTER the write: a hold placed in between took the write into
+	// held_status, and nothing comes back for a held tenant.
+	b, err := s.store.GetUserBilling(userID)
+	if err != nil || b == nil {
+		return nil
+	}
+	if b.AdminHold {
+		log.Printf("billing lifecycle: %s is paid up but held by an operator, nothing comes back until the hold is lifted", userID)
+		return nil
+	}
 	// Paying again does not hand the links back to a tenant who is ALSO past
 	// their over-limit grace. The two enforcements have separate clocks, and the
 	// link's next heartbeat would be refused and take the token down again - so
 	// restoring it here would mean a valid token for five seconds and calling
 	// it a reactivation.
-	if b, err := s.store.GetUserBilling(userID); err == nil && b != nil &&
-		b.OverLimitSince != nil && !time.Now().Before(b.OverLimitSince.Add(OverLimitGrace)) {
+	if b.OverLimitSince != nil && !time.Now().Before(b.OverLimitSince.Add(OverLimitGrace)) {
 		log.Printf("billing lifecycle: %s is active again but still over its limits, links stay down", userID)
 		return nil
 	}
 	s.reactivateTenantLinks(userID)
+	s.setTenantNodeLinks(userID, true)
 	return nil
 }
 
@@ -606,12 +735,26 @@ func (s *BillingLifecycleService) Reactivate(userID string) error {
 // re-sends its state after any hiccup, and a fresh suspended_at on each one
 // would push the hard cutoff back every time.
 func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) error {
-	if b, err := s.store.GetUserBilling(userID); err == nil && b != nil && b.Status == "suspended" && b.SuspendedAt != nil {
+	return s.suspend(userID, nil)
+}
+
+// suspend is Suspend, written only while the payment status is one of from
+// (nil: any). Under an operator's hold the account already reads suspended, and
+// this records what the payments say underneath it (held_status) - an early
+// return on "already suspended" lost it, and lifting the hold then found an
+// account that had stopped paying recorded as active.
+func (s *BillingLifecycleService) suspend(userID string, from []string) error {
+	b, err := s.store.GetUserBilling(userID)
+	if err == nil && b != nil && b.PaymentStatus() == "suspended" && (b.SuspendedAt != nil || b.AdminHold) {
 		return nil
 	}
 	now := time.Now()
-	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
+	wrote, err := s.store.SetUserBillingStatusIf(userID, "suspended", nil, &now, from)
+	if err != nil {
 		return err
+	}
+	if !wrote || (b != nil && b.AdminHold) {
+		return nil
 	}
 	// The hard cutoff (stop servers + drop route-only link ACLs) is deferred to the
 	// enforcement pass in runOnce, which fires once suspended_at + suspendGrace has
@@ -635,18 +778,17 @@ func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) er
 // refused by link-boot and the heartbeat alike. See Reactivate's doc comment
 // for what happens to these links on reactivation.
 func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string) error {
-	now := time.Now()
-	// The hold first: a store "activate" arriving between the two writes must
-	// already find it.
-	if err := s.store.SetUserBillingAdminHold(userID, true); err != nil {
-		return err
-	}
-	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
+	// One write: the hold, the suspension and what the payments said underneath
+	// it, so a store "activate" cannot land between them.
+	if err := s.store.PlaceAdminHold(userID, time.Now()); err != nil {
 		return err
 	}
 	s.sendSuspendedEmail(userID)
 	s.stopTenantServers(ctx, userID)
 	s.revokeTenantNodeKeys(ctx, userID)
+	// At once, unlike the graced cutoff: the Hub link carries only players, the
+	// stop travels over the node's own overlay, which this does not touch.
+	s.setTenantNodeLinks(userID, false)
 	if s.gateway == nil || s.redis == nil {
 		return nil // solo/hoster mode: no link kits to revoke
 	}

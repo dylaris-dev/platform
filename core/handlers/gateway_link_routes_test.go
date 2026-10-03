@@ -133,7 +133,8 @@ func (g *linkRouteFakeGateway) LinkToken(nodeID string) string {
 	}
 	return "derived-token-" + nodeID
 }
-func (g *linkRouteFakeGateway) DiscoveryProof(nodeID string) string { return "proof-" + nodeID }
+func (g *linkRouteFakeGateway) DiscoveryProof(nodeID string) string   { return "proof-" + nodeID }
+func (g *linkRouteFakeGateway) SetNodeLinkEnabled(string, bool) error { return nil }
 
 func newLinkRouteRedis(t *testing.T) *redis.Client {
 	t.Helper()

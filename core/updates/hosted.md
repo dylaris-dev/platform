@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A payment made while your account was being checked is no longer missed.** It could end
+  in a suspension despite the payment. Nothing to update on your side.
+- **A suspended account can no longer create servers, addresses or nodes.** Settling the
+  payment lifts this along with the suspension.
+
 ## 2026.10.03.8
 
 ### Features

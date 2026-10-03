@@ -140,6 +140,12 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Owner not found", 404)
 		return
 	}
+	// Setup is refused to a cut-off owner, creation was not: a suspended
+	// tenant still placed new containers and rows on their machines.
+	if msg := ownerRefusal(h.state, r, req.OwnerID); msg != "" {
+		sendJSONError(w, msg, http.StatusForbidden)
+		return
+	}
 
 	// Container name: Heroku-style slug like "crimson-otter-7a3f". The 4-hex
 	// suffix gives ~65k entropy per adj+noun pair, collisions are vanishingly

@@ -64,6 +64,11 @@ type billingFakeStore struct {
 	warpKeyOwners []string
 
 	nodes map[int]*models.Node
+
+	statusFrom   [][]string // the from of each SetUserBillingStatusIf, in order
+	ownerNodes   []models.Node
+	linksMarked  int
+	linksCleared int
 }
 
 func (f *billingFakeStore) GetNodeByID(id int) (*models.Node, error) {
@@ -114,8 +119,45 @@ func (f *billingFakeStore) SetUserOverLimitSince(userID string, at *time.Time) e
 }
 
 func (f *billingFakeStore) SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error {
+	_, err := f.SetUserBillingStatusIf(userID, status, graceUntil, suspendedAt, nil)
+	return err
+}
+
+// SetUserBillingStatusIf records every call, and writes only when the payment
+// status of f.billing (when set) is one of from - the condition the real
+// statement puts in its WHERE.
+func (f *billingFakeStore) SetUserBillingStatusIf(userID, status string, graceUntil, suspendedAt *time.Time, from []string) (bool, error) {
 	f.statusCalls = append(f.statusCalls, statusCall{userID, status, graceUntil, suspendedAt})
+	f.statusFrom = append(f.statusFrom, from)
+	if f.statusErr != nil {
+		return false, f.statusErr
+	}
+	if from != nil && f.billing != nil {
+		ok := false
+		for _, s := range from {
+			ok = ok || f.billing.PaymentStatus() == s
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (f *billingFakeStore) PlaceAdminHold(userID string, at time.Time) error {
+	f.holds = append(f.holds, true)
+	f.statusCalls = append(f.statusCalls, statusCall{userID, "suspended", nil, &at})
 	return f.statusErr
+}
+
+func (f *billingFakeStore) ListNodesByOwner(string) ([]models.Node, error) { return f.ownerNodes, nil }
+func (f *billingFakeStore) MarkNodeLinksOff(string) (bool, error) {
+	f.linksMarked++
+	return true, nil
+}
+func (f *billingFakeStore) ClearNodeLinksOff(string) error {
+	f.linksCleared++
+	return nil
 }
 
 func (f *billingFakeStore) ListServersByOwner(ownerID string) ([]models.Server, error) {

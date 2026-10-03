@@ -113,6 +113,11 @@ type Store interface {
 	GetUserBilling(userID string) (*UserBilling, error)
 	SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error
 	SetUserBillingAdminHold(userID string, hold bool) error
+	SetUserBillingStatusIf(userID, status string, graceUntil, suspendedAt *time.Time, from []string) (bool, error)
+	PlaceAdminHold(userID string, at time.Time) error
+	LiftAdminHold(userID string) (string, error)
+	MarkNodeLinksOff(userID string) (bool, error)
+	ClearNodeLinksOff(userID string) error
 	SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string, r2QuotaGB *int64) error
 	// SetUserManualEntitlement grants or revokes an admin entitlement
 	// ("byon" | "route_only" | "both", empty = revoke) with an expiry.

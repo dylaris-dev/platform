@@ -50,9 +50,9 @@ type billingHoldStore struct {
 	holds []bool
 }
 
-func (f *billingHoldStore) SetUserBillingAdminHold(_ string, hold bool) error {
-	f.holds = append(f.holds, hold)
-	return nil
+func (f *billingHoldStore) LiftAdminHold(string) (string, error) {
+	f.holds = append(f.holds, false)
+	return "", nil
 }
 
 func (f *billingHoldStore) SetUserBillingStatus(string, string, *time.Time, *time.Time) error {

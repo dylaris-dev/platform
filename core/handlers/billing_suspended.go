@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
+	"dylaris-core/store"
 )
 
 // suspendedMessage is what a cut-off tenant is told, wherever they are stopped.
@@ -11,8 +14,13 @@ import (
 // same whether they pressed Start or asked for an install.
 const suspendedMessage = "Account suspended for non-payment. Settle payment to use your servers again."
 
-// suspendedForNonPayment reports whether this request must be refused because
-// the server's OWNER is suspended for non-payment.
+// overLimitMessage is the same refusal for a tenant cut off for holding more
+// than they bought, whose way out is a different one.
+const overLimitMessage = "Account suspended: it holds more than its plan includes. Remove what is over the limit or upgrade to use your servers again."
+
+// ownerRefusal reports whether this request must be refused because the
+// server's OWNER is cut off - with the message that goes with it, "" when the
+// request may go ahead.
 //
 // Suspension used to be enforced in exactly one place, on start and restart.
 // That was measured on production and it does not hold: a suspended tenant
@@ -28,18 +36,32 @@ const suspendedMessage = "Account suspended for non-payment. Settle payment to u
 //
 // past_due (the grace window) is unaffected, and an admin passes through so
 // support keeps control of a suspended tenant's machines.
-func suspendedForNonPayment(state *AppState, r *http.Request, ownerID string) bool {
+//
+// Over-limit is the other cutoff and is refused the same way. The hourly pass
+// stopped an over-limit tenant's servers and every gate here let them start
+// again straight away, until the next pass - every hour, for as long as they
+// cared to press Start.
+func ownerRefusal(state *AppState, r *http.Request, ownerID string) string {
 	if state == nil || state.Store == nil || ownerID == "" {
-		return false
+		return ""
 	}
 	if r != nil && operatorOverride(r) {
-		return false
+		return ""
 	}
 	b, err := state.Store.GetUserBilling(ownerID)
-	return err == nil && b != nil && b.Status == "suspended"
+	if err != nil || b == nil {
+		return ""
+	}
+	if b.Status == "suspended" {
+		return suspendedMessage
+	}
+	if store.OwnerCutOff(b, state.SuspendGrace, services.OverLimitGrace, time.Now()) {
+		return overLimitMessage
+	}
+	return ""
 }
 
-// refuseIfSuspended is suspendedForNonPayment plus the 403, so a call site is
+// refuseIfSuspended is ownerRefusal plus the 403, so a call site is
 // one if-statement. It reports whether the request was answered.
 // operatorOverride reports whether an operator's bypass of a tenant-facing
 // guard applies to this request: an admin in a panel session, never an API key.
@@ -51,9 +73,13 @@ func operatorOverride(r *http.Request) bool {
 }
 
 func refuseIfSuspended(w http.ResponseWriter, r *http.Request, state *AppState, srv *models.Server) bool {
-	if srv == nil || !suspendedForNonPayment(state, r, srv.OwnerID) {
+	if srv == nil {
 		return false
 	}
-	sendJSONError(w, suspendedMessage, http.StatusForbidden)
+	msg := ownerRefusal(state, r, srv.OwnerID)
+	if msg == "" {
+		return false
+	}
+	sendJSONError(w, msg, http.StatusForbidden)
 	return true
 }

@@ -163,6 +163,7 @@ type hubQueueMessage struct {
 	ServerID     *uint   `json:"server_id,omitempty"`
 	OwnerID      *string `json:"owner_id,omitempty"`
 	NewLinkToken string  `json:"new_link_token,omitempty"`
+	Enabled      *bool   `json:"enabled,omitempty"`
 }
 
 // coreOwnedRouteTTL is 0 (persistent). Core-owned (route-only) routes are
@@ -222,6 +223,9 @@ type GatewayProvider interface {
 	// identity, so a secret-free BYON Link can prove its identity without ever
 	// holding CLUSTER_SECRET.
 	DiscoveryProof(nodeID string) string
+	// SetNodeLinkEnabled switches the link with this tunnel token on or off in
+	// the Hub, which takes its routes and its tunnel key with it.
+	SetNodeLinkEnabled(linkToken string, enabled bool) error
 }
 
 // --- RedisGateway (active in gateway / both routing modes) ---
@@ -508,6 +512,13 @@ func (g *RedisGateway) LinkToken(nodeID string) string {
 // DiscoveryProof derives the Link discovery-heartbeat proof for a link identity.
 func (g *RedisGateway) DiscoveryProof(nodeID string) string {
 	return DeriveDiscoveryProof(nodeID, g.clusterSecret)
+}
+
+// SetNodeLinkEnabled addresses the link by its token: Core does not know the
+// Hub's row ids. The Hub resolves it (handleUpdateLink); a Hub from before that
+// logs the message as missing its link_id and changes nothing.
+func (g *RedisGateway) SetNodeLinkEnabled(linkToken string, enabled bool) error {
+	return g.pushToQueue(hubQueueMessage{Action: "update_link", LinkToken: linkToken, Enabled: &enabled})
 }
 
 func (g *RedisGateway) pushToQueue(msg hubQueueMessage) error {

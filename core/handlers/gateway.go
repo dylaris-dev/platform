@@ -401,6 +401,12 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		}
 		account = srv.OwnerID
 	}
+	// A cut-off owner kept claiming addresses on our domains and custom-domain
+	// proofs, which nobody else could then take.
+	if msg := ownerRefusal(h.state, r, account); msg != "" {
+		http.Error(w, msg, http.StatusForbidden)
+		return
+	}
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
 	if gErr := h.customDomainGate(r, account, finalDomain, isCustomDomain); gErr != nil {

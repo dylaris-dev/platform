@@ -15,6 +15,7 @@ import (
 var (
 	ErrEnrollInvalid = errors.New("redisacl: invalid or expired enroll token")
 	ErrNodeLimit     = errors.New("redisacl: node limit reached for owner")
+	ErrOwnerCutOff   = errors.New("redisacl: owner is suspended")
 )
 
 // HandshakeStore is the narrow data port the gRPC ACL handshake needs.
@@ -32,6 +33,9 @@ type HandshakeStore interface {
 	ResolveEnrollToken(plaintext string) (ownerID string, platform bool, ok bool, err error)
 	ConsumeEnrollToken(plaintext string) (ownerID string, ok bool, err error)
 	NodeLimitReached(ownerID string) bool
+	// OwnerSuspended reports whether the owner is suspended or cut off for
+	// holding more than they bought.
+	OwnerSuspended(ownerID string) bool
 	CreateBYONNode(token, address, ownerID, displayName string) (id int, err error)
 	// CreatePlatformNode creates an operator-owned node row (owner_id stays
 	// NULL). Same Core-minted identity as the BYON path, no owner binding.
@@ -120,6 +124,12 @@ func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address stri
 	// against.
 	if !platform && h.store.NodeLimitReached(ownerID) {
 		return "", 0, "", false, ErrNodeLimit
+	}
+	// A token minted before the suspension still enrolled a new machine for
+	// the suspended tenant, with its ACL and its row. Refused before it is
+	// spent, so the same token works once the account is back.
+	if !platform && h.store.OwnerSuspended(ownerID) {
+		return "", 0, "", false, ErrOwnerCutOff
 	}
 	// Single-use: atomically consume now. If a concurrent connect (or the
 	// discovery path) already consumed it, this returns ok=false and we reject.
