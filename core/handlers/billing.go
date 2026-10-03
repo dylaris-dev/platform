@@ -252,6 +252,14 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	// An operator moving the account out of a suspension lifts their own hold;
+	// the store cannot (see store.UserBilling.AdminHold).
+	if h.state.Store != nil && (req.Status == "active" || req.Status == "past_due") {
+		if err := h.state.Store.SetUserBillingAdminHold(userID, false); err != nil {
+			sendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	var err error
 	switch req.Status {
 	case "past_due":

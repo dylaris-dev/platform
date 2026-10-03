@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,5 +42,39 @@ func TestBillingStatusCannotBeAimedAtAStrongerAccount(t *testing.T) {
 	h.SetBillingStatus(rec, req.WithContext(ctx))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a non-admin suspending an admin: status %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
+type billingHoldStore struct {
+	billingGuardStore
+	holds []bool
+}
+
+func (f *billingHoldStore) SetUserBillingAdminHold(_ string, hold bool) error {
+	f.holds = append(f.holds, hold)
+	return nil
+}
+
+func (f *billingHoldStore) SetUserBillingStatus(string, string, *time.Time, *time.Time) error {
+	return errors.New("stop here")
+}
+
+// The operator's own way out of their suspension lifts the hold that keeps the
+// store from doing it.
+func TestAnOperatorReactivationLiftsTheHold(t *testing.T) {
+	fs := &billingHoldStore{billingGuardStore: billingGuardStore{target: &models.User{ID: "u1", Username: "tenant"}}}
+	rdb := newServerPowerRedis(t)
+	state := &AppState{Store: fs, Redis: rdb}
+	state.Billing = services.NewBillingLifecycleService(fs, services.NewQueueService(rdb), nil, "https://panel.example.com", 48*time.Hour, true)
+	h := &BillingHandler{state: state}
+
+	req := httptest.NewRequest("PATCH", "/api/admin/users/u1/billing", strings.NewReader(`{"status":"active"}`))
+	req = mux.SetURLVars(req, map[string]string{"id": "u1"})
+	ctx := context.WithValue(req.Context(), "username", "admin")
+	ctx = context.WithValue(ctx, "isAdmin", true)
+	ctx = context.WithValue(ctx, "userID", "admin-1")
+	h.SetBillingStatus(httptest.NewRecorder(), req.WithContext(ctx))
+	if len(fs.holds) != 1 || fs.holds[0] {
+		t.Fatalf("holds = %v, want one clear", fs.holds)
 	}
 }

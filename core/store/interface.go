@@ -112,6 +112,7 @@ type Store interface {
 	// --- BYON billing lifecycle ---
 	GetUserBilling(userID string) (*UserBilling, error)
 	SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error
+	SetUserBillingAdminHold(userID string, hold bool) error
 	SetUserBillingOverrides(userID, gracePeriod, r2Retention, nodeRetention string, r2QuotaGB *int64) error
 	// SetUserManualEntitlement grants or revokes an admin entitlement
 	// ("byon" | "route_only" | "both", empty = revoke) with an expiry.

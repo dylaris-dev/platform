@@ -71,13 +71,18 @@ type UserBilling struct {
 	// would enrol somebody in a charge they never saw.
 	//
 	// Told to us by the store, like the traffic flag, and never decided here.
-	BackupBillingEnabled bool      `json:"backupBillingEnabled,omitempty"`
-	UpdatedAt            time.Time `json:"updatedAt"`
+	BackupBillingEnabled bool `json:"backupBillingEnabled,omitempty"`
+	// AdminHold marks a suspension an OPERATOR imposed (SuspendNow), which only
+	// an operator lifts. Without it the next "activate" from the store - a
+	// renewal, or the tenant toggling backup billing or resuming in the Stripe
+	// portal - put a tenant suspended for fraud or abuse straight back.
+	AdminHold bool      `json:"adminHold,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), COALESCE(admin_hold, FALSE), updated_at`
 
 // SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
 // over a purchased cap. Touches ONLY that column: the row also carries the
@@ -122,7 +127,7 @@ func scanUserBilling(row interface {
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
 		&meKind, &meExp, &meByon, &meRoute, &meAt, &meBy, &overLimit,
-		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.UpdatedAt); err != nil {
+		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.AdminHold, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if overLimit.Valid {
@@ -186,8 +191,24 @@ func (s *PostgresStore) GetUserBilling(userID string) (*UserBilling, error) {
 	return b, nil
 }
 
+// SetUserBillingAdminHold sets or clears the operator hold, touching nothing else.
+func (s *PostgresStore) SetUserBillingAdminHold(userID string, hold bool) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, admin_hold, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET admin_hold = $2, updated_at = NOW()`,
+		userID, hold)
+	return err
+}
+
 // SetUserBillingStatus upserts the status + lifecycle timestamps, leaving the
 // per-user retention overrides untouched.
+//
+// While an operator's hold is set, nothing moves the row out of "suspended";
+// the operator clears the hold first (SetUserBillingAdminHold). Guarded here,
+// in the write, and not only by the callers reading the hold beforehand: a
+// store "activate" that read no hold and wrote after a force-suspend landed
+// would otherwise leave the tenant active with the hold still set.
 func (s *PostgresStore) SetUserBillingStatus(userID, status string, graceUntil, suspendedAt *time.Time) error {
 	_, err := s.db.Exec(`
 		INSERT INTO user_billing (user_id, status, grace_until, suspended_at, updated_at)
@@ -196,7 +217,8 @@ func (s *PostgresStore) SetUserBillingStatus(userID, status string, graceUntil, 
 			status       = EXCLUDED.status,
 			grace_until  = EXCLUDED.grace_until,
 			suspended_at = EXCLUDED.suspended_at,
-			updated_at   = NOW()`,
+			updated_at   = NOW()
+		WHERE NOT (COALESCE(user_billing.admin_hold, FALSE) AND EXCLUDED.status <> 'suspended')`,
 		userID, status, graceUntil, suspendedAt)
 	return err
 }

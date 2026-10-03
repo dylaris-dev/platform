@@ -418,7 +418,18 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "activate":
-		if err := h.state.Billing.Reactivate(req.UUID); err != nil {
+		// A suspension an operator imposed stays: paying, renewing or toggling a
+		// billing option on the store is not a review of why they were cut off.
+		// The entitlement below still follows the purchase, so lifting the hold
+		// later finds it current. Unreadable is refused, and the store retries.
+		b, berr := h.state.Store.GetUserBilling(req.UUID)
+		if berr != nil || b == nil {
+			sendJSONError(w, "Failed to read billing state", http.StatusInternalServerError)
+			return
+		}
+		if b.AdminHold {
+			log.Printf("store provision: %s is held by an operator, not reactivating", req.UUID)
+		} else if err := h.state.Billing.Reactivate(req.UUID); err != nil {
 			sendJSONError(w, "Failed to activate billing", http.StatusInternalServerError)
 			return
 		}
@@ -601,6 +612,10 @@ func (s *AppState) probeStoreLink(ctx context.Context, uuid string) (bool, strin
 // Per UNIT, not per tenant: this endpoint has no tenant. The store multiplies by
 // what a plan sells.
 func (h *StoreHandler) BackupDefaults(w http.ResponseWriter, r *http.Request) {
+	// Documented as store-key and was open to anyone; the store sends the key.
+	if !h.requireStoreKey(w, r) {
+		return
+	}
 	if h.state.Store == nil {
 		sendJSONError(w, "Database not connected", 503)
 		return

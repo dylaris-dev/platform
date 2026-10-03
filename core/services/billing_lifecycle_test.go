@@ -29,6 +29,8 @@ type billingFakeStore struct {
 
 	store.Store
 
+	holds []bool
+
 	billing    *store.UserBilling
 	billingErr error
 
@@ -521,6 +523,10 @@ func TestSuspendNow_SoloMode_SkipsLinkRevocation(t *testing.T) {
 	if len(fs.statusCalls) != 1 || fs.statusCalls[0].status != "suspended" {
 		t.Fatalf("status calls = %+v", fs.statusCalls)
 	}
+	// An operator's suspension is held, so the store cannot lift it.
+	if len(fs.holds) != 1 || !fs.holds[0] {
+		t.Fatalf("holds = %v, want one set", fs.holds)
+	}
 	if len(fs.listServersCalls) != 1 || fs.listServersCalls[0] != "u1" {
 		t.Fatalf("expected stopTenantServers to query servers for u1, got %v", fs.listServersCalls)
 	}
@@ -900,4 +906,9 @@ func TestEnforceSuspensions_KeepsTheOverlayUntilTheStopLands(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *billingFakeStore) SetUserBillingAdminHold(_ string, hold bool) error {
+	f.holds = append(f.holds, hold)
+	return nil
 }

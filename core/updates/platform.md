@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A suspension set by an operator could be lifted by the store,** on any renewal or when the
+  tenant changed a billing option. Only an operator lifts it now. `core`
+- **The store's backup-defaults endpoint answered without the store key.** `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03
 
 ### Features

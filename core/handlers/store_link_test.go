@@ -34,6 +34,8 @@ type storeLinkFakeStore struct {
 	setUserBillingStatusErr   error
 	// billingStatus is what GetUserBilling reports; empty means active.
 	billingStatus string
+	// adminHold is what GetUserBilling reports as an operator's suspension.
+	adminHold bool
 
 	setUserPlanCalls []storeLinkSetPlanCall
 	setUserPlanErr   error
@@ -87,9 +89,9 @@ func (f *storeLinkFakeStore) GetUserByID(id string) (*models.User, error) {
 func (f *storeLinkFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
 	if f.billingStatus != "" {
 		now := time.Now()
-		return &store.UserBilling{UserID: userID, Status: f.billingStatus, SuspendedAt: &now}, nil
+		return &store.UserBilling{UserID: userID, Status: f.billingStatus, SuspendedAt: &now, AdminHold: f.adminHold}, nil
 	}
-	return &store.UserBilling{UserID: userID, Status: "active"}, nil
+	return &store.UserBilling{UserID: userID, Status: "active", AdminHold: f.adminHold}, nil
 }
 
 // A failed payment retry reaching a tenant who is already suspended must not put
@@ -443,4 +445,44 @@ func TestProvision_ActionRouting(t *testing.T) {
 			t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// A suspension an operator imposed is lifted by an operator. Any store
+// "activate" - a renewal, the tenant toggling backup billing, resuming in the
+// Stripe portal - used to put a tenant suspended for fraud straight back.
+func TestStoreActivateLeavesAnOperatorsSuspension(t *testing.T) {
+	for _, held := range []bool{true, false} {
+		fs := &storeLinkFakeStore{users: map[string]*models.User{"u1": {ID: "u1"}},
+			billingStatus: "suspended", adminHold: held}
+		h := newStoreLinkHandler(fs, newStoreLinkRedis(t), true)
+		rec := httptest.NewRecorder()
+		h.Provision(rec, storeLinkPost("/api/store/provision",
+			map[string]interface{}{"uuid": "u1", "action": "activate", "maxNodes": 2}, storeLinkTestKey))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("held=%v: status %d: %s", held, rec.Code, rec.Body.String())
+		}
+		activated := false
+		for _, c := range fs.setUserBillingStatusCalls {
+			if c.status == "active" {
+				activated = true
+			}
+		}
+		if activated == held {
+			t.Fatalf("held=%v: activated=%v", held, activated)
+		}
+		// What was bought still lands, so lifting the hold later finds it current.
+		if len(fs.entitlementCalls) != 1 {
+			t.Fatalf("held=%v: entitlement calls %d, want 1", held, len(fs.entitlementCalls))
+		}
+	}
+}
+
+// Documented as store-key, and was answered to anyone.
+func TestBackupDefaultsNeedsTheStoreKey(t *testing.T) {
+	h := newStoreLinkHandler(&storeLinkFakeStore{}, newStoreLinkRedis(t), false)
+	rec := httptest.NewRecorder()
+	h.BackupDefaults(rec, httptest.NewRequest("GET", "/api/store/backup-defaults", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d without the key, want 401", rec.Code)
+	}
 }

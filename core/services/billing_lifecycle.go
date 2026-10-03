@@ -629,6 +629,11 @@ func (s *BillingLifecycleService) Suspend(ctx context.Context, userID string) er
 // for what happens to these links on reactivation.
 func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string) error {
 	now := time.Now()
+	// The hold first: a store "activate" arriving between the two writes must
+	// already find it.
+	if err := s.store.SetUserBillingAdminHold(userID, true); err != nil {
+		return err
+	}
 	if err := s.store.SetUserBillingStatus(userID, "suspended", nil, &now); err != nil {
 		return err
 	}
