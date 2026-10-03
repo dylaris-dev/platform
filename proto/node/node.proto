@@ -25,6 +25,20 @@ message NodeMessage {
   // answering, so the node bounds every request with a timeout.
   bool node_request = 3;
 
+  // On the node's DataChunk / WsFrame messages, a non-zero flow_window says the
+  // node honours the window, and only then does Core send FlowCredit: an older
+  // node answers a FlowCredit it cannot parse with "unknown request type" under
+  // the request's id, which ends the transfer it was meant to pace.
+  //
+  // flow_window opens credit-based flow control for a streaming request: the
+  // node may have this many DataChunk / WsFrame messages for the request in
+  // flight, and sends more only as Core grants them (FlowCredit). Every
+  // response to every request shares this one stream and one read loop on
+  // Core, so a reader slower than the node used to stall all of them. 0 (an
+  // older Core) means no flow control; an older node ignores the field and
+  // Core falls back to waiting on the full buffer, as before.
+  uint32 flow_window = 4;
+
   oneof payload {
     // Auth (Node→Core, first message after Connect)
     NodeAuth          auth          = 10;
@@ -112,6 +126,10 @@ message NodeMessage {
     CompleteUploadResponse complete_upload_response  = 122;
     RestoreUrlRequest      restore_url_request       = 123;
     RestoreUrlResponse     restore_url_response      = 124;
+
+    // Core -> node: the reader of request_id took this many more messages, so
+    // the node may send that many more. See flow_window.
+    FlowCredit             flow_credit               = 125;
 
     // Generic result / error
     OpResult          result        = 90;
@@ -341,6 +359,12 @@ message CopyFileReq {
 }
 
 // ─── Chunked Transfer ────────────────────────────────────────────────
+message FlowCredit {
+  uint32 grant = 1;
+  // cancel: the reader is gone; stop sending for this request now.
+  bool cancel = 2;
+}
+
 message DataChunk {
   bytes data = 1;       // max 64KB
   int64 offset = 2;

@@ -44,12 +44,29 @@ type coreConnection struct {
 	// waiter; nil once the connection is gone. See node_request.go.
 	pending   map[string]chan *pb.NodeMessage
 	pendingMu sync.Mutex
+
+	// flows holds the credit of each streaming request Core opened with a
+	// flow window; see flow_credit.go.
+	flows  map[string]*flowCredit
+	flowMu sync.Mutex
 }
 
 // send serializes all writes to this Core stream. gRPC streams are not safe
 // for concurrent Send; the WS bridge introduced the first background sender.
 func (cc *coreConnection) send(msg *pb.NodeMessage) error {
 	msg = boundForCore(msg)
+	// Before the lock: a transfer waiting for its reader must not hold up
+	// anyone else's messages.
+	if err := cc.awaitCredit(msg); err != nil {
+		if errors.Is(err, errFlowStalled) {
+			// Uncounted, so it is not held: without it the reader on Core,
+			// which has no deadline of its own, waits for this transfer forever.
+			cc.sendMu.Lock()
+			_ = cc.stream.Send(errorMsg(msg.RequestId, 504, "transfer stalled: the reader took nothing for too long"))
+			cc.sendMu.Unlock()
+		}
+		return err
+	}
 	cc.sendMu.Lock()
 	defer cc.sendMu.Unlock()
 	return cc.stream.Send(msg)
@@ -401,6 +418,9 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 			cc.routeNodeResponse(msg)
 			continue
 		}
+		if cc.takeFlowCredit(msg) {
+			continue
+		}
 
 		// Handled on the read loop to preserve per-request_id ordering
 		// (WriteReq -> Chunks -> TransferDone; WsFrame delivery). handleRequest
@@ -417,6 +437,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	// After the map delete, so a new Request cannot pick this connection; one
 	// that already did finds pending nil and moves on to another Core.
 	cc.closePending()
+	cc.closeFlows()
 	cancel()
 	conn.Close()
 	// WS5 I1: tear down every WS bridge this dying connection owned instead
@@ -429,6 +450,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// WS bridge (WS5): open, or route a frame/close to an existing bridge.
 	if open := msg.GetWsOpen(); open != nil {
+		cc.openFlow(msg.RequestId, msg.FlowWindow)
 		m.handleWSOpen(cc, msg.RequestId, msg.ServerUuid, open)
 		return
 	}
@@ -524,14 +546,32 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// streams from concurrent proxy requests never interleave a single message.
 	if proxyReq := msg.GetHttpProxyReq(); proxyReq != nil {
 		reqID, serverUUID := msg.RequestId, msg.ServerUuid
-		go m.handler.handleHTTPProxy(reqID, serverUUID, proxyReq, cc.send)
+		cc.openFlow(reqID, msg.FlowWindow)
+		go func() {
+			defer cc.closeFlow(reqID)
+			m.handler.handleHTTPProxy(reqID, serverUUID, proxyReq, cc.send)
+		}()
 		return
 	}
 
 	// ReadReq / SelectiveReadReq / BackupOpenReq: streaming downloads
 	// (io.Pipe / file read, constant ~128KB RAM regardless of size).
+	//
+	// On their own goroutine, like the proxy above. They ran on this shared
+	// read loop for the whole transfer, so while one download streamed the node
+	// read nothing else from Core - and with flow control the loop has to stay
+	// free to read the very grants the download is waiting for. A download
+	// takes no further inbound messages under its request_id, so nothing is
+	// reordered by moving it.
 	if msg.GetReadReq() != nil || msg.GetSelectiveReadReq() != nil || msg.GetBackupOpenReq() != nil {
-		m.handler.HandleStreaming(msg, cc.send)
+		reqID, slots := msg.RequestId, downloadSlotsFor(msg.ServerUuid)
+		cc.openFlow(reqID, msg.FlowWindow)
+		go func() {
+			defer cc.closeFlow(reqID)
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			m.handler.HandleStreaming(msg, cc.send)
+		}()
 		return
 	}
 

@@ -37,6 +37,19 @@ type NodeMessage struct {
 	// An old Core ignores the field and logs the request as unroutable without
 	// answering, so the node bounds every request with a timeout.
 	NodeRequest bool `protobuf:"varint,3,opt,name=node_request,json=nodeRequest,proto3" json:"node_request,omitempty"`
+	// On the node's DataChunk / WsFrame messages, a non-zero flow_window says the
+	// node honours the window, and only then does Core send FlowCredit: an older
+	// node answers a FlowCredit it cannot parse with "unknown request type" under
+	// the request's id, which ends the transfer it was meant to pace.
+	//
+	// flow_window opens credit-based flow control for a streaming request: the
+	// node may have this many DataChunk / WsFrame messages for the request in
+	// flight, and sends more only as Core grants them (FlowCredit). Every
+	// response to every request shares this one stream and one read loop on
+	// Core, so a reader slower than the node used to stall all of them. 0 (an
+	// older Core) means no flow control; an older node ignores the field and
+	// Core falls back to waiting on the full buffer, as before.
+	FlowWindow uint32 `protobuf:"varint,4,opt,name=flow_window,json=flowWindow,proto3" json:"flow_window,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*NodeMessage_Auth
@@ -78,6 +91,7 @@ type NodeMessage struct {
 	//	*NodeMessage_CompleteUploadResponse
 	//	*NodeMessage_RestoreUrlRequest
 	//	*NodeMessage_RestoreUrlResponse
+	//	*NodeMessage_FlowCredit
 	//	*NodeMessage_Result
 	//	*NodeMessage_Error
 	Payload       isNodeMessage_Payload `protobuf_oneof:"payload"`
@@ -134,6 +148,13 @@ func (x *NodeMessage) GetNodeRequest() bool {
 		return x.NodeRequest
 	}
 	return false
+}
+
+func (x *NodeMessage) GetFlowWindow() uint32 {
+	if x != nil {
+		return x.FlowWindow
+	}
+	return 0
 }
 
 func (x *NodeMessage) GetPayload() isNodeMessage_Payload {
@@ -494,6 +515,15 @@ func (x *NodeMessage) GetRestoreUrlResponse() *RestoreUrlResponse {
 	return nil
 }
 
+func (x *NodeMessage) GetFlowCredit() *FlowCredit {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_FlowCredit); ok {
+			return x.FlowCredit
+		}
+	}
+	return nil
+}
+
 func (x *NodeMessage) GetResult() *OpResult {
 	if x != nil {
 		if x, ok := x.Payload.(*NodeMessage_Result); ok {
@@ -705,6 +735,12 @@ type NodeMessage_RestoreUrlResponse struct {
 	RestoreUrlResponse *RestoreUrlResponse `protobuf:"bytes,124,opt,name=restore_url_response,json=restoreUrlResponse,proto3,oneof"`
 }
 
+type NodeMessage_FlowCredit struct {
+	// Core -> node: the reader of request_id took this many more messages, so
+	// the node may send that many more. See flow_window.
+	FlowCredit *FlowCredit `protobuf:"bytes,125,opt,name=flow_credit,json=flowCredit,proto3,oneof"`
+}
+
 type NodeMessage_Result struct {
 	// Generic result / error
 	Result *OpResult `protobuf:"bytes,90,opt,name=result,proto3,oneof"`
@@ -791,6 +827,8 @@ func (*NodeMessage_CompleteUploadResponse) isNodeMessage_Payload() {}
 func (*NodeMessage_RestoreUrlRequest) isNodeMessage_Payload() {}
 
 func (*NodeMessage_RestoreUrlResponse) isNodeMessage_Payload() {}
+
+func (*NodeMessage_FlowCredit) isNodeMessage_Payload() {}
 
 func (*NodeMessage_Result) isNodeMessage_Payload() {}
 
@@ -2126,6 +2164,59 @@ func (x *CopyFileReq) GetDstPath() string {
 }
 
 // ─── Chunked Transfer ────────────────────────────────────────────────
+type FlowCredit struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Grant uint32                 `protobuf:"varint,1,opt,name=grant,proto3" json:"grant,omitempty"`
+	// cancel: the reader is gone; stop sending for this request now.
+	Cancel        bool `protobuf:"varint,2,opt,name=cancel,proto3" json:"cancel,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlowCredit) Reset() {
+	*x = FlowCredit{}
+	mi := &file_node_node_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowCredit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowCredit) ProtoMessage() {}
+
+func (x *FlowCredit) ProtoReflect() protoreflect.Message {
+	mi := &file_node_node_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowCredit.ProtoReflect.Descriptor instead.
+func (*FlowCredit) Descriptor() ([]byte, []int) {
+	return file_node_node_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *FlowCredit) GetGrant() uint32 {
+	if x != nil {
+		return x.Grant
+	}
+	return 0
+}
+
+func (x *FlowCredit) GetCancel() bool {
+	if x != nil {
+		return x.Cancel
+	}
+	return false
+}
+
 type DataChunk struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"` // max 64KB
@@ -2136,7 +2227,7 @@ type DataChunk struct {
 
 func (x *DataChunk) Reset() {
 	*x = DataChunk{}
-	mi := &file_node_node_proto_msgTypes[21]
+	mi := &file_node_node_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2148,7 +2239,7 @@ func (x *DataChunk) String() string {
 func (*DataChunk) ProtoMessage() {}
 
 func (x *DataChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[21]
+	mi := &file_node_node_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2161,7 +2252,7 @@ func (x *DataChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataChunk.ProtoReflect.Descriptor instead.
 func (*DataChunk) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{21}
+	return file_node_node_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *DataChunk) GetData() []byte {
@@ -2188,7 +2279,7 @@ type TransferDone struct {
 
 func (x *TransferDone) Reset() {
 	*x = TransferDone{}
-	mi := &file_node_node_proto_msgTypes[22]
+	mi := &file_node_node_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2200,7 +2291,7 @@ func (x *TransferDone) String() string {
 func (*TransferDone) ProtoMessage() {}
 
 func (x *TransferDone) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[22]
+	mi := &file_node_node_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2213,7 +2304,7 @@ func (x *TransferDone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferDone.ProtoReflect.Descriptor instead.
 func (*TransferDone) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{22}
+	return file_node_node_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *TransferDone) GetTotalBytes() int64 {
@@ -2241,7 +2332,7 @@ type InspectOrphanReq struct {
 
 func (x *InspectOrphanReq) Reset() {
 	*x = InspectOrphanReq{}
-	mi := &file_node_node_proto_msgTypes[23]
+	mi := &file_node_node_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2253,7 +2344,7 @@ func (x *InspectOrphanReq) String() string {
 func (*InspectOrphanReq) ProtoMessage() {}
 
 func (x *InspectOrphanReq) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[23]
+	mi := &file_node_node_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2266,7 +2357,7 @@ func (x *InspectOrphanReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectOrphanReq.ProtoReflect.Descriptor instead.
 func (*InspectOrphanReq) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{23}
+	return file_node_node_proto_rawDescGZIP(), []int{24}
 }
 
 type SubServerInfo struct {
@@ -2279,7 +2370,7 @@ type SubServerInfo struct {
 
 func (x *SubServerInfo) Reset() {
 	*x = SubServerInfo{}
-	mi := &file_node_node_proto_msgTypes[24]
+	mi := &file_node_node_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2291,7 +2382,7 @@ func (x *SubServerInfo) String() string {
 func (*SubServerInfo) ProtoMessage() {}
 
 func (x *SubServerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[24]
+	mi := &file_node_node_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2304,7 +2395,7 @@ func (x *SubServerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubServerInfo.ProtoReflect.Descriptor instead.
 func (*SubServerInfo) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{24}
+	return file_node_node_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SubServerInfo) GetName() string {
@@ -2333,7 +2424,7 @@ type InspectOrphanResp struct {
 
 func (x *InspectOrphanResp) Reset() {
 	*x = InspectOrphanResp{}
-	mi := &file_node_node_proto_msgTypes[25]
+	mi := &file_node_node_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2345,7 +2436,7 @@ func (x *InspectOrphanResp) String() string {
 func (*InspectOrphanResp) ProtoMessage() {}
 
 func (x *InspectOrphanResp) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[25]
+	mi := &file_node_node_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2358,7 +2449,7 @@ func (x *InspectOrphanResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectOrphanResp.ProtoReflect.Descriptor instead.
 func (*InspectOrphanResp) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{25}
+	return file_node_node_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *InspectOrphanResp) GetHasMetadata() bool {
@@ -2398,7 +2489,7 @@ type BackupListReq struct {
 
 func (x *BackupListReq) Reset() {
 	*x = BackupListReq{}
-	mi := &file_node_node_proto_msgTypes[26]
+	mi := &file_node_node_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2410,7 +2501,7 @@ func (x *BackupListReq) String() string {
 func (*BackupListReq) ProtoMessage() {}
 
 func (x *BackupListReq) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[26]
+	mi := &file_node_node_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2423,7 +2514,7 @@ func (x *BackupListReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupListReq.ProtoReflect.Descriptor instead.
 func (*BackupListReq) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{26}
+	return file_node_node_proto_rawDescGZIP(), []int{27}
 }
 
 type BackupObject struct {
@@ -2437,7 +2528,7 @@ type BackupObject struct {
 
 func (x *BackupObject) Reset() {
 	*x = BackupObject{}
-	mi := &file_node_node_proto_msgTypes[27]
+	mi := &file_node_node_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2449,7 +2540,7 @@ func (x *BackupObject) String() string {
 func (*BackupObject) ProtoMessage() {}
 
 func (x *BackupObject) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[27]
+	mi := &file_node_node_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2462,7 +2553,7 @@ func (x *BackupObject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupObject.ProtoReflect.Descriptor instead.
 func (*BackupObject) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{27}
+	return file_node_node_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *BackupObject) GetKey() string {
@@ -2495,7 +2586,7 @@ type BackupListResp struct {
 
 func (x *BackupListResp) Reset() {
 	*x = BackupListResp{}
-	mi := &file_node_node_proto_msgTypes[28]
+	mi := &file_node_node_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2507,7 +2598,7 @@ func (x *BackupListResp) String() string {
 func (*BackupListResp) ProtoMessage() {}
 
 func (x *BackupListResp) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[28]
+	mi := &file_node_node_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2520,7 +2611,7 @@ func (x *BackupListResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupListResp.ProtoReflect.Descriptor instead.
 func (*BackupListResp) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{28}
+	return file_node_node_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *BackupListResp) GetObjects() []*BackupObject {
@@ -2539,7 +2630,7 @@ type BackupOpenReq struct {
 
 func (x *BackupOpenReq) Reset() {
 	*x = BackupOpenReq{}
-	mi := &file_node_node_proto_msgTypes[29]
+	mi := &file_node_node_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2551,7 +2642,7 @@ func (x *BackupOpenReq) String() string {
 func (*BackupOpenReq) ProtoMessage() {}
 
 func (x *BackupOpenReq) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[29]
+	mi := &file_node_node_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2564,7 +2655,7 @@ func (x *BackupOpenReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupOpenReq.ProtoReflect.Descriptor instead.
 func (*BackupOpenReq) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{29}
+	return file_node_node_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *BackupOpenReq) GetKey() string {
@@ -2583,7 +2674,7 @@ type BackupDeleteReq struct {
 
 func (x *BackupDeleteReq) Reset() {
 	*x = BackupDeleteReq{}
-	mi := &file_node_node_proto_msgTypes[30]
+	mi := &file_node_node_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2595,7 +2686,7 @@ func (x *BackupDeleteReq) String() string {
 func (*BackupDeleteReq) ProtoMessage() {}
 
 func (x *BackupDeleteReq) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[30]
+	mi := &file_node_node_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2608,7 +2699,7 @@ func (x *BackupDeleteReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupDeleteReq.ProtoReflect.Descriptor instead.
 func (*BackupDeleteReq) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{30}
+	return file_node_node_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *BackupDeleteReq) GetKey() string {
@@ -2626,7 +2717,7 @@ type BackupUsageReq struct {
 
 func (x *BackupUsageReq) Reset() {
 	*x = BackupUsageReq{}
-	mi := &file_node_node_proto_msgTypes[31]
+	mi := &file_node_node_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2638,7 +2729,7 @@ func (x *BackupUsageReq) String() string {
 func (*BackupUsageReq) ProtoMessage() {}
 
 func (x *BackupUsageReq) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[31]
+	mi := &file_node_node_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2651,7 +2742,7 @@ func (x *BackupUsageReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupUsageReq.ProtoReflect.Descriptor instead.
 func (*BackupUsageReq) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{31}
+	return file_node_node_proto_rawDescGZIP(), []int{32}
 }
 
 type BackupUsageResp struct {
@@ -2664,7 +2755,7 @@ type BackupUsageResp struct {
 
 func (x *BackupUsageResp) Reset() {
 	*x = BackupUsageResp{}
-	mi := &file_node_node_proto_msgTypes[32]
+	mi := &file_node_node_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2676,7 +2767,7 @@ func (x *BackupUsageResp) String() string {
 func (*BackupUsageResp) ProtoMessage() {}
 
 func (x *BackupUsageResp) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[32]
+	mi := &file_node_node_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2689,7 +2780,7 @@ func (x *BackupUsageResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupUsageResp.ProtoReflect.Descriptor instead.
 func (*BackupUsageResp) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{32}
+	return file_node_node_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *BackupUsageResp) GetUsedBytes() int64 {
@@ -2716,7 +2807,7 @@ type OpResult struct {
 
 func (x *OpResult) Reset() {
 	*x = OpResult{}
-	mi := &file_node_node_proto_msgTypes[33]
+	mi := &file_node_node_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2728,7 +2819,7 @@ func (x *OpResult) String() string {
 func (*OpResult) ProtoMessage() {}
 
 func (x *OpResult) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[33]
+	mi := &file_node_node_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2741,7 +2832,7 @@ func (x *OpResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpResult.ProtoReflect.Descriptor instead.
 func (*OpResult) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{33}
+	return file_node_node_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *OpResult) GetMessage() string {
@@ -2761,7 +2852,7 @@ type OpError struct {
 
 func (x *OpError) Reset() {
 	*x = OpError{}
-	mi := &file_node_node_proto_msgTypes[34]
+	mi := &file_node_node_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2773,7 +2864,7 @@ func (x *OpError) String() string {
 func (*OpError) ProtoMessage() {}
 
 func (x *OpError) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[34]
+	mi := &file_node_node_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2786,7 +2877,7 @@ func (x *OpError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpError.ProtoReflect.Descriptor instead.
 func (*OpError) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{34}
+	return file_node_node_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *OpError) GetCode() int32 {
@@ -2817,7 +2908,7 @@ type UploadPartUrlsRequest struct {
 
 func (x *UploadPartUrlsRequest) Reset() {
 	*x = UploadPartUrlsRequest{}
-	mi := &file_node_node_proto_msgTypes[35]
+	mi := &file_node_node_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2829,7 +2920,7 @@ func (x *UploadPartUrlsRequest) String() string {
 func (*UploadPartUrlsRequest) ProtoMessage() {}
 
 func (x *UploadPartUrlsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[35]
+	mi := &file_node_node_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2842,7 +2933,7 @@ func (x *UploadPartUrlsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadPartUrlsRequest.ProtoReflect.Descriptor instead.
 func (*UploadPartUrlsRequest) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{35}
+	return file_node_node_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *UploadPartUrlsRequest) GetRunId() string {
@@ -2869,7 +2960,7 @@ type PartUrl struct {
 
 func (x *PartUrl) Reset() {
 	*x = PartUrl{}
-	mi := &file_node_node_proto_msgTypes[36]
+	mi := &file_node_node_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2881,7 +2972,7 @@ func (x *PartUrl) String() string {
 func (*PartUrl) ProtoMessage() {}
 
 func (x *PartUrl) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[36]
+	mi := &file_node_node_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2894,7 +2985,7 @@ func (x *PartUrl) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartUrl.ProtoReflect.Descriptor instead.
 func (*PartUrl) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{36}
+	return file_node_node_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *PartUrl) GetPartNumber() int32 {
@@ -2923,7 +3014,7 @@ type UploadPartUrlsResponse struct {
 
 func (x *UploadPartUrlsResponse) Reset() {
 	*x = UploadPartUrlsResponse{}
-	mi := &file_node_node_proto_msgTypes[37]
+	mi := &file_node_node_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2935,7 +3026,7 @@ func (x *UploadPartUrlsResponse) String() string {
 func (*UploadPartUrlsResponse) ProtoMessage() {}
 
 func (x *UploadPartUrlsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[37]
+	mi := &file_node_node_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2948,7 +3039,7 @@ func (x *UploadPartUrlsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadPartUrlsResponse.ProtoReflect.Descriptor instead.
 func (*UploadPartUrlsResponse) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{37}
+	return file_node_node_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *UploadPartUrlsResponse) GetUploadId() string {
@@ -2988,7 +3079,7 @@ type CompleteUploadRequest struct {
 
 func (x *CompleteUploadRequest) Reset() {
 	*x = CompleteUploadRequest{}
-	mi := &file_node_node_proto_msgTypes[38]
+	mi := &file_node_node_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3000,7 +3091,7 @@ func (x *CompleteUploadRequest) String() string {
 func (*CompleteUploadRequest) ProtoMessage() {}
 
 func (x *CompleteUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[38]
+	mi := &file_node_node_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3013,7 +3104,7 @@ func (x *CompleteUploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteUploadRequest.ProtoReflect.Descriptor instead.
 func (*CompleteUploadRequest) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{38}
+	return file_node_node_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *CompleteUploadRequest) GetRunId() string {
@@ -3033,7 +3124,7 @@ type CompleteUploadResponse struct {
 
 func (x *CompleteUploadResponse) Reset() {
 	*x = CompleteUploadResponse{}
-	mi := &file_node_node_proto_msgTypes[39]
+	mi := &file_node_node_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3045,7 +3136,7 @@ func (x *CompleteUploadResponse) String() string {
 func (*CompleteUploadResponse) ProtoMessage() {}
 
 func (x *CompleteUploadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[39]
+	mi := &file_node_node_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3058,7 +3149,7 @@ func (x *CompleteUploadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteUploadResponse.ProtoReflect.Descriptor instead.
 func (*CompleteUploadResponse) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{39}
+	return file_node_node_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *CompleteUploadResponse) GetSizeBytes() int64 {
@@ -3084,7 +3175,7 @@ type RestoreUrlRequest struct {
 
 func (x *RestoreUrlRequest) Reset() {
 	*x = RestoreUrlRequest{}
-	mi := &file_node_node_proto_msgTypes[40]
+	mi := &file_node_node_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3096,7 +3187,7 @@ func (x *RestoreUrlRequest) String() string {
 func (*RestoreUrlRequest) ProtoMessage() {}
 
 func (x *RestoreUrlRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[40]
+	mi := &file_node_node_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3109,7 +3200,7 @@ func (x *RestoreUrlRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreUrlRequest.ProtoReflect.Descriptor instead.
 func (*RestoreUrlRequest) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{40}
+	return file_node_node_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *RestoreUrlRequest) GetRestoreId() string {
@@ -3129,7 +3220,7 @@ type RestoreUrlResponse struct {
 
 func (x *RestoreUrlResponse) Reset() {
 	*x = RestoreUrlResponse{}
-	mi := &file_node_node_proto_msgTypes[41]
+	mi := &file_node_node_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3141,7 +3232,7 @@ func (x *RestoreUrlResponse) String() string {
 func (*RestoreUrlResponse) ProtoMessage() {}
 
 func (x *RestoreUrlResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[41]
+	mi := &file_node_node_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3154,7 +3245,7 @@ func (x *RestoreUrlResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreUrlResponse.ProtoReflect.Descriptor instead.
 func (*RestoreUrlResponse) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{41}
+	return file_node_node_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *RestoreUrlResponse) GetUrl() string {
@@ -3187,7 +3278,7 @@ type RconExecReq struct {
 
 func (x *RconExecReq) Reset() {
 	*x = RconExecReq{}
-	mi := &file_node_node_proto_msgTypes[42]
+	mi := &file_node_node_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3199,7 +3290,7 @@ func (x *RconExecReq) String() string {
 func (*RconExecReq) ProtoMessage() {}
 
 func (x *RconExecReq) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[42]
+	mi := &file_node_node_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3212,7 +3303,7 @@ func (x *RconExecReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RconExecReq.ProtoReflect.Descriptor instead.
 func (*RconExecReq) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{42}
+	return file_node_node_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *RconExecReq) GetCommand() string {
@@ -3255,7 +3346,7 @@ type RconExecResp struct {
 
 func (x *RconExecResp) Reset() {
 	*x = RconExecResp{}
-	mi := &file_node_node_proto_msgTypes[43]
+	mi := &file_node_node_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3267,7 +3358,7 @@ func (x *RconExecResp) String() string {
 func (*RconExecResp) ProtoMessage() {}
 
 func (x *RconExecResp) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[43]
+	mi := &file_node_node_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3280,7 +3371,7 @@ func (x *RconExecResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RconExecResp.ProtoReflect.Descriptor instead.
 func (*RconExecResp) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{43}
+	return file_node_node_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *RconExecResp) GetOk() bool {
@@ -3324,7 +3415,7 @@ type HttpHeader struct {
 
 func (x *HttpHeader) Reset() {
 	*x = HttpHeader{}
-	mi := &file_node_node_proto_msgTypes[44]
+	mi := &file_node_node_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3336,7 +3427,7 @@ func (x *HttpHeader) String() string {
 func (*HttpHeader) ProtoMessage() {}
 
 func (x *HttpHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[44]
+	mi := &file_node_node_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3349,7 +3440,7 @@ func (x *HttpHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpHeader.ProtoReflect.Descriptor instead.
 func (*HttpHeader) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{44}
+	return file_node_node_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *HttpHeader) GetKey() string {
@@ -3379,7 +3470,7 @@ type HttpProxyReq struct {
 
 func (x *HttpProxyReq) Reset() {
 	*x = HttpProxyReq{}
-	mi := &file_node_node_proto_msgTypes[45]
+	mi := &file_node_node_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3391,7 +3482,7 @@ func (x *HttpProxyReq) String() string {
 func (*HttpProxyReq) ProtoMessage() {}
 
 func (x *HttpProxyReq) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[45]
+	mi := &file_node_node_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3404,7 +3495,7 @@ func (x *HttpProxyReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpProxyReq.ProtoReflect.Descriptor instead.
 func (*HttpProxyReq) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{45}
+	return file_node_node_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *HttpProxyReq) GetTargetPort() int32 {
@@ -3452,7 +3543,7 @@ type HttpProxyRespHead struct {
 
 func (x *HttpProxyRespHead) Reset() {
 	*x = HttpProxyRespHead{}
-	mi := &file_node_node_proto_msgTypes[46]
+	mi := &file_node_node_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3464,7 +3555,7 @@ func (x *HttpProxyRespHead) String() string {
 func (*HttpProxyRespHead) ProtoMessage() {}
 
 func (x *HttpProxyRespHead) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[46]
+	mi := &file_node_node_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3477,7 +3568,7 @@ func (x *HttpProxyRespHead) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpProxyRespHead.ProtoReflect.Descriptor instead.
 func (*HttpProxyRespHead) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{46}
+	return file_node_node_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *HttpProxyRespHead) GetStatusCode() int32 {
@@ -3505,7 +3596,7 @@ type WsOpen struct {
 
 func (x *WsOpen) Reset() {
 	*x = WsOpen{}
-	mi := &file_node_node_proto_msgTypes[47]
+	mi := &file_node_node_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3517,7 +3608,7 @@ func (x *WsOpen) String() string {
 func (*WsOpen) ProtoMessage() {}
 
 func (x *WsOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[47]
+	mi := &file_node_node_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3530,7 +3621,7 @@ func (x *WsOpen) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WsOpen.ProtoReflect.Descriptor instead.
 func (*WsOpen) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{47}
+	return file_node_node_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *WsOpen) GetTargetPort() int32 {
@@ -3565,7 +3656,7 @@ type WsFrame struct {
 
 func (x *WsFrame) Reset() {
 	*x = WsFrame{}
-	mi := &file_node_node_proto_msgTypes[48]
+	mi := &file_node_node_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3577,7 +3668,7 @@ func (x *WsFrame) String() string {
 func (*WsFrame) ProtoMessage() {}
 
 func (x *WsFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[48]
+	mi := &file_node_node_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3590,7 +3681,7 @@ func (x *WsFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WsFrame.ProtoReflect.Descriptor instead.
 func (*WsFrame) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{48}
+	return file_node_node_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *WsFrame) GetOpcode() int32 {
@@ -3624,7 +3715,7 @@ type WsClose struct {
 
 func (x *WsClose) Reset() {
 	*x = WsClose{}
-	mi := &file_node_node_proto_msgTypes[49]
+	mi := &file_node_node_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3636,7 +3727,7 @@ func (x *WsClose) String() string {
 func (*WsClose) ProtoMessage() {}
 
 func (x *WsClose) ProtoReflect() protoreflect.Message {
-	mi := &file_node_node_proto_msgTypes[49]
+	mi := &file_node_node_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3649,7 +3740,7 @@ func (x *WsClose) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WsClose.ProtoReflect.Descriptor instead.
 func (*WsClose) Descriptor() ([]byte, []int) {
-	return file_node_node_proto_rawDescGZIP(), []int{49}
+	return file_node_node_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *WsClose) GetCode() int32 {
@@ -3670,13 +3761,15 @@ var File_node_node_proto protoreflect.FileDescriptor
 
 const file_node_node_proto_rawDesc = "" +
 	"\n" +
-	"\x0fnode/node.proto\x12\fdylaris.node\"\x83\x17\n" +
+	"\x0fnode/node.proto\x12\fdylaris.node\"\xe1\x17\n" +
 	"\vNodeMessage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1f\n" +
 	"\vserver_uuid\x18\x02 \x01(\tR\n" +
 	"serverUuid\x12!\n" +
-	"\fnode_request\x18\x03 \x01(\bR\vnodeRequest\x12,\n" +
+	"\fnode_request\x18\x03 \x01(\bR\vnodeRequest\x12\x1f\n" +
+	"\vflow_window\x18\x04 \x01(\rR\n" +
+	"flowWindow\x12,\n" +
 	"\x04auth\x18\n" +
 	" \x01(\v2\x16.dylaris.node.NodeAuthH\x00R\x04auth\x12;\n" +
 	"\vauth_result\x18\v \x01(\v2\x18.dylaris.node.AuthResultH\x00R\n" +
@@ -3721,7 +3814,9 @@ const file_node_node_proto_rawDesc = "" +
 	"\x17complete_upload_request\x18y \x01(\v2#.dylaris.node.CompleteUploadRequestH\x00R\x15completeUploadRequest\x12`\n" +
 	"\x18complete_upload_response\x18z \x01(\v2$.dylaris.node.CompleteUploadResponseH\x00R\x16completeUploadResponse\x12Q\n" +
 	"\x13restore_url_request\x18{ \x01(\v2\x1f.dylaris.node.RestoreUrlRequestH\x00R\x11restoreUrlRequest\x12T\n" +
-	"\x14restore_url_response\x18| \x01(\v2 .dylaris.node.RestoreUrlResponseH\x00R\x12restoreUrlResponse\x120\n" +
+	"\x14restore_url_response\x18| \x01(\v2 .dylaris.node.RestoreUrlResponseH\x00R\x12restoreUrlResponse\x12;\n" +
+	"\vflow_credit\x18} \x01(\v2\x18.dylaris.node.FlowCreditH\x00R\n" +
+	"flowCredit\x120\n" +
 	"\x06result\x18Z \x01(\v2\x16.dylaris.node.OpResultH\x00R\x06result\x12-\n" +
 	"\x05error\x18[ \x01(\v2\x15.dylaris.node.OpErrorH\x00R\x05errorB\t\n" +
 	"\apayload\"\xeb\x02\n" +
@@ -3820,7 +3915,11 @@ const file_node_node_proto_rawDesc = "" +
 	"\bnew_name\x18\x02 \x01(\tR\anewName\"C\n" +
 	"\vCopyFileReq\x12\x19\n" +
 	"\bsrc_path\x18\x01 \x01(\tR\asrcPath\x12\x19\n" +
-	"\bdst_path\x18\x02 \x01(\tR\adstPath\"7\n" +
+	"\bdst_path\x18\x02 \x01(\tR\adstPath\":\n" +
+	"\n" +
+	"FlowCredit\x12\x14\n" +
+	"\x05grant\x18\x01 \x01(\rR\x05grant\x12\x16\n" +
+	"\x06cancel\x18\x02 \x01(\bR\x06cancel\"7\n" +
 	"\tDataChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\"K\n" +
@@ -3937,7 +4036,7 @@ func file_node_node_proto_rawDescGZIP() []byte {
 	return file_node_node_proto_rawDescData
 }
 
-var file_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_node_node_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
 var file_node_node_proto_goTypes = []any{
 	(*NodeMessage)(nil),            // 0: dylaris.node.NodeMessage
 	(*NodeAuth)(nil),               // 1: dylaris.node.NodeAuth
@@ -3960,35 +4059,36 @@ var file_node_node_proto_goTypes = []any{
 	(*DeleteFileReq)(nil),          // 18: dylaris.node.DeleteFileReq
 	(*RenameFileReq)(nil),          // 19: dylaris.node.RenameFileReq
 	(*CopyFileReq)(nil),            // 20: dylaris.node.CopyFileReq
-	(*DataChunk)(nil),              // 21: dylaris.node.DataChunk
-	(*TransferDone)(nil),           // 22: dylaris.node.TransferDone
-	(*InspectOrphanReq)(nil),       // 23: dylaris.node.InspectOrphanReq
-	(*SubServerInfo)(nil),          // 24: dylaris.node.SubServerInfo
-	(*InspectOrphanResp)(nil),      // 25: dylaris.node.InspectOrphanResp
-	(*BackupListReq)(nil),          // 26: dylaris.node.BackupListReq
-	(*BackupObject)(nil),           // 27: dylaris.node.BackupObject
-	(*BackupListResp)(nil),         // 28: dylaris.node.BackupListResp
-	(*BackupOpenReq)(nil),          // 29: dylaris.node.BackupOpenReq
-	(*BackupDeleteReq)(nil),        // 30: dylaris.node.BackupDeleteReq
-	(*BackupUsageReq)(nil),         // 31: dylaris.node.BackupUsageReq
-	(*BackupUsageResp)(nil),        // 32: dylaris.node.BackupUsageResp
-	(*OpResult)(nil),               // 33: dylaris.node.OpResult
-	(*OpError)(nil),                // 34: dylaris.node.OpError
-	(*UploadPartUrlsRequest)(nil),  // 35: dylaris.node.UploadPartUrlsRequest
-	(*PartUrl)(nil),                // 36: dylaris.node.PartUrl
-	(*UploadPartUrlsResponse)(nil), // 37: dylaris.node.UploadPartUrlsResponse
-	(*CompleteUploadRequest)(nil),  // 38: dylaris.node.CompleteUploadRequest
-	(*CompleteUploadResponse)(nil), // 39: dylaris.node.CompleteUploadResponse
-	(*RestoreUrlRequest)(nil),      // 40: dylaris.node.RestoreUrlRequest
-	(*RestoreUrlResponse)(nil),     // 41: dylaris.node.RestoreUrlResponse
-	(*RconExecReq)(nil),            // 42: dylaris.node.RconExecReq
-	(*RconExecResp)(nil),           // 43: dylaris.node.RconExecResp
-	(*HttpHeader)(nil),             // 44: dylaris.node.HttpHeader
-	(*HttpProxyReq)(nil),           // 45: dylaris.node.HttpProxyReq
-	(*HttpProxyRespHead)(nil),      // 46: dylaris.node.HttpProxyRespHead
-	(*WsOpen)(nil),                 // 47: dylaris.node.WsOpen
-	(*WsFrame)(nil),                // 48: dylaris.node.WsFrame
-	(*WsClose)(nil),                // 49: dylaris.node.WsClose
+	(*FlowCredit)(nil),             // 21: dylaris.node.FlowCredit
+	(*DataChunk)(nil),              // 22: dylaris.node.DataChunk
+	(*TransferDone)(nil),           // 23: dylaris.node.TransferDone
+	(*InspectOrphanReq)(nil),       // 24: dylaris.node.InspectOrphanReq
+	(*SubServerInfo)(nil),          // 25: dylaris.node.SubServerInfo
+	(*InspectOrphanResp)(nil),      // 26: dylaris.node.InspectOrphanResp
+	(*BackupListReq)(nil),          // 27: dylaris.node.BackupListReq
+	(*BackupObject)(nil),           // 28: dylaris.node.BackupObject
+	(*BackupListResp)(nil),         // 29: dylaris.node.BackupListResp
+	(*BackupOpenReq)(nil),          // 30: dylaris.node.BackupOpenReq
+	(*BackupDeleteReq)(nil),        // 31: dylaris.node.BackupDeleteReq
+	(*BackupUsageReq)(nil),         // 32: dylaris.node.BackupUsageReq
+	(*BackupUsageResp)(nil),        // 33: dylaris.node.BackupUsageResp
+	(*OpResult)(nil),               // 34: dylaris.node.OpResult
+	(*OpError)(nil),                // 35: dylaris.node.OpError
+	(*UploadPartUrlsRequest)(nil),  // 36: dylaris.node.UploadPartUrlsRequest
+	(*PartUrl)(nil),                // 37: dylaris.node.PartUrl
+	(*UploadPartUrlsResponse)(nil), // 38: dylaris.node.UploadPartUrlsResponse
+	(*CompleteUploadRequest)(nil),  // 39: dylaris.node.CompleteUploadRequest
+	(*CompleteUploadResponse)(nil), // 40: dylaris.node.CompleteUploadResponse
+	(*RestoreUrlRequest)(nil),      // 41: dylaris.node.RestoreUrlRequest
+	(*RestoreUrlResponse)(nil),     // 42: dylaris.node.RestoreUrlResponse
+	(*RconExecReq)(nil),            // 43: dylaris.node.RconExecReq
+	(*RconExecResp)(nil),           // 44: dylaris.node.RconExecResp
+	(*HttpHeader)(nil),             // 45: dylaris.node.HttpHeader
+	(*HttpProxyReq)(nil),           // 46: dylaris.node.HttpProxyReq
+	(*HttpProxyRespHead)(nil),      // 47: dylaris.node.HttpProxyRespHead
+	(*WsOpen)(nil),                 // 48: dylaris.node.WsOpen
+	(*WsFrame)(nil),                // 49: dylaris.node.WsFrame
+	(*WsClose)(nil),                // 50: dylaris.node.WsClose
 }
 var file_node_node_proto_depIdxs = []int32{
 	1,  // 0: dylaris.node.NodeMessage.auth:type_name -> dylaris.node.NodeAuth
@@ -4005,50 +4105,51 @@ var file_node_node_proto_depIdxs = []int32{
 	18, // 11: dylaris.node.NodeMessage.delete_req:type_name -> dylaris.node.DeleteFileReq
 	19, // 12: dylaris.node.NodeMessage.rename_req:type_name -> dylaris.node.RenameFileReq
 	20, // 13: dylaris.node.NodeMessage.copy_req:type_name -> dylaris.node.CopyFileReq
-	21, // 14: dylaris.node.NodeMessage.chunk:type_name -> dylaris.node.DataChunk
-	22, // 15: dylaris.node.NodeMessage.transfer_done:type_name -> dylaris.node.TransferDone
-	23, // 16: dylaris.node.NodeMessage.inspect_orphan_req:type_name -> dylaris.node.InspectOrphanReq
-	25, // 17: dylaris.node.NodeMessage.inspect_orphan_resp:type_name -> dylaris.node.InspectOrphanResp
-	26, // 18: dylaris.node.NodeMessage.backup_list_req:type_name -> dylaris.node.BackupListReq
-	28, // 19: dylaris.node.NodeMessage.backup_list_resp:type_name -> dylaris.node.BackupListResp
-	29, // 20: dylaris.node.NodeMessage.backup_open_req:type_name -> dylaris.node.BackupOpenReq
-	30, // 21: dylaris.node.NodeMessage.backup_delete_req:type_name -> dylaris.node.BackupDeleteReq
-	31, // 22: dylaris.node.NodeMessage.backup_usage_req:type_name -> dylaris.node.BackupUsageReq
-	32, // 23: dylaris.node.NodeMessage.backup_usage_resp:type_name -> dylaris.node.BackupUsageResp
-	42, // 24: dylaris.node.NodeMessage.rcon_exec_req:type_name -> dylaris.node.RconExecReq
-	43, // 25: dylaris.node.NodeMessage.rcon_exec_resp:type_name -> dylaris.node.RconExecResp
-	45, // 26: dylaris.node.NodeMessage.http_proxy_req:type_name -> dylaris.node.HttpProxyReq
-	46, // 27: dylaris.node.NodeMessage.http_proxy_resp_head:type_name -> dylaris.node.HttpProxyRespHead
-	47, // 28: dylaris.node.NodeMessage.ws_open:type_name -> dylaris.node.WsOpen
-	48, // 29: dylaris.node.NodeMessage.ws_frame:type_name -> dylaris.node.WsFrame
-	49, // 30: dylaris.node.NodeMessage.ws_close:type_name -> dylaris.node.WsClose
+	22, // 14: dylaris.node.NodeMessage.chunk:type_name -> dylaris.node.DataChunk
+	23, // 15: dylaris.node.NodeMessage.transfer_done:type_name -> dylaris.node.TransferDone
+	24, // 16: dylaris.node.NodeMessage.inspect_orphan_req:type_name -> dylaris.node.InspectOrphanReq
+	26, // 17: dylaris.node.NodeMessage.inspect_orphan_resp:type_name -> dylaris.node.InspectOrphanResp
+	27, // 18: dylaris.node.NodeMessage.backup_list_req:type_name -> dylaris.node.BackupListReq
+	29, // 19: dylaris.node.NodeMessage.backup_list_resp:type_name -> dylaris.node.BackupListResp
+	30, // 20: dylaris.node.NodeMessage.backup_open_req:type_name -> dylaris.node.BackupOpenReq
+	31, // 21: dylaris.node.NodeMessage.backup_delete_req:type_name -> dylaris.node.BackupDeleteReq
+	32, // 22: dylaris.node.NodeMessage.backup_usage_req:type_name -> dylaris.node.BackupUsageReq
+	33, // 23: dylaris.node.NodeMessage.backup_usage_resp:type_name -> dylaris.node.BackupUsageResp
+	43, // 24: dylaris.node.NodeMessage.rcon_exec_req:type_name -> dylaris.node.RconExecReq
+	44, // 25: dylaris.node.NodeMessage.rcon_exec_resp:type_name -> dylaris.node.RconExecResp
+	46, // 26: dylaris.node.NodeMessage.http_proxy_req:type_name -> dylaris.node.HttpProxyReq
+	47, // 27: dylaris.node.NodeMessage.http_proxy_resp_head:type_name -> dylaris.node.HttpProxyRespHead
+	48, // 28: dylaris.node.NodeMessage.ws_open:type_name -> dylaris.node.WsOpen
+	49, // 29: dylaris.node.NodeMessage.ws_frame:type_name -> dylaris.node.WsFrame
+	50, // 30: dylaris.node.NodeMessage.ws_close:type_name -> dylaris.node.WsClose
 	10, // 31: dylaris.node.NodeMessage.hash_files_req:type_name -> dylaris.node.HashFilesReq
 	12, // 32: dylaris.node.NodeMessage.hash_files_resp:type_name -> dylaris.node.HashFilesResp
-	35, // 33: dylaris.node.NodeMessage.upload_part_urls_request:type_name -> dylaris.node.UploadPartUrlsRequest
-	37, // 34: dylaris.node.NodeMessage.upload_part_urls_response:type_name -> dylaris.node.UploadPartUrlsResponse
-	38, // 35: dylaris.node.NodeMessage.complete_upload_request:type_name -> dylaris.node.CompleteUploadRequest
-	39, // 36: dylaris.node.NodeMessage.complete_upload_response:type_name -> dylaris.node.CompleteUploadResponse
-	40, // 37: dylaris.node.NodeMessage.restore_url_request:type_name -> dylaris.node.RestoreUrlRequest
-	41, // 38: dylaris.node.NodeMessage.restore_url_response:type_name -> dylaris.node.RestoreUrlResponse
-	33, // 39: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
-	34, // 40: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
-	6,  // 41: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
-	2,  // 42: dylaris.node.NodeAuth.identity:type_name -> dylaris.node.NodeIdentity
-	9,  // 43: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
-	11, // 44: dylaris.node.HashFilesResp.files:type_name -> dylaris.node.FileHash
-	24, // 45: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
-	27, // 46: dylaris.node.BackupListResp.objects:type_name -> dylaris.node.BackupObject
-	36, // 47: dylaris.node.UploadPartUrlsResponse.urls:type_name -> dylaris.node.PartUrl
-	44, // 48: dylaris.node.HttpProxyReq.headers:type_name -> dylaris.node.HttpHeader
-	44, // 49: dylaris.node.HttpProxyRespHead.headers:type_name -> dylaris.node.HttpHeader
-	44, // 50: dylaris.node.WsOpen.headers:type_name -> dylaris.node.HttpHeader
-	0,  // 51: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
-	0,  // 52: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
-	52, // [52:53] is the sub-list for method output_type
-	51, // [51:52] is the sub-list for method input_type
-	51, // [51:51] is the sub-list for extension type_name
-	51, // [51:51] is the sub-list for extension extendee
-	0,  // [0:51] is the sub-list for field type_name
+	36, // 33: dylaris.node.NodeMessage.upload_part_urls_request:type_name -> dylaris.node.UploadPartUrlsRequest
+	38, // 34: dylaris.node.NodeMessage.upload_part_urls_response:type_name -> dylaris.node.UploadPartUrlsResponse
+	39, // 35: dylaris.node.NodeMessage.complete_upload_request:type_name -> dylaris.node.CompleteUploadRequest
+	40, // 36: dylaris.node.NodeMessage.complete_upload_response:type_name -> dylaris.node.CompleteUploadResponse
+	41, // 37: dylaris.node.NodeMessage.restore_url_request:type_name -> dylaris.node.RestoreUrlRequest
+	42, // 38: dylaris.node.NodeMessage.restore_url_response:type_name -> dylaris.node.RestoreUrlResponse
+	21, // 39: dylaris.node.NodeMessage.flow_credit:type_name -> dylaris.node.FlowCredit
+	34, // 40: dylaris.node.NodeMessage.result:type_name -> dylaris.node.OpResult
+	35, // 41: dylaris.node.NodeMessage.error:type_name -> dylaris.node.OpError
+	6,  // 42: dylaris.node.NodeAuth.ips:type_name -> dylaris.node.NodeIPs
+	2,  // 43: dylaris.node.NodeAuth.identity:type_name -> dylaris.node.NodeIdentity
+	9,  // 44: dylaris.node.ListFilesResp.files:type_name -> dylaris.node.FileInfo
+	11, // 45: dylaris.node.HashFilesResp.files:type_name -> dylaris.node.FileHash
+	25, // 46: dylaris.node.InspectOrphanResp.sub_servers:type_name -> dylaris.node.SubServerInfo
+	28, // 47: dylaris.node.BackupListResp.objects:type_name -> dylaris.node.BackupObject
+	37, // 48: dylaris.node.UploadPartUrlsResponse.urls:type_name -> dylaris.node.PartUrl
+	45, // 49: dylaris.node.HttpProxyReq.headers:type_name -> dylaris.node.HttpHeader
+	45, // 50: dylaris.node.HttpProxyRespHead.headers:type_name -> dylaris.node.HttpHeader
+	45, // 51: dylaris.node.WsOpen.headers:type_name -> dylaris.node.HttpHeader
+	0,  // 52: dylaris.node.NodeService.NodeConnect:input_type -> dylaris.node.NodeMessage
+	0,  // 53: dylaris.node.NodeService.NodeConnect:output_type -> dylaris.node.NodeMessage
+	53, // [53:54] is the sub-list for method output_type
+	52, // [52:53] is the sub-list for method input_type
+	52, // [52:52] is the sub-list for extension type_name
+	52, // [52:52] is the sub-list for extension extendee
+	0,  // [0:52] is the sub-list for field type_name
 }
 
 func init() { file_node_node_proto_init() }
@@ -4096,6 +4197,7 @@ func file_node_node_proto_init() {
 		(*NodeMessage_CompleteUploadResponse)(nil),
 		(*NodeMessage_RestoreUrlRequest)(nil),
 		(*NodeMessage_RestoreUrlResponse)(nil),
+		(*NodeMessage_FlowCredit)(nil),
 		(*NodeMessage_Result)(nil),
 		(*NodeMessage_Error)(nil),
 	}
@@ -4105,7 +4207,7 @@ func file_node_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_node_node_proto_rawDesc), len(file_node_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   50,
+			NumMessages:   51,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

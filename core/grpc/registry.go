@@ -33,6 +33,14 @@ type Registry struct {
 	// allowNodeRequest. Its own lock, so the limiter never waits on mu.
 	limitMu        sync.Mutex
 	requestBuckets map[int]*requestBucket
+
+	// flowStops maps a streaming request_id to the channel that stops its
+	// pump. Kept here and not on the connection: CleanupRequest finds the
+	// CURRENT connection, and after a reconnect that is not the one the
+	// request was opened on - a stop kept there was never found, and the pump
+	// of a reader that gave up waited on it for good.
+	flowMu    sync.Mutex
+	flowStops map[string]chan struct{}
 }
 
 func NewRegistry() *Registry {
@@ -156,9 +164,25 @@ func (r *Registry) SendRequest(nodeID int, msg *pb.NodeMessage, timeout time.Dur
 	}
 }
 
+// flowWindow is how many DataChunk / WsFrame messages of one streaming request
+// a node may have in flight, and flowGrantEvery how many the reader takes
+// before Core grants that many again. The window is below the 64-message
+// buffer, so a node that honours it never fills the buffer and RouteResponse
+// never waits: one slow reader no longer stalls the node's read loop, and with
+// it every other request to that node.
+const (
+	flowWindow     = 32
+	flowGrantEvery = 16
+)
+
 // SendRequestStreaming sends a message and returns a channel that will receive
 // all response messages for this request_id (for chunked transfers).
-// Caller MUST read from the channel until it's closed.
+// Caller MUST read from the channel until it's closed, or call CleanupRequest.
+//
+// The request carries flow_window, and the returned channel is fed by a pump
+// that grants the node more only as the caller reads (FlowCredit). An older
+// node ignores the window and is served as before: the buffer fills and
+// RouteResponse waits for the reader.
 func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan *pb.NodeMessage, error) {
 	conn, ok := r.GetConnection(nodeID)
 	if !ok {
@@ -166,6 +190,8 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 	}
 
 	ch := make(chan *pb.NodeMessage, 64)
+	out := make(chan *pb.NodeMessage, 1)
+	stop := make(chan struct{})
 	conn.mu.Lock()
 	if conn.pending == nil {
 		conn.mu.Unlock()
@@ -173,6 +199,13 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 	}
 	conn.pending[msg.RequestId] = ch
 	conn.mu.Unlock()
+	r.flowMu.Lock()
+	if r.flowStops == nil {
+		r.flowStops = map[string]chan struct{}{}
+	}
+	r.flowStops[msg.RequestId] = stop
+	r.flowMu.Unlock()
+	msg.FlowWindow = flowWindow
 
 	// Send request
 	if err := conn.Send(msg); err != nil {
@@ -190,9 +223,86 @@ func (r *Registry) SendRequestStreaming(nodeID int, msg *pb.NodeMessage) (<-chan
 			close(ch)
 		}
 		conn.mu.Unlock()
+		r.stopFlow(msg.RequestId)
 		return nil, fmt.Errorf("failed to send to node %d: %w", nodeID, err)
 	}
-	return ch, nil
+	go conn.pumpFlow(msg.RequestId, ch, out, stop)
+	return out, nil
+}
+
+// pumpFlow hands the node's messages to the reader one at a time and grants
+// the node more as the reader takes them. It ends when the request's channel
+// closes (the transfer ended or the connection went) or the reader gives up
+// (CleanupRequest), so an abandoned reader leaves no goroutine behind; the
+// node is then told to stop at once rather than wait out its stall timeout
+// with a download slot held. The cancel goes out even before the node has
+// shown it honours the window - a transfer still waiting for a slot has sent
+// nothing yet - and an older node's "unknown request type" answer to it finds
+// nobody waiting. Only a transfer that already ended is not cancelled.
+//
+// Credit goes only to a node that has shown it honours the window, by
+// marking its counted messages with flow_window. An older node answers a
+// FlowCredit it cannot parse with "unknown request type" under this very
+// request_id - an error the reader takes as the end of the transfer - so
+// granting to it cut every tab page past 1 MB and every websocket tab.
+func (conn *NodeConnection) pumpFlow(requestID string, in <-chan *pb.NodeMessage, out chan<- *pb.NodeMessage, stop <-chan struct{}) {
+	defer close(out)
+	taken := uint32(0)
+	honours, ended := false, false
+	cancel := func() {
+		if !ended {
+			_ = conn.Send(&pb.NodeMessage{RequestId: requestID, Payload: &pb.NodeMessage_FlowCredit{FlowCredit: &pb.FlowCredit{Cancel: true}}})
+		}
+	}
+	for {
+		// Stop is watched while WAITING for the node too, not only while
+		// handing a message over: a reader that gave up between two messages
+		// would otherwise leave this goroutine waiting on a channel nothing
+		// will ever close.
+		var msg *pb.NodeMessage
+		select {
+		case m, ok := <-in:
+			if !ok {
+				return
+			}
+			msg = m
+			ended = IsFinalTransferDone(msg) || msg.GetError() != nil || msg.GetWsClose() != nil
+		case <-stop:
+			cancel()
+			return
+		}
+		select {
+		case out <- msg:
+		case <-stop:
+			cancel()
+			return
+		}
+		if msg.GetChunk() == nil && msg.GetWsFrame() == nil {
+			continue // only these count against the window
+		}
+		if msg.FlowWindow != 0 {
+			honours = true
+		}
+		if !honours {
+			continue
+		}
+		if taken++; taken >= flowGrantEvery {
+			// A failed grant means the stream is going; its close ends this loop.
+			_ = conn.Send(&pb.NodeMessage{RequestId: requestID, Payload: &pb.NodeMessage_FlowCredit{FlowCredit: &pb.FlowCredit{Grant: taken}}})
+			taken = 0
+		}
+	}
+}
+
+// stopFlow ends a request's pump, on whichever connection it was opened.
+func (r *Registry) stopFlow(requestID string) {
+	r.flowMu.Lock()
+	stop, ok := r.flowStops[requestID]
+	delete(r.flowStops, requestID)
+	r.flowMu.Unlock()
+	if ok {
+		close(stop)
+	}
 }
 
 // SendOnStream sends one message to a node's stream out-of-band, without
@@ -208,6 +318,7 @@ func (r *Registry) SendOnStream(nodeID int, msg *pb.NodeMessage) error {
 
 // CleanupRequest removes a pending request channel (used after streaming is done).
 func (r *Registry) CleanupRequest(nodeID int, requestID string) {
+	r.stopFlow(requestID)
 	conn, ok := r.GetConnection(nodeID)
 	if !ok {
 		return

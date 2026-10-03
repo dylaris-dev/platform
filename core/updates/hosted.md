@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Beam 0.9.10 hardens the desktop app.** Its window only lets the app's own page use it,
+  grants no camera or microphone access, and stores your sign-in encrypted. Update Beam.
+
+### Fixes
+- **A slow download no longer freezes your console, file list and tabs.** BYON nodes need
+  the update. `node`
+
 ## 2026.10.03.7
 
 ### Features

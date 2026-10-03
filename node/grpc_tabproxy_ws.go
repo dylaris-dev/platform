@@ -150,6 +150,7 @@ func splitWSFragments(data []byte, max int) [][]byte {
 // arriving before the dial completes; they flush in order once the pumps start.
 func (m *MeshManager) handleWSOpen(cc *coreConnection, reqID, serverUUID string, open *pb.WsOpen) {
 	if open == nil || open.TargetPort < 1 || open.TargetPort > 65535 {
+		cc.closeFlow(reqID) // no bridge will ever close it
 		cc.send(errorMsg(reqID, 502, "invalid ws target"))
 		return
 	}
@@ -166,6 +167,7 @@ func (m *MeshManager) handleWSOpen(cc *coreConnection, reqID, serverUUID string,
 		m.wsMu.Unlock()
 		// Bound concurrent bridges: reject beyond the cap with a policy WsClose
 		// so a flood of WsOpens cannot exhaust this node and starve co-tenants.
+		cc.closeFlow(reqID) // no bridge will ever close it
 		cc.send(&pb.NodeMessage{RequestId: reqID, Payload: &pb.NodeMessage_WsClose{WsClose: &pb.WsClose{Code: 1013, Reason: "node ws bridge limit reached"}}})
 		return
 	}
@@ -338,6 +340,9 @@ func (m *MeshManager) closeWSBridge(reqID string) {
 	m.wsMu.Unlock()
 	if ok {
 		bridge.close()
+		if bridge.owner != nil {
+			bridge.owner.closeFlow(reqID)
+		}
 	}
 }
 

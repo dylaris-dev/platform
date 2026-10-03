@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **One slow download no longer stalls every other request to its node.** Consoles, file
+  lists and tabs used to hang behind it for up to 30 seconds; transfers now pace per request. `core` `node`
+- **A node now serves downloads side by side** (up to four per server) instead of one at a
+  time, and keeps answering other requests while one runs. `node`
+
 ## 2026.10.03.7
 
 ### Features
