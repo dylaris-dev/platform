@@ -1896,7 +1896,7 @@
       "path": "/api/gateway/custom-domains/{domain:.+}/txt-token",
       "auth": "session",
       "authorization": "checked in handler",
-      "description": "Mints (once) the record a permanently blocked user must publish to prove ownership the strict way.",
+      "description": "Mints (once) the record that proves ownership.",
       "handler": "CustomDomainHandler.IssueTXTToken",
       "group": "gateway",
       "external": false
@@ -1906,7 +1906,7 @@
       "path": "/api/gateway/custom-domains/{domain:.+}/verify-txt",
       "auth": "session",
       "authorization": "checked in handler",
-      "description": "Checks the published record and, on success, lifts the permanent block.",
+      "description": "Checks the published record now instead of at the next pass, and on success verifies the claim - from pending, or out of a block.",
       "handler": "CustomDomainHandler.VerifyTXT",
       "group": "gateway",
       "external": false

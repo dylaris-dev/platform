@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -229,6 +230,9 @@ type GatewaySettings struct {
 	// leftmost label of custom/raw domains. Even though only :25565 MC traffic is
 	// routed, reserving these keeps confusable / impersonating names off the table.
 	BlockedRoutePrefixes []string `json:"blockedRoutePrefixes"`
+	// MaxCustomDomains caps the routes one account holds on its own domains,
+	// in the platform limit convention.
+	MaxCustomDomains *int64 `json:"maxCustomDomains"`
 }
 
 // defaultBlockedRoutePrefixes seeds a protective reserved list when the admin has
@@ -312,6 +316,7 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 		CustomDomainsEnabled: getSetting("gateway_custom_domains_enabled") == "true",
 		CnameTarget:          getSetting("gateway_cname_target"),
 		BlockedRoutePrefixes: h.loadBlockedRoutePrefixes(),
+		MaxCustomDomains:     services.ParseLimitSetting(getSetting(SettingMaxCustomDomains), defaultMaxCustomDomains),
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -375,11 +380,23 @@ func (h *SettingsHandler) GetGatewayRouteOptions(w http.ResponseWriter, r *http.
 
 // SaveGatewaySettings POST /api/settings/gateway - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Request) {
-	var req GatewaySettings
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	var req GatewaySettings
+	if err := json.Unmarshal(body, &req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	// null is "no cap", so an ABSENT maxCustomDomains must be told apart from
+	// it: a client that predates the field would otherwise lift the cap every
+	// time it saved this screen.
+	var present struct {
+		MaxCustomDomains json.RawMessage `json:"maxCustomDomains"`
+	}
+	_ = json.Unmarshal(body, &present)
 
 	// Validate + normalize hoster domains
 	cleaned := make([]HosterDomain, 0, len(req.HosterDomains))
@@ -429,7 +446,18 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	}
 	blockedJSON, _ := json.Marshal(blocked)
 
+	if req.MaxCustomDomains != nil && *req.MaxCustomDomains < 0 {
+		sendJSONError(w, "Custom domain limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		return
+	}
+
 	// Save port-enable settings
+	if present.MaxCustomDomains != nil {
+		if err := h.state.Store.SetSetting(SettingMaxCustomDomains, services.FormatLimitSetting(req.MaxCustomDomains)); err != nil {
+			sendJSONError(w, "Failed to save setting: "+SettingMaxCustomDomains, http.StatusInternalServerError)
+			return
+		}
+	}
 	portSettings := []struct{ k, v string }{
 		{"gateway_port_mc_enabled", fmt.Sprintf("%t", req.Limits.PortMcEnabled)},
 		{"gateway_hoster_domains", string(hostersJSON)},

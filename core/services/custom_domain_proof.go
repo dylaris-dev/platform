@@ -12,12 +12,13 @@ import (
 // Custom-domain ownership proof.
 //
 // A tenant may point their own domain at the platform, but only after showing
-// they control it. Everything here answers one question: does this domain's DNS
-// currently point at us? Only someone with DNS control can make it do that, so
-// that IS the proof - no token exchange needed on the happy path.
+// they control it. The proof is a TXT record carrying a token minted for that
+// one (account, domain) claim.
 //
-// The TXT path at the bottom is the stricter fallback, used once a tenant has
-// burned their attempts.
+// It used to be "the domain resolves to us", and that proves nothing about
+// WHICH tenant: a CNAME a former customer left behind, or any name under a
+// wildcard pointed at us, passed for whoever entered it first - and their
+// players then landed on that tenant's server.
 
 // DomainResolver is the DNS surface the proof needs, as an interface so tests
 // can drive it without touching the network.
@@ -58,60 +59,7 @@ func normaliseHost(h string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(h), "."))
 }
 
-// CheckDomainPointsAtUs reports whether domain currently resolves to the
-// platform, by either accepted route.
-//
-// TWO routes, and the second is not a convenience:
-//
-//  1. The CNAME target matches one we published.
-//  2. Failing that, the resolved ADDRESS is one of our edges.
-//
-// A strict CNAME-target match alone would reject correctly configured, paying
-// customers. An apex domain cannot carry a CNAME at all and has to use an
-// A-record, and a Cloudflare-proxied ("orange cloud") record hides the real
-// target behind Cloudflare's own - in both cases the customer did exactly what
-// they were told and a CNAME-only check still says no.
-//
-// Both routes need DNS control to satisfy, which is the property being tested.
-func CheckDomainPointsAtUs(ctx context.Context, res DomainResolver, domain string, cnameTargets, edgeAddrs []string) bool {
-	domain = normaliseHost(domain)
-	if domain == "" {
-		return false
-	}
-
-	if cname, err := res.LookupCNAME(ctx, domain); err == nil {
-		got := normaliseHost(cname)
-		// A resolver returns the name itself when there is no CNAME; that is not
-		// a match for anything and falls through to the address check.
-		for _, t := range cnameTargets {
-			if t = normaliseHost(t); t != "" && got == t {
-				return true
-			}
-		}
-	}
-
-	if len(edgeAddrs) == 0 {
-		return false
-	}
-	addrs, err := res.LookupHost(ctx, domain)
-	if err != nil {
-		return false
-	}
-	want := make(map[string]bool, len(edgeAddrs))
-	for _, a := range edgeAddrs {
-		if a = strings.TrimSpace(a); a != "" {
-			want[a] = true
-		}
-	}
-	for _, a := range addrs {
-		if want[strings.TrimSpace(a)] {
-			return true
-		}
-	}
-	return false
-}
-
-// NewTXTToken mints the self-service unblock token.
+// NewTXTToken mints a claim's ownership token.
 func NewTXTToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -122,12 +70,8 @@ func NewTXTToken() (string, error) {
 
 // CheckTXTToken reports whether _dylaris-verify.<domain> carries token.
 //
-// This is the way back after a permanent block, and it is deliberately a
-// STRONGER proof than the CNAME check it replaces rather than merely a more
-// annoying one: a CNAME only shows the domain points here, which a shared-hosting
-// or CDN setup can produce without full control, while a TXT record at a
-// dylaris-specific label is a value only the zone's owner can publish - and only
-// this user's token satisfies it.
+// A TXT record at a dylaris-specific label is a value only the zone's owner can
+// publish, and only this claim's token satisfies it.
 //
 // Compared in constant time. The token is a credential, and a timing signal is
 // free to exploit here because the attacker controls how often they ask.

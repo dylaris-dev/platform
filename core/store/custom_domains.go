@@ -94,6 +94,12 @@ func (s *PostgresStore) MarkCustomDomainVerified(id int) error {
 
 // FailCustomDomainClaim counts one missed deadline and returns the resulting
 // state. The second failure is permanent.
+//
+// Only a claim that is STILL pending and past its deadline: the verifier
+// decides on a list read at the start of a pass, and in between the customer
+// may have verified it ("check now") or re-armed it with a fresh deadline.
+// Failing it anyway overwrote a verified claim with a block. ErrNoClaim means
+// the claim moved on and there is nothing to fail.
 func (s *PostgresStore) FailCustomDomainClaim(id int) (string, error) {
 	var state string
 	err := s.db.QueryRow(`
@@ -102,8 +108,12 @@ func (s *PostgresStore) FailCustomDomainClaim(id int) (string, error) {
 		       state = CASE WHEN attempts + 1 >= $2 THEN 'permablocked' ELSE 'blocked' END,
 		       deadline_at = NULL,
 		       updated_at = NOW()
-		 WHERE id = $1
+		 WHERE id = $1 AND state = 'pending'
+		   AND deadline_at IS NOT NULL AND deadline_at <= NOW()
 		 RETURNING state`, id, MaxClaimAttempts).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNoClaim
+	}
 	return state, err
 }
 

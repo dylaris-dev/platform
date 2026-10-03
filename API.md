@@ -435,8 +435,8 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/gateway/check-domain` | session | _no capability_ | - | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
 | GET | `/api/gateway/custom-domains` | session | _in-handler_ | - | `CustomDomainHandler.List` | the caller's OWN claims. |
-| POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | - | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record a permanently blocked user must publish to prove ownership the strict way. |
-| POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit | `CustomDomainHandler.VerifyTXT` | Checks the published record and, on success, lifts the permanent block. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | - | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record that proves ownership. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit | `CustomDomainHandler.VerifyTXT` | Checks the published record now instead of at the next pass, and on success verifies the claim - from pending, or out of a block. |
 | GET | `/api/gateway/dns-check` | session | `topology.read` | - | `DNSHandler.CheckDNS` | computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe. |
 | GET | `/api/gateway/edges` | session | `topology.read` | - | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
 | GET | `/api/gateway/errors` | session | `topology.read` | - | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |

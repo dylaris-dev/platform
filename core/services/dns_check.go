@@ -276,12 +276,6 @@ func RunDNSCheck(ctx context.Context, rdb *redis.Client, cfg DNSCheckConfig) DNS
 
 // onlineEdgeIPs returns the public IPs of the online edges, deduplicated and
 // in stable order.
-// OnlineEdgeIPs is the exported view of the same set, for callers outside the
-// DNS check (the custom-domain proof needs it to accept an A-record).
-func OnlineEdgeIPs(ctx context.Context, rdb *redis.Client) []string {
-	return onlineEdgeIPs(ctx, rdb)
-}
-
 func onlineEdgeIPs(ctx context.Context, rdb *redis.Client) []string {
 	edges := GetEdgesFromRedis(ctx, rdb)
 	seen := map[string]struct{}{}

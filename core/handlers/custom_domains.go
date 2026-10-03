@@ -29,8 +29,8 @@ type customDomainView struct {
 	State      string     `json:"state"`
 	Attempts   int        `json:"attempts"`
 	DeadlineAt *time.Time `json:"deadlineAt,omitempty"`
-	// TXTName/TXTValue are populated only for a permanently blocked claim that
-	// has been issued a token - they are the instruction, not a secret to hide.
+	// TXTName/TXTValue are the record that proves ownership, shown until it is
+	// proven - they are the instruction, not a secret to hide.
 	TXTName  string `json:"txtName,omitempty"`
 	TXTValue string `json:"txtValue,omitempty"`
 }
@@ -39,7 +39,7 @@ func viewOf(c store.CustomDomainClaim) customDomainView {
 	v := customDomainView{
 		Domain: c.Domain, State: c.State, Attempts: c.Attempts, DeadlineAt: c.DeadlineAt,
 	}
-	if c.State == store.ClaimPermablocked && c.TXTToken != "" {
+	if c.State != store.ClaimVerified && c.TXTToken != "" {
 		v.TXTName = services.TXTVerifyPrefix + c.Domain
 		v.TXTValue = c.TXTToken
 	}
@@ -67,10 +67,9 @@ func (h *CustomDomainHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // IssueTXTToken POST /api/gateway/custom-domains/{domain}/txt-token
 //
-// Mints (once) the record a permanently blocked user must publish to prove
-// ownership the strict way. Refused for any other state: a pending or verified
-// claim has nothing to unblock, and handing out the token there would turn the
-// stricter path into an alternative to waiting.
+// Mints (once) the record that proves ownership. A claim gets its token when it
+// is armed; this is for a claim that predates that, and the way back from a
+// permanent block.
 func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
@@ -80,9 +79,8 @@ func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
 	}
-	if claim.State != store.ClaimPermablocked {
-		sendJSONError(w, "That domain is not blocked, so there is nothing to verify",
-			http.StatusBadRequest)
+	if claim.State == store.ClaimVerified {
+		sendJSONError(w, "That domain is already verified", http.StatusBadRequest)
 		return
 	}
 	// Reuse an existing token. Re-minting would invalidate a record the customer
@@ -104,11 +102,8 @@ func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Reque
 
 // VerifyTXT POST /api/gateway/custom-domains/{domain}/verify-txt
 //
-// Checks the published record and, on success, lifts the permanent block.
-//
-// The claim goes to VERIFIED rather than back to pending: a TXT record at a
-// dylaris-specific label under the domain is a stronger ownership proof than the
-// CNAME check it is standing in for, so there is nothing left to wait for.
+// Checks the published record now instead of at the next pass, and on success
+// verifies the claim - from pending, or out of a block.
 func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
@@ -118,7 +113,11 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
 	}
-	if claim.State != store.ClaimPermablocked || claim.TXTToken == "" {
+	if claim.State == store.ClaimVerified {
+		sendJSONError(w, "That domain is already verified", http.StatusBadRequest)
+		return
+	}
+	if claim.TXTToken == "" {
 		sendJSONError(w, "Request a verification token for this domain first", http.StatusBadRequest)
 		return
 	}

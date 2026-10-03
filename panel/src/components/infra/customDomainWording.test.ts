@@ -26,10 +26,18 @@ describe('what a pending claim tells the customer to add', () => {
         expect(body).toContain('route.us.example.com');
     });
 
-    it('says nothing about a record when the operator configured none', () => {
+    it('says nothing about a CNAME when the operator configured none', () => {
         const body = describeClaim(pending, []).body;
-        expect(body).toContain('Point this domain at us');
+        expect(body).toContain('points at us');
         expect(body).not.toContain('CNAME');
+    });
+
+    // The TXT record is the proof; a CNAME alone proves nothing about whose
+    // domain it is. Every variant has to ask for it.
+    it('always asks for the TXT record', () => {
+        for (const [targets, failed] of [[[], false], [[], true], [['route.eu.example.com'], false]] as const) {
+            expect(describeClaim(pending, [...targets], failed).body).toContain('TXT record');
+        }
     });
 
     // The distinction this whole test exists for. Same empty list, different

@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03
+
+### Features
+- **Routes on a tenant's own domains are capped per account,** 50 unless you change it under
+  Settings > Gateway > Custom Domains. `core` `panel`
+
+### Breaking
+- **A custom domain is proven by a TXT record with a token for that account,** no longer by
+  pointing at us. Domains already verified stay verified. `core` `panel`
+- **Server routes now count against the route allowance,** charged to the server's owner. They
+  were not counted at all. `core`
+
+### Security
+- **A tenant could keep an unproven custom domain forever on a server route** and with it
+  take the name from its real owner. Unproven server routes are now removed. `core`
+- **A domain that merely pointed at us was "proven" for whoever claimed it first,** such as a
+  CNAME a former customer left behind. `core`
+- **Many slow custom-domain checks could make the verifier fail other tenants' domains.** Each
+  one is now judged at the time it was checked. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02.6
 
 ### Features

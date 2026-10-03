@@ -676,20 +676,7 @@ func main() {
 		customDomainVerifier := services.NewCustomDomainVerifier(
 			pgStore,
 			services.NewNetResolver(),
-			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway),
-			func() ([]string, []string) {
-				// gateway_cname_target is a LABEL ("route"), never a usable name.
-				// Passing it through raw compared a resolved CNAME against
-				// "route", which no DNS answer can equal, so the CNAME half of
-				// the proof could not pass for anyone - see services.CNAMETargets.
-				hosters, _, cname := extras.settingsHandler.LoadGatewayDomainConfig()
-				bases := make([]string, 0, len(hosters))
-				for _, h := range hosters {
-					bases = append(bases, h.Domain)
-				}
-				return services.CNAMETargets(cname, bases),
-					services.OnlineEdgeIPs(context.Background(), redisClient)
-			},
+			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway, pgStore),
 		)
 		// Gated per pass, not once at boot: coreLeader.Start above only launches
 		// the election goroutine, so IsLeader() is still false here on a cold

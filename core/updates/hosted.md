@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03
+
+### Features
+- Nothing.
+
+### Breaking
+- **Proving a custom domain is yours now takes a TXT record.** The panel shows it when you add
+  the route; the CNAME still brings your players. Verified domains stay verified.
+
+### Security
+- **Another account could hold your domain on our gateway** if it pointed at us before you
+  added it. That needs your TXT record now. This was a fix on our side.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.02.6
 
 ### Features

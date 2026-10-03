@@ -15,8 +15,18 @@ import (
 // anything: the route was accepted, and four hours later it was gone. These
 // pin what it must say once it is shown.
 func TestCustomDomainDeadlineHint(t *testing.T) {
+	const name, value = "_dylaris-verify.mc.example.com", "dylaris-verify=abc"
+
+	// The record is the proof, so the instruction is useless without it.
+	t.Run("names the TXT record and its value", func(t *testing.T) {
+		got := customDomainDeadlineHint(name, value, []string{"route.eu.dylaris.com"})
+		if !strings.Contains(got, name) || !strings.Contains(got, value) {
+			t.Errorf("hint does not name the TXT record: %q", got)
+		}
+	})
+
 	t.Run("names the full target, never the bare label", func(t *testing.T) {
-		got := customDomainDeadlineHint([]string{"route.eu.dylaris.com"})
+		got := customDomainDeadlineHint(name, value, []string{"route.eu.dylaris.com"})
 		if !strings.Contains(got, "route.eu.dylaris.com") {
 			t.Errorf("hint does not name the target: %q", got)
 		}
@@ -26,7 +36,7 @@ func TestCustomDomainDeadlineHint(t *testing.T) {
 	})
 
 	t.Run("one target per region, and the customer picks", func(t *testing.T) {
-		got := customDomainDeadlineHint([]string{"route.eu.dylaris.com", "route.us.dylaris.com"})
+		got := customDomainDeadlineHint(name, value, []string{"route.eu.dylaris.com", "route.us.dylaris.com"})
 		for _, want := range []string{"route.eu.dylaris.com", "route.us.dylaris.com"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("hint omits %s: %q", want, got)
@@ -37,7 +47,7 @@ func TestCustomDomainDeadlineHint(t *testing.T) {
 	// An operator who has configured no hoster domain yet leaves no target to
 	// name. The deadline still applies, so it still has to be stated.
 	t.Run("no targets still warns about the deadline", func(t *testing.T) {
-		got := customDomainDeadlineHint(nil)
+		got := customDomainDeadlineHint(name, value, nil)
 		if !strings.Contains(got, "4 hours") {
 			t.Errorf("hint drops the deadline when there is no target: %q", got)
 		}
@@ -53,6 +63,12 @@ type claimFakeStore struct {
 	settings map[string]string
 	claim    *store.CustomDomainClaim
 	started  []string
+	tokens   []string
+}
+
+func (f *claimFakeStore) SetCustomDomainTXTToken(_ int, token string) error {
+	f.tokens = append(f.tokens, token)
+	return nil
 }
 
 func (f *claimFakeStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
@@ -108,6 +124,10 @@ func TestCustomDomainGateDoesNotArmTheClaim(t *testing.T) {
 		}
 		if !strings.Contains(notice, "route.eu.dylaris.com") {
 			t.Errorf("notice does not name the real target: %q", notice)
+		}
+		// Every claim carries its proof token from the moment it is armed.
+		if len(fs.tokens) != 1 || !strings.Contains(notice, fs.tokens[0]) {
+			t.Errorf("arming minted %v and the notice says %q; the customer must be told the token", fs.tokens, notice)
 		}
 	})
 

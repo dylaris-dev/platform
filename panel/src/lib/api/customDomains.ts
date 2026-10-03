@@ -1,8 +1,9 @@
 // A tenant's own custom-domain ownership claims.
 //
 // Pointing your own domain at the platform needs proof that you control it,
-// because otherwise anyone could claim any name. The proof is the DNS record
-// itself: only the zone's owner can make a domain resolve to us.
+// because otherwise anyone could claim any name. The proof is a TXT record
+// carrying a token minted for this account and this domain: a domain that
+// merely resolves to us proves nothing about WHICH account it belongs to.
 //
 // Everything here is scoped to the signed-in user inside Core. A block is
 // recorded per (user, domain), never per domain - a global block would let
@@ -11,10 +12,10 @@
 
 import { API_URL, getAuthHeader, handleResponse } from '@/lib/api/core';
 
-// pending   - inside the grant, waiting for DNS to point at us
+// pending   - inside the grant, waiting for the TXT record
 // verified  - proven, routes may be added freely
 // blocked   - one missed deadline; another attempt is allowed
-// permablocked - out of attempts; only the TXT record lifts it
+// permablocked - out of attempts; only checking the TXT record lifts it
 export type CustomDomainState = 'pending' | 'verified' | 'blocked' | 'permablocked';
 
 export interface CustomDomain {
@@ -22,7 +23,7 @@ export interface CustomDomain {
   state: CustomDomainState;
   attempts: number;
   deadlineAt?: string;
-  // Present only for a permanently blocked domain that has been issued a token.
+  // The proof record, present until the domain is verified.
   txtName?: string;
   txtValue?: string;
 }
@@ -44,7 +45,7 @@ export const listCustomDomains = async (): Promise<CustomDomain[]> => {
   return data.domains ?? [];
 };
 
-/** Mints (or returns) the TXT record that lifts a permanent block. */
+/** Mints (or returns) the TXT record that proves ownership. */
 export const issueCustomDomainToken = async (domain: string): Promise<CustomDomain> => {
   const res = await fetch(
     `${API_URL}/gateway/custom-domains/${encodeURIComponent(domain)}/txt-token`,

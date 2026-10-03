@@ -14,15 +14,19 @@ import (
 type gatewayLimitsFakeStore struct {
 	store.Store
 
-	set     map[string]*int
-	deleted map[string]bool
+	set      map[string]*int
+	deleted  map[string]bool
+	settings map[string]string
 }
 
 func newGatewayLimitsFakeStore() *gatewayLimitsFakeStore {
-	return &gatewayLimitsFakeStore{set: map[string]*int{}, deleted: map[string]bool{}}
+	return &gatewayLimitsFakeStore{set: map[string]*int{}, deleted: map[string]bool{}, settings: map[string]string{}}
 }
 
-func (f *gatewayLimitsFakeStore) SetSetting(string, string) error { return nil }
+func (f *gatewayLimitsFakeStore) SetSetting(k, v string) error {
+	f.settings[k] = v
+	return nil
+}
 func (f *gatewayLimitsFakeStore) SetGatewayRouteLimit(scope string, max *int) error {
 	f.set[scope] = max
 	return nil
@@ -85,5 +89,20 @@ func TestARouteLimitOfZeroIsSavedAsZero(t *testing.T) {
 		if !ok || v == nil || *v != 0 {
 			t.Errorf("%s = %v, want 0", scope, v)
 		}
+	}
+}
+
+// null is "no cap" for the custom-domain limit, so a request WITHOUT the field
+// must not be read as null: a client that predates it would lift the cap every
+// time it saved this screen.
+func TestTheCustomDomainCapSurvivesAClientThatDoesNotSendIt(t *testing.T) {
+	if fs := saveGatewayLimits(t, `{"limits":{"global":5}}`); fs.settings[SettingMaxCustomDomains] != "" {
+		t.Errorf("an absent field wrote %q", fs.settings[SettingMaxCustomDomains])
+	}
+	if fs := saveGatewayLimits(t, `{"limits":{"global":5},"maxCustomDomains":null}`); fs.settings[SettingMaxCustomDomains] != "unlimited" {
+		t.Errorf("an explicit null wrote %q, want unlimited", fs.settings[SettingMaxCustomDomains])
+	}
+	if fs := saveGatewayLimits(t, `{"limits":{"global":5},"maxCustomDomains":7}`); fs.settings[SettingMaxCustomDomains] != "7" {
+		t.Errorf("a cap of 7 wrote %q", fs.settings[SettingMaxCustomDomains])
 	}
 }

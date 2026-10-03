@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,29 @@ type linkRouteFakeStore struct {
 	routeLimits map[string]*models.GatewayRouteLimit
 
 	settings map[string]string
+
+	// servers by owner. Server 1 is linkRouteUserID's unless a test says
+	// otherwise, which is what CreateServerRoute's requests target.
+	servers map[string][]models.Server
+}
+
+func (f *linkRouteFakeStore) ListServersByOwner(ownerID string) ([]models.Server, error) {
+	return f.servers[ownerID], nil
+}
+
+func (f *linkRouteFakeStore) GetServerByID(id int) (*models.Server, error) {
+	for owner, srvs := range f.servers {
+		for _, s := range srvs {
+			if s.ID == id {
+				s.OwnerID = owner
+				return &s, nil
+			}
+		}
+	}
+	if id == 1 {
+		return &models.Server{ID: 1, UUID: "srv-1", OwnerID: linkRouteUserID}, nil
+	}
+	return nil, errors.New("not found")
 }
 
 func (f *linkRouteFakeStore) ListWarpAPIKeysByOwner(ownerID string) ([]store.WarpAPIKey, error) {
@@ -63,6 +87,8 @@ func (f *linkRouteFakeStore) GetCustomDomainClaim(userID, domain string) (*store
 func (f *linkRouteFakeStore) StartCustomDomainClaim(userID, domain string, deadline time.Time) (*store.CustomDomainClaim, error) {
 	return &store.CustomDomainClaim{UserID: userID, Domain: domain, State: store.ClaimPending, DeadlineAt: &deadline}, nil
 }
+
+func (f *linkRouteFakeStore) SetCustomDomainTXTToken(int, string) error { return nil }
 
 // linkRouteFakeGateway is a recording fake for services.GatewayProvider so
 // CreateLinkRoute's success path can be asserted without a real Hub/Redis
@@ -639,4 +665,44 @@ func TestCreateLinkRoute_AManagedRouteOfTheirsIsNotAnEdit(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
+}
+
+// The route-only door caps routes on the tenant's own domains as the server
+// door does. An edit of one they already hold spends nothing, as for ours.
+func TestCreateLinkRoute_CapsRoutesOnOwnDomains(t *testing.T) {
+	newFixture := func(held int) (*GatewayHandler, *linkRouteFakeGateway) {
+		fs := baseLinkRouteStore()
+		fs.settings["gateway_custom_domains_enabled"] = "true"
+		fs.settings[SettingMaxCustomDomains] = "2"
+		rdb := newLinkRouteRedis(t)
+		for i := 0; i < held; i++ {
+			seedLinkRoute(t, rdb, fmt.Sprintf("s%d.theirown.net", i),
+				services.GatewayRoute{CoreOwned: true, OwnerID: linkRouteUserID})
+		}
+		gw := &linkRouteFakeGateway{}
+		return newLinkRouteHandler(fs, gw, rdb), gw
+	}
+	body := func(domain string) map[string]interface{} {
+		b := baseLinkRouteBody()
+		b["domain"] = domain
+		return b
+	}
+
+	t.Run("at the cap a new one is refused", func(t *testing.T) {
+		h, gw := newFixture(2)
+		rec := httptest.NewRecorder()
+		h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, body("new.theirown.net")))
+		if rec.Code != http.StatusForbidden || len(gw.createRouteViaLinkCalls) != 0 {
+			t.Fatalf("status %d, creates %d: %s", rec.Code, len(gw.createRouteViaLinkCalls), rec.Body.String())
+		}
+	})
+
+	t.Run("at the cap an edit still goes through", func(t *testing.T) {
+		h, gw := newFixture(2)
+		rec := httptest.NewRecorder()
+		h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, body("s1.theirown.net")))
+		if rec.Code != http.StatusCreated || len(gw.createRouteViaLinkCalls) != 1 {
+			t.Fatalf("status %d, creates %d: %s", rec.Code, len(gw.createRouteViaLinkCalls), rec.Body.String())
+		}
+	})
 }

@@ -351,6 +351,10 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                                         </div>
                                     </>
                                 )}
+                                <span>
+                                    After saving you get a TXT record that proves the domain is yours. Add it within
+                                    4 hours, or the route is removed.
+                                </span>
                             </div>
                         </div>
                     )}

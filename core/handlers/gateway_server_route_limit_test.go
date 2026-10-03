@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -114,9 +115,13 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rdb := newLinkRouteRedis(t)
+			// Held as SERVER routes, in the shape the hub publishes them: no
+			// owner_id, only the server they serve. Seeding them with an
+			// owner_id - which the hub never writes - is what let managed
+			// routes go uncounted while this test stayed green.
 			for i := 0; i < tc.existing; i++ {
 				seedLinkRoute(t, rdb, "held"+string(rune('a'+i))+".example.com",
-					services.GatewayRoute{OwnerID: linkRouteUserID, CoreOwned: true})
+					services.GatewayRoute{TunnelID: "tok", TargetIP: "mc_srv-1", ServerUUID: "srv-1"})
 			}
 			// example.com is ours here: the cap only counts addresses in our own
 			// namespace, so without this the fixtures would sail past every limit.
@@ -128,7 +133,7 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 			fs := &linkRouteFakeStore{routeLimits: tc.limits, settings: map[string]string{
 				services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
 				"gateway_custom_domains_enabled": "true",
-			}}
+			}, servers: map[string][]models.Server{linkRouteUserID: {{ID: 1, UUID: "srv-1"}}}}
 			gw := &linkRouteFakeGateway{}
 			h := newLinkRouteHandler(fs, gw, rdb)
 
@@ -148,6 +153,91 @@ func TestCreateServerRouteHonorsTheRouteLimit(t *testing.T) {
 			// created the route would be worse than no check at all.
 			if got := len(gw.createRouteServerCalls); (got > 0) != tc.wantCreate {
 				t.Fatalf("gateway create calls = %d, wantCreate = %v", got, tc.wantCreate)
+			}
+		})
+	}
+}
+
+// A server route belongs to the server's OWNER, whoever with network.write on
+// the server creates it: the owner's allowance pays for it, and the owner's
+// claim proves its domain. The hub publishes managed routes with no owner, so
+// the server is the only thing that ties one back to an account - a claim
+// armed for a member instead could never find the route to remove it.
+func TestAServerRouteIsTheServerOwners(t *testing.T) {
+	const member = "member-1"
+	rdb := newLinkRouteRedis(t)
+	seedLinkRoute(t, rdb, "helda.example.com",
+		services.GatewayRoute{TunnelID: "tok", TargetIP: "mc_srv-1", ServerUUID: "srv-1"})
+	fs := &linkRouteFakeStore{
+		routeLimits: map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(1)}},
+		settings: map[string]string{
+			services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
+			"gateway_custom_domains_enabled": "true",
+		},
+		servers: map[string][]models.Server{linkRouteUserID: {{ID: 1, UUID: "srv-1"}}},
+	}
+
+	t.Run("the owner's allowance applies to a member", func(t *testing.T) {
+		gw := &linkRouteFakeGateway{}
+		rec := httptest.NewRecorder()
+		newLinkRouteHandler(fs, gw, rdb).CreateServerRoute(rec, serverRouteReq(member, false,
+			map[string]interface{}{"domain": "new.example.com", "targetPort": 25565}))
+		if rec.Code != http.StatusForbidden || len(gw.createRouteServerCalls) != 0 {
+			t.Fatalf("status %d, creates %d: a member spent around the owner's full allowance", rec.Code, len(gw.createRouteServerCalls))
+		}
+	})
+
+	t.Run("the route is filed under the owner", func(t *testing.T) {
+		gw := &linkRouteFakeGateway{}
+		rec := httptest.NewRecorder()
+		newLinkRouteHandler(fs, gw, rdb).CreateServerRoute(rec, serverRouteReq(member, false,
+			map[string]interface{}{"domain": "survival.theirown.net", "targetPort": 25565}))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		if got := gw.createRouteServerCalls[0].ownerID; got != linkRouteUserID {
+			t.Fatalf("route filed under %q, want the server owner %q", got, linkRouteUserID)
+		}
+	})
+}
+
+// Routes on a tenant's own domains cost us no address, and that is why they
+// had no bound at all: each one is a claim the verifier queries a
+// tenant-chosen nameserver for, and a key every edge loads.
+func TestRoutesOnOwnDomainsAreCapped(t *testing.T) {
+	cases := []struct {
+		name    string
+		setting string
+		held    int
+		want    int
+	}{
+		{"the default cap", "", 50, http.StatusForbidden},
+		{"under the default cap", "", 49, http.StatusCreated},
+		{"an operator cap", "2", 2, http.StatusForbidden},
+		{"zero means none", "0", 0, http.StatusForbidden},
+		{"no cap", "unlimited", 80, http.StatusCreated},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newLinkRouteRedis(t)
+			for i := 0; i < tc.held; i++ {
+				seedLinkRoute(t, rdb, fmt.Sprintf("s%d.theirown.net", i),
+					services.GatewayRoute{TunnelID: "tok", TargetIP: "mc_srv-1", ServerUUID: "srv-1"})
+			}
+			fs := &linkRouteFakeStore{settings: map[string]string{
+				services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
+				"gateway_custom_domains_enabled": "true",
+				SettingMaxCustomDomains:          tc.setting,
+			}, servers: map[string][]models.Server{linkRouteUserID: {{ID: 1, UUID: "srv-1"}}}}
+			gw := &linkRouteFakeGateway{}
+			rec := httptest.NewRecorder()
+			newLinkRouteHandler(fs, gw, rdb).CreateServerRoute(rec, serverRouteReq(linkRouteUserID, false,
+				map[string]interface{}{"domain": "new.theirown.net", "targetPort": 25565}))
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+			if (len(gw.createRouteServerCalls) > 0) != (tc.want == http.StatusCreated) {
+				t.Fatalf("creates = %d for status %d", len(gw.createRouteServerCalls), rec.Code)
 			}
 		})
 	}

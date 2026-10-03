@@ -877,6 +877,8 @@ export interface GatewaySettings {
     cnameTarget: string;
     // Reserved leftmost labels users may not register as a route (e.g. admin, dylaris).
     blockedRoutePrefixes: string[];
+    // Routes one account may hold on its own domains. null = no limit, 0 = none.
+    maxCustomDomains: number | null;
 }
 
 export interface GatewayRouteOptions {

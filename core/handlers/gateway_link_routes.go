@@ -77,13 +77,12 @@ func (h *GatewayHandler) effectiveRouteLimit(userID string) *int64 {
 	return nil
 }
 
-// countOwnerRoutes counts the tenant's addresses ON OUR DOMAINS. Routes on a
-// domain the customer brought themselves are not counted and not capped: we hand
-// out subdomains from a namespace that can run out, and a CNAME from their own
-// domain costs us nothing to allow. See services.DomainIsOurs.
-func (h *GatewayHandler) countOwnerRoutes(userID string) int {
-	n, _ := h.ownerRouteStats(userID, "")
-	return n
+// routeStats is what an account holds: addresses on our domains, routes on
+// its own domains, and whether the domain asked about is already its route-only
+// entry.
+type routeStats struct {
+	ours, custom int
+	ownsDomain   bool
 }
 
 // ownerRouteStats counts the tenant's addresses on our domains and, in the same
@@ -96,11 +95,20 @@ func (h *GatewayHandler) countOwnerRoutes(userID string) int {
 // could not change the port of a route THEY OWN: the check would refuse them
 // over the very route it was counting, and the message would tell them to buy
 // more addresses to keep the number of addresses the same.
-func (h *GatewayHandler) ownerRouteStats(userID, domain string) (count int, ownsDomain bool) {
+//
+// Managed routes count too, through the server they serve: the hub publishes
+// them with no owner_id, and matching on owner_id alone made every server route
+// free - a tenant capped at N addresses could hold any number of them.
+func (h *GatewayHandler) ownerRouteStats(userID, domain string) (routeStats, error) {
+	var st routeStats
+	owned, err := services.OwnedServerUUIDs(h.state.Store, userID)
+	if err != nil {
+		return st, err
+	}
 	bases := h.ourBaseDomains()
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
-		if rt.OwnerID != userID {
+		if !services.RouteHeldBy(rt, userID, owned) {
 			continue
 		}
 		// CoreOwned as well as owned BY THEM: a route-only entry is the only
@@ -109,13 +117,37 @@ func (h *GatewayHandler) ownerRouteStats(userID, domain string) (count int, owns
 		// otherwise wave the allowance check through for a request the gateway
 		// then refuses anyway.
 		if domain != "" && rt.CoreOwned && strings.EqualFold(rt.Domain, domain) {
-			ownsDomain = true
+			st.ownsDomain = true
 		}
 		if services.DomainIsOurs(rt.Domain, bases) {
-			count++
+			st.ours++
+		} else {
+			st.custom++
 		}
 	}
-	return count, ownsDomain
+	return st, nil
+}
+
+// SettingMaxCustomDomains caps the routes one account may hold on its own
+// domains. Those cost us no address, but each one is a claim the verifier
+// queries a tenant-chosen nameserver for and a key every edge loads, and there
+// was no bound on them at all.
+const SettingMaxCustomDomains = "gateway_max_custom_domains"
+
+var defaultMaxCustomDomains = services.LimitPtr(50)
+
+func (h *GatewayHandler) customDomainCap() *int64 {
+	raw, _ := h.state.Store.GetSetting(SettingMaxCustomDomains)
+	return services.ParseLimitSetting(raw, defaultMaxCustomDomains)
+}
+
+// customDomainCapError is the refusal for an account at its cap, or "".
+func (h *GatewayHandler) customDomainCapError(held int) string {
+	limit := h.customDomainCap()
+	if !services.AtOrOver(limit, int64(held)) {
+		return ""
+	}
+	return fmt.Sprintf("You have reached the limit of %d routes on your own domains.", *limit)
 }
 
 // ourBaseDomains is the hoster list the route cap is measured against.
@@ -223,10 +255,20 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	// nothing, so refusing it on a full one would deny something we do not ration.
 	//
 	// An edit spends nothing either - see ownerRouteStats.
-	held, isEdit := h.ownerRouteStats(userID, finalDomain)
-	if !isEdit && services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(held)) {
-		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", *limit), http.StatusForbidden)
+	stats, err := h.ownerRouteStats(userID, finalDomain)
+	if err != nil {
+		http.Error(w, "Could not count your routes", http.StatusInternalServerError)
 		return
+	}
+	if !stats.ownsDomain && services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(stats.ours)) {
+		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead.", *limit), http.StatusForbidden)
+		return
+	}
+	if !stats.ownsDomain && isCustomDomain && !IsAdmin(r) {
+		if msg := h.customDomainCapError(stats.custom); msg != "" {
+			http.Error(w, msg, http.StatusForbidden)
+			return
+		}
 	}
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.

@@ -319,6 +319,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         customDomainsEnabled: false,
         cnameTarget: '',
         blockedRoutePrefixes: [],
+        maxCustomDomains: 50,
     });
     // Preview of what users will actually be told to point their domain at:
     // the label combined with every hoster base, one target per region.
@@ -361,6 +362,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 customDomainsEnabled: !!gwRes.settings.customDomainsEnabled,
                 cnameTarget: gwRes.settings.cnameTarget || '',
                 blockedRoutePrefixes: gwRes.settings.blockedRoutePrefixes || [],
+                maxCustomDomains: gwRes.settings.maxCustomDomains ?? null,
             };
             setSettings(loaded);
             snapshotRef.current = loaded;
@@ -759,7 +761,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     <div className="flex items-center justify-between gap-4">
                         <div>
                             <h3 className="mono-label">Custom Domains</h3>
-                            <p className="text-xs text-(--base-06) mt-1">Allow users to bring their own domain via a CNAME record.</p>
+                            <p className="text-xs text-(--base-06) mt-1">Allow users to bring their own domain. They prove ownership with a TXT record and point it at us with a CNAME.</p>
                         </div>
                         <button
                             type="button"
@@ -802,6 +804,18 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                     Add a hoster domain above — without one there is nothing to combine this label with.
                                 </span>
                             )}
+                            <div className="mt-2 flex items-center justify-between gap-4 p-3 rounded-md bg-(--base-02)">
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-(--base-09)">Routes per account</p>
+                                    <p className="text-xs text-(--base-06)">
+                                        How many routes one account may hold on its own domains.
+                                    </p>
+                                </div>
+                                <LimitField
+                                    value={settings.maxCustomDomains}
+                                    onChange={v => setSettings(prev => ({ ...prev, maxCustomDomains: v }))}
+                                />
+                            </div>
                         </div>
                     )}
                 </div>

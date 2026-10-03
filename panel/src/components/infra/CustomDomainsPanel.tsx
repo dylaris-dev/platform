@@ -29,10 +29,14 @@ export function describeClaim(
       return {
         tone: 'text-(--success)',
         title: 'Verified',
-        body: 'This domain points at us. You can add routes on it.',
+        body: 'You have proven you own this domain. You can add routes on it.',
       };
     case 'pending': {
-      let body = 'Point this domain at us. We check every 30 minutes.';
+      // Two records, two jobs: the TXT record below proves the domain is yours,
+      // the CNAME brings players to us. Pointing at us alone proves nothing
+      // about WHICH account the domain belongs to.
+      const proof = 'Publish the TXT record below to prove you own this domain. We check every 30 minutes.';
+      let body = `${proof} Players reach it once the domain points at us.`;
       // An empty target list has two causes and they need different sentences.
       // The operator may genuinely have configured no CNAME label - then the
       // generic line above is correct. Or the lookup that produces the targets
@@ -40,14 +44,13 @@ export function describeClaim(
       // naming. cnameTargetUsage.test.ts already guards the label from being
       // rendered raw; it cannot see the request that never answered.
       if (cnameLookupFailed) {
-        body = 'Point this domain at us. We could not load the exact record to add - '
-          + 'reload the page to see it. We check every 30 minutes.';
+        body = `${proof} We could not load the record that brings players to us - reload the page to see it.`;
       } else if (cnameTargets.length === 1) {
-        body = `Add a CNAME to ${cnameTargets[0]}, or an A record to one of our edge addresses. We check every 30 minutes.`;
+        body = `${proof} For players to reach it, add a CNAME to ${cnameTargets[0]}, or an A record to one of our edge addresses.`;
       } else if (cnameTargets.length > 1) {
         // One target per region, and the choice decides which edges answer the
         // customer's players - so they pick, we do not pick for them.
-        body = `Add a CNAME to whichever of these is your region - ${cnameTargets.join(', ')} - or an A record to one of our edge addresses. We check every 30 minutes.`;
+        body = `${proof} For players to reach it, add a CNAME to whichever of these is your region - ${cnameTargets.join(', ')} - or an A record to one of our edge addresses.`;
       }
       return { tone: 'text-(--warning)', title: 'Waiting for DNS', body };
     }
@@ -55,7 +58,7 @@ export function describeClaim(
       return {
         tone: 'text-(--warning)',
         title: 'Not set up in time',
-        body: 'The route was removed. You can try again - set the record first, then add the route.',
+        body: 'The route was removed. Publish the TXT record below, check it, then add the route again.',
       };
     default:
       return {
@@ -214,14 +217,14 @@ export function CustomDomainsPanel() {
               </div>
               <p className="mt-1 text-xs text-(--base-06)">{info.body}</p>
 
-              {d.state === 'permablocked' && !d.txtValue ? (
+              {d.state !== 'verified' && !d.txtValue ? (
                 <button
                   type="button"
                   onClick={() => getToken(d.domain)}
                   disabled={busy === d.domain}
                   className="btn btn-secondary btn-sm mt-2"
                 >
-                  {busy === d.domain ? 'Working…' : 'Show me how to unblock it'}
+                  {busy === d.domain ? 'Working…' : 'Show me the record to add'}
                 </button>
               ) : null}
 

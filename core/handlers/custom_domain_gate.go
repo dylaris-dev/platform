@@ -75,41 +75,58 @@ func (h *GatewayHandler) armCustomDomainClaim(r *http.Request, userID, domain st
 	if err == nil && claim != nil && claim.State == store.ClaimVerified {
 		return "" // already proven; nothing to wait for
 	}
-	if _, err := h.state.Store.StartCustomDomainClaim(userID, domain,
-		time.Now().Add(services.CustomDomainGrant)); err != nil {
+	claim, err = h.state.Store.StartCustomDomainClaim(userID, domain,
+		time.Now().Add(services.CustomDomainGrant))
+	if err != nil {
 		// The route is already created; failing the request now would be worse
 		// than an unclaimed domain, which the next create re-arms.
 		log.Printf("custom-domain: could not arm the claim for %s (user %s): %v", domain, userID, err)
 		return ""
+	}
+	// The token is the proof, so every claim carries one from the start. An
+	// existing token is kept: re-minting would invalidate a record the
+	// customer may already have published.
+	if claim.TXTToken == "" {
+		token, terr := services.NewTXTToken()
+		if terr == nil {
+			terr = h.state.Store.SetCustomDomainTXTToken(claim.ID, token)
+		}
+		if terr != nil {
+			log.Printf("custom-domain: could not mint the token for %s (user %s): %v", domain, userID, terr)
+			return ""
+		}
+		claim.TXTToken = token
 	}
 	hosters, _, cname := h.loadGatewayDomainConfig()
 	bases := make([]string, 0, len(hosters))
 	for _, hd := range hosters {
 		bases = append(bases, hd.Domain)
 	}
-	return customDomainDeadlineHint(services.CNAMETargets(cname, bases))
+	return customDomainDeadlineHint(services.TXTVerifyPrefix+domain, claim.TXTToken,
+		services.CNAMETargets(cname, bases))
 }
 
-// customDomainDeadlineHint is the one-line instruction shown after a route on an
-// unproven domain is created. Written here so the two route handlers cannot
+// customDomainDeadlineHint is the instruction shown after a route on an
+// unproven domain is created: the TXT record that proves ownership, and the
+// record that brings players to us. Written here so the two route handlers cannot
 // drift apart on what they promise the customer - which they could not do while
 // it had no caller at all, and neither of them promised anything.
 //
 // cnameTargets are FULL names, one per region, from services.CNAMETargets. The
 // operator setting alone is a label ("route") and naming it here would send the
 // customer to create a record that resolves nowhere.
-func customDomainDeadlineHint(cnameTargets []string) string {
-	grant := formatGrant(services.CustomDomainGrant)
+func customDomainDeadlineHint(txtName, txtValue string, cnameTargets []string) string {
+	proof := fmt.Sprintf("Prove you own this domain within %s by adding a TXT record %s with the value %s, "+
+		"or the route is removed.", formatGrant(services.CustomDomainGrant), txtName, txtValue)
 	switch len(cnameTargets) {
 	case 0:
-		return fmt.Sprintf("Point this domain at us within %s or the route is removed.", grant)
+		return proof + " Players reach it once the domain points at us."
 	case 1:
-		return fmt.Sprintf("Add a CNAME to %s (or an A record to one of our edge addresses) within %s, "+
-			"or the route is removed.", cnameTargets[0], grant)
+		return proof + fmt.Sprintf(" Players reach it once it has a CNAME to %s "+
+			"(or an A record to one of our edge addresses).", cnameTargets[0])
 	default:
-		return fmt.Sprintf("Add a CNAME to whichever of these is your region - %s - "+
-			"(or an A record to one of our edge addresses) within %s, or the route is removed.",
-			strings.Join(cnameTargets, ", "), grant)
+		return proof + fmt.Sprintf(" Players reach it once it has a CNAME to whichever of these is your region - %s - "+
+			"(or an A record to one of our edge addresses).", strings.Join(cnameTargets, ", "))
 	}
 }
 

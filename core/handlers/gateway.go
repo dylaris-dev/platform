@@ -387,8 +387,23 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// A server route is the SERVER OWNER's, whoever with network.write on it
+	// creates it: their allowance pays for it and their claim proves its domain.
+	// That is also the only account a managed route can be traced back to - the
+	// hub publishes it with no owner, so a claim held by anyone else could
+	// never find it to remove it.
+	account := userID
+	if !IsAdmin(r) {
+		srv, serr := h.state.Store.GetServerByID(serverID)
+		if serr != nil || srv == nil {
+			http.Error(w, "Server not found", http.StatusNotFound)
+			return
+		}
+		account = srv.OwnerID
+	}
+
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
-	if gErr := h.customDomainGate(r, userID, finalDomain, isCustomDomain); gErr != nil {
+	if gErr := h.customDomainGate(r, account, finalDomain, isCustomDomain); gErr != nil {
 		http.Error(w, gErr.Error(), http.StatusForbidden)
 		return
 	}
@@ -425,21 +440,32 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// asymmetry resolveRouteDomain already applies to the reserved-name list.
 	//
 	// The cap counts only addresses on OUR domains, matching CreateLinkRoute and
-	// the over-limit sweep. A tenant who points their own domain at us is not
-	// spending anything we ration.
+	// the over-limit sweep. Routes on the tenant's own domains have their own,
+	// separate cap.
 	if !IsAdmin(r) {
-		limit := h.effectiveRouteLimit(userID)
+		limit := h.effectiveRouteLimit(account)
 		if limit != nil && *limit == 0 {
 			http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
 			return
 		}
-		if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(h.countOwnerRoutes(userID))) {
-			http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead - that is unlimited.", *limit), http.StatusForbidden)
+		stats, serr := h.ownerRouteStats(account, "")
+		if serr != nil {
+			http.Error(w, "Could not count your routes", http.StatusInternalServerError)
 			return
+		}
+		if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(stats.ours)) {
+			http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead.", *limit), http.StatusForbidden)
+			return
+		}
+		if isCustomDomain {
+			if msg := h.customDomainCapError(stats.custom); msg != "" {
+				http.Error(w, msg, http.StatusForbidden)
+				return
+			}
 		}
 	}
 
-	if err := h.state.Gateway.CreateServerRoute(uint(serverID), userID, finalDomain, req.TargetPort); err != nil {
+	if err := h.state.Gateway.CreateServerRoute(uint(serverID), account, finalDomain, req.TargetPort); err != nil {
 		errMsg := err.Error()
 		if errors.Is(err, services.ErrRouteDomainTaken) {
 			http.Error(w, fmt.Sprintf("%s is already in use", finalDomain), http.StatusConflict)
@@ -456,7 +482,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// Armed only now that the route exists: every rejection above would
 	// otherwise have left a live claim, and its deadline counts against the
 	// customer whether or not they ever got a route.
-	ownershipNotice := h.armCustomDomainClaim(r, userID, finalDomain, isCustomDomain)
+	ownershipNotice := h.armCustomDomainClaim(r, account, finalDomain, isCustomDomain)
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
