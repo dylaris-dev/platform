@@ -48,6 +48,8 @@ func TestSavePanelURLTokenGate(t *testing.T) {
 	// Windows and XDG_CONFIG_HOME / HOME on Unix, so set all three.
 	tmp := t.TempDir()
 	t.Setenv("AppData", tmp)         // Windows
+	t.Setenv("LocalAppData", tmp)    // Windows: the session file
+	t.Setenv("XDG_CACHE_HOME", tmp)  // Linux: the session file
 	t.Setenv("XDG_CONFIG_HOME", tmp) // Linux
 	t.Setenv("HOME", tmp)            // macOS / Linux fallback
 
@@ -82,6 +84,8 @@ func panelOriginTestApp(t *testing.T) *App {
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("AppData", tmp)         // Windows
+	t.Setenv("LocalAppData", tmp)    // Windows: the session file
+	t.Setenv("XDG_CACHE_HOME", tmp)  // Linux: the session file
 	t.Setenv("XDG_CONFIG_HOME", tmp) // Linux
 	t.Setenv("HOME", tmp)            // macOS / Linux fallback
 	// Launching with DYLARIS_PANEL_URL set is what this simulates, and that now

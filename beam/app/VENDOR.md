@@ -5,7 +5,8 @@
 `go.mod` pins Wails to the local tree via
 `replace github.com/wailsapp/wails/v2 => ./third_party/wails/v2`.
 
-This is upstream Wails v2.10.1 with ONE security patch (the "BC3" fix): the native
+This is upstream Wails v2.10.1 with three security patches. The first, and the
+reason the tree is vendored at all, is the "BC3" fix: the native
 dispatcher's `processBrowserMessage`
 (`third_party/wails/v2/internal/frontend/dispatcher/browser.go`) enforces a
 scheme allowlist on the `BrowserOpenURL` bridge call. Upstream Wails only guarded
@@ -30,6 +31,34 @@ Consequences:
 - It is built via `wails build` with `GOWORK` honoring this module's own `replace`
   (the module is a member of the repo `go.work`, and module-level replaces are
   applied for workspace members).
+
+## The bridge origin and permission patches (Windows frontend)
+
+Two more, both in `internal/frontend/desktop/windows/`, marked `DYLARIS PATCH (beam)`:
+
+- **The native bridge answers only the app's own page.** `processMessage` and
+  `processMessageWithAdditionalObjects` first call `fromAppOrigin`
+  (`bridge_origin.go`), which reads the main document's URL
+  (`ICoreWebView2::get_Source`, vtable slot 4 - go-webview2 v1.0.19 passes the
+  message callback the text alone) and drops the message unless it is on the
+  start URL's origin. Upstream dispatched any page's `chrome.webview.postMessage`,
+  and nothing keeps the window on the app's origin: a redirect the panel proxy
+  passes through, or a file dropped onto the window, navigates it, and the page
+  found there could call every bound method with the session the Go side holds.
+- **No permission is granted unasked.** `SetGlobalPermission` is `Deny`, not
+  `Allow`: upstream gave every page camera, microphone, location and clipboard
+  READ without a prompt. The panel only writes to the clipboard, which needs no
+  permission.
+
+`vendor_bridge_patch_test.go` holds both through the syntax tree, like the BC3
+test.
+
+Known residual: `processRequest` serves `http://wails.localhost/...` to any
+page, so a foreign page in the window can still send a request through the
+panel proxy with the session. Core refuses its writes (the proxy forwards the
+foreign Origin and Core's same-origin check rejects it) and CORS hides the
+answers to its reads; a GET that changes state would not be stopped. Moving to go-webview2 >= 1.0.22 would let the check use the message's own
+source (`ICoreWebView2WebMessageReceivedEventArgs.GetSource`) instead.
 
 ## External-open protection is a single, platform-agnostic path
 

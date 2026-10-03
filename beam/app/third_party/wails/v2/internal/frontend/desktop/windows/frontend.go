@@ -588,7 +588,13 @@ func (f *Frontend) setupChromium() {
 	// Set background colour
 	f.WindowSetBackgroundColour(f.frontendOptions.BackgroundColour)
 
-	chromium.SetGlobalPermission(edge.CoreWebView2PermissionStateAllow)
+	// DYLARIS PATCH (beam): no permission is granted without asking. Upstream
+	// answered every PermissionRequested with Allow, so whatever page the
+	// window held - the remote panel, or a foreign page it was navigated to -
+	// got camera, microphone, location and clipboard READ silently. The panel
+	// needs none of them (it only writes to the clipboard, which needs no
+	// permission).
+	chromium.SetGlobalPermission(edge.CoreWebView2PermissionStateDeny)
 	chromium.AddWebResourceRequestedFilter("*", edge.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
 	chromium.Navigate(f.startURL.String())
 }
@@ -681,6 +687,11 @@ var edgeMap = map[string]uintptr{
 }
 
 func (f *Frontend) processMessage(message string) {
+	// DYLARIS PATCH (beam): only the app's own page reaches the bridge. See
+	// bridge_origin.go.
+	if !f.fromAppOrigin() {
+		return
+	}
 	if message == "drag" {
 		if !f.mainWindow.IsFullScreen() {
 			err := f.startDrag()
@@ -725,6 +736,11 @@ func (f *Frontend) processMessage(message string) {
 }
 
 func (f *Frontend) processMessageWithAdditionalObjects(message string, sender *edge.ICoreWebView2, args *edge.ICoreWebView2WebMessageReceivedEventArgs) {
+	// DYLARIS PATCH (beam): only the app's own page reaches the bridge. See
+	// bridge_origin.go.
+	if !f.fromAppOrigin() {
+		return
+	}
 	if strings.HasPrefix(message, "file:drop") {
 		if !f.frontendOptions.DragAndDrop.EnableFileDrop {
 			return

@@ -5,7 +5,6 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -120,6 +119,8 @@ func TestClearStoredSessionRemovesTheFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir) // linux
 	t.Setenv("AppData", dir)         // windows
+	t.Setenv("LocalAppData", dir)    // Windows: the session file
+	t.Setenv("XDG_CACHE_HOME", dir)  // Linux: the session file
 	t.Setenv("HOME", dir)            // macOS falls back through here
 	if err := writeStoredSessions(storedSessions{Cookies: map[string][]storedCookie{
 		"https://panel.example.com": {{Name: "s", Value: "v"}},
@@ -142,9 +143,6 @@ func TestClearStoredSessionRemovesTheFile(t *testing.T) {
 func TestSessionIsNotStoredBesideThePanelURLs(t *testing.T) {
 	if sessionPath() == settingsPath() {
 		t.Fatal("the session is written into the settings file, which is world-readable")
-	}
-	if filepath.Dir(sessionPath()) != filepath.Dir(settingsPath()) {
-		t.Errorf("sessionPath is outside the app's own config directory: %s", sessionPath())
 	}
 	b, err := os.ReadFile("session_store.go")
 	if err != nil {

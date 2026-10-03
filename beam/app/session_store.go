@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -43,11 +44,27 @@ type storedSessions struct {
 	Cookies map[string][]storedCookie `json:"cookies"`
 }
 
-// sessionPath sits beside config.json, in the directory settingsPath already
-// resolves and creates.
+// sessionPath is in the user's LOCAL data directory (%LocalAppData% on
+// Windows), not beside config.json in the roaming one: a roaming profile
+// copies %AppData% to every machine the user signs in to, and a live session
+// token has no business travelling with it. On Windows the file is also
+// encrypted to the user account (sealSession).
 func sessionPath() string {
+	dir, err := os.UserCacheDir()
+	if err != nil || dir == "" {
+		return legacySessionPath()
+	}
+	return filepath.Join(dir, "dylaris-beam", "session.json")
+}
+
+// legacySessionPath is where earlier versions wrote the session, in plain
+// JSON beside config.json. Read once, moved, and removed.
+func legacySessionPath() string {
 	return filepath.Join(filepath.Dir(settingsPath()), "session.json")
 }
+
+// sealedMagic marks a session file encrypted with sealSession.
+var sealedMagic = []byte("DYLBEAM-SEALED-1\n")
 
 // panelOrigin reduces a panel URL to the scheme://host key used in the file.
 // Path and query are dropped: cookies are scoped by host, and keying on the
@@ -64,7 +81,27 @@ func readStoredSessions() storedSessions {
 	var s storedSessions
 	data, err := os.ReadFile(sessionPath())
 	if err != nil {
+		// A session from an earlier version: take it over, store it the new
+		// way, and leave no plaintext copy behind.
+		legacy := legacySessionPath()
+		if legacy == sessionPath() {
+			return s
+		}
+		old, lerr := os.ReadFile(legacy)
+		if lerr != nil {
+			return s
+		}
+		if json.Unmarshal(old, &s) == nil && writeStoredSessions(s) == nil {
+			_ = os.Remove(legacy)
+		}
 		return s
+	}
+	if bytes.HasPrefix(data, sealedMagic) {
+		plain, err := openSession(data[len(sealedMagic):])
+		if err != nil {
+			return storedSessions{} // another account's file, or a copied one: sign in again
+		}
+		data = plain
 	}
 	_ = json.Unmarshal(data, &s)
 	return s
@@ -79,8 +116,15 @@ func writeStoredSessions(s storedSessions) error {
 	if err != nil {
 		return err
 	}
+	if sessionSealed {
+		sealed, err := sealSession(data)
+		if err != nil {
+			return err
+		}
+		data = append(append([]byte(nil), sealedMagic...), sealed...)
+	}
 	// 0600: this file holds a live session token. On Windows the mode is
-	// advisory, but the location is already inside the user's own profile.
+	// advisory, which is why it is sealed there as well.
 	return os.WriteFile(path, data, 0o600)
 }
 
@@ -209,4 +253,5 @@ func (a *App) clearStoredSession() {
 	a.sessionFingerprint = ""
 	a.sessionMu.Unlock()
 	_ = os.Remove(sessionPath())
+	_ = os.Remove(legacySessionPath())
 }
