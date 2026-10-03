@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **BYON: update your node.** The next release needs this node version to find our
+  servers. `node`
+
+### Security
+- **Your node stops listing keys on our Redis.** The next release takes the ability away;
+  this one makes the node independent of it. `node`
+
+### Fixes
+- **A stopped server now shows its disk usage,** and a server held for a full disk is
+  released once space is freed. `node`
+
 ## 2026.10.03.5
 
 ### Features

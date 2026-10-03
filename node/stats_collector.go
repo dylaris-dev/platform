@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"dylaris-pkg/validate"
 )
 
 // StatsPayload is the JSON published to Redis for each stats tick.
@@ -669,33 +671,32 @@ func publishStoppedDiskUsage(ctx context.Context, rdb *redis.Client, quota *Quot
 	if rdb == nil || globalStorageMgr == nil {
 		return
 	}
-	for _, base := range globalStorageMgr.Paths() {
-		entries, err := os.ReadDir(base)
-		if err != nil {
+	for _, uuid := range localServerUUIDs() {
+		if running[uuid] {
 			continue
 		}
-		for _, e := range entries {
-			uuid := e.Name()
-			if !e.IsDir() || running[uuid] || !looksLikeServerUUID(uuid) {
-				continue
-			}
-			// Only where this server actually lives: a copy left on another
-			// path would publish the wrong number.
-			if globalStorageMgr.GetServerDir(uuid) != filepath.Join(base, uuid) {
-				continue
-			}
-			usage := getDiskUsage(ctx, rdb, uuid, quota)
-			if usage == nil {
-				continue
-			}
-			data, _ := json.Marshal(usage)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", uuid), string(data), stoppedDiskUsageTTL)
+		usage := getDiskUsage(ctx, rdb, uuid, quota)
+		if usage == nil {
+			continue
 		}
+		data, _ := json.Marshal(usage)
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", uuid), string(data), stoppedDiskUsageTTL)
 	}
 }
 
-// looksLikeServerUUID keeps the sweep to server directories: 8-4-4-4-12 hex.
+// looksLikeServerUUID keeps the sweeps to server directories: a canonical
+// 8-4-4-4-12 UUID, optionally followed by "_<suffix>". It used to demand the
+// bare UUID, and the panel mints "<ownerUUID>_<random>" - so every real server
+// was skipped: a stopped server never had its disk usage published at all.
+// Stricter than validate.IsServerUUID, which only rules out injection and
+// would take any directory name.
 func looksLikeServerUUID(s string) bool {
+	if len(s) > 37 && s[36] == '_' {
+		if !validate.IsServerUUID(s) {
+			return false
+		}
+		s = s[:36]
+	}
 	if len(s) != 36 {
 		return false
 	}
@@ -725,40 +726,50 @@ func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *Quo
 	if rdb == nil || globalStorageMgr == nil {
 		return
 	}
-	var cursor uint64
-	for {
-		keys, next, err := rdb.Scan(ctx, cursor, "dylaris:server:*:disk_full", 100).Result()
+	// This node's own servers, from its storage paths, and not a walk over
+	// dylaris:server:*:disk_full: the node is losing SCAN, which lists every
+	// key NAME on the platform whatever its ACL's patterns say.
+	for _, uuid := range localServerUUIDs() {
+		if n, err := rdb.Exists(ctx, diskFullKey(uuid)).Result(); err != nil || n == 0 {
+			continue
+		}
+		usage := getDiskUsage(ctx, rdb, uuid, quota)
+		if usage == nil || usage.Limit <= 0 {
+			continue
+		}
+		if usage.Total >= usage.Limit {
+			continue // still over: keep holding
+		}
+		log.Printf("Disk quota resolved for %s while stopped — releasing the hold", uuid)
+		rdb.Del(ctx, diskFullKey(uuid))
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+	}
+}
+
+// localServerUUIDs are the servers whose directory lives on this node, where
+// the storage manager places it.
+func localServerUUIDs() []string {
+	if globalStorageMgr == nil {
+		return nil
+	}
+	var out []string
+	for _, base := range globalStorageMgr.Paths() {
+		entries, err := os.ReadDir(base)
 		if err != nil {
-			return
+			continue
 		}
-		for _, key := range keys {
-			parts := strings.Split(key, ":")
-			if len(parts) != 4 {
+		for _, e := range entries {
+			uuid := e.Name()
+			if !e.IsDir() || !looksLikeServerUUID(uuid) {
 				continue
 			}
-			uuid := parts[2]
-			// Only this node's servers: the key is global, the measurement is not.
-			dir := globalStorageMgr.GetServerDir(uuid)
-			if dir == "" {
+			// Only where this server actually lives: a copy left on another
+			// path is not it.
+			if globalStorageMgr.GetServerDir(uuid) != filepath.Join(base, uuid) {
 				continue
 			}
-			if _, statErr := os.Stat(dir); statErr != nil {
-				continue
-			}
-			usage := getDiskUsage(ctx, rdb, uuid, quota)
-			if usage == nil || usage.Limit <= 0 {
-				continue
-			}
-			if usage.Total >= usage.Limit {
-				continue // still over: keep holding
-			}
-			log.Printf("Disk quota resolved for %s while stopped — releasing the hold", uuid)
-			rdb.Del(ctx, diskFullKey(uuid))
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
-		}
-		cursor = next
-		if cursor == 0 {
-			return
+			out = append(out, uuid)
 		}
 	}
+	return out
 }

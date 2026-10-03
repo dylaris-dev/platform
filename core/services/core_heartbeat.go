@@ -69,6 +69,13 @@ func (s *CoreHeartbeatService) key() string {
 	return "dylaris:core:" + s.coreID
 }
 
+// CoreIndexKey lists the Core ids that heartbeat, so a node finds the Cores by
+// reading one set instead of walking the keyspace. A node may not SCAN: SCAN
+// lists every key NAME regardless of ACL key patterns, and on this platform
+// the names - link tokens above all - are the secret. Inside dylaris:core:*
+// on purpose, so the node's existing read grant covers it.
+const CoreIndexKey = "dylaris:core:index"
+
 // Start begins writing heartbeats every 10 seconds. Calling it twice is a
 // no-op, so a second call cannot leave an unstoppable goroutine behind.
 func (s *CoreHeartbeatService) Start() {
@@ -131,6 +138,7 @@ func (s *CoreHeartbeatService) Stop(ctx context.Context) {
 	if err := s.redis.Del(ctx, s.key()).Err(); err != nil {
 		log.Printf("Core Heartbeat: could not remove %s on shutdown, it will expire with its TTL instead: %v", s.key(), err)
 	}
+	s.redis.SRem(ctx, CoreIndexKey, s.coreID)
 }
 
 func (s *CoreHeartbeatService) writeHeartbeat() {
@@ -165,6 +173,25 @@ func (s *CoreHeartbeatService) writeHeartbeat() {
 
 	if err := s.redis.Set(ctx, s.key(), string(data), 30*time.Second).Err(); err != nil {
 		log.Printf("Core Heartbeat Redis error: %v", err)
+	}
+	if err := s.redis.SAdd(ctx, CoreIndexKey, s.coreID).Err(); err != nil {
+		log.Printf("Core Heartbeat: index write failed: %v", err)
+	}
+	pruneCoreIndex(ctx, s.redis)
+}
+
+// pruneCoreIndex drops ids whose heartbeat has expired. A Core killed without
+// its Stop never removes itself, and nodes cannot write the index, so every
+// live Core sweeps it. Readers skip a dead id anyway; this keeps the set short.
+func pruneCoreIndex(ctx context.Context, rdb *redis.Client) {
+	ids, err := rdb.SMembers(ctx, CoreIndexKey).Result()
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		if n, err := rdb.Exists(ctx, "dylaris:core:"+id).Result(); err == nil && n == 0 {
+			rdb.SRem(ctx, CoreIndexKey, id)
+		}
 	}
 }
 

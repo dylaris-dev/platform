@@ -363,9 +363,16 @@ const maxStopDrain = 2 * time.Hour
 // A BYON node reads its commands and its desired state through that tunnel.
 // Dropping it in the same pass that queued the stop meant the node never read
 // the stop: the containers kept running on the customer's hardware and the
-// panel showed "stopping" forever. Players are cut off regardless - the link
-// keys go in the same pass - so only the control path lingers, and not past
+// panel showed "stopping" forever. Only the control path lingers, and not past
 // maxStopDrain, whatever the servers report.
+//
+// Not true of players, which this used to claim: a route-only link loses its
+// tunnel key in the same pass (suspendTenantLinks), but a BYON node's own link
+// sidecar re-writes its key with its own Redis login, and the ACL reconciler
+// keeps that login on. Players therefore still reach a server running on the
+// customer's machine until its stop lands. Closing that means switching the
+// sidecar's login off for a suspended owner without taking away the read
+// access (Beam) a suspended tenant keeps - left for the BYON work.
 func (s *BillingLifecycleService) dropWarpPeersOnceStopped(ctx context.Context, userID string, cutoff, now time.Time) {
 	if now.Before(cutoff.Add(maxStopDrain)) && s.byonServersStillUp(userID) {
 		log.Printf("billing lifecycle: %s: keeping the overlay until their own machines report their servers stopped (at most until %s)",

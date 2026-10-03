@@ -94,7 +94,7 @@ func OnlineCores(ctx context.Context, rdb *redis.Client) ([]CoreHeartbeat, error
 
 		for _, key := range keys {
 			examined++
-			if key == coreLeaderKey {
+			if key == coreLeaderKey || key == CoreIndexKey {
 				continue
 			}
 

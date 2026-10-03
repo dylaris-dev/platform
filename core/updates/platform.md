@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **Update nodes after Core.** Nodes now find Core from an index Core keeps; the next release
+  takes keyspace scans away from nodes, and an older node then cannot find Core. `core` `node`
+
+### Security
+- **Nodes no longer walk the Redis keyspace** to find Core, their ports or held servers. A
+  walk lists every key name on the platform, link tokens included. `node`
+
+### Fixes
+- **A stopped server's disk usage was never published,** so the panel showed none and its
+  disk-full hold could not lift. Servers with the panel's own ids were skipped. `node`
+
 ## 2026.10.03.5
 
 ### Features

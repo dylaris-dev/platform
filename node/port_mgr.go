@@ -84,38 +84,71 @@ func (pm *PortManager) AdoptExistingBindings(bindings map[string]int) {
 	}
 }
 
+// portsKey mirrors every dylaris:node:<id>:port:<uuid> key of this node into
+// one hash, so the allocations load with one read instead of a keyspace walk.
+// The node is losing SCAN: it lists every key NAME on the platform whatever
+// the ACL's patterns say. The per-server keys stay; Core reads them.
+func (pm *PortManager) portsKey() string {
+	return fmt.Sprintf("dylaris:node:%s:ports", pm.nodeID)
+}
+
 // loadFromRedis reads existing port assignments from Redis into the in-RAM index.
 func (pm *PortManager) loadFromRedis() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var cursor uint64
-	pattern := fmt.Sprintf("dylaris:node:%s:port:*", pm.nodeID)
-	for {
-		keys, next, err := pm.rdb.Scan(ctx, cursor, pattern, 100).Result()
+	// The per-server keys are the truth while they can still be listed: a
+	// node rolled back to a binary without the hash kept changing them, and a
+	// hash read on the way forward again would load what it had left behind.
+	if !pm.rebuildFromScan(ctx) {
+		all, err := pm.rdb.HGetAll(ctx, pm.portsKey()).Result()
 		if err != nil {
-			log.Printf("PortManager: Redis scan error: %v", err)
-			break
+			log.Printf("PortManager: Redis read error: %v", err)
+		}
+		for uuid, portStr := range all {
+			if port, perr := strconv.Atoi(portStr); perr == nil {
+				pm.usedPorts[port] = uuid
+			}
+		}
+	}
+	log.Printf("PortManager: loaded %d existing port allocations (range %d-%d)", len(pm.usedPorts), pm.rangeStart, pm.rangeEnd)
+}
+
+// rebuildFromScan loads the ledger from the per-server keys and rewrites the
+// hash to match, reporting whether it could. It needs SCAN, which a node holds
+// only until every node runs this version; after that the hash is read, and
+// adopting the running containers' bindings recovers a wiped Redis.
+func (pm *PortManager) rebuildFromScan(ctx context.Context) bool {
+	prefix := fmt.Sprintf("dylaris:node:%s:port:", pm.nodeID)
+	found := map[string]string{}
+	var cursor uint64
+	for {
+		keys, next, err := pm.rdb.Scan(ctx, cursor, prefix+"*", 100).Result()
+		if err != nil {
+			return false
 		}
 		for _, key := range keys {
-			portStr, err := pm.rdb.Get(ctx, key).Result()
-			if err != nil {
-				continue
+			if portStr, err := pm.rdb.Get(ctx, key).Result(); err == nil {
+				found[key[len(prefix):]] = portStr
 			}
-			port, err := strconv.Atoi(portStr)
-			if err != nil {
-				continue
-			}
-			// Extract serverUUID from key suffix
-			suffix := key[len(fmt.Sprintf("dylaris:node:%s:port:", pm.nodeID)):]
-			pm.usedPorts[port] = suffix
 		}
 		cursor = next
 		if cursor == 0 {
 			break
 		}
 	}
-	log.Printf("PortManager: loaded %d existing port allocations (range %d-%d)", len(pm.usedPorts), pm.rangeStart, pm.rangeEnd)
+	pipe := pm.rdb.TxPipeline()
+	pipe.Del(ctx, pm.portsKey())
+	for uuid, portStr := range found {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			pm.usedPorts[port] = uuid
+			pipe.HSet(ctx, pm.portsKey(), uuid, portStr)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("PortManager: could not rebuild the port hash: %v", err)
+	}
+	return true
 }
 
 // AllocatePort finds the next free port in the configured range and reserves it.
@@ -146,7 +179,7 @@ func (pm *PortManager) AllocatePort(serverUUID string) (int, error) {
 			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			if err := pm.rdb.Set(ctx, key, strconv.Itoa(port), 0).Err(); err != nil {
+			if err := pm.persist(ctx, serverUUID, key, port); err != nil {
 				return 0, fmt.Errorf("failed to persist port allocation: %w", err)
 			}
 			pm.usedPorts[port] = serverUUID
@@ -168,7 +201,7 @@ func (pm *PortManager) ReleasePort(serverUUID string) {
 			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			pm.rdb.Del(ctx, key)
+			pm.forget(ctx, serverUUID, key)
 			delete(pm.usedPorts, port)
 			log.Printf("PortManager: released port %d (server %s)", port, serverUUID)
 			return
@@ -187,7 +220,7 @@ func (pm *PortManager) SetPort(serverUUID string, port int) error {
 		if uuid == serverUUID && p != port {
 			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			pm.rdb.Del(ctx, key)
+			pm.forget(ctx, serverUUID, key)
 			cancel()
 			delete(pm.usedPorts, p)
 			break
@@ -202,12 +235,30 @@ func (pm *PortManager) SetPort(serverUUID string, port int) error {
 	key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := pm.rdb.Set(ctx, key, strconv.Itoa(port), 0).Err(); err != nil {
+	if err := pm.persist(ctx, serverUUID, key, port); err != nil {
 		return fmt.Errorf("failed to persist port: %w", err)
 	}
 	pm.usedPorts[port] = serverUUID
 	log.Printf("PortManager: set port %d for server %s", port, serverUUID)
 	return nil
+}
+
+// persist writes a server's per-server key and its hash entry in one
+// transaction, so neither can exist without the other.
+func (pm *PortManager) persist(ctx context.Context, serverUUID, key string, port int) error {
+	pipe := pm.rdb.TxPipeline()
+	pipe.Set(ctx, key, strconv.Itoa(port), 0)
+	pipe.HSet(ctx, pm.portsKey(), serverUUID, strconv.Itoa(port))
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// forget removes both, together.
+func (pm *PortManager) forget(ctx context.Context, serverUUID, key string) {
+	pipe := pm.rdb.TxPipeline()
+	pipe.Del(ctx, key)
+	pipe.HDel(ctx, pm.portsKey(), serverUUID)
+	pipe.Exec(ctx)
 }
 
 // GetPort returns the port assigned to a server, or 0 if none.

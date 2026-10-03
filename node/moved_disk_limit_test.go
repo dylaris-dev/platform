@@ -54,7 +54,10 @@ func TestStoppedServersPublishTheirDiskUsage(t *testing.T) {
 	globalStorageMgr = NewStorageManager(root, nil)
 	const stopped = "aaaaaaaa-1111-2222-3333-444444444444"
 	const running = "bbbbbbbb-1111-2222-3333-444444444444"
-	for _, d := range []string{stopped, running, "not-a-server"} {
+	// The id the panel actually mints: "<ownerUUID>_<random>". Every real
+	// server has this shape, and the sweep used to skip all of them.
+	const minted = "cccccccc-1111-2222-3333-444444444444_232qs8ryxy3"
+	for _, d := range []string{stopped, running, minted, "not-a-server"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -63,6 +66,7 @@ func TestStoppedServersPublishTheirDiskUsage(t *testing.T) {
 		}
 	}
 	recordDiskLimit(ctx, rdb, stopped, 1)
+	recordDiskLimit(ctx, rdb, minted, 1)
 
 	publishStoppedDiskUsage(ctx, rdb, NewQuotaSet(nil), map[string]bool{running: true})
 
@@ -76,6 +80,9 @@ func TestStoppedServersPublishTheirDiskUsage(t *testing.T) {
 	}
 	if mr.Exists("dylaris:server:" + running + ":stats:disk") {
 		t.Error("the running server's own collector is the one that measures it")
+	}
+	if !mr.Exists("dylaris:server:" + minted + ":stats:disk") {
+		t.Error("a server with the panel's minted id was skipped")
 	}
 	if mr.Exists("dylaris:server:not-a-server:stats:disk") {
 		t.Error("a directory that is not a server was measured")

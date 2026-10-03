@@ -106,3 +106,24 @@ func TestCoreHeartbeat_StopSurvivesAnUnreachableRedis(t *testing.T) {
 
 	waitForStop(t, svc)
 }
+
+// The node finds the Cores from this index: its Redis login no longer may
+// SCAN, which lists every key NAME on the platform whatever its key patterns
+// say. A Core that died without its Stop leaves a stale id, and every live
+// Core sweeps those out, since a node cannot.
+func TestCoreHeartbeat_KeepsTheCoreIndex(t *testing.T) {
+	rdb, mr := newCoreInstancesRedis(t)
+	mr.SAdd(CoreIndexKey, "core-dead") // its heartbeat key expired long ago
+	svc := NewCoreHeartbeatService(rdb, "core-a", "default", "2026.10.03", 25501)
+	svc.Start()
+
+	members, _ := mr.Members(CoreIndexKey)
+	if len(members) != 1 || members[0] != "core-a" {
+		t.Fatalf("index = %v, want [core-a] (listed, and the dead id swept)", members)
+	}
+
+	waitForStop(t, svc)
+	if members, _ := mr.Members(CoreIndexKey); len(members) != 0 {
+		t.Fatalf("index after Stop = %v, want empty", members)
+	}
+}

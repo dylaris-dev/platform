@@ -151,24 +151,56 @@ func (m *MeshManager) cleanupStalePendingWrites() {
 	}
 }
 
-func (m *MeshManager) scanCores(ctx context.Context) {
-	// SCAN, not KEYS: the node's scoped Redis ACL grants SCAN but denies KEYS
-	// (it is in @dangerous). KEYS here returned NOPERM, so Core discovery never
-	// ran and the node<->Core gRPC connection was never established — file
-	// transfers to the node then fail with "Node not connected".
+// coreIndexKey is Core's set of heartbeating Core ids (services.CoreIndexKey).
+const coreIndexKey = "dylaris:core:index"
+
+// coreHeartbeatKeys finds the Cores' heartbeat keys from Core's index, plus a
+// keyspace walk for as long as the node may still walk.
+//
+// The index is what the node will rely on once its login loses SCAN, which
+// lists every key NAME on the platform whatever the ACL's key patterns say
+// (a link token is all the edge asks of a tunnel). Until then the two are
+// UNIONED rather than tried in turn: the index alone hides every Core too old
+// to write it, which is half the Cores in the middle of a rolling update and
+// all of them after a rollback that left only dead ids behind - and a node
+// that sees no Core disconnects from every one it had.
+func coreHeartbeatKeys(ctx context.Context, rdb *redis.Client) ([]string, error) {
+	seen := map[string]bool{}
 	var keys []string
+	add := func(k string) {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	ids, ierr := rdb.SMembers(ctx, coreIndexKey).Result()
+	for _, id := range ids {
+		add("dylaris:core:" + id)
+	}
 	var cursor uint64
 	for {
-		batch, next, err := m.rdb.Scan(ctx, cursor, "dylaris:core:*", 100).Result()
-		if err != nil {
-			log.Printf("gRPC Mesh: Redis scan error: %v", err)
-			return
+		batch, next, serr := rdb.Scan(ctx, cursor, "dylaris:core:*", 100).Result()
+		if serr != nil {
+			if ierr != nil {
+				return nil, serr
+			}
+			return keys, nil // no walk any more: the index is the answer
 		}
-		keys = append(keys, batch...)
+		for _, k := range batch {
+			add(k)
+		}
 		cursor = next
 		if cursor == 0 {
-			break
+			return keys, nil
 		}
+	}
+}
+
+func (m *MeshManager) scanCores(ctx context.Context) {
+	keys, err := coreHeartbeatKeys(ctx, m.rdb)
+	if err != nil {
+		log.Printf("gRPC Mesh: no Core index and no scan: %v", err)
+		return
 	}
 
 	activeCores := make(map[string]bool)
