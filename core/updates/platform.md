@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.7
+
+### Features
+- Nothing.
+
+### Breaking
+- **Nodes older than 2026.10.03.6 can no longer find Core.** Their Redis login loses
+  keyspace scans; update every node first. `core`
+
+### Security
+- **The node agent's Redis login can no longer list every key name,** link tokens included.
+  No principal on the platform can scan the keyspace any more. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03.6
 
 ### Features

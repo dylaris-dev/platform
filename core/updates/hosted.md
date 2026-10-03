@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.7
+
+### Features
+- Nothing.
+
+### Breaking
+- **BYON: a node older than 2026.10.03.6 can no longer reach our servers.** Update your node
+  if you have not yet.
+
+### Security
+- **Your node's access to our Redis is narrowed further.** Nothing to do beyond the update.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03.6
 
 ### Features

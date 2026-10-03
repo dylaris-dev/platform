@@ -35,7 +35,7 @@ func TestBuildNodeACLRules(t *testing.T) {
 		"beam:max_upload_bytes", "beam:daily_upload_bytes",
 		"sftp:node:n1:",
 		"&dylaris:backup:results:n1", "&dylaris:server:uuid-a:stats:live",
-		"+@read", "+@write", "+@stream", "+@pubsub", "-@dangerous", "+scan",
+		"+@read", "+@write", "+@stream", "+@pubsub", "-@dangerous", "-scan",
 	} {
 		if !strings.Contains(r, want) {
 			t.Errorf("node rules missing %q in: %s", want, r)

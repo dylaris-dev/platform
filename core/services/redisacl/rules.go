@@ -37,19 +37,13 @@ var commandCats = []string{
 	"-@dangerous", "-@admin", "-@scripting", "-scan",
 }
 
-// nodeCommandCats is commandCats plus SCAN, and ONLY the node agent gets it.
-// "+scan" comes after commandCats' "-scan", and the later rule wins.
-//
-// The node genuinely iterates the keyspace - Core discovery, port allocation and
-// the disk-full sweep all scan - so removing it would break the agent. Nothing
-// else here does: the log-shipper, the node's link sidecar and a route-only
-// link make no SCAN call in either repository.
-//
-// Left as a known, narrowed exposure rather than a solved one: a tenant-owned
-// BYON node can still enumerate key names. Closing that needs the three scan
-// sites rewritten to read an index instead of walking the keyspace, which is a
-// change to the agent and not to this file.
-var nodeCommandCats = append(append([]string{}, commandCats...), "+scan")
+// The node agent gets commandCats like everyone else: no SCAN. It used to keep
+// it for three keyspace walks - Core discovery, its port ledger and the
+// disk-full sweep - and a tenant-owned BYON node could therefore list every key
+// name on the platform, link tokens included. Those three read indexes now
+// (dylaris:core:index, dylaris:node:<id>:ports, its own server directories), so
+// nothing on any node scans. A node older than that cannot find Core without
+// SCAN, which is why it shipped a release ahead of this.
 
 // globalReadKeys are the shared keys the node accesses (NOT the shipper). The
 // ones the node only ever reads are read-only (%R~); dylaris:migration:* stays
@@ -262,7 +256,7 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 	for _, u := range serverUUIDs {
 		rules = append(rules, "&dylaris:server:"+u+":stats:live")
 	}
-	for _, c := range nodeCommandCats {
+	for _, c := range commandCats {
 		rules = append(rules, c)
 	}
 	return rules

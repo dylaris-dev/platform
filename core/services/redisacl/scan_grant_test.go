@@ -12,18 +12,19 @@ import "testing"
 // SFTP account name and link token on the platform is a key name, and those are
 // exactly the identifiers a forged write needs as input.
 //
-// Only the node agent may hold it, and only because it genuinely walks the
-// keyspace (Core discovery, port allocation, the disk-full sweep). Everything
-// else here runs somewhere a tenant can reach: the log-shipper credential is in
-// the environment of the tenant's own Minecraft container, beside plugins the
-// tenant wrote, and it never called SCAN once.
-func TestOnlyTheNodeAgentMayScan(t *testing.T) {
+// No principal here may hold it, the node agent included. The node used to be
+// the exception, for three keyspace walks that read indexes now; a tenant-owned
+// BYON node could list every key name on the platform while it held SCAN. The
+// log-shipper credential is in the environment of the tenant's own Minecraft
+// container, beside plugins the tenant wrote.
+func TestNoPrincipalMayScan(t *testing.T) {
 	cases := []struct {
 		name  string
 		rules []interface{}
 		want  bool
 	}{
-		{"node agent", BuildNodeACLRules("node-a", "pw", []string{"srv-1"}), true},
+		// No longer the exception: its three walks read indexes now.
+		{"node agent", BuildNodeACLRules("node-a", "pw", []string{"srv-1"}), false},
 		{"log-shipper in the tenant's container", BuildShipperACLRules("pw", "srv-1"), false},
 		{"the node's link sidecar", BuildLinkACLRules("pw", "node-a", "tok"), false},
 	}
