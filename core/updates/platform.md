@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **`STORE_SHARED_KEY` must be at least 32 characters when set,** or Core refuses to start.
+  Installs without a store are not affected. `core`
+
+### Security
+- **A short store key was accepted.** It lets its holder activate any account with any node
+  count, so a short one is now refused at boot. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03.2
 
 ### Features

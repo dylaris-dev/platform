@@ -235,3 +235,15 @@ func TestIsLocalOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateStoreSharedKey(t *testing.T) {
+	if validateStoreSharedKey("") != nil {
+		t.Error("an unset key (no store) was refused")
+	}
+	if validateStoreSharedKey(strings.Repeat("k", 31)) == nil {
+		t.Error("a 31-character key was accepted")
+	}
+	if validateStoreSharedKey(strings.Repeat("k", 32)) != nil {
+		t.Error("a 32-character key was refused")
+	}
+}

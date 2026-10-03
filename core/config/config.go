@@ -316,6 +316,9 @@ func LoadConfig() (Config, error) {
 	if err := validateAdminSecret(cfg.AdminSecret); err != nil {
 		return cfg, err
 	}
+	if err := validateStoreSharedKey(storeSharedKey); err != nil {
+		return cfg, err
+	}
 
 	return cfg, nil
 }
@@ -414,6 +417,16 @@ func validateAdminSecret(s string) error {
 	}
 	if len(s) < 16 {
 		return fmt.Errorf("ADMIN_SECRET must be at least 16 characters when set (got %d); unset it to disable break-glass admin creation", len(s))
+	}
+	return nil
+}
+
+// validateStoreSharedKey refuses a short store key. It is a bearer secret with
+// no replay window, and whoever holds it can activate any account with any node
+// count through /store/provision. Empty is valid: no store.
+func validateStoreSharedKey(k string) error {
+	if k != "" && len(k) < 32 {
+		return fmt.Errorf("STORE_SHARED_KEY must be at least 32 characters when set (got %d)", len(k))
 	}
 	return nil
 }
