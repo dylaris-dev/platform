@@ -29,7 +29,7 @@ func TestOnlyTheNodeAgentMayScan(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := grants(c.rules, "+scan"); got != c.want {
+			if got := mayScan(c.rules); got != c.want {
 				if c.want {
 					t.Error("the node agent lost +scan; its keyspace walks would fail with NOPERM")
 				} else {
@@ -42,6 +42,26 @@ func TestOnlyTheNodeAgentMayScan(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mayScan evaluates the rules in order, as Redis does: the LAST rule that
+// mentions SCAN - directly, or through a category it belongs to - decides.
+//
+// Checking for the literal "+scan" was the test this replaced, and it agreed
+// with a comment that said SCAN was not granted while "+@read" granted it to
+// every principal: SCAN is in @read and @keyspace, and "-@dangerous" does not
+// remove it. Production had all nine scoped users able to SCAN.
+func mayScan(rules []interface{}) bool {
+	allowed := false
+	for _, r := range rules {
+		switch r {
+		case "+@all", "allcommands", "+@read", "+@keyspace", "+scan":
+			allowed = true
+		case "-@all", "nocommands", "-@read", "-@keyspace", "-scan":
+			allowed = false
+		}
+	}
+	return allowed
 }
 
 func grants(rules []interface{}, want string) bool {

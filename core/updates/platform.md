@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The log-shipper and link sidecar Redis logins could list every key name on the
+  platform,** link tokens included. They no longer can; only the node agent keeps SCAN. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03.4
 
 ### Features

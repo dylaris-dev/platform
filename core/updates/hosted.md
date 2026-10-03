@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.03.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Credentials on a customer's machine or inside a game server could reveal other
+  customers' link tokens.** Fixed on our side; nothing to update or redeploy.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03
 
 ### Features

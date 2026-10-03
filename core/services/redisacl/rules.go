@@ -13,9 +13,14 @@ import (
 // stream, pubsub, connection and transaction, minus dangerous, admin and
 // scripting.
 //
-// SCAN is deliberately NOT in it. It used to be, on the reasoning that KEYS is
-// @dangerous and SCAN is not - but Redis does not filter SCAN by the ACL's key
-// patterns. It walks the whole keyspace and returns every key NAME, and only a
+// SCAN is explicitly taken OUT of it, by the trailing "-scan". It has to be
+// said in so many words: SCAN is a member of @read (and @keyspace), so "+@read"
+// grants it, and "-@dangerous" only removes KEYS. This comment used to claim
+// SCAN was "not in it" while every principal held it through +@read, and the
+// test checked for the literal string "+scan" - so both agreed, and production
+// had all nine scoped users able to SCAN (ACL DRYRUN, 2026-10-03).
+//
+// Redis does not filter SCAN by the ACL's key patterns. It walks the whole keyspace and returns every key NAME, and only a
 // command that names a key is checked against the patterns. Measured against
 // Valkey 8: a user scoped to a single prefix ran SCAN and got back keys from
 // every other prefix; a GET on one of them then answered NOPERM. Values are
@@ -29,10 +34,11 @@ import (
 // SCAN once.
 var commandCats = []string{
 	"+@read", "+@write", "+@stream", "+@pubsub", "+@connection", "+@transaction",
-	"-@dangerous", "-@admin", "-@scripting",
+	"-@dangerous", "-@admin", "-@scripting", "-scan",
 }
 
 // nodeCommandCats is commandCats plus SCAN, and ONLY the node agent gets it.
+// "+scan" comes after commandCats' "-scan", and the later rule wins.
 //
 // The node genuinely iterates the keyspace - Core discovery, port allocation and
 // the disk-full sweep all scan - so removing it would break the agent. Nothing
