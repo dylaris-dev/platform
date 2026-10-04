@@ -201,3 +201,54 @@ func cutFunc(src, header string) (string, bool) {
 	}
 	return body, true
 }
+
+// An install writes as root into a directory that may already be the
+// container's. The start-time repair reads only that directory and skipped the
+// walk: an uploaded server's cache/, world/ and plugins/ stayed root's and
+// Paper failed every start with AccessDeniedException.
+func TestInstallHandsWhatItWroteToTheContainer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file ownership is a uid concept; the node only runs on Linux")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("chown needs root; asserted in CI's container and by the live test")
+	}
+	t.Setenv("MC_RUN_AS", "1000")
+	data := t.TempDir()
+	sub := filepath.Join(data, "main")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Lchown(sub, 1000, 1000); err != nil {
+		t.Fatal(err)
+	}
+	writeUploadZip(t, sub, map[string]string{"server.jar": "x", "cache/mojang_1.21.11.jar": "y"})
+	if _, err := InstallServer(data, "main", InstallerConfig{Type: "upload-zip", Structure: "direct"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"cache", "cache/mojang_1.21.11.jar", "server.jar"} {
+		fi, err := os.Lstat(filepath.Join(sub, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ownedBy(fi, 1000) {
+			t.Errorf("%s is not the container's after the install", p)
+		}
+	}
+}
+
+// The same, where no root is available: every install goes through the
+// hand-over, not only the start path.
+func TestInstallServerHandsTheTreeOver(t *testing.T) {
+	b, err := os.ReadFile("installer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := cutFunc(string(b), "func InstallServer(serverDataPath, subServerName string, config InstallerConfig) ([]byte, error) {")
+	if !ok {
+		t.Fatal("InstallServer is gone; move this assertion with it")
+	}
+	if !strings.Contains(body, "handInstalledTree(") {
+		t.Error("InstallServer returns without handing what it wrote to the container's uid")
+	}
+}

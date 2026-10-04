@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **An uploaded server no longer fails every start with "AccessDeniedException".** The installed
+  files are now handed to the server. On your own node, update the node agent. `node`
+
 ## 2026.10.04.9
 
 ### Features

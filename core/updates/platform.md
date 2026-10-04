@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A server installed into an existing folder can write its files again.** Files an install
+  wrote stayed root's, so an uploaded Paper server failed every start on cache/. `node`
+
 ## 2026.10.04.9
 
 ### Features

@@ -97,10 +97,31 @@ func ensureSubServerOwnership(subDir string) error {
 	if ownedBy(fi, uid) {
 		return nil
 	}
-
 	log.Printf("mc-user: handing %s to uid %d (first start after the non-root switch, or files written as root since the last one)", subDir, uid)
+	return chownSubServerTree(subDir, uid)
+}
+
+// handInstalledTree hands a sub-server to the container's uid after an install,
+// with no shortcut. The shortcut above reads only the directory itself, and an
+// installer writes as root INTO a directory that may already be the
+// container's: an upload extracted into a sub-server whose directory the
+// upload had created as uid 1000 left world/, plugins/ and cache/ root's, and
+// Paper failed every start with AccessDeniedException on cache/.
+func handInstalledTree(subDir string) {
+	if mcUser() == 0 {
+		return
+	}
+	if _, err := os.Lstat(subDir); err != nil {
+		return
+	}
+	if err := chownSubServerTree(subDir, mcUser()); err != nil {
+		log.Printf("mc-user: %v", err)
+	}
+}
+
+func chownSubServerTree(subDir string, uid int) error {
 	n := 0
-	err = filepath.WalkDir(subDir, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(subDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// A single unreadable entry must not stop the server from starting.
 			// It is reported and skipped: the world below it may still be fine,

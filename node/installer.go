@@ -102,7 +102,16 @@ func CleanServerJars(subServerDir string) error {
 // and Core has no copy of it, so the reader that unpacks the archive is the only
 // place it can be read. Every other installer is something Core already
 // described - Core picked the loader, so Core knows the loader - and returns nil.
-func InstallServer(serverDataPath, subServerName string, config InstallerConfig) (manifest []byte, err error) {
+func InstallServer(serverDataPath, subServerName string, config InstallerConfig) ([]byte, error) {
+	manifest, err := installServer(serverDataPath, subServerName, config)
+	// Installers write as root; the server runs as the container's uid. Also
+	// after a failed install: what it left behind is the operator's to fix,
+	// and they cannot through a server that may not touch it.
+	handInstalledTree(filepath.Join(serverDataPath, subServerName))
+	return manifest, err
+}
+
+func installServer(serverDataPath, subServerName string, config InstallerConfig) (manifest []byte, err error) {
 	destDir := filepath.Join(serverDataPath, subServerName)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create server dir: %v", err)
@@ -192,7 +201,7 @@ func installUploadSoftware(serverDataPath, subServerName string, config Installe
 	next.Type = config.Software
 	next.Software = ""
 	next.WipePaths = wipe
-	_, err := InstallServer(serverDataPath, subServerName, next)
+	_, err := installServer(serverDataPath, subServerName, next)
 	return err
 }
 
