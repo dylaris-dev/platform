@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The file browser scrolls again.** A folder taller than the window was cut off with no way to
+  reach the files below. `panel`
+
 ## 2026.10.04.10
 
 ### Features

@@ -52,7 +52,10 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
 
   return (
     <div className="flex flex-col gap-3 h-full overflow-hidden">
-      <div className="flex-1 min-h-0">
+      {/* The scroll lives here: the outer box clips (so the debug log below
+          stays pinned), and nothing inside FileBrowser scrolls, so a folder
+          taller than the window was cut off with no way to reach the rest. */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <FileBrowser
           currentServerPath={currentServerPath}
           serverUuid={serverUuid}
