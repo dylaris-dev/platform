@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	pb "dylaris-proto/node"
@@ -86,6 +88,41 @@ var objectTransferClient = &http.Client{Transport: func() http.RoundTripper {
 	t.ResponseHeaderTimeout = 2 * time.Minute
 	return t
 }()}
+
+// guardedObjectTransferClient is objectTransferClient for a TENANT's own
+// bucket (the command's guardedTransfer). Core presigns against the endpoint
+// the tenant typed, so the URL can name any host: this node sits in the private
+// network next to Redis and Postgres, and an unguarded PUT or GET there is the
+// tenant's request made from inside. Every dial - redirects included - must be
+// to a public address, checked on the address actually dialled.
+var guardedObjectTransferClient = &http.Client{Transport: func() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = 2 * time.Minute
+	// No proxy: a proxy dials for us and the check would only see its address.
+	t.Proxy = nil
+	t.DialContext = (&net.Dialer{
+		Timeout: 30 * time.Second,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			if !dialAllowed(host, port) {
+				return fmt.Errorf("refused: %s is not a public address", host)
+			}
+			return nil
+		},
+	}).DialContext
+	return t
+}()}
+
+// transferClient picks the client for a command's object transfer.
+func transferClient(guarded bool) *http.Client {
+	if guarded {
+		return guardedObjectTransferClient
+	}
+	return objectTransferClient
+}
 
 // errNothingArchived is RunBackup's refusal to complete an archive whose
 // include/exclude patterns matched no file.

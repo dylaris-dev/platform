@@ -21,6 +21,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -474,8 +475,28 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 // to the cap and reported as a successful download: for a mod file with no
 // sha512 in the manifest, a corrupt jar was then renamed into place as if it
 // were the real one.
+//
+// It is unguarded because Core's own mirror may sit on a private address, so it
+// must not follow a redirect off that host: the tenant picks the PATH on Core's
+// host, and one open redirect there would otherwise point this node at Redis,
+// Postgres or the metadata service with the answer written into their server.
 func downloadBoundedInto(root *os.Root, name, url string, maxBytes int64) (int64, error) {
-	return downloadBoundedWith(&http.Client{Timeout: 5 * time.Minute, Transport: uaTransport{base: http.DefaultTransport}}, root, name, url, maxBytes)
+	return downloadBoundedWith(&http.Client{
+		Timeout:       5 * time.Minute,
+		Transport:     uaTransport{base: http.DefaultTransport},
+		CheckRedirect: sameHostRedirect,
+	}, root, name, url, maxBytes)
+}
+
+// sameHostRedirect follows a redirect only to the host the request started on.
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	if req.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("refused redirect off %s", via[0].URL.Host)
+	}
+	return nil
 }
 
 // downloadBoundedGuarded is downloadBoundedInto through the client that refuses

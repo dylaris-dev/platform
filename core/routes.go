@@ -1731,9 +1731,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteStorage))).Methods("DELETE")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.TestStorage))).Methods("POST")
 
-	// A tenant's own backup storage. Owner-scoped capabilities, granted
-	// deliberately rather than by any preset: connecting arbitrary S3 endpoints
-	// makes Core talk to hosts the operator did not choose.
+	// A tenant's own backup storage. Owner-scoped, so every account holds it
+	// for itself (see the catalog entry); the endpoint they type is dialled
+	// through netguard, never on the default client.
 	api.HandleFunc("/me/backup-storages", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.read")(backupHandler.ListOwnStorages))).Methods("GET")
 	api.HandleFunc("/me/backup-storages", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.CreateOwnStorage))).Methods("POST")
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.UpdateOwnStorage))).Methods("PATCH")

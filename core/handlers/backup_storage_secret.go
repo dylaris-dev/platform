@@ -3,8 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
+	"strings"
 
 	"dylaris-core/models"
+	backupstorage "dylaris-core/storage/backup"
 )
 
 // backupStorageSecretField is the one credential field inside an s3 backup
@@ -60,12 +64,35 @@ func validateBackupStorageEndpoint(bs models.BackupStorage) error {
 	if bs.Provider != "s3" || len(bs.Config) == 0 {
 		return nil
 	}
+	// Each field under its exact name only. json matches struct fields
+	// case-insensitively and map keys exactly, and this file reads the config
+	// both ways: "Endpoint" passed the endpoint check unread and was still the
+	// endpoint NewS3 dialled, and next to an unchanged "endpoint" it moved the
+	// stored secret to a new host in mergeBackupStorageSecret, whose identity
+	// check compared the lowercase key only.
 	m := map[string]json.RawMessage{}
 	if err := json.Unmarshal(bs.Config, &m); err != nil {
 		return nil
 	}
+	for k := range m {
+		for _, f := range s3ConfigFields {
+			if k != f && strings.EqualFold(k, f) {
+				return fmt.Errorf("backup storage: unknown config field %q (did you mean %q?)", k, f)
+			}
+		}
+	}
 	return validateS3Endpoint("backup storage", jsonString(m["endpoint"]))
 }
+
+// s3ConfigFields are backup.S3Config's json names.
+var s3ConfigFields = func() []string {
+	t := reflect.TypeOf(backupstorage.S3Config{})
+	out := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		out = append(out, strings.Split(t.Field(i).Tag.Get("json"), ",")[0])
+	}
+	return out
+}()
 
 // backupStorageEndpoint reads the s3 endpoint out of the config blob.
 //
@@ -76,11 +103,11 @@ func backupStorageEndpoint(bs models.BackupStorage) string {
 	if bs.Provider != "s3" || len(bs.Config) == 0 {
 		return ""
 	}
-	m := map[string]json.RawMessage{}
-	if err := json.Unmarshal(bs.Config, &m); err != nil {
+	var cfg backupstorage.S3Config
+	if err := json.Unmarshal(bs.Config, &cfg); err != nil {
 		return ""
 	}
-	return jsonString(m["endpoint"])
+	return cfg.Endpoint
 }
 
 // backupStorageIdentityFields are the s3 config fields that decide WHERE a

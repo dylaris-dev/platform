@@ -67,6 +67,13 @@ type NodeStore interface {
 	GetServerByUUID(uuid string) (*models.Server, error)
 }
 
+// TenantEndpoint reports whether a storage dials an endpoint a TENANT typed:
+// their own s3 bucket. Core then dials it through netguard (NewTenantS3) and
+// tells the node to do the same for its presigned transfers.
+func TenantEndpoint(bs *models.BackupStorage) bool {
+	return bs != nil && bs.OwnerID != nil && bs.Provider == "s3"
+}
+
 // Open returns a Storage implementation matching the given backup_storages
 // row. The factory keeps the rest of the codebase decoupled from concrete
 // providers.
@@ -86,6 +93,9 @@ func Open(ctx context.Context, bs *models.BackupStorage, deps Deps) (Storage, er
 		// resolves to the same implementation.
 		return NewLocal(bs.Config)
 	case "s3":
+		if TenantEndpoint(bs) {
+			return NewTenantS3(ctx, bs.Config)
+		}
 		return NewS3(ctx, bs.Config)
 	case "node-local":
 		if deps.Registry == nil || deps.NodeStore == nil {

@@ -99,9 +99,13 @@ var catalog = []Capability{
 	// backups.create runs a backup to a target the platform chose, this decides
 	// where the bytes GO and holds an S3 credential.
 	//
-	// Not granted by any preset. Connecting arbitrary S3 endpoints makes Core
-	// talk to hosts an operator did not pick, so it is a deliberate grant rather
-	// than something that arrives with a role.
+	// Every account holds these for its OWN realm: owner caps resolve with
+	// serverID 0, where Resolve makes everyone owner of themselves. That is the
+	// product (owner decision 2026-10-04: bringing your own bucket is for every
+	// customer). What makes it safe is the dial, not the grant - a tenant's
+	// endpoint goes through netguard (backup.NewTenantS3) on Core and through
+	// the guarded client on the node. This comment used to call it a
+	// deliberate grant, which it never was.
 	{ID: "backupstorage.read", Label: "View own backup storage", Category: "Backups", Scope: ScopeOwner, Verb: VerbRead},
 	{ID: "backupstorage.write", Label: "Connect own backup storage", Category: "Backups", Scope: ScopeOwner, Verb: VerbWrite},
 	{ID: "backupstorage.delete", Label: "Remove own backup storage", Category: "Backups", Scope: ScopeOwner, Verb: VerbDelete},

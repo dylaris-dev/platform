@@ -18,6 +18,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+
+	"dylaris-core/pkg/netguard"
 )
 
 // S3Storage works against any S3-compatible endpoint — AWS S3, Cloudflare R2,
@@ -48,6 +50,22 @@ type S3Config struct {
 }
 
 func NewS3(ctx context.Context, raw json.RawMessage) (*S3Storage, error) {
+	return newS3(ctx, raw, false)
+}
+
+// NewTenantS3 is NewS3 for a bucket a TENANT connected. Every connection goes
+// through netguard.Dialer, so the endpoint - which the tenant typed - cannot
+// point Core at Redis, the database, the Hub, the overlay or the metadata
+// service. It used to be dialled with the SDK's default client: any account
+// could aim it anywhere, and "Test connection" handed the answer back.
+//
+// The platform's own storages keep the default client: an operator may run
+// MinIO on a private address on purpose.
+func NewTenantS3(ctx context.Context, raw json.RawMessage) (*S3Storage, error) {
+	return newS3(ctx, raw, true)
+}
+
+func newS3(ctx context.Context, raw json.RawMessage, guarded bool) (*S3Storage, error) {
 	var cfg S3Config
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("s3 storage requires config")
@@ -78,6 +96,14 @@ func NewS3(ctx context.Context, raw json.RawMessage) (*S3Storage, error) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
 		}
 		o.UsePathStyle = cfg.ForcePathStyle
+		if guarded {
+			o.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+				// No proxy: a proxy dials for us, and the check would only
+				// ever see the proxy's address.
+				t.Proxy = nil
+				t.DialContext = netguard.Dialer.DialContext
+			})
+		}
 		// Do not attach a CRC32 to every request. Since aws-sdk-go-v2 made
 		// request checksums the default, a PutObject whose body is neither
 		// seekable nor length-known is sent as aws-chunked with the checksum in

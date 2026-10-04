@@ -7,54 +7,16 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"syscall"
 	"time"
+
+	"dylaris-core/pkg/netguard"
 )
 
-// isDisallowedIP reports whether an IP must never be dialed by the import
-// fetcher. It blocks loopback, private (RFC1918 / IPv6 ULA), link-local
-// (including the cloud metadata endpoint 169.254.169.254 and fe80::/10),
-// unspecified, and multicast ranges. IPv4-mapped IPv6 is normalized first so
-// that e.g. ::ffff:10.0.0.1 is caught as private.
-func isDisallowedIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if v4 := ip.To4(); v4 != nil {
-		ip = v4
-	}
-	// 100.64.0.0/10 (CGNAT, RFC 6598) is a standard SSRF blocklist range that
-	// IsPrivate does not cover.
-	if len(ip) == net.IPv4len && ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127 {
-		return true
-	}
-	return ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() ||
-		ip.IsMulticast()
-}
+// isDisallowedIP and safeFetchDialer are the shared rule in pkg/netguard,
+// which the tenant backup storage client uses too.
+var isDisallowedIP = netguard.Disallowed
 
-// safeFetchDialer validates the concrete post-resolution IP right before
-// connect. Because Control runs on the already-resolved address (not the
-// hostname), it also defeats DNS-rebinding: a name that resolves to a public
-// IP at lookup time but a private IP at dial time is still rejected here.
-var safeFetchDialer = &net.Dialer{
-	Timeout:   10 * time.Second,
-	KeepAlive: -1,
-	Control: func(network, address string, _ syscall.RawConn) error {
-		host, _, err := net.SplitHostPort(address)
-		if err != nil {
-			return err
-		}
-		ip := net.ParseIP(host)
-		if ip == nil || isDisallowedIP(ip) {
-			return fmt.Errorf("blocked non-public address: %s", address)
-		}
-		return nil
-	},
-}
+var safeFetchDialer = netguard.Dialer
 
 // safeFetchClient is the hardened outbound client. Redirects are re-validated
 // (scheme + hop cap) and every dial - initial or redirected - passes through

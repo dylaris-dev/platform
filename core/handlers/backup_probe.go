@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/pkg/netguard"
 	backupstorage "dylaris-core/storage/backup"
 )
 
@@ -116,6 +117,14 @@ const (
 // the endpoint is typed by an operator and a redirect would carry Core's
 // request to wherever it points.
 var multipartProbeClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// tenantMultipartProbeClient is multipartProbeClient for a bucket a TENANT
+// connected: the presigned URLs name the host they typed, so every dial goes
+// through netguard, the same as the S3 client for that storage.
+var tenantMultipartProbeClient = &http.Client{
+	Transport:     &http.Transport{Proxy: nil, DialContext: netguard.Dialer.DialContext},
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 

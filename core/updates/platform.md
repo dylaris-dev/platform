@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **A tenant's own backup bucket must be on a public address.** Core and the nodes now refuse
+  private, loopback and metadata addresses for it; the platform's own storage is unaffected. `core` `node`
+
+### Security
+- **Any account could make Core and the nodes connect to internal addresses** through its own
+  backup bucket, and "Test connection" showed the answer. Those connections are now refused. `core` `node`
+- **A misspelled config field could move a stored storage secret to another host.** Fields under
+  another spelling are now rejected. `core`
+
+### Fixes
+- **A modpack download from Core's own mirror no longer follows a redirect to another host.** `node`
+
 ## 2026.10.04
 
 ### Features

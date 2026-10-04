@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"dylaris-core/models"
 	backupstorage "dylaris-core/storage/backup"
@@ -204,6 +205,11 @@ func (h *BackupHandler) TestOwnStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ok, msg := probeBackupStorage(r.Context(), provider); !ok {
+		// The guard's refusal names the address it resolved, and a tenant can
+		// type any internal name as the endpoint: that would map our network.
+		if strings.Contains(msg, "blocked non-public address") {
+			msg = "This endpoint resolves to a private or internal address. Use your storage provider's public endpoint."
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": msg})
 		return
 	}

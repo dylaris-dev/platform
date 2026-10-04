@@ -288,3 +288,41 @@ func TestReapAbandonedRuns_KeepsAnUploadCoreCompleted(t *testing.T) {
 		t.Errorf("deleted = %v: a completed backup was deleted", got)
 	}
 }
+
+// A tenant's own s3 bucket is presigned against the endpoint they typed, so
+// the node is told to refuse non-public addresses for its transfers. A row on
+// a platform-managed connection is not, the operator chose that endpoint.
+func TestDispatch_ATenantBucketAsksTheNodeToGuardItsTransfers(t *testing.T) {
+	owner := "alice"
+	for _, tc := range []struct {
+		name    string
+		storage *models.BackupStorage
+		want    bool
+	}{
+		{"own s3 bucket", &models.BackupStorage{ID: 3, Name: "mine", Provider: "s3", OwnerID: &owner,
+			Config: json.RawMessage(`{"endpoint":"https://s3.example.com","bucket":"b","accessKeyId":"k","secretAccessKey":"s"}`)}, true},
+		{"platform connection", ownedConnectionStorage(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newTransferFakeStore()
+			st.storage = tc.storage
+			st.servers[100].UUID = "srv-uuid"
+			rdb := heartbeatRedis(t, map[string]string{"node-hosting": presignedMultipartSince})
+			b := transferScheduler(st, &fakeMultipartStorage{}, rdb)
+			if err := b.dispatch(context.Background(), models.BackupJob{ID: 10, ServerID: 100, Schedule: "every 1d"}); err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			cmds := dispatchedCommands(t, rdb, "node-hosting")
+			if len(cmds) != 1 {
+				t.Fatalf("commands = %d, want 1", len(cmds))
+			}
+			var cmd map[string]interface{}
+			if err := json.Unmarshal([]byte(cmds[0]), &cmd); err != nil {
+				t.Fatal(err)
+			}
+			if got := cmd["guardedTransfer"] == true; got != tc.want {
+				t.Fatalf("guardedTransfer = %v, want %v: %s", cmd["guardedTransfer"], tc.want, cmds[0])
+			}
+		})
+	}
+}

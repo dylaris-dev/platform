@@ -776,6 +776,12 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	if objectStorage {
 		payload["upload"] = BackupUploadMultipart
 	}
+	// A tenant's own bucket: the presigned URLs point wherever they said, so
+	// the node refuses non-public addresses for them. An older node ignores
+	// the field.
+	if backupstorage.TenantEndpoint(storage) {
+		payload["guardedTransfer"] = true
+	}
 	if len(manifest) > 0 {
 		payload["manifest"] = json.RawMessage(manifest)
 	}

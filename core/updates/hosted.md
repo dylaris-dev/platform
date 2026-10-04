@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Your own backup bucket must be reachable at a public address.** A bucket on a private network
+  address, such as MinIO on your LAN, is refused; use your provider's public endpoint.
+
+### Security
+- **Connecting your own backup bucket can no longer be used to reach our internal network.** This
+  was a fix on our side.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.04
 
 ### Features

@@ -245,7 +245,10 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 	// Does the endpoint answer at all, before anything is signed. Without this
 	// step a wrong endpoint and a wrong secret arrive as the same failure, and
 	// the secret is what an operator retypes first - see services/conncheck.go.
-	if host, port, ok := services.HostPortFromEndpoint(backupStorageEndpoint(*storage)); ok {
+	//
+	// Skipped for a tenant's own bucket: this dial is unguarded, and the
+	// endpoint is one a tenant typed. Open dials it through netguard below.
+	if host, port, ok := services.HostPortFromEndpoint(backupStorageEndpoint(*storage)); ok && !backupstorage.TenantEndpoint(storage) {
 		if reach := services.Reachable(r.Context(), host, port); !reach.OK {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false, "stage": reach.Stage, "message": reach.Message,
@@ -274,7 +277,11 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 	// Not passed through ClassifyStorageFailure: the round trip above has just
 	// succeeded with the same credentials, so a 403 here is not a wrong key, and
 	// that function would say it is.
-	multipart := probeBackupMultipart(r.Context(), provider, multipartProbeClient)
+	probeClient := multipartProbeClient
+	if backupstorage.TenantEndpoint(storage) {
+		probeClient = tenantMultipartProbeClient
+	}
+	multipart := probeBackupMultipart(r.Context(), provider, probeClient)
 	if multipart.applicable && multipart.failedStep != "" {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false, "stage": services.StageRejected, "message": multipart.message(),
@@ -757,6 +764,12 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	if objectStorage {
 		payload["download"] = services.BackupDownloadPresigned
 	}
+	// A tenant's own bucket: the presigned URLs point wherever they said, so
+	// the node refuses non-public addresses for them. An older node ignores
+	// the field.
+	if backupstorage.TenantEndpoint(storage) {
+		payload["guardedTransfer"] = true
+	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
 	if err := h.state.Queue.SendRawCommand(r.Context(), node.Token, payload); err != nil {
@@ -1149,6 +1162,12 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	}
 	if objectStorage {
 		payload["upload"] = services.BackupUploadMultipart
+	}
+	// A tenant's own bucket: the presigned URLs point wherever they said, so
+	// the node refuses non-public addresses for them. An older node ignores
+	// the field.
+	if backupstorage.TenantEndpoint(storage) {
+		payload["guardedTransfer"] = true
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.

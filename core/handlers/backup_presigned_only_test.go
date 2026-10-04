@@ -16,6 +16,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/pkg/netguard"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -124,6 +125,11 @@ func presignedOnlyHandler(t *testing.T, nodeVersion string, run models.BackupRun
 	rec := &s3Recorder{}
 	srv := httptest.NewServer(rec)
 	t.Cleanup(srv.Close)
+	// The bucket is a tenant's, dialled through netguard, and httptest is on
+	// loopback - which netguard exists to refuse. Let this test's dials through.
+	orig := netguard.Dialer.Control
+	netguard.Dialer.Control = nil
+	t.Cleanup(func() { netguard.Dialer.Control = orig })
 
 	owner := "alice"
 	cfg, _ := json.Marshal(map[string]interface{}{
@@ -212,6 +218,10 @@ func TestRestoreRun_ObjectStorageCommandCarriesNoURL(t *testing.T) {
 	if cmd["download"] != "presigned" || cmd["restoreId"] != float64(30) {
 		t.Errorf("download = %v restoreId = %v, want presigned / 30", cmd["download"], cmd["restoreId"])
 	}
+	// The tenant's own bucket: the node must refuse non-public addresses.
+	if cmd["guardedTransfer"] != true {
+		t.Errorf("guardedTransfer = %v, want true for a tenant bucket", cmd["guardedTransfer"])
+	}
 	assertNoSecretOrURL(t, cmds[0])
 	if got := rec.requests(); len(got) != 0 {
 		t.Errorf("dispatch reached the bucket: %v", got)
@@ -252,6 +262,9 @@ func TestTriggerJob_ObjectStorage(t *testing.T) {
 		}
 		if cmd["upload"] != "multipart" {
 			t.Errorf("upload = %v, want multipart", cmd["upload"])
+		}
+		if cmd["guardedTransfer"] != true {
+			t.Errorf("guardedTransfer = %v, want true for a tenant bucket", cmd["guardedTransfer"])
 		}
 		assertNoSecretOrURL(t, cmds[0])
 	})
