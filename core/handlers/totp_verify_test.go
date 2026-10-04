@@ -30,6 +30,7 @@ type totpFakeStore struct {
 	lastSetBackups string
 	lastSetEnabled bool
 	setErr         error
+	epochBumps     int
 }
 
 func (f *totpFakeStore) SetUserTOTP(id, secret, backupCodesJSON string, enabled bool) error {
@@ -41,6 +42,22 @@ func (f *totpFakeStore) SetUserTOTP(id, secret, backupCodesJSON string, enabled 
 	f.lastSetBackups = backupCodesJSON
 	f.lastSetEnabled = enabled
 	return nil
+}
+
+// ConsumeTOTPBackupCode is the consumption write now; recorded the same way.
+func (f *totpFakeStore) ConsumeTOTPBackupCode(id, readJSON, remainingJSON string) (bool, error) {
+	if f.setErr != nil {
+		return false, f.setErr
+	}
+	f.setCalls++
+	f.lastSetBackups = remainingJSON
+	f.lastSetEnabled = true // the write only lands while 2FA is on
+	return true, nil
+}
+
+func (f *totpFakeStore) BumpSessionEpoch(string) (int, error) {
+	f.epochBumps++
+	return f.epochBumps, nil
 }
 
 func (f *totpFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error { return nil }

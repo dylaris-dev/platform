@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.3
+
+### Features
+- **Sign out everywhere.** Your profile's Security tab can end every other session of your
+  account. Turning two-factor authentication on or off does the same.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Two-factor sign-in is harder to attack.** Wrong codes are now limited per account, and a
+  backup code works exactly once. Nothing to update on your side.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.04.2
 
 ### Features

@@ -44,6 +44,8 @@ type Store interface {
 	// --- 2FA (TOTP + Backup Codes) ---
 	SetUserTOTP(id string, secret string, backupCodesJSON string, enabled bool) error
 	DisableUserTOTP(id string) error
+	ConsumeTOTPBackupCode(id, readJSON, remainingJSON string) (bool, error)
+	BumpSessionEpoch(id string) (int, error)
 
 	// --- Nodes ---
 	GetNodeByID(id int) (*models.Node, error)

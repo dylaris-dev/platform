@@ -40,6 +40,10 @@ func applyAuthzFoundationSchema(db *sql.DB) error {
 	for _, q := range []string{
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS panel_role_id INTEGER REFERENCES panel_roles(id) ON DELETE SET NULL`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS panel_cap_overrides JSONB NOT NULL DEFAULT '{}'::jsonb`,
+		// Bumped to end every session of the account at once ("sign out
+		// everywhere", 2FA on/off, an admin's 2FA reset). Folded into the
+		// session fingerprint, so 0 keeps every existing session valid.
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			return fmt.Errorf("authz foundation: alter users: %w", err)

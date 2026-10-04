@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 	"dylaris-pkg/validate"
 
@@ -155,7 +157,7 @@ func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Demo account unavailable", http.StatusNotFound)
 		return
 	}
-	token, err := h.IssueToken(u.Username, false, u.Password)
+	token, err := h.IssueToken(u.Username, false, sessionKey(u))
 	if err != nil {
 		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return
@@ -215,6 +217,27 @@ func passwordFingerprint(hash string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// sessionKey is what a session is bound to: the password hash, plus the
+// account's session epoch once that has been bumped. passwordFingerprint of it
+// goes into every session and SSE ticket and is compared on every request, so
+// bumping the epoch ends every session of the account at once - "sign out
+// everywhere", turning 2FA on or off, an admin's 2FA reset. Before it, only a
+// password change could end a session early: logging out cleared one cookie,
+// and a session taken from the account kept working for the rest of its 24
+// hours whatever its owner did about 2FA.
+//
+// Epoch 0 is the bare hash, so every session issued before this existed stays
+// valid.
+func sessionKey(u *models.User) string {
+	if u == nil {
+		return ""
+	}
+	if u.SessionEpoch == 0 {
+		return u.Password
+	}
+	return u.Password + "#" + strconv.Itoa(u.SessionEpoch)
+}
+
 // tokenPurposeKey carries the JWT's Purpose claim to handlers that need to tell
 // a fresh password login apart from a long-lived session. Typed, unlike the
 // string keys beside it, so it cannot collide with a request-scoped value set
@@ -233,11 +256,16 @@ func TokenPurpose(r *http.Request) string {
 // purposes whitelisted for setup-token JWTs. Anything else gets 403'd
 // by AuthMiddleware so the bearer of a setup token can't access regular
 // endpoints just because they have a valid signature.
-var setupTokenAllowedPaths = map[string]bool{
-	"/api/auth/2fa/setup":  true,
-	"/api/auth/2fa/verify": true,
+//
+// Path AND method. It used to be the path alone, which let a setup token PUT
+// /api/auth/profile - and a password change there (to the same password)
+// hands back a full session: everything "2FA required" was meant to withhold,
+// for anyone holding the password of an account that had not enrolled yet.
+var setupTokenAllowedPaths = map[string]string{
+	"/api/auth/2fa/setup":  http.MethodPost,
+	"/api/auth/2fa/verify": http.MethodPost,
 	// Used by the forced-setup page to load the user's username.
-	"/api/auth/profile": true,
+	"/api/auth/profile": http.MethodGet,
 }
 
 type LoginRequest struct {
@@ -312,9 +340,9 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 						}
 						// The same rule the session token follows: a ticket minted
 						// under an older password is over.
-						if ticketFp != "" && ticketFp != passwordFingerprint(user.Password) {
+						if ticketFp != "" && ticketFp != passwordFingerprint(sessionKey(user)) {
 							h.state.Redis.Del(r.Context(), key)
-							sendJSONError(w, "Your password changed - please sign in again", http.StatusUnauthorized)
+							sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 							return
 						}
 						isAdmin = user.IsAdmin
@@ -386,7 +414,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Setup tokens are scoped to a tiny allowlist. Any other endpoint
 		// must reject them with 403 - bearer doesn't have a full session yet.
 		if claims.Purpose == "2fa_setup" {
-			if !setupTokenAllowedPaths[r.URL.Path] {
+			if m, ok := setupTokenAllowedPaths[r.URL.Path]; !ok || m != r.Method {
 				sendJSONError(w, "Token is restricted to 2FA setup - finish enrollment first", http.StatusForbidden)
 				return
 			}
@@ -477,8 +505,8 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// whole platform out on deploy; they age out within 24 hours on
 			// their own. The demo-account session is unbound for the same
 			// reason and has nothing to invalidate.
-			if claims.PwdFp != "" && claims.PwdFp != passwordFingerprint(user.Password) {
-				sendJSONError(w, "Your password changed - please sign in again", http.StatusUnauthorized)
+			if claims.PwdFp != "" && claims.PwdFp != passwordFingerprint(sessionKey(user)) {
+				sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 				return
 			}
 
@@ -662,6 +690,12 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		// Before the code is checked, so a right code past the limit is not
+		// spent by the replay claim.
+		if !reserveCodeAttempt(r.Context(), h.state, user.ID) {
+			sendJSONError(w, "Too many wrong codes. Try again in 15 minutes.", http.StatusTooManyRequests)
+			return
+		}
 		ok, err := h.verifyTOTPOrBackup(user, req.TOTPCode)
 		if err != nil {
 			sendJSONError(w, "2FA verification failed", http.StatusInternalServerError)
@@ -671,6 +705,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 			return
 		}
+		clearCodeAttempts(r.Context(), h.state, user.ID)
 	}
 
 	// The same window IssueToken uses; the cookie's Max-Age is set from it too.
@@ -679,7 +714,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		Username: user.Username,
 		IsAdmin:  user.IsAdmin,
 		// Binds the session to the password it was issued against.
-		PwdFp:            passwordFingerprint(user.Password),
+		PwdFp:            passwordFingerprint(sessionKey(user)),
 		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
 	}
 
@@ -954,7 +989,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		out["message"] = "Profile updated. We sent a link to your new address - confirm it before you next sign in."
 	}
 	if passwordChanged {
-		if fresh, terr := h.IssueToken(user.Username, user.IsAdmin, user.Password); terr == nil {
+		if fresh, terr := h.IssueToken(user.Username, user.IsAdmin, sessionKey(user)); terr == nil {
 			out["token"] = fresh
 			// The cookie has to be replaced too, or the caller keeps sending
 			// the one their own password change just invalidated and is thrown
@@ -985,6 +1020,74 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	clearSessionCookie(w, r)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// LogoutEverywhere POST /api/auth/logout-everywhere - ends every session of
+// the account, on every device, and hands the caller a fresh one.
+//
+// Logout above can only clear the cookie it is sent; a session copied
+// elsewhere lived out its 24 hours. This bumps the account's session epoch,
+// which every session is bound to (sessionKey), so all of them stop at their
+// next request. Beam access is re-stamped the same way the other
+// account-security changes do it.
+func (h *AuthHandler) LogoutEverywhere(w http.ResponseWriter, r *http.Request) {
+	username, _ := r.Context().Value("username").(string)
+	if username == "" || h.state.Store == nil {
+		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil || user == nil {
+		sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+		return
+	}
+	if err := endAllSessions(h.state, user); err != nil {
+		log.Printf("auth: could not end the sessions of %s: %v", user.Username, err)
+		sendJSONError(w, "Could not end your other sessions", http.StatusInternalServerError)
+		return
+	}
+	LogIdentityAudit(h.state, r, AuditEventSessionsRevoked, user.ID, user.ID, nil)
+	h.reissueOwnSession(w, r, user)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// endAllSessions bumps the account's session epoch and updates user to match,
+// so a session issued from it afterwards is a valid one.
+//
+// Panel sessions only. Beam access is stamped per SERVER, so stamping it here
+// would end every member's Beam session on every server this account can
+// reach - for a self-service button, a way to disconnect other people. Beam
+// tickets are short-lived and the Beam app's own session token is a panel
+// session, which this does end.
+func endAllSessions(state *AppState, user *models.User) error {
+	epoch, err := state.Store.BumpSessionEpoch(user.ID)
+	if err != nil {
+		return err
+	}
+	user.SessionEpoch = epoch
+	return nil
+}
+
+// endSessionsAfter is endAllSessions for a change that has already been
+// written: failing the request now would report a change that happened as one
+// that did not, and leave whatever follows it undone. The failure is logged.
+func endSessionsAfter(state *AppState, user *models.User, what string) {
+	if err := endAllSessions(state, user); err != nil {
+		log.Printf("auth: %s for %s, but its sessions could not be ended: %v", what, user.Username, err)
+	}
+}
+
+// reissueOwnSession replaces the caller's session cookie after their own
+// change ended every session, theirs included - the same courtesy a password
+// change in settings gives. A failure is logged, not answered: the change
+// itself has happened, and signing in again recovers.
+func (h *AuthHandler) reissueOwnSession(w http.ResponseWriter, r *http.Request, user *models.User) {
+	fresh, err := h.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
+	if err != nil {
+		log.Printf("auth: could not re-issue a session for %s: %v", user.Username, err)
+		return
+	}
+	setSessionCookie(w, r, fresh, int(sessionTTL.Seconds()))
 }
 
 // SessionToken POST /api/auth/session-token - hands the caller a bearer copy of
@@ -1028,7 +1131,7 @@ func (h *AuthHandler) SessionToken(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
 		return
 	}
-	token, err := h.IssueToken(user.Username, user.IsAdmin, user.Password)
+	token, err := h.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
 		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return

@@ -133,15 +133,15 @@ can still show what exists.
 
 ## At a glance
 
-- **514 routes** in 51 sections: 228 GET, 158 POST, 38 PUT, 36 PATCH, 55 DELETE.
+- **515 routes** in 51 sections: 228 GET, 159 POST, 38 PUT, 36 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **109** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **110** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
 - [/api/admin](#apiadmin) (124)
-- [/api/auth](#apiauth) (20)
+- [/api/auth](#apiauth) (21)
 - [/api/authz](#apiauthz) (3)
 - [/api/backup-jobs](#apibackup-jobs) (4)
 - [/api/backup-runs](#apibackup-runs) (3)
@@ -335,6 +335,7 @@ can still show what exists.
 | POST | `/api/auth/forgot-password` | **none** | _public_ | Limit, LimitBody | `PasswordResetHandler.ForgotPassword` | public. |
 | POST | `/api/auth/login` | **none** | _public_ | Limit, LimitBody | `AuthHandler.LoginHandler` | issues the session JWT. |
 | POST | `/api/auth/logout` | **none** | _public_ | Limit | `AuthHandler.Logout` | drops the session cookie. |
+| POST | `/api/auth/logout-everywhere` | session | _no capability_ | Limit | `AuthHandler.LogoutEverywhere` | ends every session of the account, on every device, and hands the caller a fresh one. |
 | GET | `/api/auth/profile` | session | _no capability_ | - | `AuthHandler.GetProfileHandler` | the calling user's own row, with the password hash cleared before it is written out. |
 | PUT | `/api/auth/profile` | session | _no capability_ | Limit | `AuthHandler.UpdateProfileHandler` | updates the calling user's own profile. |
 | POST | `/api/auth/register` | **none** | _public_ | Limit, LimitBody | `RegistrationHandler.Register` | public, gated on auth.registration_enabled. |

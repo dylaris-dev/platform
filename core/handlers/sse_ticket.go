@@ -84,7 +84,7 @@ func (h *AuthHandler) MintSSETicket(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
 			return
 		}
-		fp = passwordFingerprint(user.Password)
+		fp = passwordFingerprint(sessionKey(user))
 	}
 
 	buf := make([]byte, 32)

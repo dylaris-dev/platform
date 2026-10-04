@@ -40,6 +40,18 @@ func (f *reauthFakeStore) SetUserTOTP(id, secret, backupCodes string, enabled bo
 
 // Consuming a backup code audits the consumption, so the fake has to answer
 // that call - the embedded nil store.Store would panic instead.
+// ConsumeTOTPBackupCode behaves like the store: it writes only over the list
+// the caller read.
+func (f *reauthFakeStore) ConsumeTOTPBackupCode(id, readJSON, remainingJSON string) (bool, error) {
+	u, ok := f.users[id]
+	if !ok || !u.Is2FAEnabled || u.TOTPBackupCodes != readJSON {
+		return false, nil
+	}
+	f.totpSaved = true
+	u.TOTPBackupCodes = remainingJSON
+	return true, nil
+}
+
 func (f *reauthFakeStore) InsertAuditIdentity(e *models.AuditEventIdentity) error { return nil }
 
 func hashFor(t *testing.T, plain string) string {

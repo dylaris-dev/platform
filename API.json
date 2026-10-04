@@ -1332,6 +1332,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/auth/logout-everywhere",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "ends every session of the account, on every device, and hands the caller a fresh one.",
+      "handler": "AuthHandler.LogoutEverywhere",
+      "group": "auth",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/auth/profile",
       "auth": "session",
@@ -5129,16 +5139,16 @@
     }
   ],
   "counts": {
-    "total": 515,
+    "total": 516,
     "byAuth": {
       "none": 31,
-      "session": 468,
+      "session": 469,
       "user API key": 10,
       "warp key": 6
     },
     "byGroup": {
       "admin": 124,
-      "auth": 20,
+      "auth": 21,
       "authz": 3,
       "backup-jobs": 4,
       "backup-runs": 3,

@@ -199,7 +199,7 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.auth.IssueToken(user.Username, user.IsAdmin, user.Password)
+	token, err := h.auth.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
 		sendSetupError(w, http.StatusInternalServerError, "token_failed", "Admin created but token issuance failed: "+err.Error())
 		return

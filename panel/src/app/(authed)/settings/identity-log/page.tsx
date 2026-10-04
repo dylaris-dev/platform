@@ -48,6 +48,7 @@ const LABELS: Record<string, string> = {
     '2fa_admin_reset': 'Two-factor reset by an operator',
     '2fa_setup_completed': 'Two-factor set up',
     '2fa_backup_code_consumed': 'Backup code used',
+    sessions_revoked: 'Signed out everywhere',
     email_verified: 'Address verified',
     password_reset_requested: 'Password reset requested',
     account_grant_assigned: 'Account-wide access granted',

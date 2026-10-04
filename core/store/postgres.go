@@ -138,7 +138,8 @@ const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(mi
 	COALESCE(support_team, ''),
 	last_username_change,
 	COALESCE(can_create_modpacks, TRUE),
-	COALESCE(can_create_modpacks_manual, FALSE)`
+	COALESCE(can_create_modpacks_manual, FALSE),
+	COALESCE(session_epoch, 0)`
 
 func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 	var (
@@ -156,7 +157,8 @@ func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 		&deletionWarningSentAt, &deletionScheduledAt,
 		&u.Role, &u.CanDeleteServers, &u.CanChangeResources, &u.SupportTeam,
 		&lastUsernameChange,
-		&u.CanCreateModpacks, &u.CanCreateModpacksManual)
+		&u.CanCreateModpacks, &u.CanCreateModpacksManual,
+		&u.SessionEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -408,6 +410,34 @@ func (s *PostgresStore) SetUserTOTP(id string, secret, backupCodesJSON string, e
 		secret, backupCodesJSON, enabled, id,
 	)
 	return err
+}
+
+// ConsumeTOTPBackupCode writes the backup-code list with one code removed,
+// but only if the stored list is still the one the caller read and 2FA is
+// still on. The read-modify-write it replaces let two logins spend the same
+// code, brought back a code a concurrent login had spent, and could write a
+// just-reset secret back. false means the row moved on: the code is not spent
+// by this caller.
+func (s *PostgresStore) ConsumeTOTPBackupCode(id, readJSON, remainingJSON string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE users SET totp_backup_codes = $3::jsonb
+		  WHERE id = $1 AND is_2fa_enabled AND totp_backup_codes = $2::jsonb`,
+		id, readJSON, remainingJSON)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// BumpSessionEpoch ends every session of the account and returns the new
+// epoch.
+func (s *PostgresStore) BumpSessionEpoch(id string) (int, error) {
+	var epoch int
+	err := s.db.QueryRow(
+		`UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 WHERE id = $1 RETURNING session_epoch`,
+		id).Scan(&epoch)
+	return epoch, err
 }
 
 // DisableUserTOTP wipes the secret + backup codes and sets is_2fa_enabled to false.

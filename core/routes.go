@@ -702,6 +702,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// most needs to clear is an expired session they can no longer authenticate
 	// with. Rate-limited anyway, so it cannot be used as free traffic.
 	api.HandleFunc("/auth/logout", authLimiter.Limit(30, authHandler.Logout)).Methods("POST")
+	api.HandleFunc("/auth/logout-everywhere", authLimiter.Limit(10, authHandler.AuthMiddleware(authHandler.LogoutEverywhere))).Methods("POST")
 	// A bearer copy of the caller's own session, for the Beam desktop client's
 	// native side. Authenticated like any other route AND refused with 404
 	// anywhere but the Wails webview origin - see SessionToken for why the

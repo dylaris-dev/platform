@@ -82,6 +82,50 @@ func claimTOTPStep(state *AppState, userID string, step int64) bool {
 	return free
 }
 
+// The second factor at login is limited per ACCOUNT, not only per address.
+// The per-IP limiter alone let anyone holding the password guess codes from as
+// many addresses as they had - three codes are valid at any moment, so a few
+// hundred thousand guesses find one - and nothing noticed. Reaching this needs
+// the password first, so a stranger cannot use it to lock the owner out.
+const (
+	wrongCodeLimit  = 10
+	wrongCodeWindow = 15 * time.Minute
+)
+
+func wrongCodeKey(userID string) string { return "auth:2fa_wrong:" + userID }
+
+// reserveCodeAttempt counts an attempt BEFORE the code is checked and reports
+// whether it is within the limit. Reserving first is what makes it a limit:
+// read-then-count let a burst of parallel logins all read the old count. A
+// right code clears the count (clearCodeAttempts), so only misses add up.
+//
+// Fails open without Redis, like the TOTP replay check: the per-IP limiter
+// still stands, and refusing every login would be worse.
+func reserveCodeAttempt(ctx context.Context, state *AppState, userID string) bool {
+	if state.Redis == nil {
+		return true
+	}
+	key := wrongCodeKey(userID)
+	n, err := state.Redis.Incr(ctx, key).Result()
+	if err != nil {
+		log.Printf("2fa: could not count a code attempt for %s: %v", userID, err)
+		return true
+	}
+	// The window starts at the first attempt and is not extended by later
+	// ones. Checked by TTL rather than n == 1, so a key whose expiry was lost
+	// gets one instead of locking the account for good.
+	if ttl, terr := state.Redis.TTL(ctx, key).Result(); terr == nil && ttl < 0 {
+		state.Redis.Expire(ctx, key, wrongCodeWindow)
+	}
+	return n <= wrongCodeLimit
+}
+
+func clearCodeAttempts(ctx context.Context, state *AppState, userID string) {
+	if state.Redis != nil {
+		state.Redis.Del(ctx, wrongCodeKey(userID))
+	}
+}
+
 // backupCodeCount is the number of single-use codes generated when 2FA is set up.
 const backupCodeCount = 10
 
@@ -171,6 +215,14 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Secret and code required", http.StatusBadRequest)
 		return
 	}
+	// Enrolment while 2FA is on replaced the authenticator and the backup codes
+	// on the password alone - the one step that decides who owns the second
+	// factor was the one that did not ask for it. Switching authenticators
+	// goes through disable, which asks for a current code.
+	if user.Is2FAEnabled {
+		sendJSONError(w, "Two-factor authentication is already on. Turn it off first to switch authenticators.", http.StatusConflict)
+		return
+	}
 
 	// Re-authenticate before enabling. Without this, a session token alone was
 	// enough to enrol 2FA: the caller supplies the secret, so a stolen or
@@ -235,6 +287,13 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	LogIdentityAudit(h.state, r, AuditEvent2FASetupCompleted, user.ID, user.ID, map[string]interface{}{
 		"backup_codes_generated": backupCodeCount,
 	})
+	// A session that predates the second factor was never asked for it. End
+	// them all; the caller keeps working on a fresh one. A setup token has no
+	// session to replace - the forced-enrolment page signs in afterwards.
+	endSessionsAfter(h.state, user, "2FA turned on")
+	if TokenPurpose(r) != "2fa_setup" {
+		h.reissueOwnSession(w, r, user)
+	}
 
 	json.NewEncoder(w).Encode(VerifyTOTPResponse{
 		Success:     true,
@@ -393,6 +452,10 @@ func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	LogIdentityAudit(h.state, r, AuditEvent2FADisabled, user.ID, user.ID, nil)
+	// Same as enabling: a change to the second factor ends every session of
+	// the account; the caller gets a fresh one.
+	endSessionsAfter(h.state, user, "2FA turned off")
+	h.reissueOwnSession(w, r, user)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -438,6 +501,9 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	actorID, _ := r.Context().Value("userID").(string)
 	// A second factor is reset because the account is not in its owner's
 	// hands; the API keys are a way in that needs neither factor.
+	// The sessions go too: a 2FA reset is asked for because someone else may
+	// be holding the account, and their session would otherwise outlive it.
+	endSessionsAfter(h.state, target, "2FA reset by an operator")
 	revoked := revokeAllAPIKeys(h.state, id, "admin 2FA reset")
 	stampBeamAccessForUser(r.Context(), h.state, id)
 	sshRevoked := revokeAllSSHKeys(h.state, id, "admin 2FA reset")
@@ -510,8 +576,16 @@ func verifyTOTPOrBackupWith(state *AppState, user *models.User, code string, cla
 			// can't be reused.
 			remaining := append(hashed[:i], hashed[i+1:]...)
 			out, _ := json.Marshal(remaining)
-			if err := state.Store.SetUserTOTP(user.ID, user.TOTPSecret, string(out), user.Is2FAEnabled); err != nil {
+			// Spent only if the list is still the one read above: the
+			// write used to replace the whole row, so two logins could spend
+			// one code, a code spent concurrently came back, and a 2FA reset
+			// racing a login was undone.
+			spent, err := state.Store.ConsumeTOTPBackupCode(user.ID, user.TOTPBackupCodes, string(out))
+			if err != nil {
 				return false, err
+			}
+			if !spent {
+				return false, nil
 			}
 			// Audit the consumption so admins can spot recovery-code abuse
 			// — multiple consumptions on one account, or from unfamiliar IPs,

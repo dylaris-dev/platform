@@ -53,6 +53,9 @@ type User struct {
 	// this row, so a deliberate per-user decision survives the global switch.
 	// Read-only to the panel; it is set as a side effect of the per-user write.
 	CanCreateModpacksManual bool `json:"canCreateModpacksManual"`
+	// SessionEpoch ends every session of the account when it changes; see
+	// handlers.sessionKey.
+	SessionEpoch int `json:"-"`
 
 	// Verification / lifecycle
 	EmailVerifiedAt         *time.Time `json:"emailVerifiedAt,omitempty"`

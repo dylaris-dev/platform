@@ -119,6 +119,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/auth/2fa/setup":                   true, // authed; own 2FA
 	"/api/auth/2fa/verify":                  true, // authed; own 2FA
 	"/api/auth/2fa/disable":                 true, // authed; own 2FA
+	"/api/auth/logout-everywhere":           true, // authed; own sessions
 	"/api/auth/2fa/regenerate-backup-codes": true, // authed; own 2FA
 	"/api/auth/2fa/status":                  true, // authed; own 2FA
 

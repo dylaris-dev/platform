@@ -40,6 +40,9 @@ const (
 	AuditEvent2FABackupRegenerated  = "2fa_backup_codes_regenerated"
 	AuditEvent2FABackupCodeConsumed = "2fa_backup_code_consumed"
 
+	// Every session of the account ended at once ("sign out everywhere").
+	AuditEventSessionsRevoked = "sessions_revoked"
+
 	// Password reset flow.
 	AuditEventPasswordResetRequested = "password_reset_requested"
 	AuditEventPasswordResetCompleted = "password_reset_completed"

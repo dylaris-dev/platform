@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.3
+
+### Features
+- **Sign out everywhere.** Settings > Security ends every other session of the account; turning
+  2FA on or off and an operator's 2FA reset now end them too. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- **Required 2FA could be skipped.** The token handed out to set up 2FA could be turned into a full
+  session through the profile page; it now only reaches the setup steps. `core`
+- **Wrong 2FA codes are limited per account,** not only per address: 10 in 15 minutes, then even
+  the right code waits. Re-enrolling while 2FA is on now needs turning it off first. `core`
+- **A backup code can no longer be used twice** by two logins at the same moment. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.04.2
 
 ### Features

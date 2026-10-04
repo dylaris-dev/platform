@@ -435,3 +435,31 @@ func TestAnAdminPasswordResetRevokesTheAccountsAPIKeys(t *testing.T) {
 		t.Fatalf("revoked keys %v, want both of the account's keys", fs.revoked)
 	}
 }
+
+type epochGuardStore struct {
+	*keyedGuardStore
+	bumped []string
+}
+
+func (f *epochGuardStore) BumpSessionEpoch(id string) (int, error) {
+	f.bumped = append(f.bumped, id)
+	return len(f.bumped), nil
+}
+
+// A 2FA reset is asked for because someone else may be holding the account.
+// Their session used to outlive it: only a password change ended sessions.
+func TestAnAdmin2FAResetEndsTheAccountsSessions(t *testing.T) {
+	base := newGuardFakeStore()
+	base.users[guardAdmin].Password = testReauthHash
+	fs := &epochGuardStore{keyedGuardStore: &keyedGuardStore{guardFakeStore: base}}
+	h := &AuthHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	rec := httptest.NewRecorder()
+	h.AdminResetTOTPHandler(rec, guardRequest("DELETE", guardAdmin, true, guardMember,
+		`{"reauth":{"password":"`+testReauthPassword+`"}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.bumped) != 1 || fs.bumped[0] != guardMember {
+		t.Fatalf("sessions ended for %v, want the member's", fs.bumped)
+	}
+}

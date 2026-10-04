@@ -189,6 +189,21 @@ export const updateProfile = async (data: any) => {
   }
 };
 
+// Ends every session of the account on every device. Core hands this tab a
+// new session cookie on the same response, so it keeps working; everything
+// else signed in as this account is out at its next request.
+export const logoutEverywhere = async () => {
+  try {
+    const res = await fetch(`${API_URL}/auth/logout-everywhere`, {
+      method: 'POST',
+      headers: getAuthHeader(),
+    });
+    return handleResponse(res);
+  } catch (err) {
+    return handleError(err);
+  }
+};
+
 // Signing out is now a SERVER call: the session cookie is HttpOnly, so the panel
 // cannot delete what it cannot read. The local hint is dropped first so the UI
 // switches immediately rather than waiting on the round trip.

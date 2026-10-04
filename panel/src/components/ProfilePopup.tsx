@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil, History as HistoryIcon, ChevronDown } from 'lucide-react';
+import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil, History as HistoryIcon, ChevronDown, LogOut } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes } from '@/lib/api/auth';
+import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes, logoutEverywhere } from '@/lib/api/auth';
 import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
 import { getMyUsernameHistory, type UsernameHistoryEntry } from '@/lib/api/accountPolicy';
 import { isUsername } from '@/lib/validation';
@@ -221,6 +221,8 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                       </button>
                     </div>
                   )}
+
+                  <SignOutEverywhereRow />
                 </div>
               </div>
             )}
@@ -271,6 +273,60 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
     </>
   );
 };
+
+// Ends every other session of the account. Two clicks on purpose: it signs out
+// every device, including ones the user may be in the middle of using.
+function SignOutEverywhereRow() {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setNote(null);
+    const res = await logoutEverywhere();
+    setBusy(false);
+    setConfirming(false);
+    setNote(res?.success
+      ? { ok: true, text: 'Every other session has been signed out.' }
+      : { ok: false, text: res?.message || 'Could not sign out your other sessions.' });
+  };
+
+  return (
+    <div className="mt-2 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <LogOut size={16} className="shrink-0 mt-0.5 text-(--base-07)" />
+          <div className="min-w-0">
+            <div className="font-medium text-sm text-(--base-09)">Sessions</div>
+            <div className="text-xs text-(--base-06)">
+              {confirming
+                ? 'Sign out every other browser and device signed in as you?'
+                : 'Signed in somewhere you no longer use or trust? End every other session.'}
+            </div>
+          </div>
+        </div>
+        {confirming ? (
+          <div className="shrink-0 flex gap-2">
+            <button type="button" onClick={() => setConfirming(false)} disabled={busy} className="btn btn-secondary btn-sm">
+              Cancel
+            </button>
+            <button type="button" onClick={run} disabled={busy} className="btn btn-primary btn-sm">
+              {busy ? 'Signing out…' : 'Sign out'}
+            </button>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setConfirming(true)} className="btn btn-secondary btn-sm shrink-0">
+            Sign out everywhere else
+          </button>
+        )}
+      </div>
+      {note ? (
+        <p role="status" className={`mt-2 text-xs ${note.ok ? 'text-(--success)' : 'text-(--warning)'}`}>{note.text}</p>
+      ) : null}
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────
 // Username history
