@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.8
+
+### Features
+- Nothing.
+
+### Breaking
+- **Moving a server between your nodes needs both nodes updated.** An older node is refused with
+  a message instead of stopping the server first. Update the node agent on both machines.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Moving a server between your nodes works again.** Moves failed after the server had been
+  stopped; it now arrives, and nothing is left behind on the old node.
+
 ## 2026.10.04.7
 
 ### Features

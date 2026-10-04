@@ -154,16 +154,18 @@ func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, server
 // node stages the (already-stopped) server directory as a zip and publishes its
 // hash to Redis. Distinct from migrate_storage above, which moves between local
 // storage paths on the same node.
-func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, serverUUID string) error {
+func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, serverUUID, attempt string) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateOutCmd struct {
-		Action string                 `json:"action"`
-		Config map[string]interface{} `json:"config"`
+		Action  string                 `json:"action"`
+		Config  map[string]interface{} `json:"config"`
+		Attempt string                 `json:"attempt,omitempty"`
 	}
 	cmd := migrateOutCmd{
-		Action: "migrate_out",
-		Config: map[string]interface{}{"uuid": serverUUID},
+		Action:  "migrate_out",
+		Config:  map[string]interface{}{"uuid": serverUUID},
+		Attempt: attempt,
 	}
 
 	jsonData, err := json.Marshal(cmd)
@@ -192,13 +194,14 @@ func migrateTargetConfig(serverUUID string, diskLimitMB int64) map[string]interf
 // so the target puts the arriving directory under its quota. It never did: a
 // moved server ran with no disk limit on its new node until someone next
 // changed its resources.
-func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string, diskLimitMB int64) error {
+func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, attempt, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string, diskLimitMB int64) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateInCmd struct {
 		Action         string                 `json:"action"`
 		Config         map[string]interface{} `json:"config"`
 		SourceNodeID   string                 `json:"sourceNodeId"`
+		Attempt        string                 `json:"attempt,omitempty"`
 		MigrateToken   string                 `json:"migrateToken"`
 		ExpectedSha256 string                 `json:"expectedSha256"`
 		// ExpectedSize is the size the source staged, and the bound the target
@@ -216,6 +219,7 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 		Action:           "migrate_in",
 		Config:           migrateTargetConfig(serverUUID, diskLimitMB),
 		SourceNodeID:     sourceNodeID,
+		Attempt:          attempt,
 		MigrateToken:     token,
 		ExpectedSha256:   expectedSha256,
 		ExpectedSize:     expectedSize,
@@ -234,17 +238,19 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 // fallback). The source node uploads its already-staged archive to the pre-signed
 // PUT URL and reports phase "pushed". The URL carries its own auth, so the node
 // never receives bucket credentials.
-func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, serverUUID, putURL string) error {
+func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, serverUUID, attempt, putURL string) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migratePushR2Cmd struct {
 		Action          string                 `json:"action"`
 		Config          map[string]interface{} `json:"config"`
+		Attempt         string                 `json:"attempt,omitempty"`
 		PresignedPutURL string                 `json:"presignedPutUrl"`
 	}
 	cmd := migratePushR2Cmd{
 		Action:          "migrate_push_r2",
 		Config:          map[string]interface{}{"uuid": serverUUID},
+		Attempt:         attempt,
 		PresignedPutURL: putURL,
 	}
 
@@ -260,12 +266,13 @@ func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, 
 // fallback). The target node downloads from the pre-signed GET URL, verifies the
 // archive against expectedSha256, extracts it, and reports phase "transferred" —
 // the same terminal phase as migrate_in, so cutover proceeds identically.
-func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, getURL, expectedSha256 string, expectedSize int64, diskLimitMB int64) error {
+func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, attempt, getURL, expectedSha256 string, expectedSize int64, diskLimitMB int64) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migratePullR2Cmd struct {
 		Action          string                 `json:"action"`
 		Config          map[string]interface{} `json:"config"`
+		Attempt         string                 `json:"attempt,omitempty"`
 		PresignedGetURL string                 `json:"presignedGetUrl"`
 		ExpectedSha256  string                 `json:"expectedSha256"`
 		// See SendMigrateInCommand: the same download bound, for the R2 leg.
@@ -274,6 +281,7 @@ func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, 
 	cmd := migratePullR2Cmd{
 		Action:          "migrate_pull_r2",
 		Config:          migrateTargetConfig(serverUUID, diskLimitMB),
+		Attempt:         attempt,
 		PresignedGetURL: getURL,
 		ExpectedSha256:  expectedSha256,
 		ExpectedSize:    expectedSize,

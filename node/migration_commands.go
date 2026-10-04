@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"dylaris-pkg/migration"
@@ -95,13 +96,13 @@ func sharedStorageOwner(storage *StorageManager, serverUUID string) string {
 // cleanup then deletes it out from under the running container - total data loss
 // reported as a successful migration. Refuse before anything is written, so the
 // orchestrator fails the move with no cutover.
-func refuseIfStorageShared(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, cmd string) bool {
+func refuseIfStorageShared(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, cmd string) bool {
 	owner := sharedStorageOwner(storage, serverUUID)
 	if owner == "" {
 		return false
 	}
 	log.Printf("%s %s: refusing - storage is shared with source node %s", cmd, serverUUID, owner)
-	setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf(
+	setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf(
 		"shared storage: this node and %s write to the same storage backend, so moving would delete the server", owner))
 	return true
 }
@@ -139,24 +140,24 @@ func setMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, serve
 // handleMigrateOut (source side) stages the server's data directory as a zip
 // and publishes its hash. The orchestrator guarantees the server is already
 // stopped before this runs, so we archive the dir as-is.
-func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID string) {
+func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string) {
 	storagePath := storage.GetServerPath(serverUUID)
 	if storagePath == "" {
 		log.Printf("migrate_out %s: no storage path found", serverUUID)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "storage path not found")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "storage path not found")
 		return
 	}
 	srcDir := filepath.Join(storagePath, serverUUID)
 	if stat, err := os.Stat(srcDir); err != nil || !stat.IsDir() {
 		log.Printf("migrate_out %s: server dir missing at %s", serverUUID, srcDir)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "server directory missing")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "server directory missing")
 		return
 	}
 
 	stagingDir := filepath.Join(storagePath, migrationStagingDir)
 	if err := os.MkdirAll(stagingDir, 0755); err != nil {
 		log.Printf("migrate_out %s: cannot create staging dir: %v", serverUUID, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "cannot create staging dir")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "cannot create staging dir")
 		return
 	}
 
@@ -165,7 +166,7 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	// own, so a move we cannot prove safe must not start at all.
 	if err := os.WriteFile(migrationOriginPath(storagePath, serverUUID), []byte(nodeID), 0644); err != nil {
 		log.Printf("migrate_out %s: cannot write origin stamp: %v", serverUUID, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "cannot write origin stamp")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "cannot write origin stamp")
 		return
 	}
 
@@ -175,20 +176,20 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	if err != nil {
 		log.Printf("migrate_out %s: archive failed: %v", serverUUID, err)
 		os.Remove(destZip) // partial archive is useless
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("archive failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("archive failed: %v", err))
 		return
 	}
 
 	meta := migrationMeta{SHA256: sha, Size: size, SourceNodeID: nodeID, StagedAt: time.Now().Unix()}
 	metaJSON, _ := json.Marshal(meta)
-	metaKey := queue.MigrationMetaKey(nodeToken, serverUUID)
+	metaKey := queue.MigrationMetaKey(nodeToken, progressID)
 	if err := rdb.Set(ctx, metaKey, metaJSON, migrationMetaTTL).Err(); err != nil {
 		log.Printf("migrate_out %s: failed to publish meta: %v", serverUUID, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "failed to publish meta")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "failed to publish meta")
 		return
 	}
 
-	setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "staged", "")
+	setMigrationStatus(ctx, rdb, nodeToken, progressID, "staged", "")
 	log.Printf("migrate_out %s: staged (%s, sha256=%s)", serverUUID, formatBytes(uint64(size)), sha)
 }
 
@@ -200,12 +201,21 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 // same-LAN move stays within a few seconds before falling back to the overlay.
 const migrationProbeTimeout = 2 * time.Second
 
-func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string) {
+func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string) {
 	if sourceNodeID == "" || token == "" || expectedSha256 == "" {
 		log.Printf("migrate_in %s: missing sourceNodeID/token/expectedSha256", serverUUID)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "missing migrate_in parameters")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "missing migrate_in parameters")
 		return
 	}
+
+	// One transfer into this server at a time. An attempt Core gave up on keeps
+	// running here, and a second one extracting into the same directory, or the
+	// first one's failure removing it, wrecked whatever the other produced.
+	if _, busy := migrateInFlight.LoadOrStore(serverUUID, struct{}{}); busy {
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "an earlier transfer of this server is still running on the target")
+		return
+	}
+	defer migrateInFlight.Delete(serverUUID)
 
 	// Resolve where to pull from. The source node refreshes this key while it
 	// is up; if it is absent the source is unreachable/down and we cannot move.
@@ -213,7 +223,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	endpoint, err := rdb.Get(ctx, endpointKey).Result()
 	if err != nil || endpoint == "" {
 		log.Printf("migrate_in %s: source endpoint %s not found: %v", serverUUID, endpointKey, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "source endpoint unavailable")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "source endpoint unavailable")
 		return
 	}
 
@@ -229,13 +239,13 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		picked := chooseMigrationHost(ctx, lanCandidates(endpoint, sourcePrivateIPs), token)
 		if picked == "" {
 			log.Printf("migrate_in %s: source LAN unreachable, requesting R2 fallback", serverUUID)
-			setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "need_remote", "")
+			setMigrationStatus(ctx, rdb, nodeToken, progressID, "need_remote", "")
 			return
 		}
 		chosen = picked
 	}
 
-	if refuseIfStorageShared(ctx, rdb, storage, nodeToken, serverUUID, "migrate_in") {
+	if refuseIfStorageShared(ctx, rdb, storage, nodeToken, serverUUID, progressID, "migrate_in") {
 		return
 	}
 
@@ -244,7 +254,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	targetPath, err := storage.SelectStoragePath(serverUUID, "")
 	if err != nil {
 		log.Printf("migrate_in %s: cannot select storage path: %v", serverUUID, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("storage selection failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("storage selection failed: %v", err))
 		return
 	}
 
@@ -256,16 +266,24 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		os.Remove(tmpZip)
 		// Hash mismatch after retries aborts before extract — never write
 		// unverified bytes into the live server directory.
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("pull failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("pull failed: %v", err))
 		return
 	}
 
 	targetDir := filepath.Join(targetPath, serverUUID)
+	// Onto an empty directory. A copy left here by an earlier move merged with
+	// the new one: files deleted on the source since came back. Core never
+	// sends this to the node the server currently lives on.
+	if err := resetMigrationTarget(targetDir); err != nil {
+		os.Remove(tmpZip)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("cannot clear the target directory: %v", err))
+		return
+	}
 	if err := migration.Extract(tmpZip, targetDir); err != nil {
 		log.Printf("migrate_in %s: extract failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		os.RemoveAll(targetDir)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("extract failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("extract failed: %v", err))
 		return
 	}
 	os.Remove(tmpZip)
@@ -273,7 +291,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	// SelectStoragePath already persisted node:<nodeID>:server:<uuid>:storage,
 	// so the node knows where the server lives for the follow-up start.
 
-	setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "transferred", "")
+	setMigrationStatus(ctx, rdb, nodeToken, progressID, "transferred", "")
 	log.Printf("migrate_in %s: transferred into %s", serverUUID, targetDir)
 }
 
@@ -348,11 +366,82 @@ func chooseMigrationHost(ctx context.Context, candidates []string, token string)
 	return ""
 }
 
+// migrateInFlight holds the servers a transfer is landing into on this node.
+var migrateInFlight sync.Map
+
+// resetMigrationTarget empties a server's directory on the TARGET before an
+// arriving copy is extracted into it.
+func resetMigrationTarget(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	return os.MkdirAll(dir, 0o755)
+}
+
+// migrationInFlight reports whether this node staged a move of the server that
+// has not finished either way: the staged archive exists until the move's
+// cleanup or abort removes it.
+//
+// Only a RECENT archive counts. One can outlive its move - every attempt
+// before moves worked left one, and an abort can be lost - and while it
+// counted, the server was never restarted after a crash again, silently.
+// stagedArchiveMaxAge is longer than any move runs.
+func migrationInFlight(storage *StorageManager, serverUUID string) bool {
+	p := storage.GetServerPath(serverUUID)
+	if p == "" {
+		return false
+	}
+	st, err := os.Stat(stagedArchivePath(p, serverUUID))
+	return err == nil && time.Since(st.ModTime()) < stagedArchiveMaxAge
+}
+
+// stagedArchiveMaxAge outlives the longest move (Core's migrationQueuedTTL).
+const stagedArchiveMaxAge = 3 * time.Hour
+
+// sweepStaleMigrationArchives removes staged archives and origin stamps older
+// than any move: copies of servers left by moves that never finished, each a
+// full copy outside its server's quota.
+func sweepStaleMigrationArchives(storage *StorageManager) {
+	for _, root := range storage.Paths() {
+		dir := filepath.Join(root, migrationStagingDir)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			info, err := e.Info()
+			if err != nil || e.IsDir() || time.Since(info.ModTime()) < stagedArchiveMaxAge {
+				continue
+			}
+			p := filepath.Join(dir, e.Name())
+			if err := os.Remove(p); err == nil {
+				log.Printf("migration: removed stale staged file %s", p)
+			}
+		}
+	}
+}
+
+// handleMigrateAbort (source side) removes the staged archive and origin stamp
+// of a move that did not happen - and nothing else: the server stays on this
+// node. The archive is a full copy of the server outside its disk quota, and
+// only the successful path's cleanup used to remove it.
+func handleMigrateAbort(storage *StorageManager, serverUUID string) {
+	storagePath := storage.GetServerPath(serverUUID)
+	if storagePath == "" {
+		return
+	}
+	for _, p := range []string{stagedArchivePath(storagePath, serverUUID), migrationOriginPath(storagePath, serverUUID)} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			log.Printf("migrate_abort %s: could not remove %s: %v", serverUUID, p, err)
+		}
+	}
+}
+
 // handleMigrateCleanup (source side) removes the staged archive and the
 // original server directory after the target confirms transfer. The
 // orchestrator controls ordering and only sends this once migrate_in reported
 // "transferred". No host port to release in gateway mode.
-func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID string) {
+func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *StorageManager, dm *DockerManager, nodeToken, serverUUID string) {
 	storagePath := storage.GetServerPath(serverUUID)
 	if storagePath == "" {
 		log.Printf("migrate_cleanup %s: no storage path found", serverUUID)
@@ -360,13 +449,20 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 		return
 	}
 
-	zipPath := stagedArchivePath(storagePath, serverUUID)
-	if err := os.Remove(zipPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("migrate_cleanup %s: could not remove staged archive %s: %v", serverUUID, zipPath, err)
+	// Not while a move of this server INTO this node is landing: a cleanup
+	// that waited in a busy queue would delete a server just moved back here.
+	if _, busy := migrateInFlight.LoadOrStore(serverUUID, struct{}{}); busy {
+		log.Printf("migrate_cleanup %s: a transfer of this server into this node is running, leaving its data", serverUUID)
+		return
 	}
-	originPath := migrationOriginPath(storagePath, serverUUID)
-	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("migrate_cleanup %s: could not remove origin stamp %s: %v", serverUUID, originPath, err)
+	defer migrateInFlight.Delete(serverUUID)
+
+	// The container first. It was only stopped for the move and stayed behind:
+	// once Core set the server online for the target, this node's reconciler
+	// started it again on the data about to be deleted, and it ran on for good
+	// (and a later move back reused its stale image and binds).
+	if dm != nil {
+		dm.PowerAction(serverUUID, "delete")
 	}
 
 	srcDir := filepath.Join(storagePath, serverUUID)
@@ -374,6 +470,18 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 		log.Printf("migrate_cleanup %s: could not remove server dir %s: %v", serverUUID, srcDir, err)
 		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("cleanup failed: %v", err))
 		return
+	}
+
+	// The archive LAST: while it exists the reconciler leaves this server
+	// alone, and removing it first let the recreate pass bring the container
+	// back on a directory still being deleted.
+	zipPath := stagedArchivePath(storagePath, serverUUID)
+	if err := os.Remove(zipPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("migrate_cleanup %s: could not remove staged archive %s: %v", serverUUID, zipPath, err)
+	}
+	originPath := migrationOriginPath(storagePath, serverUUID)
+	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("migrate_cleanup %s: could not remove origin stamp %s: %v", serverUUID, originPath, err)
 	}
 
 	storage.RemoveServerPath(serverUUID)
@@ -386,33 +494,33 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 // orchestrator routes the transfer through R2 (node-direct, $0 egress, no warp
 // hairpin). The archive + its hash were already produced by migrate_out, so this
 // only re-uses that staged zip — no re-archiving. Reports phase "pushed".
-func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, putURL string) {
+func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, putURL string) {
 	if putURL == "" {
 		log.Printf("migrate_push_r2 %s: missing presigned put url", serverUUID)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "missing push_r2 url")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "missing push_r2 url")
 		return
 	}
 	storagePath := storage.GetServerPath(serverUUID)
 	if storagePath == "" {
 		log.Printf("migrate_push_r2 %s: no storage path found", serverUUID)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "storage path not found")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "storage path not found")
 		return
 	}
 	zipPath := stagedArchivePath(storagePath, serverUUID)
 	if stat, err := os.Stat(zipPath); err != nil || stat.IsDir() {
 		log.Printf("migrate_push_r2 %s: staged archive missing at %s", serverUUID, zipPath)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "staged archive missing")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "staged archive missing")
 		return
 	}
 
 	log.Printf("migrate_push_r2 %s: uploading staged archive to R2", serverUUID)
 	if err := putFilePresigned(ctx, putURL, zipPath); err != nil {
 		log.Printf("migrate_push_r2 %s: upload failed: %v", serverUUID, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("r2 push failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("r2 push failed: %v", err))
 		return
 	}
 
-	setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "pushed", "")
+	setMigrationStatus(ctx, rdb, nodeToken, progressID, "pushed", "")
 	log.Printf("migrate_push_r2 %s: uploaded to R2", serverUUID)
 }
 
@@ -423,23 +531,32 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 // hash is checked BEFORE extract so a corrupted download never lands in the live
 // server directory. Reports phase "transferred" — identical to migrate_in, so
 // the orchestrator's cutover proceeds the same way.
-func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, getURL, expectedSha256 string, expectedSize int64) {
+func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, getURL, expectedSha256 string, expectedSize int64) {
 	if getURL == "" || expectedSha256 == "" {
 		log.Printf("migrate_pull_r2 %s: missing getURL/expectedSha256", serverUUID)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", "missing pull_r2 parameters")
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "missing pull_r2 parameters")
 		return
 	}
 
+	// One transfer into this server at a time. An attempt Core gave up on keeps
+	// running here, and a second one extracting into the same directory, or the
+	// first one's failure removing it, wrecked whatever the other produced.
+	if _, busy := migrateInFlight.LoadOrStore(serverUUID, struct{}{}); busy {
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "an earlier transfer of this server is still running on the target")
+		return
+	}
+	defer migrateInFlight.Delete(serverUUID)
+
 	// Same hazard as the LAN path: the R2 round trip does not make the source
 	// and target directories any less identical on shared storage.
-	if refuseIfStorageShared(ctx, rdb, storage, nodeToken, serverUUID, "migrate_pull_r2") {
+	if refuseIfStorageShared(ctx, rdb, storage, nodeToken, serverUUID, progressID, "migrate_pull_r2") {
 		return
 	}
 
 	targetPath, err := storage.SelectStoragePath(serverUUID, "")
 	if err != nil {
 		log.Printf("migrate_pull_r2 %s: cannot select storage path: %v", serverUUID, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("storage selection failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("storage selection failed: %v", err))
 		return
 	}
 
@@ -448,21 +565,29 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3, expectedSize); err != nil {
 		log.Printf("migrate_pull_r2 %s: download failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("r2 pull failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("r2 pull failed: %v", err))
 		return
 	}
 
 	targetDir := filepath.Join(targetPath, serverUUID)
+	// Onto an empty directory. A copy left here by an earlier move merged with
+	// the new one: files deleted on the source since came back. Core never
+	// sends this to the node the server currently lives on.
+	if err := resetMigrationTarget(targetDir); err != nil {
+		os.Remove(tmpZip)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("cannot clear the target directory: %v", err))
+		return
+	}
 	if err := migration.Extract(tmpZip, targetDir); err != nil {
 		log.Printf("migrate_pull_r2 %s: extract failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		os.RemoveAll(targetDir)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("extract failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("extract failed: %v", err))
 		return
 	}
 	os.Remove(tmpZip)
 
-	setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "transferred", "")
+	setMigrationStatus(ctx, rdb, nodeToken, progressID, "transferred", "")
 	log.Printf("migrate_pull_r2 %s: transferred into %s", serverUUID, targetDir)
 }
 

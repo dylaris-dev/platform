@@ -151,25 +151,14 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 				continue
 			}
 
-			// Skip if in a protected transitional status.
+			// The same holds as the crash-restart pass (restartBlocked). The busy
+			// hold matters most here: a reinstall REMOVES the container
+			// (RecreateWithCommand is stop+remove+create), so during one the
+			// server looks exactly like a manually deleted container, and
+			// recreating it from the saved config would race the installer over
+			// the same directory.
 			statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
-			if status, err := rdb.Get(ctx, statusKey).Result(); err == nil && protectedStatuses[status] {
-				continue
-			}
-			// This pass is the more dangerous of the two here: a reinstall REMOVES
-			// the container (RecreateWithCommand is stop+remove+create), so during
-			// one the server looks exactly like a manually deleted container, and
-			// recreating it from the saved config would race the installer over the
-			// same directory.
-			if isNodeBusy(ctx, rdb, uuid) {
-				continue
-			}
-			// Same reason the crash-restart pass below checks it: the status key
-			// that "disk_full" would arrive on is drained by Core every 5s, so
-			// the protectedStatuses check above cannot be relied on to see the
-			// hold. Recreating here would put a server that is over its limit
-			// straight back over it.
-			if isDiskFull(ctx, rdb, uuid) {
+			if restartBlocked(ctx, rdb, storage, uuid) {
 				continue
 			}
 
@@ -224,11 +213,37 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 	}
 }
 
+// restartBlocked reports whether the reconciler must leave a stopped container
+// alone although its desired state is "online".
+func restartBlocked(ctx context.Context, rdb *redis.Client, storage *StorageManager, uuid string) bool {
+	// A protected status.
+	statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
+	if status, err := rdb.Get(ctx, statusKey).Result(); err == nil && protectedStatuses[status] {
+		return true
+	}
+	// An operation this node is running right now, which the status key cannot
+	// tell us (see isNodeBusy).
+	if isNodeBusy(ctx, rdb, uuid) {
+		return true
+	}
+	// A server the disk guard deliberately stopped. Restarting it would put a
+	// server that is over its limit straight back over it.
+	if isDiskFull(ctx, rdb, uuid) {
+		return true
+	}
+	// A server this node staged a move of. Once Core sets it online for its NEW
+	// node, the desired state reads "online" here too, and this restarted the
+	// stopped source container on data the move's cleanup deletes moments
+	// later - and left it running for good.
+	return migrationInFlight(storage, uuid)
+}
+
 // StartReconciler runs a periodic loop that compares actual Docker container
 // state against the desired state stored in Redis and auto-restarts crashed
 // containers when desired_state is "online".
 func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, storage *StorageManager) {
 	log.Println("Reconciler started (interval: 15s)")
+	sweepStaleMigrationArchives(storage)
 	tracker := make(map[string]*reconcileInfo)
 	var mu sync.Mutex
 
@@ -276,21 +291,11 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 				continue
 			}
 
-			// Container is NOT running but desired_state is "online" — check for protected status
+			// Container is NOT running but desired_state is "online".
+			if restartBlocked(ctx, rdb, storage, c.UUID) {
+				continue
+			}
 			statusKey := fmt.Sprintf("dylaris:server:%s:status", c.UUID)
-			if status, err := rdb.Get(ctx, statusKey).Result(); err == nil && protectedStatuses[status] {
-				continue
-			}
-			// ... and for an operation this node is running right now, which the
-			// status key cannot tell us (see isNodeBusy).
-			if isNodeBusy(ctx, rdb, c.UUID) {
-				continue
-			}
-			// ... and for a server the disk guard deliberately stopped. Restarting
-			// it would put a server that is over its limit straight back over it.
-			if isDiskFull(ctx, rdb, c.UUID) {
-				continue
-			}
 
 			// Initialize tracker if needed
 			info, exists := tracker[c.UUID]

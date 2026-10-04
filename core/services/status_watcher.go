@@ -80,6 +80,14 @@ func (s *StatusWatcherService) scan() {
 				continue
 			}
 
+			// "migrating" is the orchestrator's until it ends the move. The
+			// source reports its container going down after Core set it, and
+			// writing that "stopped" over it reopened power actions mid-move:
+			// a start on the source after staging lost everything written
+			// since, and the cleanup then deleted the directory under it.
+			if srv.Status == "migrating" {
+				continue
+			}
 			if srv.Status != newStatus {
 				log.Printf("Status update for %s: %s -> %s", uuid, srv.Status, newStatus)
 				s.store.UpdateServerStatus(srv.ID, newStatus)

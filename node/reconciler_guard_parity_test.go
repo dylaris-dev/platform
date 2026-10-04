@@ -24,15 +24,21 @@ func TestBothReconcilerPassesTakeTheSameHolds(t *testing.T) {
 	}
 	body := string(src)
 
-	deleted := between(t, body, "func reconcileDeletedContainers(", "func StartReconciler(")
+	// Both passes take their holds from ONE function now, which also holds a
+	// server this node staged a move of; the pass that recreated without it
+	// would have been the next gap of the same kind.
+	deleted := between(t, body, "func reconcileDeletedContainers(", "func restartBlocked(")
 	crashed := after(t, body, "func StartReconciler(")
+	holds := between(t, body, "func restartBlocked(", "func StartReconciler(")
 
-	for _, guard := range []string{"protectedStatuses[", "isNodeBusy(", "isDiskFull("} {
-		if !strings.Contains(deleted, guard) {
-			t.Errorf("reconcileDeletedContainers does not consult %s", guard)
+	for name, pass := range map[string]string{"reconcileDeletedContainers": deleted, "StartReconciler's crash-restart pass": crashed} {
+		if !strings.Contains(pass, "restartBlocked(") {
+			t.Errorf("%s does not consult restartBlocked", name)
 		}
-		if !strings.Contains(crashed, guard) {
-			t.Errorf("StartReconciler's crash-restart pass does not consult %s", guard)
+	}
+	for _, guard := range []string{"protectedStatuses[", "isNodeBusy(", "isDiskFull(", "migrationInFlight("} {
+		if !strings.Contains(holds, guard) {
+			t.Errorf("restartBlocked does not consult %s", guard)
 		}
 	}
 }

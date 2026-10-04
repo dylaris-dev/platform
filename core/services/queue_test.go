@@ -240,7 +240,7 @@ func TestSendMigrateOutCommand(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateOutCommand(context.Background(), "tok-8", "server-uuid"); err != nil {
+	if err := svc.SendMigrateOutCommand(context.Background(), "tok-8", "server-uuid", "att1"); err != nil {
 		t.Fatalf("SendMigrateOutCommand: %v", err)
 	}
 
@@ -258,7 +258,7 @@ func TestSendMigrateInCommand(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, []string{"10.0.0.5", "192.168.1.10"}, 2048); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "att1", "source-node-id", "migrate-tok", "deadbeef", 4096, []string{"10.0.0.5", "192.168.1.10"}, 2048); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
@@ -299,7 +299,7 @@ func TestSendMigrateInCommand_OmitsEmptySourcePrivateIPs(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "source-node-id", "migrate-tok", "deadbeef", 4096, nil, 0); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "", "source-node-id", "migrate-tok", "deadbeef", 4096, nil, 0); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
@@ -313,7 +313,7 @@ func TestSendMigratePushR2Command(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigratePushR2Command(context.Background(), "tok-11", "server-uuid", "https://example.com/put-url"); err != nil {
+	if err := svc.SendMigratePushR2Command(context.Background(), "tok-11", "server-uuid", "att1", "https://example.com/put-url"); err != nil {
 		t.Fatalf("SendMigratePushR2Command: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestSendMigratePullR2Command(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "https://example.com/get-url", "cafebabe", 8192, 2048); err != nil {
+	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "att1", "https://example.com/get-url", "cafebabe", 8192, 2048); err != nil {
 		t.Fatalf("SendMigratePullR2Command: %v", err)
 	}
 

@@ -85,6 +85,13 @@ var ErrNodeUpdateRequired = errors.New("this node must be updated before it can 
 // a local build), which is built from the source it runs against and is let
 // through. Every image CI builds is stamped, so no production node reports "".
 func nodeTakesPresignedTransfers(ctx context.Context, rdb *redis.Client, nodeToken string) bool {
+	return nodeAtLeast(ctx, rdb, nodeToken, presignedMultipartSince)
+}
+
+// nodeAtLeast reports whether the node's heartbeat names release `since` or
+// newer, with the reading nodeTakesPresignedTransfers documents: no heartbeat
+// or an unparseable version is old, no version at all is a development build.
+func nodeAtLeast(ctx context.Context, rdb *redis.Client, nodeToken, since string) bool {
 	hb := LoadHeartbeat(ctx, rdb, nodeToken)
 	if hb == nil {
 		return false
@@ -96,11 +103,11 @@ func nodeTakesPresignedTransfers(ctx context.Context, rdb *redis.Client, nodeTok
 	if err != nil {
 		return false
 	}
-	since, err := release.ParseVersion(presignedMultipartSince)
+	want, err := release.ParseVersion(since)
 	if err != nil {
 		return false
 	}
-	return have.Compare(since) >= 0
+	return have.Compare(want) >= 0
 }
 
 // PrepareNodeStorage decides what a node receives for a backup upload or a

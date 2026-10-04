@@ -2,11 +2,12 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
 	"time"
 
 	"dylaris-core/database"
@@ -65,10 +66,22 @@ const (
 
 // MigrationRequest is the JSON payload on the migration queue.
 type MigrationRequest struct {
-	ServerID     int    `json:"serverID"`
-	TargetNodeID int    `json:"targetNodeID"`
-	Reason       string `json:"reason"`      // "manual" | "rebalance"
-	RequestedBy  string `json:"requestedBy"` // user ID or "system"
+	ServerID     int `json:"serverID"`
+	TargetNodeID int `json:"targetNodeID"`
+	// SourceNodeID is the node the server was on when the move was decided.
+	// Every check behind a request - who may move it, onto which node - was
+	// made against that placement, and a request waiting in the queue could
+	// run after the server had moved (a customer's transfer ahead of a
+	// rebalance pulled it back onto the platform). 0 on requests from an older
+	// Core: not checked.
+	SourceNodeID int `json:"sourceNodeID,omitempty"`
+	// PreStatus is the server's status when the move was decided. A re-run
+	// after a Core crash or handover reads "migrating" from the database,
+	// which made a rollback write "migrating" back and a successful move lose
+	// a suspension.
+	PreStatus   string `json:"preStatus,omitempty"`
+	Reason      string `json:"reason"`      // "manual" | "rebalance"
+	RequestedBy string `json:"requestedBy"` // user ID or "system"
 }
 
 // orchestrationStatus is the orchestrator-owned progress record, written to
@@ -134,21 +147,66 @@ func (o *MigrationOrchestrator) Start(ctx context.Context) {
 
 // EnqueueMigration pushes a migration request onto the queue. Callable from any
 // Core (the manual endpoint, the Wave 4 worker); the leader executes it.
+//
+// One request per server at a time: the queue runs one migration at a time
+// for the whole platform, and a request against a node that never answers
+// holds it for minutes - so a customer looping transfers of one server held
+// every other move, and the stream's length cap dropped older requests.
+// ErrMigrationQueued when one is already queued or running.
 func (o *MigrationOrchestrator) EnqueueMigration(ctx context.Context, serverID, targetNodeID int, reason, requestedBy string) error {
+	srv, err := o.store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		return fmt.Errorf("load server %d: %w", serverID, err)
+	}
+	marked, err := o.redis.SetNX(ctx, migrationQueuedKey(serverID), reason, migrationQueuedTTL).Result()
+	if err != nil {
+		return fmt.Errorf("mark migration queued: %w", err)
+	}
+	if !marked {
+		return ErrMigrationQueued
+	}
 	req := MigrationRequest{
 		ServerID:     serverID,
 		TargetNodeID: targetNodeID,
+		SourceNodeID: srv.NodeID,
+		PreStatus:    srv.Status,
 		Reason:       reason,
 		RequestedBy:  requestedBy,
 	}
 	data, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal migration request: %w", err)
+	if err == nil {
+		_, err = queue.Publish(ctx, o.redis, migrationStreamKey, data)
 	}
-	if _, err := queue.Publish(ctx, o.redis, migrationStreamKey, data); err != nil {
+	if err != nil {
+		o.redis.Del(context.Background(), migrationQueuedKey(serverID))
 		return fmt.Errorf("enqueue migration request: %w", err)
 	}
 	return nil
+}
+
+// ErrMigrationQueued refuses a second request for a server that has one.
+var ErrMigrationQueued = errors.New("a move of this server is already queued or running")
+
+// migrationQueuedTTL outlives the longest migration (two R2 legs of an hour
+// each plus staging and stop), so the marker cannot lapse under a live one; a
+// Core that died with it set frees it at the latest then.
+const migrationQueuedTTL = 3 * time.Hour
+
+// migrationAttemptSince is the node release that reports move progress per
+// attempt. Moves were broken before it in any case: Core named the source by
+// an id it never published under.
+const migrationAttemptSince = "2026.10.04.8"
+
+func newMigrationAttempt() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// migrationQueuedKey is by server ID, which every request carries: Migrate
+// releases it on every return, including the ones before the server loaded.
+func migrationQueuedKey(serverID int) string {
+	return fmt.Sprintf("dylaris:migration:queued:%d", serverID)
 }
 
 // consume is the leader-gated durable-queue loop. When not leader it idles on a
@@ -293,6 +351,27 @@ func (o *MigrationOrchestrator) watchLeadership(ctx context.Context, cancel cont
 // surfaced via the orchestration status key; we never return them to a caller
 // (this runs async on the leader).
 func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationRequest) {
+	// The request is done with when this returns - except on a leadership
+	// handover, where it stays pending for the next leader, and when another
+	// Core is running it right now.
+	keepMarker := false
+	defer func() {
+		if ctx.Err() != nil || keepMarker {
+			return
+		}
+		o.redis.Del(context.Background(), migrationQueuedKey(req.ServerID))
+		// Nothing but this function ends "migrating", and the status watcher
+		// leaves it alone. A return that did not set a status - a check that
+		// failed on a re-run after a crash - put the one it had back.
+		if cur, err := o.store.GetServerByID(req.ServerID); err == nil && cur != nil && cur.Status == "migrating" {
+			back := req.PreStatus
+			if back == "" || back == "migrating" {
+				back = "stopped"
+			}
+			o.store.UpdateServerStatus(req.ServerID, back)
+		}
+	}()
+
 	// --- (a) Load + validate ---
 	srv, err := o.store.GetServerByID(req.ServerID)
 	if err != nil {
@@ -316,6 +395,31 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	writeStatus := func(phase, errMsg string) {
 		o.writeStatus(ctx, srv.UUID, phase, errMsg, sourceNode.ID, targetNode.ID, req.Reason, startedAt)
 	}
+	if req.SourceNodeID != 0 && srv.NodeID != req.SourceNodeID {
+		log.Printf("migration %s: server moved from node %d to %d since the request was queued, refusing", srv.UUID, req.SourceNodeID, srv.NodeID)
+		writeStatus("failed", "server was moved since this request was queued")
+		return
+	}
+	// Before anything is stopped: a source that is not there cannot stage, and
+	// waiting for it held the platform's one migration slot for minutes while
+	// its server sat stopped.
+	if sourceNode.Status != "online" {
+		log.Printf("migration %s: source node %d not online (%s)", srv.UUID, sourceNode.ID, sourceNode.Status)
+		writeStatus("failed", "source node not online")
+		return
+	}
+	// Both ends must report progress per attempt (queue.MigrationProgressID).
+	// An older node reports under the bare uuid, which this Core no longer
+	// reads, so its move would only time out - after the server was stopped.
+	for _, n := range []*models.Node{sourceNode, targetNode} {
+		if !nodeAtLeast(ctx, o.redis, n.Token, migrationAttemptSince) {
+			log.Printf("migration %s: node %d is older than %s", srv.UUID, n.ID, migrationAttemptSince)
+			writeStatus("failed", fmt.Sprintf("node %d must be updated before it can take part in a move", n.ID))
+			return
+		}
+	}
+	attempt := newMigrationAttempt()
+	progress := queue.MigrationProgressID(srv.UUID, attempt)
 
 	// Migration is gateway-only: a server's reachable address is tied to its
 	// node unless the gateway re-points the route, so a move without it breaks
@@ -343,6 +447,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		// Still held after the full wait, so it is not a dead Core's leftover:
 		// another Core owns this migration and will finish it.
 		log.Printf("migration %s: still locked after %s, another Core is migrating it - skipping", srv.UUID, migrationLockWait)
+		keepMarker = true
 		return
 	}
 	if isContextError(err) {
@@ -365,10 +470,21 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// cancel (arrived post-cutover and ignored) never lingers into a future move.
 	defer o.redis.Del(context.Background(), migrationCancelKey(srv.UUID))
 
+	// Progress the nodes reported for an EARLIER attempt lives for an hour. Read
+	// as this attempt's, a leftover "staged" and "transferred" cut the server
+	// over onto the first attempt's copy and had the source's current data
+	// deleted. Cleared before this attempt sends anything.
+	o.redis.Del(ctx,
+		queue.MigrationStatusKey(sourceNode.Token, srv.UUID), queue.MigrationMetaKey(sourceNode.Token, srv.UUID),
+		queue.MigrationStatusKey(targetNode.Token, srv.UUID), queue.MigrationMetaKey(targetNode.Token, srv.UUID))
+
 	// --- (c) Starting ---
 	writeStatus("starting", "")
-	wasRunning := srv.Status == "online"
 	preStatus := srv.Status
+	if preStatus == "migrating" && req.PreStatus != "" {
+		preStatus = req.PreStatus
+	}
+	wasRunning := preStatus == "online"
 
 	// --- (d) Rebalance player gate (manual moves skip — admin chose to move) ---
 	if req.Reason == "rebalance" && wasRunning {
@@ -397,19 +513,19 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// --- (f) migrate_out (source stages archive) ---
 	o.store.UpdateServerStatus(srv.ID, "migrating")
 	writeStatus("migrating", "")
-	if err := o.queue.SendMigrateOutCommand(ctx, sourceNode.Token, srv.UUID); err != nil {
+	if err := o.queue.SendMigrateOutCommand(ctx, sourceNode.Token, srv.UUID, attempt); err != nil {
 		log.Printf("migration %s: migrate_out queue failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_out queue failed")
 		return
 	}
-	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, srv.UUID, "staged", migrationStageTimeout); phase != "staged" {
+	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, progress, "staged", migrationStageTimeout); phase != "staged" {
 		log.Printf("migration %s: staging failed (phase=%s, err=%s)", srv.UUID, phase, nerr)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "staging failed: "+nerr)
 		return
 	}
 
 	// --- (g) migrate_in (target pulls + verifies) ---
-	meta, err := o.readMeta(ctx, sourceNode.Token, srv.UUID)
+	meta, err := o.readMeta(ctx, sourceNode.Token, progress)
 	if err != nil {
 		log.Printf("migration %s: cannot read meta: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "meta read failed")
@@ -424,17 +540,20 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		return
 	}
 	migKey := string(secret)
-	token, err := migration.MintToken(migKey, srv.UUID, strconv.Itoa(sourceNode.ID), migrationTokenTTL)
+	token, err := migration.MintToken(migKey, srv.UUID, sourceNode.Token, migrationTokenTTL)
 	if err != nil {
 		log.Printf("migration %s: mint token failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "token mint failed")
 		return
 	}
-	// sourceNodeID is the node ID as a string — the target resolves the pull
-	// endpoint via dylaris:migration:endpoint:<sourceNodeID>.
+	// The source is named by its TOKEN: that is the id the node publishes its
+	// pull endpoint under (dylaris:migration:endpoint:<token>, the only one its
+	// Redis ACL lets it write). This passed the numeric database id, under which
+	// nothing is ever published - so every move failed with "source endpoint
+	// unavailable", after the server had been stopped and archived.
 	// See migrationSourceLANIPs for who is handed the source's LAN addresses.
 	sourcePrivateIPs := migrationSourceLANIPs(sourceNode, targetNode)
-	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, strconv.Itoa(sourceNode.ID), token, meta.SHA256, meta.Size, sourcePrivateIPs, srv.DiskLimit); err != nil {
+	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, attempt, sourceNode.Token, token, meta.SHA256, meta.Size, sourcePrivateIPs, srv.DiskLimit); err != nil {
 		log.Printf("migration %s: migrate_in queue failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
 		return
@@ -442,10 +561,10 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// migrate_in reports "transferred" on success, or "need_remote" when this is
 	// a BYON move and the target cannot reach the source over the LAN. In the
 	// latter case we transfer through R2 (node-direct, no warp hairpin) instead.
-	phase, nerr := o.waitForNodePhaseAny(ctx, targetNode.Token, srv.UUID, map[string]bool{"transferred": true, "need_remote": true}, migrationTransferTimeout)
+	phase, nerr := o.waitForNodePhaseAny(ctx, targetNode.Token, progress, map[string]bool{"transferred": true, "need_remote": true}, migrationTransferTimeout)
 	if phase == "need_remote" {
 		log.Printf("migration %s: source LAN unreachable, falling back to R2 transfer", srv.UUID)
-		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, meta.SHA256, meta.Size); err != nil {
+		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, attempt, meta.SHA256, meta.Size); err != nil {
 			// Still pre-cutover: node_id unchanged, source authoritative — roll back.
 			log.Printf("migration %s: R2 transfer failed: %v", srv.UUID, err)
 			o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "r2 transfer failed: "+err.Error())
@@ -484,6 +603,10 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		// the failure; the route can be re-pointed manually / on retry. Do not
 		// revert node_id (target is authoritative now).
 		log.Printf("migration %s: MigrateServerRoutes failed post node-flip: %v", srv.UUID, err)
+		// Not left on "migrating": nothing but the orchestrator ends that
+		// status, and the server is on the target now, stopped.
+		o.store.UpdateServerStatus(srv.ID, "stopped")
+		o.store.UpdateServerDesiredState(srv.ID, "stopped")
 		writeStatus("failed_post_cutover", "route re-point failed: "+err.Error())
 		return
 	}
@@ -532,7 +655,13 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 			o.waitForOnline(ctx, srv.ID, migrationStartTimeout)
 		}
 	} else {
-		o.store.UpdateServerStatus(srv.ID, "stopped")
+		// An operator's suspension moves with the server. Writing "stopped"
+		// lifted it: the power gate refuses only a "suspended" server.
+		final := "stopped"
+		if preStatus == "suspended" {
+			final = "suspended"
+		}
+		o.store.UpdateServerStatus(srv.ID, final)
 		o.store.UpdateServerDesiredState(srv.ID, "stopped")
 	}
 
@@ -637,6 +766,13 @@ func (o *MigrationOrchestrator) holdMigrationLock(ctx context.Context, uuid, req
 // Never deletes source data — by definition this is called before cutover, so
 // the source is still authoritative. Writes orchestration phase "failed".
 func (o *MigrationOrchestrator) rollbackPreCutover(ctx context.Context, srv *models.Server, sourceNode *models.Node, wasRunning bool, preStatus string, writeStatus func(string, string), reason string) {
+	// The staged archive is a full copy of the server outside its quota, and
+	// only a successful move's cleanup removed it: every failed attempt left
+	// one behind, past even the server's deletion. Best-effort; an older node
+	// ignores the command.
+	if err := o.queue.SendCommand(ctx, sourceNode.Token, "migrate_abort", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
+		log.Printf("migration %s: could not tell the source to drop its staged archive: %v", srv.UUID, err)
+	}
 	if wasRunning {
 		o.store.UpdateServerDesiredState(srv.ID, "online")
 		o.store.UpdateServerStatus(srv.ID, "starting")
@@ -739,8 +875,9 @@ func (o *MigrationOrchestrator) pollDBStatus(ctx context.Context, serverID int, 
 // was asked for it. It used to be dylaris:migration:<uuid>:status, which every
 // node in the fleet could write - and "transferred" here is what makes the
 // caller flip node_id and delete the source copy. See queue.MigrationStatusKey.
-func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, nodeToken, serverUUID, wantPhase string, timeout time.Duration) (string, string) {
-	key := queue.MigrationStatusKey(nodeToken, serverUUID)
+func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, nodeToken, progressID, wantPhase string, timeout time.Duration) (string, string) {
+	key := queue.MigrationStatusKey(nodeToken, progressID)
+	serverUUID := queue.MigrationProgressServer(progressID)
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(migrationPollInterval)
 	defer ticker.Stop()
@@ -801,8 +938,9 @@ func (o *MigrationOrchestrator) timeoutReason(ctx context.Context, lastPhase, se
 // "error", with its message), or the timeout elapses. Used by migrate_in, which
 // can end in either "transferred" (got the copy) or "need_remote" (BYON LAN
 // unreachable, use the R2 fallback).
-func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, nodeToken, serverUUID string, accept map[string]bool, timeout time.Duration) (string, string) {
-	key := queue.MigrationStatusKey(nodeToken, serverUUID)
+func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, nodeToken, progressID string, accept map[string]bool, timeout time.Duration) (string, string) {
+	key := queue.MigrationStatusKey(nodeToken, progressID)
+	serverUUID := queue.MigrationProgressServer(progressID)
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(migrationPollInterval)
 	defer ticker.Stop()
@@ -847,7 +985,8 @@ func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, nodeTok
 // counts against the tenant's R2 quota) and is deleted when we're done, success
 // or fail. On success the target has reported "transferred" exactly like
 // migrate_in, so the caller proceeds to the normal cutover.
-func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, expectedSha256 string, expectedSize int64) error {
+func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, attempt, expectedSha256 string, expectedSize int64) error {
+	progress := queue.MigrationProgressID(srv.UUID, attempt)
 	bs, err := o.store.GetDefaultBackupStorage()
 	if err != nil {
 		return fmt.Errorf("resolve backup storage: %w", err)
@@ -882,18 +1021,18 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	}()
 
 	// Source uploads its staged archive to R2.
-	if err := o.queue.SendMigratePushR2Command(ctx, sourceNode.Token, srv.UUID, putURL); err != nil {
+	if err := o.queue.SendMigratePushR2Command(ctx, sourceNode.Token, srv.UUID, attempt, putURL); err != nil {
 		return fmt.Errorf("queue migrate_push_r2: %w", err)
 	}
-	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, srv.UUID, "pushed", migrationR2PhaseTimeout); phase != "pushed" {
+	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, progress, "pushed", migrationR2PhaseTimeout); phase != "pushed" {
 		return fmt.Errorf("source R2 upload failed (phase=%s): %s", phase, nerr)
 	}
 
 	// Target downloads from R2, verifies the hash, extracts. Reports "transferred".
-	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, getURL, expectedSha256, expectedSize, srv.DiskLimit); err != nil {
+	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, attempt, getURL, expectedSha256, expectedSize, srv.DiskLimit); err != nil {
 		return fmt.Errorf("queue migrate_pull_r2: %w", err)
 	}
-	if phase, nerr := o.waitForNodePhase(ctx, targetNode.Token, srv.UUID, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
+	if phase, nerr := o.waitForNodePhase(ctx, targetNode.Token, progress, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
 		return fmt.Errorf("target R2 download failed (phase=%s): %s", phase, nerr)
 	}
 	return nil
@@ -907,8 +1046,8 @@ type nodeMeta struct {
 	StagedAt     int64  `json:"stagedAt"`
 }
 
-func (o *MigrationOrchestrator) readMeta(ctx context.Context, nodeToken, serverUUID string) (nodeMeta, error) {
-	key := queue.MigrationMetaKey(nodeToken, serverUUID)
+func (o *MigrationOrchestrator) readMeta(ctx context.Context, nodeToken, progressID string) (nodeMeta, error) {
+	key := queue.MigrationMetaKey(nodeToken, progressID)
 	raw, err := o.redis.Get(ctx, key).Result()
 	if err != nil {
 		return nodeMeta{}, err

@@ -7,6 +7,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-pkg/validate"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -1736,6 +1737,17 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "A server can only be moved to the platform's nodes or to its owner's own", http.StatusForbidden)
 		return
 	}
+	// A suspended server is not the owner's to move: the move ended in
+	// "stopped", which the power gate does not refuse, so a transfer onto the
+	// owner's own machine lifted an operator's suspension. The account-level
+	// cut-off applies here like on every other action the owner takes.
+	if srv.Status == "suspended" && !operatorOverride(r) {
+		sendJSONError(w, "Server is suspended. Action blocked.", http.StatusForbidden)
+		return
+	}
+	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
 	h.queueMigration(w, r, srv, target, "transfer", username)
 }
 
@@ -1762,7 +1774,15 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 		sendJSONError(w, "Target node is not online", 409)
 		return
 	}
+	if source, serr := h.state.Store.GetNodeByID(srv.NodeID); serr == nil && source != nil && source.Status != "online" {
+		sendJSONError(w, "The server's current node is offline, so its data cannot be moved right now", http.StatusConflict)
+		return
+	}
 	if err := h.state.Migration.EnqueueMigration(r.Context(), srv.ID, target.ID, reason, requestedBy); err != nil {
+		if errors.Is(err, services.ErrMigrationQueued) {
+			sendJSONError(w, "A move of this server is already queued or running", http.StatusConflict)
+			return
+		}
 		sendJSONError(w, "Failed to queue migration", 500)
 		return
 	}

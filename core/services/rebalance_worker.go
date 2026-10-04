@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -165,7 +166,9 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 		return
 	}
 
-	if err := w.orchestrator.EnqueueMigration(ctx, candidate.ID, target.ID, "rebalance", "system"); err != nil {
+	if err := w.orchestrator.EnqueueMigration(ctx, candidate.ID, target.ID, "rebalance", "system"); errors.Is(err, ErrMigrationQueued) {
+		return // already on its way somewhere
+	} else if err != nil {
 		logErrf("rebalance", "enqueue failed for server %s (node %d -> %d): %v", candidate.UUID, src.ID, target.ID, err)
 		return
 	}

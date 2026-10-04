@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.8
+
+### Features
+- Nothing.
+
+### Breaking
+- **Moving a server between nodes needs both nodes on this release.** A move with an older node is
+  refused up front instead of stopping the server first. `core` `node`
+
+### Security
+- **A transfer no longer lifts a suspension,** and a suspended server or a cut-off account cannot
+  be transferred by its owner. `core`
+
+### Fixes
+- **Moving a server between nodes works again.** Every move failed after stopping and archiving the
+  server; the source is now named the way it publishes itself. `core` `node`
+- **A failed move no longer leaves a full copy of the server behind,** and the old copy is not
+  restarted on the source after a successful one. `node`
+- **One move per server at a time;** a source node that is offline fails the move at once. `core`
+
 ## 2026.10.04.7
 
 ### Features

@@ -222,6 +222,11 @@ func (f *twoNodeFakeStore) GetServerByID(id int) (*models.Server, error) {
 	return &models.Server{ID: id, UUID: "srv-1", OwnerID: visOwner, NodeID: f.node.ID}, nil
 }
 
+// The transfer asks whether the owner's account is cut off; it is not here.
+func (f *twoNodeFakeStore) GetUserBilling(id string) (*store.UserBilling, error) {
+	return &store.UserBilling{UserID: id, Status: "active"}, nil
+}
+
 // TestFilesAndBeamAskTheResolverForAnAdmin: both answered an admin before the
 // resolver was consulted, which made the resolver fence decorative.
 func TestFilesAndBeamAskTheResolverForAnAdmin(t *testing.T) {

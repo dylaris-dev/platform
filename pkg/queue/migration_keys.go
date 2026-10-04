@@ -36,6 +36,33 @@ func MigrationMetaKey(nodeToken, serverUUID string) string {
 	return migrationNodeKey(nodeToken, serverUUID, "meta")
 }
 
+// MigrationProgressID names ONE attempt of a move in the progress keys: the
+// server's uuid, plus "@attempt" when Core sent one. A node runs migrate_in on
+// its own goroutine and keeps going after Core gave up on it (a timeout, a
+// cancel, a leader handover), so an earlier attempt's late "transferred" landed
+// in the key the next attempt was waiting on - and Core cut over onto the
+// earlier, older copy and had the source's current data deleted. Each attempt
+// now reports under its own name; a late write lands where nobody reads.
+//
+// Still under the node's own prefix, so the ACL grant is unchanged. No attempt
+// (an older Core) is the bare uuid, exactly the key used before.
+func MigrationProgressID(serverUUID, attempt string) string {
+	if attempt == "" {
+		return serverUUID
+	}
+	return serverUUID + "@" + attempt
+}
+
+// MigrationProgressServer is the server uuid a progress id names.
+func MigrationProgressServer(progressID string) string {
+	for i := 0; i < len(progressID); i++ {
+		if progressID[i] == '@' {
+			return progressID[:i]
+		}
+	}
+	return progressID
+}
+
 // MigrationNodeKeyPattern is the ACL key pattern granting one node its own
 // progress keys and nothing else.
 func MigrationNodeKeyPattern(nodeToken string) string {

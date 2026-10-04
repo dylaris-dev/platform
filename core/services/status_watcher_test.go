@@ -344,3 +344,20 @@ func TestSyncPortsIgnoresAnotherNodesKey(t *testing.T) {
 		t.Fatalf("a foreign node's key rewrote the port: %+v", fs.portCalls)
 	}
 }
+
+// "migrating" is the orchestrator's until the move ends. The source reports its
+// container going down after Core set it, and that "stopped" overwrote it -
+// which reopened power actions mid-move.
+func TestScan_DoesNotOverwriteMigrating(t *testing.T) {
+	fs := &statusWatcherFakeStore{
+		serversByUUID: map[string]models.Server{"srv-m": {ID: 3, UUID: "srv-m", Status: "migrating"}},
+	}
+	svc := newStatusWatcherTest(t, fs)
+	if err := svc.redis.Set(context.Background(), "dylaris:server:srv-m:status", "stopped", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	svc.scan()
+	if len(fs.statusCalls) != 0 {
+		t.Fatalf("a node report overwrote migrating: %+v", fs.statusCalls)
+	}
+}

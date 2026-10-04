@@ -214,7 +214,10 @@ type NodeCommand struct {
 	// migrate_in (auto-move) parameters. Carried as top-level fields like
 	// TargetPath rather than stuffed into Config, since they describe
 	// the move, not the server.
-	SourceNodeID   string `json:"sourceNodeId,omitempty"`
+	SourceNodeID string `json:"sourceNodeId,omitempty"`
+	// Attempt names one attempt of a move; progress is reported under
+	// queue.MigrationProgressID(uuid, attempt). Empty from an older Core.
+	Attempt        string `json:"attempt,omitempty"`
 	MigrateToken   string `json:"migrateToken,omitempty"`
 	ExpectedSha256 string `json:"expectedSha256,omitempty"`
 	// ExpectedSize is the byte size the SOURCE announced for the staged
@@ -1886,25 +1889,30 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_out":
 		// Source side: stage the (already-stopped) server dir as a zip.
-		handleMigrateOut(ctx, rdb, storage, id, cmd.Config.UUID)
+		handleMigrateOut(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt))
 
 	case "migrate_in":
 		// Target side: pull the staged archive and extract it. No
 		// container start here — the orchestrator sends start next.
-		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
+		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
 		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.
-		handleMigrateCleanup(ctx, rdb, storage, id, cmd.Config.UUID)
+		handleMigrateCleanup(ctx, rdb, storage, dm, id, cmd.Config.UUID)
+
+	case "migrate_abort":
+		// Source side, failed move: drop the staged archive only. The server
+		// stays here and keeps its data.
+		handleMigrateAbort(storage, cmd.Config.UUID)
 
 	case "migrate_push_r2":
 		// Source side (cross-LAN BYON fallback): upload the staged archive to R2.
-		handleMigratePushR2(ctx, rdb, storage, id, cmd.Config.UUID, cmd.PresignedPutURL)
+		handleMigratePushR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedPutURL)
 
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
-		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
+		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
 		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 
 	case "backup_run":

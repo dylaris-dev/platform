@@ -225,23 +225,20 @@ func TestMigrationOrchestrator_WaitForNodePhaseAny(t *testing.T) {
 // --- EnqueueMigration() ---
 
 func TestMigrationOrchestrator_EnqueueMigration(t *testing.T) {
-	rdb := newQueueTestRedis(t)
-	// EnqueueMigration only touches o.redis (verified in source: it marshals
-	// the request and calls queue.Publish(ctx, o.redis, migrationStreamKey,
-	// data) - it never reads o.store/o.queue/o.gateway). No fake store or
-	// gateway is needed.
-	o := &MigrationOrchestrator{redis: rdb}
+	// EnqueueMigration reads the server now: the request carries the node it
+	// was decided against (see TestASecondRequestForTheSameServerIsRefused).
+	o, _, _, rdb := newFlow(t, "stopped")
 
-	if err := o.EnqueueMigration(context.Background(), 42, 7, "rebalance", "system"); err != nil {
+	if err := o.EnqueueMigration(context.Background(), 5, 2, "rebalance", "system"); err != nil {
 		t.Fatalf("EnqueueMigration: %v", err)
 	}
 
 	payload := readStreamPayload(t, rdb, migrationStreamKey)
-	if int(payload["serverID"].(float64)) != 42 {
-		t.Errorf("serverID = %v, want 42", payload["serverID"])
+	if int(payload["serverID"].(float64)) != 5 {
+		t.Errorf("serverID = %v, want 5", payload["serverID"])
 	}
-	if int(payload["targetNodeID"].(float64)) != 7 {
-		t.Errorf("targetNodeID = %v, want 7", payload["targetNodeID"])
+	if int(payload["targetNodeID"].(float64)) != 2 {
+		t.Errorf("targetNodeID = %v, want 2", payload["targetNodeID"])
 	}
 	if payload["reason"] != "rebalance" {
 		t.Errorf("reason = %v, want rebalance", payload["reason"])
