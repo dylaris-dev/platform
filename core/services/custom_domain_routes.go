@@ -96,6 +96,11 @@ func (r *customDomainRouteRemover) DeleteRoutesForDomain(ctx context.Context, us
 	if err != nil {
 		return err
 	}
+	// A Redis that could not be read is not "no routes": the caller then marks
+	// the claim done and nothing looks at those routes again.
+	if err := r.redis.SCard(ctx, "sys:index:routes").Err(); err != nil {
+		return fmt.Errorf("read routes: %w", err)
+	}
 	var firstErr error
 	for _, rt := range GetRoutesFromRedis(ctx, r.redis) {
 		if !RouteHeldBy(rt, userID, owned) {

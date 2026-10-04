@@ -26,10 +26,19 @@ export function describeClaim(
 ): { tone: string; title: string; body: string } {
   switch (d.state) {
     case 'verified':
+      // Re-checked daily: a domain that expired or changed hands must stop
+      // reaching this account, so the record has to stay where it is.
+      if (d.lapsesAt) {
+        return {
+          tone: 'text-(--warning)',
+          title: 'TXT record missing',
+          body: `We cannot find the TXT record below. Publish it before ${formatDate(d.lapsesAt)}, or the routes on this domain are removed.`,
+        };
+      }
       return {
         tone: 'text-(--success)',
         title: 'Verified',
-        body: 'You have proven you own this domain. You can add routes on it.',
+        body: 'You have proven you own this domain. Keep the TXT record below published: we check it daily, and a domain without it for 7 days loses its routes.',
       };
     case 'pending': {
       // Two records, two jobs: the TXT record below proves the domain is yours,
@@ -57,8 +66,8 @@ export function describeClaim(
     case 'blocked':
       return {
         tone: 'text-(--warning)',
-        title: 'Not set up in time',
-        body: 'The route was removed. Publish the TXT record below, check it, then add the route again.',
+        title: 'Ownership not proven',
+        body: 'The TXT record below was not found in time, so the route was removed. Publish it, check it, then add the route again.',
       };
     default:
       return {
@@ -67,6 +76,11 @@ export function describeClaim(
         body: 'Too many failed checks. Publish the TXT record below to prove you own this domain.',
       };
   }
+}
+
+function formatDate(iso: string): string {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? 'the deadline' : new Date(t).toLocaleString();
 }
 
 function timeLeft(deadlineAt?: string): string | null {
@@ -203,14 +217,17 @@ export function CustomDomainsPanel() {
         {domains.map((d) => {
           const info = describeClaim(d, cnameTargets, cnameLookupFailed);
           const left = d.state === 'pending' ? timeLeft(d.deadlineAt) : null;
+          // A healthy verified claim has nothing to check; the button would only
+          // be told "already verified".
+          const canCheck = d.state !== 'verified' || !!d.lapsesAt;
           return (
             <li key={d.domain} className="rounded-md border border-(--base-03) bg-(--base-02) p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs text-(--base-09)">{d.domain}</span>
                 <span className={`inline-flex items-center gap-1 text-xs ${info.tone}`}>
-                  {d.state === 'verified' ? <ShieldCheck size={13} /> : null}
+                  {d.state === 'verified' && !d.lapsesAt ? <ShieldCheck size={13} /> : null}
                   {d.state === 'pending' ? <Clock size={13} /> : null}
-                  {d.state === 'blocked' || d.state === 'permablocked' ? <AlertTriangle size={13} /> : null}
+                  {d.state === 'blocked' || d.state === 'permablocked' || d.lapsesAt ? <AlertTriangle size={13} /> : null}
                   {info.title}
                 </span>
                 {left ? <span className="text-xs text-(--base-06)">{left}</span> : null}
@@ -252,14 +269,16 @@ export function CustomDomainsPanel() {
                       </button>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => verify(d.domain)}
-                    disabled={busy === d.domain}
-                    className="btn btn-primary btn-sm"
-                  >
-                    {busy === d.domain ? 'Checking…' : "I've added it - check now"}
-                  </button>
+                  {canCheck ? (
+                    <button
+                      type="button"
+                      onClick={() => verify(d.domain)}
+                      disabled={busy === d.domain}
+                      className="btn btn-primary btn-sm"
+                    >
+                      {busy === d.domain ? 'Checking…' : "I've added it - check now"}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
 

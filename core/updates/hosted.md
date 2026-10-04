@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04
+
+### Features
+- Nothing.
+
+### Breaking
+- **Keep the TXT record on your own domains published.** We now check it daily, and a domain
+  without it for 7 days loses its routes. The panel shows the record and warns when it is missing.
+
+### Security
+- **A domain you buy can no longer stay routed to its previous holder on our gateway.** This was
+  a fix on our side.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03.9
 
 ### Features

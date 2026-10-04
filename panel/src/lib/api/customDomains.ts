@@ -13,7 +13,7 @@
 import { API_URL, getAuthHeader, handleResponse } from '@/lib/api/core';
 
 // pending   - inside the grant, waiting for the TXT record
-// verified  - proven, routes may be added freely
+// verified  - proven, routes may be added freely; re-checked daily
 // blocked   - one missed deadline; another attempt is allowed
 // permablocked - out of attempts; only checking the TXT record lifts it
 export type CustomDomainState = 'pending' | 'verified' | 'blocked' | 'permablocked';
@@ -23,9 +23,12 @@ export interface CustomDomain {
   state: CustomDomainState;
   attempts: number;
   deadlineAt?: string;
-  // The proof record, present until the domain is verified.
+  // The proof record. Shown after verification too: the domain is re-checked,
+  // so the record has to stay published.
   txtName?: string;
   txtValue?: string;
+  // Set while a verified domain's record is missing: when its routes go.
+  lapsesAt?: string;
 }
 
 // These three RAISE on a failed request, which handleResponse itself does not

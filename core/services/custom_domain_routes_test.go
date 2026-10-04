@@ -116,3 +116,14 @@ func TestTheRemoverLeavesOtherTenantsAlone(t *testing.T) {
 		})
 	}
 }
+
+// An unreadable Redis is an error, not an empty routing table.
+func TestTheRemoverFailsWhenRedisCannotBeRead(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	mr.Close()
+	err := NewCustomDomainRouteRemover(rdb, &recordingDeleter{}, ownerServers{}).DeleteRoutesForDomain(context.Background(), "u1", "play.victim.net")
+	if err == nil {
+		t.Fatal("an unreadable Redis reported success")
+	}
+}

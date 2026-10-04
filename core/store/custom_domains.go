@@ -30,16 +30,20 @@ type CustomDomainClaim struct {
 	TXTToken   string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	// CheckedAt is the last re-check of a verified claim; FailingSince the
+	// first miss in the current run of them, nil while the record is there.
+	CheckedAt    *time.Time
+	FailingSince *time.Time
 }
 
 // ErrNoClaim is returned when a (user, domain) pair has no row yet.
 var ErrNoClaim = errors.New("no custom domain claim")
 
-func scanClaim(row *sql.Row) (*CustomDomainClaim, error) {
+func scanClaim(row interface{ Scan(...interface{}) error }) (*CustomDomainClaim, error) {
 	var c CustomDomainClaim
-	var deadline sql.NullTime
+	var deadline, checked, failing sql.NullTime
 	err := row.Scan(&c.ID, &c.UserID, &c.Domain, &c.State, &c.Attempts, &deadline,
-		&c.TXTToken, &c.CreatedAt, &c.UpdatedAt)
+		&c.TXTToken, &c.CreatedAt, &c.UpdatedAt, &checked, &failing)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoClaim
 	}
@@ -49,10 +53,16 @@ func scanClaim(row *sql.Row) (*CustomDomainClaim, error) {
 	if deadline.Valid {
 		c.DeadlineAt = &deadline.Time
 	}
+	if checked.Valid {
+		c.CheckedAt = &checked.Time
+	}
+	if failing.Valid {
+		c.FailingSince = &failing.Time
+	}
 	return &c, nil
 }
 
-const claimCols = `id, user_id, domain, state, attempts, deadline_at, txt_token, created_at, updated_at`
+const claimCols = `id, user_id, domain, state, attempts, deadline_at, txt_token, created_at, updated_at, checked_at, failing_since`
 
 // GetCustomDomainClaim returns one user's claim on one domain.
 func (s *PostgresStore) GetCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error) {
@@ -84,12 +94,72 @@ func (s *PostgresStore) StartCustomDomainClaim(userID, domain string, deadline t
 // MarkCustomDomainVerified records a proven claim and clears the deadline. The
 // attempt counter is reset too: the domain is proven, so an older miss should
 // not count toward a future permanent block.
+//
+// The token is KEPT. It used to be cleared here, which left nothing to re-check
+// the claim against, so a domain proven once stayed proven for that account
+// after it expired or was sold. A successful re-check comes through here too
+// and ends a run of misses.
 func (s *PostgresStore) MarkCustomDomainVerified(id int) error {
 	_, err := s.db.Exec(
 		`UPDATE custom_domain_claims
-		    SET state = 'verified', deadline_at = NULL, attempts = 0, txt_token = '', updated_at = NOW()
+		    SET state = 'verified', deadline_at = NULL, attempts = 0,
+		        checked_at = NOW(), failing_since = NULL, updated_at = NOW()
 		  WHERE id = $1`, id)
 	return err
+}
+
+// ListClaimsDueRecheck returns verified claims whose last re-check is older
+// than every, or which are failing (those are looked at on every pass, so a
+// fixed record ends the run of misses quickly). Oldest first, at most limit.
+func (s *PostgresStore) ListClaimsDueRecheck(every time.Duration, limit int) ([]CustomDomainClaim, error) {
+	return s.queryClaims(
+		`SELECT `+claimCols+` FROM custom_domain_claims
+		  WHERE state = 'verified'
+		    AND (failing_since IS NOT NULL OR checked_at IS NULL
+		         OR checked_at <= NOW() - make_interval(secs => $1))
+		  ORDER BY (failing_since IS NULL), checked_at NULLS FIRST, id
+		  LIMIT $2`, every.Seconds(), limit)
+}
+
+// RecheckFailedCustomDomainClaim records a re-check that did not find the
+// record and returns when the current run of misses began - the first miss
+// starts it, later ones keep it. ErrNoClaim when the claim is no longer
+// verified.
+func (s *PostgresStore) RecheckFailedCustomDomainClaim(id int) (time.Time, error) {
+	var since time.Time
+	err := s.db.QueryRow(`
+		UPDATE custom_domain_claims
+		   SET failing_since = COALESCE(failing_since, NOW()), checked_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND state = 'verified'
+		 RETURNING failing_since`, id).Scan(&since)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, ErrNoClaim
+	}
+	return since, err
+}
+
+// LapseCustomDomainClaim takes the proof away from a verified claim whose
+// record has been missing for at least grace. It becomes blocked WITHOUT a
+// strike: a domain that expired or changed hands is not a failed attempt, and
+// the account may prove it again. Re-adding a route re-arms it like any other
+// blocked claim.
+//
+// Only while it is STILL verified and still failing that long: a "check now"
+// between the verifier's read and this write must win. ErrNoClaim then.
+func (s *PostgresStore) LapseCustomDomainClaim(id int, grace time.Duration) error {
+	res, err := s.db.Exec(`
+		UPDATE custom_domain_claims
+		   SET state = 'blocked', failing_since = NULL, updated_at = NOW()
+		 WHERE id = $1 AND state = 'verified'
+		   AND failing_since IS NOT NULL AND failing_since <= NOW() - make_interval(secs => $2)`,
+		id, grace.Seconds())
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoClaim
+	}
+	return nil
 }
 
 // FailCustomDomainClaim counts one missed deadline and returns the resulting
@@ -144,16 +214,11 @@ func (s *PostgresStore) queryClaims(q string, args ...interface{}) ([]CustomDoma
 	defer rows.Close()
 	out := []CustomDomainClaim{}
 	for rows.Next() {
-		var c CustomDomainClaim
-		var deadline sql.NullTime
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Domain, &c.State, &c.Attempts, &deadline,
-			&c.TXTToken, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		c, err := scanClaim(rows)
+		if err != nil {
 			return nil, err
 		}
-		if deadline.Valid {
-			c.DeadlineAt = &deadline.Time
-		}
-		out = append(out, c)
+		out = append(out, *c)
 	}
 	return out, rows.Err()
 }

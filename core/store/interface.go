@@ -424,6 +424,9 @@ type Store interface {
 	ListPendingClaims() ([]CustomDomainClaim, error)
 	ListCustomDomainClaimsByUser(userID string) ([]CustomDomainClaim, error)
 	SetCustomDomainTXTToken(id int, token string) error
+	ListClaimsDueRecheck(every time.Duration, limit int) ([]CustomDomainClaim, error)
+	RecheckFailedCustomDomainClaim(id int) (time.Time, error)
+	LapseCustomDomainClaim(id int, grace time.Duration) error
 
 	ListWarpPeersByRegion(region string) ([]WarpPeer, error)
 	SetWarpPeerAssignedLeader(pubkey, leaderID string) error

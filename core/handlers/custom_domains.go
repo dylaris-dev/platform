@@ -29,19 +29,27 @@ type customDomainView struct {
 	State      string     `json:"state"`
 	Attempts   int        `json:"attempts"`
 	DeadlineAt *time.Time `json:"deadlineAt,omitempty"`
-	// TXTName/TXTValue are the record that proves ownership, shown until it is
-	// proven - they are the instruction, not a secret to hide.
+	// TXTName/TXTValue are the record that proves ownership - they are the
+	// instruction, not a secret to hide. Shown for a verified claim too: it is
+	// re-checked, so the record has to stay published.
 	TXTName  string `json:"txtName,omitempty"`
 	TXTValue string `json:"txtValue,omitempty"`
+	// LapsesAt is set while a verified claim's record is missing: when its
+	// routes are removed unless the record comes back.
+	LapsesAt *time.Time `json:"lapsesAt,omitempty"`
 }
 
 func viewOf(c store.CustomDomainClaim) customDomainView {
 	v := customDomainView{
 		Domain: c.Domain, State: c.State, Attempts: c.Attempts, DeadlineAt: c.DeadlineAt,
 	}
-	if c.State != store.ClaimVerified && c.TXTToken != "" {
+	if c.TXTToken != "" {
 		v.TXTName = services.TXTVerifyPrefix + c.Domain
 		v.TXTValue = c.TXTToken
+	}
+	if c.State == store.ClaimVerified && c.FailingSince != nil {
+		at := c.FailingSince.Add(services.CustomDomainLapseGrace)
+		v.LapsesAt = &at
 	}
 	return v
 }
@@ -103,7 +111,8 @@ func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Reque
 // VerifyTXT POST /api/gateway/custom-domains/{domain}/verify-txt
 //
 // Checks the published record now instead of at the next pass, and on success
-// verifies the claim - from pending, or out of a block.
+// verifies the claim - from pending, out of a block, or out of a run of missed
+// re-checks.
 func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
@@ -113,7 +122,7 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
 	}
-	if claim.State == store.ClaimVerified {
+	if claim.State == store.ClaimVerified && claim.FailingSince == nil {
 		sendJSONError(w, "That domain is already verified", http.StatusBadRequest)
 		return
 	}
@@ -136,6 +145,6 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"message": "Ownership verified. You can add routes on " + domain + " again.",
+		"message": "Ownership verified. You can add routes on " + domain + ".",
 	})
 }

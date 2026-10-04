@@ -50,6 +50,16 @@ describe('what a pending claim tells the customer to add', () => {
         expect(failed).toMatch(/could not load/i);
     });
 
+    // A verified domain is re-checked daily. The customer has to know the
+    // record must stay, and when one went missing, by when to restore it.
+    it('tells a verified customer to keep the record, and warns when it is gone', () => {
+        const healthy = describeClaim({ ...pending, state: 'verified' }, []);
+        expect(healthy.body).toContain('Keep the TXT record');
+        const failing = describeClaim({ ...pending, state: 'verified', lapsesAt: '2026-10-11T12:00:00Z' }, []);
+        expect(failing.title).not.toBe('Verified');
+        expect(failing.body).toContain('routes on this domain are removed');
+    });
+
     it('leaves the other states alone', () => {
         expect(describeClaim({ ...pending, state: 'verified' }, [], true).title).toBe('Verified');
         expect(describeClaim({ ...pending, state: 'permablocked' }, [], true).body).toContain('TXT');

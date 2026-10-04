@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04
+
+### Features
+- Nothing.
+
+### Breaking
+- **Verified custom domains are re-checked daily and must keep their TXT record.** Without it for
+  7 days their routes are removed; domains verified before this release get a record to publish. `core` `panel`
+
+### Security
+- **A tenant kept routing a custom domain after it expired or was sold,** and its new owner could
+  not route it. The proof is now re-checked instead of kept forever. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.03.9
 
 ### Features

@@ -27,7 +27,7 @@ func createCustomDomainTables(db *sql.DB) error {
 			attempts INTEGER NOT NULL DEFAULT 0,
 			-- When a pending claim stops being given the benefit of the doubt.
 			deadline_at TIMESTAMPTZ,
-			-- Self-service unblock token, issued only after a permanent block.
+			-- The proof token. Kept after verification: the re-check needs it.
 			txt_token TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -36,6 +36,12 @@ func createCustomDomainTables(db *sql.DB) error {
 		// The poller scans pending claims by deadline every 30 minutes.
 		`CREATE INDEX IF NOT EXISTS idx_custom_domain_claims_pending
 			ON custom_domain_claims (state, deadline_at)`,
+		// A verified domain is re-checked: domains expire and change hands, and
+		// a proof from years ago kept the new owner's name routed to the old
+		// tenant. checked_at is the last re-check, failing_since the first one
+		// in the current run of misses (NULL while the record is there).
+		`ALTER TABLE custom_domain_claims ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ`,
+		`ALTER TABLE custom_domain_claims ADD COLUMN IF NOT EXISTS failing_since TIMESTAMPTZ`,
 	}
 	for _, q := range tables {
 		if _, err := db.Exec(q); err != nil {

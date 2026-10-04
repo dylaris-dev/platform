@@ -21,6 +21,8 @@ type verifierFakeStore struct {
 	current *store.CustomDomainClaim
 	tokens  []string
 	rearmed []string
+	// linksOff is the billing cutoff having switched the tenant's links off.
+	linksOff bool
 }
 
 func (f *verifierFakeStore) GetCustomDomainClaim(userID, domain string) (*store.CustomDomainClaim, error) {
@@ -46,6 +48,14 @@ func (f *verifierFakeStore) StartCustomDomainClaim(_, domain string, _ time.Time
 
 func (f *verifierFakeStore) ListPendingClaims() ([]store.CustomDomainClaim, error) {
 	return f.pending, nil
+}
+
+// No verified claims to re-check unless a test says so (recheckFakeStore).
+func (f *verifierFakeStore) ListClaimsDueRecheck(time.Duration, int) ([]store.CustomDomainClaim, error) {
+	return nil, nil
+}
+func (f *verifierFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	return &store.UserBilling{UserID: userID, Status: "active", NodeLinksOff: f.linksOff}, nil
 }
 func (f *verifierFakeStore) MarkCustomDomainVerified(id int) error {
 	f.verified = append(f.verified, id)
