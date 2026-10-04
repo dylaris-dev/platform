@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Plugins that load native libraries work again** (SQLite for WorldGuard or CoreProtect, Netty
+  epoll). The scratch folders were mounted noexec; applies when a container is recreated. `node`
+
 ## 2026.10.04.11
 
 ### Features

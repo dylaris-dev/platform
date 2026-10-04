@@ -1639,10 +1639,16 @@ const tenantTmpfsSize = "512m"
 // The writable scratch paths are memory-backed and bounded. They were part of
 // the container's writable layer on the host disk, outside the server's disk
 // limit, and /tmp could fill the node.
+//
+// "exec" is explicit because Docker mounts a tmpfs noexec unless told
+// otherwise, and Java extracts its native libraries to /tmp and ~/.cache:
+// SQLite (WorldGuard, CoreProtect), Netty's epoll, JNA, jline all failed with
+// "Operation not permitted" on every server created since this hardening.
+// noexec bought nothing: /data is the tenant's, writable and executable.
 func hardenTenantContainer(hc *container.HostConfig) {
 	hc.SecurityOpt = append(hc.SecurityOpt, "no-new-privileges:true")
 	hc.CapDrop = []string{"ALL"}
-	opts := "rw,nosuid,nodev,size=" + tenantTmpfsSize
+	opts := "rw,exec,nosuid,nodev,size=" + tenantTmpfsSize
 	home := opts + ",uid=" + strconv.Itoa(mcUser()) + ",gid=" + strconv.Itoa(mcUser()) + ",mode=0700"
 	hc.Tmpfs = map[string]string{
 		"/tmp":          opts + ",mode=1777",

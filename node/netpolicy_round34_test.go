@@ -58,6 +58,11 @@ func TestATenantContainerHoldsNoPrivilegeAndBoundedScratch(t *testing.T) {
 		if !strings.Contains(hc.Tmpfs[p], "size=") {
 			t.Errorf("%s is not a bounded tmpfs: %q", p, hc.Tmpfs[p])
 		}
+		// Docker's tmpfs default is noexec; Java's native libraries load
+		// from here (SQLite, Netty epoll, JNA) and failed on every server.
+		if opts := "," + hc.Tmpfs[p] + ","; !strings.Contains(opts, ",exec,") || strings.Contains(opts, ",noexec,") {
+			t.Errorf("%s does not allow native libraries to load: %q", p, hc.Tmpfs[p])
+		}
 	}
 }
 
