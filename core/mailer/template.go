@@ -63,8 +63,10 @@ type Brand struct {
 }
 
 const (
-	KeyVerifyEmail   = "auth.verify_email"
-	KeyPasswordReset = "auth.password_reset"
+	KeyVerifyEmail     = "auth.verify_email"
+	KeyPasswordReset   = "auth.password_reset"
+	KeyEmailChanged    = "auth.email_changed"
+	KeyPasswordChanged = "auth.password_changed"
 )
 
 var definitions = []Definition{
@@ -106,6 +108,39 @@ We received a request to reset your {{site_name}} password. Choose a new one her
 [Choose a new password]({{reset_link}})
 
 This link is valid for {{ttl_minutes}} minutes and works exactly once. If you did not ask for a reset, you can ignore this email - your password stays as it is.`,
+	},
+	{
+		Key:         KeyEmailChanged,
+		Name:        "Your email address was changed",
+		Description: "Sent to the PREVIOUS address when an account's address changes, by its owner or by an operator. Password resets go to the new address from then on.",
+		Purpose:     "auth",
+		Variables: []Variable{
+			{Name: "username", Description: "The account's name", Example: "alex"},
+			{Name: "new_email", Description: "The address the account uses now", Example: "alex@example.org"},
+			{Name: "site_name", Description: "The platform's name", Example: "DYLARIS"},
+		},
+		Subject: "Your {{site_name}} email address was changed",
+		Body: `Hi {{username}},
+
+The email address on your {{site_name}} account was just changed to {{new_email}}. Password resets go there from now on.
+
+If you made this change, there is nothing to do. If you did not, contact {{site_name}} support right away: somebody may be using your account.`,
+	},
+	{
+		Key:         KeyPasswordChanged,
+		Name:        "Your password was changed",
+		Description: "Sent when an account's password is changed from its profile or set by an operator.",
+		Purpose:     "auth",
+		Variables: []Variable{
+			{Name: "username", Description: "The account's name", Example: "alex"},
+			{Name: "site_name", Description: "The platform's name", Example: "DYLARIS"},
+		},
+		Subject: "Your {{site_name}} password was changed",
+		Body: `Hi {{username}},
+
+The password of your {{site_name}} account was just changed, and every other session of the account was signed out.
+
+If you made this change, there is nothing to do. If you did not, reset your password from the sign-in page and contact {{site_name}} support.`,
 	},
 }
 

@@ -279,6 +279,9 @@ type UpdateRequest struct {
 	NewPassword       *string `json:"newPassword,omitempty"`
 	MinecraftUsername *string `json:"minecraftUsername,omitempty"`
 	Email             *string `json:"email,omitempty"`
+	// TOTPCode is required, when the account has 2FA, to change the email or
+	// the password: both decide who can get back in.
+	TOTPCode string `json:"totpCode,omitempty"`
 	// Note: 2FA is NOT toggled via this endpoint — use /auth/2fa/setup + /auth/2fa/verify
 	// (or /auth/2fa/disable) so the user must prove possession of the secret.
 }
@@ -690,22 +693,15 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Before the code is checked, so a right code past the limit is not
-		// spent by the replay claim.
-		if !reserveCodeAttempt(r.Context(), h.state, user.ID) {
-			sendJSONError(w, "Too many wrong codes. Try again in 15 minutes.", http.StatusTooManyRequests)
-			return
-		}
 		ok, err := h.verifyTOTPOrBackup(user, req.TOTPCode)
 		if err != nil {
-			sendJSONError(w, "2FA verification failed", http.StatusInternalServerError)
+			codeCheckFailed(w, err)
 			return
 		}
 		if !ok {
 			sendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 			return
 		}
-		clearCodeAttempts(r.Context(), h.state, user.ID)
 	}
 
 	// The same window IssueToken uses; the cookie's Max-Age is set from it too.
@@ -818,7 +814,9 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
-		sendJSONError(w, "Invalid current password", 401)
+		// 403, not 401: the panel reads a 401 as an expired session and signs
+		// the user out instead of showing this.
+		sendJSONError(w, "Invalid current password", http.StatusForbidden)
 		return
 	}
 
@@ -867,11 +865,19 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Username change: route through RenameUser with policy + cooldown + uniqueness guards.
-	// RenameUser writes user_username_history and bumps last_username_change in one tx, so
-	// we MUST NOT also write the username column in the generic UpdateUser call below.
-	if req.NewUsername != nil && strings.TrimSpace(*req.NewUsername) != user.Username {
-		newName := strings.TrimSpace(*req.NewUsername)
+	// The address and the password decide who can get back into the account:
+	// a reset goes to the one, and the other is what ends every other
+	// session. With 2FA on they asked for the password alone, so a taken
+	// session plus a phished password locked the owner out of an account
+	// protected by a second factor. Asked here, before anything is written.
+	// Everything that can refuse the save without writing is decided here,
+	// BEFORE the second-factor check below: a check that failed after it had
+	// already spent the code (a backup code is gone, a TOTP step is claimed)
+	// and, for the rename, had already committed half the save.
+	renaming := req.NewUsername != nil && strings.TrimSpace(*req.NewUsername) != user.Username
+	newName := ""
+	if renaming {
+		newName = strings.TrimSpace(*req.NewUsername)
 		if newName == "" {
 			sendJSONError(w, "Username cannot be empty", http.StatusBadRequest)
 			return
@@ -902,6 +908,49 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			sendJSONError(w, "Username already taken", http.StatusConflict)
 			return
 		}
+	}
+	if req.NewPassword != nil && *req.NewPassword != "" {
+		// Enforce the same length policy the register + reset paths apply; this
+		// self-service field previously accepted any non-empty password.
+		if min := LoadAuthPolicy(h.state).PasswordMinLength; len(*req.NewPassword) < min {
+			sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.MinecraftUsername != nil {
+		if mc := strings.TrimSpace(*req.MinecraftUsername); mc != "" && !validate.IsMinecraftUsername(mc) {
+			sendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Same per-account limit as the login's code step (inside the check).
+	passwordRequested := req.NewPassword != nil && *req.NewPassword != ""
+	if user.Is2FAEnabled && (emailChanged || passwordRequested) {
+		if strings.TrimSpace(req.TOTPCode) == "" {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false, "requires2FA": true,
+				"message": "Enter a code from your authenticator to change your email or password",
+			})
+			return
+		}
+		ok, verr := h.verifyTOTPOrBackup(user, req.TOTPCode)
+		if verr != nil {
+			codeCheckFailed(w, verr)
+			return
+		}
+		if !ok {
+			sendJSONError(w, "Invalid 2FA code", http.StatusForbidden)
+			return
+		}
+	}
+	oldEmail := user.Email
+
+	// Username change: route through RenameUser with policy + cooldown + uniqueness guards.
+	// RenameUser writes user_username_history and bumps last_username_change in one tx, so
+	// we MUST NOT also write the username column in the generic UpdateUser call below.
+	if renaming {
 		if err := h.state.Store.RenameUser(user.ID, newName, user.ID); err != nil {
 			// The pre-check above is best-effort UX; the username UNIQUE
 			// constraint is the real guard against a concurrent rename race.
@@ -919,12 +968,6 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	// Update Fields in Struct (non-username fields)
 	passwordChanged := false
 	if req.NewPassword != nil && *req.NewPassword != "" {
-		// Enforce the same length policy the register + reset paths apply; this
-		// self-service field previously accepted any non-empty password.
-		if min := LoadAuthPolicy(h.state).PasswordMinLength; len(*req.NewPassword) < min {
-			sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
-			return
-		}
 		hashed, herr := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), bcrypt.DefaultCost)
 		if herr != nil {
 			sendJSONError(w, "Update failed", 500)
@@ -937,12 +980,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		user.Email = newEmail
 	}
 	if req.MinecraftUsername != nil {
-		mc := strings.TrimSpace(*req.MinecraftUsername)
-		if mc != "" && !validate.IsMinecraftUsername(mc) {
-			sendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
-			return
-		}
-		user.MinecraftUsername = mc
+		user.MinecraftUsername = strings.TrimSpace(*req.MinecraftUsername)
 	}
 
 	// Each field the form owns gets its own write; the username went through
@@ -974,7 +1012,14 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, user.ID, user.ID, nil)
+		notifyAddressChanged(h.state, oldEmail, newEmail, user.Username)
 		emailVerifySent = sendChangedEmailVerification(h.state, user.ID, newEmail, user.Username, "profile-email-change")
+	}
+	if passwordChanged {
+		// To the address the account had BEFORE this save: when one save
+		// changes both, the new address is the one that cannot be trusted
+		// to tell the owner anything.
+		notifyPasswordChanged(h.state, oldEmail, user.Username)
 	}
 
 	// A password change invalidates every session issued against the old one -

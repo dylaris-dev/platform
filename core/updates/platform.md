@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.4
+
+### Features
+- **Account owners are told about address and password changes.** The previous address gets a mail
+  when the address changes, from the profile or by an operator; editable under mail templates. `core`
+
+### Breaking
+- **Changing your email or password needs a 2FA code when 2FA is on.** It asked for the password
+  alone, so a taken session plus a phished password could lock the owner out. `core` `panel`
+
+### Security
+- **The per-account limit on wrong 2FA codes now covers every code check,** including turning 2FA
+  off and re-authenticating, not only the login. `core`
+
+### Fixes
+- **A wrong password or code in the profile or 2FA settings no longer signs you out.** It shows
+  the error instead. `core` `panel`
+
 ## 2026.10.04.3
 
 ### Features

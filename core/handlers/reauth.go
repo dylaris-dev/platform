@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"golang.org/x/crypto/bcrypt"
@@ -70,6 +71,9 @@ func requireReauth(state *AppState, userID, password, code string) *reauthError 
 	// two writes asks once, and the replay this protects against is the one at
 	// the login endpoint, which nobody reaches with a session they already have.
 	ok, verr := verifyTOTPOrBackupWith(state, user, code, false)
+	if errors.Is(verr, errTooManyCodes) {
+		return &reauthError{http.StatusTooManyRequests, "Too many wrong codes. Try again in 15 minutes."}
+	}
 	if verr != nil {
 		return &reauthError{http.StatusInternalServerError, "Verification failed"}
 	}

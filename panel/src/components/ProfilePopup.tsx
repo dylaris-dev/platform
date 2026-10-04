@@ -28,6 +28,7 @@ interface ProfilePopupProps {
       newPassword?: string;
       minecraftUsername?: string;
       email?: string;
+      totpCode?: string;
   }) => Promise<void>;
   onTwoFactorChange?: () => void;
   error: string;
@@ -44,6 +45,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState("");
@@ -69,6 +71,11 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
     });
   }, [twoFactorEnabled, currentView]);
 
+  // With 2FA on, Core asks for a code to change the email or the password:
+  // those two decide who can get back into the account.
+  const needsCode = twoFactorEnabled &&
+    (!!newPassword || email.trim().toLowerCase() !== (currentUser.email || '').trim().toLowerCase());
+
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       setLocalError("");
@@ -89,7 +96,9 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
           newPassword,
           minecraftUsername,
           email,
+          totpCode: needsCode ? totpCode.replace(/\s/g, '') : undefined,
       });
+      setTotpCode("");
       setLoading(false);
   };
 
@@ -237,6 +246,12 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                     <label className="input-label">Current Password <span className="opacity-70">(required to save profile changes)</span></label>
                     <input type="password" autoComplete="current-password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
                   </div>
+                  {needsCode && (
+                    <div className="flex flex-col gap-[5px] mt-3">
+                      <label className="input-label">Authenticator code <span className="opacity-70">(required to change your email or password)</span></label>
+                      <input type="text" inputMode="numeric" autoComplete="one-time-code" value={totpCode} onChange={e => setTotpCode(e.target.value)} required disabled={loading} className="input-field w-full font-mono disabled:opacity-40 disabled:cursor-not-allowed" placeholder="123456 or a backup code" />
+                    </div>
+                  )}
                 </div>
 
                 <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full mt-4">

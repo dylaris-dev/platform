@@ -365,8 +365,10 @@ func TestVerifyTOTPRequiresPassword(t *testing.T) {
 		h.state.Store = fs
 		body := VerifyTOTPRequest{Secret: secret, Code: validCode(t)}
 		rr := postJSONAs(t, h.VerifyTOTPHandler, "alice", body)
-		if rr.Code != 401 {
-			t.Errorf("status = %d, want 401", rr.Code)
+		// 403: the session is valid, the credential is not; a 401 signs the
+		// panel out.
+		if rr.Code != 403 {
+			t.Errorf("status = %d, want 403", rr.Code)
 		}
 		if fs.setCalls != 0 {
 			t.Error("2FA was enabled without the account password")
@@ -379,8 +381,8 @@ func TestVerifyTOTPRequiresPassword(t *testing.T) {
 		h.state.Store = fs
 		body := VerifyTOTPRequest{Secret: secret, Code: validCode(t), Password: "wrong"}
 		rr := postJSONAs(t, h.VerifyTOTPHandler, "alice", body)
-		if rr.Code != 401 || fs.setCalls != 0 {
-			t.Errorf("status = %d, setCalls = %d; want 401 and no write", rr.Code, fs.setCalls)
+		if rr.Code != 403 || fs.setCalls != 0 {
+			t.Errorf("status = %d, setCalls = %d; want 403 and no write", rr.Code, fs.setCalls)
 		}
 	})
 

@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
+	"dylaris-core/mailer"
 	"dylaris-core/services"
 )
 
@@ -98,6 +100,8 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read before the write: the notice goes to the address being replaced.
+	oldEmail := target.Email
 	if err := h.state.Store.SetUserEmail(id, email); err != nil {
 		sendJSONError(w, "Failed to update the email address", http.StatusInternalServerError)
 		return
@@ -109,6 +113,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// already names WHO was changed and by WHOM, which is what an investigation
 	// needs.
 	LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, actorID, id, nil)
+	notifyAddressChanged(h.state, oldEmail, email, target.Username)
 
 	// Send the verification the account now needs. Only when the policy
 	// requires one: without it the account is usable immediately and an
@@ -120,6 +125,49 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 		"email":           email,
 		"emailVerifySent": verifySent,
 	})
+}
+
+// sendAccountMail is services.SendMail; a variable so a test can see what the
+// notices send without an SMTP server.
+var sendAccountMail = services.SendMail
+
+// notifyAddressChanged tells the PREVIOUS address that the account's address
+// changed. It used to hear nothing: whoever changed it - an attacker holding
+// the session and the password, or a compromised operator account - also
+// redirected every future password reset, and the owner found out when they
+// could no longer get in. Sent in the background, like every account mail, so
+// the answer does not wait on SMTP; a failure is logged, the change stands.
+func notifyAddressChanged(state *AppState, oldEmail, newEmail, username string) {
+	if strings.TrimSpace(oldEmail) == "" {
+		return
+	}
+	// Read here, not in the goroutine: a test swapping it must not race a
+	// notice still in flight.
+	send := sendAccountMail
+	go func() {
+		if err := send(state.Store, mailer.KeyEmailChanged, oldEmail, state.FrontendURL, map[string]string{
+			"username": username, "new_email": newEmail,
+		}); err != nil {
+			log.Printf("account mail: address-change notice for %s not sent: %v", username, err)
+		}
+	}()
+}
+
+// notifyPasswordChanged tells the account's address that its password changed.
+func notifyPasswordChanged(state *AppState, email, username string) {
+	if strings.TrimSpace(email) == "" {
+		return
+	}
+	// Read here, not in the goroutine: a test swapping it must not race a
+	// notice still in flight.
+	send := sendAccountMail
+	go func() {
+		if err := send(state.Store, mailer.KeyPasswordChanged, email, state.FrontendURL, map[string]string{
+			"username": username,
+		}); err != nil {
+			log.Printf("account mail: password-change notice for %s not sent: %v", username, err)
+		}
+	}()
 }
 
 // sendChangedEmailVerification sends the verification an account needs after its

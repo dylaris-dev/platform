@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.4
+
+### Features
+- **You get a mail when your account's address or password changes.** It goes to your previous
+  address, so you hear about a change you did not make.
+
+### Breaking
+- **With two-factor authentication on, changing your email or password asks for a code.**
+
+### Security
+- Nothing.
+
+### Fixes
+- **A wrong password or code in your profile settings no longer signs you out.** You see the error.
+
 ## 2026.10.04.3
 
 ### Features

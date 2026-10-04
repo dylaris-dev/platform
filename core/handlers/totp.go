@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -93,6 +94,19 @@ const (
 )
 
 func wrongCodeKey(userID string) string { return "auth:2fa_wrong:" + userID }
+
+// errTooManyCodes is verifyTOTPOrBackupWith refusing to check a code because
+// the account is over the limit. Callers answer it with codeCheckFailed.
+var errTooManyCodes = errors.New("too many wrong codes")
+
+// codeCheckFailed answers a code check that could not be made.
+func codeCheckFailed(w http.ResponseWriter, err error) {
+	if errors.Is(err, errTooManyCodes) {
+		sendJSONError(w, "Too many wrong codes. Try again in 15 minutes.", http.StatusTooManyRequests)
+		return
+	}
+	sendJSONError(w, "Verification failed", http.StatusInternalServerError)
+}
 
 // reserveCodeAttempt counts an attempt BEFORE the code is checked and reports
 // whether it is within the limit. Reserving first is what makes it a limit:
@@ -242,7 +256,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	// forced-enrolment flow behind a prompt the user just answered.
 	if TokenPurpose(r) != "2fa_setup" {
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-			sendJSONError(w, "Invalid password", http.StatusUnauthorized)
+			sendJSONError(w, "Invalid password", http.StatusForbidden)
 			return
 		}
 	}
@@ -254,7 +268,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		// operator's log gets the detail, and it never contains the secret or the
 		// code.
 		log.Printf("2fa setup: rejected code for user %s: %s", user.Username, diagnoseRejectedTOTP(req.Secret, req.Code, time.Now()))
-		sendJSONError(w, "Invalid code", http.StatusUnauthorized)
+		sendJSONError(w, "Invalid code", http.StatusForbidden)
 		return
 	}
 
@@ -327,16 +341,16 @@ func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		sendJSONError(w, "Invalid password", http.StatusUnauthorized)
+		sendJSONError(w, "Invalid password", http.StatusForbidden)
 		return
 	}
 	ok, err := h.verifyTOTPOrBackup(user, req.Code)
 	if err != nil {
-		sendJSONError(w, "Verification failed", http.StatusInternalServerError)
+		codeCheckFailed(w, err)
 		return
 	}
 	if !ok {
-		sendJSONError(w, "Invalid code", http.StatusUnauthorized)
+		sendJSONError(w, "Invalid code", http.StatusForbidden)
 		return
 	}
 
@@ -433,16 +447,16 @@ func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		sendJSONError(w, "Invalid password", http.StatusUnauthorized)
+		sendJSONError(w, "Invalid password", http.StatusForbidden)
 		return
 	}
 	ok, err := h.verifyTOTPOrBackup(user, req.Code)
 	if err != nil {
-		sendJSONError(w, "Verification failed", http.StatusInternalServerError)
+		codeCheckFailed(w, err)
 		return
 	}
 	if !ok {
-		sendJSONError(w, "Invalid code", http.StatusUnauthorized)
+		sendJSONError(w, "Invalid code", http.StatusForbidden)
 		return
 	}
 
@@ -542,11 +556,24 @@ func verifyTOTPOrBackupFor(state *AppState, user *models.User, code string) (boo
 // is that one prompt can cover the two writes a single save makes: the panel's
 // "role and permissions" button calls two endpoints, and the second would
 // otherwise be refused as a replay of the code the operator had just typed.
-func verifyTOTPOrBackupWith(state *AppState, user *models.User, code string, claimStep bool) (bool, error) {
+func verifyTOTPOrBackupWith(state *AppState, user *models.User, code string, claimStep bool) (ok bool, err error) {
 	code = strings.TrimSpace(code)
 	if code == "" || user == nil {
 		return false, nil
 	}
+	// Every code check counts against the account, here where they all pass:
+	// limiting only the login left 2FA disable, backup-code regeneration and
+	// re-authentication open to unlimited guessing from many addresses - and
+	// turning 2FA off is the step before changing the address without a code.
+	// Reserved BEFORE the check, so a right code past the limit is not spent.
+	if !reserveCodeAttempt(context.Background(), state, user.ID) {
+		return false, errTooManyCodes
+	}
+	defer func() {
+		if ok {
+			clearCodeAttempts(context.Background(), state, user.ID)
+		}
+	}()
 
 	// 1) TOTP — fast path for the regular case, and single-use like the backup
 	// codes below.

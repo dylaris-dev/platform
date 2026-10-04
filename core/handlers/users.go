@@ -436,6 +436,9 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	sshRevoked := revokeAllSSHKeys(h.state, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
+	// The owner hears about it: an operator account setting passwords is also
+	// what a compromised operator account looks like.
+	notifyPasswordChanged(h.state, target.Email, target.Username)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Password updated"})
 }
