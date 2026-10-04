@@ -382,12 +382,28 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // SaveFileHandler handles requests to save file content
+// saveBodyLimit bounds the editor's save request. JSON escaping can make a
+// text file's body several times its size, hence the multiple of the open cap.
+const saveBodyLimit = 4 * maxOpenFileBytes
+
 func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 	// Bound the request body: the whole file content arrives inline as JSON, so
 	// without this an authenticated user could POST an arbitrarily large body and
 	// have it decoded into RAM. Reuse the per-user upload ceiling (the same one
 	// UploadFileHandler applies via MaxBytesReader).
-	if !capBodyLimit(w, r, h.getTransferLimit(r, "upload")) {
+	//
+	// And never above saveBodyLimit. This is the editor's save: the file was
+	// opened as text, capped at maxOpenFileBytes, and the whole body is decoded
+	// into one string and copied again before it is sent - at the upload limit
+	// (500 MB by default) that was over a gigabyte of Core's memory per
+	// request, with nothing bounding how many ran at once. Bigger files go
+	// through the upload, which streams.
+	limit := h.getTransferLimit(r, "upload")
+	if limit == nil || *limit > saveBodyLimit {
+		capped := int64(saveBodyLimit)
+		limit = &capped
+	}
+	if !capBodyLimit(w, r, limit) {
 		return
 	}
 

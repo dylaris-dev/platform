@@ -1866,7 +1866,6 @@
       "path": "/api/files/save",
       "auth": "session",
       "authorization": "checked in handler",
-      "description": "handles requests to save file content",
       "handler": "FileHandler.SaveFileHandler",
       "group": "files",
       "external": false

@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **Saving a file in the editor is capped at 40 MB.** It followed the upload limit, 500 MB by
+  default; bigger files go through the upload. `core`
+
+### Security
+- **A file disabled in the library could still be downloaded or listed** by writing its path
+  another way, such as ./folder/file. Those spellings are refused now. `core`
+- **A supporter could add or delete attachments on tickets of another team.** The ticket's own
+  visibility decides now. `core`
+- **Editor saves and modpack exports could exhaust Core's memory** when sent in parallel. Both are
+  bounded now. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.04.5
 
 ### Features

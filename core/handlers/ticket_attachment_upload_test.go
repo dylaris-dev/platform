@@ -707,3 +707,46 @@ func TestAttachmentUploadBody(t *testing.T) {
 		}
 	})
 }
+
+// supportFakeStore answers the caller as a supporter of team "b".
+type supportFakeStore struct{ *attachmentUploadFakeStore }
+
+func (f supportFakeStore) GetUserByID(id string) (*models.User, error) {
+	return &models.User{ID: id, Role: "support", SupportTeam: "b"}, nil
+}
+func (f supportFakeStore) DeleteTicketAttachment(int) error { return nil }
+
+// Upload and delete leaned on support / tickets.write alone: a supporter on
+// another team, who cannot open the ticket, could still add files to it and
+// delete its attachments by walking the sequential ids. The ticket's own
+// visibility decides now; the supporter whose team it is keeps both.
+func TestASupporterOnAnotherTeamCannotTouchTheTicketsAttachments(t *testing.T) {
+	for _, tc := range []struct {
+		team string
+		want bool
+	}{
+		{"a", false},
+		{"b", true},
+	} {
+		h, fs, _ := newAttachmentUploadHandler(t, map[string]string{"tickets.cross_team_visibility": "false"}, nil)
+		fs.ticket.AssignedTeam = tc.team
+		fs.attachments = []*models.TicketAttachment{{ID: 7, TicketID: 1, StorageKey: "tickets/1/x-a.txt"}}
+		h.state.Store = supportFakeStore{fs}
+
+		as := func(r *http.Request) *http.Request {
+			return r.WithContext(context.WithValue(r.Context(), "userID", "supporter"))
+		}
+		del := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/tickets/1/attachments/7", nil), map[string]string{"id": "1", "aid": "7"})
+		rec := httptest.NewRecorder()
+		h.DeleteAttachment(rec, as(del))
+		if got := rec.Code == http.StatusOK; got != tc.want {
+			t.Fatalf("team %q delete: status %d, want allowed=%v", tc.team, rec.Code, tc.want)
+		}
+
+		rec = httptest.NewRecorder()
+		h.UploadAttachment(rec, as(newAttachmentUploadRequest(t, "notes.txt", "text/plain", []byte("hello\n"))))
+		if got := rec.Code == http.StatusOK; got != tc.want {
+			t.Fatalf("team %q upload: status %d, want allowed=%v: %s", tc.team, rec.Code, tc.want, rec.Body)
+		}
+	}
+}

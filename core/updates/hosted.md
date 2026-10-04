@@ -11,6 +11,20 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **Saving a file in the panel's editor is limited to 40 MB.** Upload bigger files instead.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.04.5
 
 ### Features

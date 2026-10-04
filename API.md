@@ -136,7 +136,7 @@ can still show what exists.
 - **515 routes** in 51 sections: 228 GET, 159 POST, 38 PUT, 36 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
 - **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **110** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **24** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -427,7 +427,7 @@ can still show what exists.
 | GET | `/api/files/download` | session | _in-handler_ | - | `FileHandler.DownloadFileHandler` | handles file and folder downloads via gRPC streaming |
 | GET | `/api/files/download/selective` | session | _in-handler_ | - | `FileHandler.SelectiveDownloadHandler` | handles selective folder downloads. |
 | POST | `/api/files/rename` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.RenameFileHandler` | handles renaming files and directories |
-| POST | `/api/files/save` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.SaveFileHandler` | handles requests to save file content |
+| POST | `/api/files/save` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.SaveFileHandler` | - |
 | POST | `/api/files/upload` | session | _in-handler_ | AuditResolvedWrite | `FileHandler.UploadFileHandler` | handles uploads — receives files via HTTP multipart, then streams them to the Node via gRPC chunks. |
 
 ## /api/gateway

@@ -30,3 +30,24 @@ func TestSaveFileHandler_RejectsOversizedBody(t *testing.T) {
 		t.Fatalf("status = %d, want 413 (%s)", rw.Code, rw.Body.String())
 	}
 }
+
+// The editor's save is capped at saveBodyLimit whatever the upload limit says:
+// it decodes the whole body into one string and copies it again, so at the
+// default upload limit (500 MB) one request held over a gigabyte of Core's
+// memory, and nothing bounded how many ran at once.
+func TestSaveFileHandler_IsCappedBelowTheUploadLimit(t *testing.T) {
+	for _, upload := range []string{"unlimited", "1073741824"} {
+		fs := newCoreStorageHTTPFakeStore()
+		fs.kv["fm.user_upload_limit"] = upload
+		h := &FileHandler{state: &AppState{Store: fs}}
+
+		req := httptest.NewRequest(http.MethodPost, "/api/files/save", strings.NewReader("{}"))
+		req.ContentLength = saveBodyLimit + 1
+		req = req.WithContext(context.WithValue(req.Context(), "isAdmin", false))
+		rw := httptest.NewRecorder()
+		h.SaveFileHandler(rw, req)
+		if rw.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("upload limit %s: status %d, want 413", upload, rw.Code)
+		}
+	}
+}

@@ -166,28 +166,33 @@ func (h *PacksHandler) overrideEntriesFromStoredZip(ctx context.Context, zw *zip
 		if f.UncompressedSize64 > maxServerPackEntryBytes {
 			return fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
 		}
-		rc, err := f.Open()
-		if err != nil {
-			return err
-		}
-		b, err := io.ReadAll(io.LimitReader(rc, maxServerPackEntryBytes+1))
-		rc.Close()
-		if err != nil {
-			return err
-		}
-		if int64(len(b)) > maxServerPackEntryBytes {
-			return fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
-		}
-		*total += int64(len(b))
-		if *total > maxServerPackTotalBytes {
-			return fmt.Errorf("mrpack overrides exceed the total size cap")
-		}
 		ew, err := zw.CreateHeader(&zip.FileHeader{Name: "overrides/" + f.Name, Method: zip.Deflate, Modified: time.Now()})
 		if err != nil {
 			return err
 		}
-		if _, err := ew.Write(b); err != nil {
+		rc, err := f.Open()
+		if err != nil {
 			return err
+		}
+		// Streamed into the output, not read into its own buffer first: an
+		// entry may be up to maxServerPackEntryBytes, and holding it beside the
+		// stored zip and the pack being built tripled what one render held.
+		// The caps are counted as the bytes go by.
+		budget := int64(maxServerPackEntryBytes)
+		if left := int64(maxServerPackTotalBytes) - *total; left < budget {
+			budget = left
+		}
+		n, err := io.Copy(ew, io.LimitReader(rc, budget+1))
+		rc.Close()
+		if err != nil {
+			return err
+		}
+		*total += n
+		if n > maxServerPackEntryBytes {
+			return fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
+		}
+		if *total > maxServerPackTotalBytes {
+			return fmt.Errorf("mrpack overrides exceed the total size cap")
 		}
 	}
 	return nil
@@ -230,8 +235,24 @@ func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack 
 	return nil
 }
 
+// mrpackRenders bounds how many .mrpack renders run at once in this Core. One
+// render holds a stored override zip and the pack it builds in memory - up to
+// gigabytes under the size caps - and nothing bounded how many ran together:
+// an author's export or a draft's public share link could be fired in parallel
+// until Core ran out of memory, for every tenant at once.
+//
+// ponytail: a fixed in-process limit; stream the pack to storage instead of
+// buffering it if renders ever have to run wider.
+var mrpackRenders = make(chan struct{}, 2)
+
 // renderMrpack returns the full .mrpack bytes for a build.
 func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) ([]byte, error) {
+	select {
+	case mrpackRenders <- struct{}{}:
+		defer func() { <-mrpackRenders }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	prov, _ := h.state.buildModpackStorageProvider()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

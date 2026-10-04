@@ -126,3 +126,38 @@ func TestGetLibrary_FailsClosedWhenDenylistUnreadable(t *testing.T) {
 		t.Error("listing leaked the disabled directory name after a failed denylist read")
 	}
 }
+
+// The storage backends clean a path themselves, so "./secret-mods/hidden.jar"
+// found the disabled file while the denylist walked a different string. Browse
+// and download now take the one spelling the denylist compares against, like
+// the mirror always did - and a plain path still works.
+func TestADisabledLibraryPathCannotBeReachedByAnotherSpelling(t *testing.T) {
+	fake := &libraryDenylistFakeStore{disabled: []string{"secret-mods"}}
+	h := &LibraryHandler{state: newLibraryTestState(t, fake)}
+
+	for _, p := range []string{"./secret-mods/hidden.jar", "secret-mods/./hidden.jar", "secret-mods//hidden.jar"} {
+		rw := httptest.NewRecorder()
+		h.DownloadLibraryHandler(rw, nonAdminRequest(http.MethodGet, "/api/library/download?path="+p))
+		if strings.Contains(rw.Body.String(), "payload") || rw.Code == http.StatusOK {
+			t.Fatalf("download %q: status %d, the disabled file was served", p, rw.Code)
+		}
+	}
+	rw := httptest.NewRecorder()
+	h.GetLibraryHandler(rw, nonAdminRequest(http.MethodGet, "/api/library?path=./secret-mods"))
+	if strings.Contains(rw.Body.String(), "hidden.jar") {
+		t.Fatalf("the disabled folder was listed: %s", rw.Body.String())
+	}
+
+	// The ordinary spelling, with a leading slash as the panel sends it.
+	fake.disabled = nil
+	rw = httptest.NewRecorder()
+	h.DownloadLibraryHandler(rw, nonAdminRequest(http.MethodGet, "/api/library/download?path=/secret-mods/hidden.jar"))
+	if rw.Code != http.StatusOK || !strings.Contains(rw.Body.String(), "payload") {
+		t.Fatalf("an enabled file is no longer served: %d %s", rw.Code, rw.Body.String())
+	}
+	rw = httptest.NewRecorder()
+	h.GetLibraryHandler(rw, nonAdminRequest(http.MethodGet, "/api/library?path=/secret-mods"))
+	if !strings.Contains(rw.Body.String(), "hidden.jar") {
+		t.Fatalf("an enabled folder is no longer listed: %s", rw.Body.String())
+	}
+}

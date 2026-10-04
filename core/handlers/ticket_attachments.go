@@ -273,6 +273,19 @@ func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePe
 	return false
 }
 
+// seesTicket is the ticket's own visibility check, for the caller. Upload and
+// delete leaned on tickets.write / support alone, so a supporter on another
+// team - who cannot open the ticket - could still add files to it and delete
+// its attachments by walking the sequential ids.
+func (h *TicketAttachmentsHandler) seesTicket(t *models.Ticket, perms EffectivePermissions, userID string) bool {
+	isWatcher, _ := h.state.Store.IsTicketWatcher(t.ID, userID)
+	myTeam := ""
+	if me, err := h.state.Store.GetUserByID(userID); err == nil && me != nil {
+		myTeam = me.SupportTeam
+	}
+	return canSeeTicket(t, perms, userID, isWatcher, LoadTicketSettings(h.state), myTeam)
+}
+
 func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, EffectivePermissions, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
@@ -287,6 +300,21 @@ func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *h
 	userID, _ := r.Context().Value("userID").(string)
 	perms := LoadEffectivePermissions(h.state, userID)
 	return t, perms, userID, true
+}
+
+// messageOnTicket reports whether a message belongs to the ticket an
+// attachment is uploaded to; an id from another ticket is dropped, not linked.
+func (h *TicketAttachmentsHandler) messageOnTicket(ticketID, messageID int) bool {
+	msgs, err := h.state.Store.ListTicketMessages(ticketID, true)
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		if m.ID == messageID {
+			return true
+		}
+	}
+	return false
 }
 
 // randomAttachmentID returns 16 hex chars. Used as part of the storage key
@@ -403,7 +431,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 			}
 		}
 	}
-	if !h.canAttach(t, perms, userID, isWatcher, watcherCanReply) {
+	if !h.canAttach(t, perms, userID, isWatcher, watcherCanReply) || !h.seesTicket(t, perms, userID) {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -564,7 +592,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	// Optional message link from form.
 	var msgID *int
 	if v := strings.TrimSpace(r.FormValue("messageId")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && h.messageOnTicket(t.ID, n) {
 			msgID = &n
 		}
 	}
@@ -716,6 +744,9 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 	allowed := perms.IsAdmin || perms.IsSupport || t.UserID == userID
 	if !allowed && a.UploadedBy != nil && *a.UploadedBy == userID {
 		allowed = true
+	}
+	if allowed && !h.seesTicket(t, perms, userID) {
+		allowed = false
 	}
 	if !allowed {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)

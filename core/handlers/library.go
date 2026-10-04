@@ -34,8 +34,19 @@ func NewLibraryHandler(state *AppState) *LibraryHandler {
 //   - have disabled children silently filtered out of the listing
 func (h *LibraryHandler) GetLibraryHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	if path == "" {
+	if path == "" || path == "/" {
 		path = "/"
+	} else {
+		// The spelling the denylist compares against, and nothing else: the
+		// storage backends clean a path themselves, so "./private" listed a
+		// disabled folder while the check walked a different string. The
+		// mirror has refused such spellings since it was written.
+		canon, ok := canonicalLibraryPath(path)
+		if !ok {
+			sendJSONError(w, "Invalid path", http.StatusBadRequest)
+			return
+		}
+		path = canon
 	}
 
 	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixLibrary)
@@ -329,10 +340,15 @@ func (h *LibraryHandler) DownloadLibraryHandler(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Path required", http.StatusBadRequest)
 		return
 	}
-	if strings.Contains(path, "..") {
+	// Canonical or refused, as on the mirror and in browse: "./private/x.jar"
+	// passed a ".." check, walked past the denylist and was served, because
+	// the backend cleaned it into the disabled path.
+	canon, ok := canonicalLibraryPath(path)
+	if !ok {
 		sendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
+	path = canon
 
 	// Mirror the browse handler's access model: a non-admin must not download
 	// a file that lives under an admin-disabled path (the browse listing hides
