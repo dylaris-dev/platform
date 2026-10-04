@@ -114,6 +114,10 @@ interface SetupEditModeProps {
     onDelete: () => void;
     submitting: boolean;
     fileTooLarge?: boolean;
+    /** The server software choice under the upload tab. */
+    uploadSoftware?: React.ReactNode;
+    /** Something on the form still needs an answer. */
+    submitBlocked?: boolean;
     error: string;
 }
 
@@ -241,17 +245,20 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                     )}
 
                     {props.installTab === 'upload' && (
-                        <UploadSection
-                            uploadFile={props.uploadFile}
-                            onFileChange={props.onUploadFileChange}
-                            uploadStructure={props.uploadStructure}
-                            onStructureChange={props.onUploadStructureChange}
-                            uploadProgress={props.uploadProgress}
-                            uploadStatus={props.uploadStatus}
-                            onStatusChange={props.onUploadStatusChange}
-                            serverId={props.serverId}
-                            onFileTooLarge={props.onFileTooLarge}
-                        />
+                        <>
+                            <UploadSection
+                                uploadFile={props.uploadFile}
+                                onFileChange={props.onUploadFileChange}
+                                uploadStructure={props.uploadStructure}
+                                onStructureChange={props.onUploadStructureChange}
+                                uploadProgress={props.uploadProgress}
+                                uploadStatus={props.uploadStatus}
+                                onStatusChange={props.onUploadStatusChange}
+                                serverId={props.serverId}
+                                onFileTooLarge={props.onFileTooLarge}
+                            />
+                            {props.uploadSoftware}
+                        </>
                     )}
 
                     {props.installTab === 'backup' && (
@@ -300,7 +307,7 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                 <button
                     type="button"
                     onClick={props.onSubmit}
-                    disabled={props.submitting || props.fileTooLarge}
+                    disabled={props.submitting || props.fileTooLarge || props.submitBlocked}
                     className="btn btn-primary btn-lg flex-1"
                 >
                     {props.submitting

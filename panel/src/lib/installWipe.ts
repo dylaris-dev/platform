@@ -45,6 +45,8 @@ export interface NextInstall {
      * asking for a fresh import rather than saving unrelated settings.
      */
     backupFileSelected?: boolean;
+    /** An archive is selected on the upload tab. */
+    uploadFileSelected?: boolean;
     /** Server software on the online tab. */
     software?: string;
     mcVersion?: string;
@@ -89,6 +91,15 @@ const tabToInstaller = (tab: string, software?: string): string => {
 export function classifyInstallChange(prev: SubServerInstall | undefined, next: NextInstall): InstallChange {
     if (!prev) return 'installer';
 
+    // Only a new archive changes the install on the upload tab; without one
+    // the files are what is already on the server. Read as a change of
+    // installer (the record says "upload-zip" or the software installed over
+    // it), a JVM-flag save ticked "server jars" in the wipe dialog and
+    // installed nothing back - the server could no longer start.
+    if (next.tab === 'upload') {
+        return next.uploadFileSelected ? 'installer' : 'runtime';
+    }
+
     const nextType = tabToInstaller(next.tab, next.software);
     if (nextType && nextType !== prev.installerType) return 'installer';
 
@@ -111,10 +122,10 @@ export function classifyInstallChange(prev: SubServerInstall | undefined, next: 
         // dialog. With no archive picked nothing about the install is changing.
         return next.backupFileSelected ? 'installer' : 'runtime';
     }
-    if (next.tab === 'library' || next.tab === 'upload') {
-        // Both are "point at a file"; there is no version to compare, so a save
-        // on these tabs is only ever a runtime change unless the file changed,
-        // which the caller signals by switching installer type.
+    if (next.tab === 'library') {
+        // "Point at a file"; there is no version to compare, so a save on this
+        // tab is only ever a runtime change unless the file changed, which the
+        // caller signals by switching installer type.
         return 'runtime';
     }
 

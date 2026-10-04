@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -58,6 +59,9 @@ type InstallerConfig struct {
 	// build's archives. The Minecraft version is read from the pack itself.
 	Variant     string       `json:"variant,omitempty"`
 	TechnicMods []TechnicMod `json:"technicMods,omitempty"`
+	// Software ("upload", "upload-zip" only) is installed over the uploaded
+	// files - see installUploadSoftware. Empty keeps the upload's own jar.
+	Software string `json:"software,omitempty"`
 }
 
 // CleanServerJars removes server JARs and cached/generated directories while preserving
@@ -132,11 +136,26 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 		}
 		return nil, installFromURL(destDir, config.URL, downloadImportGuarded)
 	case "upload":
-		// Files pre-uploaded via HTTP to the sub-server directory — nothing to do here.
-		log.Printf("Upload type: files already in %s, skipping installer", destDir)
-		return nil, nil
+		// Files pre-uploaded via HTTP to the sub-server directory.
+		if config.Software == "" {
+			log.Printf("Upload type: files already in %s, skipping installer", destDir)
+			return nil, nil
+		}
+		return nil, installUploadSoftware(serverDataPath, subServerName, config)
 	case "upload-zip":
-		return nil, installFromUploadZip(destDir, config.Structure)
+		if err := installFromUploadZip(destDir, config.Structure); err != nil {
+			return nil, err
+		}
+		if config.Software == "" {
+			// Checked here rather than at the first start: an upload that only
+			// carries its jar under versions/ (Paper) or a launcher script used
+			// to install "successfully" and then fail every start.
+			if resolveLaunch(destDir).Mode == launchNone {
+				return nil, fmt.Errorf("the upload has no server jar in its top folder; choose the server software and version to install")
+			}
+			return nil, nil
+		}
+		return nil, installUploadSoftware(serverDataPath, subServerName, config)
 	case "backup":
 		// A Dylaris backup archive, uploaded into the sub-server directory the
 		// same way an upload-zip install finds its zip there. The only installer
@@ -149,6 +168,32 @@ func InstallServer(serverDataPath, subServerName string, config InstallerConfig)
 	default:
 		return nil, fmt.Errorf("unknown installer type: %s", config.Type)
 	}
+}
+
+// uploadSoftware is what may be installed over an upload: the plain server
+// installers, never another source such as a URL import.
+var uploadSoftware = map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true, "neoforge": true}
+
+// installUploadSoftware installs the chosen server software over uploaded
+// files. Worlds, plugins, mods and configs stay; the jars in the top folder and
+// versions/ go, because the start picks whichever jar it finds first, not the
+// one just installed. libraries/ goes when the new software is Forge/NeoForge
+// or the upload carries a Forge/NeoForge argfile, which outranks any jar.
+func installUploadSoftware(serverDataPath, subServerName string, config InstallerConfig) error {
+	if !uploadSoftware[config.Software] {
+		return fmt.Errorf("unsupported server software %q", config.Software)
+	}
+	destDir := filepath.Join(serverDataPath, subServerName)
+	wipe := []string{WipeJars, WipeVersions}
+	if config.Software == "forge" || config.Software == "neoforge" || resolveLaunch(destDir).Mode == launchArgfile {
+		wipe = append(wipe, WipeLibraries)
+	}
+	next := config
+	next.Type = config.Software
+	next.Software = ""
+	next.WipePaths = wipe
+	_, err := InstallServer(serverDataPath, subServerName, next)
+	return err
 }
 
 // installFabric downloads the Fabric server launcher. Resolves loader/installer
@@ -481,41 +526,94 @@ func installFromUploadZip(destDir, structure string) error {
 		return fmt.Errorf("upload zip not found at %s", zipPath)
 	}
 
+	// The folder to move up is read from the archive, not from the directory:
+	// a sub-server that already holds world/ or plugins/ used to count as
+	// "more than one folder", and the new upload stayed unused one level down.
+	top := ""
+	if structure == "subfolder" {
+		var err error
+		if top, err = uploadTopFolder(zipPath); err != nil {
+			return fmt.Errorf("failed to read upload zip: %v", err)
+		}
+	}
+
 	log.Printf("Extracting uploaded ZIP: %s (structure=%s)", zipPath, structure)
 	if err := extractZipToDir(zipPath, destDir); err != nil {
 		return fmt.Errorf("failed to extract upload zip: %v", err)
 	}
 	os.Remove(zipPath)
 
-	// If structure is "subfolder", check for a single top-level directory and move contents up
-	if structure == "subfolder" {
-		entries, err := os.ReadDir(destDir)
-		if err != nil {
-			return nil // extraction succeeded, this is non-critical
+	if top == "" {
+		return nil
+	}
+	return moveUploadUp(destDir, top)
+}
+
+// uploadMacJunk is what macOS adds to a zip it makes; it is not the server.
+func uploadMacJunk(name string) bool {
+	return name == "__MACOSX" || name == ".DS_Store"
+}
+
+// uploadTopFolder names the one folder every entry of the zip sits in, or ""
+// when there is no single one.
+func uploadTopFolder(zipPath string) (string, error) {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", err
+	}
+	defer zr.Close()
+	top := ""
+	for _, f := range zr.File {
+		name := strings.TrimPrefix(strings.ReplaceAll(f.Name, "\\", "/"), "./")
+		first, _, nested := strings.Cut(name, "/")
+		if first == "" || uploadMacJunk(first) {
+			continue
 		}
-		var dirs []os.DirEntry
-		for _, e := range entries {
-			if e.IsDir() {
-				dirs = append(dirs, e)
-			}
+		if !nested && !f.FileInfo().IsDir() {
+			return "", nil // a file beside the folder
 		}
-		if len(dirs) == 1 {
-			subDir := filepath.Join(destDir, dirs[0].Name())
-			log.Printf("Moving contents from subfolder: %s", dirs[0].Name())
-			subEntries, err := os.ReadDir(subDir)
-			if err != nil {
-				return nil
-			}
-			for _, e := range subEntries {
-				src := filepath.Join(subDir, e.Name())
-				dst := filepath.Join(destDir, e.Name())
-				os.Rename(src, dst)
-			}
-			os.Remove(subDir)
+		if top != "" && top != first {
+			return "", nil
+		}
+		top = first
+	}
+	return top, nil
+}
+
+// moveUploadUp moves top's contents into destDir, through an os.Root: the
+// directory is the tenant's, so a link planted there must not carry the move
+// outside it. A name that already exists is refused rather than skipped -
+// skipping left the old file in use and the upload's copy unused, with the
+// install reported as a success.
+func moveUploadUp(destDir, top string) error {
+	root, err := os.OpenRoot(destDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), top)
+	if err != nil {
+		return fmt.Errorf("reading the uploaded folder: %w", err)
+	}
+	var clash []string
+	for _, e := range entries {
+		if _, err := root.Lstat(e.Name()); err == nil {
+			clash = append(clash, e.Name())
 		}
 	}
-
-	return nil
+	if len(clash) > 0 {
+		if len(clash) > 5 {
+			clash = append(clash[:5], "...")
+		}
+		return fmt.Errorf("the upload's %s would replace files already on this server (%s); delete them first, or upload into a new server", top, strings.Join(clash, ", "))
+	}
+	log.Printf("Moving contents from subfolder: %s", top)
+	for _, e := range entries {
+		if err := root.Rename(top+"/"+e.Name(), e.Name()); err != nil {
+			return fmt.Errorf("moving %s up: %w", e.Name(), err)
+		}
+	}
+	return root.Remove(top)
 }
 
 // DetectServerJar scans the server directory for the main JAR file.

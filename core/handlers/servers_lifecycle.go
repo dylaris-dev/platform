@@ -353,6 +353,40 @@ func validateInstallerRequest(typ, version, loader, url, path string) string {
 	return ""
 }
 
+// recordedInstallerType is what a setup records as the install: an upload
+// installed over with a chosen software IS that software from here on. Mod
+// compatibility and reinstall read it from the server row, the edit form from
+// the sub-server row, and a backup import copies the latter onto the former,
+// so both rows must say the same.
+func recordedInstallerType(typ, software string) string {
+	if software != "" {
+		return software
+	}
+	return typ
+}
+
+// uploadSoftwareSince is the node release that installs installer.software
+// over an upload.
+const uploadSoftwareSince = "2026.10.04.9"
+
+// validateUploadSoftware checks installer.software. An upload without a
+// launcher in its root (a Paper server keeps its jar under versions/) used to
+// be extracted and then fail every start with "no runnable server found".
+// Empty software is "keep the upload's own jar"; the node refuses that when
+// the upload has none.
+func validateUploadSoftware(typ, software, version, loader string) string {
+	if software == "" {
+		return ""
+	}
+	if typ != "upload" && typ != "upload-zip" {
+		return "installer.software applies to an upload only"
+	}
+	if !reinstallableInstallers[software] {
+		return "installer.software must be paper, vanilla, fabric, forge or neoforge"
+	}
+	return validateInstallerRequest(software, version, loader, "", "")
+}
+
 // SetupServer POST /api/servers/{id}/setup - queues first-time provisioning of
 // a created server: image, loader and version. The reply means queued; the
 // node reports progress separately.
@@ -445,6 +479,18 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, err.Error(), 400)
 		return
 	}
+	if msg := validateUploadSoftware(req.Installer.Type, req.Installer.Software, req.Installer.Version, req.Installer.Loader); msg != "" {
+		sendJSONError(w, msg, 400)
+		return
+	}
+	// An older node ignores the field and only extracts - the exact server that
+	// never started. Refused before anything is written, like Technic below.
+	if req.Installer.Software != "" {
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && nodeReleaseOlderThan(r.Context(), h.state, node.Token, uploadSoftwareSince) {
+			sendJSONError(w, "This node runs an older release that cannot install server software over an upload. Update the node, then try again.", http.StatusConflict)
+			return
+		}
+	}
 
 	// A Technic pack is resolved here, before anything is written: the browser
 	// names a slug and a build, and every URL the node receives comes from
@@ -521,7 +567,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// answered 403 or 404 and still left the server "installing" under a
 	// sub-server name that existed nowhere, with no install on its way.
 	recordSetup := func() bool {
-		if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, req.Installer.Type, req.Installer.McVersion, req.Installer.Version); err != nil {
+		if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, recordedInstallerType(req.Installer.Type, req.Installer.Software), req.Installer.McVersion, req.Installer.Version); err != nil {
 			sendJSONError(w, "Failed to update server", 500)
 			return false
 		}
@@ -612,7 +658,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		if err := h.state.Store.UpsertSubServerInstall(models.SubServerInstall{
 			ServerID:            serverID,
 			SubServerName:       subName,
-			InstallerType:       originalInstallerType,
+			InstallerType:       recordedInstallerType(originalInstallerType, req.Installer.Software),
 			McVersion:           req.Installer.McVersion,
 			BuildVersion:        req.Installer.Version,
 			Loader:              req.Installer.Loader,
@@ -651,6 +697,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			// What to clear first. The node validates these again against its own
 			// copy of the vocabulary before it deletes anything.
 			"wipePaths": req.Installer.WipePaths,
+			"software":  req.Installer.Software,
 		}
 		if technic != nil {
 			installerPayload["variant"] = technic.Variant

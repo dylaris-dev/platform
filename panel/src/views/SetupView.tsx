@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Server, setupServer, updateServerRuntime, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
 import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
 import { recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersionPicker';
 import { JAVA_21 } from '@/lib/javaVersion';
-import { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
+import VersionPicker, { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
+import UploadSoftwareChoice from './setup/UploadSoftwareChoice';
+import { readZipEntryNames, detectUploadSoftware, singleTopFolder, type UploadDetection } from '@/lib/uploadDetect';
 import SubServerSidebar from './setup/SubServerSidebar';
 import SetupViewMode from './setup/SetupViewMode';
 import SetupNewWizard from './setup/SetupNewWizard';
@@ -20,6 +22,9 @@ import { API_URL } from '@/lib/api/core';
 import { isSubServerName } from '@/lib/validation';
 import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
 import ModalPanel from '@/components/ui/ModalPanel';
+
+// What may be installed over an upload: Core's reinstallableInstallers.
+const UPLOAD_SOFTWARE = ['paper', 'vanilla', 'fabric', 'forge', 'neoforge'];
 
 const DEFAULT_GC_FLAGS = '-XX:+UseG1GC -XX:MaxHeapFreeRatio=40 -XX:MinHeapFreeRatio=15 -XX:-ShrinkHeapInSteps';
 
@@ -78,6 +83,26 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // Software list from API
     const [softwareCatalog, setSoftwareCatalog] = useState<{ name: string; type: string }[]>([]);
     const isProxy = server.serverType === 'proxy';
+
+    // Upload
+    const [uploadFile, setUploadFile] = useState<File | null>(null);
+    const [uploadStructure, setUploadStructure] = useState<'direct' | 'subfolder'>('direct');
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [uploadStatus, setUploadStatus] = useState('');
+    // What the archive holds (null while reading it) and whether to start its
+    // own jar instead of installing the picked software over it.
+    const [uploadDetection, setUploadDetection] = useState<UploadDetection | null | undefined>(undefined);
+    const [uploadKeepJar, setUploadKeepJar] = useState(false);
+    const uploadPrefillBuild = useRef<string | undefined>(undefined);
+    // Set by a detected version that the list offers, or by the operator
+    // touching the picker. A preselected newest version is not a choice: put
+    // over a world made with an older one, its first start upgrades the world.
+    const [uploadVersionChosen, setUploadVersionChosen] = useState(false);
+    // An upload installs server software over the files unless it brings a
+    // jar the node can start. Not offered for proxies: there is no proxy
+    // installer to put over an upload. In edit mode only with a new archive;
+    // without one the save does not install anything.
+    const uploadNeedsSoftware = installTab === 'upload' && !isProxy && (formMode === 'new' || !!uploadFile);
     const filteredSoftware = useMemo(() =>
         softwareCatalog.filter(s => s.type === (isProxy ? 'proxy' : 'game')).map(s => s.name),
         [softwareCatalog, isProxy]
@@ -96,6 +121,9 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // back to the major when the build is a loader version (Fabric/Forge).
     useEffect(() => {
         if (formMode === 'view') return;
+        // The picker on the upload tab is hidden unless software is installed;
+        // its preselection must not change the Java of a server kept as it is.
+        if (installTab === 'upload' && (!uploadNeedsSoftware || uploadKeepJar)) return;
         // A modpack carries its own Minecraft version, and on the modpack tabs
         // the online version pickers are empty - so keying this on them alone
         // meant picking a modpack recommended nothing and the form silently kept
@@ -109,7 +137,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         if (!fromPicker) return;
         const rec = recommendJavaForVersion(fromPicker);
         if (rec) setJavaImage(rec);
-    }, [selectedMajor, selectedBuild, formMode, installTab, modpackSelection?.mcVersion, packSelection?.mcVersion, technicSelection?.mcVersion]);
+    }, [selectedMajor, selectedBuild, formMode, installTab, uploadNeedsSoftware, uploadKeepJar, modpackSelection?.mcVersion, packSelection?.mcVersion, technicSelection?.mcVersion]);
 
     // Pre-populate version when entering edit mode (handles case where software didn't change)
     useEffect(() => {
@@ -132,11 +160,6 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     const [libraryPath, setLibraryPath] = useState('');
     const [selectedLibraryFile, setSelectedLibraryFile] = useState('');
 
-    // Upload
-    const [uploadFile, setUploadFile] = useState<File | null>(null);
-    const [uploadStructure, setUploadStructure] = useState<'direct' | 'subfolder'>('direct');
-    const [uploadProgress, setUploadProgress] = useState(0);
-    const [uploadStatus, setUploadStatus] = useState('');
 
     // File size check
     const [fileTooLarge, setFileTooLarge] = useState(false);
@@ -265,9 +288,47 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     };
 
     useEffect(() => {
-        if (installTab !== 'online') return;
+        if (installTab !== 'online' && !uploadNeedsSoftware) return;
         fetchVersions();
-    }, [software, installTab]);
+    }, [software, installTab, uploadNeedsSoftware]);
+
+    useEffect(() => {
+        setUploadKeepJar(false);
+        setUploadVersionChosen(false);
+        uploadPrefillBuild.current = undefined;
+        if (!uploadFile) { setUploadDetection(undefined); return; }
+        setUploadDetection(null);
+        let live = true;
+        readZipEntryNames(uploadFile)
+            .then(names => {
+                // A picked zip holding one folder is extracted into that folder;
+                // installed over, the server would start beside the files with a
+                // fresh world. The node moves it up for "subfolder", and this
+                // effect runs again for it.
+                if (names && uploadStructure === 'direct' && singleTopFolder(names)) {
+                    if (live) setUploadStructure('subfolder');
+                    return undefined;
+                }
+                return names ? detectUploadSoftware(names, uploadStructure === 'subfolder') : { launchable: false };
+            })
+            .catch(() => ({ launchable: false }))
+            .then((d: UploadDetection | undefined) => {
+                if (!live || !d) return;
+                setUploadDetection(d);
+                if (!d.software || !UPLOAD_SOFTWARE.includes(d.software)) return;
+                uploadPrefillBuild.current = d.build;
+                setSoftware(d.software);
+            });
+        return () => { live = false; };
+    }, [uploadFile, uploadStructure]);
+
+    // Applied whenever the version list lands or the detection does, in
+    // whichever order the two arrive.
+    useEffect(() => {
+        if (installTab !== 'upload') return;
+        const hit = allVersions.find(v => v.build === uploadPrefillBuild.current);
+        if (hit) { setSelectedMajor(hit.major); setSelectedBuild(hit.build); setUploadVersionChosen(true); }
+    }, [allVersions, uploadDetection, installTab]);
 
     const fetchVersions = async () => {
         setLoadingVersions(true);
@@ -432,6 +493,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             const change = classifyInstallChange(installFor(sanitized), {
                 tab: installTab,
                 backupFileSelected: !!backupFile,
+                uploadFileSelected: !!uploadFile,
                 software,
                 mcVersion: selectedMajor,
                 buildVersion: selectedBuild,
@@ -553,6 +615,11 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             setUploadStatus('Installing...');
         } else {
             installer.type = 'upload';
+        }
+        if (uploadNeedsSoftware && !uploadKeepJar) {
+            installer.software = software;
+            if (software === 'neoforge') installer.loader = selectedBuild;
+            else { installer.version = selectedBuild; installer.mcVersion = selectedMajor; }
         }
 
         // Only what the operator ticked. Absent means "install on top", which is
@@ -713,6 +780,35 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
 
     // ---------- Shared props for install sections ----------
 
+    const uploadSoftwareList = filteredSoftware.filter(s => UPLOAD_SOFTWARE.includes(s));
+    const uploadKeepAllowed = !uploadFile || !!uploadDetection?.launchable;
+    const uploadIncomplete = uploadNeedsSoftware && (
+        uploadKeepJar
+            ? !uploadKeepAllowed
+            : uploadDetection === null || loadingVersions || !UPLOAD_SOFTWARE.includes(software) || !selectedBuild || !uploadVersionChosen
+    );
+    const uploadSoftware = uploadNeedsSoftware ? (
+        <UploadSoftwareChoice
+            detection={uploadDetection}
+            keepJar={uploadKeepJar}
+            onKeepJarChange={setUploadKeepJar}
+            keepAllowed={uploadKeepAllowed}
+            versionChosen={uploadVersionChosen}
+        >
+            <VersionPicker
+                software={software}
+                onSoftwareChange={s => { setSoftware(s); setUploadVersionChosen(false); }}
+                softwareList={uploadSoftwareList.length > 0 ? uploadSoftwareList : UPLOAD_SOFTWARE}
+                allVersions={allVersions}
+                selectedMajor={selectedMajor}
+                onMajorChange={m => { setSelectedMajor(m); setUploadVersionChosen(true); }}
+                selectedBuild={selectedBuild}
+                onBuildChange={b => { setSelectedBuild(b); setUploadVersionChosen(true); }}
+                loading={loadingVersions}
+            />
+        </UploadSoftwareChoice>
+    ) : null;
+
     const installProps = {
         installTab,
         onInstallTabChange: setInstallTab,
@@ -749,6 +845,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
         onTechnicSelect: setTechnicSelection,
         serverId: server.id,
         onFileTooLarge: setFileTooLarge,
+        uploadSoftware,
+        submitBlocked: uploadIncomplete,
     };
 
     // ---------- Render ----------

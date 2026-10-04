@@ -85,6 +85,11 @@ type SetupServerRequest struct {
 		// which is what every install did before this existed and is still right
 		// for a plain jar swap.
 		WipePaths []string `json:"wipePaths,omitempty"`
+		// Software applies to "upload" and "upload-zip" only: the server
+		// software (one of reinstallableInstallers) the node installs over the
+		// uploaded files, with Version/McVersion/Loader as for an online
+		// install. Empty means "keep the jar in the upload".
+		Software string `json:"software,omitempty"`
 	} `json:"installer"`
 }
 

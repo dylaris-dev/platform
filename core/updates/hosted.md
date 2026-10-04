@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.9
+
+### Features
+- **Uploading a server now asks for its server software and version,** prefilled from your
+  archive, and installs it over your files; worlds, plugins and configs stay. `node`
+
+### Breaking
+- **On your own node this needs the node agent updated.** Until then the panel refuses the
+  install with a message; keeping your upload's own jar still works.
+
+### Security
+- Nothing.
+
+### Fixes
+- **An uploaded server that never started now starts.** A Paper upload keeps its jar under
+  versions/, so nothing could be launched; choose Paper and its version and it runs.
+
 ## 2026.10.04.8
 
 ### Features

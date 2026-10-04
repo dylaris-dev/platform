@@ -25,13 +25,19 @@ type installFakeStore struct {
 	serverPowerFakeStore
 	disabled    []string
 	setupWrites int
+	setupType   string
+	installRow  models.SubServerInstall
 }
 
-func (f *installFakeStore) UpdateServerSetup(int, string, string, string, string, string, string, string) error {
+func (f *installFakeStore) UpdateServerSetup(_ int, _, _, _, _, installerType, _, _ string) error {
 	f.setupWrites++
+	f.setupType = installerType
 	return nil
 }
-func (f *installFakeStore) UpsertSubServerInstall(models.SubServerInstall) error { return nil }
+func (f *installFakeStore) UpsertSubServerInstall(r models.SubServerInstall) error {
+	f.installRow = r
+	return nil
+}
 func (f *installFakeStore) ReplaceServerModpackContents(int, string, []models.ServerModpackContent) error {
 	return nil
 }

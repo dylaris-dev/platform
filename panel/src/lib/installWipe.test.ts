@@ -103,6 +103,17 @@ describe('classifyInstallChange', () => {
         expect(classifyInstallChange(technic, next({ tab: 'technic', technicPicked: true }))).toBe('modpack');
         expect(classifyInstallChange(technic, next({ tab: 'technic', technicPicked: false }))).toBe('runtime');
     });
+    // A save on the upload tab without a new archive used to be an installer
+    // change against an "upload-zip" record: the dialog ticked the server jars
+    // and nothing installed them back.
+    it('reads the upload tab without a new archive as a runtime change', () => {
+        for (const installerType of ['upload', 'upload-zip', 'paper']) {
+            expect(classifyInstallChange(installed({ installerType }), next({ tab: 'upload', software: undefined }))).toBe('runtime');
+            expect(classifyInstallChange(installed({ installerType }), next({ tab: 'upload', software: undefined, uploadFileSelected: true }))).toBe('installer');
+        }
+        expect(classifyInstallChange(installed({ installerType: 'paper' }), next({ tab: 'upload', software: undefined }))).toBe('runtime');
+        expect(classifyInstallChange(installed({ installerType: 'paper' }), next({ tab: 'upload', software: undefined, uploadFileSelected: true }))).toBe('installer');
+    });
 });
 
 describe('recommendedWipe', () => {

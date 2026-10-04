@@ -67,3 +67,35 @@ func TestValidateInstallerRequest(t *testing.T) {
 		})
 	}
 }
+
+// installer.software is forwarded to the node, which installs it over the
+// upload; anything but the five server installers must stop here.
+func TestValidateUploadSoftware(t *testing.T) {
+	cases := []struct {
+		name                         string
+		typ, software, version, load string
+		ok                           bool
+	}{
+		{name: "keep own jar", typ: "upload-zip", ok: true},
+		{name: "paper over a zip", typ: "upload-zip", software: "paper", version: "1.21.11", ok: true},
+		{name: "fabric over sftp files", typ: "upload", software: "fabric", version: "1.21.1", ok: true},
+		{name: "neoforge needs its loader", typ: "upload-zip", software: "neoforge", load: "21.1.77", ok: true},
+		{name: "neoforge without loader", typ: "upload-zip", software: "neoforge"},
+		{name: "paper without version", typ: "upload-zip", software: "paper"},
+		{name: "import is not a software", typ: "upload-zip", software: "import"},
+		{name: "library is not a software", typ: "upload", software: "library"},
+		{name: "proxy is not a software", typ: "upload", software: "velocity", version: "3.4.0"},
+		// accepted by validateInstallerRequest as install sources, never as software
+		{name: "modpack is not a software", typ: "upload", software: "modpack"},
+		{name: "an upload is not a software", typ: "upload-zip", software: "upload-zip"},
+		{name: "only for uploads", typ: "paper", software: "paper", version: "1.21.11"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg := validateUploadSoftware(c.typ, c.software, c.version, c.load)
+			if c.ok != (msg == "") {
+				t.Fatalf("validateUploadSoftware(%q,%q) = %q, want ok=%v", c.typ, c.software, msg, c.ok)
+			}
+		})
+	}
+}

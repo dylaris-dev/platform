@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.9
+
+### Features
+- **An uploaded server now asks for its server software and version,** prefilled from the archive,
+  and installs it over the files; worlds, plugins and configs stay. `core` `panel` `node`
+
+### Breaking
+- **Installing software over an upload needs the node on this release.** An older node is refused
+  with a message; keeping the upload's own jar works as before. `core` `node`
+
+### Security
+- Nothing.
+
+### Fixes
+- **An upload with no server jar in its top folder no longer installs and then fails every start.**
+  Paper keeps its jar under versions/; such an upload is now refused at setup instead. `node`
+
 ## 2026.10.04.8
 
 ### Features
