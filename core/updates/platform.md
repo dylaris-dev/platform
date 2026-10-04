@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A mistyped password when confirming an action no longer signs you out.** Creating an API or SSH
+  key, saving security questions and admin account actions show the error instead. `core` `panel`
+
 ## 2026.10.04.4
 
 ### Features

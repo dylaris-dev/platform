@@ -83,8 +83,15 @@ func requireReauth(state *AppState, userID, password, code string) *reauthError 
 	return nil
 }
 
+// reauthFailedHeader marks a refused re-authentication. It stays a 401 -
+// integrators of the API-key and admin endpoints may rely on that - but the
+// panel reads every 401 as an expired session and signed the user out over a
+// mistyped password. The panel skips its sign-out for a response carrying this.
+const reauthFailedHeader = "X-Dylaris-Reauth"
+
 // writeReauthError answers a failed re-authentication.
 func writeReauthError(w http.ResponseWriter, e *reauthError) {
+	w.Header().Set(reauthFailedHeader, "failed")
 	sendJSONError(w, e.message, e.status)
 }
 

@@ -1039,6 +1039,11 @@ func TestAPIKeysCreate_RefusesTheWrongAccountPassword(t *testing.T) {
 			if rec.Code != http.StatusUnauthorized {
 				t.Errorf("status = %d, want 401: %s", rec.Code, rec.Body.String())
 			}
+			// Marked, or the panel reads the 401 as an expired session and
+			// signs the user out over a typo.
+			if rec.Header().Get(reauthFailedHeader) != "failed" {
+				t.Error("the refused re-authentication is not marked for the panel")
+			}
 			if len(fs.createCalls) != 0 {
 				t.Errorf("a key was minted without the account password: %+v", fs.createCalls)
 			}

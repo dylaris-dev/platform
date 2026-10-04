@@ -14,6 +14,11 @@ import { forgetSessionHint, hasSession } from "@/lib/api/sessionState";
 export function handleUnauthorized(response: Response): boolean {
   if (response.status !== 401 || typeof window === "undefined") return false;
 
+  // A refused RE-AUTHENTICATION (wrong password or code when creating an API
+  // key, saving security questions, an admin action) is a 401 from a live
+  // session. Core marks it; signing out over a typo lost the user's page.
+  if (response.headers.get("X-Dylaris-Reauth") === "failed") return false;
+
   // A 401 while a session EXISTED means it expired mid-use; a 401 with none is
   // a failed login, which the caller handles. The hint cookie is what tells the
   // two apart now - the token it used to check is not readable any more, and

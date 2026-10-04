@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A mistyped password when creating an API or SSH key no longer signs you out.** You see the
+  error and can try again.
+
 ## 2026.10.04.4
 
 ### Features
