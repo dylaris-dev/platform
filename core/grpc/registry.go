@@ -406,6 +406,49 @@ func (conn *NodeConnection) RouteResponse(msg *pb.NodeMessage) bool {
 	}
 }
 
+// AwaitReply registers for the one reply a request will get LATER, after the
+// caller has streamed to the node with plain Sends. A file write is
+// WriteReq -> DataChunk* -> TransferDone, and the node answers the
+// TransferDone with the outcome of committing the file - or answers a chunk it
+// could not write with an error at once. Nobody was listening for either: the
+// write was reported saved while the node had refused it (a full disk quota,
+// a failed rename), and the user found out when the file was not there.
+//
+// Register BEFORE the chunks go out, so a mid-stream refusal is caught too.
+// wait returns the reply or an error on timeout or a dropped connection; stop
+// unregisters and must be deferred.
+func (conn *NodeConnection) AwaitReply(requestID string) (wait func(time.Duration) (*pb.NodeMessage, error), stop func()) {
+	ch := make(chan *pb.NodeMessage, 1)
+	conn.mu.Lock()
+	registered := conn.pending != nil
+	if registered {
+		conn.pending[requestID] = ch
+	}
+	conn.mu.Unlock()
+	stop = func() {
+		conn.mu.Lock()
+		if conn.pending != nil && conn.pending[requestID] == ch {
+			delete(conn.pending, requestID)
+		}
+		conn.mu.Unlock()
+	}
+	wait = func(timeout time.Duration) (*pb.NodeMessage, error) {
+		if !registered {
+			return nil, fmt.Errorf("node connection closed")
+		}
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return nil, fmt.Errorf("node connection closed while waiting")
+			}
+			return resp, nil
+		case <-time.After(timeout):
+			return nil, fmt.Errorf("timeout waiting for the node to confirm (request %s)", requestID)
+		}
+	}
+	return wait, stop
+}
+
 // CloseStreamingRequest closes the channel for a specific request_id
 // (called when TransferDone is received to signal end of chunked transfer).
 func (conn *NodeConnection) CloseStreamingRequest(requestID string) {

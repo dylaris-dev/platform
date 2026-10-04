@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A file upload or save that did not reach your server is no longer shown as successful.** For
+  example when the server's disk limit is full, you now see the error. Nothing to update on your side.
+
 ## 2026.10.04.6
 
 ### Features

@@ -382,6 +382,24 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // SaveFileHandler handles requests to save file content
+// nodeWriteConfirmTimeout bounds the wait for the node to commit a written
+// file: a rename on its own disk, so seconds at most.
+const nodeWriteConfirmTimeout = 30 * time.Second
+
+// confirmNodeWrite waits for the node's answer to a write's TransferDone (see
+// NodeConnection.AwaitReply) and turns it into what the caller answers. ok is
+// false with a status and message when the node refused or never confirmed.
+func confirmNodeWrite(wait func(time.Duration) (*pb.NodeMessage, error)) (status int, message string, ok bool) {
+	resp, err := wait(nodeWriteConfirmTimeout)
+	if err != nil {
+		return http.StatusBadGateway, "The node did not confirm the file was written: " + err.Error(), false
+	}
+	if e := resp.GetError(); e != nil {
+		return nodeErrorStatus(e.Code), e.Message, false
+	}
+	return 0, "", true
+}
+
 // saveBodyLimit bounds the editor's save request. JSON escaping can make a
 // text file's body several times its size, hence the multiple of the open cap.
 const saveBodyLimit = 4 * maxOpenFileBytes
@@ -470,6 +488,9 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
+	// Listen for the node's verdict before the first chunk goes out.
+	wait, stop := conn.AwaitReply(reqID)
+	defer stop()
 
 	// Step 2: Send data chunks
 	const chunkSize = 64 * 1024
@@ -501,6 +522,10 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := conn.Send(doneMsg); err != nil {
 		sendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
+		return
+	}
+	if status, msg, ok := confirmNodeWrite(wait); !ok {
+		sendJSONError(w, msg, status)
 		return
 	}
 
@@ -1081,6 +1106,12 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
+		// Listen for the node's verdict before the first chunk goes out.
+		// ponytail: deferred per file, so they pile up until the request ends;
+		// a request carries a handful of files.
+		wait, stop := conn.AwaitReply(reqID)
+		defer stop()
+
 		// Step 2: Stream chunks directly from multipart file (no RAM buffering)
 		const chunkSize = 64 * 1024
 		buf := make([]byte, chunkSize)
@@ -1126,6 +1157,12 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := conn.Send(doneMsg); err != nil {
 			sendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
+			return
+		}
+		// The node commits the file on TransferDone and says how that went.
+		// "Uploaded" used to go out without asking, over a full quota too.
+		if status, msg, ok := confirmNodeWrite(wait); !ok {
+			sendJSONError(w, fmt.Sprintf("%s: %s", sanitizedName, msg), status)
 			return
 		}
 		uploadedBytes += offset

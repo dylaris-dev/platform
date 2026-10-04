@@ -237,6 +237,8 @@ func (h *RconHandler) writeNodeFileString(nodeID int, serverUUID, relPath, conte
 	if errResp := resp.GetError(); errResp != nil {
 		return fmt.Errorf("node write error: %s", errResp.Message)
 	}
+	wait, stop := conn.AwaitReply(reqID)
+	defer stop()
 
 	const chunkSize = 64 * 1024
 	for offset := 0; offset < len(data); offset += chunkSize {
@@ -261,6 +263,9 @@ func (h *RconHandler) writeNodeFileString(nodeID int, serverUUID, relPath, conte
 	}
 	if err := conn.Send(doneMsg); err != nil {
 		return fmt.Errorf("node write finalize failed: %w", err)
+	}
+	if _, msg, ok := confirmNodeWrite(wait); !ok {
+		return fmt.Errorf("node write failed: %s", msg)
 	}
 	return nil
 }

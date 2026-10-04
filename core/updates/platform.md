@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.04.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **An upload or a save the node could not write is no longer reported as done.** A full disk
+  quota or a failed write now shows as an error in the file manager, the editor and server settings. `core`
+
 ## 2026.10.04.6
 
 ### Features
