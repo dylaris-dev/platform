@@ -278,12 +278,18 @@ func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePe
 // team - who cannot open the ticket - could still add files to it and delete
 // its attachments by walking the sequential ids.
 func (h *TicketAttachmentsHandler) seesTicket(t *models.Ticket, perms EffectivePermissions, userID string) bool {
-	isWatcher, _ := h.state.Store.IsTicketWatcher(t.ID, userID)
+	return callerSeesTicket(h.state, t, perms, userID)
+}
+
+// callerSeesTicket is canSeeTicket with the watcher flag and support team
+// looked up for the caller.
+func callerSeesTicket(state *AppState, t *models.Ticket, perms EffectivePermissions, userID string) bool {
+	isWatcher, _ := state.Store.IsTicketWatcher(t.ID, userID)
 	myTeam := ""
-	if me, err := h.state.Store.GetUserByID(userID); err == nil && me != nil {
+	if me, err := state.Store.GetUserByID(userID); err == nil && me != nil {
 		myTeam = me.SupportTeam
 	}
-	return canSeeTicket(t, perms, userID, isWatcher, LoadTicketSettings(h.state), myTeam)
+	return canSeeTicket(t, perms, userID, isWatcher, LoadTicketSettings(state), myTeam)
 }
 
 func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, EffectivePermissions, string, bool) {
@@ -741,7 +747,8 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	allowed := perms.IsAdmin || perms.IsSupport || t.UserID == userID
+	// tickets.write, not tickets.read: deleting is acting on the ticket.
+	allowed := perms.IsAdmin || perms.CanManageTickets || t.UserID == userID
 	if !allowed && a.UploadedBy != nil && *a.UploadedBy == userID {
 		allowed = true
 	}

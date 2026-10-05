@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A member can no longer change their own access.** Doing so dropped the restrictions the
+  owner had set on their grant and gave them their role's full rights back. `core`
+- **Supporters limited to their team can no longer reply to, re-status, reassign or watch
+  other teams' tickets;** read-only support can no longer delete attachments. `core`
+- **Warp enrolment answers only the key that enrolled a public key,** and ticket creation and
+  adding watchers are rate limited. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05.7
 
 ### Features

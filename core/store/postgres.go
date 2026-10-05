@@ -1527,7 +1527,12 @@ func (s *PostgresStore) UpdateInvitePermissions(serverID int, userID string, per
 		return err
 	}
 	_, err = s.db.Exec(
-		`UPDATE server_invites SET permissions = $1::jsonb, cap_overrides = $2::jsonb, inherit = $3,
+		// The deny side stays: it is the owner's, set through /grants, and
+		// replacing the whole document handed a member back everything their
+		// role holds.
+		`UPDATE server_invites SET permissions = $1::jsonb,
+		   cap_overrides = jsonb_set($2::jsonb, '{deny}', COALESCE(server_invites.cap_overrides->'deny', '[]'::jsonb)),
+		   inherit = $3,
 		   owner_user_id = (SELECT owner_id FROM servers WHERE id = $4)
 		 WHERE server_id = $4 AND user_id = $5`,
 		string(permsJSON), string(ovJSON), tp.Inherit, serverID, userID)

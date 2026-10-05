@@ -360,6 +360,15 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Not your own: replacing your own set dropped the denies the owner put on
+	// your grant (the store kept only the grant side), so a member with
+	// members.write and members.delete got their role back in full. /api/grants
+	// refuses a grant to yourself for the same reason.
+	if caller, _ := r.Context().Value("userID").(string); caller == targetUserID {
+		sendJSONError(w, "You cannot change your own access", http.StatusForbidden)
+		return
+	}
+
 	// Replacing a member's set can take their access away as surely as
 	// removing them, which needs members.delete - the same rule /api/grants
 	// applies to overwriting a grant. This is the older route to the same row.

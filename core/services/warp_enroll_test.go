@@ -253,3 +253,18 @@ func TestEnroll_FixedKey_KillOldEvictsPrevious(t *testing.T) {
 		t.Fatalf("expected 3 commands (add, remove, add), got %d", len(vals))
 	}
 }
+
+// Re-enrolling a public key answers only the key that enrolled it: anyone with
+// a key and another peer's public key read that peer's overlay IP, region and
+// leader endpoints.
+func TestEnroll_AnotherKeysPubkeyIsRefused(t *testing.T) {
+	svc, _, _ := enrollTestService(t)
+	owner := store.WarpAPIKey{ID: 1, Policy: "general", MaxConns: 5, OnNewConn: "block"}
+	other := store.WarpAPIKey{ID: 2, Policy: "general", MaxConns: 5, OnNewConn: "block"}
+	if _, err := svc.Enroll(context.Background(), owner, "pubA", nil); err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	if r, err := svc.Enroll(context.Background(), other, "pubA", nil); err == nil {
+		t.Fatalf("another key was answered with the peer's config: %+v", r)
+	}
+}

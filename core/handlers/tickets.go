@@ -538,6 +538,13 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Ticket not found", http.StatusNotFound)
 		return
 	}
+	// The ticket's own visibility first: tickets.write alone let a supporter
+	// limited to their team reply to, re-status, reassign and watch (and so
+	// read) any ticket by walking the ids.
+	if !callerSeesTicket(h.state, t, perms, userID) {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
 	isWatcher, _ := h.state.Store.IsTicketWatcher(id, userID)
 	watcherCanReply := false
 	if isWatcher {
@@ -764,6 +771,13 @@ func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
+	// The ticket's own visibility first: tickets.write alone let a supporter
+	// limited to their team reply to, re-status, reassign and watch (and so
+	// read) any ticket by walking the ids.
+	if !callerSeesTicket(h.state, t, perms, userID) {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
 	// Special case: users may close their own ticket. Support+admin may
 	// move freely between any status.
 	var req statusRequest
@@ -831,6 +845,13 @@ func (h *TicketsHandler) UpdatePriority(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
+	// The ticket's own visibility first: tickets.write alone let a supporter
+	// limited to their team reply to, re-status, reassign and watch (and so
+	// read) any ticket by walking the ids.
+	if !callerSeesTicket(h.state, t, perms, userID) {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
 	var req priorityRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -883,6 +904,13 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	t, err := h.state.Store.GetTicket(id)
 	if err != nil || t == nil {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
+	// The ticket's own visibility first: tickets.write alone let a supporter
+	// limited to their team reply to, re-status, reassign and watch (and so
+	// read) any ticket by walking the ids.
+	if !callerSeesTicket(h.state, t, perms, userID) {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
@@ -955,6 +983,13 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	t, err := h.state.Store.GetTicket(id)
 	if err != nil || t == nil {
+		sendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
+	// The ticket's own visibility first: tickets.write alone let a supporter
+	// limited to their team reply to, re-status, reassign and watch (and so
+	// read) any ticket by walking the ids.
+	if !callerSeesTicket(h.state, t, perms, userID) {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}

@@ -495,7 +495,13 @@ func (s *WarpService) buildResult(ctx context.Context, region, wgIP, homeLeaderI
 func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey string, _ []string) (EnrollResult, error) {
 	// Idempotent: same pubkey already enrolled -> rebuild its config from its
 	// stored region, no new push.
+	// Only for this key's own peer, as Assignment checks: anyone holding a
+	// key and another peer's public key read that peer's overlay IP, region
+	// and leader endpoints.
 	if existing, err := s.warp.GetWarpPeerByPubkey(pubkey); err == nil && existing != nil {
+		if existing.APIKeyID != key.ID {
+			return EnrollResult{}, fmt.Errorf("public key already enrolled under another key")
+		}
 		return s.buildResult(ctx, existing.Region, existing.WGIP, existing.AssignedLeader)
 	}
 

@@ -864,7 +864,7 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyTickets` | ListTickets GET /api/tickets — user's own tickets (with watcher includes). |
-| POST | `/api/tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.CreateTicket` | opens a ticket and records its creation in the ticket audit trail. |
+| POST | `/api/tickets` | session | _no capability_ | RequireTicketsEnabled, Limit | `TicketsHandler.CreateTicket` | opens a ticket and records its creation in the ticket audit trail. |
 | GET | `/api/tickets/inbox` | session | `tickets.read` | RequireTicketsEnabled | `TicketsHandler.ListInboxTickets` | support inbox view, gated by RequireCap("tickets.read") at the route (Phase 4 Task 15; the former in-handler "support or admin" pure gate was removed since the route now supersedes it). |
 | GET | `/api/tickets/{id:[0-9]+}` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.GetTicket` | one ticket with its messages, watchers and audit trail. |
 | DELETE | `/api/tickets/{id:[0-9]+}` | session | _no capability_ | RequireTicketsEnabled | `TicketDeletionsHandler.DeleteTicket` | admin only, gated by tickets.deletion_enabled. |
@@ -876,7 +876,7 @@ can still show what exists.
 | POST | `/api/tickets/{id:[0-9]+}/messages` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.AddReply` | adds a reply and notifies the other participants. |
 | PATCH | `/api/tickets/{id:[0-9]+}/priority` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.UpdatePriority` | support/admin only. |
 | PATCH | `/api/tickets/{id:[0-9]+}/status` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.UpdateStatus` | changes a ticket's status and records the transition, from and to, in the audit trail. |
-| POST | `/api/tickets/{id:[0-9]+}/watchers` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.AddWatcher` | Users may add watchers when tickets.allow_users_to_add_watchers=TRUE. |
+| POST | `/api/tickets/{id:[0-9]+}/watchers` | session | _no capability_ | RequireTicketsEnabled, Limit | `TicketsHandler.AddWatcher` | Users may add watchers when tickets.allow_users_to_add_watchers=TRUE. |
 | DELETE | `/api/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.RemoveWatcher` | removes a watcher and records it in the audit trail. |
 
 ## /api/tools

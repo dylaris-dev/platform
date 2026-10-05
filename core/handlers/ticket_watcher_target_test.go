@@ -44,6 +44,7 @@ func (f *ticketWatcherFakeStore) GetUserByUsername(name string) (*models.User, e
 func (f *ticketWatcherFakeStore) GetUserRegionIDs(string) ([]string, error) { return nil, nil }
 func (f *ticketWatcherFakeStore) GetSetting(string) (string, error)         { return "", nil }
 func (f *ticketWatcherFakeStore) GetTicket(int) (*models.Ticket, error)     { return f.ticket, nil }
+func (f *ticketWatcherFakeStore) IsTicketWatcher(int, string) (bool, error) { return false, nil }
 
 // A userId that names nobody used to reach the insert and come back as a
 // foreign-key violation dressed up as a 500 "Failed to add watcher". The

@@ -1186,7 +1186,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// support triage view), so it is RequireCap("tickets.read")-gated here and
 	// its in-handler "support or admin" pure gate was removed.
 	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListMyTickets))).Methods("GET")
-	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.CreateTicket))).Methods("POST")
+	// Per IP: each new ticket notifies every supporter and each added watcher
+	// gets a notification carrying the ticket title, so unthrottled these were
+	// a free notification flood (and add-watcher a username oracle).
+	ticketLimiter := handlers.NewIPRateLimiter()
+	watcherLimiter := handlers.NewIPRateLimiter() // its own count: watchers must not use up ticket creation
+	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketLimiter.Limit(10, ticketsHandler.CreateTicket)))).Methods("POST")
 	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketsHandler.ListInboxTickets)))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.GetTicket))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketDeletionsHandler.DeleteTicket))).Methods("DELETE")
@@ -1194,7 +1199,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/tickets/{id:[0-9]+}/status", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdateStatus))).Methods("PATCH")
 	api.HandleFunc("/tickets/{id:[0-9]+}/priority", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdatePriority))).Methods("PATCH")
 	api.HandleFunc("/tickets/{id:[0-9]+}/assignment", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdateAssignment))).Methods("PATCH")
-	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.AddWatcher))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(watcherLimiter.Limit(20, ticketsHandler.AddWatcher)))).Methods("POST")
 	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.RemoveWatcher))).Methods("DELETE")
 
 	// Sidebar source for support's "Via tickets" tab.

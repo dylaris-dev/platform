@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A member of your server can no longer change their own access.** Doing so removed the
+  restrictions you had set on them. Fixed on our side; nothing to do.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05.6
 
 ### Features

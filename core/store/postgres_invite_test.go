@@ -48,7 +48,7 @@ func (m capOverridesGrant) Match(v driver.Value) bool {
 // byte-exact copy of that whitespace).
 const createInviteSQL = `INSERT INTO server_invites \(server_id, user_id, invited_by, permissions, cap_overrides, inherit, owner_user_id\)\s+VALUES \(\$1, \$2, \$3, \$4::jsonb, \$5::jsonb, \$6, \(SELECT owner_id FROM servers WHERE id = \$1\)\)`
 
-const updateInvitePermissionsSQL = `UPDATE server_invites SET permissions = \$1::jsonb, cap_overrides = \$2::jsonb, inherit = \$3,\s+owner_user_id = \(SELECT owner_id FROM servers WHERE id = \$4\)\s+WHERE server_id = \$4 AND user_id = \$5`
+const updateInvitePermissionsSQL = `UPDATE server_invites SET permissions = \$1::jsonb,\s+cap_overrides = jsonb_set\(\$2::jsonb, '\{deny\}', COALESCE\(server_invites\.cap_overrides->'deny', '\[\]'::jsonb\)\),\s+inherit = \$3,\s+owner_user_id = \(SELECT owner_id FROM servers WHERE id = \$4\)\s+WHERE server_id = \$4 AND user_id = \$5`
 
 // TestCreateInvite_WritesCapOverrides pins F-2: a brand-new invite must carry
 // the mapped caps in cap_overrides immediately (no restart needed for the
