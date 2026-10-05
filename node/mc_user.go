@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -119,9 +118,18 @@ func handInstalledTree(subDir string) {
 	}
 }
 
+// chownSubServerTree walks through an os.Root at subDir: the tree is the
+// tenant's, and a path-based walk resolved every intermediate component again
+// - a link swapped in by a container that happens to run (a start racing a
+// long install) would have carried the chown out of the directory.
 func chownSubServerTree(subDir string, uid int) error {
+	root, err := os.OpenRoot(subDir)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", subDir, err)
+	}
+	defer root.Close()
 	n := 0
-	err := filepath.WalkDir(subDir, func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// A single unreadable entry must not stop the server from starting.
 			// It is reported and skipped: the world below it may still be fine,
@@ -132,7 +140,15 @@ func chownSubServerTree(subDir string, uid int) error {
 		// Lchown, not Chown: a symlink inside a world is the tenant's, and
 		// following it would change the owner of whatever it points AT - which
 		// on a link to /etc is exactly the escalation this change is closing.
-		if err := os.Lchown(p, uid, uid); err != nil {
+		// A regular file with a second name is skipped for the same reason: a
+		// hard link to a node file would hand THAT file over.
+		// fs.protected_hardlinks forbids making one on most hosts; a BYON host
+		// may not set it.
+		if multiplyLinked(d) {
+			log.Printf("mc-user: skipping %s: more than one hard link", p)
+			return nil
+		}
+		if err := root.Lchown(p, uid, uid); err != nil {
 			log.Printf("mc-user: cannot chown %s: %v", p, err)
 			return nil
 		}

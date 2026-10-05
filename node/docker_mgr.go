@@ -650,6 +650,12 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 	// java -jar /data/<jar> would otherwise miss it and exit 1 silently.
 	hostSubServerPath := filepath.Join(hostServerPath, subServerName)
 
+	// The installer runs as the container's uid in a directory the node just
+	// created and filled as root: Forge, NeoForge and Technic could write
+	// nothing in a fresh sub-server. No container of this server runs now, so
+	// the walk cannot be raced.
+	handInstalledTree(filepath.Join(dm.resolveLocalServerPath(serverUUID), subServerName))
+
 	// Pull the image first — many user-selected Java images won't be on
 	// the node yet at first setup. Ignore errors; container create will
 	// re-surface the real problem if it's missing.

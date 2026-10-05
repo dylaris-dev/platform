@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -114,6 +115,19 @@ var protectedStatuses = map[string]bool{
 // reconcileDeletedContainers detects server data directories whose Docker container
 // has been manually deleted and recreates the container. Only acts when desired_state
 // is "online" and the server is not in a protected transitional status.
+// pinSavedConfig binds a saved .node_config.json to the directory it was
+// found in. The file sits in a server directory the node writes on the
+// tenant's behalf, so its identity fields are not trusted: the server is the
+// directory, and the sub-server is one name in it. A config naming another
+// server's uuid, or a sub-server of "../<uuid>/x", would have rebuilt a
+// container over someone else's data with this config's image and command.
+// It reports false for a sub-server that is not a single name.
+func pinSavedConfig(config *ServerConfig, uuid string) bool {
+	config.UUID = uuid
+	a := config.ActiveSubServer
+	return a != "." && a != ".." && !strings.ContainsAny(a, `/\`)
+}
+
 func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *DockerManager, storage *StorageManager) {
 	// Build a set of UUIDs that currently have a Docker container (running or stopped).
 	existing, err := dm.ListAllMCContainers()
@@ -187,6 +201,10 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 			// and the server should stay down until the user picks one
 			// in the Setup tab. Also force status to pending_setup so
 			// the panel reflects that reality.
+			if !pinSavedConfig(&config, uuid) {
+				log.Printf("reconciler(deleted): mc_%s config names sub-server %q, not a name; leaving stopped", uuid, config.ActiveSubServer)
+				continue
+			}
 			if config.ActiveSubServer == "" {
 				log.Printf("reconciler(deleted): mc_%s has empty active sub-server — leaving stopped, marking pending_setup", uuid)
 				rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)

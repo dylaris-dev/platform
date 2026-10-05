@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Copying a folder in the file browser can no longer reach files outside the destination.** On
+  your own node, update the node agent. `node`
+
+### Fixes
+- **Folders and files you create in the file browser are writable by your server,** which could
+  not use them before. `node`
+- **Forge, NeoForge and Technic installs work again.** `node`
+
 ## 2026.10.04.12
 
 ### Features

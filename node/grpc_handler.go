@@ -843,7 +843,7 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 	}
 	defer dstRoot.Close()
 	if stat.IsDir() {
-		if err := copyWalkIn(root, srcName, dstRoot, dstLeaf, true); err != nil {
+		if err := copyDirForTenant(root, srcName, h.serverDir(serverUUID), dstName); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy dir: %v", err))
 		}
 	} else {

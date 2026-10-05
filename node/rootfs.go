@@ -181,6 +181,15 @@ func chownForMCIn(root *os.Root, name string) {
 	if mcUser() == 0 {
 		return
 	}
+	// A name that is a second hard link to a file - .node_config.json, made by
+	// a tenant on a host without fs.protected_hardlinks - would hand THAT file
+	// over, after a write through it had already replaced its contents.
+	// ponytail: Lstat then Lchown is not atomic; closing it needs fchown on the
+	// writer's own fd at every call site.
+	if fi, err := root.Lstat(name); err == nil && multiplyLinkedInfo(fi) {
+		log.Printf("mc-user: not handing %s over: more than one hard link", name)
+		return
+	}
 	if err := root.Lchown(name, mcUser(), mcUser()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		log.Printf("mc-user: cannot hand %s to uid %d: %v", name, mcUser(), err)
 	}
@@ -202,6 +211,30 @@ func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string) erro
 		return err
 	}
 	return out.Close()
+}
+
+// copyDirForTenant copies a tenant's tree to dstName, writing through a root
+// AT dstName, reached without following a link.
+//
+// Not through a root at its parent: for a destination in the server's top
+// level that parent is the server directory, which holds .node_config.json,
+// and a Root follows any link that stays inside it. A destination that is an
+// existing sub-server is writable by its running container, so a plugin
+// planting survival/x -> ../.node_config.json made a copy of a folder holding
+// "x" into "survival" overwrite the node's config for this server. With the
+// root at the destination, a link inside it can only reach the destination.
+func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
+	pinned, release, err := pinDir(rootDir, dstName, true)
+	if err != nil {
+		return err
+	}
+	defer release()
+	dst, err := os.OpenRoot(pinned)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	return copyWalkIn(src, srcName, dst, ".", true)
 }
 
 // copyWalkIn copies the tree at srcName in src to dstName in dst. With
@@ -372,5 +405,9 @@ func writeEULA(serverPath, subName string) error {
 		return err
 	}
 	defer root.Close()
-	return root.WriteFile(leaf, []byte("eula=true\n"), 0o644)
+	if err := root.WriteFile(leaf, []byte("eula=true\n"), 0o644); err != nil {
+		return err
+	}
+	chownForMCIn(root, leaf)
+	return nil
 }

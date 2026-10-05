@@ -2,7 +2,10 @@
 
 package main
 
-import "os"
+import (
+	"io/fs"
+	"os"
+)
 
 // ownedBy always reports false where file ownership is not a uid.
 //
@@ -11,3 +14,8 @@ import "os"
 // returning true, would silently SKIP the ownership fix - and this file exists
 // only so a Windows build compiles, never so it decides anything.
 func ownedBy(os.FileInfo, int) bool { return false }
+
+// multiplyLinked has no meaning where ownership is not a uid.
+func multiplyLinked(fs.DirEntry) bool { return false }
+
+func multiplyLinkedInfo(os.FileInfo) bool { return false }

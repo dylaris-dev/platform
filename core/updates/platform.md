@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Copying a folder into a sub-server can no longer overwrite the node's server config.** A link
+  planted by the running server was followed out of the destination. `node`
+- **A container rebuilt from its saved config takes the server and sub-server from where the file
+  lies,** never from the file. `node`
+
+### Fixes
+- **New files and folders made in the file browser, over SFTP or by a mod install belong to the
+  server,** which could not write them before. `node`
+- **Forge, NeoForge and Technic installs work in a fresh sub-server again;** the installer could
+  not write its directory. `node`
+
 ## 2026.10.04.12
 
 ### Features

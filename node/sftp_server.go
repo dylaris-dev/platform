@@ -970,6 +970,9 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if err := root.Mkdir(leaf, 0755); err != nil {
 			return err
 		}
+		// Files written over SFTP are handed over; a directory was not, and the
+		// server could create nothing in it.
+		chownForMCIn(root, leaf)
 		v.audit.note(ref.UUID, "mkdir", rel)
 		return nil
 	// pkg/sftp reports RMDIR as its own method, and it was not handled at all:

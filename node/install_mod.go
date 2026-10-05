@@ -168,6 +168,14 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 		fail("download failed for %s: %v", cleanName, err)
 		return
 	}
+	// Handed over before it takes the name: the rename otherwise replaced a
+	// jar the server owned with one it may not touch (a plugin updating its
+	// own jar in place).
+	if u := mcUser(); u != 0 {
+		if err := os.Lchown(tmpFile, u, u); err != nil {
+			log.Printf("mc-user: cannot hand %s to uid %d: %v", cleanName, u, err)
+		}
+	}
 	if err := os.Rename(tmpFile, destFile); err != nil {
 		os.Remove(tmpFile)
 		fail("rename %s to %s: %v", tmpFile, destFile, err)

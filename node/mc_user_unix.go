@@ -3,6 +3,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"syscall"
 )
@@ -15,4 +16,21 @@ import (
 func ownedBy(fi os.FileInfo, uid int) bool {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	return ok && int(st.Uid) == uid
+}
+
+// multiplyLinked reports a regular file with more than one name.
+func multiplyLinked(d fs.DirEntry) bool {
+	if !d.Type().IsRegular() {
+		return false
+	}
+	fi, err := d.Info()
+	if err != nil {
+		return false
+	}
+	return multiplyLinkedInfo(fi)
+}
+
+func multiplyLinkedInfo(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && fi.Mode().IsRegular() && st.Nlink > 1
 }

@@ -899,6 +899,10 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	if err := root.WriteFile(name, []byte(req.Content), 0644); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	// A NEW file is the node's (root) and the running server could not write
+	// it; the start-time repair skips a directory that is already the
+	// container's, so nothing fixed it later either.
+	chownForMCIn(root, name)
 	s.recordBeamDailyUsage(ctx, username, size)
 
 	s.auditBeam(ctx, serverUUID, "write", req.Path)
@@ -927,6 +931,9 @@ func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) 
 		}
 		f.Close()
 	}
+	// As the panel's create (handleCreate): a folder made here was root's, and
+	// the server could not put anything in it.
+	chownForMCIn(root, name)
 
 	s.auditBeam(ctx, serverUUID, "write", req.Path)
 	return &pb.BeamOpResp{Success: true, Message: "created"}, nil
@@ -1035,7 +1042,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 	}
 
 	if stat.IsDir() {
-		if err := copyWalkIn(root, srcName, dstRoot, dstLeaf, true); err != nil {
+		if err := copyDirForTenant(root, srcName, s.storageMgr.GetServerDir(serverUUID), dstName); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
