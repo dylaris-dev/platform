@@ -228,6 +228,7 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 		Image         string  `json:"image"`
 		Command       string  `json:"command"`
 		ExtraJvmFlags string  `json:"extraJvmFlags,omitempty"`
+		CpusetCpus    string  `json:"cpusetCpus"`
 		HostPort      int     `json:"hostPort"`
 		ContainerPort int     `json:"containerPort"`
 	}
@@ -247,6 +248,9 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 			Image:         srv.GameImage,
 			Command:       srv.StartCommand,
 			ExtraJvmFlags: srv.ExtraJvmFlags,
+			// The effective cpuset (GetAllActiveServers). Without it every
+			// recreated container lost its pinning.
+			CpusetCpus: srv.Cpuset,
 			// hostPort=0 → node auto-allocates (ip_port mode) or skips binding (gateway mode)
 			HostPort:      0,
 			ContainerPort: srv.ContainerPort,

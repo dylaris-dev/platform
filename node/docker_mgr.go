@@ -1190,7 +1190,10 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 
 // UpdateResources stops the container, then recreates it with new RAM/CPU/Port settings,
 // preserving the existing image, command, and bind mounts from the running/last container inspect.
-func (dm *DockerManager) UpdateResources(config ServerConfig) error {
+// It returns the config the server now runs with, or will start from, which is
+// what the caller saves: the payload's command is Core's jar-form default and
+// is wrong for an argfile install.
+func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, error) {
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 
 	// Inspect existing container to preserve image + active sub-server + binds.
@@ -1231,12 +1234,61 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) error {
 		// running whatever it had been: a routing-mode switch sends this to
 		// every server, so each stopped one started - including servers of
 		// suspended tenants and ones Core keeps down because their disk is full.
-		return dm.RecreateKeepingRunState(config)
+		return config, dm.RecreateKeepingRunState(config)
 	}
 
-	// No container at all is the server arriving on this node by a move, and
-	// the move sends this to bring it up with its new cores.
-	return dm.RecreateWithCommand(config)
+	// No container: a stopped server after a move, a sub-server delete or a
+	// storage move. This created one AND started it, with Core's command,
+	// whatever the server's state: a routing-mode switch started suspended and
+	// stopped servers. Like RecreateKeepingRunState, the change only reaches
+	// the saved config, which the next start builds from.
+	return dm.mergeIntoSavedConfig(config), nil
+}
+
+// mergeIntoSavedConfig lays a resource change over the server's saved config.
+// Only what a resource change carries replaces a saved value, so an empty
+// sub-server or port in the payload cannot overwrite a good one, and the start
+// command is rebuilt from what is on disk.
+func (dm *DockerManager) mergeIntoSavedConfig(change ServerConfig) ServerConfig {
+	serverDir := dm.resolveLocalServerPath(change.UUID)
+	merged := change
+	if data, err := os.ReadFile(filepath.Join(serverDir, ".node_config.json")); err == nil {
+		var saved ServerConfig
+		if err := json.Unmarshal(data, &saved); err != nil {
+			log.Printf("update_resources %s: saved config unreadable (%v), replacing it with the change", change.UUID, err)
+		} else {
+			// The file sits where tenant code once could plant one (round 53):
+			// a sub-server that is not one plain name is not used.
+			if !pinSavedConfig(&saved, change.UUID) {
+				saved.ActiveSubServer = ""
+			}
+			merged = saved
+			merged.Docker.RAM = change.Docker.RAM
+			merged.Docker.CPULimit = change.Docker.CPULimit
+			merged.Docker.CpusetCpus = change.Docker.CpusetCpus
+			merged.Docker.DiskLimit = change.Docker.DiskLimit
+			if change.Docker.Image != "" {
+				merged.Docker.Image = change.Docker.Image
+			}
+			if change.ActiveSubServer != "" {
+				merged.ActiveSubServer = change.ActiveSubServer
+			}
+			if change.Docker.HostPort != 0 {
+				merged.Docker.HostPort = change.Docker.HostPort
+			}
+			if change.Docker.ContainerPort != 0 {
+				merged.Docker.ContainerPort = change.Docker.ContainerPort
+			}
+		}
+	}
+	if merged.ActiveSubServer != "" {
+		subDir := filepath.Join(serverDir, merged.ActiveSubServer)
+		flags := extractJvmFlagsFromCommand(merged.Docker.Command)
+		if startCmd, err := buildStartCommand(subDir, merged.Docker.RAM, flags, merged.Docker.Image); err == nil {
+			merged.Docker.Command = startCmd
+		}
+	}
+	return merged
 }
 
 // PullContainerImage inspects a container to get its image, then pulls the latest version.

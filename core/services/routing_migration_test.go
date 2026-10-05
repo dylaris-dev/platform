@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,4 +129,30 @@ func TestRoutingMigrationRunPropagatesAFailedFleetLoad(t *testing.T) {
 	if !free {
 		t.Error("the migration lock was not released after the failed load; every retry would be refused until its TTL expired")
 	}
+}
+
+// A routing-mode switch recreates every container; it sent no cpuset, so every
+// pinned server came back unpinned.
+func TestRoutingRedeployKeepsTheCpuset(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	m := &RoutingMigrationService{redis: rdb, queue: NewQueueService(rdb), store: failingServerStore{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := models.Server{UUID: "srv-pin", NodeAddress: "node-tok", Cpuset: "2-3", Memory: 2048}
+	done := make(chan struct{})
+	go func() { m.redeployServer(ctx, srv, "gateway"); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		msgs, _ := rdb.XRange(context.Background(), "dylaris:node:node-tok:cmds", "-", "+").Result()
+		if len(msgs) > 0 {
+			data, _ := msgs[0].Values["data"].(string)
+			if !strings.Contains(data, `"cpusetCpus":"2-3"`) {
+				t.Fatalf("update_resources carried no cpuset: %s", data)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("no command was sent")
 }

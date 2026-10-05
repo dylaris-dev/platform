@@ -162,3 +162,25 @@ func TestRetentionListsReportAShortRead(t *testing.T) {
 		})
 	}
 }
+
+// The routing migration sends what this returns as the cpuset: the effective
+// one, so a pinned server keeps its cores and a shared one gets the node's.
+func TestGetAllActiveServersCarriesTheEffectiveCpuset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	s := NewPostgresStore(db)
+	cols := []string{"id", "uuid", "node_id", "node_name", "node_token", "status", "host_port", "container_port", "memory", "cpu_limit", "disk_limit", "start_command", "game_image", "active_sub_server", "extra_jvm_flags", "mode", "cpuset", "node_cpuset"}
+	mock.ExpectQuery(regexp.QuoteMeta("FROM servers")).WillReturnRows(sqlmock.NewRows(cols).
+		AddRow(1, "pinned", 1, "n", "tok", "online", 0, 25565, 1024, 0.0, 0, "", "img", "s", "", "auto", "2-3", "0-7").
+		AddRow(2, "shared", 1, "n", "tok", "online", 0, 25565, 1024, 0.0, 0, "", "img", "s", "", "shared", "", "0-7"))
+	servers, err := s.GetAllActiveServers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 || servers[0].Cpuset != "2-3" || servers[1].Cpuset != "0-7" {
+		t.Fatalf("cpusets = %+v", servers)
+	}
+}

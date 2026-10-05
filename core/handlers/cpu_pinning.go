@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -8,17 +9,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// effectiveCpuset is the cpuset Core sends to the node for a server: the server's
-// own pinned cpuset (auto/manual) when set, otherwise the node's static default.
-// This keeps 'shared'/unpinned servers on the node default (prior behavior) while
-// preserving a server's pinning across every recreate path (setup, switch,
-// resource change).
-func effectiveCpuset(mode, serverCpuset, nodeCpuset string) string {
-	if (mode == "auto" || mode == "manual") && serverCpuset != "" {
-		return serverCpuset
-	}
-	return nodeCpuset
-}
+// effectiveCpuset: see models.EffectiveCpuset.
+var effectiveCpuset = models.EffectiveCpuset
 
 // CPUPinningHandler serves node CPU topology for the pinning UI.
 type CPUPinningHandler struct {

@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Changing a server's resources or the routing mode no longer starts a server that has no
+  container,** suspended or stopped ones included. The change applies on its next start. `node`
+
+### Fixes
+- **A routing-mode switch keeps each server's CPU pinning;** every pinned server came back
+  unpinned. `core`
+- **A resource change no longer saves a generic start command for the server.** A Forge or
+  NeoForge server later rebuilt from that saved config crash-looped. `node`
+
 ## 2026.10.05.3
 
 ### Features

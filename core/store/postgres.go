@@ -1415,7 +1415,8 @@ func (s *PostgresStore) GetUsedHostPortsOnNode(nodeID int) ([]int, error) {
 
 func (s *PostgresStore) GetAllActiveServers() ([]models.Server, error) {
 	rows, err := s.db.Query(`
-		SELECT s.id, s.uuid, s.node_id, n.name as node_name, n.token as node_token, s.status, COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.memory, 1024), COALESCE(s.cpu_limit, 0), COALESCE(s.disk_limit, 0), COALESCE(s.start_command, ''), COALESCE(s.game_image, ''), COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, '')
+		SELECT s.id, s.uuid, s.node_id, n.name as node_name, n.token as node_token, s.status, COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.memory, 1024), COALESCE(s.cpu_limit, 0), COALESCE(s.disk_limit, 0), COALESCE(s.start_command, ''), COALESCE(s.game_image, ''), COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''),
+			COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.cpuset_cpus, '')
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		WHERE s.status != 'pending_setup'
@@ -1428,10 +1429,15 @@ func (s *PostgresStore) GetAllActiveServers() ([]models.Server, error) {
 	for rows.Next() {
 		var srv models.Server
 		// NodeName is reused to carry the node token for migration purposes
-		var nodeToken string
-		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.NodeID, &srv.NodeName, &nodeToken, &srv.Status, &srv.HostPort, &srv.ContainerPort, &srv.Memory, &srv.CPULimit, &srv.DiskLimit, &srv.StartCommand, &srv.GameImage, &srv.ActiveSubServer, &srv.ExtraJvmFlags); err != nil {
+		var nodeToken, nodeCpuset string
+		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.NodeID, &srv.NodeName, &nodeToken, &srv.Status, &srv.HostPort, &srv.ContainerPort, &srv.Memory, &srv.CPULimit, &srv.DiskLimit, &srv.StartCommand, &srv.GameImage, &srv.ActiveSubServer, &srv.ExtraJvmFlags,
+			&srv.CPUPinningMode, &srv.Cpuset, &nodeCpuset); err != nil {
 			return nil, err
 		}
+		// Cpuset carries the EFFECTIVE cpuset here, the one the node is sent:
+		// the routing migration recreates every container, and one sent
+		// without it unpinned every pinned server.
+		srv.Cpuset = models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, nodeCpuset)
 		// Store the node token in NodeAddress field temporarily (migration service reads it)
 		srv.NodeAddress = nodeToken
 		servers = append(servers, srv)

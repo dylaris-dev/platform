@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Changing a server's resources no longer starts it if it was stopped after a move.** On your
+  own node, update the node agent. `node`
+
+### Fixes
+- **A resource change no longer saves a generic start command for your server.** A Forge or
+  NeoForge server later rebuilt from it crash-looped. `node`
+
 ## 2026.10.05.3
 
 ### Features

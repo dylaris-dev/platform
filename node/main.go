@@ -1559,14 +1559,17 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "update_resources":
 		log.Printf("Updating resources for Server %s ...", cmd.Config.UUID)
-		if err := dm.UpdateResources(cmd.Config); err != nil {
+		// The config UpdateResources used is saved, not the payload: the
+		// payload carries Core's jar-form command and, from some senders, no
+		// sub-server, and the reconciler starts the server from this file.
+		if applied, err := dm.UpdateResources(cmd.Config); err != nil {
 			log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
 		} else {
 			log.Printf("Server %s resources updated", cmd.Config.UUID)
 			resServerPath := storage.GetServerDir(cmd.Config.UUID)
-			saveNodeConfig(resServerPath, cmd.Config)
+			saveNodeConfig(resServerPath, applied)
 			resActiveBytes, _ := os.ReadFile(filepath.Join(resServerPath, ".active_server"))
-			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
+			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", applied.Docker.Image, applied.Docker.RAM, applied.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
 		}
 		// Assigned again before the limit: a server that arrived by a move was
 		// never registered with this filesystem's quota, so a limit set on it

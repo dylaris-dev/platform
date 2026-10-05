@@ -56,7 +56,7 @@ func TestUpdateResourcesLeavesAStoppedServerStopped(t *testing.T) {
 	cfg := ServerConfig{UUID: uuid}
 	cfg.Docker.Image = "img:1"
 	cfg.Docker.RAM = 2048
-	if err := dm.UpdateResources(cfg); err != nil {
+	if _, err := dm.UpdateResources(cfg); err != nil {
 		t.Fatalf("UpdateResources: %v", err)
 	}
 	if n := starts.Load(); n != 0 {
