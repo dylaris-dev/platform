@@ -248,6 +248,7 @@ func main() {
 	// the storage secrets are never persisted in the clear. A legacy plaintext
 	// secret still reads through and is re-encrypted on its next save.
 	pgStore.SetSettingsEncryptionKey(cfg.ClusterSecret)
+	pgStore.SetTOTPEncryptionKey(cfg.ClusterSecret)
 	// Encrypt storage_connections secrets at rest with a distinct
 	// CLUSTER_SECRET-derived key. Installed before any handler resolves a
 	// connection, so a connection secret is never stored or read in the clear.

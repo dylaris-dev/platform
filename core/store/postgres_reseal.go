@@ -100,7 +100,7 @@ func (r *ResealReport) Moved() int {
 // ResealAtRest moves every at-rest value from a key derived off fromSecret to
 // one derived off toSecret.
 //
-// One transaction over all five buckets. A half-moved database is strictly
+// One transaction over all six buckets. A half-moved database is strictly
 // worse than an unmoved one: half the nodes would authenticate and half would
 // not, and there would be no single secret that opens the rest.
 //
@@ -153,6 +153,15 @@ func (s *PostgresStore) ResealAtRest(fromSecret, toSecret string) (*ResealReport
 		return nil, fmt.Errorf("reseal %s: %w", settingsSecretPurpose, err)
 	}
 	b.Name = settingsSecretPurpose
+	rep.Buckets = append(rep.Buckets, b)
+
+	b, err = resealTOTPSecrets(tx,
+		crypto.DeriveKey(fromSecret, totpSecretPurpose),
+		crypto.DeriveKey(toSecret, totpSecretPurpose))
+	if err != nil {
+		return nil, fmt.Errorf("reseal %s: %w", totpSecretPurpose, err)
+	}
+	b.Name = totpSecretPurpose
 	rep.Buckets = append(rep.Buckets, b)
 
 	if err := tx.Commit(); err != nil {

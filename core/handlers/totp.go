@@ -371,7 +371,7 @@ func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 		hashed[i] = string(bcryptHash)
 	}
 	hashedJSON, _ := json.Marshal(hashed)
-	if err := h.state.Store.SetUserTOTP(user.ID, user.TOTPSecret, string(hashedJSON), true); err != nil {
+	if err := h.state.Store.SetUserTOTPBackupCodes(user.ID, string(hashedJSON)); err != nil {
 		sendJSONError(w, "Failed to persist new codes", http.StatusInternalServerError)
 		return
 	}

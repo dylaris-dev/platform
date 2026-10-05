@@ -27,6 +27,7 @@ var resealedPurposes = map[string]bool{
 	storageConnSecretPurpose:   true,
 	modrinthPATPurpose:         true,
 	settingsSecretPurpose:      true,
+	totpSecretPurpose:          true,
 }
 
 // unresealablePurposes are the derivations that are NOT stored ciphertext, with
@@ -48,6 +49,7 @@ var knownPurposeIdents = map[string]string{
 	"backupStorageSecretPurpose": backupStorageSecretPurpose,
 	"storageConnSecretPurpose":   storageConnSecretPurpose,
 	"settingsSecretPurpose":      settingsSecretPurpose,
+	"totpSecretPurpose":          totpSecretPurpose,
 }
 
 var deriveKeyCall = regexp.MustCompile(`crypto\.DeriveKey\(\s*[^,()]+,\s*([^)]+)\)`)

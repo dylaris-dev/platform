@@ -43,6 +43,9 @@ type Store interface {
 
 	// --- 2FA (TOTP + Backup Codes) ---
 	SetUserTOTP(id string, secret string, backupCodesJSON string, enabled bool) error
+	// SetUserTOTPBackupCodes replaces the hashed backup codes of a user with
+	// 2FA on, without touching the secret.
+	SetUserTOTPBackupCodes(id, backupCodesJSON string) error
 	DisableUserTOTP(id string) error
 	ConsumeTOTPBackupCode(id, readJSON, remainingJSON string) (bool, error)
 	BumpSessionEpoch(id string) (int, error)

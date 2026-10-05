@@ -38,6 +38,8 @@ type PostgresStore struct {
 	// a greenfield table, so there is no legacy plaintext to tolerate and a
 	// secret must never land there in the clear.
 	storageConnSecretKey []byte
+	// totpSecretKey seals users.totp_secret (store/totp_secret.go).
+	totpSecretKey []byte
 	// backupStorageSecretKey encrypts backup_storages.secret_enc at rest. nil
 	// until SetBackupStorageEncryptionKey runs at boot. A non-empty-secret write
 	// fails closed with no key. Unlike storage_connections this table is NOT
@@ -141,7 +143,7 @@ const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(mi
 	COALESCE(can_create_modpacks_manual, FALSE),
 	COALESCE(session_epoch, 0)`
 
-func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
+func scanUserRow(scan func(dest ...interface{}) error) (*models.User, error) {
 	var (
 		u                                                                                        models.User
 		createdAt, emailVerifiedAt, emailVerificationSentAt, passwordResetExpiresAt, lastLoginAt sql.NullTime
@@ -198,12 +200,12 @@ func scanUser(scan func(dest ...interface{}) error) (*models.User, error) {
 
 func (s *PostgresStore) GetUserByUsername(username string) (*models.User, error) {
 	query := `SELECT ` + userSelectCols + ` FROM users WHERE username = $1`
-	return scanUser(s.db.QueryRow(query, username).Scan)
+	return s.scanUser(s.db.QueryRow(query, username).Scan)
 }
 
 func (s *PostgresStore) GetUserByID(id string) (*models.User, error) {
 	query := `SELECT ` + userSelectCols + ` FROM users WHERE id = $1`
-	return scanUser(s.db.QueryRow(query, id).Scan)
+	return s.scanUser(s.db.QueryRow(query, id).Scan)
 }
 
 // UsernameTaken reports whether a username is claimed, comparing WITHOUT case.
@@ -380,7 +382,7 @@ func (s *PostgresStore) ListUsers() ([]models.User, error) {
 
 	var users []models.User
 	for rows.Next() {
-		u, err := scanUser(rows.Scan)
+		u, err := s.scanUser(rows.Scan)
 		if err != nil {
 			// Surface scan failures instead of dropping rows silently —
 			// a single bad row used to make freshly-created users vanish
@@ -2452,7 +2454,7 @@ func (s *PostgresStore) GetUserByEmail(email string) (*models.User, error) {
 	// Case-insensitive lookup — emails normalized to lowercase at write
 	// time but be defensive on reads in case older rows escaped that.
 	query := `SELECT ` + userSelectCols + ` FROM users WHERE LOWER(email) = LOWER($1)`
-	return scanUser(s.db.QueryRow(query, email).Scan)
+	return s.scanUser(s.db.QueryRow(query, email).Scan)
 }
 
 func (s *PostgresStore) GetUserByEmailVerificationToken(token string) (*models.User, error) {
@@ -2461,7 +2463,7 @@ func (s *PostgresStore) GetUserByEmailVerificationToken(token string) (*models.U
 	// asked for a new one. Expired reads like invalid; the user can resend.
 	query := `SELECT ` + userSelectCols + ` FROM users WHERE email_verification_token = $1 AND email_verification_token IS NOT NULL
 		AND email_verification_sent_at > NOW() - INTERVAL '7 days'`
-	return scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
+	return s.scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
 }
 
 // SetEmailVerificationToken stores a freshly generated token + sent timestamp.
@@ -2528,7 +2530,7 @@ func (s *PostgresStore) GetUserByPasswordResetToken(token string) (*models.User,
 		WHERE password_reset_token = $1
 		  AND password_reset_token IS NOT NULL
 		  AND (password_reset_expires_at IS NULL OR password_reset_expires_at > NOW())`
-	return scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
+	return s.scanUser(s.db.QueryRow(query, hashAuthToken(token)).Scan)
 }
 
 // ResetPasswordWithToken sets the password only while the row still holds this

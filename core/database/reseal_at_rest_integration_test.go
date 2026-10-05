@@ -72,6 +72,16 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 		t.Fatalf("SetSetting: %v", err)
 	}
 
+	// Sealed the way the store seals it; the column is written directly
+	// because SetUserTOTP still stores plaintext until every Core can open it.
+	totpCT, err := crypto.Encrypt(crypto.DeriveKey(secretBefore, "totp-secret"), []byte("JBSWY3DPEHPK3PXP"))
+	if err != nil {
+		t.Fatalf("encrypt TOTP: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE users SET totp_secret = $1 WHERE id = $2`, "enc:v1:"+totpCT, f.user.ID); err != nil {
+		t.Fatalf("seal TOTP: %v", err)
+	}
+
 	rep, err := before.ResealAtRest(secretBefore, secretAfter)
 	if err != nil {
 		t.Fatalf("ResealAtRest: %v", err)
@@ -79,8 +89,8 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	if rep.Unreadable() != 0 {
 		t.Fatalf("report = %+v; every value was sealed under the source secret", rep.Buckets)
 	}
-	if len(rep.Buckets) != 5 {
-		t.Fatalf("got %d buckets, want 5: %+v", len(rep.Buckets), rep.Buckets)
+	if len(rep.Buckets) != 6 {
+		t.Fatalf("got %d buckets, want 6: %+v", len(rep.Buckets), rep.Buckets)
 	}
 	for _, b := range rep.Buckets {
 		if b.Moved < 1 {
@@ -94,6 +104,7 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	after.SetBackupStorageEncryptionKey(secretAfter)
 	after.SetStorageConnEncryptionKey(secretAfter)
 	after.SetSettingsEncryptionKey(secretAfter)
+	after.SetTOTPEncryptionKey(secretAfter)
 
 	got, ok, err := redisacl.LoadNodeSecret(after, secretAfter, f.node.ID)
 	if err != nil || !ok {
@@ -136,10 +147,18 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 		t.Errorf("SMTP password = %q, want MAIL-SECRET", mail)
 	}
 
+	if u, err := after.GetUserByID(f.user.ID); err != nil || u.TOTPSecret != "JBSWY3DPEHPK3PXP" {
+		t.Errorf("TOTP secret under the new key = %q (%v)", u.TOTPSecret, err)
+	}
+
 	// And the old secret must no longer open any of it, or the rotation moved
 	// nothing and every assertion above passed on an unchanged column.
 	stale := store.NewPostgresStore(db)
 	stale.SetSettingsEncryptionKey(secretBefore)
+	stale.SetTOTPEncryptionKey(secretBefore)
+	if u, _ := stale.GetUserByID(f.user.ID); u != nil && u.TOTPSecret != "" {
+		t.Error("the old secret still opens the TOTP secret; nothing was resealed")
+	}
 	if v, _ := stale.GetSetting(mailKey); v == "MAIL-SECRET" {
 		t.Error("the old secret still reads the SMTP password; nothing was resealed")
 	}
