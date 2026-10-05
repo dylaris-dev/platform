@@ -4,6 +4,7 @@ import (
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -105,6 +106,8 @@ type setupAdminResp struct {
 	Message string      `json:"message,omitempty"`
 	User    interface{} `json:"user,omitempty"`
 	Token   string      `json:"token,omitempty"`
+	// BackupCodes are shown once, when the wizard set up 2FA.
+	BackupCodes []string `json:"backupCodes,omitempty"`
 }
 
 // CreateAdmin POST /api/setup/admin - open route (rate-limited). adminCreateAllowed
@@ -199,6 +202,21 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The wizard turns 2FA on, so the admin gets the backup codes enrolment
+	// hands out: without them a lost phone left the only admin to ADMIN_SECRET
+	// break-glass. A failure here leaves the admin created with 2FA on; the
+	// codes can be generated from the profile menu after signing in.
+	var backupCodes []string
+	if totpSecret != "" {
+		if plain, hashedJSON, cerr := newBackupCodes(); cerr != nil {
+			log.Printf("setup: backup codes for %s not generated: %v", user.Username, cerr)
+		} else if serr := h.state.Store.SetUserTOTPBackupCodes(user.ID, hashedJSON); serr != nil {
+			log.Printf("setup: backup codes for %s not stored: %v", user.Username, serr)
+		} else {
+			backupCodes = plain
+		}
+	}
+
 	token, err := h.auth.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
 		sendSetupError(w, http.StatusInternalServerError, "token_failed", "Admin created but token issuance failed: "+err.Error())
@@ -220,8 +238,10 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// Carries the session token and, with 2FA, the backup codes.
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(setupAdminResp{
-		Success: true, User: user, Token: token,
+		Success: true, User: user, Token: token, BackupCodes: backupCodes,
 	})
 }
 

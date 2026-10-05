@@ -51,6 +51,8 @@ export interface SetupAdminResponse {
     message?: string;
     user?: SetupAdminUser;
     token?: string;
+    /** Present once, when the wizard set up 2FA. */
+    backupCodes?: string[];
 }
 
 // The authed layout awaits getSetupStatus before it renders anything, so this

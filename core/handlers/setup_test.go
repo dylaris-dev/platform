@@ -8,9 +8,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
+
+	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // setupFakeStore embeds store.Store (nil) so it satisfies the full interface at
@@ -23,6 +27,13 @@ type setupFakeStore struct {
 	countErr   error
 	createErr  error
 	created    []string
+	codesFor   string
+	codesJSON  string
+}
+
+func (f *setupFakeStore) SetUserTOTPBackupCodes(id, backupCodesJSON string) error {
+	f.codesFor, f.codesJSON = id, backupCodesJSON
+	return nil
 }
 
 func (f *setupFakeStore) CountUsers() (int, error)  { return f.userCount, f.countErr }
@@ -342,5 +353,63 @@ func TestCreateAdmin_RefusalSetsNoCookie(t *testing.T) {
 	}
 	if c := cookieByName(rec, sessionCookieName); c != nil {
 		t.Fatalf("a refused setup set a session cookie: %q", c.Value)
+	}
+}
+
+// The wizard turns 2FA on; the admin got no backup codes, so a lost phone left
+// the only admin to ADMIN_SECRET break-glass. The codes come back once, and
+// what is stored is their hashes.
+func TestCreateAdmin_With2FAHandsOutBackupCodes(t *testing.T) {
+	fs := &setupFakeStore{}
+	h := newSetupTestHandlerWithSetup(fs, "", false)
+	secret := "JBSWY3DPEHPK3PXP"
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := postCreateAdmin(h, map[string]interface{}{
+		"username": "alice", "password": "password123",
+		"totp": map[string]string{"secret": secret, "code": code},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		BackupCodes []string `json:"backupCodes"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if len(out.BackupCodes) != backupCodeCount {
+		t.Fatalf("got %d backup codes, want %d", len(out.BackupCodes), backupCodeCount)
+	}
+	var hashed []string
+	if err := json.Unmarshal([]byte(fs.codesJSON), &hashed); err != nil || fs.codesFor != "id-alice" || len(hashed) != backupCodeCount {
+		t.Fatalf("stored %q for %q", fs.codesJSON, fs.codesFor)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hashed[0]), []byte(out.BackupCodes[0])) != nil {
+		t.Error("the stored hash does not match the code handed out")
+	}
+	if strings.Contains(fs.codesJSON, out.BackupCodes[0]) {
+		t.Error("a backup code was stored in the clear")
+	}
+
+	// Without 2FA there is nothing to hand out.
+	fs2 := &setupFakeStore{}
+	rec = postCreateAdmin(newSetupTestHandlerWithSetup(fs2, "", false), map[string]interface{}{"username": "bob", "password": "password123"})
+	if strings.Contains(rec.Body.String(), "backupCodes") || fs2.codesJSON != "" {
+		t.Errorf("codes for an admin without 2FA: %s", rec.Body.String())
+	}
+}
+
+// A response carrying the backup codes (and a session token) must not be kept
+// by any cache.
+func TestBackupCodeResponsesAreNotCached(t *testing.T) {
+	for _, fn := range []struct{ file, name string }{
+		{"setup.go", "CreateAdmin"},
+		{"totp.go", "VerifyTOTPHandler"},
+		{"totp.go", "RegenerateBackupCodesHandler"},
+	} {
+		if !strings.Contains(funcBody(t, fn.file, fn.name), `"Cache-Control", "no-store"`) {
+			t.Errorf("%s sends backup codes without no-store", fn.name)
+		}
 	}
 }

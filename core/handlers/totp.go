@@ -148,6 +148,28 @@ func clearCodeAttempts(ctx context.Context, state *AppState, userID string) {
 // backupCodeCount is the number of single-use codes generated when 2FA is set up.
 const backupCodeCount = 10
 
+// newBackupCodes makes a set of single-use codes (16 hex chars, ~64 bits each)
+// and their bcrypt hashes as the JSON the column stores. Cost 10 is light enough
+// for ten hashes per request and enough for codes of that entropy.
+func newBackupCodes() (plain []string, hashedJSON string, err error) {
+	plain = make([]string, backupCodeCount)
+	hashed := make([]string, backupCodeCount)
+	for i := range plain {
+		b := make([]byte, 8)
+		if _, err := rand.Read(b); err != nil {
+			return nil, "", err
+		}
+		plain[i] = hex.EncodeToString(b)
+		h, err := bcrypt.GenerateFromPassword([]byte(plain[i]), 10)
+		if err != nil {
+			return nil, "", err
+		}
+		hashed[i] = string(h)
+	}
+	j, err := json.Marshal(hashed)
+	return plain, string(j), err
+}
+
 // SetupTOTPRequest is the empty body of /auth/2fa/setup — auth is via JWT.
 type SetupTOTPResponse struct {
 	Success bool   `json:"success"`
@@ -277,28 +299,13 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Generate 10 single-use backup codes (16 hex chars each).
-	plainCodes := make([]string, backupCodeCount)
-	hashed := make([]string, backupCodeCount)
-	for i := 0; i < backupCodeCount; i++ {
-		b := make([]byte, 8)
-		if _, err := rand.Read(b); err != nil {
-			sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
-			return
-		}
-		plainCodes[i] = hex.EncodeToString(b)
-		// bcrypt cost 10 — light enough for 10 hashes here, strong enough
-		// since the codes already have ~64 bits of entropy.
-		h, err := bcrypt.GenerateFromPassword([]byte(plainCodes[i]), 10)
-		if err != nil {
-			sendJSONError(w, "Failed to hash backup code", http.StatusInternalServerError)
-			return
-		}
-		hashed[i] = string(h)
+	plainCodes, hashedJSON, err := newBackupCodes()
+	if err != nil {
+		sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
+		return
 	}
-	hashedJSON, _ := json.Marshal(hashed)
 
-	if err := h.state.Store.SetUserTOTP(user.ID, req.Secret, string(hashedJSON), true); err != nil {
+	if err := h.state.Store.SetUserTOTP(user.ID, req.Secret, hashedJSON, true); err != nil {
 		sendJSONError(w, "Failed to enable 2FA", http.StatusInternalServerError)
 		return
 	}
@@ -314,6 +321,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		h.reissueOwnSession(w, r, user)
 	}
 
+	w.Header().Set("Cache-Control", "no-store") // the backup codes, shown once
 	json.NewEncoder(w).Encode(VerifyTOTPResponse{
 		Success:     true,
 		BackupCodes: plainCodes,
@@ -359,24 +367,12 @@ func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	plainCodes := make([]string, backupCodeCount)
-	hashed := make([]string, backupCodeCount)
-	for i := 0; i < backupCodeCount; i++ {
-		b := make([]byte, 8)
-		if _, err := rand.Read(b); err != nil {
-			sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
-			return
-		}
-		plainCodes[i] = hex.EncodeToString(b)
-		bcryptHash, err := bcrypt.GenerateFromPassword([]byte(plainCodes[i]), 10)
-		if err != nil {
-			sendJSONError(w, "Failed to hash backup code", http.StatusInternalServerError)
-			return
-		}
-		hashed[i] = string(bcryptHash)
+	plainCodes, hashedJSON, err := newBackupCodes()
+	if err != nil {
+		sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
+		return
 	}
-	hashedJSON, _ := json.Marshal(hashed)
-	if err := h.state.Store.SetUserTOTPBackupCodes(user.ID, string(hashedJSON)); err != nil {
+	if err := h.state.Store.SetUserTOTPBackupCodes(user.ID, hashedJSON); err != nil {
 		sendJSONError(w, "Failed to persist new codes", http.StatusInternalServerError)
 		return
 	}
@@ -385,6 +381,7 @@ func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 		"count": backupCodeCount,
 	})
 
+	w.Header().Set("Cache-Control", "no-store") // the backup codes, shown once
 	json.NewEncoder(w).Encode(VerifyTOTPResponse{
 		Success:     true,
 		BackupCodes: plainCodes,

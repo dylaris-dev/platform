@@ -10,6 +10,7 @@ import {
     type SetupMode,
 } from '@/lib/api/setup';
 import { setupUiState, type SetupUiState } from '@/lib/setupUiState';
+import SetupBackupCodes from './SetupBackupCodes';
 
 type Step = 1 | 2;
 
@@ -39,6 +40,7 @@ export default function SetupWizard() {
 
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
 
     useEffect(() => {
         getSetupStatus().then(s => {
@@ -93,9 +95,18 @@ export default function SetupWizard() {
         }
         // Nothing to store. Core signs the new admin in with the same HttpOnly
         // cookie a login sets, so /servers is reachable straight away - the
-        // response still carries a token, and nothing reads it.
+        // response still carries a token, and nothing reads it. With 2FA on,
+        // the backup codes come first: this is the only time they are shown.
+        if (res.backupCodes && res.backupCodes.length > 0) {
+            setBackupCodes(res.backupCodes);
+            return;
+        }
         router.replace('/servers');
     };
+
+    if (backupCodes) {
+        return <SetupBackupCodes codes={backupCodes} onDone={() => router.replace('/servers')} />;
+    }
 
     if (!mode || !uiState) {
         return (

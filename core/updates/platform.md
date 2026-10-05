@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.7
+
+### Features
+- **The setup wizard hands out backup codes when it sets up 2FA,** shown once before the panel
+  opens. The first admin had 2FA on and no codes. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05.6
 
 ### Features
