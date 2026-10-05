@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Your two-factor secret is now stored encrypted on our side.** Nothing changes for you, and
+  your authenticator app keeps working.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05.2
 
 ### Features

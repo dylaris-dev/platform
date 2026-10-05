@@ -37,6 +37,11 @@ const (
 // none. totp.Validate answers only yes or no, and "which step" is what makes a
 // code claimable exactly once.
 func matchTOTPStep(code, secret string, now time.Time) (step int64, ok bool) {
+	// An empty secret is an empty HMAC key, and the code for it is public:
+	// pquerna validates it. A secret the store cannot open reads as "".
+	if secret == "" {
+		return 0, false
+	}
 	opts := totp.ValidateOpts{Period: totpStepSeconds, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
 	for off := -totpSkewSteps; off <= totpSkewSteps; off++ {
 		t := now.Add(time.Duration(off) * totpStepSeconds * time.Second)
@@ -261,7 +266,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if !totp.Validate(req.Code, req.Secret) {
+	if _, ok := matchTOTPStep(req.Code, req.Secret, time.Now()); !ok {
 		// Say WHY in the log. "Invalid code" alone left clock skew and a stale
 		// authenticator entry indistinguishable, and both are common enough that
 		// diagnosing them meant guessing. The response stays generic; only the

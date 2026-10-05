@@ -407,7 +407,11 @@ func (s *PostgresStore) CountUsers() (int, error) {
 // SetUserTOTP stores the TOTP secret + hashed backup codes JSON for a user
 // and sets is_2fa_enabled accordingly. enabled=true means 2FA is now active.
 func (s *PostgresStore) SetUserTOTP(id string, secret, backupCodesJSON string, enabled bool) error {
-	_, err := s.db.Exec(
+	secret, err := s.encodeTOTPSecret(secret)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
 		`UPDATE users SET totp_secret = $1, totp_backup_codes = $2::jsonb, is_2fa_enabled = $3 WHERE id = $4`,
 		secret, backupCodesJSON, enabled, id,
 	)
@@ -2813,20 +2817,27 @@ func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret stri
 		WITH guard AS (
 			SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = true)
 		)
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
-		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW()
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, is_2fa_enabled, created_at, email_verified_at)
+		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, $4, NOW(), NOW()
 		FROM guard
-		RETURNING id, username, is_admin, role, totp_secret, created_at
+		RETURNING id, username, is_admin, role, totp_secret, is_2fa_enabled, created_at
 	`
+	// The wizard verified a code against this secret: 2FA is on from the
+	// first login. It used to be stored with 2FA off, so it was never asked for.
+	sealed, err := s.encodeTOTPSecret(totpSecret)
+	if err != nil {
+		return nil, err
+	}
 	var u models.User
-	err := s.db.QueryRow(q, username, passwordHash, totpSecret).
-		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Role, &u.TOTPSecret, &u.CreatedAt)
+	err = s.db.QueryRow(q, username, passwordHash, sealed, totpSecret != "").
+		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Role, &u.TOTPSecret, &u.Is2FAEnabled, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrSetupAlreadyComplete
 	}
 	if err != nil {
 		return nil, err
 	}
+	u.TOTPSecret = s.decodeTOTPSecret(u.ID, u.TOTPSecret)
 	return &u, nil
 }
 
@@ -2837,13 +2848,19 @@ func (s *PostgresStore) CreateFirstAdmin(username, passwordHash, totpSecret stri
 // ErrUsernameTaken so the handler answers 409 instead of a raw 500.
 func (s *PostgresStore) CreateAdditionalAdmin(username, passwordHash, totpSecret string) (*models.User, error) {
 	const q = `
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
-		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW())
-		RETURNING id, username, is_admin, role, totp_secret, created_at
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, is_2fa_enabled, created_at, email_verified_at)
+		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, $4, NOW(), NOW())
+		RETURNING id, username, is_admin, role, totp_secret, is_2fa_enabled, created_at
 	`
+	// The wizard verified a code against this secret: 2FA is on from the
+	// first login. It used to be stored with 2FA off, so it was never asked for.
+	sealed, err := s.encodeTOTPSecret(totpSecret)
+	if err != nil {
+		return nil, err
+	}
 	var u models.User
-	err := s.db.QueryRow(q, username, passwordHash, totpSecret).
-		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Role, &u.TOTPSecret, &u.CreatedAt)
+	err = s.db.QueryRow(q, username, passwordHash, sealed, totpSecret != "").
+		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Role, &u.TOTPSecret, &u.Is2FAEnabled, &u.CreatedAt)
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
@@ -2851,5 +2868,6 @@ func (s *PostgresStore) CreateAdditionalAdmin(username, passwordHash, totpSecret
 		}
 		return nil, err
 	}
+	u.TOTPSecret = s.decodeTOTPSecret(u.ID, u.TOTPSecret)
 	return &u, nil
 }

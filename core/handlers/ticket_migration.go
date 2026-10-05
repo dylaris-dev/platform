@@ -21,7 +21,6 @@ import (
 
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
-	"github.com/pquerna/otp/totp"
 )
 
 // TicketMigrationHandler bundles three related admin tools:
@@ -600,7 +599,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	// typos, not credential guesses, and burning the token on them would only
 	// train people to click through the confirmation faster.
 	h.consumeRestoreToken(req.Token)
-	if !totp.Validate(strings.TrimSpace(req.TOTPCode), user.TOTPSecret) {
+	if _, ok := matchTOTPStep(strings.TrimSpace(req.TOTPCode), user.TOTPSecret, time.Now()); !ok {
 		sendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 		return
 	}

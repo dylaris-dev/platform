@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **Do not roll Core back below this release.** An older Core cannot read the encrypted 2FA
+  secrets and rejects every authenticator code; backup codes still work. `core`
+
+### Security
+- **2FA secrets are stored encrypted,** under a key derived from `CLUSTER_SECRET`, and existing
+  ones are converted when Core starts. Database backups taken before still hold them. `core`
+- **An admin who sets up 2FA in the setup wizard is now asked for it at login,** and should
+  create backup codes in the profile menu. The wizard checked the code but left 2FA off. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05.2
 
 ### Features

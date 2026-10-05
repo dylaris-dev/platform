@@ -72,14 +72,9 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 		t.Fatalf("SetSetting: %v", err)
 	}
 
-	// Sealed the way the store seals it; the column is written directly
-	// because SetUserTOTP still stores plaintext until every Core can open it.
-	totpCT, err := crypto.Encrypt(crypto.DeriveKey(secretBefore, "totp-secret"), []byte("JBSWY3DPEHPK3PXP"))
-	if err != nil {
-		t.Fatalf("encrypt TOTP: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE users SET totp_secret = $1 WHERE id = $2`, "enc:v1:"+totpCT, f.user.ID); err != nil {
-		t.Fatalf("seal TOTP: %v", err)
+	before.SetTOTPEncryptionKey(secretBefore)
+	if err := before.SetUserTOTP(f.user.ID, "JBSWY3DPEHPK3PXP", "[]", true); err != nil {
+		t.Fatalf("SetUserTOTP: %v", err)
 	}
 
 	rep, err := before.ResealAtRest(secretBefore, secretAfter)

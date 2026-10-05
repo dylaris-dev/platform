@@ -15,16 +15,16 @@ const createFirstAdminQ = `
 		WITH guard AS (
 			SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = true)
 		)
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
-		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW()
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, is_2fa_enabled, created_at, email_verified_at)
+		SELECT gen_random_uuid(), $1, $2, true, 'admin', $3, $4, NOW(), NOW()
 		FROM guard
-		RETURNING id, username, is_admin, role, totp_secret, created_at
+		RETURNING id, username, is_admin, role, totp_secret, is_2fa_enabled, created_at
 	`
 
 const createAdditionalAdminQ = `
-		INSERT INTO users (id, username, password, is_admin, role, totp_secret, created_at, email_verified_at)
-		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, NOW(), NOW())
-		RETURNING id, username, is_admin, role, totp_secret, created_at
+		INSERT INTO users (id, username, password, is_admin, role, totp_secret, is_2fa_enabled, created_at, email_verified_at)
+		VALUES (gen_random_uuid(), $1, $2, true, 'admin', $3, $4, NOW(), NOW())
+		RETURNING id, username, is_admin, role, totp_secret, is_2fa_enabled, created_at
 	`
 
 func TestCreateFirstAdmin_HappyPath(t *testing.T) {
@@ -35,10 +35,10 @@ func TestCreateFirstAdmin_HappyPath(t *testing.T) {
 	defer db.Close()
 	s := NewPostgresStore(db)
 
-	rows := sqlmock.NewRows([]string{"id", "username", "is_admin", "role", "totp_secret", "created_at"}).
-		AddRow("uuid-1", "alice", true, "admin", "", time.Now())
+	rows := sqlmock.NewRows([]string{"id", "username", "is_admin", "role", "totp_secret", "is_2fa_enabled", "created_at"}).
+		AddRow("uuid-1", "alice", true, "admin", "", false, time.Now())
 	mock.ExpectQuery(regexp.QuoteMeta(createFirstAdminQ)).
-		WithArgs("alice", "hash", "").
+		WithArgs("alice", "hash", "", false).
 		WillReturnRows(rows)
 
 	u, err := s.CreateFirstAdmin("alice", "hash", "")
@@ -63,7 +63,7 @@ func TestCreateFirstAdmin_AlreadyComplete(t *testing.T) {
 
 	// The guarded CTE inserts zero rows when an admin already exists -> ErrNoRows.
 	mock.ExpectQuery(regexp.QuoteMeta(createFirstAdminQ)).
-		WithArgs("alice", "hash", "").
+		WithArgs("alice", "hash", "", false).
 		WillReturnError(sql.ErrNoRows)
 
 	_, err = s.CreateFirstAdmin("alice", "hash", "")
@@ -83,10 +83,10 @@ func TestCreateAdditionalAdmin_HappyPath(t *testing.T) {
 	defer db.Close()
 	s := NewPostgresStore(db)
 
-	rows := sqlmock.NewRows([]string{"id", "username", "is_admin", "role", "totp_secret", "created_at"}).
-		AddRow("uuid-2", "backup-admin", true, "admin", "", time.Now())
+	rows := sqlmock.NewRows([]string{"id", "username", "is_admin", "role", "totp_secret", "is_2fa_enabled", "created_at"}).
+		AddRow("uuid-2", "backup-admin", true, "admin", "", false, time.Now())
 	mock.ExpectQuery(regexp.QuoteMeta(createAdditionalAdminQ)).
-		WithArgs("backup-admin", "hash", "").
+		WithArgs("backup-admin", "hash", "", false).
 		WillReturnRows(rows)
 
 	u, err := s.CreateAdditionalAdmin("backup-admin", "hash", "")
@@ -110,7 +110,7 @@ func TestCreateAdditionalAdmin_UsernameTaken(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	mock.ExpectQuery(regexp.QuoteMeta(createAdditionalAdminQ)).
-		WithArgs("alice", "hash", "").
+		WithArgs("alice", "hash", "", false).
 		WillReturnError(&pq.Error{Code: "23505"})
 
 	_, err = s.CreateAdditionalAdmin("alice", "hash", "")

@@ -249,6 +249,15 @@ func main() {
 	// secret still reads through and is re-encrypted on its next save.
 	pgStore.SetSettingsEncryptionKey(cfg.ClusterSecret)
 	pgStore.SetTOTPEncryptionKey(cfg.ClusterSecret)
+	// Seal the TOTP secrets still stored in the clear. A Core older than
+	// 0b307a77 cannot open a sealed one and rejects every authenticator code,
+	// so this image must not run beside one (deploy that commit first) and
+	// must not be rolled back below it.
+	if n, err := pgStore.SealPlaintextTOTPSecrets(); err != nil {
+		log.Printf("totp: sealing the stored secrets failed, they stay readable in the clear: %v", err)
+	} else if n > 0 {
+		log.Printf("totp: sealed %d stored secrets", n)
+	}
 	// Encrypt storage_connections secrets at rest with a distinct
 	// CLUSTER_SECRET-derived key. Installed before any handler resolves a
 	// connection, so a connection secret is never stored or read in the clear.

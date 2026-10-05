@@ -28,9 +28,11 @@ func (s *PostgresStore) SetTOTPEncryptionKey(clusterSecret string) {
 	s.totpSecretKey = crypto.DeriveKey(clusterSecret, totpSecretPurpose)
 }
 
-// decodeTOTPSecret opens a sealed secret. A value it cannot open reads as "",
-// which no code validates against, so a key mismatch locks the authenticator
-// out rather than letting a code through; backup codes still work.
+// decodeTOTPSecret opens a sealed secret. A value it cannot open reads as "".
+// pquerna DOES validate a code against "" (an empty HMAC key, so a public
+// code): every check refuses an empty secret before validating
+// (handlers.matchTOTPStep). A key mismatch then locks the authenticator out;
+// backup codes still work.
 func (s *PostgresStore) decodeTOTPSecret(userID, value string) string {
 	if !strings.HasPrefix(value, totpEncMarker) {
 		return value
@@ -45,6 +47,66 @@ func (s *PostgresStore) decodeTOTPSecret(userID, value string) string {
 		return ""
 	}
 	return string(pt)
+}
+
+// encodeTOTPSecret seals a secret for the column. With no key (tests, early
+// boot) it passes through, as the settings do; Core refuses to boot without
+// CLUSTER_SECRET, so a running Core always seals.
+func (s *PostgresStore) encodeTOTPSecret(value string) (string, error) {
+	if value == "" || s.totpSecretKey == nil {
+		return value, nil
+	}
+	enc, err := crypto.Encrypt(s.totpSecretKey, []byte(value))
+	if err != nil {
+		return "", err
+	}
+	return totpEncMarker + enc, nil
+}
+
+// SealPlaintextTOTPSecrets seals every secret still stored in the clear and
+// reports how many it sealed. A secret is only rewritten on enrolment, so
+// without this the existing ones would stay plaintext for good. Each row is
+// replaced only if it still holds the value read, so a second replica running
+// the same pass, or an enrolment in between, makes it a no-op.
+func (s *PostgresStore) SealPlaintextTOTPSecrets() (int, error) {
+	if s.totpSecretKey == nil {
+		return 0, nil
+	}
+	rows, err := s.db.Query(`SELECT id, totp_secret FROM users WHERE totp_secret <> '' AND totp_secret NOT LIKE $1`, totpEncMarker+"%")
+	if err != nil {
+		return 0, err
+	}
+	type pending struct{ id, val string }
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.id, &p.val); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		todo = append(todo, p)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	sealed := 0
+	for _, p := range todo {
+		enc, err := s.encodeTOTPSecret(p.val)
+		if err != nil {
+			return sealed, err
+		}
+		res, err := s.db.Exec(`UPDATE users SET totp_secret = $1 WHERE id = $2 AND totp_secret = $3`, enc, p.id, p.val)
+		if err != nil {
+			return sealed, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			sealed++
+		}
+	}
+	return sealed, nil
 }
 
 // scanUser reads a user row and opens its TOTP secret.
