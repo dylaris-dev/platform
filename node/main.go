@@ -1615,11 +1615,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		log.Printf("Deleting sub-server %s/%s ...", cmd.Config.UUID, subName)
 
-		// Tear down the container fully before touching the
-		// filesystem. The container's bind is rooted at the
-		// server dir (not the sub-server dir), so even an
-		// inactive sub-server can show up busy if the kernel
-		// hasn't released the overlay mount yet. Steps:
+		// Tear down the container before touching the sub-server it runs in.
+		// The container's bind is rooted at the server dir, and a JVM still
+		// writing into the directory being deleted lost the race:
 		//   1) SIGKILL the JVM (cheap, non-blocking)
 		//   2) Wait for Docker to actually report the
 		//      container stopped — ContainerKill returns
@@ -1629,24 +1627,38 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// then immediately RemoveAll'd, which lost a race
 		// to a still-held bind and looked to the user like
 		// "the delete button does nothing".
+		//
+		// Only for the sub-server the container runs in. This killed the
+		// running server for ANY delete, inactive sub-servers included:
+		// players dropped and the world lost everything since its last
+		// save, and the reconciler started it again. An inactive one is only
+		// torn down for if its rename fails below.
 		mcName := fmt.Sprintf("mc_%s", cmd.Config.UUID)
-		killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
-		if killErr := dm.cli.ContainerKill(killCtx, mcName, "SIGKILL"); killErr != nil {
-			log.Printf("delete_sub_server %s: ContainerKill: %v (probably already stopped — continuing)", cmd.Config.UUID, killErr)
-		}
-		statusCh, errCh := dm.cli.ContainerWait(killCtx, mcName, container.WaitConditionNotRunning)
-		select {
-		case <-statusCh:
-		case waitErr := <-errCh:
-			if waitErr != nil {
-				log.Printf("delete_sub_server %s: container wait: %v", cmd.Config.UUID, waitErr)
+		toreDown := false
+		teardown := func() {
+			toreDown = true
+			killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer killCancel()
+			if killErr := dm.cli.ContainerKill(killCtx, mcName, "SIGKILL"); killErr != nil {
+				log.Printf("delete_sub_server %s: ContainerKill: %v (probably already stopped — continuing)", cmd.Config.UUID, killErr)
 			}
-		case <-killCtx.Done():
-			log.Printf("delete_sub_server %s: kill wait timed out, proceeding anyway", cmd.Config.UUID)
+			statusCh, errCh := dm.cli.ContainerWait(killCtx, mcName, container.WaitConditionNotRunning)
+			select {
+			case <-statusCh:
+			case waitErr := <-errCh:
+				if waitErr != nil {
+					log.Printf("delete_sub_server %s: container wait: %v", cmd.Config.UUID, waitErr)
+				}
+			case <-killCtx.Done():
+				log.Printf("delete_sub_server %s: kill wait timed out, proceeding anyway", cmd.Config.UUID)
+			}
+			if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
+				log.Printf("delete_sub_server %s: ContainerRemove: %v (probably gone already — continuing)", cmd.Config.UUID, rmErr)
+			}
 		}
-		killCancel()
-		if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
-			log.Printf("delete_sub_server %s: ContainerRemove: %v (probably gone already — continuing)", cmd.Config.UUID, rmErr)
+		inUse := dm.containerUsesSubServer(cmd.Config.UUID, subName)
+		if inUse {
+			teardown()
 		}
 
 		// Drop the per-sub-server log stream. The console
@@ -1689,7 +1701,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// reported.
 		pendingPath := filepath.Join(serverPath, fmt.Sprintf(".pending-delete-%s-%d", subName, time.Now().UnixNano()))
 		removed := false
-		if renameErr := os.Rename(subServerPath, pendingPath); renameErr == nil {
+		renameErr := os.Rename(subServerPath, pendingPath)
+		if renameErr != nil && !inUse {
+			// A host that keeps a bound tree busy (Docker Desktop shares)
+			// refuses this while the container runs: the old full teardown.
+			teardown()
+			renameErr = os.Rename(subServerPath, pendingPath)
+		}
+		if renameErr == nil {
 			removed = true
 			go func(p string) {
 				for attempt := 0; attempt < 12; attempt++ {
@@ -1756,10 +1775,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// dropped the last *inactive* one we still need to
 		// notice that nothing's left -- and the stats
 		// collector won't fire for a non-existent container.
+		// "stopped" only when the container was torn down: a server left
+		// running by an inactive delete read stopped for up to a refresh,
+		// and the edge turned new logins away with "server stopped".
 		statusKey := fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID)
 		if delFinalActive == "" {
 			rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
-		} else {
+		} else if toreDown {
 			rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 		}
 		log.Printf("Sub-server %s/%s deleted", cmd.Config.UUID, subName)

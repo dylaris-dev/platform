@@ -1718,3 +1718,15 @@ func hardenTenantContainer(hc *container.HostConfig) {
 // defaultPidsLimit is the process and thread cap of a tenant container until
 // an operator saves one. Generous for a modded server, fatal to a fork bomb.
 const defaultPidsLimit int64 = 4096
+
+// containerUsesSubServer reports whether the server's container runs in the
+// named sub-server, which is what holds that directory busy. No container uses
+// nothing; any other inspect failure answers yes, so a delete never renames a
+// directory out from under a JVM it could not check on.
+func (dm *DockerManager) containerUsesSubServer(uuid, sub string) bool {
+	info, err := dm.cli.ContainerInspect(dm.ctx, fmt.Sprintf("mc_%s", uuid))
+	if err != nil {
+		return !client.IsErrNotFound(err)
+	}
+	return info.Config == nil || info.Config.WorkingDir == "/data/"+sub
+}

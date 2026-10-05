@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting a sub-server that is not running no longer kills your running server.** Players
+  were dropped and the world lost everything since its last save. On your own node, update
+  the node agent. `node`
+
 ## 2026.10.05.4
 
 ### Features
