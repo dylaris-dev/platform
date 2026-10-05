@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **A server move needs the target node on 2026.10.05.2 or newer.** An older target is refused
+  before anything is stopped. `core` `node`
+
+### Security
+- **A moved server starts with the settings Core holds,** not with the image, memory, CPU and
+  command in the source node's copy of its config. `core` `node`
+- **Unpacking a moved server is bounded by the target's free disk** and drops setuid bits. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05
 
 ### Features

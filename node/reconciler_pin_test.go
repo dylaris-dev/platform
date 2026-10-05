@@ -23,6 +23,8 @@ func TestPinSavedConfig(t *testing.T) {
 		{`..\x`, false},
 		{"..", false},
 		{".", false},
+		{".dylaris-backups", false},
+		{"", true}, // empty is handled by its own pending_setup branch
 	} {
 		cfg := ServerConfig{UUID: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", ActiveSubServer: c.sub}
 		if got := pinSavedConfig(&cfg, dirUUID); got != c.ok {

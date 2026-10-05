@@ -121,11 +121,13 @@ var protectedStatuses = map[string]bool{
 // directory, and the sub-server is one name in it. A config naming another
 // server's uuid, or a sub-server of "../<uuid>/x", would have rebuilt a
 // container over someone else's data with this config's image and command.
-// It reports false for a sub-server that is not a single name.
+// It reports false for a sub-server that is not a single name, or that names
+// one of the node's own dot entries: ".dylaris-backups" would have been handed
+// to the container's uid as the sub-server.
 func pinSavedConfig(config *ServerConfig, uuid string) bool {
 	config.UUID = uuid
 	a := config.ActiveSubServer
-	return a != "." && a != ".." && !strings.ContainsAny(a, `/\`)
+	return !strings.HasPrefix(a, ".") && !strings.ContainsAny(a, `/\`)
 }
 
 func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *DockerManager, storage *StorageManager) {

@@ -195,8 +195,8 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 
 // handleMigrateIn (target side) pulls the staged archive from the source node
 // and extracts it into a locally-selected storage path. It does NOT allocate a
-// host port or start the container — the orchestrator sends a normal start
-// afterwards, which recreates the container from the extracted .node_config.json.
+// host port or start the container: Core sends the config afterwards, and the
+// reconciler creates the container from it.
 // migrationProbeTimeout bounds each LAN-candidate reachability probe so a
 // same-LAN move stays within a few seconds before falling back to the overlay.
 const migrationProbeTimeout = 2 * time.Second
@@ -279,7 +279,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("cannot clear the target directory: %v", err))
 		return
 	}
-	if err := migration.Extract(tmpZip, targetDir); err != nil {
+	if err := extractMovedServer(tmpZip, targetPath, targetDir); err != nil {
 		log.Printf("migrate_in %s: extract failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		os.RemoveAll(targetDir)
@@ -293,6 +293,34 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "transferred", "")
 	log.Printf("migrate_in %s: transferred into %s", serverUUID, targetDir)
+}
+
+// extractMovedServer unpacks a moved server and drops the node files it
+// arrived with. Those were written by the source node, and a customer's node
+// writes what it likes: the reconciler built the container from the archived
+// .node_config.json, so its image, memory, CPU and command ran on this host.
+// Core sends its own config after the cutover (migrationTargetSince).
+// .active_server is not read to start anything and the backups are the
+// tenant's, so both stay.
+func extractMovedServer(zipPath, storagePath, targetDir string) error {
+	if err := migration.Extract(zipPath, targetDir, restoreDiskBudget(storagePath)); err != nil {
+		return err
+	}
+	for _, name := range []string{".node_config.json", ".dylaris.json"} {
+		if err := os.RemoveAll(filepath.Join(targetDir, name)); err != nil {
+			return fmt.Errorf("drop the archived %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// reportUnstartable says "stopped" for a server a refused reconfigure leaves
+// with no saved config, which is a moved server: nothing on this node can start
+// it, and Core would show it "starting" for good.
+func reportUnstartable(ctx context.Context, rdb *redis.Client, storage *StorageManager, uuid string) {
+	if _, err := os.Stat(filepath.Join(storage.GetServerDir(uuid), ".node_config.json")); os.IsNotExist(err) {
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+	}
 }
 
 // lanCandidates returns the source's LAN host:port endpoints to probe, deduped.
@@ -578,7 +606,7 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("cannot clear the target directory: %v", err))
 		return
 	}
-	if err := migration.Extract(tmpZip, targetDir); err != nil {
+	if err := extractMovedServer(tmpZip, targetPath, targetDir); err != nil {
 		log.Printf("migrate_pull_r2 %s: extract failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		os.RemoveAll(targetDir)

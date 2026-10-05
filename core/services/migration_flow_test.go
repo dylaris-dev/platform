@@ -84,6 +84,8 @@ func (flowGateway) MigrateServerRoutes(uint, uint) error { return nil }
 type simNodes struct {
 	mu          sync.Mutex
 	targetFails bool
+	// breakTarget makes every later command to the target fail to queue.
+	breakTarget bool
 	got         map[string][]map[string]interface{} // token -> commands
 }
 
@@ -126,7 +128,7 @@ func (s *simNodes) run(ctx context.Context, rdb *redis.Client) {
 					s.got = map[string][]map[string]interface{}{}
 				}
 				s.got[token] = append(s.got[token], cmd)
-				fails := s.targetFails
+				fails, brk := s.targetFails, s.breakTarget
 				s.mu.Unlock()
 				uuid, _ := cmd["config"].(map[string]interface{})["uuid"].(string)
 				attempt, _ := cmd["attempt"].(string)
@@ -141,6 +143,12 @@ func (s *simNodes) run(ctx context.Context, rdb *redis.Client) {
 						phase := `{"phase":"transferred"}`
 						if fails {
 							phase = `{"phase":"error","error":"extract failed"}`
+						}
+						if brk {
+							// A string where the stream was: XADD answers WRONGTYPE.
+							stream := "dylaris:node:" + flowTargetToken + ":cmds"
+							rdb.Del(ctx, stream)
+							rdb.Set(ctx, stream, "x", 0)
 						}
 						rdb.Set(ctx, queue.MigrationStatusKey(token, progress), phase, time.Hour)
 					}
@@ -334,4 +342,61 @@ func TestARerunPutsBackTheStatusTheServerHad(t *testing.T) {
 			t.Fatalf("status %q, want suspended after the move", got)
 		}
 	})
+}
+
+// The target starts a moved server from the config Core sends, never from the
+// one in the archive: a customer's source node wrote that one. Sent in either
+// run state, since a stopped server is started from it later.
+func TestTheTargetGetsCoresConfigAfterAMove(t *testing.T) {
+	o, fs, sim, _ := newFlow(t, "stopped")
+	fs.srv.GameImage = "ghcr.io/dylaris-dev/java:21"
+	fs.srv.Memory = 4096
+	fs.srv.ActiveSubServer = "survival"
+	fs.srv.ExtraJvmFlags = "-Dx=1"
+	o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"})
+	time.Sleep(100 * time.Millisecond)
+	got := sim.commands(flowTargetToken, "reconfigure")
+	if len(got) != 1 {
+		t.Fatalf("reconfigure sent %d times, want once", len(got))
+	}
+	cfg := got[0]["config"].(map[string]interface{})
+	d := cfg["docker"].(map[string]interface{})
+	if cfg["activeSubServer"] != "survival" || d["image"] != "ghcr.io/dylaris-dev/java:21" || d["ram"] != float64(4096) || d["extraJvmFlags"] != DefaultJvmFlags+" -Dx=1" {
+		t.Fatalf("reconfigure carried %v", cfg)
+	}
+}
+
+// An older target still starts from the archived config, so it cannot take a
+// move, whatever the source runs.
+func TestATargetThatTrustsTheArchiveIsRefused(t *testing.T) {
+	o, fs, sim, rdb := newFlow(t, "stopped")
+	hb, _ := json.Marshal(NodeHeartbeat{ID: flowTargetToken, ReleaseVersion: "2026.10.05"})
+	rdb.Set(context.Background(), "dylaris:discovery:"+flowTargetToken, hb, 0)
+	o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"})
+	time.Sleep(400 * time.Millisecond)
+	if len(fs.cutovers) != 0 || len(sim.commands(flowSourceToken, "migrate_out")) != 0 {
+		t.Fatalf("a move onto a target older than %s went ahead", migrationTargetSince)
+	}
+}
+
+// A target that never got Core's config has nothing to start from. The move
+// said "done" over that failure, and the server read "starting" for good.
+func TestAMoveWhoseConfigNeverReachedTheTargetSaysSo(t *testing.T) {
+	o, fs, sim, rdb := newFlow(t, "stopped")
+	sim.mu.Lock()
+	sim.breakTarget = true
+	sim.mu.Unlock()
+	o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"})
+	if len(fs.cutovers) != 1 {
+		t.Fatalf("cutovers %v, want the move to have cut over", fs.cutovers)
+	}
+	raw, _ := rdb.Get(context.Background(), "dylaris:migration:srv-flow:orchestration").Result()
+	var st orchestrationStatus
+	json.Unmarshal([]byte(raw), &st)
+	if st.Phase != "failed_post_cutover" {
+		t.Errorf("phase %q, want failed_post_cutover", st.Phase)
+	}
+	if got := fs.status(); got != "stopped" {
+		t.Errorf("status %q, want stopped", got)
+	}
 }

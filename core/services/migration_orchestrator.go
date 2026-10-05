@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"dylaris-core/database"
@@ -196,6 +197,16 @@ const migrationQueuedTTL = 3 * time.Hour
 // attempt. Moves were broken before it in any case: Core named the source by
 // an id it never published under.
 const migrationAttemptSince = "2026.10.04.8"
+
+// migrationTargetSince is the node release that drops the node files a moved
+// server arrives with. An older target starts the server from the archived
+// .node_config.json, which a customer's source node wrote as it liked: image,
+// memory, CPU and command on our host.
+const migrationTargetSince = "2026.10.05.2"
+
+// DefaultJvmFlags are always injected into the start command but not stored in
+// extra_jvm_flags.
+const DefaultJvmFlags = "-Dterminal.ansi=true -Djline.terminal=jline.UnsupportedTerminal"
 
 func newMigrationAttempt() string {
 	b := make([]byte, 6)
@@ -418,6 +429,11 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 			return
 		}
 	}
+	if !nodeAtLeast(ctx, o.redis, targetNode.Token, migrationTargetSince) {
+		log.Printf("migration %s: target node %d is older than %s", srv.UUID, targetNode.ID, migrationTargetSince)
+		writeStatus("failed", fmt.Sprintf("node %d must be updated before it can take part in a move", targetNode.ID))
+		return
+	}
 	attempt := newMigrationAttempt()
 	progress := queue.MigrationProgressID(srv.UUID, attempt)
 
@@ -614,53 +630,57 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// Re-resolve CPU pinning for the target host. Different hardware (fewer cores,
 	// different P/E or X3D layout) means the source cpuset is no longer valid or
 	// meaningful: auto is recomputed on the target, manual is reset to shared
-	// unless the target is identical hardware. Persisted here; a running pinned
-	// server is recreated with the corrected cpuset below instead of a plain start.
-	effCpuset, pinned := o.reResolvePinningForTarget(ctx, srv, sourceNode, targetNode)
+	// unless the target is identical hardware. Persisted here, and sent with the
+	// config below.
+	effCpuset, _ := o.reResolvePinningForTarget(ctx, srv, sourceNode, targetNode)
+
+	// The target holds no config for this server: it drops the one the archive
+	// carried (migrationTargetSince). Core's values become the saved config the
+	// target's reconciler starts from, in either run state. Sent before the
+	// desired state turns online, and the reconciler cannot start the server
+	// without it anyway.
+	confErr := o.queue.SendCommand(ctx, targetNode.Token, "reconfigure", map[string]interface{}{
+		"uuid":            srv.UUID,
+		"ownerId":         srv.OwnerID,
+		"activeSubServer": srv.ActiveSubServer,
+		"docker": map[string]interface{}{
+			"image":         srv.GameImage,
+			"ram":           srv.Memory,
+			"cpuLimit":      srv.CPULimit,
+			"cpusetCpus":    effCpuset,
+			"extraJvmFlags": strings.TrimSpace(DefaultJvmFlags + " " + srv.ExtraJvmFlags),
+		},
+	}, nil)
 
 	// --- (i) Start on target if it was running (best-effort) ---
-	if wasRunning {
+	// An operator's suspension moves with the server. Writing "stopped"
+	// lifted it: the power gate refuses only a "suspended" server.
+	final := "stopped"
+	if preStatus == "suspended" {
+		final = "suspended"
+	}
+	switch {
+	case confErr != nil:
+		// Data is safe on the target, but it holds no config to start from, so
+		// online would only read as a start that never comes.
+		log.Printf("migration %s: config for target queue failed: %v", srv.UUID, confErr)
+		o.store.UpdateServerStatus(srv.ID, final)
+		o.store.UpdateServerDesiredState(srv.ID, "stopped")
+		writeStatus("failed_post_cutover", "sending the config to the target failed: "+confErr.Error())
+		// Still send cleanup: the move itself succeeded.
+	case wasRunning:
+		// No start command: the target has no container, and "start" only
+		// restarts an existing one. The reconciler creates it from the config
+		// sent above once the desired state reads online.
 		o.store.UpdateServerStatus(srv.ID, "starting")
 		o.store.UpdateServerDesiredState(srv.ID, "online")
 		// Orchestration phase "finalizing" (not "starting") marks POST-cutover: it
 		// disambiguates from the pre-cutover "starting" phase so the cancel endpoint
 		// only offers cancellation while still pre-cutover.
 		writeStatus("finalizing", "")
-		var startErr error
-		if pinned {
-			// Recreate with the corrected cpuset (and current resources) so the
-			// container lands on valid target cores, then it comes up online.
-			startErr = o.queue.SendCommand(ctx, targetNode.Token, "update_resources", map[string]interface{}{
-				"uuid":            srv.UUID,
-				"activeSubServer": srv.ActiveSubServer,
-				"docker": map[string]interface{}{
-					"ram":        srv.Memory,
-					"cpuLimit":   srv.CPULimit,
-					"diskLimit":  srv.DiskLimit,
-					"cpusetCpus": effCpuset,
-					"image":      srv.GameImage,
-					"command":    srv.StartCommand,
-				},
-			}, nil)
-		} else {
-			startErr = o.queue.SendCommand(ctx, targetNode.Token, "start", map[string]interface{}{"uuid": srv.UUID}, nil)
-		}
-		if startErr != nil {
-			// Data is safe on the target; only the auto-start dispatch failed.
-			log.Printf("migration %s: start on target queue failed: %v", srv.UUID, startErr)
-			writeStatus("failed_post_cutover", "start on target failed: "+startErr.Error())
-			// Still send cleanup — the move itself succeeded.
-		} else {
-			// Best-effort confirm; do not fail the migration if start is slow.
-			o.waitForOnline(ctx, srv.ID, migrationStartTimeout)
-		}
-	} else {
-		// An operator's suspension moves with the server. Writing "stopped"
-		// lifted it: the power gate refuses only a "suspended" server.
-		final := "stopped"
-		if preStatus == "suspended" {
-			final = "suspended"
-		}
+		// Best-effort confirm; do not fail the migration if start is slow.
+		o.waitForOnline(ctx, srv.ID, migrationStartTimeout)
+	default:
 		o.store.UpdateServerStatus(srv.ID, final)
 		o.store.UpdateServerDesiredState(srv.ID, "stopped")
 	}
@@ -675,7 +695,10 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// --- (k) Final status ---
 	// The server's status was already set in step (i): "starting" if it was
 	// running (StatusWatcher will flip it to "online") or "stopped" otherwise.
-	writeStatus("done", "")
+	// A failure step (i) recorded stays the last word.
+	if confErr == nil {
+		writeStatus("done", "")
+	}
 	log.Printf("migration %s: done (node %d -> %d, reason=%s)", srv.UUID, sourceNode.ID, targetNode.ID, req.Reason)
 }
 

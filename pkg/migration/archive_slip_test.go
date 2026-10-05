@@ -3,6 +3,7 @@ package migration
 import (
 	"archive/zip"
 	"bytes"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,7 @@ func TestExtract_ZipSlipRejected(t *testing.T) {
 	destParent := t.TempDir()
 	destDir := filepath.Join(destParent, "dest")
 
-	err := Extract(zipPath, destDir)
+	err := Extract(zipPath, destDir, math.MaxInt64)
 	if err == nil {
 		t.Fatal("Extract: expected error for path-traversal entry, got nil")
 	}
@@ -80,7 +81,7 @@ func TestExtract_DeepZipSlipRejected(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	err := Extract(zipPath, destDir)
+	err := Extract(zipPath, destDir, math.MaxInt64)
 	if err == nil {
 		t.Fatal("Extract: expected error for deep path-traversal entry, got nil")
 	}
@@ -106,7 +107,7 @@ func TestExtract_HappyPath(t *testing.T) {
 	})
 
 	destDir := filepath.Join(t.TempDir(), "dest")
-	if err := Extract(zipPath, destDir); err != nil {
+	if err := Extract(zipPath, destDir, math.MaxInt64); err != nil {
 		t.Fatalf("Extract: unexpected error: %v", err)
 	}
 

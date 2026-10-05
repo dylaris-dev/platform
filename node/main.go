@@ -1436,6 +1436,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		subName := cmd.Config.ActiveSubServer
 		if subName == "" {
 			log.Printf("reconfigure for %s: ActiveSubServer is empty, aborting", cmd.Config.UUID)
+			reportUnstartable(ctx, rdb, storage, cmd.Config.UUID)
 			return
 		}
 		// Same interlock the install paths take. A recreate is a stop + remove +
@@ -1456,6 +1457,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			// half-applied change: the old container is still there and still
 			// correct until the recreate below runs.
 			log.Printf("buildStartCommand failed for reconfigure %s/%s: %v", cmd.Config.UUID, subName, err)
+			reportUnstartable(ctx, rdb, storage, cmd.Config.UUID)
 			return
 		}
 		cmd.Config.Docker.Command = startCmd
@@ -1893,7 +1895,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_in":
 		// Target side: pull the staged archive and extract it. No
-		// container start here — the orchestrator sends start next.
+		// container start here: Core sends "reconfigure" with its config next,
+		// and the reconciler creates the container from that.
 		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
 		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 

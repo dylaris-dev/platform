@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,8 +123,12 @@ func hashFile(path string) (string, int64, error) {
 
 // Extract unzips zipPath into destDir with zip-slip protection: any entry whose
 // cleaned absolute path would escape destDir is rejected. Directories and file
-// modes from the archive are recreated.
-func Extract(zipPath, destDir string) error {
+// modes from the archive are recreated, without setuid, setgid or sticky bits.
+//
+// budget caps the bytes written. The archive comes from the source node, and a
+// customer's node can send one that unpacks to far more than its compressed
+// size; the target's disk is shared with every other server on it.
+func Extract(zipPath, destDir string, budget int64) error {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
@@ -160,7 +166,7 @@ func Extract(zipPath, destDir string) error {
 		}
 
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, f.Mode()); err != nil {
+			if err := os.MkdirAll(target, f.Mode().Perm()); err != nil {
 				return err
 			}
 			continue
@@ -169,9 +175,11 @@ func Extract(zipPath, destDir string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
-		if err := extractOne(f, target); err != nil {
+		n, err := extractOne(f, target, budget)
+		if err != nil {
 			return err
 		}
+		budget -= n
 	}
 	return nil
 }
@@ -221,20 +229,32 @@ func linkFreeUnder(destAbs, target string, verified map[string]bool) error {
 	return nil
 }
 
-func extractOne(f *zip.File, target string) error {
+// ErrExtractBudget ends an extraction that would write more than its budget.
+var ErrExtractBudget = errors.New("migration: archive unpacks to more than the space allowed for it")
+
+func extractOne(f *zip.File, target string, budget int64) (int64, error) {
 	rc, err := f.Open()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer rc.Close()
 
-	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode().Perm())
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := io.Copy(out, rc); err != nil {
+	// Counted as written: the sizes in the zip's headers are the sender's claim.
+	limit := budget
+	if limit < math.MaxInt64 {
+		limit++ // one byte past the budget tells "exactly fits" from "too big"
+	}
+	n, err := io.Copy(out, io.LimitReader(rc, limit))
+	if err == nil && n > budget {
+		err = ErrExtractBudget
+	}
+	if err != nil {
 		out.Close()
-		return err
+		return n, err
 	}
-	return out.Close()
+	return n, out.Close()
 }

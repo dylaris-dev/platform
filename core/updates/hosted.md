@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Moving a server onto your own node needs that node updated to 2026.10.05.2.** Older nodes
+  are refused before the server is stopped. `node`
+
+### Security
+- **A moved server runs with the settings shown in the panel,** not with whatever the old node
+  had saved for it. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05
 
 ### Features

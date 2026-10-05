@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -136,7 +137,7 @@ func TestTransport_RoundTrip(t *testing.T) {
 
 	// Extract and assert the tree byte-matches the original.
 	out := t.TempDir()
-	if err := Extract(pulledZip, out); err != nil {
+	if err := Extract(pulledZip, out, math.MaxInt64); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 	assertTreesEqual(t, src, out)

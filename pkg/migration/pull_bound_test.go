@@ -3,6 +3,7 @@ package migration
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -136,7 +137,7 @@ func TestExtractRefusesToWriteThroughAPlantedDirectorySymlink(t *testing.T) {
 		t.Skipf("cannot create symlinks here: %v", err)
 	}
 
-	err := Extract(zipPath, dest)
+	err := Extract(zipPath, dest, math.MaxInt64)
 	if err == nil {
 		t.Fatal("extract followed a planted directory symlink")
 	}
@@ -161,7 +162,7 @@ func TestExtractStillWritesAnOrdinaryTree(t *testing.T) {
 	}
 
 	dest := t.TempDir()
-	if err := Extract(zipPath, dest); err != nil {
+	if err := Extract(zipPath, dest, math.MaxInt64); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 	assertTreesEqual(t, srcDir, dest)

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,7 +10,7 @@ import (
 )
 
 // defaultJvmFlags are always injected into the start command but not stored in extra_jvm_flags.
-const defaultJvmFlags = "-Dterminal.ansi=true -Djline.terminal=jline.UnsupportedTerminal"
+const defaultJvmFlags = services.DefaultJvmFlags
 
 // aikarsFlags are Aikar's optimized G1GC flags for Minecraft servers (standard RAM).
 const aikarsFlags = "-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 " +
