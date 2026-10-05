@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.05.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A routing-mode switch no longer force-kills a server that is slow to settle.** It is
+  reported as failed instead; the kill could cost a shutting-down server its last world save. `core`
+- **A routing-mode switch leaves servers that are installing, moving or stopping alone,** and
+  counts a booting one as done; the others pick up the new routing on their next start. `core`
+
 ## 2026.10.05.4
 
 ### Features

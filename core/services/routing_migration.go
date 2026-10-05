@@ -48,10 +48,16 @@ const (
 	routingMigrationRunningTTL = 5 * time.Minute
 
 	// routingRedeploySettleTimeout is how long one server is polled for a
-	// settled status before it is killed. routingBatchPause is the gap between
+	// settled status before it counts as failed. routingBatchPause is the gap between
 	// batches. Named so the TTL above can be asserted against them.
 	routingRedeploySettleTimeout = 60 * time.Second
 	routingBatchPause            = 15 * time.Second
+)
+
+// The settle wait as variables, so a test can run it in milliseconds.
+var (
+	redeploySettleTimeout = routingRedeploySettleTimeout
+	redeployPollEvery     = 3 * time.Second
 )
 
 type MigrationStatus struct {
@@ -221,6 +227,23 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 	// NodeAddress carries the node token from GetAllActiveServers
 	nodeToken := srv.NodeAddress
 
+	// An install or a move recreates the container itself when it ends, and
+	// the node binds by the mode current at that moment; a server being
+	// stopped is recreated by its next start. Recreating it here raced the
+	// install's own last step over the same container name, and rewrote the
+	// config of a server whose directory a move was archiving (a move's stop
+	// phase reads "stopping"). Read now, not from the fleet load: the batches
+	// can reach a server minutes later.
+	status := srv.Status
+	if latest, err := m.store.GetServerByUUID(srv.UUID); err == nil && latest != nil {
+		status = latest.Status
+	}
+	switch status {
+	case "installing", "migrating", "stopping":
+		log.Printf("[RoutingMigration] server %s is %s; it takes the new routing when its container is next recreated", srv.UUID, status)
+		return nil
+	}
+
 	type dockerCfg struct {
 		RAM           int     `json:"ram"`
 		CPULimit      float64 `json:"cpuLimit"`
@@ -262,27 +285,29 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 	}
 
 	// Poll for the container to settle
-	deadline := time.Now().Add(routingRedeploySettleTimeout)
+	deadline := time.Now().Add(redeploySettleTimeout)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(3 * time.Second):
+		case <-time.After(redeployPollEvery):
 		}
 		latest, err := m.store.GetServerByUUID(srv.UUID)
 		if err != nil {
 			continue
 		}
 		switch latest.Status {
-		case "stopped", "online", "offline":
+		// "starting" is the recreated container booting, already bound the
+		// new way; a large modpack takes longer than the wait to log "Done".
+		case "stopped", "online", "offline", "disk_full", "starting":
 			return nil
 		}
 	}
 
-	// Timeout — force kill
-	log.Printf("[RoutingMigration] server %s timed out, sending kill", srv.UUID)
-	_ = m.queue.SendCommand(ctx, nodeToken, "kill", map[string]string{"uuid": srv.UUID}, nil)
-	return nil
+	// Not settled in time. This used to SIGKILL the server and count it as
+	// done: a JVM still shutting down lost the world since its last save, and
+	// the kill changed no port binding, so it bought nothing.
+	return fmt.Errorf("did not settle within %s", redeploySettleTimeout)
 }
 
 func (m *RoutingMigrationService) GetStatus(ctx context.Context) MigrationStatus {

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -135,7 +136,7 @@ func TestRoutingMigrationRunPropagatesAFailedFleetLoad(t *testing.T) {
 // pinned server came back unpinned.
 func TestRoutingRedeployKeepsTheCpuset(t *testing.T) {
 	rdb := newQueueTestRedis(t)
-	m := &RoutingMigrationService{redis: rdb, queue: NewQueueService(rdb), store: failingServerStore{}}
+	m := &RoutingMigrationService{redis: rdb, queue: NewQueueService(rdb), store: statusStore{status: "online"}}
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := models.Server{UUID: "srv-pin", NodeAddress: "node-tok", Cpuset: "2-3", Memory: 2048}
 	done := make(chan struct{})
@@ -155,4 +156,86 @@ func TestRoutingRedeployKeepsTheCpuset(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("no command was sent")
+}
+
+// statusStore answers the settle poll with one fixed status.
+type statusStore struct {
+	store.Store
+	status string
+}
+
+func (s statusStore) GetServerByUUID(string) (*models.Server, error) {
+	return &models.Server{Status: s.status}, nil
+}
+
+func redeployFor(t *testing.T, status string) (error, []string) {
+	t.Helper()
+	oldT, oldP := redeploySettleTimeout, redeployPollEvery
+	redeploySettleTimeout, redeployPollEvery = 150*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { redeploySettleTimeout, redeployPollEvery = oldT, oldP })
+	rdb := newQueueTestRedis(t)
+	m := &RoutingMigrationService{redis: rdb, queue: NewQueueService(rdb), store: statusStore{status: status}}
+	err := m.redeployServer(context.Background(), models.Server{UUID: "srv", NodeAddress: "tok", Status: status}, "gateway")
+	msgs, _ := rdb.XRange(context.Background(), "dylaris:node:tok:cmds", "-", "+").Result()
+	var actions []string
+	for _, msg := range msgs {
+		data, _ := msg.Values["data"].(string)
+		var c struct{ Action string }
+		json.Unmarshal([]byte(data), &c)
+		actions = append(actions, c.Action)
+	}
+	return err, actions
+}
+
+// A server that did not settle was SIGKILLed and counted as done: a JVM still
+// shutting down lost the world since its last save, for nothing, since a
+// kill changes no port binding.
+func TestRoutingRedeployNeverKills(t *testing.T) {
+	err, actions := redeployFor(t, "restarting")
+	if err == nil {
+		t.Error("a server that never settled counted as done")
+	}
+	for _, a := range actions {
+		if a == "kill" {
+			t.Fatalf("the routing switch killed a server: %v", actions)
+		}
+	}
+}
+
+// An install or a move recreates the container itself when it ends; the
+// switch recreating it too raced the install's last step.
+func TestRoutingRedeployLeavesInstallsAndMovesAlone(t *testing.T) {
+	for _, st := range []string{"installing", "migrating", "stopping"} {
+		if err, actions := redeployFor(t, st); err != nil || len(actions) != 0 {
+			t.Errorf("%s: err %v, commands %v; want none", st, err, actions)
+		}
+	}
+}
+
+// A server held for a full disk is settled: stopped on purpose.
+func TestRoutingRedeployTakesAFullDiskAsSettled(t *testing.T) {
+	if err, actions := redeployFor(t, "disk_full"); err != nil || len(actions) != 1 || actions[0] != "update_resources" {
+		t.Errorf("err %v, commands %v; want one update_resources and no error", err, actions)
+	}
+}
+
+// The status is read when the server's turn comes, not from the fleet load:
+// a move that began since is left alone.
+func TestRoutingRedeployReadsTheStatusWhenItsTurnComes(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	m := &RoutingMigrationService{redis: rdb, queue: NewQueueService(rdb), store: statusStore{status: "migrating"}}
+	if err := m.redeployServer(context.Background(), models.Server{UUID: "srv", NodeAddress: "tok", Status: "online"}, "gateway"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := rdb.XLen(context.Background(), "dylaris:node:tok:cmds").Result(); n != 0 {
+		t.Errorf("%d command(s) sent to a server that started moving after the fleet load", n)
+	}
+}
+
+// A booting server is settled: its container was recreated with the new
+// binding, and a modpack can take longer than the wait to finish booting.
+func TestRoutingRedeployTakesABootingServerAsSettled(t *testing.T) {
+	if err, _ := redeployFor(t, "starting"); err != nil {
+		t.Errorf("a booting server counted as failed: %v", err)
+	}
 }
