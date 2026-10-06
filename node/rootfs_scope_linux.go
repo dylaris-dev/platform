@@ -140,3 +140,24 @@ func openNoFollow(p string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+// openRegularIn is openNoFollow through an os.Root, for the reads a walk does
+// after it judged the entry. The walk refuses a pipe when it lists it, but the
+// open is a second call, and a server that swaps a file for a pipe between the
+// two held a backup or a copy forever. Measured winnable for the link case
+// (rootfs.go), so the pipe case is too.
+func openRegularIn(root *os.Root, name string) (*os.File, error) {
+	f, err := root.OpenFile(name, os.O_RDONLY|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", path.Base(name))
+	}
+	if err := unix.SetNonblock(int(f.Fd()), false); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}

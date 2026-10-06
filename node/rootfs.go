@@ -197,7 +197,7 @@ func chownForMCIn(root *os.Root, name string) {
 
 // copyFileIn copies srcName in src to dstName in dst, creating dst's parents.
 func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string) error {
-	in, err := src.Open(srcName)
+	in, err := openRegularIn(src, srcName)
 	if err != nil {
 		return err
 	}

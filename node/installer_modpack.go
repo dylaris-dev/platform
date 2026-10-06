@@ -324,11 +324,20 @@ func validateMrpackURL(u string) error {
 }
 
 func readMrpackIndex(path string) (*mrpackIndex, error) {
-	rd, err := zip.OpenReader(path)
+	// Opened like the extraction: the scratch directory is the tenant's uid.
+	zf, err := openNoFollow(path)
 	if err != nil {
 		return nil, err
 	}
-	defer rd.Close()
+	defer zf.Close()
+	st, err := zf.Stat()
+	if err != nil {
+		return nil, err
+	}
+	rd, err := zip.NewReader(zf, st.Size())
+	if err != nil {
+		return nil, err
+	}
 	for _, f := range rd.File {
 		if f.Name != "modrinth.index.json" {
 			continue

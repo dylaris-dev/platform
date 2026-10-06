@@ -61,3 +61,15 @@ func openNoFollow(p string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+func openRegularIn(root *os.Root, name string) (*os.File, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+	return f, nil
+}

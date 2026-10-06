@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Installing Forge or NeoForge runs with the same network limits as your server,** and a
+  file planted in your server can no longer stall a backup. On your own node, update the
+  node agent. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.6
 
 ### Features

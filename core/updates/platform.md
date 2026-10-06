@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The Forge and NeoForge installer runs behind the same egress rules as the server,** on
+  the shared network and with a CPU cap. It ran on Docker's default bridge with neither. `node`
+- **Backups and file copies can no longer be stalled by a file swapped for a named pipe**
+  while they run; such a file now fails that backup instead of blocking it forever. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.6
 
 ### Features

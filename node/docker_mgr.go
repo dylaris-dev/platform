@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -623,6 +624,86 @@ func serverEndpoints(globalNetID, globalNetName string) *network.NetworkingConfi
 	}
 }
 
+// installerNetwork decides where the installer container's network comes from.
+//
+// It ran on Docker's default bridge with no rules: the installer JAR executes
+// in a directory the tenant can write, and from there it reached the cloud
+// metadata service and the private network Core, Redis and Postgres sit on -
+// everything the game container's egress chain refuses. Now it joins the
+// shared network like the game container, and where this node enforces the
+// policy (a platform node) it shares the namespace of a holder container the
+// rules are applied to FIRST, so the installer never runs a moment unfiltered.
+// The rules cannot be written into the installer's own namespace before it
+// starts, and after the start is already too late.
+//
+// If the policy cannot be applied the installer still runs, on the shared
+// network and unfiltered, logged - the same failure direction the game
+// containers have (netpolicy: left OPEN).
+func (dm *DockerManager) installerNetwork(ctx context.Context, egress func() (*netEgress, error)) (container.NetworkMode, *network.NetworkingConfig, func()) {
+	none := func() {}
+	netID, netName, err := dm.ensureGlobalNetwork()
+	if err != nil {
+		log.Printf("installer: no shared network, running on the default bridge: %v", err)
+		return "", nil, none
+	}
+	nc := serverEndpoints(netID, netName)
+	if dm.netPolicyImage == "" {
+		return "", nc, none
+	}
+	eg, err := egress()
+	if err != nil || eg == nil {
+		log.Printf("installer: egress rules unavailable, installer runs unfiltered: %v", err)
+		return "", nc, none
+	}
+	// AutoRemove: a node that dies mid-install leaves no holder behind once
+	// its sleep ends; nothing else would ever look for it.
+	hc := &container.HostConfig{AutoRemove: true}
+	applyPidsLimit(hc)
+	hardenTenantContainer(hc)
+	holder := &container.Config{
+		Image:      dm.netPolicyImage,
+		Entrypoint: []string{},
+		Cmd:        []string{"sleep", "86400"},
+	}
+	holder.User = mcUserSpec()
+	resp, err := dm.cli.ContainerCreate(ctx, holder, hc, nc, nil, "")
+	if err != nil {
+		log.Printf("installer: network holder create failed, installer runs unfiltered: %v", err)
+		return "", nc, none
+	}
+	release := func() {
+		_ = dm.cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
+	}
+	if err := dm.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		release()
+		log.Printf("installer: network holder start failed, installer runs unfiltered: %v", err)
+		return "", nc, none
+	}
+	applyCtx, cancel := context.WithTimeout(ctx, netPolicyApplyTimeout)
+	err = dm.applyNetPolicy(applyCtx, resp.ID, nil, eg)
+	cancel()
+	if err != nil {
+		release()
+		log.Printf("installer: egress rules not applied, installer runs unfiltered: %v", err)
+		return "", nc, none
+	}
+	return container.NetworkMode("container:" + resp.ID), nil, release
+}
+
+// installerNanoCPUs caps the installer at two CPUs, or the host's count when
+// it has fewer (Docker refuses a cap above it). It ran with no CPU limit on a
+// shared node.
+//
+// ponytail: a fixed cap like installerMemory; take the server's own CPU limit
+// if installs ever need to match the plan.
+func installerNanoCPUs() int64 {
+	n := runtime.NumCPU()
+	if n > 2 {
+		n = 2
+	}
+	return int64(n) * 1e9
+}
+
 // RunInstallerContainer runs a one-shot container with the given image,
 // mounting the server's data directory at /data, executing `cmd` from /data
 // and returning the combined stdout+stderr output. The container is
@@ -684,9 +765,18 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 		Binds:     []string{fmt.Sprintf("%s:/data", hostSubServerPath)},
 		Resources: container.Resources{Memory: installerMemory, MemorySwap: installerMemory},
 	}
+	// Only where the platform runs the machine: a customer's host without CFS
+	// bandwidth control refuses any CPU cap at create, and the install would
+	// fail outright.
+	if dm.netPolicyImage != "" {
+		hc.Resources.NanoCPUs = installerNanoCPUs()
+	}
 	applyPidsLimit(hc)
 	hardenTenantContainer(hc)
-	resp, err := dm.cli.ContainerCreate(ctx, cc, hc, nil, nil, "")
+	netMode, nc, releaseNet := dm.installerNetwork(ctx, dm.egressPolicy)
+	defer releaseNet()
+	hc.NetworkMode = netMode
+	resp, err := dm.cli.ContainerCreate(ctx, cc, hc, nc, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("installer container create: %w", err)
 	}

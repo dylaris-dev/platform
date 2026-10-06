@@ -433,7 +433,7 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 			return err
 		}
 		if !info.IsDir() {
-			f, err := root.Open(name)
+			f, err := openRegularIn(root, name)
 			if err != nil {
 				return err
 			}
