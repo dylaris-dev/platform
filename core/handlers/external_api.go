@@ -260,6 +260,16 @@ func (h *APIKeysHandler) GetExternalServer(w http.ResponseWriter, r *http.Reques
 	}
 	ownerID := APIKeyCallerID(r)
 	owner, oerr := h.state.Store.GetUserByID(ownerID)
-	redactNodeAddressOne(h.state, srv, oerr == nil && owner != nil && owner.IsAdmin, ownerID)
+	isAdmin := oerr == nil && owner != nil && owner.IsAdmin
+	redactNodeAddressOne(h.state, srv, isAdmin, ownerID)
+	// Not short-cut on isAdmin: on a customer's machine the resolver treats an
+	// admin as a guest with whatever the owner granted.
+	if srv.OwnerID != ownerID {
+		if h.state.Authz == nil {
+			redactSettingsFields(srv)
+		} else if res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: ownerID, IsAdmin: isAdmin}, srv.ID); rerr != nil || !res.HasCap(settingsFieldsCap) {
+			redactSettingsFields(srv)
+		}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "server": srv})
 }

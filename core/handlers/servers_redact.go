@@ -64,3 +64,15 @@ func redactNodeAddressOne(state *AppState, srv *models.Server, isAdmin bool, use
 	redactNodeAddress(state, one, isAdmin, userID)
 	srv.NodeAddress = one[0].NodeAddress
 }
+
+// settingsFieldsCap governs the server fields only the Setup view needs.
+const settingsFieldsCap = "server.settings.write"
+
+// redactSettingsFields blanks what a member without settingsFieldsCap has no
+// screen for. The JVM flags are free text that can carry a secret
+// (-Dsome.token=...), the start command is built from them, and the cpuset is
+// the host's CPU layout. They went to every member with any capability on the
+// server, a console-only guest included.
+func redactSettingsFields(s *models.Server) {
+	s.StartCommand, s.ExtraJvmFlags, s.Cpuset, s.CPUPinningMode = "", "", "", ""
+}

@@ -83,6 +83,16 @@ func applyResolvedTabPermissions(state *AppState, servers []models.Server, userI
 	identity := authz.Identity{UserID: userID, Username: username}
 	out := servers[:0]
 	for _, s := range servers {
+		// An admin's row on a customer's machine: the resolver treats the admin
+		// there as a guest with whatever the owner granted, so the settings
+		// fields follow that grant too.
+		if s.Role == "admin" && s.NodeKind != models.NodeKindPlatform {
+			admin := identity
+			admin.IsAdmin = true
+			if res, err := state.Authz.Resolve(admin, s.ID); err != nil || !res.HasCap(settingsFieldsCap) {
+				redactSettingsFields(&s)
+			}
+		}
 		if s.Role != "invited" && s.Role != "inherited" {
 			out = append(out, s)
 			continue
@@ -93,6 +103,9 @@ func applyResolvedTabPermissions(state *AppState, servers []models.Server, userI
 		}
 		merged := mergeResolvedTabPermissions(s.Permissions, res.HasCap)
 		s.Permissions = &merged
+		if !res.HasCap(settingsFieldsCap) {
+			redactSettingsFields(&s)
+		}
 		out = append(out, s)
 	}
 	return out

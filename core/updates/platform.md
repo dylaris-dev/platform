@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Server members only see a server's JVM flags, start command and CPU pinning when they
+  may change its settings.** They went to every member, a console-only guest included. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.3
 
 ### Features

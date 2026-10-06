@@ -204,6 +204,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 				ds.IsDemo = true
 				ds.Role = "demo"
 				ds.Permissions = &models.TabPermissions{Console: true, Files: true}
+				redactSettingsFields(ds)
 				servers = append(servers, *ds)
 			}
 		}
