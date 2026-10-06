@@ -170,3 +170,20 @@ func TestAdminServerListBlanksSettingsFieldsOnACustomersMachine(t *testing.T) {
 		t.Fatalf("row missing: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Support (servers.read, not an admin) gets the admin list without the
+// settings fields, like without the node address.
+func TestAdminServerListBlanksSettingsFieldsForSupport(t *testing.T) {
+	h := &ServerHandler{state: &AppState{Store: adminListStore{}}}
+	r := httptest.NewRequest("GET", "/api/admin/servers", nil)
+	ctx := context.WithValue(r.Context(), "userID", "support-1")
+	r = r.WithContext(context.WithValue(ctx, "isAdmin", false))
+	rec := httptest.NewRecorder()
+	h.GetAdminServers(rec, r)
+	if strings.Contains(rec.Body.String(), "s3cret") || strings.Contains(rec.Body.String(), `"cpuset":"2-3"`) {
+		t.Fatalf("support sees the settings fields: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"id":1`) {
+		t.Fatalf("row missing: %d %s", rec.Code, rec.Body.String())
+	}
+}

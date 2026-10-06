@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Support staff no longer see servers' JVM flags, start command or CPU pinning** in the admin
+  server list, as they already did not see the node address. Admins still do. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.7
 
 ### Features
