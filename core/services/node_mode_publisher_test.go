@@ -219,3 +219,37 @@ func TestEverySettingMirroredIntoRedisIsRepublished(t *testing.T) {
 			strings.Join(missing, "\n  "))
 	}
 }
+
+// The beam throttle and upload caps fail open when their key is missing, and
+// the admin save was their only writer: a Redis restart lifted an upload cap of
+// 0 until someone saved the Beam page again.
+func TestNodeModePublisherRepublishesTheBeamLimits(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	st := &settingsStub{values: map[string]string{
+		"beam.bw_limit":           "5000",
+		"beam.bw_up_external":     "7000",
+		"beam.max_upload_bytes":   "0",
+		"beam.daily_upload_bytes": LimitUnlimited,
+	}}
+	// A stale cap from before the operator chose "no cap" must go.
+	rdb.Set(ctx, "beam:daily_upload_bytes", "100", 0)
+
+	NewNodeModePublisher(st, rdb).Publish(ctx)
+
+	for key, exp := range map[string]string{
+		"beam:bw_limit":         "5000",
+		"beam:bw_up_external":   "7000",
+		"beam:max_upload_bytes": "0",
+	} {
+		if got, err := rdb.Get(ctx, key).Result(); err != nil || got != exp {
+			t.Errorf("%s = %q (%v), want %q", key, got, err, exp)
+		}
+	}
+	if n, _ := rdb.Exists(ctx, "beam:daily_upload_bytes").Result(); n != 0 {
+		t.Error("beam:daily_upload_bytes survived a no-cap setting")
+	}
+	if n, _ := rdb.Exists(ctx, "beam:bw_down_internal").Result(); n != 0 {
+		t.Error("a never-saved throttle was published")
+	}
+}

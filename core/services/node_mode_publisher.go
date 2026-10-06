@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"log"
+	"strconv"
 	"time"
 
 	"dylaris-core/store"
@@ -108,9 +109,47 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 		}
 	}
 
+	// The beam throttle and upload caps had the same single writer - the admin
+	// save - and they fail OPEN when the key is missing: after a Redis restart
+	// an upload cap of 0 or a daily quota was silently gone until someone saved
+	// the Beam page again.
+	for setting, key := range map[string]string{
+		"beam.bw_limit":         "beam:bw_limit",
+		"beam.bw_up_internal":   "beam:bw_up_internal",
+		"beam.bw_down_internal": "beam:bw_down_internal",
+		"beam.bw_up_external":   "beam:bw_up_external",
+		"beam.bw_down_external": "beam:bw_down_external",
+	} {
+		if v, err := p.store.GetSetting(setting); err == nil && v != "" {
+			values[key] = v
+		}
+	}
+
 	for k, v := range values {
 		if err := p.redis.Set(ctx, k, v, 0).Err(); err != nil {
 			log.Printf("node mode publisher: set %s: %v", k, err)
+		}
+	}
+
+	// No cap deletes the key, as on save: a missing key is the node's "no cap".
+	for setting, key := range map[string]string{
+		"beam.max_upload_bytes":   "beam:max_upload_bytes",
+		"beam.daily_upload_bytes": "beam:daily_upload_bytes",
+	} {
+		// A failed read must not delete a cap; a missing row (never saved) is
+		// "no cap" either way and the key stays as it is.
+		raw, err := p.store.GetSetting(setting)
+		if err != nil {
+			continue
+		}
+		var rerr error
+		if v := ParseLimitSetting(raw, nil); v == nil {
+			rerr = p.redis.Del(ctx, key).Err()
+		} else {
+			rerr = p.redis.Set(ctx, key, strconv.FormatInt(*v, 10), 0).Err()
+		}
+		if rerr != nil {
+			log.Printf("node mode publisher: %s: %v", key, rerr)
 		}
 	}
 }

@@ -330,6 +330,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The operator's off switch. It used to be read only by the panel and by
+	// GetBeamConfig, so a disabled Beam kept minting tickets and the node, which
+	// never sees this setting, honoured them.
+	if v, _ := h.state.Store.GetSetting("beam.enabled"); v == "false" {
+		sendJSONError(w, "Beam is disabled", http.StatusForbidden)
+		return
+	}
+
 	// server_uuid is read from the query string (GET) or a JSON body
 	// (POST). The Beam desktop app uses GET — networks in front of Core
 	// were observed handing its POSTs an HTML page instead of routing
@@ -372,6 +380,20 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	allowed, filePerms := h.canBeam(r, server.ID)
 	if !allowed {
 		sendJSONError(w, "Access denied", http.StatusForbidden)
+		return
+	}
+
+	// The demo gate in AuthMiddleware goes by HTTP method, and this is a GET that
+	// hands out a write credential the node enforces without knowing about demo.
+	// Fail closed: an unreadable demo setting is not proof of a normal account.
+	userID, _ := r.Context().Value("userID").(string)
+	demo, err := isDemoAccountChecked(h.state, userID)
+	if err != nil {
+		sendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
+		return
+	}
+	if demo {
+		sendJSONError(w, "Not available in the demo", http.StatusForbidden)
 		return
 	}
 
@@ -447,7 +469,6 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// one the server list hides from them. The same rule decides here, so an
 	// admin or the node's own owner keeps the direct path.
 	probe := models.Server{NodeID: server.NodeID, NodeAddress: nodePublicIP}
-	userID, _ := r.Context().Value("userID").(string)
 	redactNodeAddressOne(h.state, &probe, isAdmin, userID)
 	nodePublicIP = probe.NodeAddress
 	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)

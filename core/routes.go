@@ -1706,7 +1706,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// --- Beam Endpoints ---
 	api.HandleFunc("/beam/servers", authHandler.AuthMiddleware(beamHandler.GetBeamServers)).Methods("GET")
-	api.HandleFunc("/beam/ticket", authHandler.AuthMiddleware(beamHandler.GetBeamTicket)).Methods("GET", "POST")
+	// Its own limiter: every mint costs a server lookup and two node-secret
+	// decryptions. The app asks once per connect and once per upload resume, so
+	// 120/min per IP stays far above a real client, NAT included.
+	beamTicketLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/beam/ticket", beamTicketLimiter.Limit(120, authHandler.AuthMiddleware(beamHandler.GetBeamTicket))).Methods("GET", "POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
 	// Rate-limited because this is the only session-less route that makes Core
 	// fetch a whole file from an external host and stream it: one anonymous

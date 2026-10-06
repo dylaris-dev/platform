@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"dylaris-core/authz"
 	"dylaris-core/services"
 
 	"github.com/redis/go-redis/v9"
@@ -913,9 +914,29 @@ type BeamSettings struct {
 	DailyUploadBytes *int64 `json:"dailyUploadBytes"`
 }
 
-// GetBeamSettings GET /api/settings/beam — all authenticated users (relay address + download link needed in Files tab)
+// maySeeSettings is the settings.read check the other /settings GETs get from
+// RequireCap, for a route that has to stay open to everyone for one field.
+func (h *SettingsHandler) maySeeSettings(r *http.Request) bool {
+	if h.state == nil || h.state.Authz == nil {
+		return false
+	}
+	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), 0)
+	return err == nil && res.HasCap("settings.read")
+}
+
+// GetBeamSettings GET /api/settings/beam — every authenticated user, because the
+// Files tab needs `enabled`. Only settings.read holders get the rest: it carries
+// the relay topology (private IPs, regions) and every limit, and the public demo
+// session is an authenticated user too.
 func (h *SettingsHandler) GetBeamSettings(w http.ResponseWriter, r *http.Request) {
 	settings := h.LoadBeamSettings()
+	if !h.maySeeSettings(r) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":  true,
+			"settings": map[string]bool{"enabled": settings.Enabled},
+		})
+		return
+	}
 	settings.DiscoveredRelays = DiscoverBeamRelays(r.Context(), h.state.Redis)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

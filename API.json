@@ -4081,7 +4081,7 @@
       "path": "/api/settings/beam",
       "auth": "session",
       "authorization": "no capability on this method",
-      "description": "all authenticated users (relay address + download link needed in Files tab)",
+      "description": "every authenticated user, because the Files tab needs `enabled`.",
       "handler": "SettingsHandler.GetBeamSettings",
       "group": "settings",
       "external": false

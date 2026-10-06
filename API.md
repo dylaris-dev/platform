@@ -389,7 +389,7 @@ can still show what exists.
 | GET | `/api/beam/config` | session | _no capability_ | - | `BeamHandler.GetBeamConfig` | returns the Beam relay address and branding info. |
 | GET | `/api/beam/download` | **none** | _public_ | Limit | `BeamHandler.GetBeamDownload` | streams a Beam binary through Core. |
 | GET | `/api/beam/servers` | session | _no capability_ | - | `BeamHandler.GetBeamServers` | returns the server list with node_id for Beam clients. |
-| GET, POST | `/api/beam/ticket` | session | _no capability_ | - | `BeamHandler.GetBeamTicket` | signs a JWT ticket for a specific server. |
+| GET, POST | `/api/beam/ticket` | session | _no capability_ | Limit | `BeamHandler.GetBeamTicket` | signs a JWT ticket for a specific server. |
 
 ## /api/disk
 
@@ -742,7 +742,7 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/settings/backup` | session | `settings.read` | - | `SettingsHandler.GetBackupConfig` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/backup` | session | `settings.write` | - | `SettingsHandler.SaveBackupConfig` | PANEL settings.write (RequireCap at the route). |
-| GET | `/api/settings/beam` | session | _uncapped method_ | - | `SettingsHandler.GetBeamSettings` | all authenticated users (relay address + download link needed in Files tab) |
+| GET | `/api/settings/beam` | session | _uncapped method_ | - | `SettingsHandler.GetBeamSettings` | every authenticated user, because the Files tab needs `enabled`. |
 | POST | `/api/settings/beam` | session | `settings.write` | - | `SettingsHandler.SaveBeamSettings` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/settings/core-storage` | session | `settings.read` | - | `CoreStorageHandler.GetConfig` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/core-storage` | session | `settings.write` | - | `CoreStorageHandler.SaveConfig` | PANEL settings.write (RequireCap at the route). |

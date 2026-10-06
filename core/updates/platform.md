@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.07
+
+### Features
+- Nothing.
+
+### Breaking
+- **Beam's throttle and upload limits are now re-published every 30 seconds** from what the Beam
+  page saved. If that page shows an upload limit of 0, uploads are refused from now on. `core`
+
+### Security
+- **Turning Beam off now stops it.** Core issued Beam connections while it was switched off, and
+  it now also refuses them for the demo account and rate-limits them. `core`
+- **The Beam settings are no longer readable by every user.** Without settings access the page
+  returns only whether Beam is on; it used to include relay addresses and all limits. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.9
 
 ### Features

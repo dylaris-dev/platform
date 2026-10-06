@@ -180,3 +180,21 @@ func TestBeamDownloadStaysRateLimited(t *testing.T) {
 			"and stream it out, so an unbounded caller amplifies through Core")
 	}
 }
+
+// Authenticated, so the anonymous list above does not see it, but each mint
+// costs a server lookup and two node-secret decryptions.
+func TestBeamTicketStaysRateLimited(t *testing.T) {
+	src, err := os.ReadFile("routes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(src), "\n") {
+		if strings.Contains(line, `HandleFunc("/beam/ticket"`) {
+			if !strings.Contains(line, ".Limit(") {
+				t.Errorf("/api/beam/ticket is registered without a rate limit: %s", strings.TrimSpace(line))
+			}
+			return
+		}
+	}
+	t.Fatal("no /beam/ticket registration found; the matcher is broken, not the code")
+}
