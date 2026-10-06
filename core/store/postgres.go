@@ -1546,7 +1546,7 @@ func (s *PostgresStore) GetInvite(serverID int, userID string) (*models.ServerIn
 	// deleted, and an inner join would drop the row - hiding a member from the
 	// list while their access carried on working.
 	query := `
-		SELECT si.id, si.server_id, si.user_id, u.username, COALESCE(u.email, ''),
+		SELECT si.id, si.server_id, si.user_id, u.username,
 			si.permissions, COALESCE(si.invited_by::text, ''), COALESCE(inv_u.username, ''), si.created_at
 		FROM server_invites si
 		JOIN users u ON si.user_id = u.id
@@ -1554,7 +1554,7 @@ func (s *PostgresStore) GetInvite(serverID int, userID string) (*models.ServerIn
 		WHERE si.server_id = $1 AND si.user_id = $2
 	`
 	err := s.db.QueryRow(query, serverID, userID).Scan(
-		&inv.ID, &inv.ServerID, &inv.UserID, &inv.Username, &inv.Email,
+		&inv.ID, &inv.ServerID, &inv.UserID, &inv.Username,
 		&permsJSON, &inv.InvitedBy, &inv.InviterName, &inv.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -1572,7 +1572,7 @@ func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite
 	// it alone reported "no permissions at all" for a member holding full
 	// server admin. Measured on production.
 	query := `
-		SELECT si.id, si.server_id, si.user_id, u.username, COALESCE(u.email, ''),
+		SELECT si.id, si.server_id, si.user_id, u.username,
 			si.permissions, COALESCE(si.invited_by::text, ''), COALESCE(inv_u.username, ''), si.created_at,
 			COALESCE(si.cap_overrides, '{}'::jsonb), COALESCE(sr.capabilities, '[]'::jsonb),
 			COALESCE(si.inherit, FALSE)
@@ -1594,7 +1594,7 @@ func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite
 		var inv models.ServerInvite
 		var permsJSON, ovJSON, roleCapsJSON []byte
 		var inherit bool
-		if err := rows.Scan(&inv.ID, &inv.ServerID, &inv.UserID, &inv.Username, &inv.Email,
+		if err := rows.Scan(&inv.ID, &inv.ServerID, &inv.UserID, &inv.Username,
 			&permsJSON, &inv.InvitedBy, &inv.InviterName, &inv.CreatedAt,
 			&ovJSON, &roleCapsJSON, &inherit); err != nil {
 			continue

@@ -536,7 +536,6 @@ type ServerInvite struct {
 	ServerID    int            `json:"serverId"`
 	UserID      string         `json:"userId"`
 	Username    string         `json:"username"`
-	Email       string         `json:"email"`
 	Permissions TabPermissions `json:"permissions"`
 	// Capabilities is what the member actually holds on this server. The
 	// Permissions booleans above are its per-tab summary; this is the exact

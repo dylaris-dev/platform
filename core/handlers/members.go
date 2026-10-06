@@ -283,6 +283,9 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	if refuseBadPermissionMap(w, req.Permissions) {
 		return
 	}
+	if refuseDelegationWhenOff(w, r, h.state.Store) {
+		return
+	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
@@ -296,7 +299,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if targetUser.Username == srv.OwnerName {
+	if targetUser.ID == srv.OwnerID {
 		sendJSONError(w, "Cannot invite the server owner", http.StatusBadRequest)
 		return
 	}
@@ -304,6 +307,14 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	inviterID := ""
 	if id, ok := r.Context().Value("userID").(string); ok {
 		inviterID = id
+	}
+	// Not yourself: a member who reaches members.write through an account-wide
+	// grant, a role or a proxy could give themselves a direct row here, and it
+	// outlived the owner revoking whatever they came in through. /api/grants
+	// refuses a grant to yourself for the same reason.
+	if targetUser.ID == inviterID {
+		sendJSONError(w, "Cannot invite yourself", http.StatusBadRequest)
+		return
 	}
 
 	// Cap to what the inviter themselves holds.
@@ -366,6 +377,9 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	// refuses a grant to yourself for the same reason.
 	if caller, _ := r.Context().Value("userID").(string); caller == targetUserID {
 		sendJSONError(w, "You cannot change your own access", http.StatusForbidden)
+		return
+	}
+	if refuseDelegationWhenOff(w, r, h.state.Store) {
 		return
 	}
 
@@ -455,6 +469,23 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Inheritance only crosses servers of one owner, as the resolver applies it.
+	// A child linked to another owner's proxy (links from before that was
+	// refused, or an admin owner change that kept proxy_id) listed the other
+	// owner's members to anyone with members.read on the child.
+	proxy, err := h.state.Store.GetServerByID(*srv.ProxyID)
+	if err != nil {
+		sendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
+		return
+	}
+	if proxy == nil || proxy.OwnerID != srv.OwnerID {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"members": []interface{}{},
+		})
+		return
+	}
+
 	// Get all invites on the proxy that have inherit=true
 	proxyInvites, err := h.state.Store.ListInvitesByServer(*srv.ProxyID)
 	if err != nil {
@@ -491,4 +522,15 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"members": inherited,
 	})
+}
+
+// refuseDelegationWhenOff answers 403 when permissions_mode is off and the
+// caller is not a panel admin. Off means nobody delegates access to a server;
+// /api/grants enforced that and this older route to the same rows did not.
+func refuseDelegationWhenOff(w http.ResponseWriter, r *http.Request, st store.Store) bool {
+	if authz.IdentityFromContext(r.Context()).IsAdmin || PermissionsMode(st) != authz.ModeOff {
+		return false
+	}
+	sendJSONError(w, "Delegation is disabled", http.StatusForbidden)
+	return true
 }

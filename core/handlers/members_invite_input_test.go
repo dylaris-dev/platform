@@ -16,9 +16,12 @@ import (
 
 type inviteInputStore struct {
 	store.Store
+	mode    string
 	created bool
 }
 
+// GetSetting answers permissions_mode; empty is the simple default.
+func (f *inviteInputStore) GetSetting(string) (string, error) { return f.mode, nil }
 func (f *inviteInputStore) GetServerByID(id int) (*models.Server, error) {
 	return &models.Server{ID: id, OwnerID: "owner-1", OwnerName: "owner"}, nil
 }

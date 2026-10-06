@@ -18,10 +18,13 @@ import (
 // a body the endpoint did not understand must never reach it.
 type patchPermsStore struct {
 	store.Store
+	mode    string
 	updated bool
 	written map[string]bool
 }
 
+// GetSetting answers permissions_mode; empty is the simple default.
+func (f *patchPermsStore) GetSetting(string) (string, error) { return f.mode, nil }
 func (f *patchPermsStore) GetServerByID(id int) (*models.Server, error) {
 	return &models.Server{ID: id, OwnerID: "owner-1", OwnerName: "owner"}, nil
 }

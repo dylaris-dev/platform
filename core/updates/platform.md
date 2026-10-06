@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The member list API no longer returns members' email addresses.** Anyone with
+  members.read on a server saw every other member's email. `core`
+- **Inviting or editing members honours permissions mode "off",** as granting access already
+  did; only panel admins can delegate then. Nobody can invite themselves any more. `core`
+- **Inherited members are only listed from a proxy of the same owner.** `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06
 
 ### Features

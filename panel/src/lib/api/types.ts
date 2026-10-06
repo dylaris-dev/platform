@@ -137,7 +137,6 @@ export interface ServerInvite {
     serverId: number;
     userId: string;
     username: string;
-    email: string;
     permissions: TabPermissions;
     invitedBy: string;
     inviterName: string;
