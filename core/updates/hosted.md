@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A file move in Beam or SFTP can no longer be used to overwrite your node's server settings,**
+  and opening a named pipe no longer hangs a download. On your own node, update the node agent. `node`
+- **Removing someone's access to a proxy now also ends their Beam access to the servers behind it.**
+  This needs nothing from you.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.7
 
 ### Features

@@ -117,6 +117,8 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 		sendJSONError(w, "Failed to update owner", 500)
 		return
 	}
+	// The previous owner and everyone their grants let in lose the server here.
+	stampBeamAccess(r.Context(), h.state, serverID)
 	// On both accounts, so the trail of the one that LOST the server shows it.
 	actorID, _ := r.Context().Value("userID").(string)
 	meta := map[string]interface{}{

@@ -376,14 +376,11 @@ func (h *StreamHandler) streamFile(reqID string, root *os.Root, name string, sen
 		return
 	}
 
-	// A pipe with no writer would hold this open forever.
-	if st, err := root.Stat(name); err == nil && !st.Mode().IsRegular() {
-		sendFn(errorMsg(reqID, 400, "not a regular file"))
-		return
-	}
-	f, err := root.Open(name)
+	// A pipe with no writer would hold this open forever. Judged on the open
+	// itself: a Stat first lost to a swap between the two calls.
+	f, err := openRegularIn(root, name)
 	if err != nil {
-		sendFn(errorMsg(reqID, 500, fmt.Sprintf("open: %v", err)))
+		sendFn(errorMsg(reqID, 400, fmt.Sprintf("open: %v", err)))
 		return
 	}
 	defer f.Close()
@@ -516,7 +513,7 @@ func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.Fi
 	if err != nil || info.IsDir() {
 		return err
 	}
-	f, err := root.Open(name)
+	f, err := openRegularIn(root, name)
 	if err != nil {
 		return err
 	}

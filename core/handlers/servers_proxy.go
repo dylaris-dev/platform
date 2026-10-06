@@ -83,6 +83,8 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Failed to link server", 500)
 		return
 	}
+	// A move from one proxy to another ends what was inherited from the first.
+	stampBeamAccess(r.Context(), h.state, serverID)
 
 	// The proxy can only reach this server once the node has been told to allow
 	// it, so republish now rather than at the next tick. Linking is the moment
@@ -223,6 +225,8 @@ func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Failed to unlink server", 500)
 		return
 	}
+	// Ends access inherited from the proxy; see stampBeamAccess.
+	stampBeamAccess(r.Context(), h.state, serverID)
 
 	// Withdraw the proxy's allow rule now, for the same reason linking installs
 	// it now - and this direction matters more: until it is withdrawn the proxy

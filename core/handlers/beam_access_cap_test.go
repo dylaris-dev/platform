@@ -29,7 +29,7 @@ import (
 // fleet JWT secret. The embedded store.Store is nil, so without this the call
 // panics instead of reporting "no secret". Empty = this node has none, which is
 // the path that leaves the ticket with no direct hints.
-func (f *beamAccessFakeStore) GetNodeSecretEnc(int) (string, error) { return "", nil }
+func (f *beamAccessFakeStore) GetNodeSecretEnc(int) (string, error) { return f.secretEnc, nil }
 
 type beamAccessFakeStore struct {
 	store.Store
@@ -52,6 +52,9 @@ type beamAccessFakeStore struct {
 
 	// billingStatus of the server's OWNER, as the suspension guard reads it.
 	billingStatus string
+
+	secretEnc string
+	settings  map[string]string
 }
 
 // billingStatus is what the suspension guard reads; empty means a paying
@@ -97,7 +100,7 @@ func (f *beamAccessFakeStore) GetInvite(serverID int, userID string) (*models.Se
 	return &models.ServerInvite{ID: 1, ServerID: serverID, UserID: userID}, nil
 }
 
-func (f *beamAccessFakeStore) GetSetting(key string) (string, error) { return "", nil }
+func (f *beamAccessFakeStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
 
 // authz.Store surface beyond GetServerByID.
 func (f *beamAccessFakeStore) GetPanelRole(id int) (*store.PanelRole, error) {

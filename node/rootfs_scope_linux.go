@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -70,6 +72,13 @@ func writeScope(rootDir, rel string, mkParents bool) (*os.Root, string, error) {
 		return nil, "", err
 	}
 	defer dir.Close()
+	// The Root below is rootDir itself when rel has no parent, and there a link
+	// at the leaf can name .node_config.json without leaving the Root. The
+	// tenant cannot create one there (the server root is root's), only move one
+	// in by a rename, which renameNoFollow refuses; this is the second half.
+	if !strings.Contains(path.Clean("/" + strings.ReplaceAll(rel, "\\", "/"))[1:], "/") && isLinkAt(dir, leaf) {
+		return nil, "", fmt.Errorf("%w: %q is a link, and a write does not follow links", os.ErrPermission, leaf)
+	}
 	sub, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", dir.Fd()))
 	if err != nil {
 		return nil, "", err
@@ -77,9 +86,23 @@ func writeScope(rootDir, rel string, mkParents bool) (*os.Root, string, error) {
 	return sub, leaf, nil
 }
 
+func isLinkAt(dir *os.File, name string) bool {
+	var st unix.Stat_t
+	return unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK
+}
+
 // renameNoFollow renames oldRel to newRel inside rootDir, reaching both
 // parents without following a link. renameat itself does not follow either
 // last component.
+//
+// It does not move a link. A link the tenant's server made in a sub-server
+// directory, "survival/z -> .node_config.json", is harmless there - its Root
+// is survival/ - but renamed to the top of the server it names the node's own
+// file, and the next save to it wrote that file. The check before renameat
+// can lose to a swap in the tenant's directory, and a check after it leaves
+// the link under its new name for the moment a parallel save needs - measured
+// winnable in milliseconds. So it lands first under a name every write path
+// refuses (isProtectedFile), is judged there, and only then takes its name.
 func renameNoFollow(rootDir, oldRel, newRel string) error {
 	od, ol, err := openParentNoFollow(rootDir, oldRel, false)
 	if err != nil {
@@ -91,7 +114,26 @@ func renameNoFollow(rootDir, oldRel, newRel string) error {
 		return err
 	}
 	defer nd.Close()
-	if err := unix.Renameat(int(od.Fd()), ol, int(nd.Fd()), nl); err != nil {
+	errLink := fmt.Errorf("%w: %q is a link, and links are not moved", os.ErrPermission, path.Base(oldRel))
+	if isLinkAt(od, ol) {
+		return errLink
+	}
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return err
+	}
+	tmp := ".pending-delete-mv-" + hex.EncodeToString(b)
+	if err := unix.Renameat(int(od.Fd()), ol, int(nd.Fd()), tmp); err != nil {
+		return &os.LinkError{Op: "rename", Old: oldRel, New: newRel, Err: err}
+	}
+	if isLinkAt(nd, tmp) {
+		if unix.Renameat(int(nd.Fd()), tmp, int(od.Fd()), ol) != nil {
+			_ = unix.Unlinkat(int(nd.Fd()), tmp, 0)
+		}
+		return errLink
+	}
+	if err := unix.Renameat(int(nd.Fd()), tmp, int(nd.Fd()), nl); err != nil {
+		_ = unix.Renameat(int(nd.Fd()), tmp, int(od.Fd()), ol)
 		return &os.LinkError{Op: "rename", Old: oldRel, New: newRel, Err: err}
 	}
 	return nil

@@ -725,7 +725,7 @@ func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 		return nil, err
 	}
 	defer root.Close()
-	f, err := root.Open(filepath.ToSlash(rel))
+	f, err := openRegularIn(root, filepath.ToSlash(rel))
 	if err != nil {
 		return nil, err
 	}

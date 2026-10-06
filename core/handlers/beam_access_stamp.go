@@ -36,6 +36,29 @@ func stampBeamAccess(ctx context.Context, state *AppState, serverID int) {
 		return
 	}
 	stampBeamAccessUUID(ctx, state, srv.UUID)
+	// A grant with inherit on a proxy reaches every same-owner server linked to
+	// it (authz resolver), so a change to it changes access to those too. Only
+	// the proxy was stamped, and a member removed from it kept an open session
+	// on its backends for up to a day.
+	if srv.ServerType == "proxy" {
+		stampBeamUUIDs(ctx, state, proxyBackendUUIDs(state, srv.ID))
+	}
+}
+
+// proxyBackendUUIDs lists the servers linked to a proxy.
+func proxyBackendUUIDs(state *AppState, proxyID int) []string {
+	all, err := state.Store.ListAllServers()
+	if err != nil {
+		log.Printf("beam access stamp: could not list the backends of proxy %d: %v", proxyID, err)
+		return nil
+	}
+	var out []string
+	for _, s := range all {
+		if s.ProxyID != nil && *s.ProxyID == proxyID {
+			out = append(out, s.UUID)
+		}
+	}
+	return out
 }
 
 // stampBeamAccessForOwner marks every server an account owns. Used where the

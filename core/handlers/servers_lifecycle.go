@@ -2144,10 +2144,17 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// runs cascade with the row, and the run is the only record of where its
 	// archive lives.
 	purgeBackupArchivesForServers(h.state, []int{serverID})
+	// The foreign key nulls the backends' proxy_id with the row, which ends
+	// what they inherited from it. Listed now, stamped once that has happened.
+	var backends []string
+	if srv.ServerType == "proxy" && h.state.Redis != nil {
+		backends = proxyBackendUUIDs(h.state, serverID)
+	}
 	if err := h.state.Store.DeleteServer(serverID); err != nil {
 		sendJSONError(w, "Delete failed", 500)
 		return
 	}
+	stampBeamUUIDs(r.Context(), h.state, backends)
 
 	// Shared with the two node-delete paths, which used to do none of this: the
 	// same cleanup has to run whether one server goes or every server on a

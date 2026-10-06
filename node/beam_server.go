@@ -854,7 +854,7 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 	// take the node agent - and every tenant's console and files with it -
 	// down. Core caps opening a file at the same size; larger ones are
 	// downloaded.
-	f, err := root.Open(name)
+	f, err := openRegularIn(root, name)
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
 	}
@@ -1088,7 +1088,7 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 		})
 	}
 
-	f, err := root.Open(name)
+	f, err := openRegularIn(root, name)
 	if err != nil {
 		return status.Errorf(codes.Internal, "open file: %v", err)
 	}

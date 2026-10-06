@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	beamauth "dylaris-pkg/beam/auth"
@@ -441,6 +442,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		return val
 	}
 	relayAddr, _ := resolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
+	// "No relay registered" is also every relay restart: heartbeats live 30s, so
+	// a member asking during a relay deploy got the node's public address, the
+	// one the server list hides from them. The same rule decides here, so an
+	// admin or the node's own owner keeps the direct path.
+	probe := models.Server{NodeID: server.NodeID, NodeAddress: nodePublicIP}
+	userID, _ := r.Context().Value("userID").(string)
+	redactNodeAddressOne(h.state, &probe, isAdmin, userID)
+	nodePublicIP = probe.NodeAddress
 	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
 
 	// Sign ticket via shared auth package — same format used by gateway

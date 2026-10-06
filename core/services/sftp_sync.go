@@ -379,9 +379,18 @@ func (s *SFTPSyncService) sync() {
 		// A failed read of the access rows already skipped this node above, so a
 		// database fault leaves the previous grant in place instead of revoking
 		// every user's counter on a tick that knew nothing.
+		//
+		// Not on a customer's machine. The counter is per person and
+		// platform-wide, the customer holds this credential, and who is "on" the
+		// node is theirs to decide: granting a stranger's username was enough to
+		// INCRBY that stranger out of uploading anywhere for the day, or to
+		// EXPIRE their own count. Uploads to their own disk then go uncounted,
+		// which is the lesser loss.
 		usernames := make([]string, 0, len(byUser))
-		for username := range byUser {
-			usernames = append(usernames, username)
+		if node.Kind() != models.NodeKindBYON {
+			for username := range byUser {
+				usernames = append(usernames, username)
+			}
 		}
 		if err := redisacl.NewProvisioner(s.redis).SetNodeBeamQuotaGrant(ctx, node.Token, usernames); err != nil {
 			// Loud, because the failure is silent everywhere else: the quota

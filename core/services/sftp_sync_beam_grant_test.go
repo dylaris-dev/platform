@@ -98,3 +98,25 @@ func TestARevokedUsersUploadCounterGrantIsWithdrawn(t *testing.T) {
 		t.Errorf("a node left with no users must have its selector CLEARED, not skipped: %s", got)
 	}
 }
+
+// A customer's machine holds this credential, and who is on it is the
+// customer's to decide: naming a stranger was enough to reach that stranger's
+// platform-wide counter. Such a node gets no counter at all.
+func TestACustomerNodeGetsNoUploadCounter(t *testing.T) {
+	fs := pruneFixture()
+	owner := "u-carol"
+	fs.nodes[0].OwnerID = &owner
+	svc, rec := newBeamGrantTest(t, fs)
+	svc.sync()
+
+	got, ok := rec.argsFor(redisacl.NodeUsername(pruneNodeA))
+	if !ok || !strings.Contains(got, "clearselectors") {
+		t.Fatalf("the customer node's old grant was not cleared: %q", got)
+	}
+	if strings.Contains(got, "alice") {
+		t.Errorf("a customer node reaches alice's upload counter: %s", got)
+	}
+	if b, _ := rec.argsFor(redisacl.NodeUsername(pruneNodeB)); !strings.Contains(b, "bob") {
+		t.Errorf("a platform node lost its user's counter: %s", b)
+	}
+}

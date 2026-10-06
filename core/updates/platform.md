@@ -14,9 +14,14 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Breaking
-- Nothing.
+- **Beam uploads to a BYON node no longer count toward the daily upload limit.** The customer's
+  node could change any user's counter, so it no longer gets access to them. `core`
 
 ### Security
+- **A Beam or SFTP rename can no longer move a link to the top of a server,** where a
+  following save overwrote the node's own config. Reads of a named pipe are refused instead of hanging. `node`
+- **Revoking Beam access now also ends it on a proxy's backends, on unlink and on owner change.**
+  A ticket no longer shows a node's public IP to anyone the server list hides it from. `core`
 - **Support staff no longer see servers' JVM flags, start command or CPU pinning** in the admin
   server list, as they already did not see the node address. Admins still do. `core`
 
