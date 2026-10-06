@@ -120,7 +120,8 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		"cpu_limit", "node_id", "extra_jvm_flags", "start_command", "installer_type",
 		"minecraft_version", "build_number", "disk_limit", "server_type", "proxy_id",
 		"node_address", "host_port", "container_port", "region", "node_status",
-		"node_last_seen_at", "node_owner_id", "node_tags", "role", "permissions",
+		"node_last_seen_at", "node_owner_id", "node_tags",
+		"cpu_pinning_mode", "cpuset", "auto_move", "role", "permissions",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		5, "uuid-c", "charlie", "node-1", "owner-name", 25565, "online", "running",
@@ -128,7 +129,8 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		1.5, 7, "", "", "",
 		"", "", int64(0), "game", nil,
 		"10.0.0.5", 25565, 25565, "default", "offline",
-		now, nil, "external,eu", "owner", nil,
+		now, nil, "external,eu",
+		"manual", "2-3", true, "owner", nil,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.owner_id = $1")).
 		WithArgs(owner).
@@ -158,6 +160,11 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 	// this wrong is how a server would land under the wrong tab.
 	if got[0].NodeKind != models.NodeKindExternal {
 		t.Fatalf("NodeKind = %q, want external", got[0].NodeKind)
+	}
+	// The resources dialog prefills from this row; a list without the pinning
+	// made every save reset it to shared.
+	if got[0].CPUPinningMode != "manual" || got[0].Cpuset != "2-3" || !got[0].AutoMove {
+		t.Fatalf("pinning/auto-move not scanned: %q %q %v", got[0].CPUPinningMode, got[0].Cpuset, got[0].AutoMove)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet sqlmock expectations: %v", err)

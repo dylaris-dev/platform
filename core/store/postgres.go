@@ -1639,6 +1639,10 @@ func (s *PostgresStore) CountInvitesPerServer() (map[int]int, error) {
 //
 // n.owner_id and n.tags are joined but never returned as themselves: they are
 // folded into models.Server.NodeKind by scanNodeKind.
+//
+// The CPU pinning and auto-move columns are here because the panel's resources
+// dialog prefills from a list row. Without them every row read "shared", and a
+// save of RAM or CPU alone sent that back and reset a server's pinning.
 const serverCols = `s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image,
 		s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, s.owner_id,
 		s.memory, COALESCE(s.cpu_limit, 0), s.node_id, COALESCE(s.extra_jvm_flags, ''), COALESCE(s.start_command, ''),
@@ -1646,7 +1650,8 @@ const serverCols = `s.id, s.uuid, s.name, n.name, u.username, s.port, s.status, 
 		COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id,
 		COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565),
 		COALESCE(s.region, 'default'), COALESCE(n.status, 'offline'), n.last_seen_at,
-		n.owner_id, COALESCE(n.tags, '')`
+		n.owner_id, COALESCE(n.tags, ''),
+		COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(s.auto_move, false)`
 
 const serverFrom = `FROM servers s JOIN nodes n ON s.node_id = n.id JOIN users u ON s.owner_id = u.id`
 
@@ -1693,7 +1698,8 @@ func scanFleetServer(rows *sql.Rows) (models.Server, error) {
 		&srv.CreatedAt, &srv.OwnerID, &srv.Memory, &srv.CPULimit, &srv.NodeID,
 		&srv.ExtraJvmFlags, &srv.StartCommand, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber,
 		&srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort,
-		&srv.Region, &srv.NodeStatus, &srv.NodeLastSeenAt, &nodeOwner, &nodeTags)
+		&srv.Region, &srv.NodeStatus, &srv.NodeLastSeenAt, &nodeOwner, &nodeTags,
+		&srv.CPUPinningMode, &srv.Cpuset, &srv.AutoMove)
 	srv.NodeKind = scanNodeKind(nodeOwner, nodeTags)
 	return srv, err
 }
@@ -1819,6 +1825,7 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 			&srv.ExtraJvmFlags, &srv.StartCommand, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber,
 			&srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort,
 			&srv.Region, &srv.NodeStatus, &srv.NodeLastSeenAt, &nodeOwner, &nodeTags,
+			&srv.CPUPinningMode, &srv.Cpuset, &srv.AutoMove,
 			&role, &permsJSON); err != nil {
 			continue
 		}

@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The admin server list applies the same rule as the server list** to an admin's row on a
+  customer's machine: JVM flags, start command and CPU pinning only with the settings right. `core`
+
+### Fixes
+- **Saving a server's resources no longer resets its CPU pinning to shared.** The dialog
+  never received the pinning or auto-move a server had, so it showed and sent the defaults. `core`
+
 ## 2026.10.06.4
 
 ### Features

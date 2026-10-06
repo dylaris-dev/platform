@@ -25,6 +25,12 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 	if servers == nil {
 		servers = []models.Server{}
 	}
+	// An admin's row on a customer's machine follows the owner's grant, as on
+	// the tenant list: the settings fields only with server.settings.write.
+	if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin {
+		username, _ := r.Context().Value("username").(string)
+		servers = applyResolvedTabPermissions(h.state, servers, userID, username)
+	}
 
 	search := strings.ToLower(r.URL.Query().Get("search"))
 	if search != "" {

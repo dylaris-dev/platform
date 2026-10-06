@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
 	"dylaris-core/authz"
@@ -134,5 +135,38 @@ func TestAdminOnACustomersMachineSeesSettingsFieldsOnlyWhenGranted(t *testing.T)
 	var out struct{ Server models.Server }
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !settingsFieldsBlank(out.Server) {
 		t.Errorf("external route gave an admin on a customer's machine the settings fields: %s", rec.Body.String())
+	}
+}
+
+// adminListStore serves the admin list: one row on a customer's machine.
+type adminListStore struct {
+	store.Store
+}
+
+func (adminListStore) ListServersForUser(string, bool) ([]models.Server, error) {
+	s := settingsFieldsServer(1, "admin")
+	s.NodeKind = models.NodeKindBYON
+	return []models.Server{s}, nil
+}
+func (adminListStore) CountInvitesPerServer() (map[int]int, error) { return nil, nil }
+
+// The admin server list applies the same rule to an admin's row on a
+// customer's machine.
+func TestAdminServerListBlanksSettingsFieldsOnACustomersMachine(t *testing.T) {
+	resolver := authz.NewResolver(tabListAuthzStore{grants: map[int]*store.ServerGrant{
+		1: {CapOverrides: store.CapOverrides{Grant: []string{"console.read"}}},
+	}})
+	resolver.SetForeignNode(func(int, string) bool { return true })
+	h := &ServerHandler{state: &AppState{Store: adminListStore{}, Authz: resolver}}
+	r := httptest.NewRequest("GET", "/api/admin/servers", nil)
+	ctx := context.WithValue(r.Context(), "userID", "admin-1")
+	r = r.WithContext(context.WithValue(ctx, "isAdmin", true))
+	rec := httptest.NewRecorder()
+	h.GetAdminServers(rec, r)
+	if strings.Contains(rec.Body.String(), "s3cret") {
+		t.Fatalf("admin list carries the settings fields of a customer's server: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"id":1`) {
+		t.Fatalf("row missing: %d %s", rec.Code, rec.Body.String())
 	}
 }
