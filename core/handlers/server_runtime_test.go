@@ -48,7 +48,7 @@ func (f *runtimeFakeStore) GetServerAuditState(int) (bool, bool, int, error) {
 	return false, false, 0, nil
 }
 
-func runtimeRequest(t *testing.T, fs *runtimeFakeStore, body string) *httptest.ResponseRecorder {
+func runtimeRequest(t *testing.T, fs store.Store, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	h := &ServerHandler{state: &AppState{Store: fs, Events: services.NewSystemEventsPublisher(nil)}}
 	req := httptest.NewRequest(http.MethodPatch, "/api/servers/7/runtime", strings.NewReader(body))

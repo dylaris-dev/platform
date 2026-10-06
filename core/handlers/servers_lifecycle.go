@@ -2275,6 +2275,16 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Recorded once saved, so a node that cannot be reached does not leave the
+	// change out of the trail. Whether the flags changed, not what they are: a
+	// flag can carry a secret (-Dsome.token=...), and the audit trail kept every
+	// old value for as long as the retention allows, which by default is forever.
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventRuntimeChanged, actorID, "", map[string]interface{}{
+		"java_image":        javaImage,
+		"jvm_flags_changed": srv.ExtraJvmFlags != extraFlags,
+	})
+
 	if h.state.Queue != nil {
 		node, nerr := h.state.Store.GetNodeByID(srv.NodeID)
 		if nerr != nil {
@@ -2308,10 +2318,5 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	actorID, _ := r.Context().Value("userID").(string)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventRuntimeChanged, actorID, "", map[string]interface{}{
-		"java_image": javaImage,
-		"jvm_flags":  extraFlags,
-	})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

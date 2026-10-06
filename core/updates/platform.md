@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The server audit trail no longer stores a server's JVM flags,** only whether they
+  changed. A flag can hold a secret, and old values stayed in the trail. Core removes the
+  values already stored when it starts. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.2
 
 ### Features

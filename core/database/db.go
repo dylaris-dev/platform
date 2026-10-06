@@ -308,5 +308,8 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applySSHKeysSchema(db); err != nil {
 		return err
 	}
+	if err := applyAuditJvmFlagsScrub(db); err != nil {
+		return err
+	}
 	return nil
 }
