@@ -351,7 +351,7 @@ func runBackupWithFakeCore(t *testing.T, core *fakeTransferCore, include []strin
 	}
 
 	root := t.TempDir()
-	const uuid = "srv-f3"
+	const uuid = "srv-f3-0001"
 	if err := os.MkdirAll(filepath.Join(root, uuid, "world"), 0o755); err != nil {
 		t.Fatal(err)
 	}

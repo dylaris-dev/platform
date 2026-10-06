@@ -565,12 +565,22 @@ func uploadMacJunk(name string) bool {
 
 // uploadTopFolder names the one folder every entry of the zip sits in, or ""
 // when there is no single one.
+//
+// Opened like the extraction that follows: no link, nothing but a regular file.
 func uploadTopFolder(zipPath string) (string, error) {
-	zr, err := zip.OpenReader(zipPath)
+	f, err := openNoFollow(zipPath)
 	if err != nil {
 		return "", err
 	}
-	defer zr.Close()
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	zr, err := zip.NewReader(f, st.Size())
+	if err != nil {
+		return "", err
+	}
 	top := ""
 	for _, f := range zr.File {
 		name := strings.TrimPrefix(strings.ReplaceAll(f.Name, "\\", "/"), "./")

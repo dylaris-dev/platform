@@ -376,6 +376,11 @@ func (h *StreamHandler) streamFile(reqID string, root *os.Root, name string, sen
 		return
 	}
 
+	// A pipe with no writer would hold this open forever.
+	if st, err := root.Stat(name); err == nil && !st.Mode().IsRegular() {
+		sendFn(errorMsg(reqID, 400, "not a regular file"))
+		return
+	}
 	f, err := root.Open(name)
 	if err != nil {
 		sendFn(errorMsg(reqID, 500, fmt.Sprintf("open: %v", err)))
@@ -834,6 +839,9 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 	stat, err := root.Stat(srcName)
 	if err != nil {
 		return errorMsg(reqID, 404, "source not found")
+	}
+	if !stat.IsDir() && !stat.Mode().IsRegular() {
+		return errorMsg(reqID, 400, "source is not a regular file")
 	}
 
 	// The destination is written, so it is reached without following a link.

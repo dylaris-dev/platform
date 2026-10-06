@@ -81,7 +81,7 @@ func TestDuDiskUsageReportsMeasuredSizeAndCachedLimit(t *testing.T) {
 
 	ctx := context.Background()
 	rdb := newDiskGuardRedis(t)
-	const uuid = "srv-1"
+	const uuid = "srv-1-0001"
 
 	root := t.TempDir()
 	globalStorageMgr = NewStorageManager(root, nil)

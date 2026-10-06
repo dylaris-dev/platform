@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The node refuses any server id that is not one.** An id of "." reached the storage root,
+  where the node keeps its own secret; backup commands now check every id they read. `node`
+- **A named pipe in a server's files can no longer stall the node.** An install that met one
+  where it expected an archive waited forever, and eight of them stopped every command. `node`
+- **A restore no longer brings back the node's own files from the archive,** and a host port
+  is refused when it is privileged or one of the node's own listeners. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.5
 
 ### Features

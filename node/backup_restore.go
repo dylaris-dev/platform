@@ -339,14 +339,22 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 // archive - a restore would otherwise bring back the RAM and CPU of before a
 // downgrade, for the reconciler to recreate the container with.
 func carryArchivesAcrossSwap(stashedRoot, restoredRoot string) error {
+	// No server root before the restore (a recovery onto an empty disk): the
+	// archive is the only copy of the node's state there is, so it stays.
+	if _, err := os.Lstat(stashedRoot); err != nil {
+		return nil
+	}
 	for _, name := range nodeOwnedRootEntries {
-		live := filepath.Join(stashedRoot, name)
-		if _, err := os.Lstat(live); err != nil {
-			continue // nothing to carry
-		}
+		// The archive's copy goes even when the live root has none to carry:
+		// leaving it let a restore bring node state (limits, install record)
+		// out of an archive the tenant may have written.
 		target := filepath.Join(restoredRoot, name)
 		if err := os.RemoveAll(target); err != nil {
 			return err
+		}
+		live := filepath.Join(stashedRoot, name)
+		if _, err := os.Lstat(live); err != nil {
+			continue // nothing to carry
 		}
 		if err := os.Rename(live, target); err != nil {
 			return err

@@ -1069,6 +1069,9 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		hostP := dm.portMgr.GetPort(config.UUID)
 		if hostP == 0 {
 			if config.Docker.HostPort > 0 {
+				if problem := hostPortProblem(config.Docker.HostPort); problem != "" {
+					return "", fmt.Errorf("port assignment failed: %s", problem)
+				}
 				if err := dm.portMgr.SetPort(config.UUID, config.Docker.HostPort); err != nil {
 					return "", fmt.Errorf("port assignment failed: %w", err)
 				}

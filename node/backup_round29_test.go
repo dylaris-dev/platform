@@ -68,7 +68,7 @@ func TestARestoreKeepsTheNodesOwnFiles(t *testing.T) {
 func restoreArchive(t *testing.T, entries []tar.Header, bodies map[string]string) (root string, cmd BackupRestoreCommand) {
 	t.Helper()
 	root, base := t.TempDir(), t.TempDir()
-	const uuid, key = "srv-r29", "backups/srv/job-1/run.tar.gz"
+	const uuid, key = "srv-r29-0001", "backups/srv/job-1/run.tar.gz"
 	if err := os.MkdirAll(filepath.Join(root, uuid), 0o755); err != nil {
 		t.Fatal(err)
 	}

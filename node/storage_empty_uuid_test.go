@@ -18,7 +18,9 @@ func TestEmptyUUIDNeverResolvesToAStoragePath(t *testing.T) {
 	sm, _ := newPlacementManager(t, 2)
 	paths := sm.Paths()
 
-	for _, uuid := range []string{"", " ", "\t"} {
+	// "." resolved to the storage root too, and ".." above it; the root holds
+	// .node_secret.
+	for _, uuid := range []string{"", " ", "\t", ".", "..", "../..", "srv/../.."} {
 		if got := sm.GetServerPath(uuid); got != "" {
 			t.Errorf("GetServerPath(%q) = %q, want \"\"; that path holds every server on the node", uuid, got)
 		}

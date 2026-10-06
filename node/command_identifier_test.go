@@ -195,7 +195,7 @@ func TestTheIdentifierGuardPrecedesTheActionSwitch(t *testing.T) {
 	}
 	body := string(src)
 
-	guard := strings.Index(body, "commandIdentifierProblem(cmdUUID, cmdSubServer)")
+	guard := strings.Index(body, "if problem := commandRefusal(cmd); problem != \"\" {")
 	if guard < 0 {
 		t.Fatal("the queued-identifier guard is gone from processCommand; " +
 			"both identifiers become directory names and must be validated")

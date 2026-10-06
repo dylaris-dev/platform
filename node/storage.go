@@ -11,6 +11,7 @@ import (
 
 	"dylaris-pkg/storageplacement"
 
+	"dylaris-pkg/validate"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -148,7 +149,11 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	//
 	// "" is the answer the callers that check already expect (handleMigrateOut
 	// and handleMigrateCleanup both abort on it); it was simply never produced.
-	if strings.TrimSpace(serverUUID) == "" {
+	//
+	// Not just empty: "." resolved to the storage root as well (filepath.Join
+	// cleans it away and the root IS a directory), ".." to its parent, and the
+	// root holds .node_secret. Anything that is not a server id is no server.
+	if !validate.IsServerUUID(serverUUID) {
 		return ""
 	}
 

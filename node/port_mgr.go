@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -271,4 +272,27 @@ func (pm *PortManager) GetPort(serverUUID string) int {
 		}
 	}
 	return 0
+}
+
+// hostPortProblem reports why a host port Core asked for cannot be published,
+// or "". The port is bound on every address of the node, so a privileged port
+// (SSH among them) or one of the node's own listeners would be taken from the
+// service that should hold it. 25565 stays allowed: without the gateway it is
+// the port players expect.
+func hostPortProblem(port int) string {
+	if port < 1024 || port > 65535 {
+		return fmt.Sprintf("host port %d is outside 1024-65535", port)
+	}
+	for _, l := range []struct{ env, def string }{
+		{"SFTP_PORT", "25520"}, {"BEAM_GRPC_PORT", "25521"}, {"MIGRATION_PORT", "25522"}, {"BEAM_LAN_PORT", "25523"},
+	} {
+		v := os.Getenv(l.env)
+		if v == "" {
+			v = l.def
+		}
+		if strconv.Itoa(port) == v {
+			return fmt.Sprintf("host port %d is the node's own %s", port, l.env)
+		}
+	}
+	return ""
 }

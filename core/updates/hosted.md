@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The node agent checks more of what it is asked to do,** so a file planted in your server
+  or a malformed command cannot stall it or reach beyond your server's folder. On your own
+  node, update the node agent. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.05.8
 
 ### Features

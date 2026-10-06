@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -49,4 +50,14 @@ func pinDir(rootDir, rel string, mk bool) (string, func(), error) {
 	return p, func() {}, nil
 }
 
-func openNoFollow(p string) (*os.File, error) { return os.Open(p) }
+func openNoFollow(p string) (*os.File, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", p)
+	}
+	return f, nil
+}

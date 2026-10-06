@@ -117,6 +117,26 @@ func pinDir(rootDir, rel string, mk bool) (string, func(), error) {
 // link planted under its name pointed the installer, running as root, at any
 // file on the host - another tenant's upload included - and unpacked it into
 // this server.
+//
+// Only a regular file is opened. A named pipe is something the tenant's server
+// can create, and opening one with no writer blocks forever: eight such
+// installs held every command consumer on the node. O_NONBLOCK makes the open
+// of a pipe return at once so it can be refused; reads of a regular file
+// ignore the flag.
 func openNoFollow(p string) (*os.File, error) {
-	return os.OpenFile(p, os.O_RDONLY|unix.O_NOFOLLOW, 0)
+	f, err := os.OpenFile(p, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", path.Base(p))
+	}
+	// Go leaves a flag the caller passed in place, and a FUSE storage path
+	// can hand it on to its daemon: back to blocking reads.
+	if err := unix.SetNonblock(int(f.Fd()), false); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }

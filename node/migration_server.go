@@ -64,7 +64,7 @@ func StartMigrationServer(ctx context.Context, rdb *redis.Client, nodeID string,
 		http.ServeFile(w, r, path)
 	})
 
-	srv := &http.Server{Addr: listenAddr, Handler: mux}
+	srv := &http.Server{Addr: listenAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	go publishMigrationEndpoint(ctx, rdb, nodeID, port)
 

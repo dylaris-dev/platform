@@ -1204,6 +1204,21 @@ func commandIdentifiers(cmd NodeCommand) (uuid, subServer string) {
 	return cmd.ServerUUID, cmd.SubServer
 }
 
+// commandRefusal checks every identifier pair a branch may read. backup_run and
+// backup_restore read the top-level pair even when a Config is present, so a
+// payload with a valid config.uuid and a serverUuid of "." passed a check of
+// the Config pair alone and restored over the whole storage root.
+func commandRefusal(cmd NodeCommand) string {
+	uuid, subServer := commandIdentifiers(cmd)
+	if problem := commandIdentifierProblem(uuid, subServer); problem != "" {
+		return problem
+	}
+	if cmd.ServerUUID != "" || cmd.SubServer != "" {
+		return commandIdentifierProblem(cmd.ServerUUID, cmd.SubServer)
+	}
+	return ""
+}
+
 func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
 
@@ -1254,8 +1269,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		return
 	}
 
-	cmdUUID, cmdSubServer := commandIdentifiers(cmd)
-	if problem := commandIdentifierProblem(cmdUUID, cmdSubServer); problem != "" {
+	if problem := commandRefusal(cmd); problem != "" {
 		log.Printf("%s: refusing this command, %s", cmd.Action, problem)
 		return
 	}
