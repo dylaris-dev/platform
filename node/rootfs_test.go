@@ -125,14 +125,19 @@ func TestNoReadEscapesUnderRace(t *testing.T) {
 	canary := filepath.Join(outside, "f")
 
 	var stop atomic.Bool
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for !stop.Load() {
 			os.Rename(filepath.Join(srv, "real"), target)
 			_ = os.Symlink(canary, filepath.Join(srv, "tmp"))
 			os.Rename(filepath.Join(srv, "tmp"), target)
 		}
 	}()
-	t.Cleanup(func() { stop.Store(true) })
+	// Wait for the swapper to finish, not just tell it to: one still creating
+	// "tmp" while the TempDir is removed failed the cleanup ("directory not
+	// empty"), and the test with it, under -race in CI.
+	t.Cleanup(func() { stop.Store(true); <-done })
 
 	leaked := 0
 	for range 20000 {
