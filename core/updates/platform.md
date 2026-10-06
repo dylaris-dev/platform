@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Beam 0.9.11 for Linux answers only the panel's own page.** A page shown in a frame of the
+  panel, or one the window was sent to, could call the app's file functions with your session.
+- **Ticket attachments that are XML or SVG are always served as a plain download,** never with a
+  type a browser renders as a page. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.8
 
 ### Features

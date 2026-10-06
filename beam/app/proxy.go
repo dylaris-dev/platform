@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -264,6 +265,7 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 					}
 				}
 			}
+			neutralizeForeignDocument(resp.Header)
 			// Splice the Wails runtime into HTML documents so window.go
 			// exists on the Panel. Accept-Encoding was stripped on the
 			// way out, so the body here is always plain text.
@@ -743,4 +745,21 @@ func injectBeforeBodyEnd(doc []byte, markup string) []byte {
 		return []byte(s[:i] + markup + s[i:])
 	}
 	return append(doc, markup...)
+}
+
+// neutralizeForeignDocument turns a response that is not the panel's own page
+// into bytes no webview will render as a document.
+//
+// Everything proxied shows at the app's origin, and a document there is
+// trusted with the native bridge. The Linux build (WebKitGTK legacy scheme
+// API) passes WebKit the MIME type and nothing else - not nosniff, not
+// Content-Disposition, not this proxy's CSP - so a ticket attachment Core
+// served as text/xml rendered as XHTML with a script, and got the bridge.
+// Measured. The panel serves no XML or SVG of its own.
+func neutralizeForeignDocument(h http.Header) {
+	mt, _, _ := mime.ParseMediaType(h.Get("Content-Type"))
+	attachment := strings.HasPrefix(strings.ToLower(strings.TrimSpace(h.Get("Content-Disposition"))), "attachment")
+	if attachment || mt == "text/xml" || mt == "application/xml" || strings.HasSuffix(mt, "+xml") || mt == "text/xsl" {
+		h.Set("Content-Type", "application/octet-stream")
+	}
 }

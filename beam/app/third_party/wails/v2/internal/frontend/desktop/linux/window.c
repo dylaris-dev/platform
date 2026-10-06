@@ -42,6 +42,7 @@ GtkBox *GTKBOX(void *pointer)
 }
 
 extern void processMessage(char *);
+extern void processWebMessage(char *);
 
 static void sendMessageToBackend(WebKitUserContentManager *contentManager,
                                  WebKitJavascriptResult *result,
@@ -59,7 +60,9 @@ static void sendMessageToBackend(WebKitUserContentManager *contentManager,
     JSStringGetUTF8CString(js, message, messageSize);
     JSStringRelease(js);
 #endif
-    processMessage(message);
+    // DYLARIS PATCH (beam): a page's message, checked for the app's token
+    // (bridge_origin.go). Native events below keep calling processMessage.
+    processWebMessage(message);
     g_free(message);
 }
 

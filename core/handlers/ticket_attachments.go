@@ -153,6 +153,11 @@ func clampAttachmentContentType(mime string) string {
 	switch {
 	case strings.HasPrefix(base, "text/html"):
 		return "application/octet-stream"
+	// XML and SVG are documents that run script too. A .txt starting with
+	// "<?xml" sniffs as text/xml, and a client that drops the response
+	// headers (Beam's Linux webview passes WebKit the type alone) rendered it.
+	case base == "text/xml", base == "text/xsl", strings.HasSuffix(base, "+xml"):
+		return "application/octet-stream"
 	case strings.HasPrefix(base, "image/"),
 		strings.HasPrefix(base, "text/"),
 		base == "application/pdf",

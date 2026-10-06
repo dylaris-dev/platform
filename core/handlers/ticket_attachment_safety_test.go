@@ -116,6 +116,9 @@ func TestClampAttachmentContentType(t *testing.T) {
 		{"pre-fix declared text/html with charset is clamped", "text/html; charset=utf-8", "application/octet-stream"},
 		{"unknown/unexpected type is clamped", "application/javascript", "application/octet-stream"},
 		{"empty is clamped", "", "application/octet-stream"},
+		{"sniffed text/xml is clamped", "text/xml; charset=utf-8", "application/octet-stream"},
+		{"svg is clamped", "image/svg+xml", "application/octet-stream"},
+		{"xhtml is clamped", "application/xhtml+xml", "application/octet-stream"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

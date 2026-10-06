@@ -4,7 +4,7 @@
 package linux
 
 /*
-#cgo linux pkg-config: gtk+-3.0 
+#cgo linux pkg-config: gtk+-3.0
 #cgo !webkit2_41 pkg-config: webkit2gtk-4.0
 #cgo webkit2_41 pkg-config: webkit2gtk-4.1
 
@@ -196,6 +196,9 @@ func NewFrontend(ctx context.Context, appoptions *options.App, myLogger *logger.
 	}
 
 	result.mainWindow = NewWindow(appoptions, result.debug, result.devtoolsEnabled)
+	// DYLARIS PATCH (beam): only the app's own page reaches the bridge. See
+	// bridge_origin.go.
+	result.mainWindow.installBridgeGuard(result.startURL)
 
 	C.install_signal_handlers()
 
@@ -508,6 +511,18 @@ func (f *Frontend) ExecJS(js string) {
 }
 
 var messageBuffer = make(chan string, 100)
+
+// processWebMessage is what a page posts. DYLARIS PATCH (beam): only the
+// app's own page reaches the bridge, see bridge_origin.go. Native events
+// (close, drop, DomReady from load-changed) come from window.c through
+// processMessage and carry no token.
+//
+//export processWebMessage
+func processWebMessage(message *C.char) {
+	if m, ok := fromAppPage(C.GoString(message)); ok {
+		messageBuffer <- m
+	}
+}
 
 //export processMessage
 func processMessage(message *C.char) {

@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **If you use the Beam app on Linux, update it to 0.9.11.** A page shown inside the panel could
+  use the app's file functions with your session.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.8
 
 ### Features

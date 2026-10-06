@@ -60,6 +60,29 @@ foreign Origin and Core's same-origin check rejects it) and CORS hides the
 answers to its reads; a GET that changes state would not be stopped. Moving to go-webview2 >= 1.0.22 would let the check use the message's own
 source (`ICoreWebView2WebMessageReceivedEventArgs.GetSource`) instead.
 
+## The bridge origin patch (Linux frontend)
+
+The Linux build had no origin check at all, and WebKitGTK is wider than
+WebView2: `window.webkit.messageHandlers.external` exists in EVERY document in
+the window, frames included. Measured on WebKitGTK 2.50 (4.0 and 4.1 APIs) with
+a probe in a container: a cross-origin iframe (the panel frames tenant tab
+pages), an about:blank child that iframe creates, and a foreign page the main
+frame was navigated to all reached `processMessage`. The
+`script-message-received` signal does not say which frame sent a message, so
+there is no origin to read.
+
+The app's page proves itself instead (`linux/bridge_origin.go`, marked
+`DYLARIS PATCH (beam)`): a user script injected into the TOP frame only, at
+document start, and only when that document is on the start URL's origin,
+wraps `postMessage` in that realm to prefix a per-run random token.
+`processMessage` drops anything without it. Frames have their own realm and no
+script; a foreign top document gets the script but it returns before touching
+anything. The same probe with the shipped script accepts only the app's page,
+and fails when the origin line is removed.
+
+`bridge_origin_test.go` (vendored, needs the GTK/WebKit dev packages) and
+`TestTheLinuxBridgeAnswersOnlyTheAppsOwnPage` (syntax tree, runs in CI) hold it.
+
 ## External-open protection is a single, platform-agnostic path
 
 Beam's defense against a compromised/MITM'd Panel triggering a native OS
