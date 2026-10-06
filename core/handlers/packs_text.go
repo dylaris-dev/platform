@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path"
@@ -16,6 +18,34 @@ import (
 
 // maxEditableTextBytes bounds how much text the in-panel editor will load/save.
 const maxEditableTextBytes = 1 << 20 // 1 MiB
+
+// maxEditableObjectBytes bounds the stored content zip the editor reads to get
+// at that text: one deflated entry of at most maxEditableTextBytes plus zip
+// overhead. Anything larger cannot hold editable text, and reading it whole
+// (a stored mod zip can be 1 GiB) cost that much memory per request.
+const maxEditableObjectBytes = maxEditableTextBytes + 64<<10
+
+// errNotEditableObject is returned by readEditableObject for an object too
+// large to be an editable text entry.
+var errNotEditableObject = errors.New("stored object too large to be editable text")
+
+// readEditableObject reads a stored content zip for the text editor, refusing
+// one past maxEditableObjectBytes without reading the rest of it.
+func readEditableObject(ctx context.Context, prov modpack.ModpackStorageProvider, key string) ([]byte, error) {
+	rc, _, err := prov.Stream(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, maxEditableObjectBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxEditableObjectBytes {
+		return nil, errNotEditableObject
+	}
+	return data, nil
+}
 
 // loadOwnedContentModversion resolves the ownership-checked build, the
 // modversion (verified attached to that build, not a foreign id), and the
@@ -53,7 +83,11 @@ func (h *PacksHandler) GetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
 		return
 	}
-	raw, err := prov.Get(r.Context(), mv.StorageKey)
+	raw, err := readEditableObject(r.Context(), prov, mv.StorageKey)
+	if errors.Is(err, errNotEditableObject) {
+		sendJSONError(w, "Content is not editable text", http.StatusUnsupportedMediaType)
+		return
+	}
 	if err != nil {
 		sendJSONError(w, "Failed to read content", http.StatusInternalServerError)
 		return
@@ -92,7 +126,11 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
 		return
 	}
-	curRaw, err := prov.Get(r.Context(), mv.StorageKey)
+	curRaw, err := readEditableObject(r.Context(), prov, mv.StorageKey)
+	if errors.Is(err, errNotEditableObject) {
+		sendJSONError(w, "This content is not an editable text file", http.StatusUnprocessableEntity)
+		return
+	}
 	if err != nil {
 		sendJSONError(w, "Failed to read content", http.StatusInternalServerError)
 		return

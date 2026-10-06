@@ -909,7 +909,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.MigrateBuild))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateShareLink)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListShareLinks)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RevokeShareLink))))).Methods("DELETE")
+	// Revoking only withdraws access, so it stays open when modpacks or authoring
+	// are switched off: those switches stop new links, not the ones already out.
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.AllowReadOnlyWhenDisabled(packsHandler.RevokeShareLink)))).Methods("DELETE")
 
 	// --- Username history + account policy ---
 	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap

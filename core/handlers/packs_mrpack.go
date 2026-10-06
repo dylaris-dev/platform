@@ -338,6 +338,12 @@ func (h *PacksHandler) ensureInstallMrpack(ctx context.Context, pack *models.Pac
 	if err != nil {
 		return "", err
 	}
+	return h.storeDraftMrpack(ctx, pack, build, content)
+}
+
+// storeDraftMrpack renders an unpublished build's mrpack from content and stores
+// it under the build's deterministic key.
+func (h *PacksHandler) storeDraftMrpack(ctx context.Context, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) (string, error) {
 	data, err := h.renderMrpack(ctx, pack, build, content)
 	if err != nil {
 		return "", err
@@ -354,6 +360,22 @@ func (h *PacksHandler) ensureInstallMrpack(ctx context.Context, pack *models.Pac
 		return "", err
 	}
 	return key, nil
+}
+
+// mrpackInputsFingerprint hashes everything renderMrpack reads besides the
+// stored content objects, which never change in place: an upload is keyed by its
+// sha1 and an edit writes a fresh key, so a changed object is a changed row.
+func mrpackInputsFingerprint(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) (string, error) {
+	b, err := json.Marshal(struct {
+		Pack    *models.Pack
+		Build   *models.PackBuild
+		Content []models.BuildContentEntry
+	}{pack, build, content})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // ExportMrpack streams the .mrpack for a build (self-distributed download).

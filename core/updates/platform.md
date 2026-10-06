@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.06
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A public share link to a draft pack renders it at most once a minute while it is unchanged,**
+  not on every download. One link could keep Core's two render slots busy and stall pack installs. `core`
+- **Uploading a jar, resourcepack or config file no longer holds it in memory twice,** and the
+  text editor no longer reads a whole stored file to show 1 MiB of it. `core`
+
+### Fixes
+- **An owner can revoke a share link while pack authoring is switched off.** It was refused,
+  while the link itself kept working. `core`
+
 ## 2026.10.05.8
 
 ### Features

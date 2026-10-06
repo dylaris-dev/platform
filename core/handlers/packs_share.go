@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"dylaris-core/models"
@@ -132,7 +134,7 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 
 	switch link.Kind {
 	case models.ShareLinkClientMrpack:
-		key, err := h.ensureInstallMrpack(r.Context(), pack, build)
+		key, err := h.shareMrpackKey(r.Context(), pack, build)
 		if err != nil {
 			sendJSONError(w, "Failed to render pack", http.StatusInternalServerError)
 			return
@@ -190,4 +192,59 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 	default:
 		notFound()
 	}
+}
+
+// draftShareReuse is how long a share link reuses a draft's stored mrpack
+// instead of rendering it again, while the draft is unchanged.
+const draftShareReuse = time.Minute
+
+// draftShareRenders maps a draft's mrpack storage key to the inputs and time of
+// the last render a share link triggered in this process.
+//
+// A draft has no persisted mrpack, so every hit on its public share link
+// rendered it: gigabytes of memory under the size caps, on the same two slots
+// every tenant's installs and exports wait for. An anonymous holder of one link
+// could keep both busy. Now a link renders at most once a minute per draft and
+// replica, and at once when the draft changed.
+//
+// ponytail: the object can be overwritten by another replica or an install, so
+// reuse is bounded in time rather than trusted forever. A draft edited and then
+// reverted within the minute across replicas can serve the edited pack until
+// the minute is up. Content-address the key if that ever matters.
+var draftShareRenders sync.Map
+
+type draftShareRender struct {
+	inputs string
+	at     time.Time
+}
+
+// shareMrpackKey is ensureInstallMrpack for the anonymous share route.
+func (h *PacksHandler) shareMrpackKey(ctx context.Context, pack *models.Pack, build *models.PackBuild) (string, error) {
+	if build.MrpackStorageKey != "" {
+		return build.MrpackStorageKey, nil
+	}
+	content, err := h.state.Store.ListBuildContent(build.ID)
+	if err != nil {
+		return "", err
+	}
+	inputs, err := mrpackInputsFingerprint(pack, build, content)
+	if err != nil {
+		return "", err
+	}
+	key := h.mrpackStorageKey(pack, build)
+	if v, ok := draftShareRenders.Load(key); ok {
+		last := v.(draftShareRender)
+		if last.inputs == inputs && time.Since(last.at) < draftShareReuse {
+			if prov, err := h.state.buildModpackStorageProvider(); err == nil && prov != nil {
+				if _, exists, err := prov.Stat(ctx, key); err == nil && exists {
+					return key, nil
+				}
+			}
+		}
+	}
+	if key, err = h.storeDraftMrpack(ctx, pack, build, content); err != nil {
+		return "", err
+	}
+	draftShareRenders.Store(key, draftShareRender{inputs: inputs, at: time.Now()})
+	return key, nil
 }

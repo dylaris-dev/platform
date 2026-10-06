@@ -605,7 +605,7 @@ can still show what exists.
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | the share links issued for one build. |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.RevokeShareLink` | revokes one share link. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | AllowReadOnlyWhenDisabled | `PacksHandler.RevokeShareLink` | revokes one share link. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
 
 ## /api/placement

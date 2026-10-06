@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -28,27 +29,34 @@ var zeroModTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 // out of the database, skipping the validation the original upload went
 // through.
 func BuildContentZip(innerPath string, content []byte) ([]byte, error) {
-	if innerPath == "" {
-		return nil, fmt.Errorf("contentzip: empty inner path")
-	}
-	if IsUnsafeEntryPath(innerPath) {
-		return nil, fmt.Errorf("contentzip: unsafe inner path %q", innerPath)
-	}
 	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	hdr := &zip.FileHeader{Name: innerPath, Method: zip.Deflate}
-	hdr.Modified = zeroModTime
-	w, err := zw.CreateHeader(hdr)
-	if err != nil {
-		_ = zw.Close()
-		return nil, err
-	}
-	if _, err := w.Write(content); err != nil {
-		_ = zw.Close()
-		return nil, err
-	}
-	if err := zw.Close(); err != nil {
+	if err := WriteContentZip(&buf, innerPath, bytes.NewReader(content)); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// WriteContentZip is BuildContentZip writing to w as content is read, so a
+// large upload is wrapped without holding the file or the zip in memory. Both
+// produce the same bytes.
+func WriteContentZip(w io.Writer, innerPath string, content io.Reader) error {
+	if innerPath == "" {
+		return fmt.Errorf("contentzip: empty inner path")
+	}
+	if IsUnsafeEntryPath(innerPath) {
+		return fmt.Errorf("contentzip: unsafe inner path %q", innerPath)
+	}
+	zw := zip.NewWriter(w)
+	hdr := &zip.FileHeader{Name: innerPath, Method: zip.Deflate}
+	hdr.Modified = zeroModTime
+	ew, err := zw.CreateHeader(hdr)
+	if err != nil {
+		_ = zw.Close()
+		return err
+	}
+	if _, err := io.Copy(ew, content); err != nil {
+		_ = zw.Close()
+		return err
+	}
+	return zw.Close()
 }
