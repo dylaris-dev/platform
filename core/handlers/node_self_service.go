@@ -183,6 +183,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	// Background, not the request context: a browser that timed out must not be
 	// the reason an address outlives the machine behind it.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
+	dropDemoServers(h.state, services.ServerUUIDs(servers))
 	log.Printf("DeleteMyNode: node %d — cleaned up %d route(s) across %d server(s)", node.ID, matched, len(servers))
 
 	// The Redis ACL user and the node's keys are all keyed by its token, which

@@ -592,6 +592,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// Background, not the request context: an operator who hung up must not be
 	// the reason a deleted machine's addresses keep resolving.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
+	dropDemoServers(h.state, services.ServerUUIDs(servers))
 	log.Printf("ForceDeleteNode: node %d — cleaned up %d route(s) across %d server(s)", id, matched, len(servers))
 	h.cleanupDeletedNode(r, node, warpKeys)
 
@@ -1356,6 +1357,14 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 //     persist installer_type, minecraft_version, active_sub_server.
 //  6. Returns the created server as JSON.
 func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
+	// Admin-only, whatever nodes.write says - the same rule as
+	// AdminUpdateServerOwner. The body names the owner, and the owner gets the
+	// resolver's owner short-circuit: a staff role holding nodes.write could
+	// adopt a deleted customer's world for itself, console and files included.
+	if !IsAdmin(r) {
+		sendJSONError(w, "Only an administrator can adopt an orphaned server", http.StatusForbidden)
+		return
+	}
 	if h.state.Store == nil {
 		sendJSONError(w, "DB error", 503)
 		return

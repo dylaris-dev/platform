@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.07.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **Adopting an orphaned server folder is admin-only now.** Staff roles with node write access
+  get a refusal; they could name any owner, themselves included. `core`
+
+### Security
+- **Access given by a server's previous owner ends when an admin changes the owner.** Their
+  invites and server roles used to keep working on the moved server. `core`
+- **Removing a member under a proxy can no longer widen their access.** If the proxy would pass
+  them more than their own grant allowed, only the owner can remove it. `core`
+
+### Fixes
+- **A deleted demo server no longer leaves its demo flag behind** for a later server that reuses
+  the same id. `core`
+
 ## 2026.10.07.3
 
 ### Features

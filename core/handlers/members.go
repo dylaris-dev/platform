@@ -427,6 +427,18 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	caller, _ := r.Context().Value("userID").(string)
+	adminHere := IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, caller)
+	if !adminHere && caller != srv.OwnerID && revokeUncoversInheritance(h.state, srv, targetUserID) {
+		sendJSONError(w, "Removing this member would give them the wider access they inherit from the proxy; only the owner can do that", http.StatusForbidden)
+		return
+	}
+
 	if err := h.state.Store.DeleteInvite(serverID, targetUserID); err != nil {
 		sendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
 		return

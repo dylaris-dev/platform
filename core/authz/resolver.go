@@ -198,6 +198,13 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 
 	// Direct per-server grant, else a proxy-inherited grant.
 	grant, gerr := r.store.GetServerGrant(serverID, id.UserID)
+	// A grant belongs to the realm of the owner who gave it. An admin owner
+	// change moves the server and leaves its rows behind, so without this the
+	// previous owner's friends kept their access, and the previous owner could
+	// still widen it by editing the server role those rows point at.
+	if grant != nil && grant.OwnerUserID != "" && grant.OwnerUserID != srv.OwnerID {
+		grant = nil
+	}
 	if gerr != nil || grant == nil {
 		grant = nil
 		if srv.ProxyID != nil {
@@ -205,18 +212,19 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 			// as the child, else a friend invited on someone else's proxy could
 			// reach this owner's server.
 			if psrv, perr := r.store.GetServerByID(*srv.ProxyID); perr == nil && psrv != nil && psrv.OwnerID == srv.OwnerID {
-				if pg, perr2 := r.store.GetServerGrant(*srv.ProxyID, id.UserID); perr2 == nil && pg != nil && pg.Inherit {
+				if pg, perr2 := r.store.GetServerGrant(*srv.ProxyID, id.UserID); perr2 == nil && pg != nil && pg.Inherit &&
+					(pg.OwnerUserID == "" || pg.OwnerUserID == srv.OwnerID) {
 					grant = pg
 				}
 			}
 		}
 	}
 	if grant != nil {
-		r.applyGrant(res, grant)
+		r.applyGrant(res, grant, srv.OwnerID)
 	}
 	// Account-wide grant on this server's owner realm (all servers + owner tools).
 	if acct, aerr := r.store.GetAccountGrant(srv.OwnerID, id.UserID); aerr == nil && acct != nil {
-		r.applyGrant(res, acct)
+		r.applyGrant(res, acct, srv.OwnerID)
 	}
 	return res, nil
 }
@@ -224,10 +232,15 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 // applyGrant folds a grant's server-role caps + overrides into the resolution,
 // routing each resolved cap to the SERVER or OWNER set by its catalog scope so
 // a mixed server-role (SERVER + OWNER caps) lands in both sets correctly.
-func (r *Resolver) applyGrant(res *Resolution, g *store.ServerGrant) {
+// realmOwner is the server's owner. A role is used only if it belongs to that
+// realm: a grant row edited after an admin owner change takes the new owner's
+// realm but keeps its role id, which would otherwise hand the member whatever
+// the previous owner puts into that role.
+func (r *Resolver) applyGrant(res *Resolution, g *store.ServerGrant, realmOwner string) {
 	caps := map[string]bool{}
 	if g.ServerRoleID != nil {
-		if role, err := r.store.GetServerRole(*g.ServerRoleID); err == nil && role != nil {
+		if role, err := r.store.GetServerRole(*g.ServerRoleID); err == nil && role != nil &&
+			(role.OwnerUserID == "" || role.OwnerUserID == realmOwner) {
 			for _, capID := range role.Capabilities {
 				caps[capID] = true
 			}

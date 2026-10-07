@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -103,11 +104,27 @@ func TestAssignOrphan_DuplicateCheck(t *testing.T) {
 			h := &NodeHandler{state: &AppState{Store: &orphanAssignFakeStore{server: c.server, err: c.err}}}
 
 			rw := httptest.NewRecorder()
-			h.AssignOrphan(rw, httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody())))
+			req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody()))
+			h.AssignOrphan(rw, req.WithContext(context.WithValue(req.Context(), "isAdmin", true)))
 
 			if rw.Code != c.wantCode {
 				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.wantCode, rw.Body.String())
 			}
 		})
+	}
+}
+
+// Adopting names the owner, and the owner gets everything on the server, so a
+// staff role holding nodes.write could take a deleted customer's world for
+// itself. Admin-only, like changing a server's owner.
+func TestAssignOrphanIsAdminOnly(t *testing.T) {
+	h := &NodeHandler{state: &AppState{Store: &orphanAssignFakeStore{}}}
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody()))
+	ctx := context.WithValue(req.Context(), "isAdmin", false)
+	ctx = context.WithValue(ctx, "userID", "staff-id")
+	h.AssignOrphan(rw, req.WithContext(ctx))
+	if rw.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rw.Code, rw.Body.String())
 	}
 }

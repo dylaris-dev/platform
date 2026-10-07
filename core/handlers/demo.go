@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -230,4 +231,32 @@ func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": u.Username})
+}
+
+// dropDemoServers takes deleted servers off the demo list. The list holds
+// UUIDs, and a UUID can come back: CreateServer accepts one from the client,
+// and adopting a leftover folder reuses it. A stale entry then made a new,
+// unrelated server readable by every signed-in account.
+func dropDemoServers(s *AppState, uuids []string) {
+	if s == nil || !s.StoreEnabled || s.Store == nil || len(uuids) == 0 {
+		return
+	}
+	cur := loadDemoServerUUIDs(s.Store)
+	gone := make(map[string]bool, len(uuids))
+	for _, u := range uuids {
+		gone[u] = true
+	}
+	next := make([]string, 0, len(cur))
+	for _, u := range cur {
+		if !gone[u] {
+			next = append(next, u)
+		}
+	}
+	if len(next) == len(cur) {
+		return
+	}
+	data, _ := json.Marshal(next)
+	if err := s.Store.SetSetting(demoServerUUIDsSetting, string(data)); err != nil {
+		log.Printf("demo: could not drop deleted servers from the demo list: %v", err)
+	}
 }
