@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.07.3
+
+### Features
+- Nothing.
+
+### Breaking
+- **A server-pack share link can answer "being built, try again" on its first download** of a
+  large pack. The pack is then stored and served at once until its content changes. `core`
+
+### Security
+- **Server-pack share links are no longer rebuilt on every download.** Each hit downloaded and
+  compressed up to 2 GiB with no limit on how many ran; now one build per change, two at a time. `core`
+
+### Fixes
+- **A modpack file on local storage is never visible half-written.** An interrupted write could
+  leave a truncated pack that was then served as complete. `core`
+
 ## 2026.10.07.2
 
 ### Features

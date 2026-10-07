@@ -91,18 +91,8 @@ func (p *LocalProvider) PutStream(ctx context.Context, key string, r io.Reader, 
 	if err := os.MkdirAll(filepath.Dir(first), 0o755); err != nil {
 		return fmt.Errorf("modpack storage: mkdir %s: %w", filepath.Dir(first), err)
 	}
-	dst, err := os.Create(first)
-	if err != nil {
-		return fmt.Errorf("modpack storage: create %s: %w", first, err)
-	}
-	if _, err := io.Copy(dst, r); err != nil {
-		dst.Close()
-		_ = os.Remove(first)
-		return fmt.Errorf("modpack storage: write %s: %w", first, err)
-	}
-	if err := dst.Close(); err != nil {
-		_ = os.Remove(first)
-		return fmt.Errorf("modpack storage: write %s: %w", first, err)
+	if err := writeLocalAtomic(first, r); err != nil {
+		return err
 	}
 	written = append(written, first)
 
@@ -132,18 +122,38 @@ func copyLocalFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	return writeLocalAtomic(dst, in)
+}
+
+// writeLocalAtomic writes r to a temp file beside dst and renames it into
+// place, so a reader - Stat included - never sees a half-written object. A
+// stream written straight to its final name existed, at its partial size, for
+// the whole copy, and a crash mid-copy left that truncated file standing as the
+// object for good.
+func writeLocalAtomic(dst string, r io.Reader) error {
+	out, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".partial-*")
 	if err != nil {
 		return fmt.Errorf("modpack storage: create %s: %w", dst, err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	tmp := out.Name()
+	// CreateTemp makes 0600; os.Create made these 0644 and Put still does.
+	if err := out.Chmod(0o644); err != nil {
 		out.Close()
-		_ = os.Remove(dst)
-		return fmt.Errorf("modpack storage: mirror %s: %w", dst, err)
+		_ = os.Remove(tmp)
+		return fmt.Errorf("modpack storage: chmod %s: %w", dst, err)
+	}
+	if _, err := io.Copy(out, r); err != nil {
+		out.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("modpack storage: write %s: %w", dst, err)
 	}
 	if err := out.Close(); err != nil {
-		_ = os.Remove(dst)
-		return fmt.Errorf("modpack storage: mirror %s: %w", dst, err)
+		_ = os.Remove(tmp)
+		return fmt.Errorf("modpack storage: write %s: %w", dst, err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("modpack storage: write %s: %w", dst, err)
 	}
 	return nil
 }

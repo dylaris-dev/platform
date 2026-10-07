@@ -2,12 +2,17 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +20,7 @@ import (
 	"dylaris-core/storage/modpack"
 
 	"github.com/gorilla/mux"
+	"golang.org/x/sync/singleflight"
 )
 
 type createShareLinkRequest struct {
@@ -170,22 +176,36 @@ func (h *PacksHandler) ServeShare(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to load content", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", pack.InternalSlug+"-"+build.VersionString+"-server.zip"))
-		// The pack streams straight to the client so Core never holds the whole
-		// archive in memory. cw tracks whether any byte has been sent: a render
-		// error before the first byte can still be a clean 500 (the headers set
-		// above are only sent on the first write), while a failure partway
-		// through can only be logged - the status is already committed. The
-		// security checks inside renderServerPack run before each entry is
-		// written, so a rejected entry never reaches the client.
-		cw := &countingWriter{w: w}
-		if err := h.renderServerPack(r.Context(), content, cw); err != nil {
-			if cw.written == 0 {
-				sendJSONError(w, "Failed to render server pack", http.StatusInternalServerError)
-			} else {
-				log.Printf("share: server-pack render failed for %s after %d bytes: %v", pack.InternalSlug, cw.written, err)
+		prov, err := h.state.buildModpackStorageProvider()
+		if err != nil || prov == nil {
+			sendJSONError(w, "Storage unavailable", http.StatusInternalServerError)
+			return
+		}
+		key, err := h.shareServerPackKey(r.Context(), prov, pack, build, content)
+		if errors.Is(err, errServerPackBusy) {
+			w.Header().Set("Retry-After", "60")
+			sendJSONError(w, "Server pack is being built, try again shortly", http.StatusServiceUnavailable)
+			return
+		}
+		if err != nil {
+			if r.Context().Err() == nil {
+				log.Printf("share: server-pack render failed for %s: %v", pack.InternalSlug, err)
 			}
+			sendJSONError(w, "Failed to render server pack", http.StatusInternalServerError)
+			return
+		}
+		// Streamed, not redirected: a presigned URL would show the storage key,
+		// and the pack's directory is reachable over the anonymous /mirror/ by
+		// path - it would outlive a revoked link and open the client .mrpack
+		// this link never shared. Streaming also keeps the filename and a
+		// plain `curl -o` working as before. No render slot is held here.
+		filename := pack.InternalSlug + "-" + build.VersionString + "-server.zip"
+		if err := serveModpackObject(w, r, prov, key, deliverStream, "application/zip", filename); err != nil {
+			if errors.Is(err, modpack.ErrNotFound) {
+				notFound()
+				return
+			}
+			sendJSONError(w, "Failed to read pack", http.StatusInternalServerError)
 			return
 		}
 
@@ -247,4 +267,167 @@ func (h *PacksHandler) shareMrpackKey(ctx context.Context, pack *models.Pack, bu
 	}
 	draftShareRenders.Store(key, draftShareRender{inputs: inputs, at: time.Now()})
 	return key, nil
+}
+
+// serverPackRenders bounds the server-pack renders running in this Core, and
+// serverPackFlight collapses concurrent requests for the same render into one.
+//
+// The share route used to build the server zip on every request, straight into
+// the response: up to 2 GiB of downloads, temp disk and deflate per hit, held
+// open for as long as the client cared to read, with nothing bounding how many
+// ran. One anonymous holder of a link could fill Core's disk and CPU for every
+// tenant. Now a render goes to a temp file and into storage once per distinct
+// input, and the client is served from there. The slot is released before a
+// single byte goes to a client, so a slow reader holds nothing shared.
+var (
+	serverPackRenders = make(chan struct{}, 2)
+	serverPackFlight  singleflight.Group
+	// serverPackFailures holds when a render last failed, per key. A pack
+	// that cannot render (a broken entry at the end of 2 GiB of downloads)
+	// would otherwise redo all of it on every hit and keep both slots busy.
+	serverPackFailures sync.Map
+)
+
+// errServerPackBusy is the answer when the pack is not ready within
+// serverPackRequestWait; the render goes on and a retry finds it stored.
+var errServerPackBusy = errors.New("server pack is being built")
+
+// Vars so a test can shorten them.
+var (
+	serverPackSlotWait    = time.Minute
+	serverPackRequestWait = time.Minute
+)
+
+const (
+	serverPackRenderBudget = 15 * time.Minute
+	serverPackFailureHold  = 5 * time.Minute
+)
+
+// sortServerPackContent puts the content in the one order both the fingerprint
+// and the render use. The store orders by mod slug only, so two rows of one mod
+// could swap between requests; and when two entries write the same path, the
+// order decides which one wins, so it has to be part of what the key means.
+func sortServerPackContent(content []models.BuildContentEntry) []models.BuildContentEntry {
+	out := append([]models.BuildContentEntry(nil), content...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].TargetPath != out[j].TargetPath {
+			return out[i].TargetPath < out[j].TargetPath
+		}
+		return out[i].StorageKey+out[i].ModrinthDownloadURL < out[j].StorageKey+out[j].ModrinthDownloadURL
+	})
+	return out
+}
+
+// serverPackFingerprint hashes exactly what renderServerPack reads, in the
+// order given (sortServerPackContent). Hashing the whole build content would
+// change the key whenever the hourly update check stamps a mod row, and
+// re-render gigabytes for nothing.
+func serverPackFingerprint(content []models.BuildContentEntry) (string, error) {
+	type in struct {
+		Side, Source, StorageKey, URL, SHA1, SHA512, TargetPath string
+	}
+	ins := make([]in, 0, len(content))
+	for _, e := range content {
+		if e.Side == models.SideClient {
+			continue
+		}
+		ins = append(ins, in{string(e.Side), string(e.Source), e.StorageKey, e.ModrinthDownloadURL, e.SHA1, e.SHA512, e.TargetPath})
+	}
+	b, err := json.Marshal(ins)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// shareServerPackKey returns the storage key of the build's server pack,
+// rendering and storing it first when these inputs have not been rendered yet.
+//
+// The key is content-addressed, so a stored object is never stale and replicas
+// never overwrite each other's work. The previous render's key is kept in a
+// small marker object and deleted when a new one is stored, so editing a shared
+// draft does not leave one zip behind per edit.
+//
+// ponytail: two replicas storing two new renders at once can both delete the
+// same previous key and orphan one of theirs; deleting a build does not remove
+// its stored objects (the .mrpack neither). A sweep by prefix closes both.
+func (h *PacksHandler) shareServerPackKey(ctx context.Context, prov modpack.ModpackStorageProvider, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) (string, error) {
+	content = sortServerPackContent(content)
+	fp, err := serverPackFingerprint(content)
+	if err != nil {
+		return "", err
+	}
+	dir := strings.TrimSuffix(h.mrpackStorageKey(pack, build), "pack.mrpack")
+	key := dir + "server-" + fp + ".zip"
+	if _, exists, err := prov.Stat(ctx, key); err == nil && exists {
+		return key, nil
+	}
+	if v, ok := serverPackFailures.Load(key); ok {
+		if time.Since(v.(time.Time)) < serverPackFailureHold {
+			return "", errors.New("server pack failed to render recently")
+		}
+		serverPackFailures.Delete(key)
+	}
+
+	ch := serverPackFlight.DoChan(key, func() (any, error) {
+		// Detached from the request: the render is shared by every waiter, so
+		// one client leaving must not cancel it for the rest.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), serverPackRenderBudget)
+		defer cancel()
+		select {
+		case serverPackRenders <- struct{}{}:
+			defer func() { <-serverPackRenders }()
+		case <-time.After(serverPackSlotWait):
+			return nil, errServerPackBusy
+		}
+		if _, exists, err := prov.Stat(rctx, key); err == nil && exists {
+			return nil, nil // another replica stored it while we waited
+		}
+		if err := h.storeServerPack(rctx, prov, content, key); err != nil {
+			serverPackFailures.Store(key, time.Now())
+			return nil, err
+		}
+		serverPackFailures.Delete(key)
+		marker := dir + "server.last"
+		if rc, _, err := prov.Stream(rctx, marker); err == nil {
+			prev, _ := io.ReadAll(io.LimitReader(rc, 512))
+			rc.Close()
+			if p := string(prev); p != key && strings.HasPrefix(p, dir+"server-") {
+				_ = prov.Delete(rctx, p)
+			}
+		}
+		_ = prov.Put(rctx, marker, []byte(key))
+		return nil, nil
+	})
+	// Bounded so the first request for a large pack answers before a proxy in
+	// front of Core gives up on it; the render carries on and a retry is served.
+	select {
+	case res := <-ch:
+		return key, res.Err
+	case <-time.After(serverPackRequestWait):
+		return "", errServerPackBusy
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// storeServerPack renders the server pack into a temp file and stores it.
+func (h *PacksHandler) storeServerPack(ctx context.Context, prov modpack.ModpackStorageProvider, content []models.BuildContentEntry, key string) error {
+	tmp, err := os.CreateTemp("", "serverpack-*.zip")
+	if err != nil {
+		return err
+	}
+	defer cleanupTemp(tmp)
+	if err := h.renderServerPack(ctx, content, tmp); err != nil {
+		return err
+	}
+	size, err := tmp.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return prov.PutStream(ctx, key, tmp, size)
 }
