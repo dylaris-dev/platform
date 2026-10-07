@@ -121,3 +121,50 @@ func TestProxyEndpointsSkipAnotherAccountsServer(t *testing.T) {
 		t.Errorf("the other account's server appears in the listing: %s", body)
 	}
 }
+
+func (f *proxyLinkStore) GetNodeByID(id int) (*models.Node, error) {
+	if id == 8 {
+		customer := "owner-a"
+		return &models.Node{ID: 8, OwnerID: &customer}, nil
+	}
+	return &models.Node{ID: id}, nil
+}
+
+// An inherit grant on a proxy reaches every server linked to it, so choosing
+// the link is choosing who holds rights on the server - the owner's call, like
+// setting inherit. A member with network.write on the server could link it
+// under a proxy where they hold an inherit grant and gain console and files.
+func TestLinkServerToProxyIsTheOwnersCall(t *testing.T) {
+	cases := []struct {
+		name   string
+		user   string
+		admin  bool
+		nodeID int
+		want   int
+	}{
+		{"owner", "owner-a", false, 7, http.StatusOK},
+		{"member with network.write", "member-m", false, 7, http.StatusForbidden},
+		{"admin on a platform node", "admin-x", true, 7, http.StatusOK},
+		{"admin on the customer's own node", "admin-x", true, 8, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := proxyLinkFixture()
+			fs.servers[1].NodeID = c.nodeID
+			h := NewServerHandler(&AppState{Store: fs})
+			r := proxyLinkReq("1", `{"proxyId":2}`)
+			ctx := context.WithValue(r.Context(), "userID", c.user)
+			ctx = context.WithValue(ctx, "isAdmin", c.admin)
+			rec := httptest.NewRecorder()
+
+			h.LinkServerToProxy(rec, r.WithContext(ctx))
+
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, c.want, rec.Body.String())
+			}
+			if fs.linked != (c.want == http.StatusOK) {
+				t.Errorf("linked = %v after status %d", fs.linked, rec.Code)
+			}
+		})
+	}
+}

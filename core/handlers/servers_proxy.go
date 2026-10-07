@@ -78,6 +78,21 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Linking decides which grants reach this server: an "inherit" grant on the
+	// proxy flows down to every server linked to it. Setting inherit is the
+	// owner's call (server_grants.go), and so is this, or a member holding
+	// network.write here could link it under a proxy where a second account of
+	// theirs (or they themselves, when their rights here come from an account
+	// grant) holds an inherit grant, and pick up console and file rights the
+	// owner never gave. Unlinking only takes rights away and stays with
+	// network.write. Admins as for grants: not on a customer's machine.
+	userID, _ := r.Context().Value("userID").(string)
+	adminHere := IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, userID)
+	if !adminHere && (userID == "" || userID != srv.OwnerID) {
+		sendJSONError(w, "Only the server's owner can link it to a proxy", 403)
+		return
+	}
+
 	proxyID := req.ProxyID
 	if err := h.state.Store.UpdateServerProxyID(serverID, &proxyID); err != nil {
 		sendJSONError(w, "Failed to link server", 500)

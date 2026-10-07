@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.07.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Only a server's owner can link it to a proxy now.** Members with network access could do it
+  before; they can still unlink. Admins keep it, except on a customer's own node. `core`
+
+### Security
+- **Linking a server to a proxy could hand out rights the owner never gave.** Grants that flow
+  down from a proxy reached the newly linked server, so a member could widen their own access. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.07
 
 ### Features

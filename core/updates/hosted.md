@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.07.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Only you, as the server's owner, can link it to a proxy now.** People you invited can still
+  unlink it. Nothing to do on your side.
+
+### Security
+- **Someone you invited could have used a proxy link to give themselves more rights** on your
+  server than you granted. Fixed on our side.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.06.9
 
 ### Features

@@ -79,6 +79,7 @@ func TestUnlinkAndOwnerChangeStampTheServer(t *testing.T) {
 		},
 		"relink": func(h *ServerHandler, w *httptest.ResponseRecorder) {
 			r := httptest.NewRequest("POST", "/x", bytes.NewBufferString(`{"proxyId":1}`))
+			r = r.WithContext(context.WithValue(r.Context(), "userID", "o"))
 			h.LinkServerToProxy(w, mux.SetURLVars(r, map[string]string{"id": "3"}))
 		},
 		"owner": func(h *ServerHandler, w *httptest.ResponseRecorder) {
