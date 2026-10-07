@@ -1550,8 +1550,10 @@ func (s *PostgresStore) GetInvite(serverID int, userID string) (*models.ServerIn
 			si.permissions, COALESCE(si.invited_by::text, ''), COALESCE(inv_u.username, ''), si.created_at
 		FROM server_invites si
 		JOIN users u ON si.user_id = u.id
+		JOIN servers sv ON sv.id = si.server_id
 		LEFT JOIN users inv_u ON si.invited_by = inv_u.id
 		WHERE si.server_id = $1 AND si.user_id = $2
+		  AND (si.owner_user_id IS NULL OR si.owner_user_id = sv.owner_id)
 	`
 	err := s.db.QueryRow(query, serverID, userID).Scan(
 		&inv.ID, &inv.ServerID, &inv.UserID, &inv.Username,
@@ -1566,6 +1568,9 @@ func (s *PostgresStore) GetInvite(serverID int, userID string) (*models.ServerIn
 func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite, error) {
 	// Same LEFT JOIN as GetInvite: a deleted inviter must not remove a live
 	// member from the list.
+	// Rows and roles from a previous owner's realm are left out, as the
+	// resolver ignores them (authz/resolver.go): an admin owner change keeps
+	// them, and listing them showed access nobody has.
 	// cap_overrides and the role's capabilities are read too, because they are
 	// where a member's access actually lives. The legacy permissions blob is
 	// empty for everyone added through POST /api/grants, so a roster built from
@@ -1578,9 +1583,11 @@ func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite
 			COALESCE(si.inherit, FALSE)
 		FROM server_invites si
 		JOIN users u ON si.user_id = u.id
+		JOIN servers sv ON sv.id = si.server_id
 		LEFT JOIN users inv_u ON si.invited_by = inv_u.id
-		LEFT JOIN server_roles sr ON sr.id = si.server_role_id
+		LEFT JOIN server_roles sr ON sr.id = si.server_role_id AND sr.owner_user_id = sv.owner_id
 		WHERE si.server_id = $1
+		  AND (si.owner_user_id IS NULL OR si.owner_user_id = sv.owner_id)
 		ORDER BY si.created_at ASC
 	`
 	rows, err := s.db.Query(query, serverID)
@@ -1617,7 +1624,11 @@ func (s *PostgresStore) ListInvitesByServer(serverID int) ([]models.ServerInvite
 }
 
 func (s *PostgresStore) CountInvitesPerServer() (map[int]int, error) {
-	rows, err := s.db.Query(`SELECT server_id, COUNT(*) FROM server_invites GROUP BY server_id`)
+	// Same realm rule as the roster: a previous owner's rows are not members.
+	rows, err := s.db.Query(`SELECT si.server_id, COUNT(*) FROM server_invites si
+		JOIN servers sv ON sv.id = si.server_id
+		WHERE si.owner_user_id IS NULL OR si.owner_user_id = sv.owner_id
+		GROUP BY si.server_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1934,6 +1945,36 @@ func (s *PostgresStore) SetSetting(key, value string) error {
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 	`, key, stored)
 	return err
+}
+
+// UpdateSetting rewrites one setting from its current value under a row lock,
+// so two replicas editing the same list cannot lose each other's change the way
+// a GetSetting/SetSetting pair does. A missing row reads as "".
+func (s *PostgresStore) UpdateSetting(key string, fn func(old string) (string, error)) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("update setting %s: %w", key, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES ($1, '') ON CONFLICT (key) DO NOTHING`, key); err != nil {
+		return fmt.Errorf("update setting %s: %w", key, err)
+	}
+	var raw string
+	if err := tx.QueryRow(`SELECT value FROM settings WHERE key = $1 FOR UPDATE`, key).Scan(&raw); err != nil {
+		return fmt.Errorf("update setting %s: %w", key, err)
+	}
+	next, err := fn(s.decodeSettingValue(key, raw))
+	if err != nil {
+		return err
+	}
+	stored, err := s.encodeSettingValue(key, next)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE settings SET value = $2 WHERE key = $1`, key, stored); err != nil {
+		return fmt.Errorf("update setting %s: %w", key, err)
+	}
+	return tx.Commit()
 }
 
 // ConsumeOneShotJoin atomically flips node_join_mode from 'one-shot' to

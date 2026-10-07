@@ -370,6 +370,8 @@ type Store interface {
 	// --- Settings ---
 	GetSetting(key string) (string, error)
 	SetSetting(key, value string) error
+	// UpdateSetting rewrites a setting from its current value under a row lock.
+	UpdateSetting(key string, fn func(old string) (string, error)) error
 
 	// --- Health ---
 	// Ping verifies the underlying database connection is alive. Backed by

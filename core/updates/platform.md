@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Member lists match real access after an admin changes a server's owner.** The roster, the
+  member counts and the previous owner's Access page no longer list grants that stopped working. `core`
+- **Flagging a server as a demo can no longer race a delete** on another Core replica and put the
+  deleted server back on the demo list. `core`
+
 ## 2026.10.07.4
 
 ### Features

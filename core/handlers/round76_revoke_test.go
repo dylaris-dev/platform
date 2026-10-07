@@ -3,8 +3,10 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -124,10 +126,24 @@ func (f *memberDeleteStore) GetServerRole(int) (*store.ServerRole, error) {
 type demoListStore struct {
 	store.Store
 	settings map[string]string
+	// deleteInLock deletes the server between the handler's first load and
+	// the locked edit, as a delete on the other replica would.
+	deleteInLock bool
+	deleted      bool
 }
 
 func (f *demoListStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
 func (f *demoListStore) SetSetting(k, v string) error        { f.settings[k] = v; return nil }
+func (f *demoListStore) UpdateSetting(k string, fn func(string) (string, error)) error {
+	if f.deleteInLock {
+		f.deleted = true
+	}
+	v, err := fn(f.settings[k])
+	if err == nil {
+		f.settings[k] = v
+	}
+	return err
+}
 
 // The demo list holds UUIDs and a UUID can come back (CreateServer accepts one,
 // adopting a leftover folder reuses it), so a deleted server left on the list
@@ -138,5 +154,52 @@ func TestDeletedServersLeaveTheDemoList(t *testing.T) {
 	dropDemoServers(s, []string{"gone"})
 	if isDemoServer(s, "gone") || !isDemoServer(s, "keep") {
 		t.Fatalf("demo list after delete: %s", fs.settings[demoServerUUIDsSetting])
+	}
+}
+
+func (f *demoListStore) GetServerByID(id int) (*models.Server, error) {
+	if f.deleted {
+		return nil, sql.ErrNoRows
+	}
+	return &models.Server{ID: id, UUID: "srv-" + strconv.Itoa(id), NodeID: 1}, nil
+}
+func (f *demoListStore) GetNodeByID(id int) (*models.Node, error) { return &models.Node{ID: id}, nil }
+
+// Toggling goes through the same locked edit as the delete path, and must add,
+// keep others, and remove - including a duplicate a racing toggle left behind.
+func TestSetServerDemoEditsTheListInPlace(t *testing.T) {
+	fs := &demoListStore{settings: map[string]string{demoServerUUIDsSetting: `["other","srv-7","srv-7"]`}}
+	s := &AppState{Store: fs, StoreEnabled: true}
+	toggle := func(on bool) {
+		body := `{"enabled":false}`
+		if on {
+			body = `{"enabled":true}`
+		}
+		w := httptest.NewRecorder()
+		(&ServerHandler{state: s}).SetServerDemo(w, foreignAdminRequest("PATCH", map[string]string{"id": "7"}, body))
+		if w.Code != http.StatusOK {
+			t.Fatalf("SetServerDemo(%v) = %d %s", on, w.Code, w.Body)
+		}
+	}
+	toggle(false)
+	if got := fs.settings[demoServerUUIDsSetting]; got != `["other"]` {
+		t.Fatalf("after off: %s", got)
+	}
+	toggle(true)
+	toggle(true)
+	if got := fs.settings[demoServerUUIDsSetting]; got != `["other","srv-7"]` {
+		t.Fatalf("after on twice: %s", got)
+	}
+}
+
+// A delete that lands between the handler's load and the locked edit must not
+// see its dropDemoServers undone by the toggle writing the UUID back.
+func TestSetServerDemoDoesNotReAddADeletedServer(t *testing.T) {
+	fs := &demoListStore{settings: map[string]string{demoServerUUIDsSetting: `["other"]`}, deleteInLock: true}
+	s := &AppState{Store: fs, StoreEnabled: true}
+	w := httptest.NewRecorder()
+	(&ServerHandler{state: s}).SetServerDemo(w, foreignAdminRequest("PATCH", map[string]string{"id": "7"}, `{"enabled":true}`))
+	if w.Code != http.StatusNotFound || fs.settings[demoServerUUIDsSetting] != `["other"]` {
+		t.Fatalf("got %d, list %s", w.Code, fs.settings[demoServerUUIDsSetting])
 	}
 }

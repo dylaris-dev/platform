@@ -140,26 +140,29 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	current := loadDemoServerUUIDs(h.state.Store)
-	next := make([]string, 0, len(current)+1)
-	seen := false
-	for _, u := range current {
-		if u == srv.UUID {
-			seen = true
-			if req.Enabled {
-				next = append(next, u) // keep
+	err = editDemoList(h.state.Store, func(current []string) ([]string, error) {
+		next := make([]string, 0, len(current)+1)
+		for _, u := range current {
+			if u != srv.UUID {
+				next = append(next, u)
 			}
-			// when disabling, drop it (don't append)
-			continue
 		}
-		next = append(next, u)
+		if req.Enabled {
+			// Asked again under the lock: a delete that committed after the
+			// load above has already run its dropDemoServers, and adding the
+			// UUID now would put a deleted server back on the list.
+			if again, err := h.state.Store.GetServerByID(serverID); err != nil || again == nil || again.UUID != srv.UUID {
+				return nil, errDemoServerGone
+			}
+			next = append(next, srv.UUID)
+		}
+		return next, nil
+	})
+	if errors.Is(err, errDemoServerGone) {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
 	}
-	if req.Enabled && !seen {
-		next = append(next, srv.UUID)
-	}
-
-	data, _ := json.Marshal(next)
-	if err := h.state.Store.SetSetting(demoServerUUIDsSetting, string(data)); err != nil {
+	if err != nil {
 		sendJSONError(w, "Failed to save demo setting", http.StatusInternalServerError)
 		return
 	}
@@ -241,22 +244,42 @@ func dropDemoServers(s *AppState, uuids []string) {
 	if s == nil || !s.StoreEnabled || s.Store == nil || len(uuids) == 0 {
 		return
 	}
-	cur := loadDemoServerUUIDs(s.Store)
 	gone := make(map[string]bool, len(uuids))
 	for _, u := range uuids {
 		gone[u] = true
 	}
-	next := make([]string, 0, len(cur))
-	for _, u := range cur {
-		if !gone[u] {
-			next = append(next, u)
+	err := editDemoList(s.Store, func(cur []string) ([]string, error) {
+		next := make([]string, 0, len(cur))
+		for _, u := range cur {
+			if !gone[u] {
+				next = append(next, u)
+			}
 		}
-	}
-	if len(next) == len(cur) {
-		return
-	}
-	data, _ := json.Marshal(next)
-	if err := s.Store.SetSetting(demoServerUUIDsSetting, string(data)); err != nil {
+		return next, nil
+	})
+	if err != nil {
 		log.Printf("demo: could not drop deleted servers from the demo list: %v", err)
 	}
+}
+
+// editDemoList changes the demo list under the settings row lock. A
+// read-then-write let a delete on one replica and a demo toggle on the other
+// each write back the list it had read, putting a deleted server back on it.
+var errDemoServerGone = errors.New("demo server no longer exists")
+
+func editDemoList(st store.Store, edit func([]string) ([]string, error)) error {
+	return st.UpdateSetting(demoServerUUIDsSetting, func(raw string) (string, error) {
+		var cur []string
+		if raw != "" {
+			// An unreadable list grants nothing (loadDemoServerUUIDs), so it is
+			// replaced rather than kept.
+			_ = json.Unmarshal([]byte(raw), &cur)
+		}
+		next, err := edit(cur)
+		if err != nil {
+			return "", err
+		}
+		data, err := json.Marshal(next)
+		return string(data), err
+	})
 }

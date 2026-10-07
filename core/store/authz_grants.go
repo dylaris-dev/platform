@@ -205,8 +205,10 @@ func (s *PostgresStore) ListGrantsByOwner(ownerUserID string) ([]OwnerGrant, err
 		 FROM server_invites si
 		 JOIN users u ON si.user_id = u.id
 		 LEFT JOIN servers sv ON si.server_id = sv.id
-		 LEFT JOIN server_roles sr ON si.server_role_id = sr.id
+		 LEFT JOIN server_roles sr ON si.server_role_id = sr.id AND sr.owner_user_id = si.owner_user_id
 		 WHERE si.owner_user_id = $1
+		   -- a server since moved to another owner is no longer this realm
+		   AND (si.server_id IS NULL OR sv.owner_id = si.owner_user_id)
 		 ORDER BY u.username ASC`, ownerUserID)
 	if err != nil {
 		return nil, err
