@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime/debug"
+	"strings"
 	"testing"
 
 	"dylaris-core/authz"
@@ -241,6 +242,10 @@ func TestTheAccountGuardAfterReview(t *testing.T) {
 	withSupport := func() *guardFakeStore {
 		fs := newGuardFakeStore()
 		fs.users[supportMember] = &models.User{ID: supportMember, Username: "support-member", Role: "support", CanChangeResources: true}
+		// An equal: holding what the target holds is what lets these saves
+		// reach the unchanged-value check at all (TestTheLegacyRightsGuardTheAccount).
+		fs.users[guardStaff].Role = "support"
+		fs.users[guardStaff].CanChangeResources = true
 		return fs
 	}
 
@@ -461,5 +466,74 @@ func TestAnAdmin2FAResetEndsTheAccountsSessions(t *testing.T) {
 	}
 	if len(fs.bumped) != 1 || fs.bumped[0] != guardMember {
 		t.Fatalf("sessions ended for %v, want the member's", fs.bumped)
+	}
+}
+
+// The per-user rights that are not panel caps. A staff member with users.write
+// and none of them took over an account holding one and so held it too: role
+// support reads every ticket, can_change_resources resizes servers, a support
+// team decides whose tickets are visible.
+func TestTheLegacyRightsGuardTheAccount(t *testing.T) {
+	cases := []struct {
+		name   string
+		staff  models.User
+		target models.User
+		want   bool
+		caps   []string // extra panel caps for the staff role
+	}{
+		{"plain target", models.User{}, models.User{}, true, nil},
+		{"support target, staff without tickets", models.User{}, models.User{Role: "support"}, false, nil},
+		{"support target, support staff", models.User{Role: "support"}, models.User{Role: "support"}, true, nil},
+		{"support target, staff reading tickets only", models.User{}, models.User{Role: "support"}, false, []string{"tickets.read"}},
+		{"support target, staff with both ticket caps", models.User{}, models.User{Role: "support"}, true, []string{"tickets.read", "tickets.write"}},
+		{"resource target, staff without", models.User{}, models.User{CanChangeResources: true}, false, nil},
+		{"resource target, staff with", models.User{CanChangeResources: true}, models.User{CanChangeResources: true}, true, nil},
+		{"other team", models.User{SupportTeam: "a"}, models.User{SupportTeam: "b"}, false, nil},
+		{"team target, staff without team", models.User{}, models.User{SupportTeam: "b"}, false, nil},
+		{"same team", models.User{SupportTeam: "b"}, models.User{SupportTeam: "b"}, true, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := newGuardFakeStore()
+			fs.roles[1].Capabilities = append(fs.roles[1].Capabilities, c.caps...)
+			staff := c.staff
+			staff.ID, staff.Username = guardStaff, "staff"
+			if staff.Role == "" {
+				staff.Role = "user"
+			}
+			fs.users[guardStaff] = &staff
+			target := c.target
+			target.ID, target.Username = guardMember, "member"
+			if target.Role == "" {
+				target.Role = "user"
+			}
+			fs.users[guardMember] = &target
+			if got := mayManageAccount(guardState(fs), guardRequest("PUT", guardStaff, false, guardMember, ""), &target); got != c.want {
+				t.Fatalf("mayManageAccount = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// The guard reads the target's CURRENT team; the save names the next one.
+// Staff took over a manageable colleague and moved them into a team whose
+// tickets the cross-team setting withholds from the caller.
+func TestStaffPlaceOthersOnlyInTheirOwnTeam(t *testing.T) {
+	for _, c := range []struct {
+		team    string
+		refused bool
+	}{{"b", true}, {"a", false}, {"", false}} {
+		fs := newGuardFakeStore()
+		fs.users[guardStaff].SupportTeam = "a"
+		rec := httptest.NewRecorder()
+		func() {
+			defer func() { _ = recover() }() // past the guard, the fake has no flag writer
+			NewUserHandler(guardState(fs)).SetUserPermissionsHandler(rec,
+				guardRequest("PUT", guardStaff, false, guardMember, `{"supportTeam":"`+c.team+`"}`))
+		}()
+		got := strings.Contains(rec.Body.String(), "your own support team")
+		if got != c.refused {
+			t.Errorf("team %q: refused = %v, want %v (%d %s)", c.team, got, c.refused, rec.Code, rec.Body)
+		}
 	}
 }

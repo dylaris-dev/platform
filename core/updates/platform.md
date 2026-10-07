@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Staff with user management can no longer manage accounts that hold rights they lack** outside
+  panel roles: the support role, resource changes, or another support team. `core`
+
+### Security
+- **Staff could take over a support or resource-changing account to gain its rights,** or move a
+  colleague into another support team to read that team's tickets. Both are refused now. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.08
 
 ### Features

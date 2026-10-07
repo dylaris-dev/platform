@@ -166,6 +166,17 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		sendJSONError(w, "Your own permissions and support team are set by another administrator", http.StatusForbidden)
 		return
 	}
+	// mayManageAccount compares the team the target is in, not the one asked
+	// for: staff could take over a colleague, move them into another team and
+	// read that team's tickets as them. Staff place someone only in their own.
+	if !IsAdmin(r) && req.SupportTeam != "" && req.SupportTeam != target.SupportTeam {
+		actorID, _ := r.Context().Value("userID").(string)
+		me, err := h.state.Store.GetUserByID(actorID)
+		if err != nil || me == nil || me.SupportTeam != req.SupportTeam {
+			sendJSONError(w, "You can only place someone in your own support team", http.StatusForbidden)
+			return
+		}
+	}
 	// Resource changes are a right of their own; a delegated users.write must
 	// not hand it out, to someone else or to the caller themselves. Only a
 	// change from off to on hands it out: the panel re-sends the current value.

@@ -20,18 +20,13 @@ import (
 //
 // An admin may manage anyone. Anybody else may manage an account only if it is
 // not an admin and holds no PANEL capability the caller lacks. Only panel
-// capabilities are compared: region scope and server grants are not.
+// capabilities are compared, plus the legacy per-user rights below: region
+// scope and server grants are not.
 //
 // The target's capabilities are read strictly, not through Resolve, which drops
 // a role lookup error and would make a stronger account look powerless. A
 // lookup that fails refuses. The caller's side may stay lenient: reading the
 // caller as weaker than they are only refuses more.
-// actingOnSelf reports whether the request is aimed at the caller's own account.
-func actingOnSelf(r *http.Request, targetID string) bool {
-	actorID, _ := r.Context().Value("userID").(string)
-	return actorID != "" && actorID == targetID
-}
-
 func mayManageAccount(state *AppState, r *http.Request, target *models.User) bool {
 	if IsAdmin(r) {
 		return true
@@ -49,6 +44,25 @@ func mayManageAccount(state *AppState, r *http.Request, target *models.User) boo
 	}
 	for capID := range held {
 		if c, known := authz.Get(capID); known && c.Scope == authz.ScopePanel && !actor.HasCap(capID) {
+			return false
+		}
+	}
+	// The per-user rights that are NOT panel caps, which the loop cannot see:
+	// role "support" reads and answers every ticket, can_change_resources
+	// resizes servers and pins CPUs, and a support team decides whose tickets
+	// are visible. Taking such an account over handed the caller a right the
+	// permissions route refuses to grant them.
+	actorID, _ := r.Context().Value("userID").(string)
+	mine := LoadEffectivePermissions(state, actorID)
+	if target.Role == "support" && !(mine.IsSupport && mine.CanManageTickets) {
+		return false
+	}
+	if target.CanChangeResources && !mine.CanChangeResources {
+		return false
+	}
+	if target.SupportTeam != "" && target.ID != actorID {
+		me, err := state.Store.GetUserByID(actorID)
+		if err != nil || me == nil || me.SupportTeam != target.SupportTeam {
 			return false
 		}
 	}
@@ -101,4 +115,10 @@ func guardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, 
 		return false
 	}
 	return true
+}
+
+// actingOnSelf reports whether the request is aimed at the caller's own account.
+func actingOnSelf(r *http.Request, targetID string) bool {
+	actorID, _ := r.Context().Value("userID").(string)
+	return actorID != "" && actorID == targetID
 }
