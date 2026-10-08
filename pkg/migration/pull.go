@@ -6,11 +6,48 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// pullClient follows no redirect: the address comes from the source node, and
+// a customer's node could answer with a 302 to anything the target can reach -
+// a metadata endpoint, Core, another node - and have it fetched with the
+// target's network position. The headers must arrive promptly; the body is
+// bounded by pullStallTimeout instead, as a large archive legitimately takes a
+// long time.
+//
+// Node to node goes direct: the peer is on the overlay or the LAN, which an
+// egress proxy cannot reach. A pre-signed object-storage URL is public, and a
+// node behind a corporate proxy reaches it only through that proxy.
+var (
+	pullClient      = newPullClient(nil)
+	presignedClient = newPullClient(http.ProxyFromEnvironment)
+)
+
+func newPullClient(proxy func(*http.Request) (*url.URL, error)) *http.Client {
+	return &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport: &http.Transport{
+			Proxy:                 proxy,
+			ForceAttemptHTTP2:     true,
+			DialContext:           (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+	}
+}
+
+// pullStallTimeout ends a download attempt that delivers no byte for this
+// long. Without it a source trickling its body held one of the target's
+// command slots for good; now it is bounded by the retries. A variable for
+// tests.
+var pullStallTimeout = 2 * time.Minute
 
 // Pull downloads the archive at url to destPath, verifying its sha256 matches
 // expectedSha256 (case-insensitive hex). The token is sent in the
@@ -26,8 +63,8 @@ import (
 // transport error or hash mismatch it retries the WHOLE download up to
 // maxRetries additional times (so total attempts = maxRetries+1). Returns nil
 // only when the bytes on disk hash to the expected value.
-func Pull(ctx context.Context, url, token, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
-	return pull(ctx, url, token, expectedSha256, destPath, maxRetries, maxBytes)
+func Pull(ctx context.Context, rawURL, token, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
+	return pull(ctx, pullClient, rawURL, token, expectedSha256, destPath, maxRetries, maxBytes)
 }
 
 // PullURL is Pull for a pre-signed URL (S3/R2): the URL itself carries the
@@ -35,11 +72,11 @@ func Pull(ctx context.Context, url, token, expectedSha256, destPath string, maxR
 // can conflict with SigV4 query-string signing). Used by the migration R2
 // fallback path — the same streaming download + sha256 verification as Pull, so
 // a corrupted transfer never reaches Extract.
-func PullURL(ctx context.Context, url, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
-	return pull(ctx, url, "", expectedSha256, destPath, maxRetries, maxBytes)
+func PullURL(ctx context.Context, rawURL, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
+	return pull(ctx, presignedClient, rawURL, "", expectedSha256, destPath, maxRetries, maxBytes)
 }
 
-func pull(ctx context.Context, url, token, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
+func pull(ctx context.Context, client *http.Client, rawURL, token, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
@@ -47,7 +84,7 @@ func pull(ctx context.Context, url, token, expectedSha256, destPath string, maxR
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		got, err := pullOnce(ctx, url, token, destPath, maxBytes)
+		got, err := pullOnce(ctx, client, rawURL, token, destPath, maxBytes)
 		if err != nil {
 			lastErr = err
 			// Context cancellation is terminal — retrying won't help.
@@ -78,7 +115,7 @@ func pull(ctx context.Context, url, token, expectedSha256, destPath string, maxR
 // side that decides how many bytes to send - so the announced size has to be
 // enforced rather than trusted. Content-Length is not the bound either: it is
 // the sender's claim about the same stream.
-func pullOnce(ctx context.Context, url, token, destPath string, maxBytes int64) (string, error) {
+func pullOnce(ctx context.Context, client *http.Client, rawURL, token, destPath string, maxBytes int64) (string, error) {
 	tmp, err := os.CreateTemp(filepath.Dir(destPath), ".migration-pull-*")
 	if err != nil {
 		return "", err
@@ -91,7 +128,12 @@ func pullOnce(ctx context.Context, url, token, destPath string, maxBytes int64) 
 		os.Remove(tmpPath)
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stall := time.AfterFunc(pullStallTimeout, cancel)
+	defer stall.Stop()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -101,7 +143,7 @@ func pullOnce(ctx context.Context, url, token, destPath string, maxBytes int64) 
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -113,9 +155,9 @@ func pullOnce(ctx context.Context, url, token, destPath string, maxBytes int64) 
 	h := sha256.New()
 	// The extra byte is the overflow probe: LimitReader alone would silently
 	// truncate at the cap and hand back a "successful" short download.
-	body := io.Reader(resp.Body)
+	body := io.Reader(&stallReader{r: resp.Body, t: stall})
 	if maxBytes > 0 {
-		body = io.LimitReader(resp.Body, maxBytes+1)
+		body = io.LimitReader(body, maxBytes+1)
 	}
 	n, err := io.Copy(io.MultiWriter(tmp, h), body)
 	if err != nil {
@@ -131,4 +173,18 @@ func pullOnce(ctx context.Context, url, token, destPath string, maxBytes int64) 
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// stallReader re-arms the stall timer on every read that returned data.
+type stallReader struct {
+	r io.Reader
+	t *time.Timer
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.t.Reset(pullStallTimeout)
+	}
+	return n, err
 }

@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A server move no longer trusts the source node's address and size.** The target follows no
+  redirects, refuses loopback and link-local sources, and caps the download at its free space. `node`
+- **A stalled or oversized move ends instead of blocking the node:** downloads that deliver
+  nothing for two minutes stop, and archives with millions of entries are refused. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.08.2
 
 ### Features

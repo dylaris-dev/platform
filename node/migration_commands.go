@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -201,6 +202,13 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 // same-LAN move stays within a few seconds before falling back to the overlay.
 const migrationProbeTimeout = 2 * time.Second
 
+// migrationProbeClient follows no redirect, for the reason migration.Pull does
+// not: the candidates are the source's self-report, and the RFC1918 filter
+// below means nothing if a candidate may answer with a 302 to anywhere else.
+var migrationProbeClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
 func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string) {
 	if sourceNodeID == "" || token == "" || expectedSha256 == "" {
 		log.Printf("migrate_in %s: missing sourceNodeID/token/expectedSha256", serverUUID)
@@ -234,6 +242,11 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	// directly over the LAN. If the LAN is unreachable (cross-LAN) we deliberately
 	// do NOT hairpin the warp overlay — we report "need_remote" so the
 	// orchestrator falls back to the node-direct R2 transfer path instead.
+	if !pullableEndpoint(endpoint) {
+		log.Printf("migrate_in %s: refusing source endpoint %q", serverUUID, endpoint)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "source endpoint is not a usable address")
+		return
+	}
 	chosen := endpoint
 	if len(sourcePrivateIPs) > 0 {
 		picked := chooseMigrationHost(ctx, lanCandidates(endpoint, sourcePrivateIPs), token)
@@ -261,12 +274,16 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	url := fmt.Sprintf("http://%s/migration", chosen)
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_in %s: pulling from %s", serverUUID, url)
-	if err := migration.Pull(ctx, url, token, expectedSha256, tmpZip, 3, expectedSize); err != nil {
+	if err := migration.Pull(ctx, url, token, expectedSha256, tmpZip, 3, pullCap(expectedSize, targetPath)); err != nil {
 		log.Printf("migrate_in %s: pull failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		// Hash mismatch after retries aborts before extract — never write
 		// unverified bytes into the live server directory.
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("pull failed: %v", err))
+		// The detail stays in this log. The address came from the source node,
+		// and the error text (refused, timed out, a status code, the first
+		// bytes of a non-HTTP reply) reaches the server's owner through the
+		// move status: a customer's node could map what this node can reach.
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "pull from the source node failed")
 		return
 	}
 
@@ -293,6 +310,41 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "transferred", "")
 	log.Printf("migrate_in %s: transferred into %s", serverUUID, targetDir)
+}
+
+// pullCap bounds a download by the free space as well as the announced size.
+// The size is the source node's own report (it writes the migration meta), so
+// on its own it bounded nothing a customer's node did not want bounded, and
+// the temp file lands on the storage path every server here shares. 0 from an
+// older Core means "not announced", never "no bound".
+func pullCap(announced int64, storagePath string) int64 {
+	budget := restoreDiskBudget(storagePath)
+	if budget < 1 {
+		budget = 1 // no room at all: any byte overflows rather than 0 = unbounded
+	}
+	if announced > 0 && announced < budget {
+		return announced
+	}
+	return budget
+}
+
+// pullableEndpoint refuses an address the target must never fetch from. The
+// endpoint key is written by the SOURCE node, and a customer's node can write
+// anything there: this node's loopback, a link-local metadata service, or a
+// name to resolve. An honest node publishes its overlay IPv4 and a port.
+func pullableEndpoint(endpoint string) bool {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return false
+	}
+	// The value is spliced into a URL, so anything but a port number would
+	// change its path.
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() &&
+		!ip.IsUnspecified() && !ip.IsMulticast()
 }
 
 // extractMovedServer unpacks a moved server and drops the node files it
@@ -381,7 +433,7 @@ func chooseMigrationHost(ctx context.Context, candidates []string, token string)
 			continue
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := migrationProbeClient.Do(req)
 		cancel()
 		if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
@@ -590,7 +642,7 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_pull_r2 %s: downloading from R2", serverUUID)
-	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3, expectedSize); err != nil {
+	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3, pullCap(expectedSize, targetPath)); err != nil {
 		log.Printf("migrate_pull_r2 %s: download failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("r2 pull failed: %v", err))

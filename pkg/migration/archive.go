@@ -121,6 +121,10 @@ func hashFile(path string) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 
+// MaxArchiveEntries bounds the entries Extract creates. A large modded server
+// holds a few hundred thousand files; a variable for tests.
+var MaxArchiveEntries = 2_000_000
+
 // Extract unzips zipPath into destDir with zip-slip protection: any entry whose
 // cleaned absolute path would escape destDir is rejected. Directories and file
 // modes from the archive are recreated, without setuid, setgid or sticky bits.
@@ -134,6 +138,11 @@ func Extract(zipPath, destDir string, budget int64) error {
 		return err
 	}
 	defer zr.Close()
+	// Bytes are not the only thing a shared filesystem runs out of: an archive
+	// of empty entries costs one inode each and passes any byte budget.
+	if len(zr.File) > MaxArchiveEntries {
+		return fmt.Errorf("migration: archive has %d entries, more than the %d allowed", len(zr.File), MaxArchiveEntries)
+	}
 
 	destDir = filepath.Clean(destDir)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
