@@ -2295,7 +2295,7 @@
       "path": "/api/me/backup-storages/{id:[0-9]+}",
       "auth": "session",
       "authorization": "backupstorage.delete",
-      "description": "The archives already written to it are NOT deleted: they are in a bucket the tenant controls, and this only removes our record of how to reach it.",
+      "description": "Refused while a backup or a schedule still names it (store.ErrStorageInUse): the reference would fall back to the platform default, so the tenant's archives would be billed as ours and a restore would fetch from a bucket that never held them.",
       "handler": "BackupHandler.DeleteOwnStorage",
       "group": "me",
       "external": false

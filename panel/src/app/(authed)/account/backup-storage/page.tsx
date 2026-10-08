@@ -89,7 +89,7 @@ export default function OwnBackupStoragePage() {
         runDelete(async () => {
             const res = await deleteOwnBackupStorage(confirmDelete.id);
             if (!res.success) { toast(res.message || 'Could not remove this storage', false); return; }
-            toast('Storage removed. The backups already in it are untouched.');
+            toast('Storage removed.');
             setConfirmDelete(null);
             load();
         });
@@ -122,8 +122,8 @@ export default function OwnBackupStoragePage() {
                         <p className="text-sm text-(--base-07) leading-relaxed">
                             What lands in your own bucket does not count against your backup allowance and is
                             never billed to you here - you are already paying whoever hosts it. It also means
-                            we never delete from it: if your account is suspended or you disconnect the
-                            storage below, those archives stay exactly where they are.
+                            we never delete from it on our own: if your account is suspended, those archives
+                            stay exactly where they are.
                         </p>
                     </div>
                 )}
@@ -210,9 +210,9 @@ export default function OwnBackupStoragePage() {
                             Remove {confirmDelete.name}?
                         </h2>
                         <p className="text-sm text-(--base-07) mt-2 leading-relaxed">
-                            This removes our record of how to reach the bucket. The backups already in it are
-                            not deleted - they stay in your storage, but this panel can no longer restore or
-                            download them.
+                            This removes our record of how to reach the bucket. It only works once nothing
+                            here uses it: move any backup schedule to another storage, and delete the backups
+                            stored in it first.
                         </p>
                         <div className="flex justify-end gap-2 mt-5">
                             <button onClick={() => setConfirmDelete(null)} className="btn btn-secondary">Cancel</button>

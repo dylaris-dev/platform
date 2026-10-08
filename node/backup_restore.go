@@ -185,7 +185,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	stall := time.AfterFunc(restoreStallTimeout, dlCancel)
 	defer stall.Stop()
 
-	gr, err := gzip.NewReader(&stallReader{r: body, t: stall})
+	gr, err := gzip.NewReader(&stallReader{r: body, t: stall, d: restoreStallTimeout})
 	if err != nil {
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "gzip open: "+err.Error())
@@ -433,16 +433,20 @@ var nodeOwnedRootEntries = []string{backupDirName, ".node_config.json", ".active
 // long. A variable for tests.
 var restoreStallTimeout = 2 * time.Minute
 
-// stallReader re-arms the stall timer on every read that returned data.
+// stallReader re-arms the stall timer for d on every read that returned data.
+// It is NOT stopped at EOF: an HTTP/2 upload reads its last buffer to EOF before
+// flow control lets it go out, so a peer that withholds the window from there
+// would otherwise hold the request with no timer running. The owner stops it.
 type stallReader struct {
 	r io.Reader
 	t *time.Timer
+	d time.Duration
 }
 
 func (s *stallReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
 	if n > 0 {
-		s.t.Reset(restoreStallTimeout)
+		s.t.Reset(s.d)
 	}
 	return n, err
 }

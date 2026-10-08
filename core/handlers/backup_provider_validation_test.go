@@ -31,11 +31,11 @@ func (f *backupValidationFakeStore) UpdateBackupStorage(*models.BackupStorage) e
 	return nil
 }
 
-// GetBackupStorage is consulted by UpdateStorage to backfill a redacted s3
-// secret. This test is about provider validation, not the secret merge, so it
-// returns no row; mergeBackupStorageSecret is nil-safe and leaves req untouched.
-func (f *backupValidationFakeStore) GetBackupStorage(int) (*models.BackupStorage, error) {
-	return nil, nil
+// GetBackupStorage answers UpdateStorage's platform-row check and secret
+// backfill. This test is about provider validation, so it is a platform row
+// holding no secret, which mergeBackupStorageSecret leaves untouched.
+func (f *backupValidationFakeStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
+	return &models.BackupStorage{ID: id}, nil
 }
 
 func TestValidBackupProvider(t *testing.T) {

@@ -241,9 +241,49 @@ func clearOtherDefaults(tx *sql.Tx, ownerID *string, excludeID int) error {
 	return err
 }
 
+// DeleteBackupStorage removes a storage nothing points at, and refuses one that
+// a backup or a schedule still names with ErrStorageInUse.
+//
+// The references are ON DELETE SET NULL, and a NULL storage resolves to the
+// PLATFORM default (ResolveRunStorage): a tenant's archives would be billed as
+// ours, a restore would stop the server and then fetch a key that bucket never
+// held, and a delete would drop the row on S3's "missing key is success" and
+// leave the real archive behind.
+//
+// A failed PLATFORM run does not count: it holds no usable archive, retention
+// never prunes it and no route deletes one, so it would pin its storage for good.
+//
+// FOR UPDATE conflicts with the KEY SHARE lock an inserting run takes on this
+// row, so a run being created right now is either committed and counted, or
+// waits and then fails its foreign key.
 func (s *PostgresStore) DeleteBackupStorage(id int) error {
-	_, err := s.db.Exec(`DELETE FROM backup_storages WHERE id = $1`, id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var locked int
+	if err := tx.QueryRow(`SELECT id FROM backup_storages WHERE id = $1 FOR UPDATE`, id).Scan(&locked); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	var inUse bool
+	if err := tx.QueryRow(`SELECT
+		EXISTS (SELECT 1 FROM backup_runs WHERE storage_id = $1) OR
+		EXISTS (SELECT 1 FROM backup_jobs WHERE storage_id = $1) OR
+		EXISTS (SELECT 1 FROM platform_backup_runs WHERE storage_id = $1 AND status <> 'failed') OR
+		EXISTS (SELECT 1 FROM platform_backup_jobs WHERE storage_id = $1)`, id).Scan(&inUse); err != nil {
+		return err
+	}
+	if inUse {
+		return ErrStorageInUse
+	}
+	if _, err := tx.Exec(`DELETE FROM backup_storages WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ───────────── Jobs ─────────────

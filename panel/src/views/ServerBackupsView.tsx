@@ -279,7 +279,9 @@ export default function ServerBackupsView() {
     };
     const handleUpdate = async (job: Partial<BackupJob>) => {
         if (!editingJob) return;
-        const res = await updateBackupJob(editingJob.id, job);
+        // "Default storage" is null in the form, and the API reads a null
+        // storageId as "unchanged": 0 is what clears it.
+        const res = await updateBackupJob(editingJob.id, { ...job, storageId: job.storageId ?? 0 });
         if (res.success) {
             showToast('Job saved.');
             setEditingJob(null);

@@ -144,6 +144,9 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "name and provider are required", 400)
 		return
 	}
+	// A platform storage: an ownerId in the body would file it into a tenant's
+	// account, with a provider the tenant guard does not cover.
+	req.OwnerID = nil
 	if !validBackupProvider(req.Provider) {
 		sendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
@@ -178,6 +181,10 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.ID = id
+	existing, ok := h.platformStorage(w, id)
+	if !ok {
+		return
+	}
 	if !validBackupProvider(req.Provider) {
 		sendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
@@ -192,14 +199,15 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	// the secret pointed at the same endpoint, bucket and access key. Changing
 	// any of those without supplying a secret is refused rather than merged; see
 	// mergeBackupStorageSecret.
-	if existing, err := h.state.Store.GetBackupStorage(id); err == nil {
-		merged, merr := mergeBackupStorageSecret(req, existing)
-		if merr != nil {
-			sendJSONError(w, merr.Error(), 400)
-			return
-		}
-		req = merged
+	merged, merr := mergeBackupStorageSecret(req, existing)
+	if merr != nil {
+		sendJSONError(w, merr.Error(), 400)
+		return
 	}
+	req = merged
+	// A platform row stays one: the body's ownerId would otherwise move it, and
+	// a nil one is what clearOtherDefaults reads as "the platform's default".
+	req.OwnerID = nil
 	if err := h.state.Store.UpdateBackupStorage(&req); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
@@ -221,11 +229,31 @@ func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid ID", 400)
 		return
 	}
+	if _, ok := h.platformStorage(w, id); !ok {
+		return
+	}
 	if err := h.state.Store.DeleteBackupStorage(id); err != nil {
+		if errors.Is(err, store.ErrStorageInUse) {
+			sendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage first; it can be deleted once the backups stored on it are deleted or have aged out under retention.", 409)
+			return
+		}
 		sendJSONError(w, err.Error(), 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// platformStorage loads a PLATFORM storage for the admin routes. A tenant's
+// own row answers 404 here exactly as an unknown id does: ListStorages never
+// shows one, and editing it from here could turn it into a provider the
+// tenant guard does not cover or clear the platform default.
+func (h *BackupHandler) platformStorage(w http.ResponseWriter, id int) (*models.BackupStorage, bool) {
+	bs, err := h.state.Store.GetBackupStorage(id)
+	if err != nil || bs == nil || bs.OwnerID != nil {
+		sendJSONError(w, "Backup storage not found", 404)
+		return nil, false
+	}
+	return bs, true
 }
 
 // TestStorage POST /api/backup-storages/{id}/test — round-trip put/get/delete
@@ -237,9 +265,8 @@ func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid ID", 400)
 		return
 	}
-	storage, err := h.state.Store.GetBackupStorage(id)
-	if err != nil {
-		sendJSONError(w, "Storage not found", 404)
+	storage, ok := h.platformStorage(w, id)
+	if !ok {
 		return
 	}
 	// Does the endpoint answer at all, before anything is signed. Without this

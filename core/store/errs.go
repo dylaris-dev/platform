@@ -23,6 +23,9 @@ var (
 	ErrWarpKeyNodeTaken = errors.New("machine already has a live key bound")
 	// ErrSSHKeyExists is an SSH key the account already holds.
 	ErrSSHKeyExists = errors.New("this key is already on the account")
+	// ErrStorageInUse is a backup storage a backup or a schedule still names.
+	// Handlers map it to 409.
+	ErrStorageInUse = errors.New("backup storage still in use")
 )
 
 // isUniqueViolation reports whether err is a Postgres unique-constraint

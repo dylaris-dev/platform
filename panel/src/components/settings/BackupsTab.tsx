@@ -325,7 +325,7 @@ export default function BackupsTab() {
     };
 
     const handleDelete = async (id: number) => {
-        if (!(await confirmDialog({ title: 'Delete storage', message: 'Delete this storage? Existing backups in this storage become inaccessible.' }))) return;
+        if (!(await confirmDialog({ title: 'Delete storage', message: 'Delete this storage? This is refused while a backup or a backup schedule still uses it.' }))) return;
         const res = await deleteBackupStorage(id);
         if (res.success) reload();
         else showToast(res.message || 'Delete failed.', false);

@@ -78,7 +78,7 @@ type Consumer struct {
 	Concurrency int
 
 	// inflight holds the ids this process is running RIGHT NOW. Recovery reads
-	// (recoverPending, claimStale) list pending entries, and "pending" includes
+	// (ownPending, staleClaimed) list pending entries, and "pending" includes
 	// entries whose handler simply has not finished yet - so without this they
 	// re-run work that is still in progress, in parallel with itself. See
 	// beginInflight.
@@ -190,28 +190,41 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 		go func() {
 			defer wg.Done()
 			for m := range work {
-				c.handleOne(ctx, m, handler)
+				c.process(ctx, m, handler)
+				c.endInflight(m.ID)
 			}
 		}()
 	}
 	defer func() { close(work); wg.Wait() }()
 
+	// dispatch claims each entry BEFORE handing it over, so a recovery pass that
+	// lists it again while it waits for a worker skips it (beginInflight).
 	dispatch := func(msgs []redis.XMessage) bool {
 		for _, m := range msgs {
+			if !c.beginInflight(m.ID) {
+				continue
+			}
 			select {
 			case work <- m:
 			case <-ctx.Done():
+				c.endInflight(m.ID)
 				return false
 			}
 		}
 		return true
 	}
+	// Recovered entries go through the pool like live ones. Handled here, in
+	// the reading goroutine, a recovered backup or restore stopped this
+	// consumer reading anything else for as long as it ran - hours for an
+	// upload - and ran beside the pool, past a Concurrency of 1.
+	recoverAll := func() bool {
+		return dispatch(c.staleClaimed(ctx)) && dispatch(c.ownPending(ctx))
+	}
 
 	// Recover anything left from a previous life before taking new work.
-	// Recovery is infrequent and processed synchronously (correctness over
-	// parallelism); only live ">" messages flow through the worker pool.
-	c.claimStale(ctx, handler)
-	c.recoverPending(ctx, handler)
+	if !recoverAll() {
+		return ctx.Err()
+	}
 
 	for {
 		if ctx.Err() != nil {
@@ -230,8 +243,9 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 					return ctx.Err()
 				}
 				// Idle tick: sweep for stragglers (orphaned / retryable), then wait.
-				c.claimStale(ctx, handler)
-				c.recoverPending(ctx, handler)
+				if !recoverAll() {
+					return ctx.Err()
+				}
 				continue
 			}
 			// The group vanished mid-run: Redis restarted with no persistence
@@ -264,9 +278,9 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	}
 }
 
-// recoverPending reprocesses this consumer's already-delivered-but-unacked
-// entries (XREADGROUP id "0"). Dedup skips ones that actually completed.
-func (c *Consumer) recoverPending(ctx context.Context, handler Handler) {
+// ownPending lists this consumer's already-delivered-but-unacked entries
+// (XREADGROUP id "0") for reprocessing. Dedup skips ones that actually completed.
+func (c *Consumer) ownPending(ctx context.Context) []redis.XMessage {
 	res, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    c.group,
 		Consumer: c.name,
@@ -274,19 +288,19 @@ func (c *Consumer) recoverPending(ctx context.Context, handler Handler) {
 		Count:    c.Count,
 	}).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return
+		return nil
 	}
+	var out []redis.XMessage
 	for _, st := range res {
-		for _, m := range st.Messages {
-			c.handleOne(ctx, m, handler)
-		}
+		out = append(out, st.Messages...)
 	}
+	return out
 }
 
-// claimStale takes over pending entries idle longer than ClaimMinIdle that are
+// staleClaimed takes over pending entries idle longer than ClaimMinIdle that are
 // owned by a dead or renamed consumer. Best-effort: a backend without
 // XAUTOCLAIM (or a transient error) is logged and skipped.
-func (c *Consumer) claimStale(ctx context.Context, handler Handler) {
+func (c *Consumer) staleClaimed(ctx context.Context) []redis.XMessage {
 	msgs, _, err := c.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   c.stream,
 		Group:    c.group,
@@ -296,11 +310,9 @@ func (c *Consumer) claimStale(ctx context.Context, handler Handler) {
 		Count:    c.Count,
 	}).Result()
 	if err != nil {
-		return
+		return nil
 	}
-	for _, m := range msgs {
-		c.handleOne(ctx, m, handler)
-	}
+	return msgs
 }
 
 // runHandler calls handler and turns a panic into an ordinary error.
@@ -331,12 +343,16 @@ func runHandler(ctx context.Context, handler Handler, data []byte) (err error) {
 func (c *Consumer) handleOne(ctx context.Context, m redis.XMessage, handler Handler) {
 	// Already running here: a recovery read listed an entry whose handler has
 	// not returned yet. Drop it - the live run owns the ACK. Guarding here
-	// covers all three delivery paths (live ">", recoverPending, claimStale).
+	// covers all three delivery paths (live ">", ownPending, staleClaimed).
 	if !c.beginInflight(m.ID) {
 		return
 	}
 	defer c.endInflight(m.ID)
+	c.process(ctx, m, handler)
+}
 
+// process runs one entry the caller has already claimed with beginInflight.
+func (c *Consumer) process(ctx context.Context, m redis.XMessage, handler Handler) {
 	// Already processed (ACK lost / redelivered): just ACK and move on.
 	if n, _ := c.rdb.Exists(ctx, c.doneKey(m.ID)).Result(); n == 1 {
 		c.ack(ctx, m.ID)

@@ -108,7 +108,9 @@ func TestRetryThenAckOnRecovery(t *testing.T) {
 	}
 
 	// Recovery reprocesses own pending; handler now succeeds -> acked.
-	c.recoverPending(ctx, failOnce)
+	for _, m := range c.ownPending(ctx) {
+		c.handleOne(ctx, m, failOnce)
+	}
 	if calls != 2 {
 		t.Fatalf("calls=%d, want 2 after recovery", calls)
 	}
@@ -276,6 +278,9 @@ func TestSlowHandlerIsNotRunTwiceByRecovery(t *testing.T) {
 	// read must time out while the handler is still working, exactly as a 5s
 	// Block does against a stop that runs for tens of seconds.
 	c.Block = 50 * time.Millisecond
+	// A free worker, as on a node (8): with one, a duplicate could only queue
+	// behind the original and would never show.
+	c.Concurrency = 2
 	if err := c.EnsureGroup(ctx); err != nil {
 		t.Fatalf("EnsureGroup: %v", err)
 	}

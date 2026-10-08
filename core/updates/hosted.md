@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.7
+
+### Features
+- Nothing.
+
+### Breaking
+- **Your own backup storage can be removed once no schedule uses it and its backups are deleted.**
+  Before, removing it moved those backups onto our storage, billed and no longer restorable.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backups from your node end after two minutes when the storage stops responding,** and a node
+  restarted mid-backup takes new commands right away. Update your node to get it. `node`
+- **"Default storage" on a backup schedule is saved again;** it used to keep the old storage.
+
 ## 2026.10.08.6
 
 ### Features

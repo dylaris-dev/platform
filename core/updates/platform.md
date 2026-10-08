@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.7
+
+### Features
+- Nothing.
+
+### Breaking
+- **A backup storage that a backup or a schedule still uses can no longer be deleted,** the request
+  answers 409. Before, those backups silently fell back to the default storage. `core` `panel`
+
+### Security
+- **A backup upload whose storage stops reading now ends after two minutes,** instead of holding a
+  node command slot for up to 90 minutes per part. `node`
+- **The admin backup-storage routes accept platform storages only.** A tenant's own storage could
+  be switched to an unguarded provider or clear the platform default from there. `core`
+
+### Fixes
+- **Commands picked up again after a restart no longer stop the queue reading new ones:** a
+  recovered backup used to hold every other command on its node until it finished. `core` `node`
+- **"Default storage" on a backup schedule is saved again;** it used to keep the old storage. `panel`
+
 ## 2026.10.08.6
 
 ### Features

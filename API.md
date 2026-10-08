@@ -505,7 +505,7 @@ can still show what exists.
 | GET | `/api/me/backup-storages` | session | `backupstorage.read` | - | `BackupHandler.ListOwnStorages` | the caller's own storages, with secrets stripped, and which of them is their default. |
 | POST | `/api/me/backup-storages` | session | `backupstorage.write` | - | `BackupHandler.CreateOwnStorage` | connects a bucket of the caller's own. |
 | PATCH | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.write` | - | `BackupHandler.UpdateOwnStorage` | - |
-| DELETE | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.delete` | - | `BackupHandler.DeleteOwnStorage` | The archives already written to it are NOT deleted: they are in a bucket the tenant controls, and this only removes our record of how to reach it. |
+| DELETE | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.delete` | - | `BackupHandler.DeleteOwnStorage` | Refused while a backup or a schedule still names it (store.ErrStorageInUse): the reference would fall back to the platform default, so the tenant's archives would be billed as ours and a restore would fetch from a bucket that never held them. |
 | POST | `/api/me/backup-storages/{id:[0-9]+}/test` | session | `backupstorage.write` | - | `BackupHandler.TestOwnStorage` | the same round trip the admin path runs, against the caller's own storage only. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
 | GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |

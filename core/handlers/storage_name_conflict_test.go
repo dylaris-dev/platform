@@ -35,8 +35,8 @@ func (f *nameConflictStore) CreateBackupStorage(*models.BackupStorage) (int, err
 	return 0, f.err
 }
 func (f *nameConflictStore) UpdateBackupStorage(*models.BackupStorage) error { return f.err }
-func (f *nameConflictStore) GetBackupStorage(int) (*models.BackupStorage, error) {
-	return nil, sql.ErrNoRows // no stored secret to merge; not the path under test
+func (f *nameConflictStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
+	return &models.BackupStorage{ID: id}, nil // a platform row with no secret to merge; not the path under test
 }
 func (f *nameConflictStore) CreateStorageConnection(*models.StorageConnection) (int, error) {
 	return 0, f.err

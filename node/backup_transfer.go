@@ -67,6 +67,13 @@ const (
 // not wait on it.
 var partRetryBackoff = time.Second
 
+// partStallTimeout ends a part PUT whose body nobody has read for this long. The
+// transport reads the body only as the socket takes it, so a backend that
+// accepts the connection and stops reading - a tenant's own endpoint can do
+// that on purpose - would otherwise hold a command slot for partPutTimeout
+// three times over per part. A variable for tests.
+var partStallTimeout = 2 * time.Minute
+
 // coreRequest sends a node-initiated request to Core. main sets it to the mesh
 // manager's Request before any command is processed.
 var coreRequest func(ctx context.Context, req *pb.NodeMessage, attemptTimeout time.Duration) (*pb.NodeMessage, error)
@@ -377,10 +384,19 @@ func (u *partUploader) url(ctx context.Context, num int32, fresh bool) (string, 
 func (u *partUploader) put(ctx context.Context, target string, data []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, partPutTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, bytes.NewReader(data))
+	stall := time.AfterFunc(partStallTimeout, cancel)
+	defer stall.Stop()
+	body := func() io.ReadCloser {
+		return io.NopCloser(&stallReader{r: bytes.NewReader(data), t: stall, d: partStallTimeout})
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, body())
 	if err != nil {
 		return fmt.Errorf("build part request: %w", withoutURL(err))
 	}
+	// Set by hand: NewRequest infers both only from a *bytes.Reader, and a
+	// presigned PUT without a Content-Length is refused (or sent chunked).
+	req.ContentLength = int64(len(data))
+	req.GetBody = func() (io.ReadCloser, error) { return body(), nil }
 	resp, err := u.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("put: %w", withoutURL(err))

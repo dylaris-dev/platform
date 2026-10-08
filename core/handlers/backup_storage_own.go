@@ -175,17 +175,20 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 
 // DeleteOwnStorage DELETE /api/me/backup-storages/{id}
 //
-// The archives already written to it are NOT deleted: they are in a bucket the
-// tenant controls, and this only removes our record of how to reach it. Their
-// run rows survive with a dangling storage reference, which the run's own
-// storage_id turns into an honest "the storage is gone" rather than a silent
-// re-resolution onto ours.
+// Refused while a backup or a schedule still names it (store.ErrStorageInUse):
+// the reference would fall back to the platform default, so the tenant's
+// archives would be billed as ours and a restore would fetch from a bucket that
+// never held them.
 func (h *BackupHandler) DeleteOwnStorage(w http.ResponseWriter, r *http.Request) {
 	bs, ok := h.ownStorageFor(w, r)
 	if !ok {
 		return
 	}
 	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
+		if errors.Is(err, store.ErrStorageInUse) {
+			sendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage and delete the backups stored in it first.", http.StatusConflict)
+			return
+		}
 		sendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
