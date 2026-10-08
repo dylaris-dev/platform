@@ -547,12 +547,13 @@ func (s *PostgresStore) ListBackupRunsByOwner(ownerID string) ([]BackupRunRef, e
 func (s *PostgresStore) BackupBytesByOwner(ownerID string) (int64, error) {
 	var total sql.NullInt64
 	err := s.db.QueryRow(`
-		SELECT COALESCE(SUM(br.size_bytes), 0)
+		SELECT COALESCE(SUM(CASE WHEN br.status = 'running' THEN br.uploaded_bytes ELSE br.size_bytes END), 0)
 		FROM backup_runs br
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
 		LEFT JOIN backup_storages bst ON bst.id = br.storage_id
-		WHERE s.owner_id = $1 AND (br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0))
+		WHERE s.owner_id = $1 AND (br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0)
+		      OR (br.status = 'running' AND br.uploaded_bytes IS NOT NULL))
 		  AND bst.owner_id IS NULL`, ownerID).Scan(&total)
 	if err != nil {
 		return 0, err

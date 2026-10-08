@@ -63,13 +63,14 @@ func (s *PostgresStore) TenantServerOwners() (map[string]string, error) {
 // counts: NULL means "before this column", and those archives are ours.
 func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
 	rows, err := s.db.Query(`
-		SELECT n.owner_id, COALESCE(SUM(br.size_bytes), 0)
+		SELECT n.owner_id, COALESCE(SUM(CASE WHEN br.status = 'running' THEN br.uploaded_bytes ELSE br.size_bytes END), 0)
 		FROM backup_runs br
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		JOIN servers s ON s.id = bj.server_id
 		JOIN nodes n ON n.id = s.node_id
 		LEFT JOIN backup_storages bst ON bst.id = br.storage_id
-		WHERE n.owner_id IS NOT NULL AND (br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0))
+		WHERE n.owner_id IS NOT NULL AND (br.status = 'success' OR (br.status = 'failed' AND br.size_bytes > 0)
+		      OR (br.status = 'running' AND br.uploaded_bytes IS NOT NULL))
 		  AND bst.owner_id IS NULL
 		GROUP BY n.owner_id`)
 	if err != nil {

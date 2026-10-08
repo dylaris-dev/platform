@@ -580,6 +580,13 @@ func (s *PostgresStore) BackupRunRestoring(runID int) (bool, error) {
 	return busy, err
 }
 
+// BackupJobRestoring reports whether a restore is waiting on any run of the job.
+func (s *PostgresStore) BackupJobRestoring(jobID int) (bool, error) {
+	var busy bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM backup_runs WHERE job_id = $1 AND `+backupRunRestoring+`)`, jobID).Scan(&busy)
+	return busy, err
+}
+
 func (s *PostgresStore) PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun, error) {
 	if keep < 0 {
 		keep = 0

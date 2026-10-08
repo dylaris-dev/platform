@@ -201,12 +201,17 @@ func (t *BackupTransfer) openRunStorage(ctx context.Context, run *models.BackupR
 
 // exceedsAllowance reports whether bytes on the upload's storage would take its
 // owner past the backup storage allowance, the one BackupAllowanceExceeded
-// answers for a dispatch. A running run is not part of the owner's usage (see
-// store BackupBytesByOwner), so bytes is this run's whole upload so far.
+// answers for a dispatch. bytes is this run's whole upload so far. A running
+// run counts in the owner's usage once Core has completed its upload (store
+// BackupBytesByOwner), so a retried completion takes this run's recorded size
+// back out instead of counting it twice.
 func (t *BackupTransfer) exceedsAllowance(u *runUpload, bytes int64) bool {
 	exceeded, used, quota := BackupAllowanceExceeded(t.store, u.owner, t.storeEnabled, u.bs)
 	if !exceeded && quota == 0 {
 		return false // nothing caps this storage
+	}
+	if r := u.run.UploadedBytes; r != nil {
+		used -= *r
 	}
 	return used+bytes > quota
 }

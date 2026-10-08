@@ -393,6 +393,24 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 	// gigabyte linked five thousand times, which costs them no quota, became
 	// five terabytes of upload, and a restore of it filled the node's disk.
 	seen := map[fileIdentity]string{}
+	// The archive store is skipped by name, but a symlink elsewhere in the tree
+	// onto one of its archives is archived as its target: a tenant linking every
+	// earlier archive made each run carry all of them, doubling per run. So
+	// the store's files are known by identity and never archived under any name.
+	// Links INSIDE the store are not followed: one there onto level.dat would
+	// otherwise take the world out of every backup.
+	stored := map[fileIdentity]bool{}
+	_ = fs.WalkDir(root.FS(), backupDirName, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil && info.Mode().IsRegular() {
+			if id, ok := identityOf(info); ok {
+				stored[id] = true
+			}
+		}
+		return nil
+	})
 	walkErr := walkRoot(root, startName, func(name string, info fs.FileInfo) error {
 		rel := relTo(startName, name)
 		if rel == "." {
@@ -419,6 +437,9 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 		}
 		hdr.Name = rel
 		if id, ok := identityOf(info); ok && !info.IsDir() {
+			if stored[id] {
+				return nil
+			}
 			if first, dup := seen[id]; dup {
 				hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeLink, first, 0
 				if err := tw.WriteHeader(hdr); err != nil {

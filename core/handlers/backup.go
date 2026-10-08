@@ -523,6 +523,12 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Same rule as DeleteRun: a restore waiting on one of these archives has
+	// usually stopped the server already, and the download would fail.
+	if busy, err := h.state.Store.BackupJobRestoring(jobID); err != nil || busy {
+		sendJSONError(w, "A backup of this schedule is being restored. Delete it once the restore has finished.", http.StatusConflict)
+		return
+	}
 	// The runs cascade with the job and take their storage keys with them, so
 	// the archives have to go first or nothing can ever name them again.
 	purgeBackupArchivesForJob(h.state, jobID)
@@ -684,6 +690,14 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	// None while it moves: a restore during a move restarted the server on the
+	// node it was leaving. Two restores at once are refused by the node itself,
+	// which knows what is running; a row here can outlive a result that a Core
+	// restart never received, and would lock the server's restores for hours.
+	if srv.Status == "migrating" {
+		sendJSONError(w, "The server is being moved. Restore it once the move has finished.", http.StatusConflict)
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)

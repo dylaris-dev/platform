@@ -317,6 +317,7 @@ type Store interface {
 	// BackupRunRestoring reports whether a queued or running restore (requested
 	// in the last six hours) is waiting on the run's archive.
 	BackupRunRestoring(runID int) (bool, error)
+	BackupJobRestoring(jobID int) (bool, error)
 	ListAbandonedBackupRuns(quietSince time.Time, limit int) ([]models.BackupRun, error)
 	// SetBackupRunUpload stores a run's multipart upload id and part size only
 	// where none is stored yet and the run is still running, and reports whether

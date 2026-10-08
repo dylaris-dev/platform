@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **Restoring a backup now waits for a running server move to finish,** and a second restore of
+  the same server is refused while the first runs. Nothing to do on your side.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backup restores on your node are sturdier:** a download that stops sending ends instead of
+  hanging. Update your node to get it. `node`
+
 ## 2026.10.08.4
 
 ### Features

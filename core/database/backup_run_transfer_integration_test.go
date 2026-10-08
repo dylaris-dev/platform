@@ -99,8 +99,10 @@ func TestIntegrationBackupRunUploadedSizeAndUsage(t *testing.T) {
 		t.Fatalf("SetBackupRunUploaded on a failed run = %v, %v; want refused", stored, err)
 	}
 
-	// A running run carrying a huge node-reported progress size is not usage;
-	// a failed run with a size (an archive the reaper found) still is.
+	// A running run carrying a huge node-reported progress size is not usage,
+	// but the size Core measured when it completed the upload is (round 82: a
+	// node withholding its report stacked archives past the allowance). A
+	// failed run with a size (an archive the reaper found) still counts.
 	if err := st.UpdateBackupRunStatus(running, "running", "", 900<<30, "backups/h1/running.tar.gz", time.Time{}); err != nil {
 		t.Fatalf("progress write: %v", err)
 	}
@@ -108,8 +110,8 @@ func TestIntegrationBackupRunUploadedSizeAndUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackupBytesByOwner: %v", err)
 	}
-	if used != 700 {
-		t.Fatalf("usage = %d, want 700 (the failed run's found archive, never the running run's progress)", used)
+	if used != 700+4096 {
+		t.Fatalf("usage = %d, want 4796 (the failed run's found archive plus Core's completed upload, never the running run's progress)", used)
 	}
 	tenants, err := st.TenantBackupBytes()
 	if err != nil {

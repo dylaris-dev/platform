@@ -249,9 +249,37 @@ func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
 	// files.read here, the handler would skip its own redaction path.
 	// server.audit.read is the sharpest of the four: the audit rows carry the IP
 	// address and user agent of the owner and of every member.
-	for _, id := range []string{"network.read", "members.read", "files.read", "server.audit.read"} {
+	// backups.read hands out a download of every archive: the whole world,
+	// unredacted, the thing files.read is withheld for.
+	for _, id := range []string{"network.read", "members.read", "files.read", "server.audit.read", "backups.read"} {
 		if res.HasCap(id) {
 			t.Errorf("demo server must NOT grant sensitive read cap %q to a stranger", id)
+		}
+	}
+}
+
+// demoReadReviewed is every server read cap a public demo GRANTS, each one
+// looked at. A new server read cap is granted to every signed-in account the
+// moment it exists, so it must be put here or on demoReadDeny deliberately.
+var demoReadReviewed = map[string]string{
+	"overview.read": "status and resources",
+	"console.read":  "the showcase itself",
+	"players.read":  "who is online",
+	"config.read":   "RCON port and whether a secret is set, never the secret",
+	"mods.read":     "installed mods",
+	"tabs.read":     "the operator's custom tabs, meant to be shown",
+	"schedule.read": "scheduled tasks",
+	"stats.read":    "graphs",
+}
+
+func TestEveryServerReadCapIsClassifiedForTheDemo(t *testing.T) {
+	for _, c := range All() {
+		if c.Scope != ScopeServer || c.Verb != VerbRead {
+			continue
+		}
+		_, granted := demoReadReviewed[c.ID]
+		if granted == demoReadDeny[c.ID] {
+			t.Errorf("%q must be on exactly one of demoReadReviewed (granted to every account on a demo server) or demoReadDeny", c.ID)
 		}
 	}
 }

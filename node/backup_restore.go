@@ -12,7 +12,9 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -83,6 +85,11 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 	defer restoresInFlight.leave(key)
+	if !restoreServersInFlight.enter(cmd.ServerUUID) {
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "another restore of this server is still running on its node")
+		return
+	}
+	defer restoreServersInFlight.leave(cmd.ServerUUID)
 
 	started := time.Now()
 	storage := storageInfo{}
@@ -157,10 +164,15 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 	}()
 
+	// The body has no deadline (a restore may stream for hours), so a source
+	// that stops sending ends it instead: a tenant's own bucket could trickle a
+	// byte a minute and hold this command slot for good.
+	dlCtx, dlCancel := context.WithCancel(ctx)
+	defer dlCancel()
 	var body io.ReadCloser
 	switch {
 	case cmd.Download == modeDownloadPresigned:
-		body, err = openPresignedRestore(ctx, transferClient(cmd.GuardedTransfer), restoreURL, coreRestoreURL(cmd.RestoreID))
+		body, err = openPresignedRestore(dlCtx, transferClient(cmd.GuardedTransfer), restoreURL, coreRestoreURL(cmd.RestoreID))
 	default:
 		body, err = downloadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
 	}
@@ -170,8 +182,10 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 	defer body.Close()
+	stall := time.AfterFunc(restoreStallTimeout, dlCancel)
+	defer stall.Stop()
 
-	gr, err := gzip.NewReader(body)
+	gr, err := gzip.NewReader(&stallReader{r: body, t: stall})
 	if err != nil {
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "gzip open: "+err.Error())
@@ -200,7 +214,11 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// needs as much as this one.
 	budget := restoreDiskBudget(filepath.Dir(stageDir))
 	var written int64
-	extracted := 0
+	extracted, entries := 0, 0
+	// The directories creating an entry makes, its own and the parents
+	// MkdirAll adds: an archive of deep paths built thousands of directories
+	// per counted entry.
+	madeDirs := map[string]bool{}
 	for {
 		hdr, terr := tr.Next()
 		if terr == io.EOF {
@@ -226,6 +244,24 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		if skip {
 			log.Printf("Restore %d: skipping unsafe entry %q", cmd.RunID, hdr.Name)
 			continue
+		}
+		// Every entry costs an inode and at least a block, which a byte budget
+		// over file contents never sees: an archive of millions of empty
+		// directories is small in the bucket and exhausts the node's inodes.
+		cost := 1
+		for d := path.Dir(name); d != "." && d != "/" && !madeDirs[d]; d = path.Dir(d) {
+			madeDirs[d] = true
+			cost++
+		}
+		if hdr.Typeflag == tar.TypeDir {
+			madeDirs[name] = true
+		}
+		entries += cost
+		written += int64(cost) * restoreEntryCost
+		if entries > maxRestoreEntries || written > budget {
+			stageCleanup()
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreDiskBudget.Error())
+			return
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -298,7 +334,10 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	}
 	if err := os.Rename(stageDir, targetDir); err != nil {
 		// Roll back the previous stash so the world isn't left missing.
-		os.Rename(backupDir, targetDir)
+		if rerr := os.Rename(backupDir, targetDir); rerr != nil {
+			// The stash is now the only copy of the world.
+			keepStash(cmd.RunID, backupDir)
+		}
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "swap stage: "+err.Error())
 		return
@@ -314,10 +353,33 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	}
 	if carried {
 		go os.RemoveAll(backupDir)
+	} else {
+		keepStash(cmd.RunID, backupDir)
 	}
 
 	reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
+}
+
+// keepStash renames a stash that must survive out of the restore cleanup's
+// reach: that cleanup removes every "<dir>.pre-restore-<time>" after a day,
+// and a stash kept because it holds the other backups, or the only copy of the
+// world, went with it.
+//
+// The kept name starts with a dot, so the sub-server listing, the server count
+// and the disk-quota sweep - which all skip dot-directories - do not take it for
+// a sub-server or a server of its own.
+func keepStash(runID int, stash string) {
+	if _, err := os.Lstat(stash); err != nil {
+		return // nothing was stashed (no server dir before the restore)
+	}
+	dir, base := filepath.Split(stash)
+	kept := filepath.Join(dir, ".restore-kept-"+strings.Replace(base, ".pre-restore-", "-", 1))
+	if err := os.Rename(stash, kept); err != nil {
+		log.Printf("Restore %d: [warn] could not move %s out of the cleanup's reach: %v", runID, stash, err)
+		return
+	}
+	log.Printf("Restore %d: [warn] kept %s for an operator to look at", runID, kept)
 }
 
 // carryArchivesAcrossSwap moves the live archive directory from the stashed
@@ -366,6 +428,30 @@ func carryArchivesAcrossSwap(stashedRoot, restoredRoot string) error {
 // nodeOwnedRootEntries are the names in a server root the node writes and the
 // tenant cannot (isProtectedFile).
 var nodeOwnedRootEntries = []string{backupDirName, ".node_config.json", ".active_server", ".dylaris.json"}
+
+// restoreStallTimeout ends a restore download that delivers no byte for this
+// long. A variable for tests.
+var restoreStallTimeout = 2 * time.Minute
+
+// stallReader re-arms the stall timer on every read that returned data.
+type stallReader struct {
+	r io.Reader
+	t *time.Timer
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.t.Reset(restoreStallTimeout)
+	}
+	return n, err
+}
+
+// maxRestoreEntries and restoreEntryCost bound what an archive's entries cost
+// beyond their bytes. A large modded server holds a few hundred thousand files.
+var maxRestoreEntries = 2_000_000
+
+const restoreEntryCost = 4096
 
 // errRestoreDiskBudget ends an extraction that would fill the disk.
 var errRestoreDiskBudget = errors.New("the archive is larger than the free space this node can give it")

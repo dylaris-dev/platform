@@ -51,7 +51,11 @@ func (s *inflightSet) leave(id string) {
 // and must not block each other.
 var (
 	restoresInFlight = newInflightSet()
-	backupsInFlight  = newInflightSet()
+	// One restore per SERVER, whatever its id: two restores of one server
+	// swapped the world under each other, and a flood of them held every
+	// command slot of this node for all its tenants.
+	restoreServersInFlight = newInflightSet()
+	backupsInFlight        = newInflightSet()
 
 	// The same hazard for the destructive per-server commands, keyed
 	// "<action>:<uuid>" since they carry no run id. The consumer runs 8

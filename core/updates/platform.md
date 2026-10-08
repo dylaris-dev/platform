@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.6
+
+### Features
+- Nothing.
+
+### Breaking
+- **A restore is refused while its server is being moved, and a second restore of the same server
+  fails while the first runs.** Deleting a backup schedule waits for a restore of it. `core` `node`
+
+### Security
+- **A demo server no longer hands its backup archives to every signed-in account.** They carried
+  the whole world unredacted, configs and credentials included. `core`
+- **A stalled or crafted backup restore can no longer block a node or exhaust its disk:** downloads
+  that stop sending end after two minutes, and every archive entry counts against the budget. `node`
+- **Completed backups whose node never reported now count against the storage allowance,** so
+  withheld reports cannot stack archives past it. `core`
+
+### Fixes
+- **A node-local backup no longer copies earlier backups into itself through a symlink,** and a
+  restore stash that had to be kept is no longer deleted a day later. `node`
+
 ## 2026.10.08.5
 
 ### Features

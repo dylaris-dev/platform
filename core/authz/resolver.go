@@ -86,6 +86,10 @@ var demoReadDeny = map[string]bool{
 	// of every member, which is the sharpest disclosure on this list - a public
 	// showcase must never hand that to an arbitrary authenticated viewer.
 	"server.audit.read": true,
+	// backups.read lists the runs and hands out a download of each archive:
+	// the whole world, unredacted - server.properties, plugin configs and
+	// their credentials - which is exactly what files.read is kept from.
+	"backups.read": true,
 }
 
 // HasCap reports whether the resolution grants capID. An unknown capability is

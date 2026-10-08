@@ -37,11 +37,13 @@ type presignedOnlyStore struct {
 	restoreUpdates []string
 	deleted        []int
 	restoring      bool // a restore is waiting on the run
+	serverStatus   string
 }
 
 func (f *presignedOnlyStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id, UUID: "srv-uuid", NodeID: 5, OwnerID: "alice"}, nil
+	return &models.Server{ID: id, UUID: "srv-uuid", NodeID: 5, OwnerID: "alice", Status: f.serverStatus}, nil
 }
+func (f *presignedOnlyStore) BackupJobRestoring(int) (bool, error) { return f.restoring, nil }
 func (f *presignedOnlyStore) GetNodeByID(id int) (*models.Node, error) {
 	return &models.Node{ID: id, Token: "node-hosting"}, nil
 }
