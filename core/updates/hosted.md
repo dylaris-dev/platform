@@ -23,6 +23,7 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Security
 - **Your node's internal server config and its local backups can no longer be read through file
   access or by a plugin,** and a plugin can no longer stall your node. Update your node. `node`
+- **Your node is built with Go 1.26.9,** fixing published flaws in HTTP/2 and TLS. `node`
 
 ### Fixes
 - Nothing.

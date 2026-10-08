@@ -85,7 +85,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.7'
+          go-version: '1.26.9'
           cache: false
 
       # beam/app embeds frontend/dist (a Wails build artifact that a fresh
@@ -597,7 +597,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.7'
+          go-version: '1.26.9'
           # Same reason as the go-tests job above: restoring that cache costs
           # seven minutes of tar on this runner, and this job sits on the path to
           # a deploy. The tests have already warmed the module cache by the time

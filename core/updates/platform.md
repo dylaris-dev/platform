@@ -24,6 +24,8 @@ Newest release first. The format is fixed and checked in CI - see the
   neither directly, through a link, nor by a plugin off the mount. `node`
 - **Uploads are checked before their body is read, and save, create, rename and copy refuse a
   suspended tenant** the way the upload already did. `core` `panel`
+- **Built with Go 1.26.9 and golang.org/x/net v0.60.0,** fixing the published flaws in HTTP/2,
+  TLS, html/template and os that 1.26.7 carried. `core` `node`
 
 ### Fixes
 - **A file request that waits over 20 seconds for its server's turn is answered busy,** instead of

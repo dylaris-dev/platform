@@ -57,7 +57,7 @@ RUN mkdir -p /panel
 FROM ${PANEL_STAGE} AS panel
 
 # --- Build Stage ---
-FROM golang:1.26.7-alpine AS builder
+FROM golang:1.26.9-alpine AS builder
 
 # Install git (important for go mod download with some libs)
 RUN apk add --no-cache git
