@@ -105,7 +105,7 @@ func TestControlPlaneZip_SymlinkEscapingRootIsOmitted(t *testing.T) {
 		}
 		defer root.Close()
 		raw := collectZipFromStream(t, func(send func(*pb.NodeMessage) error) {
-			h.streamDirAsZip("r1", root, "plugins", "plugins.zip", send)
+			h.streamDirAsZip("r1", root, "plugins", "plugins.zip", nil, send)
 		})
 		names, bodies := zipNamesAndBodies(t, raw)
 		if names["escape.txt"] {

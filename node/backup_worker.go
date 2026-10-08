@@ -533,7 +533,7 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// filename — the directory is server-scoped already so the prefix
 		// adds no information.
 		dir := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, nodeOwnedDirMode); err != nil {
 			return fmt.Errorf("create node-local backup dir: %w", err)
 		}
 		archive := nodeLocalArchiveName(key)

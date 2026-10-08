@@ -725,7 +725,7 @@ func (v *virtualFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 		return nil, err
 	}
 	defer root.Close()
-	f, err := openRegularIn(root, filepath.ToSlash(rel))
+	f, err := openTenantReadIn(root, filepath.ToSlash(rel), nodeOwnedIdentities(root, true))
 	if err != nil {
 		return nil, err
 	}
@@ -1146,6 +1146,10 @@ func (v *virtualFS) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 			return nil, err
 		}
 		defer root.Close()
+		// The same store reached through a link (survival/x -> ../.dylaris-backups).
+		if st, serr := root.Stat(filepath.ToSlash(rel)); serr == nil && deniedIdentity(st, nodeOwnedIdentities(root, true)) {
+			return nil, os.ErrNotExist
+		}
 		entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(rel))
 		if err != nil {
 			return nil, err

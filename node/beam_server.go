@@ -817,7 +817,7 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 		// it must not appear in a regular directory listing.
 		// .dylaris.json holds platform metadata; .pending-delete-* are
 		// rename tombstones from sub-server cleanup.
-		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" || e.Name() == ".dylaris.json" {
+		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" || e.Name() == ".dylaris.json" || e.Name() == ".node_config.json" {
 			continue
 		}
 		if strings.HasPrefix(e.Name(), ".pending-delete-") {
@@ -854,7 +854,9 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 	// take the node agent - and every tenant's console and files with it -
 	// down. Core caps opening a file at the same size; larger ones are
 	// downloaded.
-	f, err := openRegularIn(root, name)
+	// The node's config and metadata are not the tenant's to read, also not
+	// through a link; backup archives stay readable here (see validateBeamPathOp).
+	f, err := openTenantReadIn(root, name, nodeOwnedIdentities(root, false))
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
 	}
@@ -1046,7 +1048,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		if err := copyFileIn(root, srcName, dstRoot, dstLeaf); err != nil {
+		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, false)); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 		chownForMCIn(dstRoot, dstLeaf)
@@ -1088,7 +1090,9 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 		})
 	}
 
-	f, err := openRegularIn(root, name)
+	// The node's config and metadata are not the tenant's to read, also not
+	// through a link; backup archives stay readable here (see validateBeamPathOp).
+	f, err := openTenantReadIn(root, name, nodeOwnedIdentities(root, false))
 	if err != nil {
 		return status.Errorf(codes.Internal, "open file: %v", err)
 	}
@@ -1510,12 +1514,13 @@ func zipNameFor(path string) string {
 // control-plane zip paths in grpc_handler.go, so both transports archive
 // exactly the same thing.
 func addTreeToZip(zw *zip.Writer, root *os.Root, nameBase, target string) error {
+	deny := nodeOwnedIdentities(root, false)
 	return walkRoot(root, target, func(name string, info fs.FileInfo) error {
 		rel := relTo(nameBase, name)
 		if rel == "." {
 			return nil
 		}
-		return addZipEntry(zw, root, name, rel, info)
+		return addZipEntry(zw, root, name, rel, info, deny)
 	})
 }
 

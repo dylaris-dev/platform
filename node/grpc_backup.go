@@ -33,7 +33,7 @@ func (h *StreamHandler) resolveBackupDir(serverUUID string) (string, error) {
 		return "", fmt.Errorf("storage manager not initialised")
 	}
 	dir := filepath.Join(h.storageMgr.GetServerDir(serverUUID), backupDirName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, nodeOwnedDirMode); err != nil {
 		return "", fmt.Errorf("mkdir backup dir: %w", err)
 	}
 	return dir, nil

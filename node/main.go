@@ -909,7 +909,7 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 		return
 	}
 	configPath := filepath.Join(serverDir, ".node_config.json")
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, data, nodeOwnedFileMode); err != nil {
 		log.Printf("saveNodeConfig: write error for %s: %v", config.UUID, err)
 	}
 }
@@ -1421,7 +1421,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 		// Track the active sub-server on disk
 		activeFile := filepath.Join(serverPath, ".active_server")
-		if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
+		if err := os.WriteFile(activeFile, []byte(subName), nodeOwnedFileMode); err != nil {
 			log.Printf("Failed to write .active_server for %s: %v", cmd.Config.UUID, err)
 		}
 
@@ -1511,7 +1511,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
 			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 		} else {
-			if err := os.WriteFile(activeFile, []byte(subName), 0644); err != nil {
+			if err := os.WriteFile(activeFile, []byte(subName), nodeOwnedFileMode); err != nil {
 				log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
 			}
 			log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
@@ -1772,7 +1772,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				}
 			}
 			if newActive != "" {
-				os.WriteFile(activeFile, []byte(newActive), 0644)
+				os.WriteFile(activeFile, []byte(newActive), nodeOwnedFileMode)
 				log.Printf("Activated sub-server %s for %s", newActive, cmd.Config.UUID)
 				delFinalActive = newActive
 			} else {

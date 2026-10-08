@@ -94,15 +94,16 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 		return
 	}
 	defer root.Close()
+	deny := nodeOwnedIdentities(root, true)
 
 	stat, err := root.Stat(name)
-	if err != nil {
+	if err != nil || (name != "." && isProtectedFile(name)) || deniedIdentity(stat, deny) {
 		sendFn(errorMsg(msg.RequestId, 404, "file not found"))
 		return
 	}
 
 	if stat.IsDir() && readReq.ZipIfDir {
-		h.streamDirAsZip(msg.RequestId, root, name, zipName(msg.ServerUuid, name), sendFn)
+		h.streamDirAsZip(msg.RequestId, root, name, zipName(msg.ServerUuid, name), deny, sendFn)
 		return
 	}
 
@@ -111,7 +112,7 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 		return
 	}
 
-	h.streamFile(msg.RequestId, root, name, sendFn)
+	h.streamFile(msg.RequestId, root, name, deny, sendFn)
 }
 
 // resolveWithinDir joins reqPath under dataPath and guarantees the result
@@ -282,7 +283,15 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 	var entries []fs.DirEntry
 	if err == nil {
 		defer root.Close()
-		entries, err = fs.ReadDir(root.FS(), name)
+		// The backup store's contents are the node's, and so is a directory
+		// reached through a link onto it: the same rule as a read.
+		if name != "." && isProtectedFile(name) {
+			err = fs.ErrNotExist
+		} else if st, serr := root.Stat(name); serr == nil && deniedIdentity(st, nodeOwnedIdentities(root, true)) {
+			err = fs.ErrNotExist
+		} else {
+			entries, err = fs.ReadDir(root.FS(), name)
+		}
 	}
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -363,7 +372,7 @@ func dirSizeIn(root *os.Root, name string) int64 {
 
 // streamFile streams a single file in 64KB chunks via sendFn.
 // Sends metadata TransferDone first (TotalBytes=0), then chunks, then final TransferDone.
-func (h *StreamHandler) streamFile(reqID string, root *os.Root, name string, sendFn func(*pb.NodeMessage) error) {
+func (h *StreamHandler) streamFile(reqID string, root *os.Root, name string, deny map[fileIdentity]bool, sendFn func(*pb.NodeMessage) error) {
 	filename := path.Base(name)
 
 	// Send metadata first (filename for Content-Disposition header)
@@ -378,7 +387,7 @@ func (h *StreamHandler) streamFile(reqID string, root *os.Root, name string, sen
 
 	// A pipe with no writer would hold this open forever. Judged on the open
 	// itself: a Stat first lost to a swap between the two calls.
-	f, err := openRegularIn(root, name)
+	f, err := openTenantReadIn(root, name, deny)
 	if err != nil {
 		sendFn(errorMsg(reqID, 400, fmt.Sprintf("open: %v", err)))
 		return
@@ -424,7 +433,7 @@ func (h *StreamHandler) streamFile(reqID string, root *os.Root, name string, sen
 
 // streamDirAsZip creates a zip of the directory using io.Pipe and streams chunks
 // as they are produced. Constant ~128KB RAM usage regardless of directory size.
-func (h *StreamHandler) streamDirAsZip(reqID string, root *os.Root, dirName, filename string, sendFn func(*pb.NodeMessage) error) {
+func (h *StreamHandler) streamDirAsZip(reqID string, root *os.Root, dirName, filename string, deny map[fileIdentity]bool, sendFn func(*pb.NodeMessage) error) {
 
 	// Send metadata first (filename for Content-Disposition header)
 	if err := sendFn(&pb.NodeMessage{
@@ -446,7 +455,7 @@ func (h *StreamHandler) streamDirAsZip(reqID string, root *os.Root, dirName, fil
 			if relPath == "." {
 				return nil
 			}
-			return addZipEntry(zw, root, name, relPath, info)
+			return addZipEntry(zw, root, name, relPath, info, deny)
 		})
 
 		zw.Close()
@@ -497,8 +506,17 @@ func (h *StreamHandler) streamDirAsZip(reqID string, root *os.Root, dirName, fil
 }
 
 // addZipEntry writes one walked entry into zw under relPath, reading the
-// file through the Root.
-func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.FileInfo) error {
+// file through the Root. The node's own files are left out, by name and, for
+// one reached through a link, by identity (see nodeOwnedIdentities). That
+// includes the backup store in a Beam archive: Beam serves a backup only as the
+// single file it was asked for.
+func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.FileInfo, deny map[fileIdentity]bool) error {
+	if isProtectedFile(name) || deniedIdentity(info, deny) {
+		if info.IsDir() {
+			return fs.SkipDir
+		}
+		return nil
+	}
 	header, err := zip.FileInfoHeader(info)
 	if err != nil {
 		return err
@@ -513,7 +531,7 @@ func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.Fi
 	if err != nil || info.IsDir() {
 		return err
 	}
-	f, err := openRegularIn(root, name)
+	f, err := openTenantReadIn(root, name, deny)
 	if err != nil {
 		return err
 	}
@@ -532,10 +550,11 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 		return
 	}
 	defer root.Close()
+	deny := nodeOwnedIdentities(root, true)
 
 	// If select_all, just zip the whole directory
 	if req.SelectAll {
-		h.streamDirAsZip(reqID, root, baseName, zipName(serverUUID, baseName), sendFn)
+		h.streamDirAsZip(reqID, root, baseName, zipName(serverUUID, baseName), deny, sendFn)
 		return
 	}
 
@@ -577,7 +596,7 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 				if rel == "." {
 					return nil
 				}
-				return addZipEntry(zw, root, name, rel, info)
+				return addZipEntry(zw, root, name, rel, info, deny)
 			})
 			if walkErr != nil {
 				break
@@ -812,6 +831,11 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 	if isProtectedFile(req.DstPath) {
 		return errorMsg(reqID, 403, "cannot overwrite protected file")
 	}
+	// A copy is a read of its source: out of .dylaris-backups into the open is
+	// a backup download without backups.read.
+	if isProtectedFile(req.SrcPath) {
+		return errorMsg(reqID, 403, "cannot copy a protected file")
+	}
 	srcPath, err := h.validatePath(req.SrcPath, serverUUID)
 	if err != nil {
 		return errorMsg(reqID, 403, err.Error())
@@ -852,7 +876,7 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 			return errorMsg(reqID, 500, fmt.Sprintf("copy dir: %v", err))
 		}
 	} else {
-		if err := copyFileIn(root, srcName, dstRoot, dstLeaf); err != nil {
+		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, true)); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy file: %v", err))
 		}
 		chownForMCIn(dstRoot, dstLeaf)

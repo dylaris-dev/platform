@@ -50,7 +50,7 @@ func newUploadRequest(t *testing.T, serverUUID string, fileSize int) *http.Reque
 	if err := mw.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/files/upload", &body)
+	req := httptest.NewRequest(http.MethodPost, "/api/files/upload?server_uuid="+serverUUID, &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	ctx := context.WithValue(req.Context(), "username", "u")
 	ctx = context.WithValue(ctx, "isAdmin", true) // the resolver's admin short-circuit

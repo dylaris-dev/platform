@@ -575,11 +575,41 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		return
 	}
 
-	// Normal request handling (List, Write, Create, Delete, Rename, Copy)
-	responses := m.handler.Handle(msg)
+	// A WriteReq stays on the loop: the chunks that follow it under its
+	// request_id must find the pending write registered above, in order.
+	if msg.GetWriteReq() != nil {
+		m.sendResponses(cc, msg.RequestId, m.handler.Handle(msg))
+		return
+	}
+
+	// Everything else (List, Create, Delete, Rename, Copy, hashing, RCON...)
+	// is one message in, one answer out, so it runs off the loop. On it, a
+	// copy of a large tree, a delete of millions of files, a listing that sums
+	// a whole world, or an open that blocked, stopped this node reading
+	// anything from that Core - every other server's requests and the flow
+	// credits running downloads wait on - until it returned.
+	slots := requestSlotsFor(msg.ServerUuid)
+	go func() {
+		// Bounded: Core gives up on a request after its own timeout, and one
+		// that ran anyway once a slot freed would be a delete or a copy the
+		// user saw fail, retried, and then got twice.
+		wait := time.NewTimer(requestSlotWait)
+		defer wait.Stop()
+		select {
+		case slots <- struct{}{}:
+		case <-wait.C:
+			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 503, "the node is busy with other file operations on this server, try again")})
+			return
+		}
+		defer func() { <-slots }()
+		m.sendResponses(cc, msg.RequestId, m.handler.Handle(msg))
+	}()
+}
+
+func (m *MeshManager) sendResponses(cc *coreConnection, reqID string, responses []*pb.NodeMessage) {
 	for _, resp := range responses {
 		if err := cc.send(resp); err != nil {
-			log.Printf("gRPC Mesh: Failed to send response (request_id=%s): %v", msg.RequestId, err)
+			log.Printf("gRPC Mesh: Failed to send response (request_id=%s): %v", reqID, err)
 			return
 		}
 	}

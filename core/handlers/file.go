@@ -148,6 +148,22 @@ func (h *FileHandler) getServerUUID(r *http.Request, requiredCap string) (string
 	return uuid, err
 }
 
+// fileOpBodyLimit bounds the JSON bodies of the small file operations (create,
+// rename, copy, delete): a path or two. They were decoded unbounded, and before
+// the caller was checked.
+const fileOpBodyLimit = 64 << 10
+
+// refuseSuspendedWrite applies the owner cut-off Beam, SFTP and the upload
+// apply. Save, create, rename and copy are new data a suspended tenant's server
+// takes on just as an upload is; delete stays open on purpose.
+func (h *FileHandler) refuseSuspendedWrite(w http.ResponseWriter, r *http.Request, serverUUID string) bool {
+	if h.state == nil || h.state.Store == nil {
+		return false
+	}
+	srv, err := h.state.Store.GetServerByUUID(serverUUID)
+	return err == nil && refuseIfSuspended(w, r, h.state, srv)
+}
+
 // getServerUUIDRead is getServerUUID for read-only operations (list + view file
 // content), always resolved against files.read. It additionally allows any
 // authenticated user to READ a demo server, so a logged-out-of-everything
@@ -454,6 +470,9 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
+	if h.refuseSuspendedWrite(w, r, serverUUID) {
+		return
+	}
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
@@ -537,6 +556,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 
 // CreateFileHandler handles requests to create a new file or directory
 func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, fileOpBodyLimit)
 	var req struct {
 		Path  string `json:"path"`
 		IsDir bool   `json:"is_dir"`
@@ -561,6 +581,9 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	if serverUUID == "" {
 		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		return
+	}
+	if h.refuseSuspendedWrite(w, r, serverUUID) {
 		return
 	}
 
@@ -589,6 +612,7 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 
 // RenameFileHandler handles renaming files and directories
 func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, fileOpBodyLimit)
 	var req struct {
 		OldPath string `json:"oldPath"`
 		NewPath string `json:"newPath"`
@@ -617,6 +641,9 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
+	if h.refuseSuspendedWrite(w, r, serverUUID) {
+		return
+	}
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
@@ -643,6 +670,7 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 
 // CopyFileHandler handles copying files and directories
 func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, fileOpBodyLimit)
 	var req struct {
 		OldPath string `json:"oldPath"`
 		NewPath string `json:"newPath"`
@@ -659,6 +687,9 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if serverUUID == "" {
 		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		return
+	}
+	if h.refuseSuspendedWrite(w, r, serverUUID) {
 		return
 	}
 
@@ -701,6 +732,7 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 
 // DeleteFileHandler handles requests to delete a file
 func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, fileOpBodyLimit)
 	var req struct {
 		Path string `json:"path"`
 	}
@@ -957,6 +989,25 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 // UploadFileHandler handles uploads — receives files via HTTP multipart,
 // then streams them to the Node via gRPC chunks.
 func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) {
+	// The caller is checked BEFORE the body is read. Parsing first spooled up
+	// to the upload limit onto Core's disk for any signed-in account, including
+	// one with no server at all, and only then answered 403. So server_uuid
+	// comes in the query: in the form, finding it would mean parsing the body.
+	if r.URL.Query().Get("server_uuid") == "" {
+		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		return
+	}
+	serverUUID, err := h.getServerUUID(r, "files.write")
+	if err != nil {
+		sendJSONError(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	// The cut-off Beam and SFTP apply: an upload is new data a suspended
+	// tenant's server takes on.
+	if h.refuseSuspendedWrite(w, r, serverUUID) {
+		return
+	}
+
 	uploadLimit := h.getTransferLimit(r, "upload")
 	if !capBodyLimit(w, r, uploadLimit) {
 		return
@@ -985,20 +1036,6 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	path := r.FormValue("path")
 	if !validate.IsSafeRelPath(path) {
 		sendJSONError(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	serverUUID, err := h.getServerUUID(r, "files.write")
-	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
-		return
-	}
-	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
-		return
-	}
-	// The cut-off Beam and SFTP apply: an upload is new data a suspended
-	// tenant's server takes on, and this route was the one way left to do it.
-	if srv, err := h.state.Store.GetServerByUUID(serverUUID); err == nil && refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
 

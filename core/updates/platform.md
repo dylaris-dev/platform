@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09
+
+### Features
+- Nothing.
+
+### Breaking
+- **`POST /api/files/upload` needs `server_uuid` in the query string;** in the form alone it is
+  refused, because the caller is now checked before the body is read. The panel sends it. `core`
+
+### Security
+- **A named pipe a plugin created in a mods folder could stop a node answering Core for every
+  server on it.** File requests also no longer run on the node's connection loop. `node`
+- **The node's own server config and node-local backups are no longer readable with file access,**
+  neither directly, through a link, nor by a plugin off the mount. `node`
+- **Uploads are checked before their body is read, and save, create, rename and copy refuse a
+  suspended tenant** the way the upload already did. `core` `panel`
+
+### Fixes
+- **A file request that waits over 20 seconds for its server's turn is answered busy,** instead of
+  running after Core already reported a timeout. `node`
+
 ## 2026.10.08.7
 
 ### Features

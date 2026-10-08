@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09
+
+### Features
+- Nothing.
+
+### Breaking
+- **Uploads through the API (`POST /api/files/upload`) need `server_uuid` in the query string.**
+  The panel already sends it; only your own scripts may need the change.
+
+### Security
+- **Your node's internal server config and its local backups can no longer be read through file
+  access or by a plugin,** and a plugin can no longer stall your node. Update your node. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.08.7
 
 ### Features

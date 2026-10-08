@@ -31,22 +31,45 @@ var flowCreditWait = 5 * time.Minute
 // other tenant's reads - the editor, RCON's server.properties - behind them.
 var downloadsPerServer = 4
 
-var (
-	downloadSlotsMu sync.Mutex
-	downloadSlots   = map[string]chan struct{}{}
-)
+// requestsPerServer caps the other file requests (list, copy, delete, hash,
+// RCON...) one server runs at once off the read loop; see handleRequest.
+var requestsPerServer = 4
 
+// requestSlotWait is how long such a request waits for a slot before it is
+// answered "busy" instead of run. Under Core's timeout for these requests.
+var requestSlotWait = 20 * time.Second
+
+// slotTable hands out one semaphore per server.
+//
 // ponytail: a server's entry is never removed; bounded by the servers this
 // node has served since it started.
-func downloadSlotsFor(serverUUID string) chan struct{} {
-	downloadSlotsMu.Lock()
-	defer downloadSlotsMu.Unlock()
-	s, ok := downloadSlots[serverUUID]
+type slotTable struct {
+	mu    sync.Mutex
+	slots map[string]chan struct{}
+}
+
+func (t *slotTable) of(serverUUID string, n int) chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.slots == nil {
+		t.slots = map[string]chan struct{}{}
+	}
+	s, ok := t.slots[serverUUID]
 	if !ok {
-		s = make(chan struct{}, downloadsPerServer)
-		downloadSlots[serverUUID] = s
+		s = make(chan struct{}, n)
+		t.slots[serverUUID] = s
 	}
 	return s
+}
+
+var downloadSlots, requestSlots slotTable
+
+func downloadSlotsFor(serverUUID string) chan struct{} {
+	return downloadSlots.of(serverUUID, downloadsPerServer)
+}
+
+func requestSlotsFor(serverUUID string) chan struct{} {
+	return requestSlots.of(serverUUID, requestsPerServer)
 }
 
 var errFlowStalled = errors.New("the reader took nothing for too long")

@@ -44,7 +44,7 @@ func writeServerMetadata(serverDir string, m ServerMetadata) error {
 		return err
 	}
 	tmp := metadataPath(serverDir) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, nodeOwnedFileMode); err != nil {
 		return err
 	}
 	return os.Rename(tmp, metadataPath(serverDir))

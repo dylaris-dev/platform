@@ -119,7 +119,10 @@ export function uploadFiles(path: string, files: FileList, onProgress: (p: numbe
         };
         xhr.onerror = () => resolve({ success: false, message: 'Connection error' });
 
-        xhr.open('POST', `${API_URL}/files/upload`, true);
+        // server_uuid in the query too: Core checks the caller before it reads
+        // the body, and the form is the body.
+        const query = serverUuid ? `?server_uuid=${encodeURIComponent(serverUuid)}` : '';
+        xhr.open('POST', `${API_URL}/files/upload${query}`, true);
         // No Authorization header: XMLHttpRequest sends cookies on same-origin
         // requests by default, and the session is a cookie now.
         xhr.send(formData);

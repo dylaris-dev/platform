@@ -114,7 +114,7 @@ func TestReadsRefuseAPipe(t *testing.T) {
 		},
 		"panel": func() bool {
 			ok := true
-			NewStreamHandler(bs.storageMgr).streamFile("r", root, "survival/p", func(m *nodepb.NodeMessage) error {
+			NewStreamHandler(bs.storageMgr).streamFile("r", root, "survival/p", nil, func(m *nodepb.NodeMessage) error {
 				if m.GetError() != nil {
 					ok = false
 				}

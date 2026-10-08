@@ -46,7 +46,7 @@ func TestUploadWithNoRecognisedFilePartIsRefused(t *testing.T) {
 				t.Fatalf("close writer: %v", err)
 			}
 
-			req := httptest.NewRequest(http.MethodPost, "/api/files/upload", &body)
+			req := httptest.NewRequest(http.MethodPost, "/api/files/upload?server_uuid=s1", &body)
 			req.Header.Set("Content-Type", mw.FormDataContentType())
 			ctx := context.WithValue(req.Context(), "username", "u")
 			ctx = context.WithValue(ctx, "isAdmin", true)

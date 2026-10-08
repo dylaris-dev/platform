@@ -196,8 +196,8 @@ func chownForMCIn(root *os.Root, name string) {
 }
 
 // copyFileIn copies srcName in src to dstName in dst, creating dst's parents.
-func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string) error {
-	in, err := openRegularIn(src, srcName)
+func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool) error {
+	in, err := openTenantReadIn(src, srcName, deny)
 	if err != nil {
 		return err
 	}
@@ -211,6 +211,95 @@ func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string) erro
 		return err
 	}
 	return out.Close()
+}
+
+// nodeOwnedFileMode and nodeOwnedDirMode keep the node's own files in a server
+// directory away from the container, which mounts that directory at /data and
+// runs as uid 1000: a plugin read .node_config.json (the start command and the
+// JVM flags, hidden from members without server.settings.write) and every
+// node-local backup straight off the mount. A container run as root
+// (MC_RUN_AS=0) still reads them.
+const (
+	nodeOwnedFileMode os.FileMode = 0o600
+	nodeOwnedDirMode  os.FileMode = 0o700
+)
+
+// restrictNodeOwnedFiles applies those modes to files written before they
+// existed. os.WriteFile keeps an existing file's mode, so without this an old
+// config stayed readable for good. Links are left alone: the node never makes
+// one here, and the tenant cannot create entries in this directory.
+func restrictNodeOwnedFiles(serverDir string) {
+	for name, mode := range map[string]os.FileMode{
+		".node_config.json": nodeOwnedFileMode,
+		".dylaris.json":     nodeOwnedFileMode,
+		".active_server":    nodeOwnedFileMode,
+		backupDirName:       nodeOwnedDirMode,
+	} {
+		p := filepath.Join(serverDir, name)
+		info, err := os.Lstat(p)
+		if err != nil || info.Mode()&fs.ModeSymlink != 0 || info.Mode().Perm() == mode {
+			continue
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			log.Printf("restrict %s: %v", p, err)
+		}
+	}
+}
+
+// nodeOwnedIdentities collects the identities of the files the node keeps in
+// the server directory root is opened at: its config, its metadata and, with
+// withBackups, the node-local backup store and everything in it.
+//
+// A read is refused by identity and not only by name because a name can be a
+// link: a plugin planting survival/x -> ../.node_config.json made a member with
+// files.read read the container command and JVM flags (hidden from them since
+// round 64) and download backups without backups.read, through every read path
+// that follows a link inside the server directory.
+func nodeOwnedIdentities(root *os.Root, withBackups bool) map[fileIdentity]bool {
+	ids := map[fileIdentity]bool{}
+	add := func(info fs.FileInfo) {
+		if id, ok := identityOf(info); ok {
+			ids[id] = true
+		}
+	}
+	for _, n := range []string{".node_config.json", ".dylaris.json", ".active_server"} {
+		if info, err := root.Lstat(n); err == nil {
+			add(info)
+		}
+	}
+	if withBackups {
+		_ = fs.WalkDir(root.FS(), backupDirName, func(_ string, d fs.DirEntry, err error) error {
+			if err != nil || d.Type()&fs.ModeSymlink != 0 {
+				return nil
+			}
+			if info, ierr := d.Info(); ierr == nil {
+				add(info)
+			}
+			return nil
+		})
+	}
+	return ids
+}
+
+// deniedIdentity reports whether info is one of deny's files.
+func deniedIdentity(info fs.FileInfo, deny map[fileIdentity]bool) bool {
+	id, ok := identityOf(info)
+	return ok && deny[id]
+}
+
+// openTenantReadIn is openRegularIn for a read on a tenant's behalf: a file
+// that turns out to be one of deny's is not found, however it was reached.
+// Judged on the open file, so a link swapped after a check cannot slip past.
+func openTenantReadIn(root *os.Root, name string, deny map[fileIdentity]bool) (*os.File, error) {
+	f, err := openRegularIn(root, name)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || deniedIdentity(st, deny) {
+		f.Close()
+		return nil, fs.ErrNotExist
+	}
+	return f, nil
 }
 
 // copyDirForTenant copies a tenant's tree to dstName, writing through a root
@@ -242,6 +331,10 @@ func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
 // and everything written is handed to the container's uid (see copyDir). Without
 // it, it is a verbatim MOVE of a whole server (see copyTree).
 func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool) error {
+	var deny map[fileIdentity]bool
+	if forTenant {
+		deny = nodeOwnedIdentities(src, true)
+	}
 	return walkRoot(src, srcName, func(name string, info fs.FileInfo) error {
 		rel := "."
 		if name != srcName {
@@ -250,7 +343,7 @@ func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forT
 				rel = name
 			}
 		}
-		if forTenant && rel != "." && isProtectedFile(rel) {
+		if forTenant && rel != "." && (isProtectedFile(rel) || isProtectedFile(name) || deniedIdentity(info, deny)) {
 			if info.IsDir() {
 				return fs.SkipDir
 			}
@@ -266,7 +359,7 @@ func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forT
 			}
 			return nil
 		}
-		if err := copyFileIn(src, name, dst, target); err != nil {
+		if err := copyFileIn(src, name, dst, target, deny); err != nil {
 			return err
 		}
 		if forTenant {

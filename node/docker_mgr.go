@@ -1127,6 +1127,10 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 			log.Printf("mc-user: %v", err)
 		}
 	}
+	// The PARENT is mounted too (at /data), so a root-owned parent keeps the
+	// tenant from writing the node's files but not from reading them. They
+	// are root-only now; this is the migration for the ones written 0644.
+	restrictNodeOwnedFiles(dm.resolveLocalServerPath(config.UUID))
 
 	binds := []string{fmt.Sprintf("%s:/data", hostServerPath)}
 	if len(config.ExistingBinds) > 0 {
