@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **Moving a server to one of your nodes now checks that node's server limit,** just like creating
+  a server there. If the node is full, stop or delete a server there first. Nothing to update.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.07.2
 
 ### Features

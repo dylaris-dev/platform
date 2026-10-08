@@ -1784,6 +1784,16 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "A server can only be moved to the platform's nodes or to its owner's own", http.StatusForbidden)
 		return
 	}
+	// The same per-node cap as CreateServer: it protects the shared control
+	// plane, and filling one node by creating and then moving servers onto
+	// another got past it.
+	// ponytail: counted at queue time, so moves queued together can overshoot by the queue depth.
+	if byonActive(h.state, r) && !IsAdmin(r) {
+		if reached, capN := h.byonNodeServerCapReached(r.Context(), target); reached {
+			sendJSONError(w, fmt.Sprintf("The target node's server limit (%d) is reached.", capN), http.StatusForbidden)
+			return
+		}
+	}
 	// A suspended server is not the owner's to move: the move ended in
 	// "stopped", which the power gate does not refuse, so a transfer onto the
 	// owner's own machine lifted an operator's suspension. The account-level

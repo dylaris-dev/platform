@@ -211,6 +211,9 @@ type twoNodeFakeStore struct {
 	target *models.Node
 }
 
+// An empty target: the per-node server cap does not refuse (TransferServer).
+func (f *twoNodeFakeStore) CountServersByNode(int) (int, error) { return 0, nil }
+
 func (f *twoNodeFakeStore) GetNodeByID(id int) (*models.Node, error) {
 	if f.target != nil && id == f.target.ID {
 		return f.target, nil

@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **Moving a server onto a customer's node now respects that node's server limit,** the same
+  limit that applies when creating one there. Admins stay exempt. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- **Temporary R2 objects from cross-network node moves are deleted again once their upload links
+  expire.** A late upload used to leave an object behind for good. `core`
+
 ## 2026.10.08.3
 
 ### Features

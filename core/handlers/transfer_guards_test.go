@@ -19,8 +19,11 @@ import (
 // source node's state set per case.
 type transferStore struct {
 	*twoNodeFakeStore
-	status string
+	status   string
+	onTarget int // servers already on the target node
 }
+
+func (f *transferStore) CountServersByNode(int) (int, error) { return f.onTarget, nil }
 
 func (f *transferStore) GetServerByID(id int) (*models.Server, error) {
 	return &models.Server{ID: id, UUID: "srv-1", OwnerID: visOwner, NodeID: f.node.ID, Status: f.status}, nil
@@ -85,5 +88,21 @@ func TestATransferRepeatedWhileQueuedIsRefused(t *testing.T) {
 	rw := transferAs(t, newTransferStore("online", "stopped"))
 	if rw.Code != http.StatusConflict || !bytes.Contains(rw.Body.Bytes(), []byte("already queued")) {
 		t.Fatalf("status %d: %s", rw.Code, rw.Body)
+	}
+}
+
+// The per-node cap CreateServer applies: creating servers on one node and
+// moving them onto another filled that one past it.
+func TestATransferOntoAFullNodeIsRefused(t *testing.T) {
+	full := newTransferStore("online", "stopped")
+	full.onTarget = byonNodeServerFallbackCap
+	if rw := transferAs(t, full); rw.Code != http.StatusForbidden || !bytes.Contains(rw.Body.Bytes(), []byte("server limit")) {
+		t.Fatalf("full target: status %d: %s", rw.Code, rw.Body)
+	}
+	room := newTransferStore("online", "stopped")
+	room.onTarget = byonNodeServerFallbackCap - 1
+	// transferAs sends twice: the first is accepted, so the second meets the queue.
+	if rw := transferAs(t, room); !bytes.Contains(rw.Body.Bytes(), []byte("already queued")) {
+		t.Fatalf("a target with room was refused: %d %s", rw.Code, rw.Body)
 	}
 }

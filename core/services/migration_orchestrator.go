@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,6 +145,65 @@ func (o *MigrationOrchestrator) SetLeader(l leader.Election) { o.leader = l }
 func (o *MigrationOrchestrator) Start(ctx context.Context) {
 	log.Println("Migration Orchestrator started")
 	go o.consume(ctx)
+	go o.sweepR2TransfersLoop(ctx)
+}
+
+// migrationR2SweepKey holds the R2 transfer objects to delete once more after
+// their pre-signed URLs expired, scored by that time (unix seconds).
+const migrationR2SweepKey = "dylaris:migration:r2sweep"
+
+// sweepR2TransfersLoop runs the sweep on the leader every quarter hour.
+func (o *MigrationOrchestrator) sweepR2TransfersLoop(ctx context.Context) {
+	t := time.NewTicker(15 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if o.leader != nil && !o.leader.IsLeader() {
+				continue
+			}
+			o.sweepR2Transfers(ctx, time.Now(), o.deleteTransferObject)
+		}
+	}
+}
+
+// sweepR2Transfers deletes every recorded transfer object whose URLs have
+// expired, and forgets it only once the delete succeeded.
+func (o *MigrationOrchestrator) sweepR2Transfers(ctx context.Context, now time.Time, del func(context.Context, string) error) {
+	due, err := o.redis.ZRangeByScoreWithScores(ctx, migrationR2SweepKey, &redis.ZRangeBy{
+		Min: "-inf", Max: strconv.FormatInt(now.Unix(), 10),
+	}).Result()
+	if err != nil {
+		log.Printf("migration: R2 transfer object sweep could not read its list: %v", err)
+		return
+	}
+	for _, z := range due {
+		key, _ := z.Member.(string)
+		if err := del(ctx, key); err != nil {
+			// A storage that went away (switched off S3, deleted bucket) will
+			// not come back for this key; a week of retries is enough.
+			if now.Sub(time.Unix(int64(z.Score), 0)) > 7*24*time.Hour {
+				o.redis.ZRem(ctx, migrationR2SweepKey, key)
+			}
+			log.Printf("migration: R2 transfer object sweep failed (%s): %v", key, err)
+			continue
+		}
+		o.redis.ZRem(ctx, migrationR2SweepKey, key)
+	}
+}
+
+func (o *MigrationOrchestrator) deleteTransferObject(ctx context.Context, key string) error {
+	bs, err := o.store.GetDefaultBackupStorage()
+	if err != nil || bs == nil || bs.Provider != "s3" {
+		return fmt.Errorf("no S3/R2 backup storage to sweep: %v", err)
+	}
+	prov, err := backupstorage.Open(ctx, bs, backupstorage.Deps{})
+	if err != nil {
+		return fmt.Errorf("open backup storage: %w", err)
+	}
+	return prov.Delete(ctx, key)
 }
 
 // EnqueueMigration pushes a migration request onto the queue. Callable from any
@@ -1022,10 +1082,19 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 		return fmt.Errorf("open backup storage: %w", err)
 	}
 
-	// One stable key per server (migrations are serialized, so no collision).
-	key := fmt.Sprintf("migration-transfer/%s.zip", srv.UUID)
+	// One key per attempt: the sweep below deletes it again after its URLs
+	// expire, and must never reach the object of a later move of the server.
+	key := fmt.Sprintf("migration-transfer/%s-%s.zip", srv.UUID, attempt)
 	// Use the BYON presign TTL (longer) since at least one leg is a slow home link.
 	ttl := presignTTL(o.store, true)
+	// The PUT URL outlives the delete below: the source - a customer's node on
+	// this path - can upload again until it expires, and that object was left
+	// for good. Recorded before the URL exists, so no URL is ever untracked.
+	if err := o.redis.ZAdd(ctx, migrationR2SweepKey, redis.Z{
+		Score: float64(time.Now().Add(ttl + time.Minute).Unix()), Member: key,
+	}).Err(); err != nil {
+		return fmt.Errorf("record transfer object for cleanup: %w", err)
+	}
 	putURL, err := prov.UploadURL(ctx, key, ttl)
 	if err != nil || putURL == "" {
 		return fmt.Errorf("presign put url: %v", err)
