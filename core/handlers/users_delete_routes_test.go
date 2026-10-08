@@ -26,6 +26,9 @@ type deleteRoutesFakeStore struct {
 	deleteUser error
 }
 
+// No modpack storage configured: the account has no pack objects to clean.
+func (f *deleteRoutesFakeStore) GetSetting(string) (string, error) { return "", nil }
+
 func (f *deleteRoutesFakeStore) GetUserByID(id string) (*models.User, error) {
 	return &models.User{ID: id, Username: "customer", Password: testReauthHash}, nil
 }

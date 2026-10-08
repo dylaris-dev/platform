@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.08.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting a modpack, a build or an account now removes its stored files** (.mrpack and server
+  pack). Renaming a draft version removes the old ones. They used to stay in storage for good. `core`
+- **A failed content upload no longer leaves its file in modpack storage.** `core`
+
 ## 2026.10.08.4
 
 ### Features

@@ -23,6 +23,9 @@ type userDeleteWarpStore struct {
 	keys []store.WarpAPIKey
 }
 
+// No modpack storage configured: the account has no pack objects to clean.
+func (f *userDeleteWarpStore) GetSetting(string) (string, error) { return "", nil }
+
 func (f *userDeleteWarpStore) GetUserByID(id string) (*models.User, error) {
 	return &models.User{ID: id, Username: "victim", Password: testReauthHash}, nil
 }

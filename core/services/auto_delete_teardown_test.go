@@ -178,3 +178,29 @@ func TestAutoDeleteKeepsTheAccountWhenTeardownFails(t *testing.T) {
 		t.Errorf("the account was deleted even though its address could not be removed: %v", fs.deletedIDs)
 	}
 }
+
+// A hard delete cascades the account's packs; their stored objects are read
+// before the row goes and removed after. Anonymize keeps the rows, and so the
+// objects.
+func TestAutoDeleteRemovesThePackObjectsOfAHardDelete(t *testing.T) {
+	for _, mode := range []string{"hard_delete", "anonymize"} {
+		t.Run(mode, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			fs := &autoDeleteFakeStore{due: []string{"owner-1"}}
+			svc := NewAutoDeleteService(fs, "https://panel.example.test")
+			svc.SetLinkACL(&autoDeleteFakeGateway{store: fs, failFor: map[string]error{}}, rdb, redisacl.NewProvisioner(rdb))
+			var dropped []string
+			svc.SetPackStorage(
+				func(id string) []string { return []string{"modpacks/" + id + "/"} },
+				func(d []string) { dropped = append(dropped, d...) },
+			)
+			svc.processExecutions(context.Background(), policySnapshot{Mode: mode})
+			if mode == "hard_delete" && (len(dropped) != 1 || dropped[0] != "modpacks/owner-1/") {
+				t.Errorf("hard delete dropped %v", dropped)
+			}
+			if mode == "anonymize" && len(dropped) != 0 {
+				t.Errorf("anonymize dropped %v; the rows still point at them", dropped)
+			}
+		})
+	}
+}

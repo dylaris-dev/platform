@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -265,6 +266,8 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		OwnerID: userID, Slug: slug, PrettyName: fileName, ContentType: contentType,
 	})
 	if err != nil {
+		// The object is stored and nothing points at it yet.
+		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
 		sendJSONError(w, "Failed to save mod", http.StatusInternalServerError)
 		return
 	}
@@ -292,6 +295,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	}
 	mvID, err := h.state.Store.CreateModversion(mv)
 	if err != nil {
+		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
 		sendJSONError(w, "Failed to save version", http.StatusInternalServerError)
 		return
 	}

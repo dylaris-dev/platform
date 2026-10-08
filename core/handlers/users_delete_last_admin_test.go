@@ -24,6 +24,9 @@ type lastAdminFakeStore struct {
 	deleted bool
 }
 
+// No modpack storage configured: the account has no pack objects to clean.
+func (f *lastAdminFakeStore) GetSetting(string) (string, error) { return "", nil }
+
 func (f *lastAdminFakeStore) GetUserByID(string) (*models.User, error) {
 	u := f.target
 	u.Password = testReauthHash // the acting admin re-authenticates

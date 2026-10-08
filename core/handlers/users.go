@@ -316,6 +316,8 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// The Beam stamp goes first of all: once the grants are gone there is no
 	// list of what this account could reach left to stamp.
 	stampBeamAccessForUser(r.Context(), h.state, id)
+	// Read now, removed once the row is gone: the packs cascade with it.
+	packDirs := h.state.PackDirsOfUser(id)
 	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
 		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), h.state.WarpPeers, id); err != nil {
 		log.Printf("delete user %s: teardown: %v", id, err)
@@ -346,6 +348,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	h.state.DropPackDirs(packDirs)
 
 	// The only record that this account ever existed.
 	//

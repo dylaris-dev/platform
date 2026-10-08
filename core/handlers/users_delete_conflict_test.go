@@ -21,6 +21,9 @@ type deleteUserFakeStore struct {
 	auditRows    []models.AuditEventIdentity
 }
 
+// No modpack storage configured: the account has no pack objects to clean.
+func (f *deleteUserFakeStore) GetSetting(string) (string, error) { return "", nil }
+
 func (f *deleteUserFakeStore) GetUserByID(id string) (*models.User, error) {
 	// The password is the acting admin's: deleting re-authenticates now.
 	return &models.User{ID: id, Username: "customer", Email: "customer@example.test", Password: testReauthHash}, nil

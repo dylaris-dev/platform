@@ -145,6 +145,9 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	mv.ModrinthLatestVersionID = v.ID // aligned: current == latest-known -> clears "update available"
 	mv.ModrinthLastChecked = &now
 	if err := h.state.Store.UpdateModversion(mv); err != nil {
+		if newKey != oldKey {
+			h.deleteIfUnreferenced(context.WithoutCancel(ctx), prov, newKey)
+		}
 		return fmt.Errorf("failed to update content: %w", err)
 	}
 	if oldKey != "" && oldKey != newKey {

@@ -776,6 +776,7 @@ func main() {
 	// up once the row is gone.
 	autoDelete.SetLinkACL(appState.Gateway, redisClient, aclProvisioner)
 	autoDelete.SetWarpPeers(extras.warpService)
+	autoDelete.SetPackStorage(appState.PackDirsOfUser, appState.DropPackDirs)
 	autoDelete.Start(bgCtx)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},

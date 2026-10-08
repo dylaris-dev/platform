@@ -196,6 +196,9 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	mv.ModrinthLatestVersionID = ""
 	mv.ModrinthLastChecked = nil
 	if err := h.state.Store.UpdateModversion(mv); err != nil {
+		if newKey != oldKey {
+			h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, newKey)
+		}
 		sendJSONError(w, "Failed to save content", http.StatusInternalServerError)
 		return
 	}

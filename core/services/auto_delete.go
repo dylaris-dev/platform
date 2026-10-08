@@ -21,10 +21,12 @@ import (
 // policy. Gated on the global Core leader so under multi-Core only one
 // instance ever processes warnings/deletions per tick.
 type AutoDeleteService struct {
-	store       store.Store
-	frontendURL string
-	interval    time.Duration
-	leader      leader.Election
+	packDirsOf   func(string) []string
+	dropPackDirs func([]string)
+	store        store.Store
+	frontendURL  string
+	interval     time.Duration
+	leader       leader.Election
 
 	// Teardown deps, wired after the ACL provisioner and gateway exist. Until
 	// they are, this sweep removes account ROWS and leaves what those accounts
@@ -46,6 +48,13 @@ func (s *AutoDeleteService) SetWarpPeers(w WarpPeerDisconnector) { s.warpPeers =
 // SetLeader wires the leader-election gate. Without it the service runs
 // on every tick (single-Core dev mode).
 func (s *AutoDeleteService) SetLeader(l leader.Election) { s.leader = l }
+
+// SetPackStorage wires the modpack storage cleanup a hard delete needs: the
+// directories are read before the row goes (the packs cascade with it) and
+// removed after. Lives in handlers, which derives the keys.
+func (s *AutoDeleteService) SetPackStorage(dirsOf func(userID string) []string, drop func([]string)) {
+	s.packDirsOf, s.dropPackDirs = dirsOf, drop
+}
 
 // SetLinkACL wires what this sweep needs to remove a tenant's infrastructure
 // along with their account. Named and shaped like the billing lifecycle's
@@ -244,9 +253,16 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 
 		switch p.Mode {
 		case "hard_delete":
+			var packDirs []string
+			if s.packDirsOf != nil {
+				packDirs = s.packDirsOf(userID)
+			}
 			if err := s.store.DeleteUser(userID); err != nil {
 				log.Printf("auto-delete: hard-delete userID=%s: %v", userID, err)
 				continue
+			}
+			if s.dropPackDirs != nil {
+				s.dropPackDirs(packDirs)
 			}
 			// No target: the user row is gone and the foreign key refuses a
 			// reference to it. The metadata carries who it was.
