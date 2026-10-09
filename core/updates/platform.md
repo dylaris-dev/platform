@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Copies, archive extraction and import downloads can no longer fill a node's disk or inodes.**
+  They stop at the node's free space less a reserve and at two million files. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.3
 
 ### Features

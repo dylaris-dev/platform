@@ -1040,7 +1040,9 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, true)); err != nil {
+		budget := newWriteBudget(s.storageMgr.GetServerDir(serverUUID))
+		defer budget.release()
+		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, true), budget); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 		chownForMCIn(dstRoot, dstLeaf)

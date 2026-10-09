@@ -373,7 +373,8 @@ func extractOverrides(mrpackPath, destDir string) error {
 	if err != nil {
 		return err
 	}
-	budget := restoreDiskBudget(destDir)
+	budget := newWriteBudget(destDir)
+	defer budget.release()
 
 	root, err := openRootMk(destDir)
 	if err != nil {
@@ -399,6 +400,9 @@ func extractOverrides(mrpackPath, destDir string) error {
 			if skip {
 				return fmt.Errorf("unsafe path in mrpack: %s", f.Name)
 			}
+			if err := budget.entryAt(name); err != nil {
+				return err
+			}
 			if f.FileInfo().IsDir() {
 				if err := root.MkdirAll(name, 0o755); err != nil {
 					return err
@@ -409,7 +413,7 @@ func extractOverrides(mrpackPath, destDir string) error {
 			if err != nil {
 				return err
 			}
-			werr := writeFileInto(root, name, 0o644, &budgetReader{r: rc, left: &budget}, 0)
+			werr := writeFileInto(root, name, 0o644, budget.reader(rc), 0)
 			rc.Close()
 			if werr != nil {
 				return werr

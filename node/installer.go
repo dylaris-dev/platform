@@ -503,7 +503,15 @@ func installFromLibrary(destDir, localPath, url string) error {
 // refuses every non-public address. The response lands in the tenant's server,
 // so an unguarded fetch read whatever the node reaches on the private network.
 func downloadImportGuarded(url, destPath string) error {
-	return downloadFileGuarded(url, destPath, 0)
+	// The tenant names the URL, and nothing capped the body: a response that
+	// never ends filled the node's disk. No room left is a refusal: a cap of 0
+	// would mean no cap at all.
+	budget := newWriteBudget(filepath.Dir(destPath))
+	defer budget.release()
+	if budget.left <= 0 {
+		return errUnpackBudget
+	}
+	return downloadFileGuarded(url, destPath, budget.left)
 }
 
 // installFromURL downloads a file from a URL and places it in destDir.
@@ -692,8 +700,10 @@ func extractZipToDir(zipPath, destDir string) error {
 		return fmt.Errorf("failed to open zip %s: %v", zipPath, err)
 	}
 	// Bounded like a restore: nothing else stops an archive that unpacks to
-	// more than the disk holds, on a node without project quotas.
-	budget := restoreDiskBudget(destDir)
+	// more than the disk holds, or to more files than it has inodes, on a
+	// node without project quotas.
+	budget := newWriteBudget(destDir)
+	defer budget.release()
 
 	root, err := openRootMk(destDir)
 	if err != nil {
@@ -707,6 +717,9 @@ func extractZipToDir(zipPath, destDir string) error {
 			log.Printf("Skipping unsafe zip entry %q", f.Name)
 			continue
 		}
+		if err := budget.entryAt(name); err != nil {
+			return err
+		}
 		if f.FileInfo().IsDir() {
 			root.MkdirAll(name, 0o755)
 			continue
@@ -715,7 +728,7 @@ func extractZipToDir(zipPath, destDir string) error {
 		if err != nil {
 			return err
 		}
-		werr := writeFileInto(root, name, f.Mode(), &budgetReader{r: rc, left: &budget}, 0)
+		werr := writeFileInto(root, name, f.Mode(), budget.reader(rc), 0)
 		rc.Close()
 		if werr != nil {
 			return werr

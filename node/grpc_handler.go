@@ -873,7 +873,9 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 			return errorMsg(reqID, 500, fmt.Sprintf("copy dir: %v", err))
 		}
 	} else {
-		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, true)); err != nil {
+		budget := newWriteBudget(h.serverDir(serverUUID))
+		defer budget.release()
+		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, true), budget); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy file: %v", err))
 		}
 		chownForMCIn(dstRoot, dstLeaf)

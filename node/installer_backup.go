@@ -82,7 +82,8 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 		return nil, fmt.Errorf("backup archive not found at %s: %w", backupImportArchiveName, err)
 	}
 	defer f.Close()
-	budget := restoreDiskBudget(destDir)
+	budget := newWriteBudget(destDir)
+	defer budget.release()
 
 	gr, err := gzip.NewReader(f)
 	if err != nil {
@@ -127,6 +128,9 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 			log.Printf("backup import: skipping unsafe entry %q", hdr.Name)
 			continue
 		}
+		if err := budget.entryAt(name); err != nil {
+			return nil, err
+		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -140,7 +144,7 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 			}
 			// Bounded by the header's own size rather than copied to EOF, so a
 			// lying header cannot fill the disk from a small archive.
-			if _, cerr := io.Copy(out, &budgetReader{r: io.LimitReader(tr, hdr.Size), left: &budget}); cerr != nil {
+			if _, cerr := io.Copy(out, budget.reader(io.LimitReader(tr, hdr.Size))); cerr != nil {
 				out.Close()
 				return nil, fmt.Errorf("write %s: %w", hdr.Name, cerr)
 			}

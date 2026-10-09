@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 )
 
 // The node's filesystem boundary for tenant trees.
@@ -197,17 +198,25 @@ func chownForMCIn(root *os.Root, name string) {
 }
 
 // copyFileIn copies srcName in src to dstName in dst, creating dst's parents.
-func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool) error {
+// A nil budget copies unbounded: only a whole-server move does that.
+func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool, budget *writeBudget) error {
 	in, err := openTenantReadIn(src, srcName, deny)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	var r io.Reader = in
+	if budget != nil {
+		if err := budget.entry(); err != nil {
+			return err
+		}
+		r = budget.reader(in)
+	}
 	out, err := createIn(dst, dstName, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(out, r); err != nil {
 		out.Close()
 		return err
 	}
@@ -333,8 +342,13 @@ func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
 // it, it is a verbatim MOVE of a whole server (see copyTree).
 func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool) error {
 	var deny map[fileIdentity]bool
+	var budget *writeBudget
 	if forTenant {
 		deny = nodeOwnedIdentities(src, true)
+		// A copy had no bound at all: a member duplicating a large world
+		// again and again filled the node's disk for every server on it.
+		budget = newWriteBudget(dst.Name())
+		defer budget.release()
 	}
 	return walkRoot(src, srcName, func(name string, info fs.FileInfo) error {
 		rel := "."
@@ -352,6 +366,11 @@ func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forT
 		}
 		target := path.Join(dstName, rel)
 		if info.IsDir() {
+			if budget != nil {
+				if err := budget.entry(); err != nil {
+					return err
+				}
+			}
 			if err := dst.MkdirAll(target, info.Mode().Perm()); err != nil {
 				return err
 			}
@@ -360,7 +379,7 @@ func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forT
 			}
 			return nil
 		}
-		if err := copyFileIn(src, name, dst, target, deny); err != nil {
+		if err := copyFileIn(src, name, dst, target, deny, budget); err != nil {
 			return err
 		}
 		if forTenant {
@@ -465,27 +484,84 @@ func copyTreeAt(src, dst string, forTenant bool) error {
 	return copyWalkIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst), forTenant)
 }
 
-// errUnpackBudget ends an extraction that would fill the disk.
-var errUnpackBudget = errors.New("the archive unpacks to more than the free space this node can give it")
+// errUnpackBudget ends an extraction or copy that would fill the disk.
+var errUnpackBudget = errors.New("this writes more than the free space or the number of files this node can give it")
 
-// budgetReader fails once more than *left bytes have been read through it,
-// across every reader sharing left. An archive's sizes are its own claim, so
-// the count is of what actually comes out.
-type budgetReader struct {
-	r    io.Reader
-	left *int64
+// writeBudget bounds what an extraction or a tenant's copy may write into one
+// directory: bytes against the node's free space less its reserve, and entries
+// against the inode count, each charged restoreEntryCost the way a restore is.
+// Only a restore and a migration had an entry cap; a zip of millions of empty
+// files, or a copy of a folder holding them, used up the node's inodes for
+// every server on it.
+type writeBudget struct {
+	left    int64
+	used    int64
+	entries int
+	dirs    map[string]bool
 }
 
-func (b *budgetReader) Read(p []byte) (int, error) {
-	n, err := b.r.Read(p)
-	if int64(n) > *b.left {
-		// Hand back only what fits: io.Copy writes the bytes of a read before
-		// it looks at the error.
-		n = int(max(*b.left, 0))
-		*b.left = -1
-		return n, errUnpackBudget
+// inflightWrites is what running budgets have written and not yet released.
+// Each budget measured the free space on its own, so four copies of a world
+// started together each saw the whole of it and together went past the
+// reserve.
+var inflightWrites atomic.Int64
+
+// newWriteBudget must be paired with release once the write is done.
+func newWriteBudget(dir string) *writeBudget {
+	return &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}}
+}
+
+func (b *writeBudget) release() {
+	inflightWrites.Add(-b.used)
+	b.used = 0
+}
+
+func (b *writeBudget) spend(n int64) bool {
+	b.left -= n
+	b.used += n
+	inflightWrites.Add(n)
+	return b.left >= 0
+}
+
+// entry charges one created file or directory.
+func (b *writeBudget) entry() error {
+	b.entries++
+	if !b.spend(restoreEntryCost) || b.entries > maxRestoreEntries {
+		return errUnpackBudget
 	}
-	*b.left -= int64(n)
+	return nil
+}
+
+// entryAt charges the entry at name and every parent directory creating it
+// makes on the way, once each, the way a restore counts them: an archive entry
+// a/a/a/.../f makes thousands of directories and was charged as one.
+func (b *writeBudget) entryAt(name string) error {
+	for d := path.Dir(name); d != "." && d != "/" && !b.dirs[d]; d = path.Dir(d) {
+		b.dirs[d] = true
+		if err := b.entry(); err != nil {
+			return err
+		}
+	}
+	return b.entry()
+}
+
+// reader counts what actually comes out of r against the bytes left.
+func (b *writeBudget) reader(r io.Reader) io.Reader {
+	return &writeBudgetReader{r: r, b: b}
+}
+
+type writeBudgetReader struct {
+	r io.Reader
+	b *writeBudget
+}
+
+func (w *writeBudgetReader) Read(p []byte) (int, error) {
+	n, err := w.r.Read(p)
+	if n > 0 && !w.b.spend(int64(n)) {
+		// Hand back only what fit: io.Copy writes a read's bytes before it
+		// looks at the error.
+		return max(n+int(w.b.left), 0), errUnpackBudget
+	}
 	return n, err
 }
 
