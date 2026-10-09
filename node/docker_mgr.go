@@ -528,13 +528,16 @@ func (dm *DockerManager) RemoveOwnLinkContainer() {
 // no networks, its log-shipper retrying "Redis not reachable ... network is
 // unreachable" every 32 seconds, never starting Java at all.
 func (dm *DockerManager) ensureGlobalNetwork() (id string, name string, err error) {
-	const netName = "dylaris_net"
+	netName := globalNetOverride()
+	if netName == "" {
+		netName = "dylaris_net"
+	}
 	nets, lerr := dm.cli.NetworkList(dm.ctx, network.ListOptions{})
 	if lerr != nil {
 		return "", "", fmt.Errorf("network list error: %v", lerr)
 	}
 	for _, n := range nets {
-		if isGlobalNetName(n.Name) {
+		if isOwnGlobalNet(n.Name) {
 			log.Printf("Found overlay network %q (ID: %s)", n.Name, n.ID[:12])
 			return n.ID, n.Name, nil
 		}
@@ -593,6 +596,22 @@ func isGlobalNetName(name string) bool {
 	return name == "dylaris_net" || strings.HasSuffix(name, "_dylaris_net")
 }
 
+// globalNetOverride is the server network a deploy kit names. An older node
+// created a dylaris_net of its own, which current Docker Compose refuses to
+// adopt, and with two nodes on one daemon "the first *_dylaris_net" can be the
+// other node's.
+func globalNetOverride() string {
+	return strings.TrimSpace(os.Getenv("NODE_DOCKER_NETWORK"))
+}
+
+// isOwnGlobalNet matches only the named network when the kit names one.
+func isOwnGlobalNet(name string) bool {
+	if want := globalNetOverride(); want != "" {
+		return name == want
+	}
+	return isGlobalNetName(name)
+}
+
 // findExistingGlobalNetwork re-lists networks and returns the shared server
 // network if present. Used to adopt a network a concurrent creator just made.
 func (dm *DockerManager) findExistingGlobalNetwork() (id, name string, found bool) {
@@ -601,7 +620,7 @@ func (dm *DockerManager) findExistingGlobalNetwork() (id, name string, found boo
 		return "", "", false
 	}
 	for _, n := range nets {
-		if isGlobalNetName(n.Name) {
+		if isOwnGlobalNet(n.Name) {
 			return n.ID, n.Name, true
 		}
 	}

@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The node file from the panel deploys again on current Docker Compose.** It stopped with
+  "network dylaris_net was found but has incorrect label"; take a fresh file from the panel. `node`
+
 ## 2026.10.09.9
 
 ### Features

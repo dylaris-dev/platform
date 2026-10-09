@@ -373,20 +373,46 @@ describe('nodeCompose with the Link beside the node', () => {
         expect(link).not.toContain('network_mode: host');
     });
 
-    // The node puts servers on the network named dylaris_net; a folder-prefixed
-    // name would be a second network beside the one servers already run on.
+    // The node is told the network by name and the link joins the same one. It
+    // is not dylaris_net: an older node made that one itself, and current Docker
+    // Compose refuses a network it did not label.
     it('joins the servers\' network by its exact name, with no subnet pinned', () => {
         const out = kit();
-        expect(service(out, 'link')).toContain('networks: [dylaris_net]');
-        expect(out).toMatch(/\nnetworks:\n(?: {2}#.*\n)* {2}dylaris_net:\n {4}name: dylaris_net\n/);
+        expect(service(out, 'link')).toContain('networks: [byon_dylaris_net]');
+        expect(service(out, 'node')).toContain('NODE_DOCKER_NETWORK: "byon_dylaris_net"');
+        expect(out).toMatch(/\nnetworks:\n(?: {2}#.*\n)* {2}byon_dylaris_net:\n {4}name: byon_dylaris_net\n/);
+        expect(out).not.toMatch(/(?:\[|name: |^ {2})dylaris_net\b/m);
         expect(out).not.toMatch(/^\s*(?:- )?subnet:/m);
         expect(out).not.toMatch(/^\s*ipam:/m);
     });
 
     it('keeps the link cache in a named volume', () => {
         const out = kit();
-        expect(service(out, 'link')).toContain('- link_data:/data');
-        expect(out).toMatch(/\nvolumes:\n {2}byon_data:\n {2}link_data:\n/);
+        expect(service(out, 'link')).toContain('- byon_link_data:/data');
+        expect(out).toMatch(/\nvolumes:\n {2}byon_data:\n {2}byon_link_data:\n/);
+    });
+
+    // Without a link nothing in the file creates the network. Named here, the node
+    // would create it without Compose's labels and the file with a link would then
+    // fail on it, the very error this naming fixes.
+    it('leaves the network unnamed in a file without a link', () => {
+        for (const out of [kit({ linkBesideNode: false }), kit({ linkBesideNode: false, externalNode: true })]) {
+            expect(out).toContain('THIS FILE RUNS NO LINK');
+            expect(out).not.toContain('NODE_DOCKER_NETWORK');
+            expect(out).not.toContain('_dylaris_net');
+        }
+    });
+
+    // An External node and a customer node on one test machine keep their files
+    // and their server network apart.
+    it('names an External node\'s volumes and network after it', () => {
+        const out = kit({ externalNode: true });
+        expect(service(out, 'node')).toContain('- external_data:/app/dylaris_data');
+        expect(service(out, 'node')).toContain('NODE_DOCKER_NETWORK: "external_dylaris_net"');
+        expect(service(out, 'link')).toContain('- external_link_data:/data');
+        expect(service(out, 'link')).toContain('networks: [external_dylaris_net]');
+        expect(out).toMatch(/\nvolumes:\n {2}external_data:\n {2}external_link_data:\n/);
+        expect(out).not.toContain('byon_');
     });
 
     // Everything the node kit promised before still holds with the link in it.

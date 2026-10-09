@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The BYON and External node files deploy again on current Docker Compose.** Each kind now has its
+  own network and volumes; an External node from an older file keeps `byon_data` as its volume. `panel` `node`
+
 ## 2026.10.09.9
 
 ### Features

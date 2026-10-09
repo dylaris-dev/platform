@@ -299,6 +299,13 @@ services:
  */
 export function nodeCompose(i: WarpDeployInput): string {
     const kitLink = i.linkBesideNode === true;
+    // Per kind, so an External node and a customer node on one test machine keep
+    // their files and their server network apart.
+    const kind = i.externalNode ? 'external' : 'byon';
+    // Only a file with a link names the network, because only then does Compose
+    // create it. Named in a file without one, the node would create it unlabelled,
+    // and the file with a link the user is told to take next would fail on it.
+    const serverNet = `${kind}_dylaris_net`;
     // Docker Desktop's "host" is the WSL2 VM, not Windows. That is the same
     // adaptation route-only already makes, and it is the whole difference: the
     // node, its warp tunnel and the Minecraft containers all sit inside that VM
@@ -368,28 +375,26 @@ ${i.legacyAdminKey
     volumes:
       # keep - what link last got from us, so a restart comes up even while
       # our API cannot be reached.
-      - link_data:/data
+      - ${kind}_link_data:/data
     # keep - the network the node starts your servers on; link reaches them there.
-    networks: [dylaris_net]
+    networks: [${serverNet}]
 `
         : '';
     const tail = kitLink
         ? `volumes:
-  byon_data:
-  link_data:
+  ${kind}_data:
+  ${kind}_link_data:
 
 networks:
-  # keep - named exactly, without this folder's name in front: the node starts
-  # your servers on the network called dylaris_net, and on a machine that ran
-  # an earlier version of this file it already exists with your servers on it.
-  # Docker Compose then warns that it did not create that network and uses it
-  # anyway, which is what should happen. No subnet is set; Docker's own ranges
-  # stay clear of the tunnel's.
-  dylaris_net:
-    name: dylaris_net
+  # keep - named exactly, without this folder's name in front: the node is told
+  # this name below and starts your servers on it. It is not dylaris_net, which
+  # an older node created by itself and current Docker Compose refuses to adopt.
+  # No subnet is set; Docker's own ranges stay clear of the tunnel's.
+  ${serverNet}:
+    name: ${serverNet}
 `
         : `volumes:
-  byon_data:
+  ${kind}_data:
 `;
     return `# byon-node.yml
 #
@@ -440,7 +445,10 @@ ${manageLink}      # EDIT only for a different name. It ends up in keys and in t
       # :25523, and this container is host-networked, so it sits on your LAN.
       # Transfers then go through the relay instead.
       BEAM_LAN_FASTPATH: "true"
-
+${kitLink ? `
+      # keep - the Docker network your servers run on, and the only one.
+      NODE_DOCKER_NETWORK: "${serverNet}"
+` : ''}
 ${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR, no REDIS_ADDR and no CLUSTER_SECRET, on purpose: the
       # node reaches us through warp's proxy, and it fetches a Redis credential
       # scoped to itself once it has enrolled. Nothing here changes if we move.
@@ -451,7 +459,7 @@ ${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR, no REDIS_ADDR an
       # EDIT to keep the server files somewhere you can see:
       #   Linux           - /srv/dylaris:/app/dylaris_data
       #   Docker Desktop  - C:\\dylaris:/app/dylaris_data
-      - byon_data:/app/dylaris_data
+      - ${kind}_data:/app/dylaris_data
     network_mode: host
     cap_add: [SYS_ADMIN]
 ${linkService}
