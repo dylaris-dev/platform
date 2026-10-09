@@ -1347,6 +1347,76 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 		} else if config.Docker.Command == "" && len(info.Config.Cmd) > 0 {
 			config.Docker.Command = strings.Join(info.Config.Cmd, " ")
 		}
+
+		// Core sends ports only when they change, so an absent one means "as
+		// it is". Falling through to the global default instead persisted port
+		// 0 into .node_config.json and could move the server's container port.
+		curHost, curCont := boundPorts(info.HostConfig.PortBindings)
+		payloadHost := config.Docker.HostPort
+		if config.Docker.ContainerPort == 0 {
+			config.Docker.ContainerPort = curCont
+		}
+		if config.Docker.ContainerPort == 0 {
+			config.Docker.ContainerPort = dm.savedContainerPort(config.UUID)
+		}
+		direct := getRoutingMode() != "gateway" && dm.portMgr != nil
+		if direct && config.Docker.HostPort == 0 {
+			config.Docker.HostPort = curHost
+		}
+
+		have := resourceShape{
+			Memory:   info.HostConfig.Memory,
+			NanoCPUs: info.HostConfig.NanoCPUs,
+			Cpuset:   info.HostConfig.CpusetCpus,
+			Image:    info.Config.Image,
+			WorkDir:  info.Config.WorkingDir,
+			HostPort: curHost, ContainerPort: curCont,
+		}
+		want := resourceShape{
+			Memory:   int64(config.Docker.RAM+512) * 1024 * 1024,
+			NanoCPUs: int64(config.Docker.CPULimit * 1e9),
+			Cpuset:   sanitizeCpusetForHost(config.Docker.CpusetCpus, config.UUID),
+			Image:    normalizeImageRef(config.Docker.Image),
+			WorkDir:  info.Config.WorkingDir,
+		}
+		if config.ActiveSubServer != "" {
+			want.WorkDir = "/data/" + config.ActiveSubServer
+		}
+		if direct {
+			want.HostPort = config.Docker.HostPort
+			want.ContainerPort = config.Docker.ContainerPort
+			if want.ContainerPort == 0 {
+				want.ContainerPort = getContainerPort()
+			}
+		}
+
+		if !needsRecreate(have, want) {
+			// CPU and cpuset are cgroup settings Docker changes on the live
+			// container, so a running server is not restarted for them.
+			if want.NanoCPUs != have.NanoCPUs || want.Cpuset != have.Cpuset {
+				if _, uerr := dm.cli.ContainerUpdate(dm.ctx, containerName, container.UpdateConfig{
+					Resources: container.Resources{NanoCPUs: want.NanoCPUs, CpusetCpus: want.Cpuset},
+				}); uerr != nil {
+					return config, fmt.Errorf("live resource update of %s: %w", containerName, uerr)
+				}
+			}
+			return config, nil
+		}
+
+		// Claimed before the old container goes, so a port another server
+		// holds fails the change while this server still runs as it was. Once
+		// claimed it stays claimed: if the recreate below fails, the server is
+		// down and the reconciler rebuilds it on the new port.
+		// startMinecraftContainer takes whatever the manager holds, so a new
+		// host port that only sat in the config never reached the container.
+		if direct && payloadHost > 0 && payloadHost != dm.portMgr.GetPort(config.UUID) {
+			if problem := hostPortProblem(payloadHost); problem != "" {
+				return config, fmt.Errorf("port assignment failed: %s", problem)
+			}
+			if err := dm.portMgr.SetPort(config.UUID, payloadHost); err != nil {
+				return config, fmt.Errorf("port assignment failed: %w", err)
+			}
+		}
 		// A resource change leaves the server as it was. It used to end
 		// running whatever it had been: a routing-mode switch sends this to
 		// every server, so each stopped one started - including servers of
@@ -1360,6 +1430,65 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 	// stopped servers. Like RecreateKeepingRunState, the change only reaches
 	// the saved config, which the next start builds from.
 	return dm.mergeIntoSavedConfig(config), nil
+}
+
+// resourceShape is what a container was created with, as far as a resource
+// change can alter it. Ports are the published binding; both are 0 for none.
+type resourceShape struct {
+	Memory, NanoCPUs        int64
+	Cpuset, Image, WorkDir  string
+	HostPort, ContainerPort int
+}
+
+// needsRecreate reports whether going from have to want takes a new container
+// rather than a live ContainerUpdate. Memory is left to a recreate on purpose:
+// the heap in the start command follows the booking, and the command only
+// changes with a new container. Docker's update reads a zero NanoCPUs and an
+// empty cpuset as "leave as is", so removing a limit or a pinning cannot be
+// done live either.
+func needsRecreate(have, want resourceShape) bool {
+	return have.Memory != want.Memory ||
+		have.Image != want.Image ||
+		have.WorkDir != want.WorkDir ||
+		have.HostPort != want.HostPort ||
+		have.ContainerPort != want.ContainerPort ||
+		(have.NanoCPUs != 0 && want.NanoCPUs == 0) ||
+		(have.Cpuset != "" && want.Cpuset == "")
+}
+
+// boundPorts returns the first published host port and the container port it
+// maps to, or 0, 0 for a container that publishes none (gateway routing).
+func boundPorts(pm nat.PortMap) (host, cont int) {
+	for cPort, bindings := range pm {
+		for _, b := range bindings {
+			if h, err := strconv.Atoi(b.HostPort); err == nil && h > 0 {
+				return h, cPort.Int()
+			}
+		}
+	}
+	return 0, 0
+}
+
+// savedContainerPort is the container port in the server's .node_config.json,
+// or 0. Only for a container that publishes none, which carries no port to
+// read it from.
+func (dm *DockerManager) savedContainerPort(uuid string) int {
+	data, err := os.ReadFile(filepath.Join(dm.resolveLocalServerPath(uuid), ".node_config.json"))
+	if err != nil {
+		return 0
+	}
+	var saved ServerConfig
+	if json.Unmarshal(data, &saved) != nil {
+		return 0
+	}
+	return saved.Docker.ContainerPort
+}
+
+// containerGone reports whether the server's container is known not to exist.
+// An inspect that fails for another reason does not count.
+func (dm *DockerManager) containerGone(uuid string) bool {
+	_, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+uuid)
+	return client.IsErrNotFound(err)
 }
 
 // mergeIntoSavedConfig lays a resource change over the server's saved config.

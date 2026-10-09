@@ -29,6 +29,8 @@ import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { planResourceChange, diskGBToMB, joinFields, type ResourceValues } from '@/lib/resourceChanges';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -422,15 +424,45 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         }
     };
 
+    // The same defaults handleOpenEditResources seeds the form with, so an
+    // untouched field never reads as a change.
+    const currentResources: ResourceValues = {
+        ram: selectedServer.memory || 1024,
+        cpuLimit: selectedServer.cpuLimit || 0,
+        diskMB: selectedServer.diskLimit || 0,
+        hostPort: selectedServer.hostPort || 0,
+        containerPort: selectedServer.containerPort || 25565,
+        cpuMode: selectedServer.cpuPinningMode || 'shared',
+        cpuset: selectedServer.cpuset || (selectedServer as any).cpusetCpus || '',
+        autoMove: !!(selectedServer as any).autoMove,
+    };
+    const resourcePlan = planResourceChange(currentResources, {
+        ram: editRam,
+        cpuLimit: editCpuLimit,
+        diskMB: diskGBToMB(editDiskLimit),
+        hostPort: editHostPort,
+        containerPort: editContainerPort,
+        cpuMode: editCpuMode,
+        cpuset: editCpusetCpus,
+        autoMove: editAutoMove,
+    }, !isServerOffline, !!user?.isAdmin);
+
     const handleSaveResources = async () => {
         const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
         setResourcesMsg('');
+        if (resourcePlan.needsRestart && !(await confirmDialog({
+            title: 'Restart the server?',
+            message: `Changing ${joinFields(resourcePlan.restartFields)} restarts ${selectedServer.name}. Players on it are disconnected.`,
+            confirmLabel: 'Save and restart',
+        }))) {
+            return;
+        }
         // Both answers used to be discarded and the dialog closed regardless, so
         // a refusal (host port already taken, a cpuset the node cannot honour,
         // over the plan's limits) looked exactly like a save: the popup shut and
         // the old numbers quietly came back with refreshServers.
         const res = await updateServerResources(
-            selectedServer.id, editRam, editCpuLimit, editDiskLimit > 0 ? editDiskLimit * 1024 : 0,
+            selectedServer.id, editRam, editCpuLimit, diskGBToMB(editDiskLimit),
             ports, undefined, { mode: editCpuMode, cpuset: editCpusetCpus },
         );
         if (res?.success === false) {
@@ -1354,6 +1386,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 </div>
                             )}
                         </div>
+                        <p className="px-5 pb-2 text-xs text-(--base-06)" aria-live="polite">{resourcePlan.note}</p>
                         {resourcesMsg && (
                             <div className="px-5 pb-1">
                                 <div className="alert alert-error text-xs" role="alert">{resourcesMsg}</div>
@@ -1361,7 +1394,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                         )}
                         <div className="modal-footer">
                             <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
-                            <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources} className="btn btn-primary disabled:opacity-40">Save & Restart</button>
+                            <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
                         </div>
                     </ModalPanel>
                 </div>

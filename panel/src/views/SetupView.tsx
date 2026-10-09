@@ -5,7 +5,7 @@ import { Server, setupServer, updateServerRuntime, switchSubServer, getFiles, ge
 import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
-import { recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersionPicker';
+import { recommendJavaForVersion } from './setup/JavaVersionPicker';
 import { JAVA_21 } from '@/lib/javaVersion';
 import VersionPicker, { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
 import UploadSoftwareChoice from './setup/UploadSoftwareChoice';
@@ -23,6 +23,8 @@ import { isSubServerName } from '@/lib/validation';
 import { ROUTES_CHANGED_EVENT } from '@/lib/systemEvents';
 import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { installTargetMcVersion } from '@/views/setup/installTarget';
+import { createUploadStager, uploadStartStep, UPLOAD_ZIP_NAME } from '@/views/setup/uploadStaging';
 
 // What may be installed over an upload: Core's reinstallableInstallers.
 const UPLOAD_SOFTWARE = ['paper', 'vanilla', 'fabric', 'forge', 'neoforge'];
@@ -101,6 +103,29 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     // touching the picker. A preselected newest version is not a choice: put
     // over a world made with an older one, its first start upgrades the world.
     const [uploadVersionChosen, setUploadVersionChosen] = useState(false);
+    // The picked archive is uploaded as soon as it has a sub-server to go to,
+    // straight to <sub>/.upload.zip where every node release looks for it
+    // (uploadStaging.ts). uploadTarget is that sub-server, and locks the name;
+    // uploadStaged is true once the archive is all there.
+    const [uploadTarget, setUploadTarget] = useState<string | null>(null);
+    const [uploadStaged, setUploadStaged] = useState(false);
+    const stager = useMemo(() => createUploadStager({
+        upload: (sub, file, onProgress) => {
+            const dt = new DataTransfer();
+            dt.items.add(new File([file], UPLOAD_ZIP_NAME, { type: file.type }));
+            // Inside the Beam desktop app this streams straight to the node over
+            // the beam tunnel; in a browser it is the HTTP upload through Core.
+            return createBeamAdapter().uploadFiles(sub, dt.files, onProgress, undefined, undefined, server.uuid);
+        },
+        removeZip: sub => createBeamAdapter().deleteFile(`${sub}/${UPLOAD_ZIP_NAME}`, server.uuid),
+        list: async sub => {
+            const res: any = await createBeamAdapter().getFiles(sub, server.uuid);
+            return res?.success && Array.isArray(res.files) ? res.files.map((f: any) => f.name) : null;
+        },
+        removeDir: sub => createBeamAdapter().deleteFile(sub, server.uuid),
+    }), [server.uuid]);
+    // Leaving the Setup tab drops a staged archive nobody installed.
+    useEffect(() => () => stager.discard(), [stager]);
     // An upload installs server software over the files unless it brings a
     // jar the node can start. Not offered for proxies: there is no proxy
     // installer to put over an upload. In edit mode only with a new archive;
@@ -127,15 +152,23 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     // pickers are empty; an upload kept as it is says its own in its files.
     // Keyed on the pickers alone, the form recommended the Java of the server
     // being replaced ("Minecraft 26.3 needs Java 25" over a 1.20.1 pack).
-    const keepsUpload = installTab === 'upload' && (!uploadNeedsSoftware || uploadKeepJar);
-    const targetMcVersion =
-        installTab === 'modpack' ? (modpackSelection?.mcVersion || '')
-        : installTab === 'pack' ? (packSelection?.mcVersion || '')
-        : installTab === 'technic' ? (technicSelection?.mcVersion || '')
-        : keepsUpload ? (uploadDetection?.mcVersion || '')
-        : effectiveMcVersion(selectedMajor, selectedBuild);
-    // A picked upload whose files name no version: say so rather than recommend.
-    const javaVersionUnknown = keepsUpload && !isProxy && !!uploadFile && uploadDetection !== null && !targetMcVersion;
+    // The upload tab shares the pickers with the Online tab, which preselects
+    // its newest version: "Paper 26.3" online, then an upload, recommended Java
+    // 25 for the upload. Each tab answers for itself in installTargetMcVersion.
+    const { version: targetMcVersion, unknown: javaVersionUnknown } = installTargetMcVersion({
+        tab: installTab,
+        isProxy,
+        selectedMajor,
+        selectedBuild,
+        selectionMcVersion: installTab === 'modpack' ? modpackSelection?.mcVersion
+            : installTab === 'pack' ? packSelection?.mcVersion
+            : installTab === 'technic' ? technicSelection?.mcVersion
+            : undefined,
+        uploadFilePicked: !!uploadFile,
+        uploadDetection,
+        uploadInstallsSoftware: uploadNeedsSoftware && !uploadKeepJar,
+        uploadVersionChosen,
+    });
 
     useEffect(() => {
         if (formMode === 'view' || !targetMcVersion) return;
@@ -382,6 +415,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
 
     const enterViewMode = () => {
         setFormMode('view');
+        clearUpload();
         setSubName(server.activeSubServer || '');
         setJavaImage(server.image || JAVA_21);
         setExtraFlags(server.extraJvmFlags || '');
@@ -447,9 +481,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         setInstallTab('online');
         setSoftware(defaultSoftware);
         setSelectedLibraryFile('');
-        setUploadFile(null);
-        setUploadProgress(0);
-        setUploadStatus('');
+        clearUpload();
         setError('');
     };
 
@@ -468,6 +500,64 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     };
 
     // ---------- Handlers ----------
+
+    // Also what the name field's "Change" does: the archive went to the old
+    // name, so it goes, and the file is picked again under the new one.
+    const clearUpload = () => {
+        stager.discard();
+        setUploadFile(null);
+        setUploadTarget(null);
+        setUploadStaged(false);
+        setUploadProgress(0);
+        setUploadStatus('');
+    };
+
+    const startUpload = (f: File, sub: string) => {
+        setUploadTarget(sub);
+        setUploadStaged(false);
+        setUploadProgress(0);
+        setUploadStatus('Uploading...');
+        setError(e => e.startsWith('Upload failed') ? '' : e);
+        // A new sub-server's directory is made by this upload, so a discard may
+        // remove it again; an existing one's never.
+        const ownsDir = formMode === 'new' && !subServers.includes(sub);
+        // A newer pick or a clear supersedes this one; the stager answers that.
+        void stager.stage(sub, ownsDir, f, setUploadProgress).then(r => {
+            if (r.status === 'superseded') return;
+            if (r.status === 'staged') {
+                setUploadStaged(true);
+                setUploadProgress(100);
+                setUploadStatus('Uploaded');
+                return;
+            }
+            clearUpload();
+            setError(`Upload failed: ${r.message}. Pick the file again to retry.`);
+        });
+    };
+
+    const handleUploadFileChange = (f: File | null) => {
+        if (!f) { clearUpload(); return; }
+        setUploadFile(f);
+        // Already going to a sub-server: the new file replaces it there.
+        if (uploadTarget) startUpload(f, uploadTarget);
+    };
+
+    // A new sub-server is usually named after the file is picked. Waits for the
+    // typing to settle: the first letter is already a valid name, and the
+    // upload locks the field.
+    const uploadName = sanitizeName(subName);
+    const uploadStep = uploadStartStep({
+        onUploadTab: installTab === 'upload' && formMode !== 'view',
+        filePicked: !!uploadFile,
+        started: !!uploadTarget,
+        nameValid: isSubServerName(uploadName),
+    });
+    useEffect(() => {
+        if (uploadStep === 'need-name') { setUploadStatus('Enter a name to start the upload'); return; }
+        if (uploadStep !== 'start' || !uploadFile) return;
+        const t = setTimeout(() => startUpload(uploadFile, uploadName), formMode === 'new' ? 800 : 0);
+        return () => clearTimeout(t);
+    }, [uploadStep, uploadFile, uploadName, formMode]);
 
     const handleSubNameChange = (raw: string) => {
         setSubName(raw);
@@ -603,29 +693,11 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
             }
             setUploadStatus('Restoring...');
         } else if (installTab === 'upload' && uploadFile) {
+            // Already uploaded to <sub>/.upload.zip when it was picked; the
+            // request is the one the node has always taken.
+            if (!uploadStaged || uploadTarget !== sanitized) { setSubmitting(false); return; }
             installer.type = 'upload-zip';
             installer.structure = uploadStructure;
-            setUploadStatus('Uploading...');
-            try {
-                const renamedFile = new File([uploadFile], '.upload.zip', { type: uploadFile.type });
-                const dt = new DataTransfer();
-                dt.items.add(renamedFile);
-                // Inside the Beam desktop app this streams the archive straight to
-                // the node over the beam tunnel; in a browser createBeamAdapter
-                // resolves to the same HTTP-through-Core upload as before.
-                const uploadRes = await createBeamAdapter().uploadFiles(sanitized, dt.files, (p) => setUploadProgress(p), undefined, undefined, server.uuid);
-                if (!uploadRes.success) {
-                    setError(uploadRes.message || 'Upload failed');
-                    setSubmitting(false);
-                    setUploadStatus('');
-                    return;
-                }
-            } catch {
-                setError('Upload failed');
-                setSubmitting(false);
-                setUploadStatus('');
-                return;
-            }
             setUploadStatus('Installing...');
         } else {
             installer.type = 'upload';
@@ -641,14 +713,29 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         // a jar swap.
         if (wipePaths && wipePaths.length > 0) installer.wipePaths = wipePaths;
 
-        const res = await setupServer(server.id, {
-            subServerName: sanitized,
-            javaImage,
-            extraJvmFlags: extraFlags,
-            installer,
-        });
+        // From here Core may queue the install, so leaving the tab mid-request
+        // must not delete the archive (or a new sub-server's directory) under
+        // it. Refused, it is the panel's again to retry or discard.
+        // ponytail: installed from another tab, a staged archive stays in the
+        // sub-server as a dotfile; the next upload install replaces it.
+        const holdsUpload = uploadTarget === sanitized;
+        if (holdsUpload) stager.beginInstall();
+        let res: Awaited<ReturnType<typeof setupServer>>;
+        try {
+            res = await setupServer(server.id, {
+                subServerName: sanitized,
+                javaImage,
+                extraJvmFlags: extraFlags,
+                installer,
+            });
+        } catch (e) {
+            if (holdsUpload) stager.endInstall(false);
+            throw e;
+        }
+        if (holdsUpload) stager.endInstall(!!res.success);
 
         if (res.success) {
+            if (holdsUpload) { setUploadTarget(null); setUploadStaged(false); }
             // Create gateway route if any domain field was filled. We surface
             // failures inline so a typo'd domain or a race-loss against
             // another tab doesn't silently drop the route -- the server is
@@ -807,6 +894,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
             ? !uploadKeepAllowed
             : uploadDetection === null || loadingVersions || !UPLOAD_SOFTWARE.includes(software) || !selectedBuild || !uploadVersionChosen
     );
+    const uploadPending = installTab === 'upload' && !!uploadFile && !uploadStaged;
     const uploadSoftware = uploadNeedsSoftware ? (
         <UploadSoftwareChoice
             detection={uploadDetection}
@@ -851,7 +939,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         onLibraryNavigate: loadLibraryFiles,
         onLibrarySelect: setSelectedLibraryFile,
         uploadFile,
-        onUploadFileChange: (f: File | null) => { setUploadFile(f); if (!f) { setUploadProgress(0); setUploadStatus(''); } },
+        onUploadFileChange: handleUploadFileChange,
         uploadStructure,
         onUploadStructureChange: setUploadStructure,
         uploadProgress,
@@ -868,7 +956,9 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         serverId: server.id,
         onFileTooLarge: setFileTooLarge,
         uploadSoftware,
-        submitBlocked: uploadIncomplete,
+        submitBlocked: uploadIncomplete || uploadPending,
+        subNameLocked: !!uploadTarget,
+        onSubNameUnlock: clearUpload,
     };
 
     // ---------- Render ----------

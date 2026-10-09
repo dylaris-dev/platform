@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"bytes"
+	"compress/gzip"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	nodegrpc "dylaris-core/grpc"
 	pb "dylaris-proto/node"
@@ -23,12 +26,43 @@ var errFileTooLargeToOpen = errors.New("this file is too large to open here (ove
 // arrived is a PART of the file, and an editor that saved it would cut it.
 var errTransferIncomplete = errors.New("the node stopped sending before the file was complete; try again")
 
-// readErrStatus is the HTTP status for an error from collectNodeFile.
+var errGzipTooLargeToOpen = errors.New("this file is over 10 MB once decompressed, too large to open here; download it instead")
+
+var errGzipCorrupt = errors.New("this .gz file could not be decompressed; it is damaged or not gzip. Download it instead")
+
+// readErrStatus is the HTTP status for an error from collectNodeFile or
+// decodeOpenedFile.
 func readErrStatus(err error) int {
-	if errors.Is(err, errFileTooLargeToOpen) {
+	switch {
+	case errors.Is(err, errFileTooLargeToOpen), errors.Is(err, errGzipTooLargeToOpen):
 		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, errGzipCorrupt):
+		return http.StatusUnprocessableEntity
 	}
 	return http.StatusBadGateway
+}
+
+// decodeOpenedFile turns a collected file into what the editor shows. A .gz
+// (rotated server logs are latest.log -> 2026-10-09-1.log.gz) is decompressed,
+// bounded by max like any opened file so a small archive cannot inflate into
+// gigabytes in Core's memory, and is readonly: saving the text back would
+// replace the archive with plain text.
+func decodeOpenedFile(path string, data []byte, max int) (content []byte, readonly bool, err error) {
+	if !strings.HasSuffix(strings.ToLower(path), ".gz") {
+		return data, false, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, true, errGzipCorrupt
+	}
+	out, err := io.ReadAll(io.LimitReader(zr, int64(max)+1))
+	if err != nil {
+		return nil, true, errGzipCorrupt
+	}
+	if len(out) > max {
+		return nil, true, errGzipTooLargeToOpen
+	}
+	return out, true, nil
 }
 
 // collectNodeFile gathers a streamed node read into memory, up to max bytes.

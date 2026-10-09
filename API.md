@@ -417,7 +417,7 @@ can still show what exists.
 | GET | `/api/external/servers/{uuid}/backup-jobs` | user API key | `backups.read` | ExternalServerRoute | `BackupHandler.ListJobs` | the backup schedules configured for one server. |
 | POST | `/api/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger` | user API key | `backups.create` | ExternalJobInServer, ExternalServerRoute | `BackupHandler.TriggerJob` | starts a run immediately. |
 | POST | `/api/external/servers/{uuid}/console/command` | user API key | `console.send` | ExternalServerRoute | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
-| GET | `/api/external/servers/{uuid}/console/history` | user API key | `console.read` | ExternalServerRoute | `ConsoleHandler.GetHistory` | Returns the last 1000 log lines from the Redis Stream for this server. |
+| GET | `/api/external/servers/{uuid}/console/history` | user API key | `console.read` | ExternalServerRoute | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | POST | `/api/external/servers/{uuid}/power` | user API key | _no capability_ | APIKeyPowerGate, ExternalServerRoute | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
 | GET | `/api/external/servers/{uuid}/stats/history` | user API key | `stats.read` | ExternalServerRoute | `StatsHandler.GetHistory` | Returns historical stats data points from PostgreSQL. |
 | GET | `/api/external/usage` | user API key | `usage.read` | ExternalOwnerRoute | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
@@ -678,7 +678,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/backup-restores` | session | `backups.read` | - | `BackupHandler.ListRestores` | Recent restore history for a server, newest first. |
 | GET | `/api/servers/{id:[0-9]+}/backup-usage` | session | `backups.read` | - | `BackupHandler.BackupUsage` | Returns the on-disk bytes used by node-local backups for the given server, plus archive count. |
 | POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
-| GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns the last 1000 log lines from the Redis Stream for this server. |
+| GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |
 | POST | `/api/servers/{id:[0-9]+}/copy-sub-server` | session | `server.settings.write` | - | `ServerModsHandler.CopySubServer` | Duplicates the active sub-server so a version move can be tried on the copy while the original stays as it is. |
 | GET | `/api/servers/{id:[0-9]+}/edge-motd` | session | `overview.read` | - | `ServerHandler.GetServerEdgeMotd` | Returns the per-server edge transitional-MOTD config (mode + custom text). |

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Server } from '@/lib/api';
 import { Pencil, PackageOpen, Cpu, HardDrive, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { JAVA_IMAGES } from './JavaVersionPicker';
+import { jvmHeapMB } from '@/lib/jvmHeap';
 
 interface SetupViewModeProps {
     server: Server;
@@ -118,7 +119,7 @@ export default function SetupViewMode({ server, activeServerMissing, onEdit, onA
                         </button>
                         {flagsOpen && (
                             <div className="mt-2 p-3 bg-(--base-02) rounded-md border border-(--base-03) font-mono text-xs text-(--base-07) whitespace-pre-wrap animate-fade-in">
-                                java -Xms{server.memory}M -Xmx{server.memory}M {server.extraJvmFlags}
+                                java -Xms{jvmHeapMB(server.memory)}M -Xmx{jvmHeapMB(server.memory)}M {server.extraJvmFlags}
                             </div>
                         )}
                     </div>

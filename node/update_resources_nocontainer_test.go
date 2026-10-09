@@ -95,7 +95,7 @@ func TestUpdateResourcesWithoutAContainerKeepsTheSavedConfigsGoodParts(t *testin
 	if got.Docker.RAM != 4096 || got.Docker.CPULimit != 2 {
 		t.Errorf("resources not applied: ram %d cpu %v", got.Docker.RAM, got.Docker.CPULimit)
 	}
-	if !strings.Contains(got.Docker.Command, "4096") || !strings.Contains(got.Docker.Command, "-Dkeep=me") {
+	if !strings.Contains(got.Docker.Command, "-Xmx3482M") || !strings.Contains(got.Docker.Command, "-Dkeep=me") {
 		t.Errorf("command not rebuilt from disk with the new memory and the saved flags: %q", got.Docker.Command)
 	}
 }

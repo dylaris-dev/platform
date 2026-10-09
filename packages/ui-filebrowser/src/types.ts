@@ -9,7 +9,8 @@ export interface FileEntry {
 
 export interface FileBrowserAdapter {
   getFiles(path: string, serverUuid?: string): Promise<{ success: boolean; files: FileEntry[]; message?: string }>;
-  getFileContent(path: string, serverUuid?: string): Promise<{ success: boolean; content: string; message?: string }>;
+  // readonly: Core marks content that must not be saved back (a decompressed .gz).
+  getFileContent(path: string, serverUuid?: string): Promise<{ success: boolean; content: string; message?: string; readonly?: boolean }>;
   saveFile(path: string, content: string, serverUuid?: string): Promise<{ success: boolean; message?: string }>;
   createFile(path: string, isDir: boolean, serverUuid?: string): Promise<{ success: boolean; message?: string }>;
   deleteFile(path: string, serverUuid?: string): Promise<{ success: boolean; message?: string }>;

@@ -47,7 +47,7 @@ func (c *crashStreak) record(now time.Time) (count int, giveUp bool) {
 const (
 	batchSize     = 50
 	batchInterval = 200 * time.Millisecond
-	maxStreamLen  = 1000
+	maxStreamLen  = 5000 // console history per server; the panel pages back through it
 	lineChanSize  = 512
 	// Key TTL.
 	//
@@ -421,8 +421,8 @@ const lossMarker = "[dylaris] %d console lines were lost while the log service w
 
 const (
 	// replayMaxLines caps the buffer at what the destination can actually hold.
-	// The stream is trimmed to maxStreamLen and the panel reads at most that
-	// many back, so buffering more only hands Redis lines it trims on arrival.
+	// The stream is trimmed to maxStreamLen, so buffering more only hands Redis
+	// lines it trims on arrival.
 	// The newest lines are the ones kept, which is what a reader wants after an
 	// outage.
 	replayMaxLines = maxStreamLen

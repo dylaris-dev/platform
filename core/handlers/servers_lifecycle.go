@@ -1502,6 +1502,10 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, msg, 400)
 		return
 	}
+	if req.HostPort < 0 || req.HostPort > 65535 || req.ContainerPort < 0 || req.ContainerPort > 65535 {
+		sendJSONError(w, "Ports must be between 1 and 65535", 400)
+		return
+	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
@@ -1512,25 +1516,33 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
-
-	isAdmin := r.Context().Value("isAdmin").(bool)
-
-	if err := h.state.Store.UpdateServerResources(serverID, req.RAM, req.CPULimit, req.DiskLimit); err != nil {
-		sendJSONError(w, "Failed to update resources", 500)
+	// The node recreates the container for a RAM or port change, which would
+	// pull it out from under a running install or a move between nodes.
+	switch srv.Status {
+	case "installing":
+		sendJSONError(w, "The server is installing. Change its resources when the install has finished.", http.StatusConflict)
+		return
+	case "migrating":
+		sendJSONError(w, "The server is being moved to another node. Change its resources when the move has finished.", http.StatusConflict)
 		return
 	}
 
-	// Optional per-server CPU pinning change. Resolved into an effective cpuset
-	// and persisted here; it is applied to the container by the recreate below.
-	if req.CPUPinningMode != nil && h.state.CPUPinning != nil {
-		mode := strings.TrimSpace(*req.CPUPinningMode)
+	isAdmin := r.Context().Value("isAdmin").(bool)
+
+	// Everything is validated before anything is written. A cpuset or port
+	// refused after the RAM had been saved left the server half-changed: the
+	// panel showed the new RAM, and the node never heard of it.
+	pinningRequested := req.CPUPinningMode != nil && h.state.CPUPinning != nil
+	pinningChanged := false
+	var pinMode, newCpuset string
+	if pinningRequested {
+		pinMode = strings.TrimSpace(*req.CPUPinningMode)
 		pinNode, perr := h.state.Store.GetNodeByID(srv.NodeID)
 		if perr != nil {
 			sendJSONError(w, "Node not found", 404)
 			return
 		}
-		var newCpuset string
-		switch mode {
+		switch pinMode {
 		case "shared":
 			newCpuset = ""
 		case "manual":
@@ -1551,24 +1563,18 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 			sendJSONError(w, "Invalid cpuPinningMode (shared|auto|manual)", 400)
 			return
 		}
-		if err := h.state.Store.UpdateServerCPUPinning(srv.ID, mode, newCpuset); err != nil {
-			sendJSONError(w, "Failed to save CPU pinning", 500)
-			return
-		}
-		srv.CPUPinningMode = mode
-		srv.Cpuset = newCpuset
+		pinningChanged = pinMode != srv.CPUPinningMode || newCpuset != srv.Cpuset
 	}
 
 	// Port changes: admin-only
-	portChanged := false
-	if isAdmin && (req.HostPort > 0 || req.ContainerPort > 0) {
-		newHostPort := req.HostPort
-		if newHostPort == 0 {
-			newHostPort = srv.HostPort
+	portsRequested := isAdmin && (req.HostPort > 0 || req.ContainerPort > 0)
+	newHostPort, newContainerPort := srv.HostPort, srv.ContainerPort
+	if portsRequested {
+		if req.HostPort > 0 {
+			newHostPort = req.HostPort
 		}
-		newContainerPort := req.ContainerPort
-		if newContainerPort == 0 {
-			newContainerPort = srv.ContainerPort
+		if req.ContainerPort > 0 {
+			newContainerPort = req.ContainerPort
 		}
 		if newContainerPort == 0 {
 			newContainerPort = 25565
@@ -1590,58 +1596,89 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 				}
 			}
 		}
+	}
+	// Either port counts: a container-port-only change used to be saved and
+	// never sent, so the container kept listening where it was.
+	portChanged := newHostPort != srv.HostPort || newContainerPort != srv.ContainerPort
+
+	if err := h.state.Store.UpdateServerResources(serverID, req.RAM, req.CPULimit, req.DiskLimit); err != nil {
+		sendJSONError(w, "Failed to update resources", 500)
+		return
+	}
+	if pinningRequested {
+		if err := h.state.Store.UpdateServerCPUPinning(srv.ID, pinMode, newCpuset); err != nil {
+			sendJSONError(w, "Failed to save CPU pinning", 500)
+			return
+		}
+		srv.CPUPinningMode = pinMode
+		srv.Cpuset = newCpuset
+	}
+	if portsRequested {
 		if err := h.state.Store.UpdateServerPorts(serverID, newHostPort, newContainerPort); err != nil {
 			sendJSONError(w, "Failed to update ports", 500)
 			return
 		}
-		portChanged = req.HostPort > 0 && req.HostPort != srv.HostPort
-		srv.HostPort = newHostPort
-		srv.ContainerPort = newContainerPort
 	}
 
-	// Regenerate start_command with the new RAM value
-	newStartCommand := fmt.Sprintf("java -Xms%dM -Xmx%dM %s %s -jar server.jar nogui",
-		req.RAM, req.RAM, defaultJvmFlags, strings.TrimSpace(srv.ExtraJvmFlags))
-	newStartCommand = strings.Join(strings.Fields(newStartCommand), " ")
+	// Recorded once saved, so a node that cannot be reached does not leave the
+	// change out of the trail.
+	auditMeta := map[string]interface{}{
+		"ram":       req.RAM,
+		"cpuLimit":  req.CPULimit,
+		"diskLimit": req.DiskLimit,
+	}
+	if pinningChanged {
+		auditMeta["cpuPinningMode"] = pinMode
+		auditMeta["cpuset"] = newCpuset
+	}
+	if portChanged {
+		auditMeta["hostPort"] = newHostPort
+		auditMeta["containerPort"] = newContainerPort
+	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(h.state, r, serverID, ServerAuditEventResourcesChanged, actorID, "", auditMeta)
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
-	// Persist the updated start_command in the DB
-	h.state.Store.UpdateServerSetup(serverID, srv.GameImage, newStartCommand,
-		srv.ActiveSubServer, srv.ExtraJvmFlags,
-		srv.InstallerType, srv.MinecraftVersion, srv.BuildNumber)
-
-	// Inform node to recreate container with new resources (and port if changed)
+	// No start command is sent or stored: the node rebuilds it from what is on
+	// disk with its own heap sizing, and uses a sent one only as a fallback.
+	// The jar-form command this used to write was wrong for every argfile
+	// (Forge/NeoForge) install and disagreed with the node's -Xmx.
 	if h.state.Queue != nil {
-		node, err := h.state.Store.GetNodeByID(srv.NodeID)
-		if err == nil {
+		dispatchErr := func() error {
+			node, err := h.state.Store.GetNodeByID(srv.NodeID)
+			if err != nil {
+				return fmt.Errorf("node %d: %w", srv.NodeID, err)
+			}
 			dockerPayload := map[string]interface{}{
 				"ram":        req.RAM,
 				"cpuLimit":   req.CPULimit,
 				"cpusetCpus": effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"diskLimit":  req.DiskLimit,
 				"image":      srv.GameImage,
-				"command":    newStartCommand,
 			}
-			if portChanged {
-				dockerPayload["hostPort"] = srv.HostPort
-				dockerPayload["containerPort"] = srv.ContainerPort
+			// Sent whenever ports were asked for, not only when they differ
+			// from the row: a retry after a failed dispatch finds the row
+			// already saved, and the node treats unchanged ports as a no-op.
+			if portsRequested {
+				dockerPayload["hostPort"] = newHostPort
+				dockerPayload["containerPort"] = newContainerPort
 			}
 			payload := map[string]interface{}{
 				"uuid":            srv.UUID,
 				"activeSubServer": srv.ActiveSubServer,
 				"docker":          dockerPayload,
 			}
-			h.state.Queue.SendCommand(context.Background(), node.Token, "update_resources", payload, nil)
+			return h.state.Queue.SendCommand(context.Background(), node.Token, "update_resources", payload, nil)
+		}()
+		if dispatchErr != nil {
+			// Saved but not dispatched, and the node applies nothing on its own:
+			// the panel would show the new values against a container still
+			// running the old ones. Said out loud so the caller can save again.
+			log.Printf("UpdateServerResources: dispatch failed for server %d: %v", serverID, dispatchErr)
+			sendJSONError(w, "The new resources were saved, but they could not be sent to the node. Save again to apply them.", http.StatusBadGateway)
+			return
 		}
 	}
-
-	actorID, _ := r.Context().Value("userID").(string)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventResourcesChanged, actorID, "", map[string]interface{}{
-		"ram":       req.RAM,
-		"cpuLimit":  req.CPULimit,
-		"diskLimit": req.DiskLimit,
-	})
-
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

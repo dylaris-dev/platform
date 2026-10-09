@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { AlertTriangle, Info, ChevronDown, ChevronUp, Zap } from 'lucide-react';
+import { jvmHeapMB } from '@/lib/jvmHeap';
 
 const FIXED_FLAGS = ['-Dterminal.ansi', '-Djline.terminal'];
 
@@ -53,7 +54,7 @@ export default function JvmFlagsSection({ extraFlags, onChange, ramMB, disabled,
                 <div className="space-y-2 animate-fade-in">
                     <div className="flex items-start gap-2">
                         <div className="shrink-0 px-2.5 py-2 rounded-md bg-(--base-03) border border-(--base-04) text-(--base-07) font-mono text-xs opacity-60 mt-px">
-                            java -Xms{ramMB}M -Xmx{ramMB}M
+                            java -Xms{jvmHeapMB(ramMB)}M -Xmx{jvmHeapMB(ramMB)}M
                         </div>
                         <textarea
                             value={extraFlags}
@@ -87,7 +88,7 @@ export default function JvmFlagsSection({ extraFlags, onChange, ramMB, disabled,
                         </div>
                     )}
 
-                    <p className="text-xs text-(--base-07)">-Xms/-Xmx are locked to allocated RAM. Leave empty to use Aikar&apos;s optimized GC flags.</p>
+                    <p className="text-xs text-(--base-07)">-Xms/-Xmx are set from the allocated RAM, minus headroom the JVM needs outside the heap. Leave empty to use Aikar&apos;s optimized GC flags.</p>
 
                     {hasFixedFlagConflict && (
                         <p className="text-xs text-(--error-light) flex items-center gap-1.5">

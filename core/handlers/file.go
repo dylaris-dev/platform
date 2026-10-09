@@ -384,6 +384,11 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, rerr.Error(), readErrStatus(rerr))
 		return
 	}
+	data, readonly, derr := decodeOpenedFile(path, data, maxOpenFileBytes)
+	if derr != nil {
+		sendJSONError(w, derr.Error(), readErrStatus(derr))
+		return
+	}
 
 	content := string(data)
 	if viaDemoBypass {
@@ -391,10 +396,14 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 		// the owner, so only the two files the demo exists to show come back.
 		content = demoFileContent(path, content)
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"success": true,
 		"content": content,
-	})
+	}
+	if readonly {
+		resp["readonly"] = true
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 // SaveFileHandler handles requests to save file content

@@ -150,7 +150,7 @@ func TestBuildStartCommand(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "java -Xlog:gc::utctime,level,tags -XX:+UseG1GC -Xms4096M -Xmx4096M -jar paper-1.20.1.jar nogui"
+		want := "java -Xlog:gc::utctime,level,tags -XX:+UseG1GC -Xms3482M -Xmx3482M -jar paper-1.20.1.jar nogui"
 		if cmd != want {
 			t.Fatalf("got %q want %q", cmd, want)
 		}
@@ -171,7 +171,7 @@ func TestBuildStartCommand(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "java -Xlog:gc::utctime,level,tags @user_jvm_args.txt -Xms6144M -Xmx6144M " +
+		want := "java -Xlog:gc::utctime,level,tags @user_jvm_args.txt -Xms5223M -Xmx5223M " +
 			"@libraries/net/minecraftforge/forge/1.20.1-47.2.0/unix_args.txt nogui"
 		if cmd != want {
 			t.Fatalf("got %q want %q", cmd, want)
@@ -193,7 +193,7 @@ func TestBuildStartCommand(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "java -Xlog:gc::utctime,level,tags -Dfoo=bar @user_jvm_args.txt -Xms4096M -Xmx4096M " +
+		want := "java -Xlog:gc::utctime,level,tags -Dfoo=bar @user_jvm_args.txt -Xms3482M -Xmx3482M " +
 			"@libraries/net/minecraftforge/forge/1.20.1-47.2.0/unix_args.txt nogui"
 		if cmd != want {
 			t.Fatalf("got %q want %q", cmd, want)

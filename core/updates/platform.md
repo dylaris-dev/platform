@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.13
+
+### Features
+- **The console keeps 5000 lines and loads older ones as you scroll up.** The text no longer slides
+  while you read further up. `core` `panel` `log-shipper`
+- **Setup uploads the chosen file at once**, with progress, so Install starts without waiting for it. `panel`
+- **Compressed logs (.log.gz) open read-only in the file browser** instead of only downloading. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Large modded servers were killed without a log line.** The JVM heap filled the whole booking and
+  left the JVM itself no room; above 2 GB the heap now keeps a reserve. Restart once to apply. `node`
+- **Resource changes:** CPU limit, pinning and disk apply without a restart, the dialog asks before one,
+  and port changes reach the node instead of being dropped. `core` `panel` `node`
+- **Long files scroll in the file browser again**, search arrows jump to the match, and the setup's Java
+  advice follows the selected tab instead of the Online tab. `panel`
+
 ## 2026.10.09.12
 
 ### Features

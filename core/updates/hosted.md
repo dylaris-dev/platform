@@ -11,6 +11,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.13
+
+### Features
+- **The console keeps 5000 lines and loads older ones as you scroll up.** The text no longer slides
+  while you read further up. Nothing to do on your machine.
+- **Setup uploads the chosen file at once**, with progress, and compressed logs (.log.gz) open
+  read-only in the file browser.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Large modded servers were killed without a log line.** The heap filled the whole booking; above
+  2 GB it now keeps a reserve. Update your node, then restart the server once. `node`
+- **CPU limit, pinning and disk changes apply without a restart** once your node is updated; until then
+  every resource save restarts a running server. `node`
+- **Long files scroll in the file browser again**, and the setup's Java advice follows the selected tab.
+
 ## 2026.10.09.12
 
 ### Features

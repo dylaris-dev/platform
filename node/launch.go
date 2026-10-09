@@ -179,6 +179,23 @@ TokenLoop:
 	return strings.Join(out, " ")
 }
 
+// jvmHeapMB is the -Xms/-Xmx for a server booked with bookedMB of RAM.
+//
+// The container limit is booked+512 MB, and the heap used to be the whole
+// booked amount. For small plans (vanilla, Paper) the 512 MB padding covers
+// what the JVM needs outside the heap, so up to 2048 MB the heap stays the
+// booking. A large modpack (a 440-mod Forge pack, measured live) needs far
+// more - metaspace, code cache, thread stacks, native buffers - and the cgroup
+// OOM-killed the container with no log line from the JVM at all. Above 2048 MB
+// the heap therefore gives up 15% of the booking, at least 512, at most 2048 MB,
+// but never drops below 2048: a bigger plan must not get a smaller heap.
+func jvmHeapMB(bookedMB int) int {
+	if bookedMB <= 2048 {
+		return bookedMB
+	}
+	return max(bookedMB-min(max(bookedMB*15/100, 512), 2048), 2048)
+}
+
 // buildStartCommand assembles the full `java …` invocation for an
 // installed sub-server. The platform -Xms/-Xmx is always the LAST JVM
 // argument before the main-class token (-jar / @argsfile), so it wins
@@ -197,6 +214,7 @@ func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string, jav
 	if isJava8 {
 		extraJvmFlags = stripJava8IncompatibleFlags(extraJvmFlags)
 	}
+	heapMB := jvmHeapMB(memMB)
 	parts := []string{"java"}
 	add := func(s string) {
 		if s = strings.TrimSpace(s); s != "" {
@@ -210,14 +228,14 @@ func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string, jav
 	switch lf.Mode {
 	case launchJar:
 		add(extraJvmFlags)
-		parts = append(parts, fmt.Sprintf("-Xms%dM", memMB), fmt.Sprintf("-Xmx%dM", memMB))
+		parts = append(parts, fmt.Sprintf("-Xms%dM", heapMB), fmt.Sprintf("-Xmx%dM", heapMB))
 		parts = append(parts, "-jar", lf.Jar, "nogui")
 	case launchArgfile:
 		add(extraJvmFlags)
 		if lf.UserJvmArgs {
 			add("@user_jvm_args.txt")
 		}
-		parts = append(parts, fmt.Sprintf("-Xms%dM", memMB), fmt.Sprintf("-Xmx%dM", memMB))
+		parts = append(parts, fmt.Sprintf("-Xms%dM", heapMB), fmt.Sprintf("-Xmx%dM", heapMB))
 		parts = append(parts, "@"+lf.ArgsFile, "nogui")
 	default:
 		return "", fmt.Errorf("no runnable server found in %s", subServerDir)

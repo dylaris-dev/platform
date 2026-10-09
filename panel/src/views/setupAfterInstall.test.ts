@@ -40,8 +40,9 @@ describe('after an install from the Setup tab', () => {
     // server being replaced ("Minecraft 26.3 needs Java 25" over a 1.20.1 pack).
     it('recommends the Java of what is installed, and says when it cannot tell', () => {
         const setup = read('views/SetupView.tsx');
-        expect(setup).toContain(": keepsUpload ? (uploadDetection?.mcVersion || '')");
-        expect(setup).toContain('const javaVersionUnknown = keepsUpload && !isProxy && !!uploadFile && uploadDetection !== null && !targetMcVersion;');
+        // Per tab, in installTargetMcVersion (installTarget.test.ts has the rows).
+        expect(setup).toContain('const { version: targetMcVersion, unknown: javaVersionUnknown } = installTargetMcVersion({');
+        expect(setup).toContain('uploadInstallsSoftware: uploadNeedsSoftware && !uploadKeepJar,');
         expect(setup).toContain('const mc = d.serverPack ? await readPackMcVersion(uploadFile)');
         for (const f of ['views/setup/SetupNewWizard.tsx', 'views/setup/SetupEditMode.tsx']) {
             const s = read(f);

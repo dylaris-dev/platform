@@ -52,8 +52,16 @@ func NewConsoleHandler(state *AppState) *ConsoleHandler {
 	return &ConsoleHandler{state: state}
 }
 
+// consoleHistoryMax is the most lines one history call returns. The stream
+// itself holds more (the log shipper keeps 5000); older pages are fetched with
+// ?before=.
+const consoleHistoryMax = 1000
+
 // GetHistory GET /api/servers/{id}/console/history
-// Returns the last 1000 log lines from the Redis Stream for this server.
+// Returns up to ?count= (default and max 1000) log lines from the Redis Stream,
+// oldest first, with their stream IDs. ?before=<id> pages backwards: only
+// lines strictly older than that ID are returned. "more" says whether older
+// lines exist beyond this page.
 func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
@@ -78,23 +86,55 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
 		return
 	}
+	before := r.URL.Query().Get("before")
+	if before != "" && !sseEventID.MatchString(before) {
+		sendJSONError(w, "Invalid before", http.StatusBadRequest)
+		return
+	}
+	count := consoleHistoryMax
+	if c := r.URL.Query().Get("count"); c != "" {
+		n, err := strconv.Atoi(c)
+		if err != nil || n < 1 {
+			sendJSONError(w, "Invalid count", http.StatusBadRequest)
+			return
+		}
+		count = min(n, consoleHistoryMax)
+	}
 	streamKey := consoleStreamKey(srv, subServer)
+
+	// The range end is inclusive, and the exclusive "(" form needs Redis 6.2,
+	// so the boundary entry is dropped here instead. One extra entry is read
+	// to tell whether older lines remain, and one more when the boundary may
+	// take a slot.
+	end, n := "+", int64(count+1)
+	if before != "" {
+		end, n = before, n+1
+	}
 	// XRevRangeN returns newest-first; we reverse to get chronological order
-	entries, err := h.state.Redis.XRevRangeN(r.Context(), streamKey, "+", "-", 1000).Result()
+	entries, err := h.state.Redis.XRevRangeN(r.Context(), streamKey, end, "-", n).Result()
 	if err != nil {
 		// Stream may not exist yet (server never started) — return empty list
 		entries = nil
 	}
+	if before != "" && len(entries) > 0 && entries[0].ID == before {
+		entries = entries[1:]
+	}
+	more := len(entries) > count
+	if more {
+		entries = entries[:count]
+	}
 
 	lines := make([]string, 0, len(entries))
+	ids := make([]string, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		if v, ok := entries[i].Values["line"]; ok {
 			lines = append(lines, fmt.Sprintf("%v", v))
+			ids = append(ids, entries[i].ID)
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"lines": lines})
+	json.NewEncoder(w).Encode(map[string]interface{}{"lines": lines, "ids": ids, "more": more})
 }
 
 // StreamConsole GET /api/servers/{id}/console/stream

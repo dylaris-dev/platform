@@ -10,11 +10,12 @@ import { xml } from '@codemirror/lang-xml';
 import { EditorView, type ViewUpdate } from '@codemirror/view';
 import { dylarisTheme, dylarisHighlight } from './codemirror-theme';
 import { propertiesLanguage } from './codemirror-properties';
+import { stripGz } from './utils';
 
 export type FileLanguage = 'json' | 'yaml' | 'properties' | 'javascript' | 'xml' | 'plain';
 
 export function detectLanguage(filename: string): FileLanguage {
-  const lower = filename.toLowerCase();
+  const lower = stripGz(filename).toLowerCase();
   const ext = lower.includes('.') ? lower.substring(lower.lastIndexOf('.')) : '';
   switch (ext) {
     case '.json':
@@ -66,7 +67,9 @@ interface CodeMirrorEditorProps {
   onChange: (next: string) => void;
   filename: string;
   readOnly?: boolean;
-  searchTerm?: string;
+  // Selection to move to and scroll into view. A new object is a new jump, so
+  // the caller sets it only when the user navigates, never while they type.
+  jumpTo?: { from: number; to: number } | null;
   className?: string;
   onCursorChange?: (line: number, col: number) => void;
 }
@@ -76,7 +79,7 @@ export default function CodeMirrorEditor({
   onChange,
   filename,
   readOnly,
-  searchTerm,
+  jumpTo,
   className,
   onCursorChange,
 }: CodeMirrorEditorProps) {
@@ -100,22 +103,26 @@ export default function CodeMirrorEditor({
     ]);
   }, [language, onCursorChange]);
 
-  // Imperative search: jump to first match when searchTerm changes.
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || !searchTerm) return;
-    const docText = view.state.doc.toString();
-    const idx = docText.toLowerCase().indexOf(searchTerm.toLowerCase());
-    if (idx < 0) return;
+    if (!view || !jumpTo) return;
+    // Offsets come from a debounced scan, so the doc may have moved under them.
+    const len = view.state.doc.length;
+    const from = Math.min(jumpTo.from, len);
     view.dispatch({
-      selection: { anchor: idx, head: idx + searchTerm.length },
+      selection: { anchor: from, head: Math.min(jumpTo.to, len) },
       scrollIntoView: true,
     });
-  }, [searchTerm]);
+  }, [jumpTo]);
 
   return (
     <div className={className} style={{ height: '100%' }}>
+      {/* @uiw wraps .cm-editor in its own div with auto height, so height="100%"
+          alone resolved against nothing: the editor grew to the whole document
+          and the clipped parent hid everything below the fold, unscrollable.
+          The wrapper needs the height too for .cm-scroller to scroll. */}
       <CodeMirror
+        style={{ height: '100%' }}
         value={value}
         onChange={onChange}
         extensions={extensions}
@@ -124,10 +131,10 @@ export default function CodeMirrorEditor({
         basicSetup={{
           lineNumbers: true,
           foldGutter: true,
-          highlightActiveLine: true,
-          highlightActiveLineGutter: true,
+          highlightActiveLine: !readOnly,
+          highlightActiveLineGutter: !readOnly,
           bracketMatching: true,
-          closeBrackets: true,
+          closeBrackets: !readOnly,
           autocompletion: language === 'json' || language === 'yaml',
           searchKeymap: true,
         }}

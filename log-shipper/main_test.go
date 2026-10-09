@@ -171,7 +171,7 @@ func TestUUIDRegex(t *testing.T) {
 
 // The panel polls RCON continuously, and Minecraft logs a thread start and a
 // shutdown for every one of those connections. At the polling rate that pushes
-// the server's actual output out of the 1000-line stream.
+// the server's actual output out of the stream's line cap.
 func TestIsRconNoiseLine(t *testing.T) {
 	noise := []string{
 		"[12:00:00] [RCON Listener #1/INFO]: Thread RCON Client /172.18.0.1 started",

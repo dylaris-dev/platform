@@ -57,10 +57,10 @@ function isContinuationLine(line: string): boolean {
 
 // Single-pass fold over a batch of console lines: lines that match a level
 // keep it, continuation-shaped lines inherit the previous line's computed
-// level, everything else falls back to the default level.
-export function computeLineLevels(lines: string[]): Level[] {
+// level, everything else falls back to the default level. `previous` is the
+// level of the line before the batch, so a live line can be levelled alone.
+export function computeLineLevels(lines: string[], previous: Level = DEFAULT_LEVEL): Level[] {
     const levels: Level[] = [];
-    let previous: Level = DEFAULT_LEVEL;
     for (const line of lines) {
         const detected = detectLevel(line);
         const level = detected ?? (isContinuationLine(line) ? previous : DEFAULT_LEVEL);

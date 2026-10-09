@@ -1756,7 +1756,7 @@
       "path": "/api/external/servers/{uuid}/console/history",
       "auth": "user API key",
       "authorization": "console.read",
-      "description": "Returns the last 1000 log lines from the Redis Stream for this server.",
+      "description": "Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs.",
       "handler": "ConsoleHandler.GetHistory",
       "group": "external",
       "external": true
@@ -3433,7 +3433,7 @@
       "path": "/api/servers/{id:[0-9]+}/console/history",
       "auth": "session",
       "authorization": "console.read",
-      "description": "Returns the last 1000 log lines from the Redis Stream for this server.",
+      "description": "Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs.",
       "handler": "ConsoleHandler.GetHistory",
       "group": "servers",
       "external": false

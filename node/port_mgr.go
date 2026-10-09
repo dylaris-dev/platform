@@ -216,6 +216,12 @@ func (pm *PortManager) SetPort(serverUUID string, port int) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
+	// Checked before the release below: a refused port used to leave the
+	// server holding no port at all.
+	if existingUUID, ok := pm.usedPorts[port]; ok && existingUUID != serverUUID {
+		return fmt.Errorf("port %d is already allocated to server %s", port, existingUUID)
+	}
+
 	// Release existing allocation for this server if different
 	for p, uuid := range pm.usedPorts {
 		if uuid == serverUUID && p != port {
@@ -226,11 +232,6 @@ func (pm *PortManager) SetPort(serverUUID string, port int) error {
 			delete(pm.usedPorts, p)
 			break
 		}
-	}
-
-	// Check if new port is taken by another server
-	if existingUUID, ok := pm.usedPorts[port]; ok && existingUUID != serverUUID {
-		return fmt.Errorf("port %d is already allocated to server %s", port, existingUUID)
 	}
 
 	key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)

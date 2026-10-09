@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
 import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { subscribeEventSource } from '@/lib/sse';
-import { levelClass, computeLineLevels } from '@/lib/consoleLog';
+import { levelClass, type Level } from '@/lib/consoleLog';
+import { appendLive, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
 import { Power, Send, Cpu, MemoryStick, ArrowDown } from 'lucide-react';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
@@ -50,6 +51,22 @@ function parseAnsiLine(line: string): React.ReactNode {
   return parts;
 }
 
+// Memoised so a new line renders one row, not every row in a 5000-line buffer.
+const ConsoleRow = memo(function ConsoleRow({ text, level }: { text: string; level: Level }) {
+  return (
+    <div className={`whitespace-pre-wrap break-all leading-5 ${levelClass(level)}`}>
+      {parseAnsiLine(text)}
+    </div>
+  );
+});
+
+interface HistoryPage { lines?: string[]; ids?: string[]; more?: boolean }
+
+function historyLines(data: HistoryPage, nextKey: () => string): { key: string; text: string }[] {
+  const ids = data.ids ?? [];
+  return (data.lines ?? []).map((text, i) => ({ key: ids[i] || nextKey(), text }));
+}
+
 const COMMANDS = [
   'advancement', 'attribute', 'ban', 'ban-ip', 'banlist', 'bossbar', 'clear', 'clone',
   'damage', 'data', 'datapack', 'debug', 'defaultgamemode', 'deop', 'difficulty',
@@ -68,7 +85,24 @@ interface ConsoleViewProps {
 }
 
 export default function ConsoleView({ server }: ConsoleViewProps) {
-  const [lines, setLines] = useState<string[]>([]);
+  const [lines, setLines] = useState<ConsoleLine[]>([]);
+  // 'more': older lines can be fetched; 'start': Core said there are none
+  // before startKeyRef; 'unknown': a Core that predates paging, so no top row.
+  const [olderState, setOlder] = useState<'more' | 'loading' | 'start' | 'unknown'>('unknown');
+  const startKeyRef = useRef('');
+  // Following trims the top, so the start reached earlier may no longer be
+  // the oldest line shown; then there is more to fetch again.
+  const oldestId = oldestStreamId(lines);
+  const older = olderState === 'start' && oldestId !== startKeyRef.current ? 'more' : olderState;
+  const olderRef = useRef(older);
+  olderRef.current = older;
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  // Bumped per server/sub-server so a page fetched for the previous one is dropped.
+  const genRef = useRef(0);
+  // scrollHeight before older lines were prepended, to keep the view anchored.
+  const anchorRef = useRef<number | null>(null);
+  const seqRef = useRef(0);
   const [liveStats, setLiveStats] = useState<ServerStats | null>(null);
   const [command, setCommand] = useState('');
   const [sendError, setSendError] = useState('');
@@ -85,11 +119,6 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
 
   const activeSubServer = server.activeSubServer || '';
 
-  // Continuation lines (exception header + `at ...` stack frames) carry no
-  // level token of their own, so they inherit the level of the record they
-  // follow - computed in one pass so the render loop below stays a simple map.
-  const lineLevels = useMemo(() => computeLineLevels(lines), [lines]);
-
   // Stats stream (was passed as prop from Dashboard previously)
   useEffect(() => {
     setLiveStats(null);
@@ -98,40 +127,93 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     });
   }, [server.id]);
 
+  const nextKey = () => `local-${++seqRef.current}`;
+  const historyUrl = (extra: string) => {
+    const params = new URLSearchParams(extra);
+    if (activeSubServer) params.set('sub_server', activeSubServer);
+    const q = params.toString();
+    return `${API_URL}/servers/${server.id}/console/history${q ? `?${q}` : ''}`;
+  };
+
   useEffect(() => {
+    const gen = ++genRef.current;
     setLines([]);
+    setOlder('unknown');
+    startKeyRef.current = '';
+    anchorRef.current = null;
     followRef.current = true;
     setFollowing(true);
-    const pendingLines: string[] = [];
+    const pendingLines: ConsoleLine[] = [];
     let historyLoaded = false;
 
     const subParam = activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : '';
     const stopStream = subscribeEventSource(`/servers/${server.id}/console/stream${subParam}`, (e) => {
+      const entry = { key: e.lastEventId || nextKey(), text: e.data };
       if (!historyLoaded) {
-        pendingLines.push(e.data);
+        pendingLines.push({ ...entry, level: 'info' }); // re-levelled on merge
       } else {
-        setLines(prev => [...prev.slice(-999), e.data]);
+        // Trimmed only while following: dropping lines above a reader who is
+        // scrolled up slides the text under them.
+        setLines(prev => appendLive(prev, entry, followRef.current));
       }
     });
 
-    const historyUrl = `${API_URL}/servers/${server.id}/console/history${activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : ''}`;
-    fetch(historyUrl)
+    const settle = (history: ConsoleLine[]) => {
+      if (gen !== genRef.current) return;
+      historyLoaded = true;
+      setLines(mergeOrdered(history, pendingLines));
+    };
+    fetch(historyUrl(''))
       .then(r => r.json())
-      .then((data: { lines?: string[] }) => {
-        historyLoaded = true;
-        const history = data.lines ?? [];
-        setLines([...history, ...pendingLines].slice(-1000));
+      .then((data: HistoryPage) => {
+        if (gen !== genRef.current) return;
+        const oldest = data.ids?.[0] ?? '';
+        startKeyRef.current = oldest;
+        if (typeof data.more === 'boolean') setOlder(data.more && oldest ? 'more' : 'start');
+        settle(levelled(historyLines(data, nextKey)));
       })
-      .catch(() => {
-        historyLoaded = true;
-        setLines(pendingLines.slice(-1000));
-      });
+      .catch(() => settle([]));
 
     return stopStream;
+    // historyUrl and nextKey read only server.id, activeSubServer and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id, activeSubServer]);
 
-  useEffect(() => {
+  const loadOlder = () => {
+    const before = oldestStreamId(linesRef.current);
+    if (olderRef.current !== 'more' || !before) return;
+    const gen = genRef.current;
+    olderRef.current = 'loading';
+    setOlder('loading');
+    fetch(historyUrl(`before=${encodeURIComponent(before)}&count=1000`))
+      .then(r => {
+        if (!r.ok) throw new Error(`history ${r.status}`);
+        return r.json();
+      })
+      .then((data: HistoryPage) => {
+        if (gen !== genRef.current) return;
+        const page = levelled(historyLines(data, nextKey));
+        startKeyRef.current = data.ids?.[0] || before;
+        setOlder(data.more && page.length > 0 ? 'more' : 'start');
+        if (page.length === 0) return;
+        anchorRef.current = logRef.current?.scrollHeight ?? null;
+        setLines(prev => mergeOrdered(page, prev));
+      })
+      .catch(() => {
+        // Left retryable: the next scroll to the top asks again.
+        if (gen === genRef.current) setOlder('more');
+      });
+  };
+
+  // A layout effect, so the position is corrected before the browser paints
+  // the prepended lines.
+  useLayoutEffect(() => {
     const el = logRef.current;
+    if (el && anchorRef.current !== null) {
+      el.scrollTop += el.scrollHeight - anchorRef.current;
+      anchorRef.current = null;
+      return;
+    }
     if (el && followRef.current) el.scrollTop = el.scrollHeight;
   }, [lines]);
 
@@ -141,6 +223,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     followRef.current = atBottom;
     setFollowing(atBottom);
+    if (el.scrollTop < 50 && !atBottom) loadOlder();
   };
 
   const jumpToBottom = () => {
@@ -252,7 +335,9 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
       )}
       {/* Log output */}
       <div className="flex-1 min-h-0 relative">
-      <div ref={logRef} onScroll={onLogScroll} className="h-full overflow-y-auto p-4 font-mono text-sm bg-(--base-00)">
+      {/* overflow-anchor off: a prepend is anchored by hand above, and the
+          browser's own scroll anchoring would shift the view a second time. */}
+      <div ref={logRef} onScroll={onLogScroll} style={{ overflowAnchor: 'none' }} className="h-full overflow-y-auto p-4 font-mono text-sm bg-(--base-00)">
         {isOffline && lines.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-(--base-06)">
             <Power size={48} className="mb-3 opacity-30" />
@@ -262,11 +347,15 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         ) : lines.length === 0 ? (
           <p className="text-(--base-06) italic">Waiting for server output...</p>
         ) : (
-          lines.map((line, i) => (
-            <div key={i} className={`whitespace-pre-wrap break-all leading-5 ${levelClass(lineLevels[i])}`}>
-              {parseAnsiLine(line)}
-            </div>
-          ))
+          <>
+            {/* One fixed-height row for every state, so its text changing never moves the lines below. */}
+            {older !== 'unknown' && (
+              <p className="h-6 text-xs leading-5 text-(--base-06) italic" aria-live="polite">
+                {older === 'loading' ? 'Loading older lines...' : older === 'start' ? 'Start of log' : ''}
+              </p>
+            )}
+            {lines.map(line => <ConsoleRow key={line.key} text={line.text} level={line.level} />)}
+          </>
         )}
       </div>
       {!following && lines.length > 0 && (

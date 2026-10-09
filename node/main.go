@@ -1578,6 +1578,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// sub-server, and the reconciler starts the server from this file.
 		if applied, err := dm.UpdateResources(cmd.Config); err != nil {
 			log.Printf("Failed to update resources for %s: %v", cmd.Config.UUID, err)
+			// A failed recreate has already removed the old container. The saved
+			// config is deliberately left as it was: it is the last one a
+			// container ran with, and the reconciler rebuilds from it. Say the
+			// server is down rather than letting it read as running.
+			if dm.containerGone(cmd.Config.UUID) {
+				log.Printf("update_resources %s: container is gone after the failed change; the server is down until it is started again", cmd.Config.UUID)
+				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			}
 		} else {
 			log.Printf("Server %s resources updated", cmd.Config.UUID)
 			resServerPath := storage.GetServerDir(cmd.Config.UUID)

@@ -24,6 +24,9 @@ interface SetupNewWizardProps {
     subName: string;
     onSubNameChange: (name: string) => void;
     subNameError: string;
+    /** An upload is going to this name; Change discards it. */
+    subNameLocked?: boolean;
+    onSubNameUnlock?: () => void;
     // Java
     javaImage: string;
     onJavaChange: (id: string) => void;
@@ -139,14 +142,26 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                 {/* Row 1: Name */}
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Server Slot Name</label>
-                    <input
-                        type="text"
-                        value={props.subName}
-                        onChange={e => props.onSubNameChange(e.target.value)}
-                        placeholder="e.g. Survival"
-                        className={`input-mono w-full md:w-1/2 ${props.subNameError ? 'input-field-error' : ''}`}
-                        autoFocus
-                    />
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            value={props.subName}
+                            onChange={e => props.onSubNameChange(e.target.value)}
+                            placeholder="e.g. Survival"
+                            className={`input-mono w-full md:w-1/2 ${props.subNameError ? 'input-field-error' : ''}`}
+                            disabled={props.subNameLocked}
+                            autoFocus
+                        />
+                        {props.subNameLocked && (
+                            <button type="button" onClick={props.onSubNameUnlock} disabled={props.submitting}
+                                className="btn btn-secondary btn-sm" title="Discards the uploaded file">
+                                Change
+                            </button>
+                        )}
+                    </div>
+                    {props.subNameLocked && (
+                        <p className="text-xs text-(--base-06)">The upload goes to this name. Change it to discard the upload.</p>
+                    )}
                     {props.subNameError && <p className="text-xs text-(--error-light)">{props.subNameError}</p>}
                     {props.subName && !props.subNameError && (
                         <p className="text-xs text-(--base-07) font-mono">

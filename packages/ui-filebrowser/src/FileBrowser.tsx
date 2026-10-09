@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspens
 import JSZip from 'jszip';
 import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import type { FileEntry, FileBrowserProps } from './types';
-import { formatBytes, validFilenameRegex, editableExtensions, getCopyName, getTruncatedPath } from './utils';
+import { formatBytes, validFilenameRegex, getCopyName, getTruncatedPath, isOpenableFile, isGzipName, findMatches, OPEN_MAX_BYTES } from './utils';
 import { useDelayedFlag } from './useDelayedFlag';
 import { beamConnectionModeMeta } from './connectionMode';
 import Toast from './Toast';
@@ -48,12 +48,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const [editorPopupStyle] = useState({ width: '80vw', maxWidth: '1400px', minWidth: '700px' });
   const [isEditorLoading, setIsEditorLoading] = useState(false);
   const [isEditingEnabled, setIsEditingEnabled] = useState(false);
+  // Opened read-only regardless of permissions: a .gz is shown decompressed,
+  // and saving that text back would replace the archive with plain text.
+  const [fileIsReadOnly, setFileIsReadOnly] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [tempFileName, setTempFileName] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
+  const [searchJump, setSearchJump] = useState<{ from: number; to: number } | null>(null);
+  const lastSearchTermRef = useRef('');
 
 
   const [showUploadPopup, setShowUploadPopup] = useState(false);
@@ -125,7 +130,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   }, [globalSearchTerm]);
 
 
-  const fetchFiles = async (path: string) => {
+  const fetchFiles = async (path: string): Promise<boolean> => {
     setLoading(true);
     setError('');
     const result = await adapter.getFiles(path, serverUuid);
@@ -136,6 +141,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       setError(result.message || 'Unknown error');
     }
     setLoading(false);
+    return result.success;
   };
   
   // --- Selective Download Helpers ---
@@ -263,39 +269,51 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   }, [currentServerPath]);
 
   useEffect(() => {
-    if (showEditPopup && editingFile) {
-      const loadContent = async () => {
-        setIsEditorLoading(true);
-        setFileContent('');
-        const fullPath = currentPath ? `${currentPath}/${editingFile}` : editingFile;
-        try {
-          const result = await adapter.getFileContent(fullPath, serverUuid);
-          if (result.success) {
-            setFileContent(result.content);
-            setOriginalFileContent(result.content);
-          } else {
-            setError(result.message || 'Unknown error');
-            setShowEditPopup(false);
-          }
-        } catch {
-          setError('Failed to load file content');
-          setShowEditPopup(false);
-        } finally {
-          setIsEditorLoading(false);
+    if (!showEditPopup || !editingFile) return;
+    // A response for a file the user already left must not land in the editor
+    // of the one they opened next (and could then be saved over it).
+    let stale = false;
+    const failLoad = (message: string) => {
+      setShowEditPopup(false);
+      setIsEditingEnabled(false);
+      showToast(message, 'error');
+    };
+    const loadContent = async () => {
+      setIsEditorLoading(true);
+      setFileContent('');
+      const fullPath = currentPath ? `${currentPath}/${editingFile}` : editingFile;
+      try {
+        const result = await adapter.getFileContent(fullPath, serverUuid);
+        if (stale) return;
+        if (!result.success) {
+          failLoad(result.message || 'Failed to load file content.');
+          return;
         }
-      };
-      loadContent();
-    }
+        // The Beam relay reads straight from the node, which does not
+        // decompress: the gzip magic byte means we got the archive itself.
+        if (isGzipName(editingFile) && result.content.charCodeAt(0) === 0x1f) {
+          failLoad('This compressed file cannot be shown here. Download it instead.');
+          return;
+        }
+        setFileContent(result.content);
+        setOriginalFileContent(result.content);
+        setFileIsReadOnly(isGzipName(editingFile) || result.readonly === true);
+      } catch {
+        if (!stale) failLoad('Failed to load file content.');
+      } finally {
+        if (!stale) setIsEditorLoading(false);
+      }
+    };
+    loadContent();
+    return () => { stale = true; };
   }, [showEditPopup, editingFile, currentPath]);
-  
+
   useEffect(() => {
-    if(showEditPopup) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
+    if (!showEditPopup) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     return () => {
-      document.body.style.overflow = 'unset';
+      document.body.style.overflow = previous;
     };
   }, [showEditPopup]);
   
@@ -333,6 +351,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   
   const closeAllPopups = useCallback(() => {
     setShowEditPopup(false);
+    // Same reset as closeEditPopup, or the next file opened in edit mode.
+    setIsEditingEnabled(false);
+    setSearchTerm('');
+    setIsRenaming(false);
     setShowUploadPopup(false);
     setShowDeleteConfirm(false);
     setPopupMode(null);
@@ -439,33 +461,43 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     return false;
   };
 
-  const handleFileClick = (name: string, isDir: boolean, path?: string) => {
-     if(path && path !== currentPath) {
-        const parentPath = path.substring(0, path.lastIndexOf('/'));
-        setGlobalSearchTerm('');
-        fetchFiles(parentPath);
-        return;
+  // `file` is the clicked entry itself, so its size is known even for a
+  // global-search hit that is not in the current folder's list.
+  const openFile = (file: FileEntry) => {
+    if (!isOpenableFile(file.name)) {
+      showToast("This file type cannot be opened.", 'error');
+      return;
     }
-    if (isDir) {
-      const newPath = currentPath ? `${currentPath}/${name}` : name;
-      fetchFiles(newPath);
-    } else {
-      const isEditable = editableExtensions.some(ext => name.endsWith(ext));
-      if (isEditable) {
-        // Refuse to open very large files in the in-memory editor; they freeze
-        // the tab. The list entry already carries the size.
-        const entry = files.find(f => f.name === name);
-        const EDIT_MAX_BYTES = 5 * 1024 * 1024;
-        if (entry && entry.size > EDIT_MAX_BYTES) {
-          showToast("File is too large to open in the editor.", 'error');
-          return;
-        }
-        setIsEditorLoading(true);
-        setEditingFile(name);
-        setShowEditPopup(true);
-      } else {
-        showToast("This file type cannot be opened.", 'error');
+    if (file.size > OPEN_MAX_BYTES) {
+      showToast("File is too large to open here (over 10 MB). Download it instead.", 'error');
+      return;
+    }
+    setIsEditorLoading(true);
+    setIsEditingEnabled(false);
+    setFileIsReadOnly(isGzipName(file.name));
+    setEditingFile(file.name);
+    setShowEditPopup(true);
+  };
+
+  // goToFolder: the "Go to folder" button on a search hit, which lands in the
+  // folder holding it instead of opening it.
+  const handleFileClick = async (file: FileEntry, goToFolder = false) => {
+    if (file.path) {
+      const parentPath = file.path.substring(0, file.path.lastIndexOf('/'));
+      setGlobalSearchTerm('');
+      if (goToFolder) {
+        fetchFiles(parentPath);
+      } else if (file.is_dir) {
+        fetchFiles(file.path);
+      } else if (await fetchFiles(parentPath) && isOpenableFile(file.name)) {
+        openFile(file);
       }
+      return;
+    }
+    if (file.is_dir) {
+      fetchFiles(currentPath ? `${currentPath}/${file.name}` : file.name);
+    } else {
+      openFile(file);
     }
   };
 
@@ -480,6 +512,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   
   const closeEditPopup = () => {
       setShowEditPopup(false);
+      setFileIsReadOnly(false);
       setIsEditingEnabled(false);
       setSearchTerm('');
       setIsRenaming(false);
@@ -487,57 +520,55 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   const handleSaveFile = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (fileIsReadOnly || loading) return;
     setLoading(true);
     const fullPath = currentPath ? `${currentPath}/${editingFile}` : editingFile;
-    const result = await adapter.saveFile(fullPath, fileContent, serverUuid);
-    if (result.success) {
-      closeEditPopup();
-      setError('');
-    } else {
-      showToast(result.message || 'Operation failed', 'error');
+    try {
+      const result = await adapter.saveFile(fullPath, fileContent, serverUuid);
+      if (result.success) {
+        setOriginalFileContent(fileContent);
+        closeEditPopup();
+        setError('');
+      } else {
+        showToast(result.message || 'Operation failed', 'error');
+      }
+    } catch {
+      showToast('Failed to save the file. Your changes are still in the editor.', 'error');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
   
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       setSearchTerm(e.target.value);
   }
 
+  // Debounced: a full rescan of a 10 MB file on every keystroke stalls typing.
+  // Only a new term jumps to the first match; an edit to the content keeps the
+  // position and must not pull the cursor away from where the user types.
   useEffect(() => {
-      if (searchTerm) {
-          // Literal, case-insensitive substring search (same approach as the
-          // CodeMirror editor). Compiling raw user input as a RegExp risked a
-          // SyntaxError on invalid patterns and catastrophic backtracking
-          // (ReDoS) against large file content.
-          const matches: number[] = [];
-          const haystack = fileContent.toLowerCase();
-          const needle = searchTerm.toLowerCase();
-          let i = haystack.indexOf(needle);
-          while (i !== -1) {
-              matches.push(i);
-              i = haystack.indexOf(needle, i + needle.length);
-          }
+      const timer = setTimeout(() => {
+          const matches = findMatches(fileContent, searchTerm);
+          const termChanged = lastSearchTermRef.current !== searchTerm;
+          lastSearchTermRef.current = searchTerm;
           setSearchMatches(matches);
-          setCurrentMatchIndex(matches.length > 0 ? 0 : -1);
-      } else {
-          setSearchMatches([]);
-          setCurrentMatchIndex(-1);
-      }
+          if (termChanged) {
+              setCurrentMatchIndex(matches.length > 0 ? 0 : -1);
+              if (matches.length > 0) setSearchJump({ from: matches[0], to: matches[0] + searchTerm.length });
+          } else {
+              setCurrentMatchIndex(prev => Math.min(prev, matches.length - 1));
+          }
+      }, 200);
+      return () => clearTimeout(timer);
   }, [searchTerm, fileContent]);
-  
-  const goToNextMatch = () => {
-    if (searchMatches.length > 0) {
-      setCurrentMatchIndex((prevIndex) => (prevIndex + 1) % searchMatches.length);
-    }
-  };
 
-  const goToPrevMatch = () => {
-    if (searchMatches.length > 0) {
-      setCurrentMatchIndex((prevIndex) => (prevIndex - 1 + searchMatches.length) % searchMatches.length);
-    }
+  const goToMatch = (delta: number) => {
+    const n = searchMatches.length;
+    if (n === 0) return;
+    const next = currentMatchIndex < 0 ? 0 : (currentMatchIndex + delta + n) % n;
+    setCurrentMatchIndex(next);
+    setSearchJump({ from: searchMatches[next], to: searchMatches[next] + searchTerm.length });
   };
-  
-  // CodeMirror owns scroll/jump-to-match; we only track the match index for the search badge.
 
   const handleDeleteClick = (e: React.MouseEvent, file: FileEntry) => {
     e.stopPropagation();
@@ -817,8 +848,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       return <Folder size={36} className="mr-3 text-(--primary-light)" />;
     }
 
-    const isEditable = editableExtensions.some(ext => file.name.endsWith(ext));
-    if (isEditable) {
+    if (isOpenableFile(file.name)) {
         return <FileText size={36} className="mr-3 text-(--primary-light)" />;
     }
 
@@ -918,7 +948,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             key={file.path || file.name}
             onClick={() => picking
               ? toggleSelected(file.name)
-              : handleFileClick(file.name, file.is_dir, file.path)}
+              : handleFileClick(file)}
             aria-selected={picking ? selected.has(file.name) : undefined}
             className={`server-row justify-between ${isPicked ? 'border-(--accent) bg-(--accent-ghost)' : ''}`}
           >
@@ -932,7 +962,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             <div className="flex items-center space-x-1 text-sm shrink-0">
               <span className="text-(--base-09) hidden sm:inline mr-2">{formatBytes(file.size)}</span>
               {file.path && file.path !== file.name && (
-                <button title="Go to folder" disabled={picking} onClick={(e) => { e.stopPropagation(); handleFileClick(file.name, true, file.path) }} className="disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light) p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
+                <button title="Go to folder" disabled={picking} onClick={(e) => { e.stopPropagation(); handleFileClick(file, true) }} className="disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light) p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white">
                     <ExternalLink size={18} />
                 </button>
               )}
@@ -1171,8 +1201,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                           onChange={handleSearchChange}
                           className="input-field h-7 px-2 text-xs"
                        />
-                       <button onClick={goToPrevMatch} disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowUp size={16} /></button>
-                       <button onClick={goToNextMatch} disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowDown size={16} /></button>
+                       <button onClick={() => goToMatch(-1)} disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowUp size={16} /></button>
+                       <button onClick={() => goToMatch(1)} disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowDown size={16} /></button>
                        <span className="text-xs text-(--base-06) px-1.5 font-mono">{searchMatches.length > 0 ? `${currentMatchIndex + 1}/${searchMatches.length}` : '0/0'}</span>
                    </div>
                    <button onClick={closeEditPopup} className="w-8 h-8 flex items-center justify-center bg-(--base-03) hover:bg-(--base-04) transition-colors rounded-md text-(--base-07)">
@@ -1191,15 +1221,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                             value={fileContent}
                             onChange={setFileContent}
                             filename={editingFile || ''}
-                            readOnly={!isEditingEnabled}
-                            searchTerm={searchTerm}
+                            readOnly={!isEditingEnabled || fileIsReadOnly}
+                            jumpTo={searchJump}
                             className="h-full"
                         />
                     </Suspense>
                 </div>
             )}
             <div className="modal-footer">
-              {!isEditingEnabled ? (
+              {fileIsReadOnly ? (
+                 <span className="text-sm text-(--base-07) mr-auto self-center">Compressed file, read-only.</span>
+              ) : !isEditingEnabled ? (
                  <button onClick={() => { if (blockReadOnly()) return; setIsEditingEnabled(true); }} className="btn btn-secondary px-4 py-2 text-sm">Edit</button>
               ) : (
                 <>
@@ -1207,7 +1239,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                       setIsEditingEnabled(false);
                       setFileContent(originalFileContent);
                   }} className="btn btn-secondary px-4 py-2 text-sm">Cancel</button>
-                  <button onClick={handleSaveFile} className="btn btn-primary px-4 py-2 text-sm">Save</button>
+                  <button onClick={handleSaveFile} disabled={loading} className="btn btn-primary px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed">Save</button>
                 </>
               )}
             </div>
