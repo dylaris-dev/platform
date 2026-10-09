@@ -46,6 +46,10 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
+	if p := req.Docker.RAMPaddingMB; p != nil && !models.ValidRAMPaddingMB(*p) {
+		sendJSONError(w, ramPaddingRefused, http.StatusBadRequest)
+		return
+	}
 
 	// The node's numeric id, as a string. Sscanf leaves it at 0 for anything it
 	// cannot read - including a node UUID, which is what the panel calls a node
@@ -68,12 +72,13 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	hasFilters := strings.TrimSpace(req.Region) != "" || len(req.Tags) > 0 || strings.TrimSpace(req.Tag) != ""
 	if nodeIDInt == 0 && hasFilters {
 		pickReq := PickNodeRequest{
-			Region:   req.Region,
-			Tags:     req.Tags,
-			Tag:      req.Tag,
-			RAMMB:    req.Docker.RAM,
-			CPUCores: req.Docker.CPULimit,
-			DiskGB:   diskMBToGBCeil(req.Docker.DiskLimit),
+			Region:       req.Region,
+			Tags:         req.Tags,
+			Tag:          req.Tag,
+			RAMMB:        req.Docker.RAM,
+			RAMPaddingMB: req.Docker.RAMPaddingMB,
+			CPUCores:     req.Docker.CPULimit,
+			DiskGB:       diskMBToGBCeil(req.Docker.DiskLimit),
 		}
 		// BYON: scope auto-placement to nodes the caller's party owns, so the
 		// scheduler never picks a foreign node. No-op when BYON is off. See
@@ -182,6 +187,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		GameImage:       "ghcr.io/dylaris-dev/platform-mc-java21:latest", // Default, overridden during setup
 		Port:            25565,
 		Memory:          req.Docker.RAM,
+		RAMPaddingMB:    req.Docker.RAMPaddingMB,
 		CPULimit:        req.Docker.CPULimit,
 		StartCommand:    "",
 		Status:          "pending_setup",
@@ -213,12 +219,13 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 			"uuid":    req.UUID,
 			"ownerId": srv.OwnerID,
 			"docker": map[string]interface{}{
-				"image":      srv.GameImage,
-				"ram":        req.Docker.RAM,
-				"cpuLimit":   req.Docker.CPULimit,
-				"cpusetCpus": effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
-				"diskLimit":  req.Docker.DiskLimit,
-				"command":    "",
+				"image":        srv.GameImage,
+				"ram":          req.Docker.RAM,
+				"ramPaddingMB": services.EffectiveRAMPaddingMB(h.state.Store, req.Docker.RAMPaddingMB, node.RAMPaddingMB),
+				"cpuLimit":     req.Docker.CPULimit,
+				"cpusetCpus":   effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"diskLimit":    req.Docker.DiskLimit,
+				"command":      "",
 			},
 		}
 
@@ -258,6 +265,8 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 const platformImagePrefix = "ghcr.io/dylaris-dev/platform-mc-java"
 
 const javaImageRefused = "That runtime image is not allowed on this platform. Pick one of the offered Java versions."
+
+var ramPaddingRefused = fmt.Sprintf("ramPaddingMb must be a whole number of MB from 0 to %d", models.MaxRAMPaddingMB)
 
 // javaImageAllowed reports whether a REQUESTED image may be set. An empty
 // request keeps the stored image, which is not re-judged: servers already on
@@ -677,6 +686,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			"docker": map[string]interface{}{
 				"image":         javaImage,
 				"ram":           srv.Memory,
+				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
 				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"extraJvmFlags": combinedJvmFlags,
@@ -879,6 +889,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			"docker": map[string]interface{}{
 				"image":         javaImage,
 				"ram":           srv.Memory,
+				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
 				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"extraJvmFlags": combinedJvmFlags,
@@ -1095,6 +1106,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 				"docker": map[string]interface{}{
 					"image":         srv.GameImage,
 					"ram":           srv.Memory,
+					"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 					"cpuLimit":      srv.CPULimit,
 					"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 					"extraJvmFlags": combinedJvmFlags,
@@ -1490,6 +1502,10 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		// Optional CPU pinning change. Omitted (nil) = leave pinning unchanged.
 		CPUPinningMode *string `json:"cpuPinningMode"`
 		Cpuset         *string `json:"cpuset"`
+		// RAM padding override: a number sets it, resetRamPadding clears it
+		// (inherit node/global), neither leaves it alone. Same gate as RAM.
+		RAMPaddingMB    *int `json:"ramPaddingMb"`
+		ResetRAMPadding bool `json:"resetRamPadding"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
@@ -1506,12 +1522,26 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Ports must be between 1 and 65535", 400)
 		return
 	}
+	if req.RAMPaddingMB != nil && req.ResetRAMPadding {
+		sendJSONError(w, "Send either ramPaddingMb or resetRamPadding, not both", 400)
+		return
+	}
+	if req.RAMPaddingMB != nil && !models.ValidRAMPaddingMB(*req.RAMPaddingMB) {
+		sendJSONError(w, ramPaddingRefused, 400)
+		return
+	}
+	paddingRequested := req.RAMPaddingMB != nil || req.ResetRAMPadding
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
 		return
 	}
+	// The padding goes to the node only when this save changes the memory
+	// anyway. Sending the current effective value on every save would turn a
+	// CPU-only save into a container recreate (a restart) whenever the node or
+	// global default had changed since; without it the node keeps its label.
+	sendPadding := paddingRequested || req.RAM != srv.Memory
 
 	if refuseIfSuspended(w, r, h.state, srv) {
 		return
@@ -1605,6 +1635,14 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Failed to update resources", 500)
 		return
 	}
+	if paddingRequested {
+		// req.RAMPaddingMB is nil on a reset, which is exactly the cleared value.
+		if err := h.state.Store.SetServerRAMPadding(serverID, req.RAMPaddingMB); err != nil {
+			sendJSONError(w, "Failed to save RAM headroom", 500)
+			return
+		}
+		srv.RAMPaddingMB = req.RAMPaddingMB
+	}
 	if pinningRequested {
 		if err := h.state.Store.UpdateServerCPUPinning(srv.ID, pinMode, newCpuset); err != nil {
 			sendJSONError(w, "Failed to save CPU pinning", 500)
@@ -1635,6 +1673,9 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		auditMeta["hostPort"] = newHostPort
 		auditMeta["containerPort"] = newContainerPort
 	}
+	if paddingRequested {
+		auditMeta["ramPaddingMb"] = req.RAMPaddingMB
+	}
 	actorID, _ := r.Context().Value("userID").(string)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventResourcesChanged, actorID, "", auditMeta)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
@@ -1655,6 +1696,9 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 				"cpusetCpus": effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"diskLimit":  req.DiskLimit,
 				"image":      srv.GameImage,
+			}
+			if sendPadding {
+				dockerPayload["ramPaddingMB"] = services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB)
 			}
 			// Sent whenever ports were asked for, not only when they differ
 			// from the row: a retry after a failed dispatch finds the row
@@ -2354,6 +2398,7 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 			"docker": map[string]interface{}{
 				"image":         javaImage,
 				"ram":           srv.Memory,
+				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
 				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"extraJvmFlags": combinedJvmFlags,

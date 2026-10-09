@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,16 +87,29 @@ func TestBoundPorts(t *testing.T) {
 // booked, 1 CPU, image img:1, sub-server main and host port 25601 -> 25566.
 // It counts update, stop and create calls.
 func existingContainerDocker(t *testing.T) (*DockerManager, map[string]*atomic.Int32) {
+	dm, calls, _ := paddedContainerDocker(t, 512, "")
+	return dm, calls
+}
+
+// paddedContainerDocker is existingContainerDocker with a container created
+// with paddingMB on top of the 4096 booked, carrying labelsJSON (a JSON object,
+// or "" for none). created returns the last container create request body.
+func paddedContainerDocker(t *testing.T, paddingMB int, labelsJSON string) (dm *DockerManager, calls map[string]*atomic.Int32, created func() string) {
 	t.Helper()
+	if labelsJSON == "" {
+		labelsJSON = "null"
+	}
+	var createBody atomic.Value
+	createBody.Store("")
 	// Direct port mode; other tests leave the mode globals set.
 	r, f, pm, cp, iow, pids := getModes()
 	setModes("ip_port", f, pm, 25565, iow, pids)
 	t.Cleanup(func() { setModes(r, f, pm, cp, iow, pids) })
-	calls := map[string]*atomic.Int32{"update": {}, "stop": {}, "create": {}}
+	calls = map[string]*atomic.Int32{"update": {}, "stop": {}, "create": {}}
 	inspect := fmt.Sprintf(`{"Id":"abc","State":{"Running":true},
-		"Config":{"Image":"img:1","WorkingDir":"/data/main","Cmd":["java","-jar","server.jar","nogui"]},
+		"Config":{"Image":"img:1","WorkingDir":"/data/main","Cmd":["java","-jar","server.jar","nogui"],"Labels":%s},
 		"HostConfig":{"Memory":%d,"NanoCPUs":1000000000,"CpusetCpus":"",
-			"PortBindings":{"25566/tcp":[{"HostIp":"0.0.0.0","HostPort":"25601"}]}}}`, int64(4096+512)<<20)
+			"PortBindings":{"25566/tcp":[{"HostIp":"0.0.0.0","HostPort":"25601"}]}}}`, labelsJSON, int64(4096+paddingMB)<<20)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
@@ -108,9 +122,19 @@ func existingContainerDocker(t *testing.T) (*DockerManager, map[string]*atomic.I
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(p, "/containers/create"):
 			calls["create"].Add(1)
+			b, _ := io.ReadAll(r.Body)
+			createBody.Store(string(b))
 			w.Write([]byte(`{"Id":"new-id-0123456789ab"}`))
 		case strings.Contains(p, "/containers/mc_") && strings.HasSuffix(p, "/json"):
 			w.Write([]byte(inspect))
+		case strings.HasSuffix(p, "/containers/new-id-0123456789ab/json"):
+			w.Write([]byte(`{"Id":"new-id-0123456789ab","State":{"Running":true},"Config":{},"HostConfig":{},"NetworkSettings":{"Networks":{"dylaris_net":{}}}}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/networks"):
+			w.Write([]byte(`[{"Id":"0123456789abcdef0123","Name":"dylaris_net","IPAM":{"Config":[{"Subnet":"172.30.0.0/16","Gateway":"172.30.0.1"}]}}]`))
+		case strings.Contains(p, "/networks/"):
+			w.Write([]byte(`{"Id":"0123456789abcdef0123","Name":"dylaris_net","IPAM":{"Config":[{"Subnet":"172.30.0.0/16","Gateway":"172.30.0.1"}]}}`))
+		case strings.HasSuffix(p, "/images/json"):
+			w.Write([]byte(`[]`))
 		default:
 			w.Write([]byte(`{}`))
 		}
@@ -122,9 +146,9 @@ func existingContainerDocker(t *testing.T) (*DockerManager, map[string]*atomic.I
 	}
 	t.Cleanup(func() { cli.Close() })
 	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
-	dm := &DockerManager{cli: cli, ctx: t.Context(), localDataPath: t.TempDir()}
+	dm = &DockerManager{cli: cli, ctx: t.Context(), localDataPath: t.TempDir()}
 	dm.portMgr = NewPortManager(rdb, "node-1", 25600, 25699, seqMode)
-	return dm, calls
+	return dm, calls, func() string { return createBody.Load().(string) }
 }
 
 func TestUpdateResourcesAppliesCPULiveAndCarriesPorts(t *testing.T) {

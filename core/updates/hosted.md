@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.14
+
+### Features
+- **The RAM headroom on top of a server's RAM is configurable** per node and per server in the panel,
+  for large modpacks that need more than the default 512 MB outside the Java heap. Update your node. `node`
+- **More text files open in the file browser**: .snbt, .zs, .mcmeta, .lang, .csv and .bat.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.13
 
 ### Features

@@ -181,8 +181,9 @@ TokenLoop:
 
 // jvmHeapMB is the -Xms/-Xmx for a server booked with bookedMB of RAM.
 //
-// The container limit is booked+512 MB, and the heap used to be the whole
-// booked amount. For small plans (vanilla, Paper) the 512 MB padding covers
+// The container limit is booked RAM plus a padding (configurable, default
+// 512 MB; the heap does not follow it), and the heap used to be the whole
+// booked amount. For small plans (vanilla, Paper) the default padding covers
 // what the JVM needs outside the heap, so up to 2048 MB the heap stays the
 // booking. A large modpack (a 440-mod Forge pack, measured live) needs far
 // more - metaspace, code cache, thread stacks, native buffers - and the cgroup

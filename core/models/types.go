@@ -324,6 +324,9 @@ type Node struct {
 	RAMOvercommitRatio float64 `json:"ramOvercommitRatio"`
 	TotalCPU           float64 `json:"totalCpu"`   // physical cores (cached from heartbeat)
 	TotalRAMMB         int64   `json:"totalRamMb"` // physical RAM in MB (cached from heartbeat)
+	// RAMPaddingMB overrides the global container RAM padding for servers on
+	// this node. nil inherits the global setting (see ram_padding.go).
+	RAMPaddingMB *int `json:"ramPaddingMb"`
 
 	// Live stats from heartbeat (not persisted, -1 = not available).
 	// LinkCount is a POINTER, like NetPolicy below: nil is "no heartbeat to
@@ -467,7 +470,12 @@ type Server struct {
 	GameImage string   `json:"image"`
 	Port      int      `json:"port"`
 	Memory    int      `json:"memory"`
-	CPULimit  float64  `json:"cpuLimit"`
+	// RAMPaddingMB is this server's own padding override (nil inherits);
+	// EffectiveRAMPaddingMB is what its container gets on its current node,
+	// resolved by the store when the row is loaded.
+	RAMPaddingMB          *int    `json:"ramPaddingMb"`
+	EffectiveRAMPaddingMB int     `json:"effectiveRamPaddingMb"`
+	CPULimit              float64 `json:"cpuLimit"`
 	// CPUPinningMode: 'shared' (default), 'auto' or 'manual'. Cpuset is the
 	// effective core list (e.g. "0-3,8"), empty when shared/unpinned.
 	CPUPinningMode   string `json:"cpuPinningMode"`

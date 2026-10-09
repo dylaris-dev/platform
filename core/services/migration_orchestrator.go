@@ -706,6 +706,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		"docker": map[string]interface{}{
 			"image":         srv.GameImage,
 			"ram":           srv.Memory,
+			"ramPaddingMB":  EffectiveRAMPaddingMB(o.store, srv.RAMPaddingMB, targetNode.RAMPaddingMB),
 			"cpuLimit":      srv.CPULimit,
 			"cpusetCpus":    effCpuset,
 			"extraJvmFlags": strings.TrimSpace(DefaultJvmFlags + " " + srv.ExtraJvmFlags),

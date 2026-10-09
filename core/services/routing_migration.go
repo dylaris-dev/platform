@@ -246,6 +246,7 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 
 	type dockerCfg struct {
 		RAM           int     `json:"ram"`
+		RAMPaddingMB  int     `json:"ramPaddingMB"`
 		CPULimit      float64 `json:"cpuLimit"`
 		DiskLimit     int64   `json:"diskLimit"`
 		Image         string  `json:"image"`
@@ -266,6 +267,7 @@ func (m *RoutingMigrationService) redeployServer(ctx context.Context, srv models
 		ActiveSubServer: srv.ActiveSubServer,
 		Docker: dockerCfg{
 			RAM:           srv.Memory,
+			RAMPaddingMB:  srv.EffectiveRAMPaddingMB, // resolved for its node by GetAllActiveServers
 			CPULimit:      srv.CPULimit,
 			DiskLimit:     srv.DiskLimit,
 			Image:         srv.GameImage,

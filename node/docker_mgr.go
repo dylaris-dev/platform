@@ -308,6 +308,33 @@ type DockerConfig struct {
 	ExtraJvmFlags string  `json:"extraJvmFlags"` // JVM flags forwarded from Core (Aikar + server-specific)
 	HostPort      int     `json:"hostPort"`      // 0 = auto-allocate from range
 	ContainerPort int     `json:"containerPort"` // 0 = use global containerPort var
+	// Container memory on top of the booked RAM, for what the JVM needs outside
+	// its heap. nil = not sent (older Core): the container label, else 512.
+	RAMPaddingMB *int `json:"ramPaddingMB,omitempty"`
+}
+
+// ramPaddingLabel records the padding a container was created with, so a
+// restart or resource change can subtract it from the memory limit again.
+const (
+	ramPaddingLabel     = "dylaris.ram_padding_mb"
+	defaultRAMPaddingMB = 512
+)
+
+// ramPadding is the padding a container built from this config gets.
+func (d DockerConfig) ramPadding() int {
+	if d.RAMPaddingMB != nil && *d.RAMPaddingMB >= 0 {
+		return *d.RAMPaddingMB
+	}
+	return defaultRAMPaddingMB
+}
+
+// ramPaddingFromLabels is the padding an existing container was created with.
+// Containers from before the label existed all got 512.
+func ramPaddingFromLabels(labels map[string]string) int {
+	if v, err := strconv.Atoi(labels[ramPaddingLabel]); err == nil && v >= 0 {
+		return v
+	}
+	return defaultRAMPaddingMB
 }
 
 // The project moved from ghcr.io/bartis-dev/dylaris-* to ghcr.io/dylaris-dev/*
@@ -882,9 +909,9 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	// Host path for Docker bind mount
 	hostServerPath := dm.resolveHostServerPath(config.UUID)
 
-	// RAM: user-specified + 512MB OOM buffer
+	// RAM: user-specified + padding (default 512MB) against the OOM killer
 	bookedRAM := int64(config.Docker.RAM) * 1024 * 1024
-	oomPadding := int64(512) * 1024 * 1024
+	oomPadding := int64(config.Docker.ramPadding()) * 1024 * 1024
 	nanoCpus := int64(config.Docker.CPULimit * 1e9)
 
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
@@ -904,7 +931,10 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		Env:        buildRedisEnv(config.UUID, "", sidecarAddr),
 		// Stamped so another node sharing this docker.sock can tell whose it
 		// is. See container_owner.go.
-		Labels: map[string]string{ownerLabel: nodeIdentity(nodeSecretDir)},
+		Labels: map[string]string{
+			ownerLabel:      nodeIdentity(nodeSecretDir),
+			ramPaddingLabel: strconv.Itoa(config.Docker.ramPadding()),
+		},
 	}
 
 	hc := &container.HostConfig{
@@ -1103,9 +1133,9 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	// Host path for Docker bind mount
 	hostServerPath := dm.resolveHostServerPath(config.UUID)
 
-	// RAM: user-specified + 512MB OOM buffer
+	// RAM: user-specified + padding (default 512MB) against the OOM killer
 	bookedRAM := int64(config.Docker.RAM) * 1024 * 1024
-	oomPadding := int64(512) * 1024 * 1024
+	oomPadding := int64(config.Docker.ramPadding()) * 1024 * 1024
 	nanoCpus := int64(config.Docker.CPULimit * 1e9)
 	cmdParts := strings.Fields(config.Docker.Command)
 
@@ -1125,7 +1155,10 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr),
 		// Stamped so another node sharing this docker.sock can tell whose it
 		// is. See container_owner.go.
-		Labels: map[string]string{ownerLabel: nodeIdentity(nodeSecretDir)},
+		Labels: map[string]string{
+			ownerLabel:      nodeIdentity(nodeSecretDir),
+			ramPaddingLabel: strconv.Itoa(config.Docker.ramPadding()),
+		},
 	}
 
 	// The container runs as uid 1000, so the world has to belong to it. Done
@@ -1264,7 +1297,9 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 		config.ActiveSubServer = strings.TrimPrefix(info.Config.WorkingDir, "/data/")
 	}
 	// Restore resource limits
-	config.Docker.RAM = int(info.HostConfig.Memory/(1024*1024)) - 512 // subtract OOM padding
+	padding := ramPaddingFromLabels(info.Config.Labels)
+	config.Docker.RAMPaddingMB = &padding
+	config.Docker.RAM = int(info.HostConfig.Memory/(1024*1024)) - padding
 	if config.Docker.RAM < 0 {
 		config.Docker.RAM = 0
 	}
@@ -1364,6 +1399,11 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 			config.Docker.HostPort = curHost
 		}
 
+		// No padding in the payload (older Core) keeps the container's own.
+		if config.Docker.RAMPaddingMB == nil {
+			p := ramPaddingFromLabels(info.Config.Labels)
+			config.Docker.RAMPaddingMB = &p
+		}
 		have := resourceShape{
 			Memory:   info.HostConfig.Memory,
 			NanoCPUs: info.HostConfig.NanoCPUs,
@@ -1373,7 +1413,7 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 			HostPort: curHost, ContainerPort: curCont,
 		}
 		want := resourceShape{
-			Memory:   int64(config.Docker.RAM+512) * 1024 * 1024,
+			Memory:   int64(config.Docker.RAM+config.Docker.ramPadding()) * 1024 * 1024,
 			NanoCPUs: int64(config.Docker.CPULimit * 1e9),
 			Cpuset:   sanitizeCpusetForHost(config.Docker.CpusetCpus, config.UUID),
 			Image:    normalizeImageRef(config.Docker.Image),
@@ -1513,6 +1553,9 @@ func (dm *DockerManager) mergeIntoSavedConfig(change ServerConfig) ServerConfig 
 			merged.Docker.CPULimit = change.Docker.CPULimit
 			merged.Docker.CpusetCpus = change.Docker.CpusetCpus
 			merged.Docker.DiskLimit = change.Docker.DiskLimit
+			if change.Docker.RAMPaddingMB != nil {
+				merged.Docker.RAMPaddingMB = change.Docker.RAMPaddingMB
+			}
 			if change.Docker.Image != "" {
 				merged.Docker.Image = change.Docker.Image
 			}

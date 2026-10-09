@@ -29,6 +29,10 @@ import { regionFlag, regionLabelFrom } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import { linkMissing, LINK_MISSING_MESSAGE } from '@/lib/linkPresence';
 import {
+    DEFAULT_RAM_PADDING_MB, MAX_RAM_PADDING_MB, RAM_PADDING_HELP,
+    inheritedRamPadding, parseRamPaddingInput, parseRequiredRamPadding, resetLabel,
+} from '@/lib/ramPadding';
+import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
     Pencil, X, AlertTriangle, Cpu, KeyRound, Copy,
     ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, RefreshCw, Eye, EyeOff,
@@ -121,6 +125,14 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     // it must not survive a reload, or "blurred by default" would only be true
     // on the first visit of the browser's lifetime.
     const [revealAddresses, setRevealAddresses] = useState(false);
+    // The global RAM headroom, for what a node without an override inherits.
+    const [globalRamPaddingMb, setGlobalRamPaddingMb] = useState(DEFAULT_RAM_PADDING_MB);
+
+    useEffect(() => {
+        getPlacementSettings().then(res => {
+            if (res.success && typeof res.settings?.ramPaddingMb === 'number') setGlobalRamPaddingMb(res.settings.ramPaddingMb);
+        }).catch(() => { /* non-fatal: the label falls back to the product default */ });
+    }, []);
 
     useEffect(() => {
         loadNodes();
@@ -270,6 +282,7 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                                 rollingSecret={rollingId === node.id}
                                 onOpenDeleteDialog={node.status === 'online' ? null : () => setDeleteTarget({ id: node.id, name: node.name })}
                                 revealAddresses={revealAddresses}
+                                globalRamPaddingMb={globalRamPaddingMb}
                             />
                         ))
                     )}
@@ -329,6 +342,7 @@ interface NodeCardProps {
     // The panel-wide "show addresses" switch. Per-field reveals live in the
     // card; this overrides all of them at once.
     revealAddresses: boolean;
+    globalRamPaddingMb: number;
 }
 
 // nodeActionClass styles a node action that OPENS an editor below the row.
@@ -531,12 +545,14 @@ function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) 
     );
 }
 
-function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onRollSecret, rollingSecret, onOpenDeleteDialog, revealAddresses }: NodeCardProps) {
+function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onRollSecret, rollingSecret, onOpenDeleteDialog, revealAddresses, globalRamPaddingMb }: NodeCardProps) {
     // For the region label: the name an operator gave the region wins over the
     // built-in map, so renaming it in Settings -> Regions shows up here.
     const { regions, gatewayEnabled } = useAppData();
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
+    // The node's RAM headroom override as typed; empty = the global default.
+    const [paddingText, setPaddingText] = useState(node.ramPaddingMb != null ? String(node.ramPaddingMb) : '');
     const [saving, setSaving] = useState(false);
     // Best-effort CPU topology for the P/E breakdown chip. Non-fatal: the
     // cores stat falls back to node.totalCpu when the node hasn't reported.
@@ -551,7 +567,8 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
     useEffect(() => {
         setCpuRatio(node.cpuOvercommitRatio ?? 1.0);
         setRamRatio(node.ramOvercommitRatio ?? 1.0);
-    }, [node.cpuOvercommitRatio, node.ramOvercommitRatio, isEditing]);
+        setPaddingText(node.ramPaddingMb != null ? String(node.ramPaddingMb) : '');
+    }, [node.cpuOvercommitRatio, node.ramOvercommitRatio, node.ramPaddingMb, isEditing]);
 
     useEffect(() => {
         let cancelled = false;
@@ -586,8 +603,13 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
             onError('Overcommit ratios must be > 0');
             return;
         }
+        const ramPaddingMb = parseRamPaddingInput(paddingText);
+        if (Number.isNaN(ramPaddingMb)) {
+            onError(`RAM headroom must be a whole number of MB from 0 to ${MAX_RAM_PADDING_MB}, or empty for the global default.`);
+            return;
+        }
         setSaving(true);
-        const res = await setNodePlacement(node.id, { cpuOvercommitRatio: cpuRatio, ramOvercommitRatio: ramRatio });
+        const res = await setNodePlacement(node.id, { cpuOvercommitRatio: cpuRatio, ramOvercommitRatio: ramRatio, ramPaddingMb });
         setSaving(false);
         if (res.success) onSaved();
         else onError(res.message || 'Save failed');
@@ -737,7 +759,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
             </div>
 
             {/* Placement summary / editor */}
-            <div className="mt-2.5 pt-2.5 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-6 gap-x-3 gap-y-2 text-xs">
+            <div className="mt-2.5 pt-2.5 border-t border-(--base-03) grid grid-cols-2 md:grid-cols-7 gap-x-3 gap-y-2 text-xs">
                 <Stat label="Total CPU" value={node.totalCpu ? `${node.totalCpu.toFixed(1)} cores` : '—'} />
                 <Stat
                     label="CPU cores"
@@ -788,6 +810,42 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                             <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-(--base-06) font-mono pointer-events-none">%</span>
                         </div>
                     ) : `${Math.round((node.ramOvercommitRatio ?? 1.0) * 100)}%`}
+                />
+                <Stat
+                    label="RAM headroom"
+                    value={isEditing ? (
+                        <div className="flex flex-col items-start gap-1">
+                            <div className="relative inline-block w-24">
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={MAX_RAM_PADDING_MB}
+                                    step={64}
+                                    value={paddingText}
+                                    placeholder={String(globalRamPaddingMb)}
+                                    onChange={e => setPaddingText(e.target.value)}
+                                    title={RAM_PADDING_HELP}
+                                    aria-label="RAM headroom override in MB, empty for the global default"
+                                    className="input-mono w-full pr-7 text-center text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                />
+                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-(--base-06) font-mono pointer-events-none">MB</span>
+                            </div>
+                            {paddingText.trim() !== '' && (
+                                <button type="button" onClick={() => setPaddingText('')} className="text-[10px] text-(--base-06) hover:text-(--accent-light) transition-colors">
+                                    {resetLabel('global', globalRamPaddingMb)}
+                                </button>
+                            )}
+                        </div>
+                    ) : (() => {
+                        const eff = node.ramPaddingMb != null
+                            ? { value: node.ramPaddingMb, source: 'node' as const }
+                            : inheritedRamPadding(null, globalRamPaddingMb);
+                        return (
+                            <span title={RAM_PADDING_HELP}>
+                                {eff.value} MB{eff.source === 'global' && <span className="text-[10px] text-(--base-06) font-mono"> global</span>}
+                            </span>
+                        );
+                    })()}
                 />
             </div>
 
@@ -1015,6 +1073,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
         diskEnforcement: 'soft',
         diskWarnPercent: 80,
         diskCriticalPercent: 95,
+        ramPaddingMb: DEFAULT_RAM_PADDING_MB,
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -1023,18 +1082,30 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
     // because entering edit mode on a row and committing or cancelling it is the
     // same shape as a dialog. This is not that - it is a page of fields.
     const snapshotRef = useRef<PlacementSettings | null>(null);
+    // Held as text: a cleared field must not become 0, which would strip the
+    // headroom from every server that inherits it.
+    const [paddingText, setPaddingText] = useState(String(DEFAULT_RAM_PADDING_MB));
+    const paddingValue = parseRequiredRamPadding(paddingText);
+    const paddingError = Number.isNaN(paddingValue)
+        ? `Enter a whole number of MB from 0 to ${MAX_RAM_PADDING_MB}.`
+        : '';
 
     useEffect(() => {
         getPlacementSettings().then(res => {
             if (res.success && res.settings) {
                 setSettings(res.settings);
                 snapshotRef.current = res.settings;
+                setPaddingText(String(res.settings.ramPaddingMb ?? DEFAULT_RAM_PADDING_MB));
             }
             setLoading(false);
         });
     }, []);
 
     const handleSave = async (): Promise<boolean> => {
+        if (paddingError) {
+            showToast(`Container RAM headroom: ${paddingError}`, false);
+            return false;
+        }
         setSaving(true);
         try {
             const res = await savePlacementSettings(settings);
@@ -1048,13 +1119,17 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
 
     const dirty =
         snapshotRef.current !== null &&
-        JSON.stringify(settings) !== JSON.stringify(snapshotRef.current);
+        (JSON.stringify(settings) !== JSON.stringify(snapshotRef.current) || paddingText.trim() !== String(settings.ramPaddingMb));
 
     useUnsavedChanges({
         dirty,
         saving,
         save: handleSave,
-        discard: () => { if (snapshotRef.current) setSettings(snapshotRef.current); },
+        discard: () => {
+            if (!snapshotRef.current) return;
+            setSettings(snapshotRef.current);
+            setPaddingText(String(snapshotRef.current.ramPaddingMb ?? DEFAULT_RAM_PADDING_MB));
+        },
     });
 
     if (loading) return (
@@ -1230,6 +1305,37 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 <div className="border-t border-(--base-03) pt-5">
                     <h3 className="mono-label mb-3">Default storage order</h3>
                     <FleetStorageOrder />
+                </div>
+
+                <div className="border-t border-(--base-03) pt-5">
+                    <h3 className="mono-label mb-3">Container RAM headroom</h3>
+                    <div className="flex flex-col gap-[5px]">
+                        <label htmlFor="placement-ram-padding" className="input-label">Container RAM headroom (MB)</label>
+                        <div className="relative w-32">
+                            <input
+                                id="placement-ram-padding"
+                                type="number"
+                                min={0}
+                                max={MAX_RAM_PADDING_MB}
+                                step={64}
+                                value={paddingText}
+                                onChange={e => {
+                                    setPaddingText(e.target.value);
+                                    const n = parseRequiredRamPadding(e.target.value);
+                                    if (!Number.isNaN(n)) setSettings(s => ({ ...s, ramPaddingMb: n }));
+                                }}
+                                aria-invalid={!!paddingError}
+                                aria-describedby={paddingError ? 'placement-ram-padding-error' : undefined}
+                                className="input-field input-mono w-full text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                        </div>
+                        {paddingError && (
+                            <p id="placement-ram-padding-error" className="text-xs text-(--error-light)" role="alert">{paddingError}</p>
+                        )}
+                        <p className="text-xs text-(--base-06)">
+                            {RAM_PADDING_HELP} This is the default for every node without its own value (<span className="font-mono">{DEFAULT_RAM_PADDING_MB}</span> unless changed, <span className="font-mono">0</span> = none). It counts toward node capacity and reaches a server on its next resource save or (re)create.
+                        </p>
+                    </div>
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">

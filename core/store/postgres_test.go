@@ -30,6 +30,7 @@ func TestGetServerByUUID_ScansNodeStatusAndLastSeen(t *testing.T) {
 		"active_sub_server", "extra_jvm_flags", "created_at", "installer_type", "minecraft_version",
 		"build_number", "disk_limit", "server_type", "proxy_id", "node_address", "host_port",
 		"container_port", "cpu_pinning_mode", "cpuset", "node_status", "node_last_seen_at",
+		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		1, "uuid-a", "alpha", 7, "node-1", "owner-1", "owner-name", "itzg/minecraft-server",
@@ -37,6 +38,7 @@ func TestGetServerByUUID_ScansNodeStatusAndLastSeen(t *testing.T) {
 		"", "", now, "", "",
 		"", int64(0), "game", nil, "10.0.0.5", 25565,
 		25565, "shared", "", "offline", now,
+		nil, nil, nil,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.uuid = $1")).
 		WithArgs("uuid-a").
@@ -77,6 +79,7 @@ func TestGetServerByUUID_NilLastSeenWhenNodeNeverReported(t *testing.T) {
 		"active_sub_server", "extra_jvm_flags", "created_at", "installer_type", "minecraft_version",
 		"build_number", "disk_limit", "server_type", "proxy_id", "node_address", "host_port",
 		"container_port", "cpu_pinning_mode", "cpuset", "node_status", "node_last_seen_at",
+		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		1, "uuid-b", "bravo", 7, "node-1", "owner-1", "owner-name", "itzg/minecraft-server",
@@ -84,6 +87,7 @@ func TestGetServerByUUID_NilLastSeenWhenNodeNeverReported(t *testing.T) {
 		"", "", time.Now(), "", "",
 		"", int64(0), "game", nil, "10.0.0.5", 25565,
 		25565, "shared", "", "offline", nil,
+		nil, nil, nil,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.uuid = $1")).
 		WithArgs("uuid-b").
@@ -121,7 +125,8 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		"minecraft_version", "build_number", "disk_limit", "server_type", "proxy_id",
 		"node_address", "host_port", "container_port", "region", "node_status",
 		"node_last_seen_at", "node_owner_id", "node_tags",
-		"cpu_pinning_mode", "cpuset", "auto_move", "role", "permissions",
+		"cpu_pinning_mode", "cpuset", "auto_move",
+		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb", "role", "permissions",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		5, "uuid-c", "charlie", "node-1", "owner-name", 25565, "online", "running",
@@ -130,7 +135,8 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		"", "", int64(0), "game", nil,
 		"10.0.0.5", 25565, 25565, "default", "offline",
 		now, nil, "external,eu",
-		"manual", "2-3", true, "owner", nil,
+		"manual", "2-3", true,
+		nil, nil, nil, "owner", nil,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.owner_id = $1")).
 		WithArgs(owner).

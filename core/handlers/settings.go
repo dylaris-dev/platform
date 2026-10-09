@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/models"
 	"dylaris-core/services"
 
 	"github.com/redis/go-redis/v9"
@@ -547,6 +548,9 @@ type PlacementSettings struct {
 	// (written + still promised, over total) at which a path is flagged.
 	DiskWarnPercent     int `json:"diskWarnPercent"`
 	DiskCriticalPercent int `json:"diskCriticalPercent"`
+	// RAMPaddingMB is the global container RAM padding (models.RAMPaddingSetting),
+	// the last level before the built-in 512. Nodes and servers may override it.
+	RAMPaddingMB int `json:"ramPaddingMb"`
 }
 
 var defaultPlacementSettings = PlacementSettings{
@@ -565,6 +569,8 @@ var defaultPlacementSettings = PlacementSettings{
 	// cap off without anyone choosing to. 0 is still accepted as "unlimited".
 	PidsLimit: 4096,
 	IOWeight:  0, // unset by default — opt-in blkio fair-share
+
+	RAMPaddingMB: models.DefaultRAMPaddingMB,
 }
 
 // GetPlacementSettings GET /api/settings/placement - PANEL settings.read (RequireCap at the route).
@@ -578,13 +584,24 @@ func (h *SettingsHandler) GetPlacementSettings(w http.ResponseWriter, r *http.Re
 
 // SavePlacementSettings POST /api/settings/placement - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.Request) {
-	var req PlacementSettings
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// The padding shadows the embedded field as a pointer: a client that does
+	// not send it (an older panel) must leave the stored value alone rather
+	// than save 0, which means "no padding at all".
+	var body struct {
+		PlacementSettings
+		RAMPaddingMB *int `json:"ramPaddingMb"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	req := body.PlacementSettings
 	if req.CPUOvercommitDefault <= 0 || req.RAMOvercommitDefault <= 0 {
 		sendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
+		return
+	}
+	if body.RAMPaddingMB != nil && !models.ValidRAMPaddingMB(*body.RAMPaddingMB) {
+		sendJSONError(w, fmt.Sprintf("Container RAM headroom must be from 0 to %d MB", models.MaxRAMPaddingMB), http.StatusBadRequest)
 		return
 	}
 	// The buffer is a floor, so it has a floor of its own: below it a path can be
@@ -643,6 +660,9 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		{"placement.container_port", fmt.Sprintf("%d", req.ContainerPort)},
 		{"placement.pids_limit", fmt.Sprintf("%d", req.PidsLimit)},
 		{"placement.io_weight", fmt.Sprintf("%d", req.IOWeight)},
+	}
+	if body.RAMPaddingMB != nil {
+		pairs = append(pairs, struct{ k, v string }{models.RAMPaddingSetting, strconv.Itoa(*body.RAMPaddingMB)})
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
@@ -737,6 +757,7 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 			s.IOWeight = n
 		}
 	}
+	s.RAMPaddingMB = models.ParseGlobalRAMPaddingMB(getStr(models.RAMPaddingSetting))
 	return s
 }
 

@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.14
+
+### Features
+- **The container RAM headroom is configurable**: a global default under Settings > Nodes, an override per
+  node and per server, each with a reset to the level above. It was a fixed 512 MB. `core` `panel` `node`
+- **Node capacity counts the headroom**, so a full node reads full: each server now counts its RAM plus
+  its headroom (512 MB unless changed). `core`
+- **More text files open in the file browser**: .snbt, .zs, .mcmeta, .lang, .csv and .bat. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.13
 
 ### Features

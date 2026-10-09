@@ -388,6 +388,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"docker": map[string]interface{}{
 			"image":         javaImage,
 			"ram":           srv.Memory,
+			"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 			"cpuLimit":      srv.CPULimit,
 			"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 			"extraJvmFlags": strings.TrimSpace(defaultJvmFlags + " " + srv.ExtraJvmFlags),

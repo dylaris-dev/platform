@@ -78,6 +78,16 @@ describe('planResourceChange', () => {
         expect(planResourceChange(base, edit({ cpuMode: 'auto' }), true, false).liveFields).toEqual(['CPU pinning']);
     });
 
+    it('treats a RAM headroom change as a restart, the same value as none', () => {
+        const withPad = { ...base, ramPaddingMb: 512 };
+        const p = planResourceChange(withPad, { ...withPad, ramPaddingMb: 1024 }, true, false);
+        expect(p.restartFields).toEqual(['RAM headroom']);
+        expect(p.needsRestart).toBe(true);
+        expect(planResourceChange(withPad, withPad, true, false).needsRestart).toBe(false);
+        // A reset whose inherited value could not be loaded still asks.
+        expect(planResourceChange(withPad, { ...withPad, ramPaddingMb: null }, true, false).needsRestart).toBe(true);
+    });
+
     it('reports no changes', () => {
         expect(planResourceChange(base, base, true, true).note).toBe('No changes.');
     });

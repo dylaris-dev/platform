@@ -29,6 +29,19 @@ type resourcesFakeStore struct {
 	resourcesWritten bool
 	pinningWritten   bool
 	portsWritten     bool
+
+	node     models.Node
+	settings map[string]string
+	// paddingWritten is set by SetServerRAMPadding; padding is what it wrote.
+	paddingWritten bool
+	padding        *int
+}
+
+func (f *resourcesFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
+func (f *resourcesFakeStore) SetServerRAMPadding(_ int, mb *int) error {
+	f.paddingWritten = true
+	f.padding = mb
+	return nil
 }
 
 func (f *resourcesFakeStore) GetUserByID(id string) (*models.User, error) {
@@ -40,7 +53,9 @@ func (f *resourcesFakeStore) GetServerByID(int) (*models.Server, error) {
 	return &s, nil
 }
 func (f *resourcesFakeStore) GetNodeByID(id int) (*models.Node, error) {
-	return &models.Node{ID: id, Token: "node-tok-7"}, nil
+	n := f.node
+	n.ID, n.Token = id, "node-tok-7"
+	return &n, nil
 }
 func (f *resourcesFakeStore) UpdateServerResources(int, int, float64, int64) error {
 	f.resourcesWritten = true

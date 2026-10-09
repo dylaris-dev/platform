@@ -14,6 +14,7 @@ export const validFilenameRegex = /^[a-zA-Z0-9._-]+$/;
 export const editableExtensions = [
   '.txt', '.log', '.md', '.yml', '.yaml', '.json', '.json5', '.toml', '.xml',
   '.properties', '.config', '.cfg', '.conf', '.ini', '.js', '.sh',
+  '.snbt', '.zs', '.mcmeta', '.lang', '.csv', '.bat',
 ];
 
 // Mirrors Core's maxOpenFileBytes: the most a file may hold to be opened.

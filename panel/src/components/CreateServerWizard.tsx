@@ -5,15 +5,16 @@ import Link from 'next/link';
 import {
     getUsers, User, createServer, getNodes, Node,
     getAvailableTags, getAvailableRegions, pickNode, NodeCandidate,
-    updateServerResources, API_URL,
+    updateServerResources, API_URL, getPlacementSettings,
 } from '../lib/api';
 import { regionFlag, regionLabelFrom } from '../lib/regions';
-import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu } from 'lucide-react';
+import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu, ChevronDown } from 'lucide-react';
 import CpuPinningControl from './CpuPinningControl';
 import { useAppData } from '@/lib/AppDataContext';
 import { sortUsersForPicker } from '@/lib/userOrder';
 import { nodeLabel } from '@/lib/nodeLabel';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput } from '@/lib/ramPadding';
 
 interface StoragePathInfo {
     path: string;
@@ -95,6 +96,11 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const [autoMove, setAutoMove] = useState(false);
     const [cpuMode, setCpuMode] = useState<'shared' | 'auto' | 'manual'>('shared');
     const [cpuset, setCpuset] = useState('');
+    // RAM headroom override as typed; empty = the node's default. The global
+    // default is only readable with settings.read, so tenants may not know it.
+    const [paddingText, setPaddingText] = useState('');
+    const [globalPaddingMb, setGlobalPaddingMb] = useState<number | undefined>(undefined);
+    const [advancedOpen, setAdvancedOpen] = useState(false);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -105,6 +111,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         setSelectedRegion(''); setAvailableRegions([]);
         setAutoMove(false);
         setCpuMode('shared'); setCpuset('');
+        setPaddingText(''); setAdvancedOpen(false);
         setNodesLoaded(false);
 
         // Owner assignment + tag/region scheduling are admin-only. A tenant owns
@@ -122,6 +129,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             getAvailableRegions().then(res => {
                 if (res.success) setAvailableRegions(res.regions || []);
             });
+            getPlacementSettings().then(res => {
+                if (res.success && typeof res.settings?.ramPaddingMb === 'number') setGlobalPaddingMb(res.settings.ramPaddingMb);
+            }).catch(() => { /* non-fatal: the hint just names no number */ });
         } else if (user?.id) {
             setOwnerId(user.id);
         }
@@ -160,12 +170,16 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             return;
         }
         let cancelled = false;
+        // Same override the create sends, so preview and create agree.
+        const parsed = parseRamPaddingInput(paddingText);
+        const previewPadding = parsed !== null && !Number.isNaN(parsed) ? parsed : null;
         pickNode({
             region: selectedRegion || undefined,
             tags: selectedTags.length > 0 ? selectedTags : undefined,
             ramMb: ram,
             cpuCores: cpuLimit,
             diskGb: diskLimit,
+            ...(previewPadding !== null ? { ramPaddingMb: previewPadding } : {}),
         }).then(res => {
             if (cancelled) return;
             if (res.success && res.picked) {
@@ -179,7 +193,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             if (!cancelled) { setTagPreview(null); setTagPreviewReason('Preview failed'); }
         });
         return () => { cancelled = true; };
-    }, [targetMode, selectedRegion, selectedTags, ram, cpuLimit, diskLimit]);
+    }, [targetMode, selectedRegion, selectedTags, ram, cpuLimit, diskLimit, paddingText]);
 
     // Load storage paths when node changes
     useEffect(() => {
@@ -203,6 +217,15 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         [onlineNodes, nodeSearch]
     );
 
+    // The node the server would land on: picked, or the scheduler's preview.
+    const targetNode = targetMode === 'node'
+        ? nodes.find(n => String(n.id) === nodeId)
+        : nodes.find(n => n.id === tagPreview?.nodeId);
+    const defaultPadding = targetNode?.ramPaddingMb != null || globalPaddingMb !== undefined
+        ? inheritedRamPadding(targetNode?.ramPaddingMb, globalPaddingMb)
+        : null;
+    const paddingOverride = parseRamPaddingInput(paddingText);
+
     const filteredUsers = useMemo(() =>
         users.filter(u => u.username.toLowerCase().includes(searchTerm.toLowerCase())),
         [users, searchTerm]
@@ -214,6 +237,10 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         const fail = (msg: string) => { setFormError(msg); setLoading(false); };
         if (!ownerId) { fail("Please select an owner."); return; }
         if (targetMode === 'node' && !nodeId) { fail("Please select a Node."); return; }
+        if (Number.isNaN(paddingOverride)) {
+            fail(`RAM headroom must be a whole number of MB from 0 to ${MAX_RAM_PADDING_MB}, or empty for the node's default.`);
+            return;
+        }
         if (targetMode === 'tag' && selectedTags.length === 0 && !selectedRegion) {
             fail("Please select a region or at least one tag.");
             return;
@@ -228,7 +255,10 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             ownerId,
             serverType,
             autoMove,
-            docker: { ram, cpuLimit, diskLimit: diskLimit > 0 ? diskLimit * 1024 : 0 },
+            docker: {
+                ram, cpuLimit, diskLimit: diskLimit > 0 ? diskLimit * 1024 : 0,
+                ...(paddingOverride !== null ? { ramPaddingMb: paddingOverride } : {}),
+            },
         };
         if (targetMode === 'node') {
             payload.nodeId = nodeId;
@@ -629,7 +659,13 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 />
                                                 <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">MB</span>
                                             </div>
-                                            <p className="text-xs text-(--base-06)">+512 MB OOM buffer added automatically</p>
+                                            <p className="text-xs text-(--base-06)">
+                                                {paddingOverride !== null && !Number.isNaN(paddingOverride)
+                                                    ? `+${paddingOverride} MB RAM headroom (set below)`
+                                                    : defaultPadding
+                                                        ? `+${defaultPadding.value} MB RAM headroom (${defaultPadding.source} default)`
+                                                        : "+ the node's default RAM headroom"}
+                                            </p>
                                         </div>
                                         <div className="flex flex-col gap-[5px]">
                                             <label className="input-label">CPU Limit (Cores)</label>
@@ -660,6 +696,31 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             </div>
                                             <p className="text-xs text-(--base-06)">0 = unlimited</p>
                                         </div>
+                                    </div>
+
+                                    <div>
+                                        <button type="button" onClick={() => setAdvancedOpen(o => !o)} aria-expanded={advancedOpen} className="flex items-center gap-2 text-xs text-(--base-06) hover:text-(--base-08) transition-colors">
+                                            <ChevronDown size={13} className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+                                            Advanced
+                                        </button>
+                                        {advancedOpen && (
+                                            <div className="mt-3 flex flex-col gap-[5px] max-w-xs">
+                                                <label htmlFor="create-ram-padding" className="input-label">RAM headroom (MB)</label>
+                                                <input
+                                                    id="create-ram-padding"
+                                                    type="number"
+                                                    min={0}
+                                                    max={MAX_RAM_PADDING_MB}
+                                                    step={64}
+                                                    value={paddingText}
+                                                    placeholder={defaultPadding ? String(defaultPadding.value) : 'Node default'}
+                                                    onChange={e => setPaddingText(e.target.value)}
+                                                    aria-invalid={Number.isNaN(paddingOverride)}
+                                                    className="input-field w-full"
+                                                />
+                                                <p className="text-xs text-(--base-06)">Empty uses the node&apos;s default. {RAM_PADDING_HELP}</p>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Storage Path Selection */}

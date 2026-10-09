@@ -49,6 +49,8 @@ type CreateServerRequest struct {
 		RAM       int     `json:"ram"`
 		CPULimit  float64 `json:"cpuLimit"`
 		DiskLimit int64   `json:"diskLimit"`
+		// RAMPaddingMB overrides the container RAM padding; nil inherits.
+		RAMPaddingMB *int `json:"ramPaddingMb"`
 	} `json:"docker"`
 }
 

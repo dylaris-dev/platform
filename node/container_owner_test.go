@@ -101,7 +101,7 @@ func TestBothMCContainerSitesCarryTheOwnerLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(string(b), "Labels: map[string]string{ownerLabel: nodeIdentity(nodeSecretDir)}"); n != 2 {
+	if n := strings.Count(string(b), "ownerLabel:      nodeIdentity(nodeSecretDir),"); n != 2 {
 		t.Errorf("%d MC container configs stamp the owner label, want 2 - an unlabelled one is claimable by any node", n)
 	}
 	// And both listers filter, since either one unfiltered reopens the hole.

@@ -172,10 +172,10 @@ func TestGetAllActiveServersCarriesTheEffectiveCpuset(t *testing.T) {
 	}
 	defer db.Close()
 	s := NewPostgresStore(db)
-	cols := []string{"id", "uuid", "node_id", "node_name", "node_token", "status", "host_port", "container_port", "memory", "cpu_limit", "disk_limit", "start_command", "game_image", "active_sub_server", "extra_jvm_flags", "mode", "cpuset", "node_cpuset"}
+	cols := []string{"id", "uuid", "node_id", "node_name", "node_token", "status", "host_port", "container_port", "memory", "cpu_limit", "disk_limit", "start_command", "game_image", "active_sub_server", "extra_jvm_flags", "mode", "cpuset", "node_cpuset", "pad", "node_pad", "global_pad"}
 	mock.ExpectQuery(regexp.QuoteMeta("FROM servers")).WillReturnRows(sqlmock.NewRows(cols).
-		AddRow(1, "pinned", 1, "n", "tok", "online", 0, 25565, 1024, 0.0, 0, "", "img", "s", "", "auto", "2-3", "0-7").
-		AddRow(2, "shared", 1, "n", "tok", "online", 0, 25565, 1024, 0.0, 0, "", "img", "s", "", "shared", "", "0-7"))
+		AddRow(1, "pinned", 1, "n", "tok", "online", 0, 25565, 1024, 0.0, 0, "", "img", "s", "", "auto", "2-3", "0-7", nil, nil, nil).
+		AddRow(2, "shared", 1, "n", "tok", "online", 0, 25565, 1024, 0.0, 0, "", "img", "s", "", "shared", "", "0-7", nil, nil, nil))
 	servers, err := s.GetAllActiveServers()
 	if err != nil {
 		t.Fatal(err)

@@ -79,6 +79,8 @@ export interface Node {
     // Placement (persisted)
     cpuOvercommitRatio?: number;
     ramOvercommitRatio?: number;
+    // Container RAM headroom override in MB; null = the global default.
+    ramPaddingMb?: number | null;
     totalCpu?: number;
     totalRamMb?: number;
     // Live (from heartbeat, set by infrastructure overview)
@@ -192,6 +194,10 @@ export interface Server {
     // the node returns. This is the explanation, not a different state.
     installStalled?: boolean;
     installStallReason?: string;
+    // RAM headroom: the server's own override (null = inherited) and the
+    // value its container gets after server -> node -> global resolution.
+    ramPaddingMb?: number | null;
+    effectiveRamPaddingMb?: number;
 }
 
 export interface SftpCredentials {
@@ -440,6 +446,8 @@ export const updateServerResources = (
     // CPU pinning. Omit to leave pinning unchanged. For mode 'manual' the
     // cpuset is sent; for 'auto'/'shared' the backend ignores it.
     pinning?: { mode: 'shared' | 'auto' | 'manual'; cpuset?: string },
+    // From ramPaddingPatch: absent leaves the RAM headroom override unchanged.
+    ramPadding?: { ramPaddingMb?: number; resetRamPadding?: true },
 ) => fetchAPI(`/servers/${id}/resources`, {
     method: 'PATCH',
     body: JSON.stringify({
@@ -448,6 +456,7 @@ export const updateServerResources = (
         ...(cpusetCpus !== undefined ? { cpusetCpus } : {}),
         ...(pinning !== undefined ? { cpuPinningMode: pinning.mode } : {}),
         ...(pinning !== undefined && pinning.cpuset !== undefined ? { cpuset: pinning.cpuset } : {}),
+        ...ramPadding,
     }),
 });
 
@@ -927,6 +936,8 @@ export interface PlacementSettings {
     // storage path is flagged in the panel.
     diskWarnPercent: number;
     diskCriticalPercent: number;
+    // Global container RAM headroom in MB (memory on top of the booked RAM).
+    ramPaddingMb: number;
 }
 export interface NodeCandidate {
     nodeId: number;
@@ -955,9 +966,9 @@ export const getAvailableTags = (region?: string): Promise<{ success: boolean; t
     fetchAPI(`/placement/tags${region ? `?region=${encodeURIComponent(region)}` : ''}`);
 export const getAvailableRegions = (): Promise<{ success: boolean; regions: string[] }> =>
     fetchAPI('/placement/regions');
-export const pickNode = (data: { region?: string; tags?: string[]; tag?: string; nodeId?: number; ramMb: number; cpuCores: number; diskGb: number }): Promise<PickNodeResponse> =>
+export const pickNode = (data: { region?: string; tags?: string[]; tag?: string; nodeId?: number; ramMb: number; cpuCores: number; diskGb: number; ramPaddingMb?: number }): Promise<PickNodeResponse> =>
     fetchAPI('/placement/pick', { method: 'POST', body: JSON.stringify(data) });
-export const setNodePlacement = (nodeId: number, data: { cpuOvercommitRatio: number; ramOvercommitRatio: number }) =>
+export const setNodePlacement = (nodeId: number, data: { cpuOvercommitRatio: number; ramOvercommitRatio: number; ramPaddingMb?: number | null }) =>
     fetchAPI(`/nodes/${nodeId}/placement`, { method: 'PUT', body: JSON.stringify(data) });
 export const setServerAutoMove = (serverId: number, enabled: boolean) =>
     fetchAPI(`/servers/${serverId}/automove`, { method: 'PATCH', body: JSON.stringify({ enabled }) });

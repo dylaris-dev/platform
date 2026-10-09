@@ -55,10 +55,13 @@ func nodeHasCapacityFor(s store.Store, n *models.Node, hb *NodeHeartbeat, srv *m
 		return false
 	}
 
-	// RAM check.
+	// RAM check. The server's container on THIS node is its RAM plus the
+	// padding it would get here, which the target's allocation already counts
+	// for every server it holds.
 	if n.TotalRAMMB > 0 {
 		cap := float64(n.TotalRAMMB) * n.RAMOvercommitRatio
-		if float64(allocRAM+int64(srv.Memory)) > cap {
+		want := int64(srv.Memory + EffectiveRAMPaddingMB(s, srv.RAMPaddingMB, n.RAMPaddingMB))
+		if float64(allocRAM+want) > cap {
 			return false
 		}
 	}
@@ -127,4 +130,26 @@ func nodeHasAllTagsCSV(haveCSV, requiredCSV string) bool {
 		}
 	}
 	return true
+}
+
+// EffectiveRAMPaddingMB resolves the container RAM padding a server gets on a
+// node: server override ?? node override ?? the global setting ?? 512. Every
+// core->node payload that carries "ram" sends this alongside it.
+func EffectiveRAMPaddingMB(s store.Store, server, node *int) int {
+	if server != nil {
+		return *server
+	}
+	if node != nil {
+		return *node
+	}
+	return GlobalRAMPaddingMB(s)
+}
+
+// GlobalRAMPaddingMB reads the global default, 512 when unset or unreadable.
+func GlobalRAMPaddingMB(s store.Store) int {
+	if s == nil {
+		return models.DefaultRAMPaddingMB
+	}
+	raw, _ := s.GetSetting(models.RAMPaddingSetting)
+	return models.ParseGlobalRAMPaddingMB(raw)
 }

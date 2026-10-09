@@ -41,6 +41,10 @@ type PickNodeRequest struct {
 	CPUCores float64  `json:"cpuCores"`
 	DiskGB   int      `json:"diskGb"`
 
+	// RAMPaddingMB is the new server's own padding override, nil = inherit.
+	// Capacity counts RAM + the padding the server would get on each node.
+	RAMPaddingMB *int `json:"ramPaddingMb,omitempty"`
+
 	// OwnerScope, when non-nil, restricts placement to nodes OWNED by this user id
 	// (their own BYON nodes only — platform nodes are excluded for self-service).
 	// Set internally by CreateServer for a non-admin caller in BYON mode so the
@@ -98,6 +102,11 @@ func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 	var req PickNodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	// A negative padding would shrink the request and make every node fit.
+	if p := req.RAMPaddingMB; p != nil && !models.ValidRAMPaddingMB(*p) {
+		sendJSONError(w, ramPaddingRefused, http.StatusBadRequest)
 		return
 	}
 
@@ -261,13 +270,15 @@ func (h *PlacementHandler) scoreNode(ctx context.Context, n *models.Node, req Pi
 		Available:     true,
 	}
 
-	// RAM capacity check
+	// RAM capacity check: the container is RAM + padding, and allocRAM counts
+	// every existing server the same way.
 	if n.TotalRAMMB > 0 {
 		cap := float64(n.TotalRAMMB) * n.RAMOvercommitRatio
-		if float64(allocRAM+int64(req.RAMMB)) > cap {
+		want := req.RAMMB + services.EffectiveRAMPaddingMB(h.state.Store, req.RAMPaddingMB, n.RAMPaddingMB)
+		if float64(allocRAM+int64(want)) > cap {
 			cand.Available = false
-			cand.Reason = fmt.Sprintf("RAM full: %d + %d > %.0f (overcommit %.2fx)",
-				allocRAM, req.RAMMB, cap, n.RAMOvercommitRatio)
+			cand.Reason = fmt.Sprintf("RAM full: %d + %d > %.0f (overcommit %.2fx, incl. container headroom)",
+				allocRAM, want, cap, n.RAMOvercommitRatio)
 		}
 	}
 	// CPU capacity check (only enforced when a positive limit is requested)
@@ -347,9 +358,13 @@ func nodeHasAllTags(n *models.Node, required []string) bool {
 }
 
 // SetNodePlacementRequest is the body for PUT /api/nodes/{id}/placement.
+//
+// RAMPaddingMB is raw so an absent field (leave the override alone) can be
+// told apart from null (clear it, inherit the global).
 type SetNodePlacementRequest struct {
-	CPUOvercommitRatio float64 `json:"cpuOvercommitRatio"`
-	RAMOvercommitRatio float64 `json:"ramOvercommitRatio"`
+	CPUOvercommitRatio float64         `json:"cpuOvercommitRatio"`
+	RAMOvercommitRatio float64         `json:"ramOvercommitRatio"`
+	RAMPaddingMB       json.RawMessage `json:"ramPaddingMb"`
 }
 
 // SetNodePlacement PUT /api/nodes/{id}/placement — PANEL nodes.write.
@@ -376,9 +391,27 @@ func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
 		return
 	}
+	// Validated before either write, so a bad padding does not leave the
+	// ratios saved and the request answered 400.
+	paddingSet := len(req.RAMPaddingMB) > 0
+	var padding *int
+	if paddingSet && string(req.RAMPaddingMB) != "null" {
+		var n int
+		if err := json.Unmarshal(req.RAMPaddingMB, &n); err != nil || !models.ValidRAMPaddingMB(n) {
+			sendJSONError(w, fmt.Sprintf("ramPaddingMb must be a whole number from 0 to %d, or null", models.MaxRAMPaddingMB), http.StatusBadRequest)
+			return
+		}
+		padding = &n
+	}
 	if err := h.state.Store.SetNodePlacement(id, req.CPUOvercommitRatio, req.RAMOvercommitRatio); err != nil {
 		sendJSONError(w, "Failed to update placement", http.StatusInternalServerError)
 		return
+	}
+	if paddingSet {
+		if err := h.state.Store.SetNodeRAMPadding(id, padding); err != nil {
+			sendJSONError(w, "Failed to update RAM padding", http.StatusInternalServerError)
+			return
+		}
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

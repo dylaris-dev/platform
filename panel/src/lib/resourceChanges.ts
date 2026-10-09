@@ -2,10 +2,10 @@
  * What a resource edit will do to the server, so the dialog can say it before
  * the click rather than after.
  *
- * The node recreates the container - a restart, if it is running - for a RAM or
- * port change and for removing a CPU limit or pinning. Other CPU and disk
- * changes are applied to the running container, and auto-move is only a flag
- * Core stores.
+ * The node recreates the container - a restart, if it is running - for a RAM,
+ * RAM headroom or port change and for removing a CPU limit or pinning. Other
+ * CPU and disk changes are applied to the running container, and auto-move is
+ * only a flag Core stores.
  */
 export interface ResourceValues {
     ram: number;
@@ -17,6 +17,12 @@ export interface ResourceValues {
     cpuMode: string;
     cpuset: string;
     autoMove: boolean;
+    /**
+     * Effective RAM headroom in MB: it is part of the container memory limit.
+     * null when the inherited value could not be loaded, so a reset to it
+     * still counts as a change.
+     */
+    ramPaddingMb?: number | null;
 }
 
 export interface ResourceChangePlan {
@@ -52,6 +58,7 @@ export function planResourceChange(
     const liveFields: string[] = [];
 
     if (edited.ram !== current.ram) restartFields.push('RAM');
+    if (edited.ramPaddingMb !== current.ramPaddingMb) restartFields.push('RAM headroom');
     if (canEditPorts && edited.hostPort > 0 && edited.hostPort !== current.hostPort) restartFields.push('host port');
     if (canEditPorts && edited.containerPort > 0 && edited.containerPort !== current.containerPort) restartFields.push('container port');
 

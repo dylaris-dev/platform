@@ -12,7 +12,7 @@ import {
     deleteServer, updateServerName, updateServerResources, serverPower,
     getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
     getInstallCooldown, moveServer, transferServer, setServerDemo, getMigrationStatus, cancelMigration, type MigrationStatus, type Node,
-    GatewayRoute, StoragePathInfo, TabPermissions,
+    GatewayRoute, StoragePathInfo, TabPermissions, getPlacementSettings,
 } from '@/lib/api';
 import { getNodes } from '@/lib/api/resources';
 import { useAppData } from '@/lib/AppDataContext';
@@ -31,6 +31,9 @@ import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { planResourceChange, diskGBToMB, joinFields, type ResourceValues } from '@/lib/resourceChanges';
+import {
+    MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput, ramPaddingPatch, resetLabel,
+} from '@/lib/ramPadding';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -65,6 +68,10 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     const [editHostPort, setEditHostPort] = useState(0);
     const [editContainerPort, setEditContainerPort] = useState(25565);
     const [editAutoMove, setEditAutoMove] = useState(false);
+    // RAM headroom override as typed (empty = inherit) and what inheriting
+    // resolves to; null until the node and global defaults are loaded.
+    const [editPaddingText, setEditPaddingText] = useState('');
+    const [paddingInherited, setPaddingInherited] = useState<{ value: number; source: 'node' | 'global' } | null>(null);
 
     // Manual move-to-node (admin only). Node list is loaded lazily when the
     // Edit Resources modal opens. migrationStatus is polled while a move is
@@ -339,6 +346,8 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         // legacy cpusetCpus so older servers still show their pinning.
         setEditCpusetCpus(selectedServer.cpuset || (selectedServer as any).cpusetCpus || '');
         setEditAutoMove(!!(selectedServer as any).autoMove);
+        setEditPaddingText(selectedServer.ramPaddingMb != null ? String(selectedServer.ramPaddingMb) : '');
+        setPaddingInherited(null);
         setEditResourcesAdvancedOpen(false);
         setStorageCurrentPath('');
         setStoragePaths([]);
@@ -348,6 +357,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         setMoveTargetNodeId(0);
         setShowEditResourcesPopup(true);
 
+        if (user?.isAdmin && selectedServer.effectiveRamPaddingMb !== undefined) {
+            Promise.all([getPlacementSettings(), getNodes()]).then(([ps, ns]) => {
+                const node: Node | undefined = ns?.success && Array.isArray(ns.nodes)
+                    ? ns.nodes.find((n: Node) => n.id === selectedServer.nodeId) : undefined;
+                if (!ps?.success || !node) return;
+                setPaddingInherited(inheritedRamPadding(node.ramPaddingMb, ps.settings?.ramPaddingMb));
+            }).catch(() => { /* non-fatal: the source just reads "inherited" */ });
+        }
         if (user?.isAdmin) {
             try {
                 const res = await getServerStoragePath(selectedServer.id);
@@ -435,7 +452,21 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         cpuMode: selectedServer.cpuPinningMode || 'shared',
         cpuset: selectedServer.cpuset || (selectedServer as any).cpusetCpus || '',
         autoMove: !!(selectedServer as any).autoMove,
+        ramPaddingMb: selectedServer.effectiveRamPaddingMb,
     };
+    // An older Core sends no effectiveRamPaddingMb: the field is then hidden and
+    // never part of the plan.
+    const paddingSupported = selectedServer.effectiveRamPaddingMb !== undefined;
+    const currentPaddingOverride = selectedServer.ramPaddingMb ?? null;
+    const editPadding = parseRamPaddingInput(editPaddingText);
+    const editPaddingInvalid = Number.isNaN(editPadding);
+    // While the server inherits, its effective value IS the inherited one, so
+    // the reset label needs no extra fetch in that case.
+    const inheritedPaddingValue = paddingInherited?.value
+        ?? (currentPaddingOverride === null ? selectedServer.effectiveRamPaddingMb : undefined);
+    const editPaddingEffective = editPaddingInvalid
+        ? selectedServer.effectiveRamPaddingMb
+        : editPadding ?? inheritedPaddingValue ?? null;
     const resourcePlan = planResourceChange(currentResources, {
         ram: editRam,
         cpuLimit: editCpuLimit,
@@ -445,11 +476,16 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         cpuMode: editCpuMode,
         cpuset: editCpusetCpus,
         autoMove: editAutoMove,
+        ramPaddingMb: paddingSupported ? editPaddingEffective : selectedServer.effectiveRamPaddingMb,
     }, !isServerOffline, !!user?.isAdmin);
 
     const handleSaveResources = async () => {
         const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
         setResourcesMsg('');
+        if (paddingSupported && editPaddingInvalid) {
+            setResourcesMsg(`RAM headroom must be a whole number of MB from 0 to ${MAX_RAM_PADDING_MB}, or empty for the default.`);
+            return;
+        }
         if (resourcePlan.needsRestart && !(await confirmDialog({
             title: 'Restart the server?',
             message: `Changing ${joinFields(resourcePlan.restartFields)} restarts ${selectedServer.name}. Players on it are disconnected.`,
@@ -464,6 +500,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         const res = await updateServerResources(
             selectedServer.id, editRam, editCpuLimit, diskGBToMB(editDiskLimit),
             ports, undefined, { mode: editCpuMode, cpuset: editCpusetCpus },
+            paddingSupported ? ramPaddingPatch(currentPaddingOverride, editPadding) : undefined,
         );
         if (res?.success === false) {
             setResourcesMsg(res.message || res.error || 'The resource change was refused.');
@@ -1188,6 +1225,37 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 <label className="input-label">RAM (MB)</label>
                                 <input type="number" min={256} step={256} value={editRam} onChange={e => setEditRam(Number(e.target.value))} className="input-field w-full" />
                             </div>
+                            {paddingSupported && (
+                                <div className="flex flex-col gap-[5px]">
+                                    <label htmlFor="edit-ram-padding" className="input-label">RAM headroom (MB)</label>
+                                    <input
+                                        id="edit-ram-padding"
+                                        type="number"
+                                        min={0}
+                                        max={MAX_RAM_PADDING_MB}
+                                        step={64}
+                                        value={editPaddingText}
+                                        placeholder={inheritedPaddingValue !== undefined ? String(inheritedPaddingValue) : 'Default'}
+                                        onChange={e => setEditPaddingText(e.target.value)}
+                                        aria-invalid={editPaddingInvalid}
+                                        className="input-field w-full"
+                                    />
+                                    <p className="text-xs text-(--base-06)">
+                                        {/* Core sends the headroom to the node only with a RAM or
+                                            headroom change, so an inherited default is not
+                                            necessarily what the container runs with. */}
+                                        {currentPaddingOverride !== null
+                                            ? `Set on this server: ${currentPaddingOverride} MB. Empty uses the default.`
+                                            : `Inherited: ${inheritedPaddingValue} MB from the ${paddingInherited?.source ?? 'node or global'} setting. A changed default applies on the next RAM or headroom change.`}
+                                        {' '}{RAM_PADDING_HELP}
+                                    </p>
+                                    {editPaddingText.trim() !== '' && (
+                                        <button type="button" onClick={() => setEditPaddingText('')} className="btn btn-ghost btn-sm self-start">
+                                            {paddingInherited ? resetLabel(paddingInherited.source, paddingInherited.value) : 'Reset to default'}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                             <div className="flex flex-col gap-[5px]">
                                 <label className="input-label">CPU Limit (Cores)</label>
                                 <input type="number" min={0} step={0.5} value={editCpuLimit} onChange={e => setEditCpuLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
