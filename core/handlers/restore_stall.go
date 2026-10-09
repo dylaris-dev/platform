@@ -24,7 +24,10 @@ import (
 // a stalled install rather than the same situation as an abandoned run: nothing
 // has to be released, and the work genuinely resumes.
 //
-// So, as there: NO TIMEOUT IS INVENTED and the status is NOT changed. The node
+// So, as there, this changes no status. The one exception is the scheduler's
+// reaper (reapAbandonedRestores): after six hours with the node CONNECTED and
+// not restoring, the result was lost and the row is failed. A disconnected
+// node is never reaped, which is what keeps the reason below true. The node
 // holds dylaris:server:<uuid>:node_busy for as long as it is restoring
 // (node/main.go, holdBusyStatus on the restore path), so "is anyone working on
 // this" is answerable instead of guessed, and no number can be wrong for a large

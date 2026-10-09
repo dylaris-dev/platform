@@ -334,6 +334,12 @@ type Store interface {
 	GetBackupRestore(id int) (*models.BackupRestore, error)
 	ListBackupRestores(serverID, limit int) ([]models.BackupRestore, error)
 	UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) error
+	// ListAbandonedBackupRestores lists queued or running restores requested
+	// before the cutoff, oldest first.
+	ListAbandonedBackupRestores(requestedBefore time.Time, limit int) ([]models.AbandonedBackupRestore, error)
+	// CloseAbandonedBackupRestore fails a restore only while it is still open,
+	// and reports whether it did: a result that arrived meanwhile stands.
+	CloseAbandonedBackupRestore(id int, message string, completed time.Time) (bool, error)
 
 	// --- Storage connections ---
 	ListStorageConnections() ([]models.StorageConnection, error)

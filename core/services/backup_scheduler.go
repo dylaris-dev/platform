@@ -32,7 +32,9 @@ type BackupScheduler struct {
 	redis    *redis.Client
 	queue    *QueueService      // publishes backup_run to the node's :cmds stream (BC1)
 	registry *nodegrpc.Registry // optional — required only for node-local retention deletes
-	leader   leader.Election
+	// nodeConnected overrides registry.IsConnected, for tests.
+	nodeConnected func(nodeID int) bool
+	leader        leader.Election
 	// coreStorage opens the shared Core file storage as a backup backend.
 	// Optional; required only for jobs whose storage row is "core-storage".
 	coreStorage func(subPrefix string) (backupstorage.Storage, error)
@@ -458,6 +460,54 @@ func (b *BackupScheduler) tick(ctx context.Context) {
 	// Runs whose result never came back. Deliberately AFTER dispatch: reaping
 	// is cleanup and must never delay this tick's real work.
 	b.reapAbandonedRuns(ctx, now)
+	b.reapAbandonedRestores(ctx, now)
+}
+
+// reapAbandonedRestores fails restores whose result never arrived. Only the
+// node's Pub/Sub result closed a restore, so one published while Core had no
+// leader, or never published because the node was gone, stayed "queued" for
+// good: the panel showed it waiting forever.
+//
+// Six hours, like the runs, and only for a node that is CONNECTED and does not
+// hold the server's busy key (a restore refreshes it every ten seconds for as
+// long as it runs). A connected node has been handed the command by its
+// durable stream, so nothing running after that long means the result was
+// lost. A node that is offline still holds the command and runs it when it
+// returns - from node-local or filesystem storage without asking Core first -
+// so closing that row would show "failed" and then replace the world anyway;
+// it stays queued, and the panel says it resumes (restore_stall.go).
+func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Time) {
+	connected := b.nodeConnected
+	if connected == nil && b.registry != nil {
+		connected = b.registry.IsConnected
+	}
+	if connected == nil {
+		return
+	}
+	restores, err := b.store.ListAbandonedBackupRestores(now.Add(-backupRunAbandonedAfter), backupReapBatchSize)
+	if err != nil {
+		logErrf("backup-scheduler", "listing abandoned restores failed: %v", err)
+		return
+	}
+	for _, r := range restores {
+		if !connected(r.NodeID) {
+			continue
+		}
+		busy, err := b.redis.Exists(ctx, fmt.Sprintf("dylaris:server:%s:node_busy", r.ServerUUID)).Result()
+		if err != nil || busy > 0 {
+			continue
+		}
+		age := now.Sub(r.RequestedAt).Round(time.Minute)
+		message := fmt.Sprintf("No result was received from the node within %s. It is connected and not restoring this server, so the result was lost; check the server and restore again if needed.", age)
+		closed, err := b.store.CloseAbandonedBackupRestore(r.ID, message, now)
+		if err != nil {
+			logErrf("backup-scheduler", "could not close abandoned restore %d: %v", r.ID, err)
+			continue
+		}
+		if closed {
+			log.Printf("backup-scheduler: closed abandoned restore %d (requested %s ago)", r.ID, age)
+		}
+	}
 }
 
 // How long a run may sit at "running" before it is treated as abandoned.

@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A backup restore whose result was lost is now marked failed after six hours** instead of
+  showing "queued" forever, as long as your node is online. Nothing to update on your side.
+
 ## 2026.10.09.4
 
 ### Features

@@ -93,6 +93,16 @@ type BackupRun struct {
 	UploadedBytes *int64 `json:"-"`
 }
 
+// AbandonedBackupRestore is a restore still open past the reaper's cutoff, with
+// the server it restores: the node's busy key is named by its UUID, and its
+// node decides whether the restore can still run.
+type AbandonedBackupRestore struct {
+	ID          int
+	ServerUUID  string
+	NodeID      int
+	RequestedAt time.Time
+}
+
 // BackupRestore records a restore attempt against an archived BackupRun.
 type BackupRestore struct {
 	ID           int        `json:"id"`

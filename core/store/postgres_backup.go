@@ -739,6 +739,43 @@ func (s *PostgresStore) UpdateBackupRestoreStatus(id int, status, errorMsg strin
 	return err
 }
 
+func (s *PostgresStore) ListAbandonedBackupRestores(requestedBefore time.Time, limit int) ([]models.AbandonedBackupRestore, error) {
+	rows, err := s.db.Query(
+		`SELECT br.id, sv.uuid, sv.node_id, br.requested_at FROM backup_restores br
+		 JOIN servers sv ON sv.id = br.server_id
+		 WHERE br.status IN ('queued', 'running') AND br.requested_at < $1
+		 ORDER BY br.requested_at ASC
+		 LIMIT $2`,
+		requestedBefore, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.AbandonedBackupRestore
+	for rows.Next() {
+		var r models.AbandonedBackupRestore
+		if err := rows.Scan(&r.ID, &r.ServerUUID, &r.NodeID, &r.RequestedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CloseAbandonedBackupRestore(id int, message string, completed time.Time) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE backup_restores SET status = 'failed', error_message = $1, completed_at = $2
+		 WHERE id = $3 AND status IN ('queued', 'running')`,
+		message, completed, id,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // ───────────── helpers ─────────────
 
 func nullableString(s *string) interface{} {
