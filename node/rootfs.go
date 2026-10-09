@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -503,4 +504,25 @@ func writeEULA(serverPath, subName string) error {
 	}
 	chownForMCIn(root, leaf)
 	return nil
+}
+
+// readTenantDir lists name in root for a tenant, judged on the directory it
+// opened: a Stat followed by a second lookup let a link swapped in between
+// list the backup store's archive names.
+func readTenantDir(root *os.Root, name string, deny map[fileIdentity]bool) ([]fs.DirEntry, error) {
+	f, err := openDirIn(root, name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if deniedIdentity(st, deny) {
+		return nil, fs.ErrNotExist
+	}
+	entries, err := f.ReadDir(-1)
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return entries, err
 }

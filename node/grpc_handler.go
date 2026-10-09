@@ -287,10 +287,8 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 		// reached through a link onto it: the same rule as a read.
 		if name != "." && isProtectedFile(name) {
 			err = fs.ErrNotExist
-		} else if st, serr := root.Stat(name); serr == nil && deniedIdentity(st, nodeOwnedIdentities(root, true)) {
-			err = fs.ErrNotExist
 		} else {
-			entries, err = fs.ReadDir(root.FS(), name)
+			entries, err = readTenantDir(root, name, nodeOwnedIdentities(root, true))
 		}
 	}
 	if err != nil {
@@ -508,8 +506,7 @@ func (h *StreamHandler) streamDirAsZip(reqID string, root *os.Root, dirName, fil
 // addZipEntry writes one walked entry into zw under relPath, reading the
 // file through the Root. The node's own files are left out, by name and, for
 // one reached through a link, by identity (see nodeOwnedIdentities). That
-// includes the backup store in a Beam archive: Beam serves a backup only as the
-// single file it was asked for.
+// includes the backup store, which no file surface serves.
 func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.FileInfo, deny map[fileIdentity]bool) error {
 	if isProtectedFile(name) || deniedIdentity(info, deny) {
 		if info.IsDir() {

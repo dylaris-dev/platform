@@ -148,8 +148,8 @@ func TestValidateBeamPathOp(t *testing.T) {
 		{"dylaris-prefixed read allowed", "survival/.dylaris-backups", "read", false},
 		// The basename here is an ordinary archive name, so checking only the
 		// basename let the beam client delete and overwrite the backups the
-		// reserved set exists to protect. The read stays allowed on purpose:
-		// that is how the desktop client downloads a backup.
+		// reserved set exists to protect. The path check passes reads; jailBeam
+		// refuses them (TestBeamDoesNotServeTheBackupStore).
 		{"write inside a reserved directory refused", ".dylaris-backups/20260806-105747.tar.gz", "write", true},
 		{"read inside a reserved directory allowed", ".dylaris-backups/20260806-105747.tar.gz", "read", false},
 		{"missing server uuid refused", "survival/x", "write", true},

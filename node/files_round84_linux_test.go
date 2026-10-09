@@ -83,9 +83,8 @@ func TestTheNodesOwnFilesAreNotReadableThroughALink(t *testing.T) {
 	}
 }
 
-// Beam and SFTP read the same server directory: the node's config through a
-// link is refused there too. Beam keeps reading backups (its documented
-// archive download); SFTP does not.
+// Beam and SFTP read the same server directory: the node's config and the
+// backup store through a link are refused there too.
 func TestBeamAndSFTPDoNotReadTheNodesConfigThroughALink(t *testing.T) {
 	bs, uuid, ctx := newTestBeamServer(t)
 	dir := bs.storageMgr.GetServerDir(uuid)
@@ -103,14 +102,39 @@ func TestBeamAndSFTPDoNotReadTheNodesConfigThroughALink(t *testing.T) {
 	if err := os.Symlink("../.node_config.json", filepath.Join(dir, "survival", "cfg.json")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("../.dylaris-backups/job-1", filepath.Join(dir, "survival", "bkdir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../.dylaris-backups/job-1/a.tar.gz", filepath.Join(dir, "survival", "bk.tgz")); err != nil {
+		t.Fatal(err)
+	}
 	for _, p := range []string{"survival/cfg.json", ".node_config.json"} {
 		resp, err := bs.ReadFileContent(ctx, &beampb.BeamFileReadReq{Path: p})
 		if err == nil && resp.Success {
 			t.Errorf("beam read %s: %q", p, resp.Content)
 		}
 	}
-	if resp, err := bs.ReadFileContent(ctx, &beampb.BeamFileReadReq{Path: ".dylaris-backups/job-1/a.tar.gz"}); err != nil || !resp.Success {
-		t.Errorf("beam no longer reads a backup archive: %v %+v", err, resp)
+	for _, p := range []string{".dylaris-backups/job-1/a.tar.gz", "survival/bk.tgz"} {
+		if resp, err := bs.ReadFileContent(ctx, &beampb.BeamFileReadReq{Path: p}); err == nil && resp.Success {
+			t.Errorf("beam read the backup %s", p)
+		}
+	}
+	if resp, _ := bs.ListFiles(ctx, &beampb.BeamFileListReq{Path: "survival/bkdir"}); len(resp.GetFiles()) != 0 {
+		t.Errorf("beam listed the backup store through a link: %v", resp.GetFiles())
+	}
+	st := &fakeBeamDownloadStream{ctx: ctx}
+	if err := bs.DownloadFile(&beampb.BeamDownloadReq{Path: "survival/bk.tgz"}, st); err == nil || st.buf.Len() != 0 {
+		t.Errorf("beam downloaded the backup through a link: %v", err)
+	}
+	st = &fakeBeamDownloadStream{ctx: ctx}
+	if err := bs.DownloadFile(&beampb.BeamDownloadReq{Path: "survival", ZipIfDir: true}, st); err != nil {
+		t.Fatalf("zip: %v", err)
+	}
+	if names, _ := zipEntries(t, st.buf.Bytes()); strings.Contains(strings.Join(names, " "), "bk") {
+		t.Errorf("beam zipped the backup store through a link: %v", names)
+	}
+	if resp, err := bs.CopyFile(ctx, &beampb.BeamFileCopyReq{SrcPath: "survival/bk.tgz", DstPath: "survival/copy.tgz"}); err == nil && resp.Success {
+		t.Error("beam copied the backup out through a link")
 	}
 	if resp, err := bs.ReadFileContent(ctx, &beampb.BeamFileReadReq{Path: "survival/ok.txt"}); err != nil || !resp.Success {
 		t.Errorf("beam no longer reads an ordinary file: %v %+v", err, resp)
@@ -166,5 +190,24 @@ func TestSFTPDoesNotListTheBackupStoreThroughALink(t *testing.T) {
 		if n, _ := l.ListAt(buf, 0); n != 0 {
 			t.Errorf("listed %d entries of the backup store", n)
 		}
+	}
+}
+
+// Listing judges the directory it opened, opened without blocking: a named
+// pipe a plugin leaves where a folder was expected fails instead of hanging.
+func TestListingAPipeDoesNotBlock(t *testing.T) {
+	h, uuid, root := seedNodeOwned(t)
+	if err := syscall.Mkfifo(filepath.Join(root, "survival", "pipe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		h.handleList("l", uuid, &pb.ListFilesReq{Path: "survival/pipe"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("listing a pipe blocked")
 	}
 }

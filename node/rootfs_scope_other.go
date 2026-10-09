@@ -73,3 +73,7 @@ func openRegularIn(root *os.Root, name string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+func openDirIn(root *os.Root, name string) (*os.File, error) {
+	return root.Open(name)
+}

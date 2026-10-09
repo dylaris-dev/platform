@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Beam no longer serves node-local backups;** it did to anyone with file read access. Backups
+  are downloaded from the server's Backups page, which needs the backups permission. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.2
 
 ### Features

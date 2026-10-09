@@ -203,3 +203,9 @@ func openRegularIn(root *os.Root, name string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+// openDirIn opens name in root as a directory without blocking: a FIFO in its
+// place fails instead of hanging the open.
+func openDirIn(root *os.Root, name string) (*os.File, error) {
+	return root.OpenFile(name, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NONBLOCK, 0)
+}

@@ -549,8 +549,8 @@ func isPlatformReservedName(name string) bool {
 // The basename alone is not enough. ".dylaris-backups" is reserved, but a write
 // to ".dylaris-backups/<id>.tar.gz" ends in an ordinary archive filename, so a
 // basename check let the beam client delete and overwrite backup archives -
-// exactly the tampering the reserved set exists to prevent. Reads are checked
-// nowhere, which is deliberate: the desktop client downloads backups this way.
+// exactly the tampering the reserved set exists to prevent. Reads are refused
+// by jailBeam with the file manager's rule (isProtectedFile).
 func reservedComponent(rel string) string {
 	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
 		if part != "" && part != "." && isPlatformReservedName(part) {
@@ -562,17 +562,7 @@ func reservedComponent(rel string) string {
 
 // validateBeamPath ensures the path stays within the server's data directory.
 // When op is "write" (upload, save, create, delete, rename, copy-dst), it
-// also refuses any platform-reserved filename. Read ops ("read", "list")
-// pass even on reserved names so the UI can show them.
-//
-// The read-op carve-out is what lets the Beam.exe desktop app download a
-// backup archive directly from .dylaris-backups/<id>.tar.gz: Core hands
-// the client a ticket for the owning server, the client opens a
-// DownloadFile stream with the relative path, and validateBeamPathRead
-// resolves it against the server dir like any other file. The hidden
-// .dylaris- prefix only blocks writes — perfect for read-only backup
-// downloads while still preventing tampering through the regular file
-// browser.
+// also refuses any platform-reserved filename. Reads are judged in jailBeam.
 func (s *beamServer) validateBeamPath(reqPath, serverUUID string) (string, error) {
 	return s.validateBeamPathOp(reqPath, serverUUID, "write")
 }
@@ -627,6 +617,12 @@ func (s *beamServer) jailBeam(reqPath, serverUUID, op string) (*os.Root, string,
 	name, err := rootName(serverDir, abs)
 	if err != nil {
 		return nil, "", err
+	}
+	// Beam served the node-local backups to anyone with files.read, which
+	// the file manager and SFTP refuse without backups.read. A backup is
+	// downloaded through Core, which checks that permission.
+	if name != "." && isProtectedFile(name) {
+		return nil, "", fs.ErrNotExist
 	}
 	root, err := os.OpenRoot(serverDir)
 	if err != nil {
@@ -798,8 +794,8 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
 	defer root.Close()
-
-	entries, err := fs.ReadDir(root.FS(), dirName)
+	// A link a plugin plants onto the backup store lists it under its own name.
+	entries, err := readTenantDir(root, dirName, nodeOwnedIdentities(root, true))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &pb.BeamFileListResp{Files: []*pb.BeamFileInfo{}}, nil
@@ -809,14 +805,10 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 
 	var files []*pb.BeamFileInfo
 	for _, e := range entries {
-		// Hidden platform-managed entries — keep them out of the file
+		// Hidden platform-managed entries - keep them out of the file
 		// browser entirely. .dylaris-backups is the node-local backup
-		// store: still readable via the dedicated DownloadFile path
-		// (validateBeamPathRead allows reads on dot-prefixed names) so
-		// Beam.exe can grab an archive when given a direct path, but
-		// it must not appear in a regular directory listing.
-		// .dylaris.json holds platform metadata; .pending-delete-* are
-		// rename tombstones from sub-server cleanup.
+		// store; .dylaris.json holds platform metadata; .pending-delete-*
+		// are rename tombstones from sub-server cleanup.
 		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" || e.Name() == ".dylaris.json" || e.Name() == ".node_config.json" {
 			continue
 		}
@@ -855,8 +847,8 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 	// down. Core caps opening a file at the same size; larger ones are
 	// downloaded.
 	// The node's config and metadata are not the tenant's to read, also not
-	// through a link; backup archives stay readable here (see validateBeamPathOp).
-	f, err := openTenantReadIn(root, name, nodeOwnedIdentities(root, false))
+	// through a link, and neither are the node-local backups.
+	f, err := openTenantReadIn(root, name, nodeOwnedIdentities(root, true))
 	if err != nil {
 		return &pb.BeamFileContentResp{Success: false, Message: err.Error()}, nil
 	}
@@ -1048,7 +1040,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, false)); err != nil {
+		if err := copyFileIn(root, srcName, dstRoot, dstLeaf, nodeOwnedIdentities(root, true)); err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 		chownForMCIn(dstRoot, dstLeaf)
@@ -1091,8 +1083,8 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 	}
 
 	// The node's config and metadata are not the tenant's to read, also not
-	// through a link; backup archives stay readable here (see validateBeamPathOp).
-	f, err := openTenantReadIn(root, name, nodeOwnedIdentities(root, false))
+	// through a link, and neither are the node-local backups.
+	f, err := openTenantReadIn(root, name, nodeOwnedIdentities(root, true))
 	if err != nil {
 		return status.Errorf(codes.Internal, "open file: %v", err)
 	}
@@ -1514,7 +1506,7 @@ func zipNameFor(path string) string {
 // control-plane zip paths in grpc_handler.go, so both transports archive
 // exactly the same thing.
 func addTreeToZip(zw *zip.Writer, root *os.Root, nameBase, target string) error {
-	deny := nodeOwnedIdentities(root, false)
+	deny := nodeOwnedIdentities(root, true)
 	return walkRoot(root, target, func(name string, info fs.FileInfo) error {
 		rel := relTo(nameBase, name)
 		if rel == "." {
