@@ -17,9 +17,11 @@ interface JavaVersionPickerProps {
     recommended?: string;
     /** The Minecraft major version string (e.g. "1.20.4") used in the mismatch warning. */
     mcVersion?: string;
+    /** No version could be read: the choice is the operator's to check. */
+    versionUnknown?: boolean;
 }
 
-export default function JavaVersionPicker({ value, onChange, disabled, serverType, recommended, mcVersion }: JavaVersionPickerProps) {
+export default function JavaVersionPicker({ value, onChange, disabled, serverType, recommended, mcVersion, versionUnknown }: JavaVersionPickerProps) {
     const isProxy = serverType === 'proxy';
 
     const recommendedImage = recommended ? JAVA_IMAGES.find(j => j.id === recommended) : undefined;
@@ -28,7 +30,7 @@ export default function JavaVersionPicker({ value, onChange, disabled, serverTyp
     return (
         <div className="flex flex-col gap-[5px]">
             <label className="input-label">Java Version</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
                 {JAVA_IMAGES.map(j => {
                     const isRecommended = recommended === j.id;
                     return (
@@ -56,6 +58,15 @@ export default function JavaVersionPicker({ value, onChange, disabled, serverTyp
                     );
                 })}
             </div>
+            {versionUnknown && !showMismatchWarning && (
+                <div className="alert alert-warning flex items-start gap-2 mt-1 rounded-lg text-sm">
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--warning)" />
+                    <span>
+                        The upload does not say which Minecraft version it runs, so no Java version is recommended.
+                        Check the one the pack needs; the wrong one can stop the server from starting.
+                    </span>
+                </div>
+            )}
             {showMismatchWarning && (
                 <div className="alert alert-error flex items-start gap-2 mt-1 rounded-lg text-sm">
                     <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--error-light)" />

@@ -119,3 +119,7 @@ class SystemEventsClient {
 }
 
 export const systemEvents = new SystemEventsClient();
+
+// A window event, not a server one: the server header keeps its own route list,
+// and the Setup tab in the same page tells it about a route it just created.
+export const ROUTES_CHANGED_EVENT = 'dylaris:routes.changed';

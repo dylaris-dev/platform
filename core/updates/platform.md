@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.11
+
+### Features
+- **An uploaded server pack picks its own Java.** Setup reads the Minecraft version from the pack's
+  manifest.json or variables.txt; when it names none, a warning asks you to check. `panel`
+- **After installing from the Setup tab you land in the console**, where the install log runs. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The console no longer jumps to the bottom while you read further up**; a button takes you back. `panel`
+- **Routes created during setup show in the server header at once, all of them side by side**;
+  it said "No gateway route configured" until a reload. `panel`
+- **Setup's install-method buttons no longer overflow**, and the Configuration search bar no longer
+  lets rows show above it while scrolling. `panel`
+
 ## 2026.10.09.10
 
 ### Features

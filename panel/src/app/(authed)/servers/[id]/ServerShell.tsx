@@ -23,7 +23,7 @@ import { useServerUploadLock } from '@/lib/uploadManager';
 import { Upload } from 'lucide-react';
 import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
 import { tabRunsOnActiveSubServer } from '@/lib/tabProxy';
-import { systemEvents } from '@/lib/systemEvents';
+import { systemEvents, ROUTES_CHANGED_EVENT } from '@/lib/systemEvents';
 import { useBusy } from '@/lib/useBusy';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
@@ -131,14 +131,23 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         return () => { cancelled = true; unsub(); };
     }, [selectedServer?.id]);
 
-    // Load gateway routes when relevant
+    // Load gateway routes when relevant, and again when the Setup tab creates
+    // one: loaded only on a server change, the header said "No gateway route
+    // configured" about the route just made until a reload.
     useEffect(() => {
         setServerRoutes([]);
         if (!selectedServer || !gatewayEnabled) return;
-        getServerRoutes(selectedServer.id).then(res => {
+        const sid = selectedServer.id;
+        const load = () => getServerRoutes(sid).then(res => {
             if (Array.isArray(res)) setServerRoutes(res);
             else if (res && Array.isArray(res.routes)) setServerRoutes(res.routes);
         });
+        load();
+        const onChanged = (e: Event) => {
+            if ((e as CustomEvent).detail?.serverId === sid) load();
+        };
+        window.addEventListener(ROUTES_CHANGED_EVENT, onChanged);
+        return () => window.removeEventListener(ROUTES_CHANGED_EVENT, onChanged);
     }, [selectedServer?.id, gatewayEnabled]);
 
     // Clear waitingForStatus when server reaches expected status
@@ -843,7 +852,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                         {gatewayEnabled && serverRoutes.length > 0 && (
                             <div className="flex items-center gap-2 flex-wrap">
                                 <span className="mono-label text-(--base-05)">Gateway</span>
-                                {serverRoutes.slice(0, 3).map(route => (
+                                {serverRoutes.map(route => (
                                     <div key={route.domain} className="flex items-center gap-1.5 bg-(--accent-ghost) border border-(--accent-border) rounded-md px-2.5 py-1">
                                         <Globe size={11} className="text-(--accent-light) shrink-0" />
                                         <span className="text-xs font-mono text-(--accent-light)">{route.domain}</span>

@@ -5,7 +5,7 @@ import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { subscribeEventSource } from '@/lib/sse';
 import { levelClass, computeLineLevels } from '@/lib/consoleLog';
-import { Power, Send, Cpu, MemoryStick } from 'lucide-react';
+import { Power, Send, Cpu, MemoryStick, ArrowDown } from 'lucide-react';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
 // ANSI spec for terminal color rendering and are intentionally NOT mapped to
@@ -72,7 +72,11 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   const [liveStats, setLiveStats] = useState<ServerStats | null>(null);
   const [command, setCommand] = useState('');
   const [sendError, setSendError] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  // Follow new output only while the reader is at the bottom: jumping back
+  // down on every line made scrolling up to read anything impossible.
+  const followRef = useRef(true);
+  const [following, setFollowing] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
 
@@ -96,6 +100,8 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
 
   useEffect(() => {
     setLines([]);
+    followRef.current = true;
+    setFollowing(true);
     const pendingLines: string[] = [];
     let historyLoaded = false;
 
@@ -125,8 +131,27 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   }, [server.id, activeSubServer]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = logRef.current;
+    if (el && followRef.current) el.scrollTop = el.scrollHeight;
   }, [lines]);
+
+  const onLogScroll = () => {
+    const el = logRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    followRef.current = atBottom;
+    setFollowing(atBottom);
+  };
+
+  const jumpToBottom = () => {
+    const el = logRef.current;
+    if (!el) return;
+    followRef.current = true;
+    setFollowing(true);
+    // At once: a smooth scroll fires scroll events short of the bottom, which
+    // switched following off again while new lines kept arriving.
+    el.scrollTop = el.scrollHeight;
+  };
 
   useEffect(() => {
     if (!command.trim()) { setSuggestions([]); return; }
@@ -150,6 +175,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     setCommand('');
     setSuggestions([]);
     setSendError('');
+    jumpToBottom();
     try {
       // The input is cleared optimistically, which is right for a console, but
       // the answer was then discarded: a refused command (server not running, no
@@ -225,7 +251,8 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         </div>
       )}
       {/* Log output */}
-      <div className="flex-1 overflow-y-auto p-4 font-mono text-sm bg-(--base-00)">
+      <div className="flex-1 min-h-0 relative">
+      <div ref={logRef} onScroll={onLogScroll} className="h-full overflow-y-auto p-4 font-mono text-sm bg-(--base-00)">
         {isOffline && lines.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-(--base-06)">
             <Power size={48} className="mb-3 opacity-30" />
@@ -241,7 +268,18 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
             </div>
           ))
         )}
-        <div ref={bottomRef} />
+      </div>
+      {!following && lines.length > 0 && (
+        <button
+          type="button"
+          onClick={jumpToBottom}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-(--base-02) border border-(--base-04) text-xs font-medium text-(--base-08) shadow-md hover:text-(--base-09) hover:border-(--accent-border) transition-colors"
+          title="Jump to the newest output"
+        >
+          <ArrowDown size={13} />
+          Latest output
+        </button>
+      )}
       </div>
 
       {/* Command input with autocomplete */}

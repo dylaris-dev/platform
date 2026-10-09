@@ -15,9 +15,17 @@ import { compareVersionsDesc } from '@/views/setup/VersionPicker';
  * gigabytes). Null when the file is not a zip this can read.
  */
 export async function readZipEntryNames(file: Blob): Promise<string[] | null> {
-    const read = async (start: number, end: number) => new DataView(await file.slice(start, end).arrayBuffer());
+    const entries = await readZipEntries(file);
+    return entries ? entries.map(e => e.name) : null;
+}
+
+interface ZipEntry { name: string; method: number; compSize: number; size: number; offset: number }
+
+const read = async (file: Blob, start: number, end: number) => new DataView(await file.slice(start, end).arrayBuffer());
+
+async function readZipEntries(file: Blob): Promise<ZipEntry[] | null> {
     const tailStart = Math.max(0, file.size - 65557);
-    const tail = await read(tailStart, file.size);
+    const tail = await read(file, tailStart, file.size);
     let eocd = -1;
     for (let i = tail.byteLength - 22; i >= 0; i--) {
         if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
@@ -30,24 +38,75 @@ export async function readZipEntryNames(file: Blob): Promise<string[] | null> {
         const loc = eocd - 20;
         if (loc < 0 || tail.getUint32(loc, true) !== 0x07064b50) return null;
         const recOffset = Number(tail.getBigUint64(loc + 8, true));
-        const rec = await read(recOffset, recOffset + 56);
+        const rec = await read(file, recOffset, recOffset + 56);
         if (rec.byteLength < 56 || rec.getUint32(0, true) !== 0x06064b50) return null;
         cdSize = Number(rec.getBigUint64(40, true));
         cdOffset = Number(rec.getBigUint64(48, true));
     }
     // ponytail: a directory over 64 MB (~500k entries) is not read; the form then just isn't prefilled.
     if (cdSize > 64 << 20 || cdOffset + cdSize > file.size) return null;
-    const cd = await read(cdOffset, cdOffset + cdSize);
+    const cd = await read(file, cdOffset, cdOffset + cdSize);
     const decoder = new TextDecoder();
-    const names: string[] = [];
+    const entries: ZipEntry[] = [];
     for (let p = 0; p + 46 <= cd.byteLength && cd.getUint32(p, true) === 0x02014b50;) {
         const n = cd.getUint16(p + 28, true);
         const extra = cd.getUint16(p + 30, true);
         const comment = cd.getUint16(p + 32, true);
-        names.push(decoder.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, n)));
+        entries.push({
+            name: decoder.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, n)),
+            method: cd.getUint16(p + 10, true),
+            compSize: cd.getUint32(p + 20, true),
+            size: cd.getUint32(p + 24, true),
+            offset: cd.getUint32(p + 42, true),
+        });
         p += 46 + n + extra + comment;
     }
-    return names;
+    return entries;
+}
+
+/**
+ * One small text entry of a zip, by exact name: stored or deflated, at most
+ * 4 MB. Null for anything else.
+ */
+async function readZipText(file: Blob, entries: ZipEntry[], name: string): Promise<string | null> {
+    const e = entries.find(x => x.name === name);
+    // ponytail: ZIP64 sizes/offsets (0xffffffff) are not followed; such a pack is just not read.
+    if (!e || e.size > 4 << 20 || e.compSize === 0xffffffff || e.offset === 0xffffffff) return null;
+    const local = await read(file, e.offset, e.offset + 30);
+    if (local.byteLength < 30 || local.getUint32(0, true) !== 0x04034b50) return null;
+    const start = e.offset + 30 + local.getUint16(26, true) + local.getUint16(28, true);
+    const raw = file.slice(start, start + e.compSize);
+    if (e.method === 0) return raw.text();
+    if (e.method !== 8 || typeof DecompressionStream === 'undefined') return null;
+    return new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+}
+
+/**
+ * The Minecraft version a server pack declares: CurseForge's manifest.json,
+ * else ServerPackCreator's variables.txt. Read so the setup form recommends
+ * the pack's Java, not the one of the server it replaces.
+ */
+export async function readPackMcVersion(file: Blob): Promise<string | undefined> {
+    try {
+        const entries = await readZipEntries(file);
+        if (!entries) return undefined;
+        // A pack zipped as its folder is moved up by the node; read it there too.
+        const names = entries.map(e => e.name);
+        const top = singleTopFolder(names) ? withoutMacJunk(names)[0].split('/')[0] + '/' : '';
+        const manifest = await readZipText(file, entries, top + 'manifest.json');
+        try {
+            const v = manifest && JSON.parse(manifest)?.minecraft?.version;
+            if (typeof v === 'string' && /^\d[\w.-]{0,31}$/.test(v)) return v;
+        } catch {
+            // not the CurseForge shape; variables.txt may still say it
+        }
+        const vars = await readZipText(file, entries, top + 'variables.txt');
+        const m = vars && /^\s*MINECRAFT_VERSION\s*=\s*["']?([\d][\w.-]{0,31})/m.exec(vars);
+        if (m) return m[1];
+    } catch {
+        // an unreadable pack only means no recommendation
+    }
+    return undefined;
 }
 
 /**
@@ -79,6 +138,8 @@ export interface UploadDetection {
      * declaring its loader, which the node installs (node/installer_serverpack.go).
      */
     serverPack?: boolean;
+    /** The Minecraft version the upload runs, where it says so. */
+    mcVersion?: string;
 }
 
 const highest = (vs: string[]) => [...vs].sort(compareVersionsDesc)[0];

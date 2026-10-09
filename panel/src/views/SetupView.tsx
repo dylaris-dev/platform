@@ -9,7 +9,7 @@ import { recommendJavaForVersion, effectiveMcVersion } from './setup/JavaVersion
 import { JAVA_21 } from '@/lib/javaVersion';
 import VersionPicker, { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
 import UploadSoftwareChoice from './setup/UploadSoftwareChoice';
-import { readZipEntryNames, detectUploadSoftware, singleTopFolder, type UploadDetection } from '@/lib/uploadDetect';
+import { readZipEntryNames, detectUploadSoftware, singleTopFolder, readPackMcVersion, type UploadDetection } from '@/lib/uploadDetect';
 import SubServerSidebar from './setup/SubServerSidebar';
 import SetupViewMode from './setup/SetupViewMode';
 import SetupNewWizard from './setup/SetupNewWizard';
@@ -20,6 +20,7 @@ import WipeChoiceDialog from '@/views/setup/WipeChoiceDialog';
 import { classifyInstallChange, type InstallChange, type WipeToken } from '@/lib/installWipe';
 import { API_URL } from '@/lib/api/core';
 import { isSubServerName } from '@/lib/validation';
+import { ROUTES_CHANGED_EVENT } from '@/lib/systemEvents';
 import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
 import ModalPanel from '@/components/ui/ModalPanel';
 
@@ -50,10 +51,12 @@ type FormMode = 'view' | 'edit' | 'new';
 interface SetupViewProps {
     server: Server;
     onSetupComplete: () => void;
+    /** After a fresh install went through: the console is where it is followed. */
+    onInstalled?: () => void;
     libraryEnabled?: boolean;
 }
 
-export default function SetupView({ server, onSetupComplete, libraryEnabled }: SetupViewProps) {
+export default function SetupView({ server, onSetupComplete, onInstalled, libraryEnabled }: SetupViewProps) {
     const { refreshServers } = useAppData();
     const [subServers, setSubServers] = useState<string[]>([]);
     const [maxSubServers, setMaxSubServers] = useState<number>(3);
@@ -119,25 +122,26 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // Auto-select Java image when MC version changes. We use the build when it
     // is a true MC patch version (Paper "1.20.11" / Vanilla "1.20.6"), and fall
     // back to the major when the build is a loader version (Fabric/Forge).
+    // The Minecraft version the install will run, which picks the Java. A
+    // modpack carries its own, and on the modpack tabs the online version
+    // pickers are empty; an upload kept as it is says its own in its files.
+    // Keyed on the pickers alone, the form recommended the Java of the server
+    // being replaced ("Minecraft 26.3 needs Java 25" over a 1.20.1 pack).
+    const keepsUpload = installTab === 'upload' && (!uploadNeedsSoftware || uploadKeepJar);
+    const targetMcVersion =
+        installTab === 'modpack' ? (modpackSelection?.mcVersion || '')
+        : installTab === 'pack' ? (packSelection?.mcVersion || '')
+        : installTab === 'technic' ? (technicSelection?.mcVersion || '')
+        : keepsUpload ? (uploadDetection?.mcVersion || '')
+        : effectiveMcVersion(selectedMajor, selectedBuild);
+    // A picked upload whose files name no version: say so rather than recommend.
+    const javaVersionUnknown = keepsUpload && !isProxy && !!uploadFile && uploadDetection !== null && !targetMcVersion;
+
     useEffect(() => {
-        if (formMode === 'view') return;
-        // The picker on the upload tab is hidden unless software is installed;
-        // its preselection must not change the Java of a server kept as it is.
-        if (installTab === 'upload' && (!uploadNeedsSoftware || uploadKeepJar)) return;
-        // A modpack carries its own Minecraft version, and on the modpack tabs
-        // the online version pickers are empty - so keying this on them alone
-        // meant picking a modpack recommended nothing and the form silently kept
-        // whatever Java was last selected. Which one applies follows the tab the
-        // operator is actually installing from.
-        const fromPicker =
-            installTab === 'modpack' ? (modpackSelection?.mcVersion || '')
-            : installTab === 'pack' ? (packSelection?.mcVersion || '')
-            : installTab === 'technic' ? (technicSelection?.mcVersion || '')
-            : effectiveMcVersion(selectedMajor, selectedBuild);
-        if (!fromPicker) return;
-        const rec = recommendJavaForVersion(fromPicker);
+        if (formMode === 'view' || !targetMcVersion) return;
+        const rec = recommendJavaForVersion(targetMcVersion);
         if (rec) setJavaImage(rec);
-    }, [selectedMajor, selectedBuild, formMode, installTab, uploadNeedsSoftware, uploadKeepJar, modpackSelection?.mcVersion, packSelection?.mcVersion, technicSelection?.mcVersion]);
+    }, [formMode, targetMcVersion]);
 
     // Pre-populate version when entering edit mode (handles case where software didn't change)
     useEffect(() => {
@@ -310,6 +314,13 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                     return undefined;
                 }
                 return names ? detectUploadSoftware(names, uploadStructure === 'subfolder') : { launchable: false };
+            })
+            .then(async (d: UploadDetection | undefined) => {
+                if (!d) return d;
+                // NeoForge's build is its own version, not Minecraft's.
+                const mc = d.serverPack ? await readPackMcVersion(uploadFile)
+                    : d.software && d.software !== 'neoforge' ? d.build : undefined;
+                return { ...d, mcVersion: mc };
             })
             .catch(() => ({ launchable: false }))
             .then((d: UploadDetection | undefined) => {
@@ -684,12 +695,18 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                 }
             }
             await loadSubServers();
-            if (routeCreated) await loadRoutes();
+            if (routeCreated) {
+                await loadRoutes();
+                window.dispatchEvent(new CustomEvent(ROUTES_CHANGED_EVENT, { detail: { serverId: server.id } }));
+            }
             await loadInstalls();
             if (routeError) {
                 setError(`Server installed, but domain route failed: ${routeError}`);
             } else {
                 onSetupComplete();
+                // An upload with no file only prepares the slot for SFTP: the
+                // next step is the upload, not a console with nothing in it.
+                if (installer.type !== 'upload') onInstalled?.();
             }
         } else setError(res.message || 'Setup failed');
         setSubmitting(false);
@@ -813,6 +830,8 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     ) : null;
 
     const installProps = {
+        targetMcVersion,
+        javaVersionUnknown,
         installTab,
         onInstallTabChange: setInstallTab,
         libraryEnabled,
@@ -1050,7 +1069,10 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
                     serverId={server.id}
                     serverName={server.name}
                     onClose={() => { setShowRoutesModal(false); loadRoutes(); }}
-                    onRoutesChanged={(rs) => setExistingRoutes(rs)}
+                    onRoutesChanged={(rs) => {
+                        setExistingRoutes(rs);
+                        window.dispatchEvent(new CustomEvent(ROUTES_CHANGED_EVENT, { detail: { serverId: server.id } }));
+                    }}
                 />
             )}
         </div>

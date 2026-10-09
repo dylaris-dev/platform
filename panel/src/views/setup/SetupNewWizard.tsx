@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { X, Rocket, RefreshCw, Globe } from 'lucide-react';
 import { CreateRouteRequest, GatewayRoute } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
-import JavaVersionPicker, { recommendJavaForVersion, effectiveMcVersion } from './JavaVersionPicker';
+import JavaVersionPicker, { recommendJavaForVersion } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
@@ -48,6 +48,10 @@ interface SetupNewWizardProps {
     onSoftwareChange: (s: string) => void;
     softwareList?: string[];
     allVersions: VersionEntry[];
+    /** The Minecraft version the install will run, whatever tab it comes from. */
+    targetMcVersion: string;
+    /** An upload kept as it is whose files name no Minecraft version. */
+    javaVersionUnknown?: boolean;
     selectedMajor: string;
     onMajorChange: (m: string) => void;
     selectedBuild: string;
@@ -99,8 +103,8 @@ interface SetupNewWizardProps {
 export default function SetupNewWizard(props: SetupNewWizardProps) {
     const sanitized = sanitizeName(props.subName);
     const effectiveVersion = useMemo(
-        () => effectiveMcVersion(props.selectedMajor, props.selectedBuild),
-        [props.selectedMajor, props.selectedBuild],
+        () => props.targetMcVersion,
+        [props.targetMcVersion],
     );
     const recommendedJava = useMemo(() => recommendJavaForVersion(effectiveVersion), [effectiveVersion]);
 
@@ -197,40 +201,41 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     serverType={props.serverType}
                     recommended={recommendedJava ?? undefined}
                     mcVersion={effectiveVersion || undefined}
+                    versionUnknown={props.javaVersionUnknown}
                 />
 
                 {/* Install tabs */}
                 <div>
                     <label className="input-label mb-2 block">Installation Method</label>
-                    <div className="flex bg-(--base-03) p-1 rounded-md max-w-md">
+                    <div className="flex flex-wrap gap-1 bg-(--base-03) p-1 rounded-md">
                         <button type="button" onClick={() => props.onInstallTabChange('online')}
-                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'online' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'online' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Online
                         </button>
                         {props.libraryEnabled && (
                             <button type="button" onClick={() => props.onInstallTabChange('library')}
-                                className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'library' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                                className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'library' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                                 Library
                             </button>
                         )}
                         <button type="button" onClick={() => props.onInstallTabChange('upload')}
-                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'upload' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'upload' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Upload / SFTP
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('backup')}
-                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'backup' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'backup' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Backup
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('modpack')}
-                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Modrinth modpacks
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('pack')}
-                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'pack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'pack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             My modpacks
                         </button>
                         <button type="button" onClick={() => props.onInstallTabChange('technic')}
-                            className={`btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab === 'technic' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'technic' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Technic
                         </button>
                     </div>

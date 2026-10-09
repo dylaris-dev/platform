@@ -578,7 +578,7 @@ export default function ServerPropertiesView() {
 
             {!loading && !error && doc && mode === 'simple' && (
                 <div className="flex-1 overflow-auto card card-pad">
-                    <div className="flex items-center gap-2 mb-4 sticky top-0 bg-(--base-02) z-10 -mx-5 -mt-5 px-5 pt-5 pb-3 border-b border-(--base-03)">
+                    <div className="flex items-center gap-2 mb-4 sticky -top-5 bg-(--base-02) z-10 -mx-5 -mt-5 px-5 pt-5 pb-3 border-b border-(--base-03)">
                         <Search size={13} className="text-(--base-05)" />
                         <input
                             type="text"
