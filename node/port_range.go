@@ -32,9 +32,10 @@ func resolvePortRange() (start, end int, notice string) {
 				"PORT_RANGE_START/PORT_RANGE_END are no longer read - set PORT_RANGE=%d-%d instead; using the default range",
 				defaultPortRangeStart, defaultPortRangeEnd)
 		}
-		return defaultPortRangeStart, defaultPortRangeEnd, fmt.Sprintf(
-			"PORT_RANGE not set, using the default range %d-%d",
-			defaultPortRangeStart, defaultPortRangeEnd)
+		// Relying on the default is a choice, not a fault: a notice here showed
+		// as a warning on every such node, including gateway-only ones that
+		// bind no host ports at all.
+		return defaultPortRangeStart, defaultPortRangeEnd, ""
 	}
 	s, e, err := parsePortRange(raw)
 	if err != nil {

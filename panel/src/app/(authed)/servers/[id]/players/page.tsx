@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Users, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock } from 'lucide-react';
+import { Users, UserRound, Power, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import PlayerHead from '@/components/PlayerHead';
 import {
@@ -10,8 +10,9 @@ import {
 } from '@/lib/api/rcon';
 import {
     getPlayerLists, getOnlinePlayers, playerAction,
-    type PlayerListEntry, type PlayerAction,
+    type PlayerListEntry, type PlayerAction, type KnownPlayer,
 } from '@/lib/api/players';
+import { isServerLive, mergeAllPlayers, type AllPlayerRow } from '@/lib/playersView';
 import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
@@ -25,13 +26,15 @@ import ModalPanel from '@/components/ui/ModalPanel';
 // job needed rcon.exec - every command the server has, `stop` included - plus
 // files.read over the whole filesystem.
 //
-// The online roster is polled every 10s. Bans/whitelist/ops come from the JSON
-// files MC keeps in the active sub-server dir, which stay the authoritative
-// view of current state; the actions mutate through the server.
+// The online roster is polled every 10s while the server runs. Bans/whitelist/
+// ops/usercache come from the JSON files MC keeps in the active sub-server dir,
+// which stay the authoritative view of current state and are readable while the
+// server is stopped; the actions mutate through the server, so they need it up.
 
-type Section = 'online' | 'bans' | 'whitelist' | 'ops' | 'rcon';
+type Section = 'all' | 'online' | 'bans' | 'whitelist' | 'ops' | 'rcon';
 
 const SECTIONS: { id: Section; label: string; Icon: React.ComponentType<{ size?: number }> }[] = [
+    { id: 'all',       label: 'All players', Icon: UserRound },
     { id: 'online',    label: 'Online',    Icon: Users },
     { id: 'bans',      label: 'Bans',      Icon: ShieldX },
     { id: 'whitelist', label: 'Whitelist', Icon: ListChecks },
@@ -41,7 +44,16 @@ const SECTIONS: { id: Section; label: string; Icon: React.ComponentType<{ size?:
 
 // Every section except RCON itself needs a live RCON connection. When RCON is
 // off we force the RCON section and lock the rest until the operator enables it.
-const RCON_DEPENDENT: Section[] = ['online', 'bans', 'whitelist', 'ops'];
+const RCON_DEPENDENT: Section[] = ['all', 'online', 'bans', 'whitelist', 'ops'];
+
+// The sections that show who is online, and so ask RCON for the roster.
+const ROSTER_SECTIONS: Section[] = ['all', 'online'];
+
+const OFFLINE_HINT = 'Start the server to do this';
+
+// How many All players rows render before "Show more": each row is an avatar
+// request, and a long-running server's usercache holds up to 1000 names.
+const ALL_PAGE = 100;
 
 export default function ServerPlayersPage() {
     const paramId = useRouteId('servers');
@@ -49,12 +61,14 @@ export default function ServerPlayersPage() {
     const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
 
-    const [section, setSection] = useState<Section>('online');
+    const [section, setSection] = useState<Section>('all');
     const [search, setSearch] = useState('');
     const [online, setOnline] = useState<OnlinePlayer[]>([]);
     const [bans, setBans] = useState<PlayerListEntry[]>([]);
     const [whitelist, setWhitelist] = useState<PlayerListEntry[]>([]);
     const [ops, setOps] = useState<PlayerListEntry[]>([]);
+    const [known, setKnown] = useState<KnownPlayer[]>([]);
+    const [whitelistState, setWhitelistState] = useState<{ enabled?: boolean; enforced?: boolean }>({});
     const [loading, setLoading] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
     const [rconEnabled, setRconEnabled] = useState(false);
@@ -74,8 +88,16 @@ export default function ServerPlayersPage() {
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
-    const activeSub = server?.activeSubServer || '';
-    const uuid = server?.uuid || '';
+    // server.status follows the servers.changed SSE, so this flips without a
+    // reload and the refresh below re-runs on it.
+    const live = useMemo(() => isServerLive(server?.status), [server?.status]);
+    // The server list carries no players.manage bit, so the one viewer known not
+    // to hold it is a demo visitor. A member without it is refused by Core and
+    // sees that refusal as a toast.
+    const canManage = server?.role !== 'demo';
+    const actionsBlocked = !live || !canManage;
+    const blockedHint = !canManage ? 'Read-only: you cannot manage players on this server' : OFFLINE_HINT;
+    const [allLimit, setAllLimit] = useState(ALL_PAGE);
 
     // With RCON off, the effective section is always 'rcon' (the only usable
     // one); the user's chosen section resumes once RCON is enabled. This is
@@ -120,24 +142,33 @@ export default function ServerPlayersPage() {
     // list is swapped for six skeleton cards every ten seconds. Only a first load
     // and an explicit Refresh show a loading state; a poll replaces the data in
     // place, which is what makes it invisible.
-    const refresh = useCallback(async (background = false) => {
+    const refresh = useCallback(async (background = false, rosterOnly = false) => {
         if (!serverId || effectiveSection === 'rcon') return;
         if (!background) setLoading(true);
         setActionError(null);
 
-        if (effectiveSection === 'online') {
-            const res = await getOnlinePlayers(serverId);
-            if (!res.success) {
-                // A dial/connection error here means RCON was enabled but the
-                // server has not restarted since (or crashed after) - never
-                // show the raw Go dial string (it also leaks the internal
-                // mc_<uuid> container hostname).
-                setActionError(friendlyRconError(res.error, 'RCON unavailable'));
+        if (ROSTER_SECTIONS.includes(effectiveSection)) {
+            if (!live) {
+                // A stopped server cannot answer RCON; asking would only put a
+                // dial error on screen for a state the page already explains.
                 setOnline([]);
             } else {
-                setOnline(parsePlayerList(res.output || ''));
+                const res = await getOnlinePlayers(serverId);
+                if (!res.success) {
+                    // A dial/connection error here means RCON was enabled but the
+                    // server has not restarted since (or crashed after) - never
+                    // show the raw Go dial string (it also leaks the internal
+                    // mc_<uuid> container hostname).
+                    setActionError(friendlyRconError(res.error, 'RCON unavailable'));
+                    setOnline([]);
+                } else {
+                    setOnline(parsePlayerList(res.output || ''));
+                }
             }
-        } else {
+        }
+        // rosterOnly is the 10s poll: re-reading five files off the node every
+        // ten seconds per open tab would buy nothing, they change on actions.
+        if (effectiveSection !== 'online' && !rosterOnly) {
             // One call for all three lists. `unavailable` names any list the
             // server could not read, which is a different fact from an empty
             // one - showing "nobody is banned" for a list nobody could open is
@@ -146,27 +177,33 @@ export default function ServerPlayersPage() {
             setBans(res.bans);
             setWhitelist(res.whitelist);
             setOps(res.ops);
+            setKnown(res.known);
+            setWhitelistState({ enabled: res.whitelistEnabled, enforced: res.whitelistEnforced });
+            const listKey = effectiveSection === 'all' ? 'known' : effectiveSection;
             if (!res.success) {
                 setActionError(res.message || 'Player lists could not be loaded.');
-            } else if (res.unavailable && res.unavailable[effectiveSection]) {
-                setActionError(`${effectiveSection}: ${res.unavailable[effectiveSection]}`);
+            } else if (res.unavailable && res.unavailable[listKey]) {
+                setActionError(`${effectiveSection === 'all' ? 'usercache' : effectiveSection}: ${res.unavailable[listKey]}`);
+            } else if (effectiveSection === 'whitelist' && res.unavailable?.properties) {
+                setActionError(`server.properties: ${res.unavailable.properties}`);
             }
         }
 
         setLoading(false);
-    }, [serverId, effectiveSection]);
+    }, [serverId, effectiveSection, live]);
 
     // Section switches DO show the skeleton: the previous section's rows would
     // otherwise sit there looking like this section's data.
     useEffect(() => { refresh(); }, [refresh]);
 
-    // Online list auto-poll every 10s. Other sections are file-backed and
-    // change only on user-initiated actions - refresh on action.
+    // Online list auto-poll every 10s, only while the server runs. Other
+    // sections are file-backed and change only on user-initiated actions -
+    // refresh on action.
     useEffect(() => {
-        if (effectiveSection !== 'online') return;
-        const id = setInterval(() => refresh(true), 10_000);
+        if (!live || !ROSTER_SECTIONS.includes(effectiveSection)) return;
+        const id = setInterval(() => refresh(true, true), 10_000);
         return () => clearInterval(id);
-    }, [effectiveSection, refresh]);
+    }, [effectiveSection, refresh, live]);
 
     // One entry point for every mutation: the panel names an ACTION and Core
     // builds the command. Nothing here can construct one.
@@ -218,6 +255,14 @@ export default function ServerPlayersPage() {
         });
     };
     const handleWhitelistAdd = (name: string) => run('Whitelist add', 'whitelist_add', name);
+    const handleWhitelistToggle = (on: boolean) => {
+        if (on) return run('Whitelist on', 'whitelist_on', '');
+        setConfirm({
+            title: 'Turn the whitelist off?',
+            message: 'Anyone who is not banned can join again.',
+            onConfirm: () => run('Whitelist off', 'whitelist_off', ''),
+        });
+    };
     const handleWhitelistRemove = (name: string) => {
         setConfirm({
             title: `Remove ${name} from whitelist?`,
@@ -232,12 +277,17 @@ export default function ServerPlayersPage() {
         const q = search.trim().toLowerCase();
         const filter = <T extends { name: string }>(rows: T[]) =>
             q ? rows.filter(p => p.name.toLowerCase().includes(q)) : rows;
+        if (effectiveSection === 'all') return filter(mergeAllPlayers(known, online));
         if (effectiveSection === 'online') return filter(online);
         if (effectiveSection === 'bans') return filter(bans);
         if (effectiveSection === 'whitelist') return filter(whitelist);
         if (effectiveSection === 'ops') return filter(ops);
         return [];
-    }, [effectiveSection, search, online, bans, whitelist, ops]);
+    }, [effectiveSection, search, online, bans, whitelist, ops, known]);
+
+    const whitelisted = useMemo(() => new Set(whitelist.map(r => r.name.toLowerCase())), [whitelist]);
+    const opped = useMemo(() => new Set(ops.map(r => r.name.toLowerCase())), [ops]);
+    const banned = useMemo(() => new Set(bans.map(r => r.name.toLowerCase())), [bans]);
 
     if (!server) return null;
 
@@ -250,7 +300,7 @@ export default function ServerPlayersPage() {
             <header className="flex items-center gap-3 shrink-0">
                 <Users size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">Players</h1>
-                {effectiveSection === 'online' && (
+                {live && ROSTER_SECTIONS.includes(effectiveSection) && (
                     <span className="text-xs text-(--base-06)">Online list polls every 10s</span>
                 )}
                 {effectiveSection !== 'rcon' && (
@@ -298,7 +348,7 @@ export default function ServerPlayersPage() {
                             <Icon size={12} />
                             {label}
                             {locked && <Lock size={10} className="opacity-70" />}
-                            {id === 'online' && !locked && online.length > 0 && (
+                            {(id === 'online' || id === 'all') && !locked && online.length > 0 && (
                                 <span className="ml-1 mono-label bg-(--base-03) px-1 rounded-sm">{online.length}</span>
                             )}
                         </button>
@@ -327,7 +377,7 @@ export default function ServerPlayersPage() {
                             <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent)/30 text-(--base-08) text-xs">
                                 <Lock size={13} className="shrink-0 mt-0.5 text-(--accent-light)" />
                                 <span>
-                                    RCON is off. Enable it below to unlock Online, Bans, Whitelist and Operators — live
+                                    RCON is off. Enable it below to unlock All players, Online, Bans, Whitelist and Operators - live
                                     player management runs over RCON.
                                 </span>
                             </div>
@@ -336,10 +386,59 @@ export default function ServerPlayersPage() {
                     </div>
                 ) : (
                     <>
+                {!live && (
+                    <div className="flex items-start gap-2 px-3 py-2 mb-3 rounded-md bg-(--base-02) border border-(--base-03) text-(--base-07) text-xs">
+                        <Power size={13} className="shrink-0 mt-0.5" />
+                        <span>
+                            The server is offline - start it to see who is online.
+                            {effectiveSection !== 'online' && ' The lists below are read from its files; changing them needs the server running.'}
+                        </span>
+                    </div>
+                )}
+
+                {effectiveSection === 'whitelist' && (
+                    <section className="card p-3 mb-3 space-y-2" aria-label="Whitelist status">
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-sm font-medium text-(--base-09)">Whitelist</span>
+                            {whitelistState.enabled === undefined ? (
+                                <span className="badge badge-neutral">Unknown</span>
+                            ) : whitelistState.enabled ? (
+                                <span className="badge badge-success">On</span>
+                            ) : (
+                                <span className="badge badge-warning">Off - anyone can join</span>
+                            )}
+                            {whitelistState.enforced !== undefined && (
+                                <span
+                                    className="badge badge-neutral"
+                                    title="enforce-whitelist has no RCON command. Change it under Configuration (server.properties); it applies after a restart."
+                                >
+                                    {whitelistState.enforced ? 'Enforced' : 'Not enforced'}
+                                </span>
+                            )}
+                            {whitelistState.enabled !== undefined && (
+                                <button
+                                    onClick={() => handleWhitelistToggle(!whitelistState.enabled)}
+                                    disabled={actionsBlocked}
+                                    title={!canManage ? blockedHint : live ? undefined : 'Start the server to change this, or change white-list under Configuration'}
+                                    className="btn btn-secondary btn-sm ml-auto"
+                                >
+                                    {whitelistState.enabled ? 'Turn off' : 'Turn on'}
+                                </button>
+                            )}
+                        </div>
+                        <p className="text-xs text-(--base-06)">
+                            Operators can always join, even when they are not on the whitelist.
+                            {' '}Enforced kicks online players who are removed from the whitelist; change it under Configuration.
+                        </p>
+                    </section>
+                )}
+
                 {/* "Add to whitelist/ops" affordance for those sections */}
                 {(effectiveSection === 'whitelist' || effectiveSection === 'ops') && (
                     <button
                         onClick={() => setAddPrompt({ target: effectiveSection as 'whitelist' | 'ops', name: '' })}
+                        disabled={actionsBlocked}
+                        title={actionsBlocked ? blockedHint : undefined}
                         className="btn btn-secondary btn-sm mb-3"
                     >
                         <ListPlus size={12} />
@@ -364,12 +463,15 @@ export default function ServerPlayersPage() {
                         ))}
                     </div>
                 ) : currentList.length === 0 ? (
-                    <div className="text-center py-12 text-sm text-(--base-06)">
-                        {section === 'online' ? 'Nobody is online.' : 'No entries.'}
-                    </div>
+                    // The offline note above already says why the roster is empty.
+                    effectiveSection === 'online' && !live ? null : (
+                        <div className="text-center py-12 text-sm text-(--base-06)">
+                            {section === 'online' ? 'Nobody is online.' : section === 'all' ? 'Nobody has joined yet.' : 'No entries.'}
+                        </div>
+                    )
                 ) : (
                     <div className="space-y-1.5">
-                        {currentList.map((p: any) => (
+                        {(section === 'all' ? currentList.slice(0, allLimit) : currentList).map((p: any) => (
                             <article key={`${section}-${p.name}`} className="card p-2 flex items-center gap-3">
                                 {/* Player head */}
                                 <PlayerHead
@@ -382,13 +484,51 @@ export default function ServerPlayersPage() {
                                     }
                                 />
                                 <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-(--base-09)">{p.name}</div>
+                                    <div className="text-sm font-medium text-(--base-09) flex items-center gap-1.5 flex-wrap">
+                                        {p.name}
+                                        {section === 'all' && (p as AllPlayerRow).online && <span className="badge badge-success">Online</span>}
+                                        {section === 'all' && opped.has(p.name.toLowerCase()) && <span className="badge badge-accent">Op</span>}
+                                        {section === 'all' && whitelisted.has(p.name.toLowerCase()) && <span className="badge badge-neutral">Whitelisted</span>}
+                                        {section === 'all' && banned.has(p.name.toLowerCase()) && <span className="badge badge-error">Banned</span>}
+                                    </div>
                                     {section === 'bans' && (p as PlayerListEntry).reason && (
                                         <div className="text-xs text-(--base-06) truncate">Reason: {(p as PlayerListEntry).reason}</div>
                                     )}
                                 </div>
-                                {/* Per-section actions */}
-                                <div className="flex items-center gap-1">
+                                {/* Per-section actions. A disabled fieldset disables every
+                                    button in it: they all go through RCON. */}
+                                <fieldset disabled={actionsBlocked} title={actionsBlocked ? blockedHint : undefined} className="flex items-center gap-1 border-0 p-0 m-0 min-w-0">
+                                    {section === 'all' && (() => {
+                                        const key = p.name.toLowerCase();
+                                        return (
+                                            <>
+                                                {(p as AllPlayerRow).online && (
+                                                    <button onClick={() => handleKick(p.name)} className="btn btn-secondary btn-sm" title="Kick" aria-label={`Kick ${p.name}`}>
+                                                        <ShieldOff size={12} />
+                                                    </button>
+                                                )}
+                                                {!whitelisted.has(key) && (
+                                                    <button onClick={() => handleWhitelistAdd(p.name)} className="btn btn-secondary btn-sm" title="Add to whitelist" aria-label={`Add ${p.name} to whitelist`}>
+                                                        <ListChecks size={12} />
+                                                    </button>
+                                                )}
+                                                {!opped.has(key) && (
+                                                    <button onClick={() => handleOp(p.name)} className="btn btn-secondary btn-sm" title="Op" aria-label={`Op ${p.name}`}>
+                                                        <ShieldCheck size={12} className="text-(--accent-light)" />
+                                                    </button>
+                                                )}
+                                                {banned.has(key) ? (
+                                                    <button onClick={() => handleUnban(p.name)} className="btn btn-secondary btn-sm" title="Unban" aria-label={`Unban ${p.name}`}>
+                                                        <CircleCheck size={12} className="text-(--success-light)" />
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title="Ban" aria-label={`Ban ${p.name}`}>
+                                                        <Skull size={12} className="text-(--error)" />
+                                                    </button>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
                                     {section === 'online' && (
                                         <>
                                             <button onClick={() => setTellPrompt({ player: p.name, message: '' })} className="btn btn-secondary btn-sm" title="Whisper">
@@ -421,9 +561,14 @@ export default function ServerPlayersPage() {
                                             <Crown size={12} className="text-(--error)" />
                                         </button>
                                     )}
-                                </div>
+                                </fieldset>
                             </article>
                         ))}
+                        {section === 'all' && currentList.length > allLimit && (
+                            <button onClick={() => setAllLimit(n => n + ALL_PAGE)} className="btn btn-secondary btn-sm w-full">
+                                Show more ({currentList.length - allLimit} more)
+                            </button>
+                        )}
                     </div>
                 )}
                     </>

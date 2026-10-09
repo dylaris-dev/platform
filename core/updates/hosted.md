@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.15
+
+### Features
+- **Players shows whether the whitelist is on** and turns it on or off; it used to only edit the list, so a
+  whitelist that was off looked active.
+- **New "All players" list** of everyone who has joined, online players first; the tab shows "server is
+  offline" instead of errors while the server is stopped.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **An invited member sees the server at once** instead of only after reloading the page.
+- **No more "PORT_RANGE not set" notice** for nodes that simply use the default range. `node`
+
 ## 2026.10.09.14
 
 ### Features

@@ -17,7 +17,7 @@ package handlers
 //
 // The action route takes an ACTION, never a command, and builds the command
 // here. That is the whole point: a moderator gets exactly these eight verbs
-// against one named player, not a shell into the server. It mirrors
+// against one named player (plus switching the whitelist on or off), not a shell into the server. It mirrors
 // /servers/{id}/power, which takes an action for the same reason.
 
 import (
@@ -27,6 +27,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/authz"
+	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
 )
@@ -49,6 +52,7 @@ var playerListFiles = []struct {
 	{"bans", "banned-players.json"},
 	{"whitelist", "whitelist.json"},
 	{"ops", "ops.json"},
+	{"known", "usercache.json"},
 }
 
 type playerListsResponse struct {
@@ -56,6 +60,16 @@ type playerListsResponse struct {
 	Bans      json.RawMessage `json:"bans"`
 	Whitelist json.RawMessage `json:"whitelist"`
 	Ops       json.RawMessage `json:"ops"`
+	// Known is usercache.json: everyone the server has resolved a profile for,
+	// which in practice is everyone who ever joined. Capped at maxKnownPlayers.
+	Known json.RawMessage `json:"known"`
+	// The two server.properties switches behind the whitelist. nil means the
+	// file could not be read (named in Unavailable as "properties"); a missing
+	// file or key is MC's default, false. whitelist.json having entries says
+	// nothing about whether it is enforced, and that is exactly what an owner
+	// misread live: Dave was on the list while white-list was still false.
+	WhitelistEnabled  *bool `json:"whitelistEnabled,omitempty"`
+	WhitelistEnforced *bool `json:"whitelistEnforced,omitempty"`
 	// Unavailable names each list that could NOT be read, and why. An empty
 	// list and an unreadable one are different facts and the panel has to be
 	// able to tell them apart - rendering "could not read" as "nobody is
@@ -76,28 +90,120 @@ func (h *PlayersHandler) GetLists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := playerListsResponse{
-		Success: true, Bans: emptyJSONArray, Whitelist: emptyJSONArray, Ops: emptyJSONArray,
+		Success: true, Bans: emptyJSONArray, Whitelist: emptyJSONArray, Ops: emptyJSONArray, Known: emptyJSONArray,
 	}
 	if srv.ActiveSubServer == "" {
-		// Nothing installed yet: three empty lists is the truth, not a failure.
+		// Nothing installed yet: empty lists are the truth, not a failure.
 		json.NewEncoder(w).Encode(out)
 		return
 	}
-	targets := map[string]*json.RawMessage{
-		"bans": &out.Bans, "whitelist": &out.Whitelist, "ops": &out.Ops,
+	unavailable := func(key string, err error) {
+		if out.Unavailable == nil {
+			out.Unavailable = map[string]string{}
+		}
+		out.Unavailable[key] = err.Error()
 	}
+	targets := map[string]*json.RawMessage{
+		"bans": &out.Bans, "whitelist": &out.Whitelist, "ops": &out.Ops, "known": &out.Known,
+	}
+	hideKnown := h.demoStranger(r, srv)
 	for _, f := range playerListFiles {
+		if f.key == "known" && hideKnown {
+			continue
+		}
 		raw, ferr := h.readPlayerList(srv.NodeID, srv.UUID, srv.ActiveSubServer, f.filename)
 		if ferr != nil {
-			if out.Unavailable == nil {
-				out.Unavailable = map[string]string{}
-			}
-			out.Unavailable[f.key] = ferr.Error()
+			unavailable(f.key, ferr)
 			continue
 		}
 		*targets[f.key] = raw
 	}
+	out.Known = knownPlayers(out.Known, maxKnownPlayers)
+
+	props, found, perr := h.rcon.readNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+serverPropertiesName)
+	if perr != nil {
+		unavailable("properties", fmt.Errorf("could not be read from the node: %w", perr))
+	} else {
+		if !found {
+			props = ""
+		}
+		enabled, enforced := whitelistFlags(props)
+		out.WhitelistEnabled, out.WhitelistEnforced = &enabled, &enforced
+	}
 	json.NewEncoder(w).Encode(out)
+}
+
+// maxKnownPlayers caps usercache.json in the response. MC itself keeps at most
+// 1000 profiles and writes them most recently used first, so the cap only bites
+// on a file something else has grown, and then keeps the recent ones.
+const maxKnownPlayers = 1000
+
+// knownPlayer is the part of a usercache.json entry the panel shows. Re-encoded
+// rather than passed through: expiresOn says when each player was last seen,
+// which nobody asked this endpoint to publish.
+type knownPlayer struct {
+	Name string `json:"name"`
+	UUID string `json:"uuid,omitempty"`
+}
+
+// knownPlayers reduces usercache.json (already validated as an array by
+// readPlayerList) to name+uuid, keeping the first n entries.
+func knownPlayers(raw json.RawMessage, n int) json.RawMessage {
+	var entries []knownPlayer
+	if json.Unmarshal(raw, &entries) != nil {
+		return emptyJSONArray
+	}
+	if len(entries) > n {
+		entries = entries[:n]
+	}
+	b, err := json.Marshal(entries)
+	if err != nil || len(entries) == 0 {
+		return emptyJSONArray
+	}
+	return b
+}
+
+// demoStranger reports whether the caller reads this server only because it is
+// a public demo, which any signed-in account may. Such a caller gets no
+// usercache: the file browser already hides usercache.json from them, and this
+// list is the same player identities. Owners, admins and real members hold
+// files.read or players.manage, neither of which the demo grants. Fails closed.
+func (h *PlayersHandler) demoStranger(r *http.Request, srv *models.Server) bool {
+	if !isDemoServer(h.state, srv.UUID) {
+		return false
+	}
+	if h.state.Authz == nil {
+		return true
+	}
+	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), srv.ID)
+	if err != nil {
+		return true
+	}
+	return !res.HasCap("players.manage") && !res.HasCap("files.read")
+}
+
+// whitelistFlags reads white-list and enforce-whitelist out of server.properties
+// content. MC parses booleans with Boolean.parseBoolean, so anything but a
+// case-insensitive "true" is false, and so is a missing key.
+func whitelistFlags(props string) (enabled, enforced bool) {
+	for _, line := range strings.Split(strings.ReplaceAll(props, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "!") {
+			continue
+		}
+		eq := strings.IndexByte(trimmed, '=')
+		if eq < 0 {
+			continue
+		}
+		on := strings.EqualFold(strings.TrimSpace(trimmed[eq+1:]), "true")
+		switch strings.TrimSpace(trimmed[:eq]) {
+		case "white-list":
+			enabled = on
+		case "enforce-whitelist":
+			enforced = on
+		}
+	}
+	return enabled, enforced
 }
 
 // readPlayerList reads one list file off the node and hands back its JSON
@@ -183,8 +289,30 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: cmd})
+	if resp.Success {
+		auditPlayerAction(h.state, r, srv.ID, req.Action, req.Player)
+	}
 	writeRconResponse(w, resp)
 }
+
+// auditPlayerAction records a player action in the server's own words.
+// Without it RequireCap's recorder writes a bare "players.manage" row with the
+// path, which cannot say who was banned or that the whitelist went off. The
+// reason and whispered text stay out: free text typed by a moderator is not
+// what the trail is for.
+func auditPlayerAction(state *AppState, r *http.Request, serverID int, action, player string) {
+	action = strings.TrimSpace(strings.ToLower(action))
+	meta := map[string]interface{}{"action": action}
+	if p := strings.TrimSpace(player); p != "" && action != "whitelist_on" && action != "whitelist_off" {
+		meta["player"] = p
+	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogServerAudit(state, r, serverID, ServerAuditEventPlayerAction, actorID, "", meta)
+}
+
+// ServerAuditEventPlayerAction is one players.manage action (kick, ban, op,
+// whitelist on/off, ...); metadata names the action and the player.
+const ServerAuditEventPlayerAction = "player_action"
 
 // playerActionVerbs is the allowlist: action -> the MC command it becomes.
 // Adding an entry here is the ONLY way to widen what players.manage can do.
@@ -197,6 +325,10 @@ var playerActionVerbs = map[string]string{
 	"whitelist_add":    "whitelist add",
 	"whitelist_remove": "whitelist remove",
 	"tell":             "tell",
+	// The two that take no player. `whitelist on|off` also persists white-list
+	// in server.properties; enforce-whitelist has no RCON command at all.
+	"whitelist_on":  "whitelist on",
+	"whitelist_off": "whitelist off",
 }
 
 // maxPlayerFreeText caps a ban reason or a whispered message. MC truncates
@@ -217,6 +349,9 @@ func buildPlayerCommand(action, player, reason, message string) (string, error) 
 	verb, ok := playerActionVerbs[strings.TrimSpace(strings.ToLower(action))]
 	if !ok {
 		return "", fmt.Errorf("unknown player action")
+	}
+	if verb == "whitelist on" || verb == "whitelist off" {
+		return verb, nil
 	}
 	player = strings.TrimSpace(player)
 	if !isPlayerName(player) {

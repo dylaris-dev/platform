@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.15
+
+### Features
+- **Players shows whether the whitelist is on** and turns it on or off; it used to only edit the list, so a
+  whitelist that was off looked active. Toggles and player actions now land in the audit log. `core` `panel`
+- **New "All players" list** of everyone who has joined, online players first; the tab shows "server is
+  offline" instead of errors while the server is stopped. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **An invited member sees the server at once** instead of only after reloading the page. `core`
+- **The resources dialog is wider and scrolls**; headroom and ports moved under Advanced, and ports are
+  greyed out while traffic runs through the gateway. `panel`
+- **No more "PORT_RANGE not set" notice** for nodes that simply use the default range. `node`
+
 ## 2026.10.09.14
 
 ### Features

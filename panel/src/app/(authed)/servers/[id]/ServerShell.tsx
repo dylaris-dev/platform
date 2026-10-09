@@ -31,6 +31,7 @@ import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { planResourceChange, diskGBToMB, joinFields, type ResourceValues } from '@/lib/resourceChanges';
+import { advancedStartsOpen, portsEditable } from '@/lib/resourceDialog';
 import {
     MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput, ramPaddingPatch, resetLabel,
 } from '@/lib/ramPadding';
@@ -348,7 +349,12 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         setEditAutoMove(!!(selectedServer as any).autoMove);
         setEditPaddingText(selectedServer.ramPaddingMb != null ? String(selectedServer.ramPaddingMb) : '');
         setPaddingInherited(null);
-        setEditResourcesAdvancedOpen(false);
+        setEditResourcesAdvancedOpen(advancedStartsOpen({
+            paddingText: selectedServer.ramPaddingMb != null ? String(selectedServer.ramPaddingMb) : '',
+            canEditPorts,
+            hostPort: selectedServer.hostPort || 0,
+            containerPort: selectedServer.containerPort || 25565,
+        }));
         setStorageCurrentPath('');
         setStoragePaths([]);
         setStorageMigrateTarget('');
@@ -443,6 +449,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
 
     // The same defaults handleOpenEditResources seeds the form with, so an
     // untouched field never reads as a change.
+    const canEditPorts = portsEditable(!!user?.isAdmin, routingMode);
     const currentResources: ResourceValues = {
         ram: selectedServer.memory || 1024,
         cpuLimit: selectedServer.cpuLimit || 0,
@@ -477,12 +484,15 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         cpuset: editCpusetCpus,
         autoMove: editAutoMove,
         ramPaddingMb: paddingSupported ? editPaddingEffective : selectedServer.effectiveRamPaddingMb,
-    }, !isServerOffline, !!user?.isAdmin);
+    }, !isServerOffline, canEditPorts);
+    // An invalid headroom lives in Advanced, so it must not hide there.
+    const resourcesAdvancedOpen = editResourcesAdvancedOpen || (paddingSupported && editPaddingInvalid);
 
     const handleSaveResources = async () => {
-        const ports = user?.isAdmin ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
+        const ports = canEditPorts ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
         setResourcesMsg('');
         if (paddingSupported && editPaddingInvalid) {
+            setEditResourcesAdvancedOpen(true);
             setResourcesMsg(`RAM headroom must be a whole number of MB from 0 to ${MAX_RAM_PADDING_MB}, or empty for the default.`);
             return;
         }
@@ -1213,234 +1223,95 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             {/* Edit Resources Popup */}
             {showEditResourcesPopup && (
                 <div className="modal-overlay animate-fade-in">
-                    <ModalPanel className="modal-panel w-full max-w-lg">
-                        <div className="modal-header">
+                    <ModalPanel className="modal-panel w-full max-w-lg md:max-w-4xl max-h-[90vh] flex flex-col">
+                        <div className="modal-header shrink-0">
                             <h3 className="modal-title flex items-center gap-2">
                                 <SlidersHorizontal size={18} />
                                 Edit Resources
                             </h3>
                         </div>
-                        <div className="modal-body space-y-4">
-                            <div className="flex flex-col gap-[5px]">
-                                <label className="input-label">RAM (MB)</label>
-                                <input type="number" min={256} step={256} value={editRam} onChange={e => setEditRam(Number(e.target.value))} className="input-field w-full" />
-                            </div>
-                            {paddingSupported && (
-                                <div className="flex flex-col gap-[5px]">
-                                    <label htmlFor="edit-ram-padding" className="input-label">RAM headroom (MB)</label>
-                                    <input
-                                        id="edit-ram-padding"
-                                        type="number"
-                                        min={0}
-                                        max={MAX_RAM_PADDING_MB}
-                                        step={64}
-                                        value={editPaddingText}
-                                        placeholder={inheritedPaddingValue !== undefined ? String(inheritedPaddingValue) : 'Default'}
-                                        onChange={e => setEditPaddingText(e.target.value)}
-                                        aria-invalid={editPaddingInvalid}
-                                        className="input-field w-full"
-                                    />
-                                    <p className="text-xs text-(--base-06)">
-                                        {/* Core sends the headroom to the node only with a RAM or
-                                            headroom change, so an inherited default is not
-                                            necessarily what the container runs with. */}
-                                        {currentPaddingOverride !== null
-                                            ? `Set on this server: ${currentPaddingOverride} MB. Empty uses the default.`
-                                            : `Inherited: ${inheritedPaddingValue} MB from the ${paddingInherited?.source ?? 'node or global'} setting. A changed default applies on the next RAM or headroom change.`}
-                                        {' '}{RAM_PADDING_HELP}
-                                    </p>
-                                    {editPaddingText.trim() !== '' && (
-                                        <button type="button" onClick={() => setEditPaddingText('')} className="btn btn-ghost btn-sm self-start">
-                                            {paddingInherited ? resetLabel(paddingInherited.source, paddingInherited.value) : 'Reset to default'}
-                                        </button>
-                                    )}
-                                </div>
-                            )}
-                            <div className="flex flex-col gap-[5px]">
-                                <label className="input-label">CPU Limit (Cores)</label>
-                                <input type="number" min={0} step={0.5} value={editCpuLimit} onChange={e => setEditCpuLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
-                                <p className="text-xs text-(--base-06)">0 = no limit. Example: 2.0 = 2 cores</p>
-                            </div>
-                            <div className="flex flex-col gap-[5px]">
-                                <label className="input-label">Storage Limit (GB)</label>
-                                <input type="number" min={0} step={1} value={editDiskLimit} onChange={e => setEditDiskLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
-                                <p className="text-xs text-(--base-06)">0 = unlimited</p>
-                            </div>
-
-                            {/* Demo flag (admin). A flagged server shows up read-only
-                                in the sidebar for any user who has no server of their
-                                own — a public showcase. Writes stay blocked server-side.
-                                Only on the hosted (store-enabled) build. */}
-                            {featureFlags.store && (
-                            <div className="border-t border-(--base-03) pt-4">
-                                <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-start gap-2.5 min-w-0">
-                                        <Globe size={14} className={`shrink-0 mt-0.5 ${selectedServer.isDemo ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
-                                        <div className="min-w-0">
-                                            <div className="text-sm font-medium text-(--base-09)">Public Demo Server</div>
-                                            <p className="text-xs text-(--base-06)">
-                                                Show this server read-only to users who have none of their own. They can view overview, console, stats and browse files, but cannot edit, power, download or upload.
-                                            </p>
-                                        </div>
+                        <div className="modal-body flex-1 min-h-0 overflow-y-auto">
+                            <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
+                                <div className="space-y-4 min-w-0">
+                                    <div className="flex flex-col gap-[5px]">
+                                        <label className="input-label">RAM (MB)</label>
+                                        <input type="number" min={256} step={256} value={editRam} onChange={e => setEditRam(Number(e.target.value))} className="input-field w-full" />
                                     </div>
-                                    <button
-                                        type="button"
-                                        role="switch"
-                                        aria-checked={!!selectedServer.isDemo}
-                                        onClick={handleToggleDemo}
-                                        className={`shrink-0 toggle-track ${selectedServer.isDemo ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                    >
-                                        <span className={`toggle-knob ${selectedServer.isDemo ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                    </button>
-                                </div>
-                                {demoMsg && (
-                                    <p className="mt-2 text-xs text-(--error-light)">{demoMsg}</p>
-                                )}
-                            </div>
-                            )}
-
-                            {/* Auto-move opt-in. Disabled when the platform feature
-                                is off or routing is on IP:Port (gateway off) — the
-                                backend would 503 either way. */}
-                            <div className={`border-t border-(--base-03) pt-4 ${autoMoveDisabled ? 'opacity-60' : ''}`}>
-                                <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-start gap-2.5 min-w-0">
-                                        <Move size={14} className={`shrink-0 mt-0.5 ${editAutoMove && !autoMoveDisabled ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
-                                        <div className="min-w-0">
-                                            <div className="text-sm font-medium text-(--base-09)">Auto-Move</div>
-                                            <p className="text-xs text-(--base-06)">
-                                                Let the rebalance worker migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle.
-                                            </p>
-                                        </div>
+                                    <div className="flex flex-col gap-[5px]">
+                                        <label className="input-label">CPU Limit (Cores)</label>
+                                        <input type="number" min={0} step={0.5} value={editCpuLimit} onChange={e => setEditCpuLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
+                                        <p className="text-xs text-(--base-06)">0 = no limit. Example: 2.0 = 2 cores</p>
                                     </div>
-                                    <button
-                                        type="button"
-                                        role="switch"
-                                        aria-checked={editAutoMove}
-                                        disabled={autoMoveDisabled}
-                                        onClick={() => setEditAutoMove(v => !v)}
-                                        className={`shrink-0 toggle-track ${editAutoMove ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
-                                    >
-                                        <span className={`toggle-knob ${editAutoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                    </button>
-                                </div>
-                                {autoMoveDisabled && (
-                                    <p className="flex items-start gap-1.5 text-xs text-(--base-06) mt-2">
-                                        <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
-                                        <span>{autoMoveReason}</span>
-                                    </p>
-                                )}
-                            </div>
-
-                            {/* Node-to-node transfer. Admins move between any nodes;
-                                a BYON owner transfers between their own nodes. Migration
-                                is gateway-only — hide the control entirely on IP:Port
-                                instead of dangling a disabled picker. */}
-                            {canTransfer && (
-                                <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
-                                    <div className="flex items-center gap-2">
-                                        <Move size={14} className="text-(--accent-light)" />
-                                        <span className="input-label mb-0">Transfer to Node</span>
+                                    <div className="flex flex-col gap-[5px]">
+                                        <label className="input-label">Storage Limit (GB)</label>
+                                        <input type="number" min={0} step={1} value={editDiskLimit} onChange={e => setEditDiskLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
+                                        <p className="text-xs text-(--base-06)">0 = unlimited</p>
                                     </div>
-                                    {moveNodes.length === 0 ? (
-                                        <p className="text-xs text-(--base-05) italic">No other online nodes available to transfer to.</p>
-                                    ) : (
-                                        <>
-                                            <div className="flex gap-2 items-end">
-                                                <div className="flex flex-col gap-[5px] flex-1 min-w-0">
-                                                    <label className="mono-label">Target Node</label>
-                                                    <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
-                                                        {moveNodes.map(n => (
-                                                            <option key={n.id} value={n.id}>{n.name}{n.region ? ` — ${n.region}` : ''}</option>
-                                                        ))}
-                                                    </select>
+
+                                    {(paddingSupported || user?.isAdmin) && (
+                                        <div className="border-t border-(--base-03) pt-4">
+                                            <button type="button" aria-expanded={resourcesAdvancedOpen} aria-controls="edit-resources-advanced" onClick={() => setEditResourcesAdvancedOpen(o => !o)} className="flex items-center gap-2 text-xs text-(--base-06) hover:text-(--base-08) transition-colors w-full">
+                                                <ChevronDown size={13} className={`transition-transform ${resourcesAdvancedOpen ? 'rotate-180' : ''}`} />
+                                                Advanced
+                                            </button>
+                                            {resourcesAdvancedOpen && (
+                                                <div id="edit-resources-advanced" className="mt-3 space-y-4">
+                                                    {paddingSupported && (
+                                                        <div className="flex flex-col gap-[5px]">
+                                                            <label htmlFor="edit-ram-padding" className="input-label">RAM headroom (MB)</label>
+                                                            <input
+                                                                id="edit-ram-padding"
+                                                                type="number"
+                                                                min={0}
+                                                                max={MAX_RAM_PADDING_MB}
+                                                                step={64}
+                                                                value={editPaddingText}
+                                                                placeholder={inheritedPaddingValue !== undefined ? String(inheritedPaddingValue) : 'Default'}
+                                                                onChange={e => setEditPaddingText(e.target.value)}
+                                                                aria-invalid={editPaddingInvalid}
+                                                                className="input-field w-full"
+                                                            />
+                                                            <p className="text-xs text-(--base-06)">
+                                                                {/* Core sends the headroom to the node only with a RAM or
+                                                                    headroom change, so an inherited default is not
+                                                                    necessarily what the container runs with. */}
+                                                                {currentPaddingOverride !== null
+                                                                    ? `Set on this server: ${currentPaddingOverride} MB. Empty uses the default.`
+                                                                    : `Inherited: ${inheritedPaddingValue} MB from the ${paddingInherited?.source ?? 'node or global'} setting. A changed default applies on the next RAM or headroom change.`}
+                                                                {' '}{RAM_PADDING_HELP}
+                                                            </p>
+                                                            {editPaddingText.trim() !== '' && (
+                                                                <button type="button" onClick={() => setEditPaddingText('')} className="btn btn-ghost btn-sm self-start">
+                                                                    {paddingInherited ? resetLabel(paddingInherited.source, paddingInherited.value) : 'Reset to default'}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {user?.isAdmin && (
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div className="flex flex-col gap-[5px]">
+                                                                <label className="input-label">Host Port</label>
+                                                                <input type="number" min={0} max={65535} value={editHostPort} onChange={e => setEditHostPort(Number(e.target.value))} placeholder="0 = auto" disabled={!canEditPorts} className="input-field w-full" />
+                                                                <p className="text-xs text-(--base-06)">0 = auto from range</p>
+                                                            </div>
+                                                            <div className="flex flex-col gap-[5px]">
+                                                                <label className="input-label">Container Port</label>
+                                                                <input type="number" min={1} max={65535} value={editContainerPort} onChange={e => setEditContainerPort(Number(e.target.value))} disabled={!canEditPorts} className="input-field w-full" />
+                                                            </div>
+                                                            {!canEditPorts && (
+                                                                <p className="col-span-2 text-xs text-(--base-06)">Not used: this server is reached through the gateway.</p>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                <button type="button" onClick={handleMoveServer} disabled={moveBusy || !moveTargetNodeId} className="btn btn-secondary btn-sm shrink-0">
-                                                    {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Move</>}
-                                                </button>
-                                            </div>
-                                            <p className="text-xs text-(--base-06)">Live migration to another node. The gateway keeps the player address stable; the server is moved while idle.</p>
-                                        </>
-                                    )}
-                                    {moveMsg && (
-                                        <p className={`text-xs ${/queued|migration/i.test(moveMsg) ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{moveMsg}</p>
-                                    )}
-                                    {migrationStatus && migrationStatus.phase !== 'none' && (
-                                        <div className="flex items-start gap-2 text-xs">
-                                            {!TERMINAL_PHASES.includes(migrationStatus.phase)
-                                                ? <RefreshCw size={13} className="animate-spin text-(--accent-light) mt-0.5 shrink-0" />
-                                                : migrationStatus.phase === 'done'
-                                                    ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
-                                                    : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
-                                            <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
-                                                Migration: {migrationStatus.phase.replace(/_/g, ' ')}
-                                                {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {user?.isAdmin && (
-                                <div className="border-t border-(--base-03) pt-4 grid grid-cols-2 gap-3">
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">Host Port</label>
-                                        <input type="number" min={0} max={65535} value={editHostPort} onChange={e => setEditHostPort(Number(e.target.value))} placeholder="0 = auto" className="input-field w-full" />
-                                        <p className="text-xs text-(--base-06)">0 = auto from range</p>
-                                    </div>
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">Container Port</label>
-                                        <input type="number" min={1} max={65535} value={editContainerPort} onChange={e => setEditContainerPort(Number(e.target.value))} className="input-field w-full" />
-                                    </div>
-                                </div>
-                            )}
-
-                            {user?.isAdmin && storagePaths.length >= 1 && (
-                                <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
-                                    <div className="flex items-center gap-2">
-                                        <MoveHorizontal size={14} className="text-(--accent-light)" />
-                                        <span className="input-label mb-0">{storagePaths.length > 1 ? 'Storage Path Migration' : 'Storage Path'}</span>
-                                    </div>
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="mono-label">Current Path</label>
-                                        <p className="text-xs font-mono text-(--base-07) bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 truncate">
-                                            {storageCurrentPath || <span className="text-(--base-05) italic">unknown</span>}
-                                        </p>
-                                    </div>
-                                    {storagePaths.length > 1 && (
-                                        <>
-                                            <div className="flex gap-2 items-end">
-                                                <div className="flex flex-col gap-[5px] flex-1 min-w-0">
-                                                    <label className="mono-label">Migrate To</label>
-                                                    <select value={storageMigrateTarget} onChange={e => setStorageMigrateTarget(e.target.value)} className="input-field text-sm" disabled={storageMigrating}>
-                                                        {storagePaths.filter(p => p.path !== storageCurrentPath).map(p => (
-                                                            <option key={p.path} value={p.path}>{p.path} — {(p.free_bytes / 1073741824).toFixed(1)} GB free</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                                <button type="button" onClick={handleMigrateStorage} disabled={storageMigrating || !storageMigrateTarget} className="btn btn-secondary btn-sm shrink-0">
-                                                    {storageMigrating ? <><RefreshCw size={14} className="animate-spin" /> Moving...</> : <><MoveHorizontal size={14} /> Migrate</>}
-                                                </button>
-                                            </div>
-                                            {storageMigrateMsg && (
-                                                <p className={`text-xs ${storageMigrateMsg.includes('queued') || storageMigrateMsg.includes('Migration') ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
-                                                    {storageMigrateMsg}
-                                                </p>
                                             )}
-                                            <p className="text-xs text-(--base-06)">Server will be stopped during migration. Restart it manually after.</p>
-                                        </>
+                                        </div>
                                     )}
                                 </div>
-                            )}
-
-                            {user?.isAdmin && (
-                                <div className="border-t border-(--base-03) pt-4">
-                                    <button type="button" onClick={() => setEditResourcesAdvancedOpen(o => !o)} className="flex items-center gap-2 text-xs text-(--base-06) hover:text-(--base-08) transition-colors w-full">
-                                        <ChevronDown size={13} className={`transition-transform ${editResourcesAdvancedOpen ? 'rotate-180' : ''}`} />
-                                        Advanced
-                                    </button>
-                                    {editResourcesAdvancedOpen && (
-                                        <div className="mt-3 flex flex-col gap-2">
+                                <div className="space-y-4 min-w-0 md:[&>*:first-child]:border-t-0 md:[&>*:first-child]:pt-0">
+                                    {user?.isAdmin && (
+                                        <div className="border-t border-(--base-03) pt-4 flex flex-col gap-2">
+                                            <span className="input-label mb-0">CPU Pinning</span>
                                             <CpuPinningControl
                                                 nodeId={selectedServer.nodeId}
                                                 mode={editCpuMode}
@@ -1451,18 +1322,171 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                             <p className="text-xs text-(--base-06)">Pin this container to specific CPU cores (useful for AMD 3D V-Cache). Resets if the server is migrated to a different node.</p>
                                         </div>
                                     )}
+                                    {/* Auto-move opt-in. Disabled when the platform feature
+                                        is off or routing is on IP:Port (gateway off) — the
+                                        backend would 503 either way. */}
+                                    <div className={`border-t border-(--base-03) pt-4 ${autoMoveDisabled ? 'opacity-60' : ''}`}>
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-start gap-2.5 min-w-0">
+                                                <Move size={14} className={`shrink-0 mt-0.5 ${editAutoMove && !autoMoveDisabled ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+                                                <div className="min-w-0">
+                                                    <div className="text-sm font-medium text-(--base-09)">Auto-Move</div>
+                                                    <p className="text-xs text-(--base-06)">
+                                                        Let the rebalance worker migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                role="switch"
+                                                aria-checked={editAutoMove}
+                                                disabled={autoMoveDisabled}
+                                                onClick={() => setEditAutoMove(v => !v)}
+                                                className={`shrink-0 toggle-track ${editAutoMove ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
+                                            >
+                                                <span className={`toggle-knob ${editAutoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                                            </button>
+                                        </div>
+                                        {autoMoveDisabled && (
+                                            <p className="flex items-start gap-1.5 text-xs text-(--base-06) mt-2">
+                                                <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
+                                                <span>{autoMoveReason}</span>
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {/* Demo flag (admin). A flagged server shows up read-only
+                                        in the sidebar for any user who has no server of their
+                                        own — a public showcase. Writes stay blocked server-side.
+                                        Only on the hosted (store-enabled) build. */}
+                                    {featureFlags.store && (
+                                    <div className="border-t border-(--base-03) pt-4">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-start gap-2.5 min-w-0">
+                                                <Globe size={14} className={`shrink-0 mt-0.5 ${selectedServer.isDemo ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+                                                <div className="min-w-0">
+                                                    <div className="text-sm font-medium text-(--base-09)">Public Demo Server</div>
+                                                    <p className="text-xs text-(--base-06)">
+                                                        Show this server read-only to users who have none of their own. They can view overview, console, stats and browse files, but cannot edit, power, download or upload.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                role="switch"
+                                                aria-checked={!!selectedServer.isDemo}
+                                                onClick={handleToggleDemo}
+                                                className={`shrink-0 toggle-track ${selectedServer.isDemo ? 'toggle-track-on' : 'toggle-track-off'}`}
+                                            >
+                                                <span className={`toggle-knob ${selectedServer.isDemo ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+                                            </button>
+                                        </div>
+                                        {demoMsg && (
+                                            <p className="mt-2 text-xs text-(--error-light)">{demoMsg}</p>
+                                        )}
+                                    </div>
+                                    )}
+
+                                    {/* Node-to-node transfer. Admins move between any nodes;
+                                        a BYON owner transfers between their own nodes. Migration
+                                        is gateway-only — hide the control entirely on IP:Port
+                                        instead of dangling a disabled picker. */}
+                                    {canTransfer && (
+                                        <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
+                                            <div className="flex items-center gap-2">
+                                                <Move size={14} className="text-(--accent-light)" />
+                                                <span className="input-label mb-0">Transfer to Node</span>
+                                            </div>
+                                            {moveNodes.length === 0 ? (
+                                                <p className="text-xs text-(--base-05) italic">No other online nodes available to transfer to.</p>
+                                            ) : (
+                                                <>
+                                                    <div className="flex gap-2 items-end">
+                                                        <div className="flex flex-col gap-[5px] flex-1 min-w-0">
+                                                            <label className="mono-label">Target Node</label>
+                                                            <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
+                                                                {moveNodes.map(n => (
+                                                                    <option key={n.id} value={n.id}>{n.name}{n.region ? ` — ${n.region}` : ''}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        <button type="button" onClick={handleMoveServer} disabled={moveBusy || !moveTargetNodeId} className="btn btn-secondary btn-sm shrink-0">
+                                                            {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Move</>}
+                                                        </button>
+                                                    </div>
+                                                    <p className="text-xs text-(--base-06)">Live migration to another node. The gateway keeps the player address stable; the server is moved while idle.</p>
+                                                </>
+                                            )}
+                                            {moveMsg && (
+                                                <p className={`text-xs ${/queued|migration/i.test(moveMsg) ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{moveMsg}</p>
+                                            )}
+                                            {migrationStatus && migrationStatus.phase !== 'none' && (
+                                                <div className="flex items-start gap-2 text-xs">
+                                                    {!TERMINAL_PHASES.includes(migrationStatus.phase)
+                                                        ? <RefreshCw size={13} className="animate-spin text-(--accent-light) mt-0.5 shrink-0" />
+                                                        : migrationStatus.phase === 'done'
+                                                            ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
+                                                            : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
+                                                    <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
+                                                        Migration: {migrationStatus.phase.replace(/_/g, ' ')}
+                                                        {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {user?.isAdmin && storagePaths.length >= 1 && (
+                                        <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
+                                            <div className="flex items-center gap-2">
+                                                <MoveHorizontal size={14} className="text-(--accent-light)" />
+                                                <span className="input-label mb-0">{storagePaths.length > 1 ? 'Storage Path Migration' : 'Storage Path'}</span>
+                                            </div>
+                                            <div className="flex flex-col gap-[5px]">
+                                                <label className="mono-label">Current Path</label>
+                                                <p className="text-xs font-mono text-(--base-07) bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 truncate">
+                                                    {storageCurrentPath || <span className="text-(--base-05) italic">unknown</span>}
+                                                </p>
+                                            </div>
+                                            {storagePaths.length > 1 && (
+                                                <>
+                                                    <div className="flex gap-2 items-end">
+                                                        <div className="flex flex-col gap-[5px] flex-1 min-w-0">
+                                                            <label className="mono-label">Migrate To</label>
+                                                            <select value={storageMigrateTarget} onChange={e => setStorageMigrateTarget(e.target.value)} className="input-field text-sm" disabled={storageMigrating}>
+                                                                {storagePaths.filter(p => p.path !== storageCurrentPath).map(p => (
+                                                                    <option key={p.path} value={p.path}>{p.path} — {(p.free_bytes / 1073741824).toFixed(1)} GB free</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        <button type="button" onClick={handleMigrateStorage} disabled={storageMigrating || !storageMigrateTarget} className="btn btn-secondary btn-sm shrink-0">
+                                                            {storageMigrating ? <><RefreshCw size={14} className="animate-spin" /> Moving...</> : <><MoveHorizontal size={14} /> Migrate</>}
+                                                        </button>
+                                                    </div>
+                                                    {storageMigrateMsg && (
+                                                        <p className={`text-xs ${storageMigrateMsg.includes('queued') || storageMigrateMsg.includes('Migration') ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+                                                            {storageMigrateMsg}
+                                                        </p>
+                                                    )}
+                                                    <p className="text-xs text-(--base-06)">Server will be stopped during migration. Restart it manually after.</p>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="shrink-0">
+                            <p className="px-5 pb-2 text-xs text-(--base-06)" aria-live="polite">{resourcePlan.note}</p>
+                            {resourcesMsg && (
+                                <div className="px-5 pb-1">
+                                    <div className="alert alert-error text-xs" role="alert">{resourcesMsg}</div>
                                 </div>
                             )}
-                        </div>
-                        <p className="px-5 pb-2 text-xs text-(--base-06)" aria-live="polite">{resourcePlan.note}</p>
-                        {resourcesMsg && (
-                            <div className="px-5 pb-1">
-                                <div className="alert alert-error text-xs" role="alert">{resourcesMsg}</div>
+                            <div className="modal-footer">
+                                <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
+                                <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
                             </div>
-                        )}
-                        <div className="modal-footer">
-                            <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
-                            <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
                         </div>
                     </ModalPanel>
                 </div>

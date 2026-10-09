@@ -171,6 +171,8 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 	// A role's capabilities are every holder's: changing them changes who may
 	// reach the files of every server in this realm.
 	stampBeamAccessForOwner(r.Context(), h.state, owner)
+	// A role losing overview.read hides servers from its holders' sidebars.
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: normalizeCaps(req.Capabilities)},
@@ -204,5 +206,6 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 		return
 	}
 	stampBeamAccessForOwner(r.Context(), h.state, owner)
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

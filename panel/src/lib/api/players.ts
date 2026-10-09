@@ -19,11 +19,23 @@ export interface PlayerListEntry {
     bypassesPlayerLimit?: boolean;
 }
 
+// One entry in usercache.json: everyone the server has resolved, which in
+// practice is everyone who ever joined.
+export interface KnownPlayer {
+    name: string;
+    uuid?: string;
+}
+
 export interface PlayerLists {
     success: boolean;
     bans: PlayerListEntry[];
     whitelist: PlayerListEntry[];
     ops: PlayerListEntry[];
+    known: KnownPlayer[];
+    // white-list / enforce-whitelist from server.properties. Undefined means
+    // the file could not be read (then named in `unavailable` as "properties").
+    whitelistEnabled?: boolean;
+    whitelistEnforced?: boolean;
     // Names each list that could NOT be read, and why. An unreadable list is
     // not an empty one, and the UI has to be able to say which it is.
     unavailable?: Record<string, string>;
@@ -32,9 +44,11 @@ export interface PlayerLists {
 
 export type PlayerAction =
     | 'kick' | 'ban' | 'unban' | 'op' | 'deop'
-    | 'whitelist_add' | 'whitelist_remove' | 'tell';
+    | 'whitelist_add' | 'whitelist_remove' | 'tell'
+    // These two take no player.
+    | 'whitelist_on' | 'whitelist_off';
 
-const EMPTY: PlayerLists = { success: false, bans: [], whitelist: [], ops: [] };
+const EMPTY: PlayerLists = { success: false, bans: [], whitelist: [], ops: [], known: [] };
 
 // What Core actually puts on the wire, plus the `status` handleResponse adds.
 interface PlayerListsWire {
@@ -44,6 +58,9 @@ interface PlayerListsWire {
     bans?: PlayerListEntry[];
     whitelist?: PlayerListEntry[];
     ops?: PlayerListEntry[];
+    known?: KnownPlayer[];
+    whitelistEnabled?: boolean;
+    whitelistEnforced?: boolean;
     unavailable?: Record<string, string>;
 }
 
@@ -59,6 +76,9 @@ export async function getPlayerLists(serverId: number): Promise<PlayerLists> {
             bans: data.bans || [],
             whitelist: data.whitelist || [],
             ops: data.ops || [],
+            known: data.known || [],
+            whitelistEnabled: data.whitelistEnabled,
+            whitelistEnforced: data.whitelistEnforced,
             unavailable: data.unavailable,
         };
     } catch (err) {

@@ -57,10 +57,17 @@ func TestResolvePortRange(t *testing.T) {
 			wantEnd:   26099,
 		},
 		{
-			name:       "unset falls back and says so",
-			wantStart:  defaultPortRangeStart,
-			wantEnd:    defaultPortRangeEnd,
-			wantNotice: true,
+			// The default is a valid choice; a notice for it showed as a
+			// warning on every node in Infrastructure.
+			name:      "unset uses the default with no notice",
+			wantStart: defaultPortRangeStart,
+			wantEnd:   defaultPortRangeEnd,
+		},
+		{
+			name:      "blank value counts as unset",
+			portRange: "   ",
+			wantStart: defaultPortRangeStart,
+			wantEnd:   defaultPortRangeEnd,
 		},
 		{
 			name:       "invalid value falls back instead of half-applying",

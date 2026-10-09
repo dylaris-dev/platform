@@ -264,7 +264,7 @@ func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
 var demoReadReviewed = map[string]string{
 	"overview.read": "status and resources",
 	"console.read":  "the showcase itself",
-	"players.read":  "who is online",
+	"players.read":  "who is online, bans, whitelist and ops; the usercache (everyone who ever joined) is withheld from demo strangers by GetLists",
 	"config.read":   "RCON port and whether a secret is set, never the secret",
 	"mods.read":     "installed mods",
 	"tabs.read":     "the operator's custom tabs, meant to be shown",

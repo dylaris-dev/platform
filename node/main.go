@@ -62,8 +62,9 @@ var (
 	// Port-range config
 	portRangeStart int
 	portRangeEnd   int
-	// portRangeNotice explains a fallback to the default range (unset or
-	// unparseable PORT_RANGE). Empty when the env value was used as-is.
+	// portRangeNotice explains a fallback to the default range caused by a
+	// fault: an unparseable PORT_RANGE, or the retired PORT_RANGE_START/END
+	// still set. Empty when the env value was used as-is or simply left unset.
 	// Published in the heartbeat so the panel can surface the typo.
 	portRangeNotice string
 	portMode        string

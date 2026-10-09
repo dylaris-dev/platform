@@ -29,6 +29,13 @@ func TestBuildPlayerCommand(t *testing.T) {
 		{name: "tell", action: "tell", player: "Notch", message: "hello there", want: "tell Notch hello there"},
 		{name: "action names are case-insensitive", action: "KICK", player: "Notch", want: "kick Notch"},
 
+		// The whitelist switch takes no player, and nothing passed as one may
+		// reach the command line.
+		{name: "whitelist on", action: "whitelist_on", want: "whitelist on"},
+		{name: "whitelist off", action: "whitelist_off", want: "whitelist off"},
+		{name: "a player on whitelist_on is dropped", action: "whitelist_on", player: "Notch; stop", reason: "x", want: "whitelist on"},
+		{name: "enforcement is not an action", action: "whitelist_enforce", wantErr: true},
+
 		// A reason belongs to kick and ban; anywhere else it must not reach the
 		// command line, or "op Notch" quietly becomes "op Notch <anything>".
 		{name: "a reason on op is dropped", action: "op", player: "Notch", reason: "because", want: "op Notch"},
@@ -98,5 +105,32 @@ func TestSanitizePlayerFreeText(t *testing.T) {
 	}
 	if got := sanitizePlayerFreeText(long); len(got) > maxPlayerFreeText {
 		t.Errorf("length %d exceeds the cap %d", len(got), maxPlayerFreeText)
+	}
+}
+
+// The panel shows the whitelist as on only when server.properties says so -
+// a populated whitelist.json with white-list=false is the state an owner
+// misread live as "the whitelist does not work".
+func TestWhitelistFlags(t *testing.T) {
+	cases := []struct {
+		name              string
+		props             string
+		enabled, enforced bool
+	}{
+		{name: "missing file", props: ""},
+		{name: "both off", props: "white-list=false\nenforce-whitelist=false\n"},
+		{name: "enabled only", props: "motd=hi\nwhite-list=true\nenforce-whitelist=false\n", enabled: true},
+		{name: "both on, CRLF, padded, upper case", props: "white-list = TRUE\r\nenforce-whitelist=true\r\n", enabled: true, enforced: true},
+		{name: "commented out is not set", props: "#white-list=true\n!enforce-whitelist=true\n"},
+		{name: "anything but true is false", props: "white-list=yes\nenforce-whitelist=1\n"},
+		{name: "a similar key is not the key", props: "white-list-extra=true\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, f := whitelistFlags(c.props)
+			if e != c.enabled || f != c.enforced {
+				t.Errorf("whitelistFlags = (%v, %v), want (%v, %v)", e, f, c.enabled, c.enforced)
+			}
+		})
 	}
 }

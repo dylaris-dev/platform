@@ -177,6 +177,10 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	} else {
 		stampBeamAccessForOwner(r.Context(), h.state, ownerUserID)
 	}
+	// The invitee's sidebar lists servers by grant, and their panel refetches
+	// that list only on this event; without it they saw the server only after
+	// some unrelated server change or a reload.
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	// Handing someone access to a server is the most security-relevant thing
 	// that happens to one, and it was the only such action with no audit row.
@@ -287,6 +291,7 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 	} else {
 		stampBeamAccessForOwner(r.Context(), h.state, ownerUserID)
 	}
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	// Revocation is audited for the same reason the grant is, and matters more
 	// when reconstructing an incident: "when did they stop having it" is the
 	// other half of "when did they get it".

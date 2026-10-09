@@ -25,6 +25,10 @@ export default function PlayerHead({ name, fallback, className }: PlayerHeadProp
         <img
             src={playerHeadURL(name)}
             alt=""
+            // A player list can hold hundreds of rows; only the visible ones
+            // should cost Core an avatar fetch.
+            loading="lazy"
+            decoding="async"
             className={className}
             style={{ imageRendering: 'pixelated' }}
             onError={() => setFailed(true)}
