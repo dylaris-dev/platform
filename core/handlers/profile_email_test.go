@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/mailer"
 	"dylaris-core/models"
+	"dylaris-core/services"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -101,19 +104,104 @@ func TestTheProfileCannotClaimAnotherAccountsAddress(t *testing.T) {
 	}
 }
 
-// A new address is unproven, exactly as when an admin types one.
-func TestAChangedAddressLosesItsVerifiedBadge(t *testing.T) {
+// With verification required, a new address waits for its confirmation and
+// the current one stays in force. Swapped at once, the account was locked out
+// at its next sign-in by any typo, with the link on its way to a mailbox
+// nobody reads.
+func TestAProfileAddressWaitsForItsConfirmation(t *testing.T) {
+	mails := captureAccountMail(t)
 	st := newProfileStore(t, true)
+	w := saveProfile(t, st, map[string]interface{}{"email": "New@Example.test"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if len(st.setEmailCalls) != 0 || st.users["u-me"].Email != "me@example.test" {
+		t.Fatalf("the current address was replaced before the new one answered: %+v", st.setEmailCalls)
+	}
+	if st.pending["u-me"] != "new@example.test" {
+		t.Fatalf("pending = %q, want the new address", st.pending["u-me"])
+	}
+	// Its own mail: the registration one welcomed a "new account", which a
+	// stranger receiving it would read as a sign-up.
+	if m := nextMail(t, mails); m.to != "new@example.test" || m.key != mailer.KeyConfirmEmailChange {
+		t.Fatalf("the confirmation went to %q as %q", m.to, m.key)
+	}
+	var out map[string]string
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if out["pendingEmail"] != "new@example.test" || !strings.Contains(out["message"], "stays in use") {
+		t.Fatalf("the answer does not say the address waits: %v", out)
+	}
+}
+
+// A confirmation that never left leaves nothing pending behind it.
+func TestAnUnsentConfirmationWithdrawsThePendingAddress(t *testing.T) {
+	orig := sendAccountMail
+	sendAccountMail = func(services.MailStore, string, string, string, map[string]string) error {
+		return errors.New("relay refused")
+	}
+	t.Cleanup(func() { sendAccountMail = orig })
+	st := newProfileStore(t, true)
+	// The same save also changes the password and the name: refused whole, not
+	// after half of it was written and the session already invalidated.
+	w := saveProfile(t, st, map[string]interface{}{"email": "new@example.test", "newPassword": "another long password", "newUsername": "renamed"})
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status %d, want 502: %s", w.Code, w.Body.String())
+	}
+	if len(st.passwordWrites) != 0 || len(st.renames) != 0 {
+		t.Fatalf("written before the mail failed: passwords %d, renames %v", len(st.passwordWrites), st.renames)
+	}
+	if st.pending["u-me"] != "" || st.users["u-me"].Email != "me@example.test" {
+		t.Fatalf("pending %q, email %q after an unsent confirmation", st.pending["u-me"], st.users["u-me"].Email)
+	}
+}
+
+// Without the policy nothing waits for a mail, and the address is the new one
+// at once, unverified as when an admin types one.
+func TestWithoutVerificationTheAddressChangesAtOnce(t *testing.T) {
+	st := newProfileStore(t, false)
 	w := saveProfile(t, st, map[string]interface{}{"email": "new@example.test"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if len(st.setEmailCalls) != 1 || st.setEmailCalls[0].email != "new@example.test" {
-		t.Fatalf("the address was not stored through the un-verifying write: %+v", st.setEmailCalls)
+	if len(st.setEmailCalls) != 1 || st.setEmailCalls[0].email != "new@example.test" || len(st.pending) != 0 {
+		t.Fatalf("setEmail %+v, pending %v", st.setEmailCalls, st.pending)
 	}
-	if st.tokenSetFor != "u-me" {
-		t.Error("no confirmation was issued for the new address although the policy requires one")
+}
+
+// The link in that mail makes the waiting address the account's.
+func TestTheConfirmationLinkSwapsInThePendingAddress(t *testing.T) {
+	captureAccountMail(t)
+	st := newProfileStore(t, true)
+	st.pending = map[string]string{"u-me": "new@example.test"}
+	me := *st.users["u-me"]
+	me.PendingEmail = "new@example.test"
+	st.byToken = &me
+	w := verifyEmail(t, st)
+	if w.Code != http.StatusOK || len(st.confirmed) != 1 || st.users["u-me"].Email != "new@example.test" {
+		t.Fatalf("status %d, confirmed %v, email %q: %s", w.Code, st.confirmed, st.users["u-me"].Email, w.Body.String())
 	}
+}
+
+// Somebody else may have taken the address while the mail waited.
+func TestAPendingAddressTakenMeanwhileIsRefused(t *testing.T) {
+	st := newProfileStore(t, true)
+	st.pending = map[string]string{"u-me": "taken@example.test"}
+	me := *st.users["u-me"]
+	me.PendingEmail = "taken@example.test"
+	st.byToken = &me
+	w := verifyEmail(t, st)
+	if w.Code != http.StatusConflict || len(st.confirmed) != 0 {
+		t.Fatalf("status %d, confirmed %v", w.Code, st.confirmed)
+	}
+}
+
+func verifyEmail(t *testing.T, st *profileFakeStore) *httptest.ResponseRecorder {
+	t.Helper()
+	h := NewRegistrationHandler(&AppState{Store: st})
+	r := httptest.NewRequest(http.MethodPost, "/api/auth/verify-email", strings.NewReader(`{"token":"0123456789abcdef0123"}`))
+	w := httptest.NewRecorder()
+	h.VerifyEmail(w, r)
+	return w
 }
 
 // Saving the form with the address it already shows must not un-verify it, or a

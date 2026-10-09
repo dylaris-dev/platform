@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Users, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import PlayerHead from '@/components/PlayerHead';
 import {
     getRconConfig, parsePlayerList, friendlyRconError, type OnlinePlayer,
 } from '@/lib/api/rcon';
@@ -371,12 +372,14 @@ export default function ServerPlayersPage() {
                         {currentList.map((p: any) => (
                             <article key={`${section}-${p.name}`} className="card p-2 flex items-center gap-3">
                                 {/* Player head */}
-                                <img
-                                    src={`https://cravatar.eu/helmavatar/${encodeURIComponent(p.name)}/32.png`}
-                                    alt={p.name}
+                                <PlayerHead
+                                    name={p.name}
                                     className="w-8 h-8 rounded-sm shrink-0 bg-(--base-03)"
-                                    style={{ imageRendering: 'pixelated' }}
-                                    onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
+                                    fallback={
+                                        <div className="w-8 h-8 rounded-sm shrink-0 bg-(--base-03) flex items-center justify-center text-xs font-semibold text-(--base-07)">
+                                            {String(p.name).charAt(0).toUpperCase()}
+                                        </div>
+                                    }
                                 />
                                 <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-(--base-09)">{p.name}</div>

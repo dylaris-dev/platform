@@ -58,6 +58,9 @@ type User struct {
 	SessionEpoch int `json:"-"`
 
 	// Verification / lifecycle
+	// PendingEmail is an address the user asked for and has not confirmed yet;
+	// Email stays in force until they do.
+	PendingEmail            string     `json:"pendingEmail,omitempty"`
 	EmailVerifiedAt         *time.Time `json:"emailVerifiedAt,omitempty"`
 	EmailVerificationToken  string     `json:"-"`
 	EmailVerificationSentAt *time.Time `json:"-"`

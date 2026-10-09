@@ -122,6 +122,8 @@ var ExemptRoutes = map[string]bool{
 	"/api/auth/logout-everywhere":           true, // authed; own sessions
 	"/api/auth/2fa/regenerate-backup-codes": true, // authed; own 2FA
 	"/api/auth/2fa/status":                  true, // authed; own 2FA
+	// A player's public head, fetched from fixed upstreams; nothing per-account.
+	"/api/avatar/{name}": true,
 
 	// Read-only capability catalog: any authed user, not yet consulted elsewhere.
 	"/api/authz/catalog": true, // authed; read-only reference data

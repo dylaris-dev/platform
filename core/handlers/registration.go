@@ -261,6 +261,25 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A link for an address change the user asked for: it becomes the
+	// account's address now, unless another account took it in the meantime.
+	if user.PendingEmail != "" {
+		if other, oerr := h.state.Store.GetUserByEmail(user.PendingEmail); oerr == nil && other != nil && other.ID != user.ID {
+			sendJSONError(w, "That email address is already in use by another account", http.StatusConflict)
+			return
+		}
+		oldEmail, newEmail, ok, cerr := h.state.Store.ConfirmPendingEmail(user.ID)
+		if cerr != nil {
+			sendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
+			return
+		}
+		if ok {
+			LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, user.ID, user.ID, nil)
+			notifyAddressChanged(h.state, oldEmail, newEmail, user.Username)
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": user.Username})
+			return
+		}
+	}
 	if err := h.state.Store.MarkEmailVerified(user.ID); err != nil {
 		sendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 		return
@@ -375,12 +394,24 @@ func randomToken(nBytes int) (string, error) {
 // sendVerificationEmail builds and sends the verification email.
 // Pure helper so the test endpoint and the production flow can be kept in
 // sync (both go through mailer.Send).
+// sendEmailChangeConfirmation mails the link that makes a pending address the
+// account's. Not the registration mail: that one welcomes a new account, and a
+// stranger receiving it would read a sign-up instead of somebody asking to put
+// their address on an existing one.
+func sendEmailChangeConfirmation(state *AppState, to, username, token string) error {
+	link := strings.TrimRight(state.FrontendURL, "/") + "/verify-email?token=" + token
+	return sendAccountMail(state.Store, mailer.KeyConfirmEmailChange, to, state.FrontendURL, map[string]string{
+		"username":     username,
+		"confirm_link": link,
+	})
+}
+
 func sendVerificationEmail(state *AppState, to, username, token string) error {
 	link := strings.TrimRight(state.FrontendURL, "/") + "/verify-email?token=" + token
 	// Wording lives in the template now, so an operator can change it without a
 	// deploy. An install that has never edited it sends the built-in default,
 	// which is this text.
-	return services.SendMail(state.Store, mailer.KeyVerifyEmail, to, state.FrontendURL, map[string]string{
+	return sendAccountMail(state.Store, mailer.KeyVerifyEmail, to, state.FrontendURL, map[string]string{
 		"username":    username,
 		"verify_link": link,
 	})

@@ -524,6 +524,10 @@ type Store interface {
 	// SetUserEmail also clears the verification state; see the implementation
 	// for why the two are one operation.
 	SetUserEmail(userID, email string) error
+	// SetPendingEmail / ConfirmPendingEmail: a self-service change waits for
+	// its confirmation with the current address left in force.
+	SetPendingEmail(userID, email, token string) error
+	ConfirmPendingEmail(userID string) (oldEmail, newEmail string, ok bool, err error)
 	UpdateLastLoginAt(userID string) error
 
 	// --- Password reset ---

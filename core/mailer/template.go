@@ -67,6 +67,8 @@ const (
 	KeyPasswordReset   = "auth.password_reset"
 	KeyEmailChanged    = "auth.email_changed"
 	KeyPasswordChanged = "auth.password_changed"
+	// KeyConfirmEmailChange goes to the NEW address of a profile change.
+	KeyConfirmEmailChange = "auth.confirm_email_change"
 )
 
 var definitions = []Definition{
@@ -108,6 +110,25 @@ We received a request to reset your {{site_name}} password. Choose a new one her
 [Choose a new password]({{reset_link}})
 
 This link is valid for {{ttl_minutes}} minutes and works exactly once. If you did not ask for a reset, you can ignore this email - your password stays as it is.`,
+	},
+	{
+		Key:         KeyConfirmEmailChange,
+		Name:        "Confirm a new email address",
+		Description: "Sent to the NEW address when an account's owner changes it in their profile. The account keeps its current address until this link is opened.",
+		Purpose:     "auth",
+		Variables: []Variable{
+			{Name: "username", Description: "The account asking for the address", Example: "alex"},
+			{Name: "confirm_link", Description: "Single-use confirmation link", Example: "https://panel.example.com/verify-email?token=..."},
+			{Name: "site_name", Description: "The platform's name", Example: "DYLARIS"},
+		},
+		Subject: "Confirm your new {{site_name}} email address",
+		Body: `Hi {{username}},
+
+The {{site_name}} account {{username}} asked to use this address from now on. If that is you, confirm it here:
+
+[Use this address]({{confirm_link}})
+
+Until this link is opened, the account keeps its current address. If you do not know this account, ignore this message: nothing changes.`,
 	},
 	{
 		Key:         KeyEmailChanged,

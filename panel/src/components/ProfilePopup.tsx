@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil, History as HistoryIcon, ChevronDown, LogOut } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes, logoutEverywhere } from '@/lib/api/auth';
 import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
 import { getMyUsernameHistory, type UsernameHistoryEntry } from '@/lib/api/accountPolicy';
 import { isUsername } from '@/lib/validation';
+import { getRegistrationStatus } from '@/lib/api/registration';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import ModalPanel from '@/components/ui/ModalPanel';
@@ -15,8 +16,16 @@ interface UserProfile {
     username: string;
     minecraftUsername?: string;
     email?: string;
+    pendingEmail?: string;
     is2FAEnabled?: boolean;
     isAdmin?: boolean;
+}
+
+export interface ProfileUpdateResult {
+    success?: boolean;
+    message?: string;
+    error?: string;
+    pendingEmail?: string;
 }
 
 interface ProfilePopupProps {
@@ -29,18 +38,62 @@ interface ProfilePopupProps {
       minecraftUsername?: string;
       email?: string;
       totpCode?: string;
-  }) => Promise<void>;
+  }) => Promise<ProfileUpdateResult>;
   onTwoFactorChange?: () => void;
-  error: string;
-  success: string;
 }
 
-const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpdate, onTwoFactorChange, error, success }) => {
+type FieldKey = 'username' | 'email' | 'minecraft' | 'current' | 'newPassword' | 'confirm' | 'totp';
+type FieldErrors = Partial<Record<FieldKey, string>>;
+
+// The tab each field lives on, in the order a reader meets them: the first
+// one in error is the one focused.
+const FIELD_ORDER: { key: FieldKey; tab: 'general' | 'security' }[] = [
+  { key: 'username', tab: 'general' },
+  { key: 'email', tab: 'general' },
+  { key: 'minecraft', tab: 'general' },
+  { key: 'current', tab: 'security' },
+  { key: 'newPassword', tab: 'security' },
+  { key: 'confirm', tab: 'security' },
+  { key: 'totp', tab: 'security' },
+];
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Which field a refusal from Core is about. Everything else stays in the
+// banner, where a message about no field in particular belongs.
+export function fieldForServerError(message: string): FieldKey | null {
+  const m = message.toLowerCase();
+  if (m.includes('current password')) return 'current';
+  if (m.includes('2fa code') || m.includes('authenticator')) return 'totp';
+  if (m.startsWith('password must')) return 'newPassword';
+  if (m.includes('minecraft')) return 'minecraft';
+  if (m.includes('username')) return 'username';
+  if (m.includes('email') || m.includes('address')) return 'email';
+  return null;
+}
+
+// One labelled input with its error under it, wired for screen readers.
+function Field({ id, label, hint, error, children }: {
+  id: string; label: React.ReactNode; hint?: React.ReactNode; error?: string; children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-[5px]">
+      <label htmlFor={id} className="input-label">{label}</label>
+      {children}
+      {error
+        ? <p id={`${id}-error`} className="text-xs text-(--error-light)">{error}</p>
+        : hint ? <p className="text-xs text-(--base-06)">{hint}</p> : null}
+    </div>
+  );
+}
+
+const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpdate, onTwoFactorChange }) => {
   const [currentView, setCurrentView] = useState("general");
 
   const [newUsername, setNewUsername] = useState(currentUser.username || "");
   const [minecraftUsername, setMinecraftUsername] = useState(currentUser.minecraftUsername || "");
   const [email, setEmail] = useState(currentUser.email || "");
+  const [pendingEmail, setPendingEmail] = useState(currentUser.pendingEmail || "");
 
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -48,7 +101,11 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const [totpCode, setTotpCode] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const [localError, setLocalError] = useState("");
+  const [bannerError, setBannerError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [minLength, setMinLength] = useState(12);
+  const inputs = useRef<Partial<Record<FieldKey, HTMLInputElement | null>>>({});
 
   // 2FA wizard state
   const [twoFactorOpen, setTwoFactorOpen] = useState(false);
@@ -56,6 +113,14 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(currentUser.is2FAEnabled || false);
   const [backupCodesRemaining, setBackupCodesRemaining] = useState<number | null>(null);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
+
+  // The policy Core enforces, checked here first so a short password is
+  // answered at the field instead of after a round trip.
+  useEffect(() => {
+    getRegistrationStatus().then(res => {
+      if (res?.success && res.passwordMinLength) setMinLength(res.passwordMinLength);
+    });
+  }, []);
 
   // Reload backup-code count whenever 2FA state changes (enable/disable/regen)
   // OR the user opens the Security tab. Cheap fetch — single GET.
@@ -76,21 +141,62 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
   const needsCode = twoFactorEnabled &&
     (!!newPassword || email.trim().toLowerCase() !== (currentUser.email || '').trim().toLowerCase());
 
+  // Opens the tab the first field in error is on and puts the cursor in it.
+  // The current password and the code sit on both tabs; they are reached on
+  // the one already open.
+  const focusFirst = (errs: FieldErrors) => {
+    const first = FIELD_ORDER.find(f => errs[f.key]);
+    if (!first) return;
+    const shared = first.key === 'current' || first.key === 'totp';
+    if (!shared) setCurrentView(first.tab);
+    setTimeout(() => {
+      const el = inputs.current[first.key];
+      el?.focus();
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 0);
+  };
+
+  const clearError = (key: FieldKey) => setErrors(prev => {
+    if (!prev[key]) return prev;
+    const next = { ...prev };
+    delete next[key];
+    return next;
+  });
+
+  const validate = (): FieldErrors => {
+    const errs: FieldErrors = {};
+    if (newUsername !== currentUser.username && !isUsername(newUsername)) {
+      errs.username = "3-32 characters: start with a letter or digit, then letters, digits, . _ or -";
+    }
+    const trimmedEmail = email.trim();
+    if (trimmedEmail !== (currentUser.email || '') && trimmedEmail !== '' && !EMAIL_RE.test(trimmedEmail)) {
+      errs.email = "Enter a valid email address";
+    }
+    if (minecraftUsername.trim() !== '' && !/^[A-Za-z0-9_]{3,16}$/.test(minecraftUsername.trim())) {
+      errs.minecraft = "3-16 characters: letters, digits or _";
+    }
+    if (!oldPassword) errs.current = "Enter your current password to save changes";
+    if (confirmPassword && !newPassword) errs.newPassword = "Enter the new password";
+    if (newPassword && newPassword.length < minLength) errs.newPassword = `At least ${minLength} characters`;
+    if (newPassword && newPassword !== confirmPassword) {
+      errs.confirm = confirmPassword ? "Does not match the new password" : "Repeat the new password";
+    }
+    if (needsCode && !totpCode.trim()) errs.totp = "Enter a code from your authenticator";
+    return errs;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
-      setLocalError("");
-      if (newUsername !== currentUser.username && !isUsername(newUsername)) {
-          setLocalError("Username: 3-32 characters, must start with a letter or digit, then letters, digits, . _ or -");
-          return;
-      }
-      if (newPassword !== confirmPassword) {
-          // Surface the mismatch instead of silently dropping the password
-          // change (sending "" left the user thinking it had changed).
-          setLocalError("New password and confirmation do not match");
+      setBannerError("");
+      setSuccess("");
+      const errs = validate();
+      setErrors(errs);
+      if (Object.keys(errs).length > 0) {
+          focusFirst(errs);
           return;
       }
       setLoading(true);
-      await onUpdate({
+      const result = await onUpdate({
           newUsername,
           oldPassword,
           newPassword,
@@ -98,9 +204,72 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
           email,
           totpCode: needsCode ? totpCode.replace(/\s/g, '') : undefined,
       });
-      setTotpCode("");
       setLoading(false);
+      setTotpCode("");
+      if (result?.success === false || result?.error) {
+          const message = result.message || result.error || 'Saving failed.';
+          const field = fieldForServerError(message);
+          // The code field only exists while a code is asked for; a refusal
+          // about it otherwise would mark nothing anyone can see.
+          if (field && (field !== 'totp' || needsCode)) {
+              const fe = { [field]: message } as FieldErrors;
+              setErrors(fe);
+              focusFirst(fe);
+          } else {
+              setBannerError(message);
+          }
+          return;
+      }
+      // Saved: the passwords leave the form, and Core's own answer is shown -
+      // it says when a new address waits for its confirmation.
+      setOldPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      if (result?.pendingEmail) {
+          setPendingEmail(result.pendingEmail);
+          setEmail(currentUser.email || "");
+      }
+      setSuccess(result?.message || 'Profile updated.');
   };
+
+  const fieldClass = (key: FieldKey, extra = '') =>
+    `input-field w-full disabled:opacity-40 disabled:cursor-not-allowed ${extra} ${errors[key] ? 'input-field-error' : ''}`;
+  const aria = (key: FieldKey, id: string) => ({
+    'aria-invalid': !!errors[key] || undefined,
+    'aria-describedby': errors[key] ? `${id}-error` : undefined,
+  });
+  const bind = (key: FieldKey) => (el: HTMLInputElement | null) => { inputs.current[key] = el; };
+
+  const currentPasswordField = (
+    <Field
+      id="profile-current-password"
+      label={<>Current password <span className="opacity-70">(required to save any change)</span></>}
+      error={errors.current}
+    >
+      <input
+        id="profile-current-password" ref={bind('current')} type="password" autoComplete="current-password"
+        value={oldPassword} onChange={e => { setOldPassword(e.target.value); clearError('current'); }}
+        disabled={loading} className={fieldClass('current')} {...aria('current', 'profile-current-password')}
+      />
+    </Field>
+  );
+
+  const totpField = needsCode && (
+    <Field
+      id="profile-totp"
+      label={<>Authenticator code <span className="opacity-70">(required to change your email or password)</span></>}
+      error={errors.totp}
+    >
+      <input
+        id="profile-totp" ref={bind('totp')} type="text" inputMode="numeric" autoComplete="one-time-code"
+        value={totpCode} onChange={e => { setTotpCode(e.target.value); clearError('totp'); }}
+        disabled={loading} className={fieldClass('totp', 'font-mono')} placeholder="123456 or a backup code"
+        {...aria('totp', 'profile-totp')}
+      />
+    </Field>
+  );
+
+  const tabClass = (view: string) => `pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === view ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`;
 
   return (
     <>
@@ -109,42 +278,57 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
       <ModalPanel onClose={onClose} className="modal-panel w-full max-w-md">
         <div className="modal-header flex justify-between items-center">
           <h2 className="modal-title">Profile Settings</h2>
-          <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light) transition-colors">
+          <button onClick={onClose} aria-label="Close" className="text-(--base-06) hover:text-(--error-light) transition-colors">
             <X size={20} />
           </button>
         </div>
 
-        <div className="flex gap-1 px-6 pt-4 border-b border-(--base-03)">
-          <button onClick={() => setCurrentView("general")} className={`pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === "general" ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`}>General</button>
-          <button onClick={() => setCurrentView("security")} className={`pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === "security" ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`}>Security</button>
+        <div role="tablist" className="flex gap-1 px-6 pt-4 border-b border-(--base-03)">
+          <button type="button" role="tab" aria-selected={currentView === "general"} onClick={() => setCurrentView("general")} className={tabClass("general")}>General</button>
+          <button type="button" role="tab" aria-selected={currentView === "security"} onClick={() => setCurrentView("security")} className={tabClass("security")}>Security</button>
           {currentUser.isAdmin && (
-            <button onClick={() => setCurrentView("developer")} className={`pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === "developer" ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`}>Developer</button>
+            <button type="button" role="tab" aria-selected={currentView === "developer"} onClick={() => setCurrentView("developer")} className={tabClass("developer")}>Developer</button>
           )}
         </div>
 
         <div className="modal-body">
-          {(localError || error) && <div className="alert alert-error mb-4 font-medium">{localError || error}</div>}
-          {success && <div className="alert alert-success mb-4 font-medium">{success}</div>}
+          {bannerError && <div role="alert" className="alert alert-error mb-4 font-medium">{bannerError}</div>}
+          {success && <div role="status" className="alert alert-success mb-4 font-medium">{success}</div>}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} noValidate className="space-y-4">
             {currentView === "general" && (
               <div className="space-y-4 animate-fade-in">
-                <div className="flex flex-col gap-[5px]">
-                  <label className="input-label">Username</label>
-                  <input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
-                  <p className="text-xs text-(--base-06) mt-1">
-                    Username changes follow the platform&apos;s cooldown policy. The admin
-                    can disable changes or set a delay between renames.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-[5px]">
-                  <label className="input-label">Email</label>
-                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
-                </div>
-                <div className="flex flex-col gap-[5px]">
-                  <label className="input-label">Minecraft Username (For Avatar)</label>
-                  <input type="text" value={minecraftUsername} onChange={e => setMinecraftUsername(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
-                </div>
+                <Field
+                  id="profile-username" label="Username" error={errors.username}
+                  hint="Username changes follow the platform's cooldown policy. The admin can disable changes or set a delay between renames."
+                >
+                  <input
+                    id="profile-username" ref={bind('username')} type="text" autoComplete="username"
+                    value={newUsername} onChange={e => { setNewUsername(e.target.value); clearError('username'); }}
+                    disabled={loading} className={fieldClass('username')} {...aria('username', 'profile-username')}
+                  />
+                </Field>
+                <Field
+                  id="profile-email" label="Email" error={errors.email}
+                  hint={pendingEmail
+                    ? <>Waiting for confirmation: <span className="font-mono text-(--base-08)">{pendingEmail}</span>. Open the link we sent there; until then your current address stays in use.</>
+                    : !currentUser.email
+                      ? 'No address on this account yet. Without one, a forgotten password can only be reset by an admin.'
+                      : undefined}
+                >
+                  <input
+                    id="profile-email" ref={bind('email')} type="email" autoComplete="email"
+                    value={email} onChange={e => { setEmail(e.target.value); clearError('email'); }}
+                    disabled={loading} className={fieldClass('email')} {...aria('email', 'profile-email')}
+                  />
+                </Field>
+                <Field id="profile-minecraft" label="Minecraft username (for your avatar)" error={errors.minecraft}>
+                  <input
+                    id="profile-minecraft" ref={bind('minecraft')} type="text"
+                    value={minecraftUsername} onChange={e => { setMinecraftUsername(e.target.value); clearError('minecraft'); }}
+                    disabled={loading} className={fieldClass('minecraft')} {...aria('minecraft', 'profile-minecraft')}
+                  />
+                </Field>
                 <UsernameHistorySection />
               </div>
             )}
@@ -155,19 +339,34 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
 
             {currentView === "security" && (
               <div className="space-y-4 animate-fade-in">
-                <div className="flex flex-col gap-[5px]">
-                  <label className="input-label">New Password</label>
-                  <input type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" placeholder="Leave blank to keep current" />
+                <div className="space-y-3">
+                  <h3 className="mono-label">Change password</h3>
+                  {currentPasswordField}
+                  <Field
+                    id="profile-new-password" label="New password" error={errors.newPassword}
+                    hint={`At least ${minLength} characters. Leave empty to keep your current password.`}
+                  >
+                    <input
+                      id="profile-new-password" ref={bind('newPassword')} type="password" autoComplete="new-password"
+                      value={newPassword} onChange={e => { setNewPassword(e.target.value); clearError('newPassword'); }}
+                      disabled={loading} className={fieldClass('newPassword')} {...aria('newPassword', 'profile-new-password')}
+                    />
+                  </Field>
+                  <Field id="profile-confirm-password" label="Confirm new password" error={errors.confirm}>
+                    <input
+                      id="profile-confirm-password" ref={bind('confirm')} type="password" autoComplete="new-password"
+                      value={confirmPassword} onChange={e => { setConfirmPassword(e.target.value); clearError('confirm'); }}
+                      disabled={loading} className={fieldClass('confirm')} {...aria('confirm', 'profile-confirm-password')}
+                    />
+                  </Field>
+                  {totpField}
+                  <button type="submit" disabled={loading} className="btn btn-primary w-full">
+                    {loading ? 'Saving...' : 'Save changes'}
+                  </button>
                 </div>
-                {newPassword && (
-                  <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Confirm Password</label>
-                    <input type="password" autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
-                  </div>
-                )}
 
                 {/* 2FA section */}
-                <div className="pt-2">
+                <div className="pt-4 border-t border-(--base-03)">
                   <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
                     <div className="flex items-start gap-2.5 min-w-0">
                       {twoFactorEnabled
@@ -236,28 +435,17 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
               </div>
             )}
 
-            {/* The current-password gate and submit button only apply to
-                profile data (general/security). The developer tab toggles
-                live state in localStorage on its own — no save needed. */}
-            {currentView !== "developer" && (
-              <>
-                <div className="pt-4 border-t border-(--base-03)">
-                  <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Current Password <span className="opacity-70">(required to save profile changes)</span></label>
-                    <input type="password" autoComplete="current-password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required disabled={loading} className="input-field w-full disabled:opacity-40 disabled:cursor-not-allowed" />
-                  </div>
-                  {needsCode && (
-                    <div className="flex flex-col gap-[5px] mt-3">
-                      <label className="input-label">Authenticator code <span className="opacity-70">(required to change your email or password)</span></label>
-                      <input type="text" inputMode="numeric" autoComplete="one-time-code" value={totpCode} onChange={e => setTotpCode(e.target.value)} required disabled={loading} className="input-field w-full font-mono disabled:opacity-40 disabled:cursor-not-allowed" placeholder="123456 or a backup code" />
-                    </div>
-                  )}
-                </div>
-
-                <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full mt-4">
-                  {loading ? 'Saving...' : 'Save Changes'}
+            {/* On the General tab the current password confirms the save at
+                the end; on Security it opens the password change, before the
+                new one. The developer tab saves nothing. */}
+            {currentView === "general" && (
+              <div className="pt-4 border-t border-(--base-03) space-y-3">
+                {currentPasswordField}
+                {totpField}
+                <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full">
+                  {loading ? 'Saving...' : 'Save changes'}
                 </button>
-              </>
+              </div>
             )}
           </form>
         </div>

@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **515 routes** in 51 sections: 228 GET, 159 POST, 38 PUT, 36 PATCH, 55 DELETE.
+- **516 routes** in 52 sections: 229 GET, 159 POST, 38 PUT, 36 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **110** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **111** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **24** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -143,6 +143,7 @@ can still show what exists.
 - [/api/admin](#apiadmin) (124)
 - [/api/auth](#apiauth) (21)
 - [/api/authz](#apiauthz) (3)
+- [/api/avatar](#apiavatar) (1)
 - [/api/backup-jobs](#apibackup-jobs) (4)
 - [/api/backup-runs](#apibackup-runs) (3)
 - [/api/backup-storages](#apibackup-storages) (5)
@@ -354,6 +355,12 @@ can still show what exists.
 | GET | `/api/authz/catalog` | session | _no capability_ | - | `AuthzHandler.Catalog` | returns the capability catalog grouped by scope then category, so the panel role editor and simple/advanced UI render entirely from the backend list (no hard-coded frontend permission arrays). |
 | GET | `/api/authz/mode` | session | _no capability_ | - | `PermissionsModeHandler.GetMode` | > {"success":true,"mode":"off\|simple\|advanced"}. |
 | GET | `/api/authz/presets` | session | _no capability_ | - | `AuthzHandler.Presets` | the simple-mode preset bundles, so the assign-only UI renders from the backend (no hard-coded frontend presets). |
+
+## /api/avatar
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/avatar/{name}` | session | _no capability_ | Limit | `AvatarHandler.Get` | the 64px head of a Minecraft player, or 404. |
 
 ## /api/backup-jobs
 

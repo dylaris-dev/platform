@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 	"dylaris-pkg/validate"
 
@@ -947,6 +948,38 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	}
 	oldEmail := user.Email
 
+	// With verification required, a new address waits for its confirmation and
+	// the current one stays in force. Decided and mailed here, before the rename
+	// and the password are written: a mail that cannot go out refuses the save
+	// whole, rather than after half of it. Swapped at once, the account was locked out
+	// at its next sign-in by any typo, with the link on its way to a mailbox
+	// nobody reads and only an admin able to help.
+	pendingSet := false
+	if emailChanged && newEmail != "" && LoadAuthPolicy(h.state).EmailVerifyRequired {
+		token, terr := randomToken(32)
+		if terr != nil {
+			sendJSONError(w, "Update failed", 500)
+			return
+		}
+		if err := h.state.Store.SetPendingEmail(user.ID, newEmail, token); err != nil {
+			sendJSONError(w, "Update failed", 500)
+			return
+		}
+		LogIdentityAudit(h.state, r, "user_email_change_requested", user.ID, user.ID, nil)
+		if err := sendEmailChangeConfirmation(h.state, newEmail, user.Username, token); err != nil {
+			services.ReportOperatorError("profile-email-change", "verification mail to %s failed: %v", newEmail, err)
+			// Withdrawn: a pending address nobody was told about would only read
+			// as "waiting for confirmation" with nothing on its way.
+			if cerr := h.state.Store.SetPendingEmail(user.ID, "", ""); cerr != nil {
+				log.Printf("profile: could not withdraw the pending address of %s: %v", user.Username, cerr)
+			}
+			sendJSONError(w, "Your current address is unchanged: the confirmation mail to the new one could not be sent", http.StatusBadGateway)
+			return
+		}
+		pendingSet = true
+		emailChanged = false
+	}
+
 	// Username change: route through RenameUser with policy + cooldown + uniqueness guards.
 	// RenameUser writes user_username_history and bumps last_username_change in one tx, so
 	// we MUST NOT also write the username column in the generic UpdateUser call below.
@@ -1028,7 +1061,10 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	// thrown out of the panel. Everyone ELSE holding a session for this account
 	// still loses it, which is the point.
 	out := map[string]string{"success": "true", "message": "Profile updated!"}
-	if emailVerifySent {
+	if pendingSet {
+		out["message"] = "We sent a confirmation link to " + newEmail + ". Your current address stays in use until you open it."
+		out["pendingEmail"] = newEmail
+	} else if emailVerifySent {
 		// Said here because it decides the next sign-in: with the policy on, the
 		// account stays usable now and asks for the confirmation at next login.
 		out["message"] = "Profile updated. We sent a link to your new address - confirm it before you next sign in."

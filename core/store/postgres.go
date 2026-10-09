@@ -141,7 +141,8 @@ const userSelectCols = `id, username, password, COALESCE(email, ''), COALESCE(mi
 	last_username_change,
 	COALESCE(can_create_modpacks, TRUE),
 	COALESCE(can_create_modpacks_manual, FALSE),
-	COALESCE(session_epoch, 0)`
+	COALESCE(session_epoch, 0),
+	COALESCE(pending_email, '')`
 
 func scanUserRow(scan func(dest ...interface{}) error) (*models.User, error) {
 	var (
@@ -160,7 +161,7 @@ func scanUserRow(scan func(dest ...interface{}) error) (*models.User, error) {
 		&u.Role, &u.CanDeleteServers, &u.CanChangeResources, &u.SupportTeam,
 		&lastUsernameChange,
 		&u.CanCreateModpacks, &u.CanCreateModpacksManual,
-		&u.SessionEpoch)
+		&u.SessionEpoch, &u.PendingEmail)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +200,12 @@ func scanUserRow(scan func(dest ...interface{}) error) (*models.User, error) {
 }
 
 func (s *PostgresStore) GetUserByUsername(username string) (*models.User, error) {
-	query := `SELECT ` + userSelectCols + ` FROM users WHERE username = $1`
+	// Case-insensitive like the unique index on LOWER(username): "Bob" for the
+	// account "bob" was refused as a wrong password.
+	// The exact spelling wins where an older install still holds two names that
+	// differ only in case (the unique index is skipped while they exist).
+	query := `SELECT ` + userSelectCols + ` FROM users WHERE LOWER(username) = LOWER($1)
+		ORDER BY (username = $1) DESC, created_at ASC LIMIT 1`
 	return s.scanUser(s.db.QueryRow(query, username).Scan)
 }
 
@@ -2531,16 +2537,21 @@ func (s *PostgresStore) GetUserByEmailVerificationToken(token string) (*models.U
 
 // SetEmailVerificationToken stores a freshly generated token + sent timestamp.
 // Pass an empty token to clear (e.g. after a manual admin override).
+//
+// Either way it ends a pending address change. The token column is shared,
+// and VerifyEmail confirms the pending address for whatever token it is shown:
+// a resend to the CURRENT address otherwise confirmed an address nobody had
+// proved, which let an account claim a stranger's mailbox.
 func (s *PostgresStore) SetEmailVerificationToken(userID string, token string) error {
 	if token == "" {
 		_, err := s.db.Exec(
-			`UPDATE users SET email_verification_token = NULL, email_verification_sent_at = NULL WHERE id = $1`,
+			`UPDATE users SET email_verification_token = NULL, email_verification_sent_at = NULL, pending_email = NULL WHERE id = $1`,
 			userID,
 		)
 		return err
 	}
 	_, err := s.db.Exec(
-		`UPDATE users SET email_verification_token = $1, email_verification_sent_at = NOW() WHERE id = $2`,
+		`UPDATE users SET email_verification_token = $1, email_verification_sent_at = NOW(), pending_email = NULL WHERE id = $2`,
 		hashAuthToken(token), userID,
 	)
 	return err
@@ -2566,13 +2577,50 @@ func (s *PostgresStore) MarkEmailVerified(userID string) error {
 // aims at exactly that address.
 func (s *PostgresStore) SetUserEmail(userID, email string) error {
 	_, err := s.db.Exec(
-		`UPDATE users SET email = $2, email_verified_at = NULL,
+		`UPDATE users SET email = $2, email_verified_at = NULL, pending_email = NULL,
 		   email_verification_token = NULL, email_verification_sent_at = NULL,
 		   password_reset_token = NULL, password_reset_expires_at = NULL
 		 WHERE id = $1`,
 		userID, email,
 	)
 	return err
+}
+
+// SetPendingEmail records an address the user asked for, with its
+// confirmation token, and leaves the current address and its verified mark as
+// they are. An empty email withdraws it.
+func (s *PostgresStore) SetPendingEmail(userID, email, token string) error {
+	if email == "" {
+		_, err := s.db.Exec(
+			`UPDATE users SET pending_email = NULL, email_verification_token = NULL, email_verification_sent_at = NULL WHERE id = $1`,
+			userID,
+		)
+		return err
+	}
+	_, err := s.db.Exec(
+		`UPDATE users SET pending_email = $2, email_verification_token = $3, email_verification_sent_at = NOW() WHERE id = $1`,
+		userID, email, hashAuthToken(token),
+	)
+	return err
+}
+
+// ConfirmPendingEmail makes the pending address the account's, verified, in
+// one statement. It reports the address it replaced and the one it set; ok is
+// false when nothing was pending.
+func (s *PostgresStore) ConfirmPendingEmail(userID string) (oldEmail, newEmail string, ok bool, err error) {
+	err = s.db.QueryRow(
+		`UPDATE users u SET email = u.pending_email, pending_email = NULL, email_verified_at = NOW(),
+		   email_verification_token = NULL, email_verification_sent_at = NULL,
+		   password_reset_token = NULL, password_reset_expires_at = NULL
+		 FROM (SELECT id, COALESCE(email, '') AS old FROM users WHERE id = $1 FOR UPDATE) prev
+		 WHERE u.id = prev.id AND u.pending_email IS NOT NULL
+		 RETURNING prev.old, u.email`,
+		userID,
+	).Scan(&oldEmail, &newEmail)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	return oldEmail, newEmail, err == nil, err
 }
 
 func (s *PostgresStore) UpdateLastLoginAt(userID string) error {

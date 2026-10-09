@@ -27,23 +27,16 @@ import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager'
 import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
+import PlayerHead from '@/components/PlayerHead';
 
-// The player head shown beside the username. Encoded because the name is stored
-// user input: without it a value carrying a slash would address a different
-// path on the avatar host.
-function avatarURL(minecraftUsername: string): string {
-    return `https://cravatar.eu/helmavatar/${encodeURIComponent(minecraftUsername)}/64.png`;
-}
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
-    const { user, ready, apiUnreachable, retryBoot, featureFlags, byonEnabled, routeOnlyEnabled, servers } = useAppData();
+    const { user, ready, apiUnreachable, retryBoot, featureFlags, byonEnabled, routeOnlyEnabled, servers, refreshUser } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
 
     const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
     const [showProfilePopup, setShowProfilePopup] = useState(false);
-    const [popupError, setPopupError] = useState('');
-    const [popupSuccess, setPopupSuccess] = useState('');
 
     // Click outside closes the dropdown
     useEffect(() => {
@@ -55,16 +48,13 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
         return () => document.removeEventListener('click', handleClickOutside);
     }, []);
 
+    // The popup shows the answer itself, field by field, and stays open: Core's
+    // message says what happens next (a new address waits for its confirmation),
+    // and closing on a fixed "Saved!" threw exactly that away.
     const handleProfileUpdate = async (data: any) => {
-        setPopupError(''); setPopupSuccess('');
-        if (data.newPassword === 'passwords-do-not-match') { setPopupError('Passwords do not match.'); return; }
         const result = await apiUpdateProfile(data);
-        if (result.success) {
-            setPopupSuccess('Saved!');
-            setTimeout(() => { setShowProfilePopup(false); setPopupSuccess(''); }, 1500);
-        } else {
-            setPopupError(result.message || 'An error occurred.');
-        }
+        if (result?.success) refreshUser();
+        return result;
     };
 
     // The API never answered the boot call. This is NOT "still loading" and it
@@ -215,12 +205,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                         >
                             <div className="w-8 h-8 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
                                 {user.minecraftUsername ? (
-                                    // 64, never 32: cravatar treats 32 as its default size and answers
-                                    // that one request with a 308 to a plain-http URL, which the browser
-                                    // then refuses as mixed content. So the head rendered everywhere the
-                                    // panel asked for any other size and broke only here. One size for
-                                    // both avatars, downscaled by CSS, which is sharper on HiDPI anyway.
-                                    <img src={avatarURL(user.minecraftUsername)} alt="" className="w-full h-full object-cover" />
+                                    <PlayerHead name={user.minecraftUsername} fallback={user.username.charAt(0).toUpperCase()} className="w-full h-full object-cover" />
                                 ) : (
                                     user.username.charAt(0).toUpperCase()
                                 )}
@@ -234,7 +219,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 <div className="flex items-center gap-3 px-3 py-3 border-b border-(--base-03) mb-1.5">
                                     <div className="w-9 h-9 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
                                         {user.minecraftUsername ? (
-                                            <img src={avatarURL(user.minecraftUsername)} alt="" className="w-full h-full object-cover" />
+                                            <PlayerHead name={user.minecraftUsername} fallback={user.username.charAt(0).toUpperCase()} className="w-full h-full object-cover" />
                                         ) : (
                                             user.username.charAt(0).toUpperCase()
                                         )}
@@ -307,8 +292,6 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     currentUser={user}
                     onClose={() => setShowProfilePopup(false)}
                     onUpdate={handleProfileUpdate}
-                    error={popupError}
-                    success={popupSuccess}
                 />
             )}
         </div>

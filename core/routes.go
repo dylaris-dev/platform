@@ -514,6 +514,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState)
 	authzHandler := handlers.NewAuthzHandler()
+	avatarHandler := handlers.NewAvatarHandler()
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
 	coreStorageHandler := handlers.NewCoreStorageHandler(appState)
 	storageConnectionHandler := handlers.NewStorageConnectionHandler(appState)
@@ -1088,6 +1089,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/authz/presets", authHandler.AuthMiddleware(authzHandler.Presets)).Methods("GET")
 	api.HandleFunc("/authz/mode", authHandler.AuthMiddleware(permissionsModeHandler.GetMode)).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
+	// Limited on its own count, so heads never drain the login budget: each
+	// name Core has not seen costs up to two upstream requests.
+	avatarLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/avatar/{name}", avatarLimiter.Limit(240, authHandler.AuthMiddleware(avatarHandler.Get))).Methods("GET")
 	// Rate limited like the public auth routes: each call checks the current
 	// password (a stolen session could otherwise guess it without limit) and
 	// an address change sends a mail.

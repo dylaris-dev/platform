@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,9 @@ type emailFakeStore struct {
 
 	setEmailCalls []struct{ id, email string }
 	tokenSetFor   string
+	pending       map[string]string
+	byToken       *models.User
+	confirmed     []string
 }
 
 // The mail dispatcher asks for an operator override before rendering. A store
@@ -48,6 +52,36 @@ func (f *emailFakeStore) SetEmailVerificationToken(id, _ string) error {
 	return nil
 }
 func (f *emailFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
+func (f *emailFakeStore) SetPendingEmail(id, email, _ string) error {
+	if f.pending == nil {
+		f.pending = map[string]string{}
+	}
+	if email == "" {
+		delete(f.pending, id)
+		return nil
+	}
+	f.pending[id] = email
+	return nil
+}
+func (f *emailFakeStore) ConfirmPendingEmail(id string) (string, string, bool, error) {
+	u, p := f.users[id], f.pending[id]
+	if u == nil || p == "" {
+		return "", "", false, nil
+	}
+	old := u.Email
+	u.Email = p
+	delete(f.pending, id)
+	f.confirmed = append(f.confirmed, p)
+	return old, p, true, nil
+}
+func (f *emailFakeStore) GetUserByEmailVerificationToken(string) (*models.User, error) {
+	if f.byToken == nil {
+		return nil, sql.ErrNoRows
+	}
+	c := *f.byToken
+	return &c, nil
+}
+func (f *emailFakeStore) MarkEmailVerified(string) error { return nil }
 
 const emailTestUserID = "11111111-1111-1111-1111-111111111111"
 

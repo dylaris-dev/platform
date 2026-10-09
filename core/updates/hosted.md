@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.12
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A new email address in the profile waits for its confirmation link.** It used to replace the old
+  one at once, and a typo locked the account out at its next sign-in.
+
+### Fixes
+- **Player heads load again.** They came straight from cravatar.eu, which is down; Core now fetches
+  and keeps them, with a second service behind the first.
+- **Profile > Security asks for the current password first** and marks each field that needs
+  attention, jumping to the first one, instead of one banner over the form.
+- **Signing in no longer depends on capitals in the username**: "Bob" reaches the account "bob".
+
 ## 2026.10.09.11
 
 ### Features

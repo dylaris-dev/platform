@@ -128,9 +128,17 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Password is required", 400)
 		return
 	}
+	// Stored as the other doors store it. Kept as typed, "Bob@X.com" passed
+	// the duplicate check the lowercase rows answer to and was a second
+	// account on one reset mailbox.
+	req.User.Email = strings.ToLower(strings.TrimSpace(req.User.Email))
+	if req.User.Email != "" && !validate.IsEmail(req.User.Email) {
+		sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+		return
+	}
 	// There is no unique index on users.email, and a second account on an
 	// existing address makes that address's password reset pick either row.
-	if email := strings.TrimSpace(req.Email); email != "" {
+	if email := req.User.Email; email != "" {
 		if existing, eerr := h.state.Store.GetUserByEmail(email); eerr == nil && existing != nil {
 			sendJSONError(w, "Email is already in use", http.StatusConflict)
 			return

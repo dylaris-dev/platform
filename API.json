@@ -1472,6 +1472,16 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/avatar/{name}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the 64px head of a Minecraft player, or 404.",
+      "handler": "AvatarHandler.Get",
+      "group": "avatar",
+      "external": false
+    },
+    {
       "method": "DELETE",
       "path": "/api/backup-jobs/{jobId:[0-9]+}",
       "auth": "session",
@@ -5138,10 +5148,10 @@
     }
   ],
   "counts": {
-    "total": 516,
+    "total": 517,
     "byAuth": {
       "none": 31,
-      "session": 469,
+      "session": 470,
       "user API key": 10,
       "warp key": 6
     },
@@ -5149,6 +5159,7 @@
       "admin": 124,
       "auth": 21,
       "authz": 3,
+      "avatar": 1,
       "backup-jobs": 4,
       "backup-runs": 3,
       "backup-storages": 5,
