@@ -54,8 +54,9 @@ func validSubServer(w http.ResponseWriter, sub *string) bool {
 // match on the message, since both messages embed live figures.
 var errBackupQuotaReached = errors.New("backup quota reached")
 
-// errBackupAlreadyRunning refuses a trigger while the job has a run in progress.
-var errBackupAlreadyRunning = errors.New("a backup of this job is already running")
+// errBackupAlreadyRunning refuses a trigger while a backup of the server is in
+// progress.
+var errBackupAlreadyRunning = errors.New("a backup of this server is already running")
 
 // backupQuotaRefusal renders one of the two quota refusals.
 //

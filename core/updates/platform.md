@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A Redis read error no longer bills a server's whole traffic history again.** The marker is
+  only read as zero when it is missing; any other error skips that server for the minute. `core`
+- **Only one backup of a server runs at a time.** Two jobs due together used to run side by side
+  and could leave an inconsistent world archive; the second now starts when the first ends. `core` `node`
+- **A backup run is no longer closed while its node is offline**, so a node back from days away
+  does not find a queue of backups of one server to run at once. `core`
+
 ## 2026.10.09.8
 
 ### Features

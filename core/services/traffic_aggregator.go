@@ -4,6 +4,7 @@ import (
 	"context"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
+	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -301,7 +302,25 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 			}
 			current := sumByteFields(fields)
 			seenKey := trafficSeenPrefix + kind + ":" + subject
-			last, _ := a.redis.Get(ctx, seenKey).Int64()
+			// Only a key that is not there is zero. Any other failure read as
+			// 0 billed the counter's whole life - months, for a busy server -
+			// into this month a second time.
+			raw, err := a.redis.Get(ctx, seenKey).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				logErrf("traffic-aggregator", "reading %s: %v; skipped this tick", seenKey, err)
+				continue
+			}
+			var last int64
+			if err == nil {
+				if last, err = strconv.ParseInt(raw, 10, 64); err != nil {
+					// Nothing but this loop writes it, so a value that is not a
+					// number cannot say what was billed. Skipping it would bill
+					// this subject never again; it starts over from here.
+					logErrf("traffic-aggregator", "%s holds %q, not a count; restarted from the current %d", seenKey, raw, current)
+					a.redis.Set(ctx, seenKey, current, trafficSeenTTL)
+					continue
+				}
+			}
 			delta := current - last
 			if delta < 0 {
 				delta = current // counter reset (key expired then recreated)
@@ -398,6 +417,9 @@ func (a *TrafficAggregator) collectRegions(
 	for region, current := range regionBytes(fields) {
 		seenKey := trafficSeenPrefix + kind + ":" + subject + trafficRegionSeenSep + region
 		last, err := a.redis.Get(ctx, seenKey).Int64()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			continue
+		}
 		missing := err != nil
 		if missing && !subjectKnown && hadTotalSeen {
 			// Seeding this subject's history away, once. Only reachable while

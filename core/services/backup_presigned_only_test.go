@@ -66,6 +66,14 @@ func (f *transferFakeStore) StartBackupRunIfIdle(r *models.BackupRun) (int, bool
 	return id, err == nil, err
 }
 
+// ListBackupRuns answers only the newest run of a job, as the scheduler asks.
+func (f *transferFakeStore) ListBackupRuns(jobID, _ int) ([]models.BackupRun, error) {
+	if f.busy && !f.busyOther {
+		return []models.BackupRun{{JobID: jobID, Status: "running"}}, nil
+	}
+	return []models.BackupRun{{JobID: jobID, Status: "success"}}, nil
+}
+
 func (f *transferFakeStore) SetBackupRunManifest(int, string) error        { return nil }
 func (f *transferFakeStore) ListServerModSubServers(int) ([]string, error) { return nil, nil }
 func (f *transferFakeStore) GetSubServerInstall(int, string) (*models.SubServerInstall, error) {

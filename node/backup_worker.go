@@ -213,6 +213,16 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		return
 	}
 	defer backupsInFlight.leave(key)
+	// A different run of the same server: the first to finish would switch
+	// world saving back on under this one's archive. Core starts one per
+	// server; this is a node that queued several while it was away.
+	serverKey := "server:" + cmd.ServerUUID
+	if !backupsInFlight.enter(serverKey) {
+		log.Printf("backup_run: run %s refused, another backup of server %s is running", key, cmd.ServerUUID)
+		reportBackup(ctx, rdb, cmd.RunID, "failed", "another backup of this server was still running on the node", 0)
+		return
+	}
+	defer backupsInFlight.leave(serverKey)
 
 	started := time.Now()
 	storage := storageInfo{}

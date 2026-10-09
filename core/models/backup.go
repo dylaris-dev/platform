@@ -97,6 +97,8 @@ type BackupRun struct {
 // the server it restores: the node's busy key is named by its UUID, and its
 // node decides whether the restore can still run.
 type AbandonedBackupRestore struct {
+	// NodeStatus is the node's own online/offline, from its heartbeat.
+	NodeStatus  string
 	ID          int
 	ServerUUID  string
 	NodeID      int

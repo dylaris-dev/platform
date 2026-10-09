@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Traffic usage can no longer be counted twice after a brief internal error.** Nothing to do
+  on your side.
+- **Two backup jobs of one server no longer run at the same time**, which could leave a world
+  archive inconsistent; the second waits for the first. Update your node. `node`
+
 ## 2026.10.09.8
 
 ### Features

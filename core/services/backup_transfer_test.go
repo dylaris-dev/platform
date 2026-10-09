@@ -49,9 +49,11 @@ type transferFakeStore struct {
 	usedBytes int64
 	// busy makes StartBackupRunIfIdle answer "a run is in progress";
 	// advanced counts SetBackupJobScheduled calls.
-	busy     bool
-	advanced int
-	touches  int
+	busy bool
+	// busyOther says the run in progress belongs to another job of the server.
+	busyOther bool
+	advanced  int
+	touches   int
 }
 
 func newTransferFakeStore() *transferFakeStore {

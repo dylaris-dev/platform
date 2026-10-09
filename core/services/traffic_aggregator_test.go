@@ -819,3 +819,48 @@ func TestTheBreakdownSeparatesTheTwoProducts(t *testing.T) {
 		t.Errorf("the billing total is %+v, want one call of 8000000000 edge bytes", fs.addUsageCalls)
 	}
 }
+
+// Only a missing marker is zero. A marker that could not be read was taken as
+// 0, which billed the counter's whole life into this month a second time.
+func TestTrafficAggregator_UnreadableSeenIsNotZero(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners:      map[string]string{"srv-uuid-1": "tenant-a"},
+		backupBytes: map[string]int64{},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx": "900000"})
+	// A read that fails: the marker is not a string.
+	mustHSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", map[string]interface{}{"x": "1"})
+
+	agg.runOnce(ctx)
+
+	if len(fs.addUsageCalls) != 0 {
+		t.Fatalf("billed %+v from a marker that could not be read", fs.addUsageCalls)
+	}
+}
+
+// A marker that is not a count says nothing about what was billed. Skipping it
+// every tick billed the subject never again; it starts over from the counter.
+func TestTrafficAggregator_ACorruptSeenStartsOver(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners:      map[string]string{"srv-uuid-1": "tenant-a"},
+		backupBytes: map[string]int64{},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx": "900000"})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", "not-a-number")
+	agg.runOnce(ctx)
+	if len(fs.addUsageCalls) != 0 {
+		t.Fatalf("billed %+v from a corrupt marker", fs.addUsageCalls)
+	}
+
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx": "900100"})
+	agg.runOnce(ctx)
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 100 {
+		t.Fatalf("addUsageCalls = %+v, want the 100 bytes since", fs.addUsageCalls)
+	}
+}

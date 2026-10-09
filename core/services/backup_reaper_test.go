@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	nodegrpc "dylaris-core/grpc"
 	"encoding/json"
 	"errors"
 	"os"
@@ -38,6 +39,7 @@ type reaperFakeStore struct {
 	storage        *models.BackupStorage
 	defaultStorage *models.BackupStorage
 	updateErr      error
+	serverNode     int
 
 	// Captured for assertions.
 	gotCutoff  time.Time
@@ -71,7 +73,7 @@ func (f *reaperFakeStore) GetBackupJob(int) (*models.BackupJob, error) { return 
 // who the server belongs to. A bare server with no owner is the platform case,
 // which is what these tests are about.
 func (f *reaperFakeStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id}, nil
+	return &models.Server{ID: id, NodeID: f.serverNode}, nil
 }
 
 func (f *reaperFakeStore) GetUserDefaultBackupStorage(string) (*models.BackupStorage, error) {
@@ -296,5 +298,58 @@ func TestReapAbandonedRuns_SurvivesAListFailure(t *testing.T) {
 
 	if len(fs.updates) != 0 {
 		t.Fatalf("updates = %d, want 0 when the list failed", len(fs.updates))
+	}
+}
+
+// An offline node still holds the command and runs it on return. Closing the
+// run freed the server for another every six hours, and the node came back to
+// a queue of them for one server.
+func TestReapAbandonedRuns_WaitsForTheServersNodeToConnect(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name      string
+		connected bool
+		want      int
+	}{{"node offline", false, 0}, {"node connected", true, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &reaperFakeStore{
+				abandoned:  []models.BackupRun{{ID: 1, JobID: 7, StartedAt: now.Add(-8 * time.Hour)}},
+				job:        jobWithStorage(1),
+				storage:    localStorageAt(t, t.TempDir()),
+				serverNode: 42,
+			}
+			b := newReaper(fs)
+			var asked int
+			b.nodeConnected = func(id int) bool { asked = id; return tc.connected }
+			b.reapAbandonedRuns(context.Background(), now)
+			if len(fs.updates) != tc.want {
+				t.Fatalf("closed %d runs, want %d", len(fs.updates), tc.want)
+			}
+			if asked != 42 {
+				t.Fatalf("asked about node %d, want the server's node 42", asked)
+			}
+		})
+	}
+}
+
+// The registry knows only the nodes connected to the replica that leads; the
+// heartbeat status is the cluster's.
+func TestNodeReachable(t *testing.T) {
+	reg := nodegrpc.NewRegistry()
+	for _, tc := range []struct {
+		name    string
+		b       *BackupScheduler
+		status  string
+		unknown bool
+		want    bool
+	}{
+		{"online by heartbeat, not on this replica", &BackupScheduler{registry: reg}, "online", false, true},
+		{"offline and not on this replica", &BackupScheduler{registry: reg}, "offline", true, false},
+		{"no registry, offline, unknown reaps", &BackupScheduler{}, "offline", true, true},
+		{"no registry, offline, unknown waits", &BackupScheduler{}, "offline", false, false},
+	} {
+		if got := tc.b.nodeReachable(7, tc.status, tc.unknown); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

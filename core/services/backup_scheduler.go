@@ -477,20 +477,13 @@ func (b *BackupScheduler) tick(ctx context.Context) {
 // so closing that row would show "failed" and then replace the world anyway;
 // it stays queued, and the panel says it resumes (restore_stall.go).
 func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Time) {
-	connected := b.nodeConnected
-	if connected == nil && b.registry != nil {
-		connected = b.registry.IsConnected
-	}
-	if connected == nil {
-		return
-	}
 	restores, err := b.store.ListAbandonedBackupRestores(now.Add(-backupRunAbandonedAfter), backupReapBatchSize)
 	if err != nil {
 		logErrf("backup-scheduler", "listing abandoned restores failed: %v", err)
 		return
 	}
 	for _, r := range restores {
-		if !connected(r.NodeID) {
+		if !b.nodeReachable(r.NodeID, r.NodeStatus, false) {
 			continue
 		}
 		busy, err := b.redis.Exists(ctx, fmt.Sprintf("dylaris:server:%s:node_busy", r.ServerUUID)).Result()
@@ -564,6 +557,12 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 			b.closeCompletedUnreportedRun(ctx, run, now)
 			continue
 		}
+		// A node that is offline still holds the command and runs it when it
+		// returns. Closing the run freed the server for the next one, so a node
+		// away for days came back to a queue of them, worked off side by side.
+		if !b.runNodeConnected(run) {
+			continue
+		}
 		var size int64
 		var detail string
 		if run.UploadID != "" {
@@ -585,6 +584,40 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 			b.discardRunUpload(ctx, run.ID, job)
 		}
 	}
+}
+
+// nodeReachable reports whether a node is consuming its command stream: its
+// own heartbeat, which discovery turns into status for the whole cluster, or
+// a stream to this replica. The registry alone knows only the nodes connected
+// to the replica that happens to lead. unknown answers when there is no
+// registry to ask.
+func (b *BackupScheduler) nodeReachable(nodeID int, status string, unknown bool) bool {
+	if b.nodeConnected != nil {
+		return b.nodeConnected(nodeID)
+	}
+	if status == "online" {
+		return true
+	}
+	if b.registry == nil {
+		return unknown
+	}
+	return b.registry.IsConnected(nodeID)
+}
+
+// runNodeConnected reports whether the node of the run's server - where it
+// is now, so a server moved off a dead node is not held by it - is reachable.
+// Unknown counts as reachable: a run nobody may close blocks every backup of
+// its server.
+func (b *BackupScheduler) runNodeConnected(run models.BackupRun) bool {
+	job, err := b.store.GetBackupJob(run.JobID)
+	if err != nil || job == nil {
+		return true
+	}
+	srv, err := b.store.GetServerByID(job.ServerID)
+	if err != nil || srv == nil {
+		return true
+	}
+	return b.nodeReachable(srv.NodeID, srv.NodeStatus, true)
 }
 
 // closeCompletedUnreportedRun closes an object-storage run whose upload Core
@@ -775,16 +808,24 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	if err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
+	if !started {
+		// Another job of this server is running: tried again next tick. Two jobs
+		// due together would otherwise always lose to the same one, and the
+		// loser never ran.
+		if runs, err := b.store.ListBackupRuns(job.ID, 1); err != nil || len(runs) == 0 || runs[0].Status != "running" {
+			log.Printf("backup-scheduler: job %d waits, another backup of its server is in progress", job.ID)
+			return nil
+		}
+		b.advanceSchedule(job)
+		log.Printf("backup-scheduler: job %d skipped, its previous run is still in progress", job.ID)
+		return nil
+	}
 	// Whatever happens to this run from here, the job is not due again until
 	// its next interval. Only a node too old for the storage advanced it
 	// before; any other lasting failure - a bucket that does not exist, a
 	// connection deleted under the job - made a new failed run every minute,
 	// and the 50-row run list pushed the good backups out of the panel.
 	defer b.advanceSchedule(job)
-	if !started {
-		log.Printf("backup-scheduler: job %d skipped, its previous run is still in progress", job.ID)
-		return nil
-	}
 
 	if b.queue == nil {
 		b.store.UpdateBackupRunStatus(runID, "failed", "queue unavailable", 0, "", time.Now())

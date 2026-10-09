@@ -471,15 +471,20 @@ func (s *PostgresStore) CreateBackupRun(r *models.BackupRun) (int, error) {
 	return id, err
 }
 
-// StartBackupRunIfIdle creates a running run for a job only while that job has
-// no run in progress, and reports whether it did. One statement, so two
-// triggers at the same moment cannot both pass a check made beforehand.
+// StartBackupRunIfIdle creates a running run for a job only while no job of
+// the same SERVER has a run in progress, and reports whether it did. Per job,
+// a "full" and a "world" job due together ran side by side, and the first to
+// finish switched world saving back on under the other's archive. One
+// statement, so a check made beforehand cannot be overtaken.
 func (s *PostgresStore) StartBackupRunIfIdle(r *models.BackupRun) (int, bool, error) {
 	var id int
 	err := s.db.QueryRow(
 		`INSERT INTO backup_runs (job_id, status, storage_key, storage_id)
 		 SELECT $1, $2, $3, $4
-		 WHERE NOT EXISTS (SELECT 1 FROM backup_runs WHERE job_id = $1 AND status = 'running')
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM backup_runs r JOIN backup_jobs j ON j.id = r.job_id
+		   WHERE r.status = 'running'
+		     AND j.server_id = (SELECT server_id FROM backup_jobs WHERE id = $1))
 		 RETURNING id`,
 		r.JobID, r.Status, r.StorageKey, nullableInt(r.StorageID),
 	).Scan(&id)
@@ -575,9 +580,13 @@ func (s *PostgresStore) ListAbandonedBackupRuns(quietSince time.Time, limit int)
 		limit = 50
 	}
 	rows, err := s.db.Query(
+		// Runs on a node that is offline come last: the reaper leaves them to
+		// wait, and listed first they filled every batch and held back the rest.
 		`SELECT `+backupRunCols+` FROM backup_runs
 		 WHERE status = 'running' AND GREATEST(started_at, transfer_activity_at) < $1
-		 ORDER BY started_at ASC
+		 ORDER BY EXISTS (
+		   SELECT 1 FROM backup_jobs j JOIN servers sv ON sv.id = j.server_id JOIN nodes n ON n.id = sv.node_id
+		   WHERE j.id = backup_runs.job_id AND n.status <> 'online'), started_at ASC
 		 LIMIT $2`,
 		quietSince, limit,
 	)
@@ -741,10 +750,11 @@ func (s *PostgresStore) UpdateBackupRestoreStatus(id int, status, errorMsg strin
 
 func (s *PostgresStore) ListAbandonedBackupRestores(requestedBefore time.Time, limit int) ([]models.AbandonedBackupRestore, error) {
 	rows, err := s.db.Query(
-		`SELECT br.id, sv.uuid, sv.node_id, br.requested_at FROM backup_restores br
+		`SELECT br.id, sv.uuid, sv.node_id, COALESCE(n.status, ''), br.requested_at FROM backup_restores br
 		 JOIN servers sv ON sv.id = br.server_id
+		 LEFT JOIN nodes n ON n.id = sv.node_id
 		 WHERE br.status IN ('queued', 'running') AND br.requested_at < $1
-		 ORDER BY br.requested_at ASC
+		 ORDER BY (n.status = 'online') IS NOT TRUE, br.requested_at ASC
 		 LIMIT $2`,
 		requestedBefore, limit,
 	)
@@ -755,7 +765,7 @@ func (s *PostgresStore) ListAbandonedBackupRestores(requestedBefore time.Time, l
 	var out []models.AbandonedBackupRestore
 	for rows.Next() {
 		var r models.AbandonedBackupRestore
-		if err := rows.Scan(&r.ID, &r.ServerUUID, &r.NodeID, &r.RequestedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.ServerUUID, &r.NodeID, &r.NodeStatus, &r.RequestedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

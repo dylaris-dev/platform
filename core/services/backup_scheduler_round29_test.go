@@ -31,6 +31,27 @@ func TestScheduledRunWaitsForTheJobsRunInProgress(t *testing.T) {
 	}
 }
 
+// Two jobs of one server due together ran side by side; now the second waits.
+// Advancing it a whole interval made the same job lose every time, so it is
+// tried again next tick instead.
+func TestAJobWaitsForAnotherJobOfItsServer(t *testing.T) {
+	st := newTransferFakeStore()
+	st.storage = ownedConnectionStorage()
+	st.busy, st.busyOther = true, true
+	rdb := heartbeatRedis(t, map[string]string{"node-hosting": presignedMultipartSince})
+	b := transferScheduler(st, &fakeMultipartStorage{}, rdb)
+
+	if err := b.dispatch(context.Background(), models.BackupJob{ID: 10, ServerID: 100, Schedule: "every 6h"}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if cmds := dispatchedCommands(t, rdb, "node-hosting"); len(cmds) != 0 {
+		t.Fatalf("a second backup of the server reached the node: %v", cmds)
+	}
+	if st.advanced != 0 {
+		t.Fatalf("schedule advanced %d times; the job would skip its whole interval", st.advanced)
+	}
+}
+
 // A storage Core could not open failed the run and left the job due, so every
 // one-minute tick made another failed run until they pushed the good backups
 // out of the 50-row list.
