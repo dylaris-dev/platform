@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Parallel SFTP uploads share one server's disk headroom.** Each open file used to get the
+  whole of it, so many at once wrote far past the limit. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.6
 
 ### Features

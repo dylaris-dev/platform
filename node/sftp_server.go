@@ -814,18 +814,23 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 			baseline = st.Size()
 		}
 	}
-	lim := sftpWriteLimits(context.Background(), v.rdb, v.serverUUIDForPath(r.Filepath), v.username)
-	return &meteredSFTPWriter{f: f, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
+	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, v.username)
+	w := &meteredSFTPWriter{f: f, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
 		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: v.pending,
-		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write })}, nil
+		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write })}
+	if lim.disk >= 0 {
+		w.srv = sftpServerInflight(ref.UUID)
+	}
+	return w, nil
 }
 
-// serverUUIDForPath returns the server UUID a virtual path targets, or "" for the
-// virtual root / an unknown server name.
-func (v *virtualFS) serverUUIDForPath(path string) string {
-	path = filepath.ToSlash(filepath.Clean("/" + path))
-	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
-	return v.current().nameToRef[parts[0]].UUID
+// sftpInflight is, per server, what open SFTP handles have written and not
+// yet closed (uuid -> *atomic.Int64).
+var sftpInflight sync.Map
+
+func sftpServerInflight(uuid string) *atomic.Int64 {
+	c, _ := sftpInflight.LoadOrStore(uuid, new(atomic.Int64))
+	return c.(*atomic.Int64)
 }
 
 // sftpLimits are the three upload limits apart, because they count different
@@ -881,6 +886,11 @@ type meteredSFTPWriter struct {
 	baseline, maxEnd int64
 	rdb              *redis.Client
 	username         string
+	// srv is what every open SFTP handle is writing into this server, held
+	// against ceil: each handle had the whole headroom, so twenty at once wrote
+	// twenty times past the limit. Not shared with copies: those measure the
+	// disk live, which already holds these bytes. nil = no disk limit.
+	srv *atomic.Int64
 	// pending is the account's added-but-unbooked bytes across every open
 	// handle. Usage is booked on close, so twenty handles opened at once each
 	// had the whole remaining daily quota. nil = this handle alone.
@@ -912,8 +922,14 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 	if m.fileCap != nil && end > *m.fileCap {
 		return 0, fmt.Errorf("SFTP write refused: per-upload size limit exceeded")
 	}
-	if m.ceil >= 0 && after > m.ceil {
-		return 0, fmt.Errorf("SFTP write refused: %s exceeded", m.reason)
+	if m.ceil >= 0 {
+		others := int64(0)
+		if m.srv != nil {
+			others = m.srv.Load() - before
+		}
+		if others+after > m.ceil {
+			return 0, fmt.Errorf("SFTP write refused: %s exceeded", m.reason)
+		}
 	}
 	if m.dailyCap != nil {
 		others := int64(0)
@@ -930,6 +946,9 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 		if m.pending != nil {
 			m.pending.Add(m.added() - before)
 		}
+		if m.srv != nil {
+			m.srv.Add(m.added() - before)
+		}
 	}
 	return n, err
 }
@@ -940,6 +959,9 @@ func (m *meteredSFTPWriter) Close() error {
 	quota.RecordDailyUsage(context.Background(), m.rdb, m.username, m.added())
 	if m.pending != nil {
 		m.pending.Add(-m.added())
+	}
+	if m.srv != nil {
+		m.srv.Add(-m.added())
 	}
 	return m.f.Close()
 }
