@@ -890,6 +890,10 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
 
+	var prior int64
+	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
+		prior = st.Size()
+	}
 	if err := root.WriteFile(name, []byte(req.Content), 0644); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
@@ -898,6 +902,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	// container's, so nothing fixed it later either.
 	chownForMCIn(root, name)
 	s.recordBeamDailyUsage(ctx, username, size)
+	noteDiskWrite(ctx, s.rdb, serverUUID, size-prior)
 
 	s.auditBeam(ctx, serverUUID, "write", req.Path)
 	return &pb.BeamOpResp{Success: true, Message: "saved"}, nil
@@ -1362,6 +1367,10 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		// Close before rename so Windows doesn't reject (no-op on Linux).
 		tmpFile.Close()
 		tmpFile = nil // skip the defer's removal — rename consumed it
+		var prior int64
+		if st, err := upRoot.Lstat(destName); err == nil && st.Mode().IsRegular() {
+			prior = st.Size()
+		}
 		if err := upRoot.Rename(tmpName, destName); err != nil {
 			upRoot.Remove(tmpName)
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
@@ -1370,6 +1379,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		// on-disk size, so a resumed multi-session upload is counted once.
 		if fi, statErr := upRoot.Stat(destName); statErr == nil {
 			s.recordBeamDailyUsage(ctx, username, fi.Size())
+			noteDiskWrite(ctx, s.rdb, serverUUID, fi.Size()-prior)
 		}
 	}
 

@@ -309,7 +309,6 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	liveKey := fmt.Sprintf("dylaris:server:%s:stats:live", uuid)
 	bufferKey := fmt.Sprintf("dylaris:server:%s:stats:buffer", uuid)
 	watchKey := fmt.Sprintf("dylaris:server:%s:stats:watching", uuid)
-	diskKey := fmt.Sprintf("dylaris:server:%s:stats:disk", uuid)
 	statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
 	// Live heap size from the log-shipper's GC log parser. May be absent
 	// (no GC yet, Java 8 image, etc.) -- we treat that as "no value" and
@@ -363,10 +362,9 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 
 	// Initial disk scan
 	go func() {
-		usage := getDiskUsage(ctx, rdb, uuid, quota)
-		if usage != nil {
-			data, _ := json.Marshal(usage)
-			rdb.Set(ctx, diskKey, string(data), 10*time.Minute)
+		measuredFrom := time.Now()
+		if usage := getDiskUsage(ctx, rdb, uuid, quota); usage != nil {
+			publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, 10*time.Minute)
 		}
 	}()
 
@@ -477,10 +475,10 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			}()
 		case <-diskTicker.C:
 			go func() {
+				measuredFrom := time.Now()
 				usage := getDiskUsage(ctx, rdb, uuid, quota)
 				if usage != nil {
-					data, _ := json.Marshal(usage)
-					rdb.Set(ctx, diskKey, string(data), 10*time.Minute)
+					publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, 10*time.Minute)
 
 					if usage.Warning == "full" {
 						// The marker, not the status key, decides whether this server is
@@ -675,12 +673,12 @@ func publishStoppedDiskUsage(ctx context.Context, rdb *redis.Client, quota *Quot
 		if running[uuid] {
 			continue
 		}
+		measuredFrom := time.Now()
 		usage := getDiskUsage(ctx, rdb, uuid, quota)
 		if usage == nil {
 			continue
 		}
-		data, _ := json.Marshal(usage)
-		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", uuid), string(data), stoppedDiskUsageTTL)
+		publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, stoppedDiskUsageTTL)
 	}
 }
 

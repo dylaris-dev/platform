@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"dylaris-pkg/fileperms"
 
@@ -30,7 +31,7 @@ func TestSFTPHandlesShareTheServersDiskHeadroom(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(sm.Paths()[0], uuid), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	rdb.Set(context.Background(), "dylaris:server:"+uuid+":stats:disk", `{"total":0,"limit":100}`, 0)
+	rdb.Set(context.Background(), "dylaris:server:"+uuid+":stats:disk", `{"total":0,"limit":100}`, 10*time.Minute)
 	refs := []sftpServerRef{{UUID: uuid, Name: "s", Perms: fileperms.Full()}}
 	open := func(user, name string) io.WriterAt {
 		w, err := newVirtualFS(refs, sm, rdb, user).Filewrite(&sftp.Request{Method: "Put", Filepath: "s/" + name, Flags: 0x02 | 0x08 | 0x10})
@@ -63,9 +64,15 @@ func TestSFTPHandlesShareTheServersDiskHeadroom(t *testing.T) {
 	}
 	closeW(a)
 	closeW(b)
+	// Closed, the bytes move into the gauge (round 92) and out of the count.
+	if total, _ := serverDiskGauge(context.Background(), rdb, uuid); total != 100 {
+		t.Errorf("gauge after every handle closed = %d, want 100", total)
+	}
+	t.Cleanup(func() { unmeasured.Lock(); delete(unmeasured.m, uuid); unmeasured.Unlock() })
+	rdb.Set(context.Background(), "dylaris:server:"+uuid+":stats:disk", `{"total":0,"limit":200}`, 10*time.Minute)
 	d := open("dave", "d")
 	if _, err := d.WriteAt(make([]byte, 100), 0); err != nil {
-		t.Errorf("closed handles still held the headroom: %v", err)
+		t.Errorf("a fresh handle was refused the headroom that is left: %v", err)
 	}
 	closeW(d)
 	if n := sftpServerInflight(uuid).Load(); n != 0 {

@@ -788,6 +788,12 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if pf.Excl {
 		flags |= os.O_EXCL
 	}
+	// What the file held before: a truncating overwrite frees it, so only the
+	// growth past it is new on the disk.
+	var prior int64
+	if st, err := root.Lstat(leaf); err == nil && st.Mode().IsRegular() {
+		prior = st.Size()
+	}
 	f, err := root.OpenFile(leaf, flags, 0644)
 	if err != nil {
 		return nil, err
@@ -814,12 +820,15 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 			baseline = st.Size()
 		}
 	}
+	// Taken before the gauge is read: a write noted in between is then counted
+	// twice rather than not at all.
+	noted0 := notedFor(ref.UUID).Load()
 	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, v.username)
-	w := &meteredSFTPWriter{f: f, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
+	w := &meteredSFTPWriter{f: f, prior: prior, noted0: noted0, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
 		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: v.pending,
 		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write })}
 	if lim.disk >= 0 {
-		w.srv = sftpServerInflight(ref.UUID)
+		w.srv, w.uuid = sftpServerInflight(ref.UUID), ref.UUID
 	}
 	return w, nil
 }
@@ -890,7 +899,11 @@ type meteredSFTPWriter struct {
 	// against ceil: each handle had the whole headroom, so twenty at once wrote
 	// twenty times past the limit. Not shared with copies: those measure the
 	// disk live, which already holds these bytes. nil = no disk limit.
-	srv *atomic.Int64
+	srv  *atomic.Int64
+	uuid string
+	// prior is the file's size before this open; noted0 the server's noted
+	// bytes when the ceiling was read, so what was noted since counts too.
+	prior, noted0 int64
 	// pending is the account's added-but-unbooked bytes across every open
 	// handle. Usage is booked on close, so twenty handles opened at once each
 	// had the whole remaining daily quota. nil = this handle alone.
@@ -925,7 +938,7 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 	if m.ceil >= 0 {
 		others := int64(0)
 		if m.srv != nil {
-			others = m.srv.Load() - before
+			others = m.srv.Load() - before + notedFor(m.uuid).Load() - m.noted0
 		}
 		if others+after > m.ceil {
 			return 0, fmt.Errorf("SFTP write refused: %s exceeded", m.reason)
@@ -961,6 +974,9 @@ func (m *meteredSFTPWriter) Close() error {
 		m.pending.Add(-m.added())
 	}
 	if m.srv != nil {
+		// Into the gauge before out of the count, so no check in between sees
+		// neither.
+		noteDiskWrite(context.Background(), m.rdb, m.uuid, m.maxEnd-m.prior)
 		m.srv.Add(-m.added())
 	}
 	return m.f.Close()

@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Uploading file after file can no longer go past a server's disk limit** on your node; each
+  finished upload now counts right away. Update your node. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.7
 
 ### Features

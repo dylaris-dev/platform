@@ -709,19 +709,28 @@ func (h *StreamHandler) createUploadTemp(serverUUID, reqPath string) (*os.File, 
 }
 
 // commitUpload moves a finished staging file onto the requested path.
-func (h *StreamHandler) commitUpload(serverUUID, reqPath, tempName string) error {
+// commitUpload returns what the server grew by: the upload less the file it
+// replaced.
+func (h *StreamHandler) commitUpload(serverUUID, reqPath, tempName string) (int64, error) {
 	if isProtectedFile(reqPath) {
-		return fmt.Errorf("cannot modify protected file")
+		return 0, fmt.Errorf("cannot modify protected file")
 	}
 	root, name, err := h.jailForWrite(serverUUID, reqPath)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer root.Close()
 	if err := mkdirParentIn(root, name); err != nil {
-		return err
+		return 0, err
 	}
-	return root.Rename(tempName, name)
+	var grown int64
+	if st, err := root.Lstat(tempName); err == nil {
+		grown = st.Size()
+	}
+	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
+		grown -= st.Size()
+	}
+	return grown, root.Rename(tempName, name)
 }
 
 // removeUploadTemp discards a staging file that will not be committed. The

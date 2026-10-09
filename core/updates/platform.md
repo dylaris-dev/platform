@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Uploads one after another no longer each get a server's full disk headroom.** A finished
+  upload now counts at once instead of at the next disk measurement, minutes later. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.7
 
 ### Features

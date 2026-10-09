@@ -498,7 +498,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				pw.tempFile.Truncate(done.TotalBytes)
 			}
 			pw.tempFile.Close()
-			if err := m.handler.commitUpload(pw.serverUUID, pw.path, pw.tempName); err != nil {
+			if grown, err := m.handler.commitUpload(pw.serverUUID, pw.path, pw.tempName); err != nil {
 				log.Printf("gRPC Mesh: Move file failed (request_id=%s): %v", msg.RequestId, err)
 				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
 				if errors.Is(err, syscall.EDQUOT) {
@@ -507,6 +507,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 					cc.send(errorMsg(msg.RequestId, 500, err.Error()))
 				}
 			} else {
+				noteDiskWrite(context.Background(), m.rdb, pw.serverUUID, grown)
 				cc.send(&pb.NodeMessage{
 					RequestId: msg.RequestId,
 					Payload:   &pb.NodeMessage_Result{Result: &pb.OpResult{Message: "written"}},

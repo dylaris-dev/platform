@@ -505,8 +505,9 @@ type writeBudget struct {
 	dirs    map[string]bool
 	// srv is the inflight count of the server written into, nil where its
 	// limit does not bound this write; err is the bound that set left.
-	srv *atomic.Int64
-	err error
+	srv  *atomic.Int64
+	uuid string
+	err  error
 }
 
 // errServerDiskLimit ends a tenant's copy or install that would take the
@@ -565,7 +566,7 @@ func newWriteBudget(dir string) *writeBudget {
 	b := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
 	if uuid, left, ok := serverDiskHeadroom(dir); ok {
 		c, _ := serverInflight.LoadOrStore(uuid, new(atomic.Int64))
-		b.srv = c.(*atomic.Int64)
+		b.srv, b.uuid = c.(*atomic.Int64), uuid
 		if left -= b.srv.Load(); left < b.left {
 			b.left, b.err = left, errServerDiskLimit
 		}
@@ -577,6 +578,9 @@ func (b *writeBudget) release() {
 	inflightWrites.Add(-b.used)
 	if b.srv != nil {
 		b.srv.Add(-b.used)
+		if b.used > 0 {
+			remeasureServer(b.uuid)
+		}
 	}
 	b.used = 0
 }
