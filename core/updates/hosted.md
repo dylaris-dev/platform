@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Copying, unpacking and installing files now stops at each server's disk limit** on your node,
+  not only at its free space. Update your node. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.5
 
 ### Features

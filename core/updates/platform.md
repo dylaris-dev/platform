@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Copies, archive extraction, imports and modpack installs now stop at the server's own disk
+  limit** on nodes without project quotas. Before, only the node's free space bounded them. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09.5
 
 ### Features

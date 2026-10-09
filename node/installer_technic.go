@@ -104,7 +104,13 @@ func installTechnic(destDir string, cfg InstallerConfig) error {
 	}
 	defer releaseDL()
 
+	// The stage is named /proc/self/fd/N, which belongs to no server, so the
+	// extractions into it are bounded by the node alone; the server's disk
+	// limit is charged here, once, against the sizes the archives declare.
 	budget := int64(technicUnpackMax)
+	if _, left, ok := serverDiskHeadroom(destDir); ok && left < budget {
+		budget = left
+	}
 	if cfg.Variant == "client-solder" {
 		for i, m := range cfg.TechnicMods {
 			if err := fetchTechnicArchive(m.URL, m.MD5, filepath.Join(dl, fmt.Sprintf("%d.zip", i)), technicModMax, stage, &budget); err != nil {
@@ -209,7 +215,7 @@ func spendUnpackBudget(zipPath string, budget *int64) error {
 	for _, f := range zr.File {
 		size := int64(f.UncompressedSize64)
 		if size < 0 || size > *budget {
-			return errors.New("the pack unpacks to more than the node allows for one install")
+			return errors.New("the pack unpacks to more than this install may write: the node's cap for one install or the server's disk limit")
 		}
 		*budget -= size
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -333,21 +335,24 @@ func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
 		return err
 	}
 	defer dst.Close()
-	return copyWalkIn(src, srcName, dst, ".", true)
+	// The budget is judged on rootDir: dst is named /proc/self/fd/N, which
+	// belongs to no server, so its disk limit never applied.
+	return copyWalkIn(src, srcName, dst, ".", true, rootDir)
 }
 
 // copyWalkIn copies the tree at srcName in src to dstName in dst. With
 // forTenant set it is a DUPLICATION for a user: protected entries are skipped
 // and everything written is handed to the container's uid (see copyDir). Without
 // it, it is a verbatim MOVE of a whole server (see copyTree).
-func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool) error {
+// budgetDir is the directory a tenant copy is charged to.
+func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool, budgetDir string) error {
 	var deny map[fileIdentity]bool
 	var budget *writeBudget
 	if forTenant {
 		deny = nodeOwnedIdentities(src, true)
 		// A copy had no bound at all: a member duplicating a large world
 		// again and again filled the node's disk for every server on it.
-		budget = newWriteBudget(dst.Name())
+		budget = newWriteBudget(budgetDir)
 		defer budget.release()
 	}
 	return walkRoot(src, srcName, func(name string, info fs.FileInfo) error {
@@ -481,7 +486,7 @@ func copyTreeAt(src, dst string, forTenant bool) error {
 		return err
 	}
 	defer dstRoot.Close()
-	return copyWalkIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst), forTenant)
+	return copyWalkIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst), forTenant, dstRoot.Name())
 }
 
 // errUnpackBudget ends an extraction or copy that would fill the disk.
@@ -498,7 +503,15 @@ type writeBudget struct {
 	used    int64
 	entries int
 	dirs    map[string]bool
+	// srv is the inflight count of the server written into, nil where its
+	// limit does not bound this write; err is the bound that set left.
+	srv *atomic.Int64
+	err error
 }
+
+// errServerDiskLimit ends a tenant's copy or install that would take the
+// server past the disk it was given.
+var errServerDiskLimit = errors.New("this writes more than the server's disk limit leaves room for")
 
 // inflightWrites is what running budgets have written and not yet released.
 // Each budget measured the free space on its own, so four copies of a world
@@ -506,13 +519,65 @@ type writeBudget struct {
 // reserve.
 var inflightWrites atomic.Int64
 
-// newWriteBudget must be paired with release once the write is done.
+// serverInflight is inflightWrites per server (uuid -> *atomic.Int64).
+var serverInflight sync.Map
+
+// serverDiskHeadroom is what the server whose directory holds dir may still
+// write, measured now rather than read off the gauge: that one is up to five
+// minutes old, and an install right after its wipe would be refused for the
+// files it just removed. ok is false where nothing here bounds it: no server,
+// no limit, or a project quota the kernel enforces itself. A variable for tests.
+var serverDiskHeadroom = func(dir string) (uuid string, left int64, ok bool) {
+	sm := globalStorageMgr
+	if sm == nil {
+		return "", 0, false
+	}
+	uuid, serverDir := serverOfDir(sm.Paths(), dir)
+	if uuid == "" || globalQuotaSet.IsAvailableFor(uuid) {
+		return "", 0, false
+	}
+	limit := loadDiskLimit(context.Background(), sm.rdb, uuid) << 20
+	if limit <= 0 {
+		return "", 0, false
+	}
+	return uuid, limit - dirSize(serverDir), true
+}
+
+// serverOfDir names the server directory, among the storage paths, that holds
+// dir.
+func serverOfDir(bases []string, dir string) (uuid, serverDir string) {
+	for _, base := range bases {
+		rel, err := filepath.Rel(base, dir)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		uuid = strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
+		return uuid, filepath.Join(base, uuid)
+	}
+	return "", ""
+}
+
+// newWriteBudget must be paired with release once the write is done. Copies,
+// extractions and installs checked only the node's free space, so on a node
+// without project quotas a tenant wrote past its own disk limit in one go, as
+// often as it liked, until the next disk sweep stopped the server.
 func newWriteBudget(dir string) *writeBudget {
-	return &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}}
+	b := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+	if uuid, left, ok := serverDiskHeadroom(dir); ok {
+		c, _ := serverInflight.LoadOrStore(uuid, new(atomic.Int64))
+		b.srv = c.(*atomic.Int64)
+		if left -= b.srv.Load(); left < b.left {
+			b.left, b.err = left, errServerDiskLimit
+		}
+	}
+	return b
 }
 
 func (b *writeBudget) release() {
 	inflightWrites.Add(-b.used)
+	if b.srv != nil {
+		b.srv.Add(-b.used)
+	}
 	b.used = 0
 }
 
@@ -520,14 +585,20 @@ func (b *writeBudget) spend(n int64) bool {
 	b.left -= n
 	b.used += n
 	inflightWrites.Add(n)
+	if b.srv != nil {
+		b.srv.Add(n)
+	}
 	return b.left >= 0
 }
 
 // entry charges one created file or directory.
 func (b *writeBudget) entry() error {
 	b.entries++
-	if !b.spend(restoreEntryCost) || b.entries > maxRestoreEntries {
+	if b.entries > maxRestoreEntries {
 		return errUnpackBudget
+	}
+	if !b.spend(restoreEntryCost) {
+		return b.err
 	}
 	return nil
 }
@@ -560,7 +631,7 @@ func (w *writeBudgetReader) Read(p []byte) (int, error) {
 	if n > 0 && !w.b.spend(int64(n)) {
 		// Hand back only what fit: io.Copy writes a read's bytes before it
 		// looks at the error.
-		return max(n+int(w.b.left), 0), errUnpackBudget
+		return max(n+int(w.b.left), 0), w.b.err
 	}
 	return n, err
 }

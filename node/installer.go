@@ -509,7 +509,7 @@ func downloadImportGuarded(url, destPath string) error {
 	budget := newWriteBudget(filepath.Dir(destPath))
 	defer budget.release()
 	if budget.left <= 0 {
-		return errUnpackBudget
+		return budget.err
 	}
 	return downloadFileGuarded(url, destPath, budget.left)
 }

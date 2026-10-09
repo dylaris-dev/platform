@@ -146,7 +146,7 @@ func TestOnlyTheDuplicatingCopyHandsFilesOver(t *testing.T) {
 			".active_server and .dylaris-backups to the tenant's uid")
 	}
 
-	walk, ok := cutFunc(src, "func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool) error {")
+	walk, ok := cutFunc(src, "func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool, budgetDir string) error {")
 	if !ok {
 		t.Fatal("copyWalkIn is gone")
 	}

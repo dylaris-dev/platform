@@ -255,6 +255,8 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 	// pack that lies about them low still writes real bytes to the node's disk,
 	// and one that declares them negative used to walk the total backwards.
 	var totalBytes int64
+	budget := newWriteBudget(destDir)
+	defer budget.release()
 	for _, f := range idx.Files {
 		if env := f.Env["server"]; env == "unsupported" {
 			continue
@@ -267,6 +269,9 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 		}
 		if totalBytes > maxModpackTotalSize {
 			return fmt.Errorf("modpack exceeds %d byte cap", int64(maxModpackTotalSize))
+		}
+		if !budget.spend(n) {
+			return fmt.Errorf("file %s: %w", f.Path, budget.err)
 		}
 	}
 
