@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.2
+
+### Features
+- **Modpack server packs install from an upload,** such as a CurseForge "Server Pack" zip: the
+  node installs the Forge, NeoForge or Fabric version the pack declares. `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A server installer run stops after 30 minutes and keeps only the end of its output,**
+  so an installer that never finishes no longer holds a server in "installing". `node`
+
 ## 2026.10.09
 
 ### Features

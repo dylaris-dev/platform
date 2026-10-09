@@ -315,6 +315,9 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
             .then((d: UploadDetection | undefined) => {
                 if (!live || !d) return;
                 setUploadDetection(d);
+                // Installing picked software over a server pack only works with
+                // exactly the loader version it was made for; the pack names it.
+                if (d.serverPack) setUploadKeepJar(true);
                 if (!d.software || !UPLOAD_SOFTWARE.includes(d.software)) return;
                 uploadPrefillBuild.current = d.build;
                 setSoftware(d.software);
@@ -781,7 +784,7 @@ export default function SetupView({ server, onSetupComplete, libraryEnabled }: S
     // ---------- Shared props for install sections ----------
 
     const uploadSoftwareList = filteredSoftware.filter(s => UPLOAD_SOFTWARE.includes(s));
-    const uploadKeepAllowed = !uploadFile || !!uploadDetection?.launchable;
+    const uploadKeepAllowed = !uploadFile || !!uploadDetection?.launchable || !!uploadDetection?.serverPack;
     const uploadIncomplete = uploadNeedsSoftware && (
         uploadKeepJar
             ? !uploadKeepAllowed

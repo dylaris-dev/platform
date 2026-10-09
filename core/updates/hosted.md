@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.09.2
+
+### Features
+- **You can install a CurseForge modpack by uploading its "Server Pack" zip in server setup;**
+  the mod loader it needs is installed for it. On your own node, update it first. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.09
 
 ### Features

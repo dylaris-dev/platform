@@ -158,11 +158,9 @@ func installServer(serverDataPath, subServerName string, config InstallerConfig)
 		if config.Software == "" {
 			// Checked here rather than at the first start: an upload that only
 			// carries its jar under versions/ (Paper) or a launcher script used
-			// to install "successfully" and then fail every start.
-			if resolveLaunch(destDir).Mode == launchNone {
-				return nil, fmt.Errorf("the upload has no server jar in its top folder; choose the server software and version to install")
-			}
-			return nil, nil
+			// to install "successfully" and then fail every start. A modpack
+			// server pack gets the loader it declares installed.
+			return nil, makeUploadLaunchable(destDir, config)
 		}
 		return nil, installUploadSoftware(serverDataPath, subServerName, config)
 	case "backup":
@@ -352,6 +350,10 @@ func installNeoForge(dir, version, javaImage, serverUUID string) error {
 // looked for the JAR at /data/_forge-installer.jar — but the JAR lives in
 // <server-dir>/<sub-server>/_forge-installer.jar, so Java exited 1 with
 // no useful stderr (JVM "Unable to access jarfile" beats stdcopy to it).
+// installerTimeout bounds one installer run; a real Forge install downloads
+// its libraries in a few minutes.
+const installerTimeout = 30 * time.Minute
+
 func runJavaInstaller(serverUUID, subServerName, javaImage, installerJAR string, args ...string) error {
 	if dockerManager == nil {
 		return fmt.Errorf("docker manager unavailable — installer cannot run")
@@ -363,7 +365,11 @@ func runJavaInstaller(serverUUID, subServerName, javaImage, installerJAR string,
 		return fmt.Errorf("installer requires a sub-server name (cannot resolve mount path)")
 	}
 	cmd := append([]string{"java", "-jar", "/data/" + installerJAR}, args...)
-	logs, err := dockerManager.RunInstallerContainer(context.Background(), serverUUID, subServerName, javaImage, cmd)
+	// An installer jar can be the tenant's own (a server pack ships one), so
+	// one that never exits must not hold the server in "installing" forever.
+	ctx, cancel := context.WithTimeout(context.Background(), installerTimeout)
+	defer cancel()
+	logs, err := dockerManager.RunInstallerContainer(ctx, serverUUID, subServerName, javaImage, cmd)
 	if err != nil {
 		if logs != "" {
 			return fmt.Errorf("%w\n%s", err, logs)

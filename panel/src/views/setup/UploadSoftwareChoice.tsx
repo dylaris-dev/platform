@@ -21,6 +21,7 @@ interface UploadSoftwareChoiceProps {
  * has nothing the node can start.
  */
 export default function UploadSoftwareChoice({ detection, keepJar, onKeepJarChange, keepAllowed, versionChosen, children }: UploadSoftwareChoiceProps) {
+    const serverPack = !!detection?.serverPack;
     const hint = detection === null
         ? 'Reading the archive...'
         : detection?.software
@@ -49,11 +50,13 @@ export default function UploadSoftwareChoice({ detection, keepJar, onKeepJarChan
                         onClick={() => onKeepJarChange(true)}
                         className={tab(keepJar)}
                     >
-                        Keep my server jar
+                        {serverPack ? "Use the pack's loader" : 'Keep my server jar'}
                     </button>
                 </div>
                 <p className="text-xs text-(--base-06) mt-2">
-                    {keepJar
+                    {keepJar && serverPack
+                        ? 'Modpack server pack detected (for example a CurseForge "Server Pack"). The mod loader it declares is installed for it; pick the Java version the pack needs above.'
+                        : keepJar
                         ? 'Starts the server jar in the top folder of your upload, unchanged.'
                         : `${hint} It is installed over your files: worlds, plugins, mods and configs stay, server jars in the top folder and versions/ are replaced.`}
                 </p>

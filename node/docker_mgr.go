@@ -815,6 +815,7 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 	logReader, logErr := dm.cli.ContainerLogs(ctx, cid, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
+		Tail:       installerLogTail,
 	})
 	logs := ""
 	if logErr == nil {
@@ -1776,6 +1777,10 @@ func (dm *DockerManager) ReconcileRedisEnv() {
 
 // installerMemory bounds a Forge/NeoForge installer run.
 const installerMemory = 2 << 30
+
+// installerLogTail is what is kept of an installer's output for the error:
+// the failure is at the end, and the whole of it went into node memory.
+const installerLogTail = "200"
 
 // tenantTmpfsSize bounds each in-memory scratch directory of a tenant
 // container. tmpfs pages count against the container's memory limit.

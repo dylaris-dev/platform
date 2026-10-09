@@ -141,16 +141,8 @@ func installTechnic(destDir string, cfg InstallerConfig) error {
 		return err
 	}
 	log.Printf("Technic client pack: %s %s for Minecraft %s", loader.Kind, loader.Version, loader.MC)
-	switch loader.Kind {
-	case "forge":
-		err = technicInstallForge(destDir, loader.MC, loader.Version, cfg.JavaImage, cfg.ServerUUID)
-	case "neoforge":
-		err = technicInstallNeoForge(destDir, loader.Version, cfg.JavaImage, cfg.ServerUUID)
-	case "fabric":
-		err = technicInstallFabric(destDir, loader.MC, loader.Version)
-	}
-	if err != nil {
-		return fmt.Errorf("installing %s for the pack failed: %w", loader.Kind, err)
+	if err := installPackLoader(destDir, loader, cfg); err != nil {
+		return err
 	}
 	// bin/ holds the CLIENT loader; the server one was just installed.
 	if err := os.RemoveAll(filepath.Join(stage, "bin")); err != nil {
@@ -308,8 +300,10 @@ func makeTechnicServerLaunchable(dir string, cfg InstallerConfig) error {
 		log.Printf("Using %s as the server jar", others[0])
 		return os.Rename(filepath.Join(dir, others[0]), filepath.Join(dir, "server.jar"))
 	}
-	return errors.New("the server pack contains no server jar that can be started")
+	return errNoServerJarInPack
 }
+
+var errNoServerJarInPack = errors.New("the server pack contains no server jar that can be started")
 
 // rootJars splits the jars at the top of dir into installers and candidates,
 // leaving out the vanilla server jar that legacy Forge loads by name.

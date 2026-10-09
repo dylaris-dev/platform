@@ -74,6 +74,11 @@ export interface UploadDetection {
     build?: string;
     /** The upload starts as it is: a server jar in its top folder, or a Forge/NeoForge argfile. */
     launchable: boolean;
+    /**
+     * A modpack server pack (CurseForge, ServerPackCreator): mods plus a file
+     * declaring its loader, which the node installs (node/installer_serverpack.go).
+     */
+    serverPack?: boolean;
 }
 
 const highest = (vs: string[]) => [...vs].sort(compareVersionsDesc)[0];
@@ -107,6 +112,10 @@ export function detectUploadSoftware(rawNames: string[], subfolder = false): Upl
         root.some(n => /^(forge-.+|neoforge-.+|paper-.+|purpur-.+)\.jar$/.test(n) && !/-installer\.jar$/.test(n)) ||
         root.some(n => /^(fabric-server-launch|server)\.jar$/.test(n)) ||
         names.some(n => /^libraries\/net\/(minecraftforge\/forge|neoforged\/neoforge)\/[^/]+\/unix_args\.txt$/.test(n));
+
+    const serverPack = names.some(n => n.startsWith('mods/')) &&
+        root.some(n => /^(variables\.txt|manifest\.json|startserver\.sh|start\.sh|run\.sh|.+-installer\.jar)$/.test(n));
+    if (serverPack && !launchable) return { launchable, serverPack };
 
     const neo = captures(names, /^libraries\/net\/neoforged\/neoforge\/([^/]+)\//);
     if (neo.length) return { software: 'neoforge', build: highest(neo), launchable };

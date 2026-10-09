@@ -51,6 +51,20 @@ describe('detectUploadSoftware', () => {
             .toEqual({ software: 'vanilla', build: '1.21.1', launchable: false });
     });
 
+    // Cut down from real CurseForge server packs: mods plus the file that
+    // names the loader, which the node installs.
+    it('recognises a modpack server pack', () => {
+        for (const declares of ['variables.txt', 'manifest.json', 'startserver.sh', 'neoforge-21.1.251-installer.jar']) {
+            expect(detectUploadSoftware(['mods/a.jar', 'config/a.toml', declares])).toEqual({ launchable: false, serverPack: true });
+        }
+        // Inside its one top folder, as ATM9 ships it.
+        expect(detectUploadSoftware(['Server-Files-1.1.1/mods/a.jar', 'Server-Files-1.1.1/startserver.sh'], true).serverPack).toBe(true);
+        // A server that already starts is not offered the pack's loader.
+        expect(detectUploadSoftware(['mods/a.jar', 'variables.txt', 'fabric-server-launch.jar']).serverPack).toBeUndefined();
+        // A start script alone, without mods, is just a server.
+        expect(detectUploadSoftware(['start.sh', 'world/level.dat']).serverPack).toBeUndefined();
+    });
+
     it('nothing recognisable prefills nothing', () => {
         expect(detectUploadSoftware(['world/level.dat', 'server.properties'])).toEqual({ launchable: false });
     });

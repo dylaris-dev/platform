@@ -149,9 +149,32 @@ func TestRunInstallerContainerUsesTheInstallerNetwork(t *testing.T) {
 		"defer releaseNet()",
 		"hc.NetworkMode = netMode",
 		`dm.cli.ContainerCreate(ctx, cc, hc, nc, nil, "")`,
+		// A server pack's own installer runs here: its output is bounded.
+		"Tail:       installerLogTail,",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("RunInstallerContainer lost %q", want)
+		}
+	}
+}
+
+// An installer the tenant shipped (a server pack's) that never exits held the
+// server in "installing" with 2 GiB reserved, for good.
+func TestRunJavaInstallerIsBounded(t *testing.T) {
+	b, err := os.ReadFile("installer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	i := strings.Index(s, "func runJavaInstaller(")
+	j := strings.Index(s[i:], "\n}\n")
+	body := s[i : i+j]
+	for _, want := range []string{
+		"ctx, cancel := context.WithTimeout(context.Background(), installerTimeout)",
+		"dockerManager.RunInstallerContainer(ctx, ",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("runJavaInstaller lost %q", want)
 		}
 	}
 }
