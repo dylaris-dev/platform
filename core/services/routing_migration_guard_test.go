@@ -7,6 +7,8 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/store"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // routingFakeStore returns a fixed server list. GetServerByUUID is never reached
@@ -149,5 +151,19 @@ func TestRun_ReleasesTheClusterLock(t *testing.T) {
 	// And the lock being gone must actually allow a retry.
 	if _, err := m.Run(context.Background(), "gateway"); err != nil {
 		t.Errorf("a second Run should be possible once the lock is released, got: %v", err)
+	}
+	// Wait for that second run too: left running past the test it raced
+	// TestComputeNextRun_IsUTCRegardlessOfHostZone's write to time.Local under -race.
+	waitForLockRelease(t, rdb)
+}
+
+func waitForLockRelease(t *testing.T, rdb *redis.Client) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for rdb.Exists(context.Background(), routingMigrationLockKey).Val() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the migration goroutine did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
