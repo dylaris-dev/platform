@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11
+
+### Features
+- **Live "Players online now" in Infrastructure > Statistics**, refreshed every 5 seconds from what each
+  Minecraft server itself reports. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Player numbers are real players now**: peak and the players graph count what each server reports
+  (they counted gateway streams incl. server-list pings, so 7 instead of 5). Proxies are not counted
+  twice. `core` `panel`
+- **A server that stops answering pings reports 0 players** after three failed pings instead of its last
+  count forever. `node`
+- **"Player sessions carried" is now "Gateway connections"**: it counts every TCP connection incl. the
+  gateway's own health checks, which is why it read 519.8k. `core` `panel`
+- **Statistics no longer fail intermittently with "bind message supplies 4 parameters"** when the metrics
+  database sits behind a transaction pooler. `core`
+
 ## 2026.10.10.9
 
 ### Features

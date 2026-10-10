@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"dylaris-core/services"
 )
@@ -71,6 +72,29 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		"onlineEdges": onlineEdges,
 		"customers":   h.customerSummary(ctx, split),
 		"errors":      errors,
+	})
+}
+
+// GetPlayersOnline GET /api/infrastructure/players-online - players on every
+// server right now, as each server's own list ping reports it. Its own route
+// rather than a field on the overview because the panel polls it every few
+// seconds, and the overview is a dozen Redis reads it does not need that often.
+func (h *InfrastructureHandler) GetPlayersOnline(w http.ResponseWriter, r *http.Request) {
+	servers, err := h.state.Store.ListServers("")
+	if err != nil {
+		sendJSONError(w, "Could not list servers", http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	n, err := services.PlayersOnline(r.Context(), h.state.Redis, servers, now)
+	if err != nil {
+		sendJSONError(w, "Could not read live server stats", http.StatusServiceUnavailable)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":       true,
+		"playersOnline": n,
+		"at":            now.UTC(),
 	})
 }
 

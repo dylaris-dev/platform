@@ -35,7 +35,6 @@ export default function InfrastructureShell({ children }: { children: React.Reac
     const external = isKind(infra.nodes, 'external');
     const byon = isKind(infra.nodes, 'byon');
     const onlineNodes = infra.nodes.filter(n => n.status === 'online').length;
-    const totalPlayers = infra.edges.reduce((sum, e) => sum + (e.stats?.active_mc_streams ?? 0), 0);
 
     // Which tabs EXIST. This decides what is drawn, and deliberately not what is
     // reachable: each page guards itself, because with real URLs a hidden tab is
@@ -108,12 +107,15 @@ export default function InfrastructureShell({ children }: { children: React.Reac
                 </button>
             </div>
 
-            <div className={`grid gap-3 ${infra.gatewayDeployed ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-2'}`}>
+            <div className={`grid gap-3 ${infra.gatewayDeployed ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-2 md:grid-cols-3'}`}>
                 <StatCard label="Nodes" value={infra.nodes.length} icon={<Network size={16} />} />
                 <StatCard label="Online" value={onlineNodes} sub={`/ ${infra.nodes.length}`} icon={<Activity size={16} />} />
                 {infra.gatewayDeployed && <StatCard label="Edges" value={infra.edges.length} icon={<Server size={16} />} />}
                 {infra.gatewayDeployed && <StatCard label="Routes" value={infra.routeCount} icon={<Globe size={16} />} />}
-                {infra.gatewayDeployed && <StatCard label="Players Connected" value={totalPlayers} icon={<Users size={16} />} />}
+                {/* From each server's own list ping, not the edges: an edge stream is
+                    also every server-list ping and resume leftover, which is how
+                    this card used to count players that were not there. */}
+                <StatCard label="Players online" value={infra.playersOnline ?? '-'} icon={<Users size={16} />} />
             </div>
 
             <nav aria-label="Infrastructure sections" className="flex items-center gap-0.5 bg-(--base-02) border border-(--base-03) rounded-lg p-1 w-fit">

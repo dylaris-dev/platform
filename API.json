@@ -2222,6 +2222,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/infrastructure/players-online",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "players on every server right now, as each server's own list ping reports it.",
+      "handler": "InfrastructureHandler.GetPlayersOnline",
+      "group": "infrastructure",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/infrastructure/routing-migration",
       "auth": "session",
       "authorization": "topology.read",
@@ -5199,10 +5209,10 @@
     }
   ],
   "counts": {
-    "total": 522,
+    "total": 523,
     "byAuth": {
       "none": 31,
-      "session": 475,
+      "session": 476,
       "user API key": 10,
       "warp key": 6
     },
@@ -5222,7 +5232,7 @@
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,
-      "infrastructure": 2,
+      "infrastructure": 3,
       "library": 6,
       "maintenance": 1,
       "me": 30,

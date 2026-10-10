@@ -398,6 +398,7 @@ var requiredCaps = map[string]string{
 	"/api/gateway/sync":                      "topology.write",
 	"/api/gateway/errors":                    "topology.read",
 	"/api/infrastructure/overview":           "topology.read",
+	"/api/infrastructure/players-online":     "topology.read",
 	"/api/admin/metrics/catalog":             "topology.read",
 	"/api/admin/metrics/series":              "topology.read",
 	"/api/admin/metrics/summary":             "topology.read",
@@ -1475,6 +1476,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/traffic-limits/resolve", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(trafficLimitHandler.ResolveTrafficLimit))).Methods("GET")
 
 	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetOverview))).Methods("GET")
+	api.HandleFunc("/infrastructure/players-online", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetPlayersOnline))).Methods("GET")
 
 	// The long-term record. Read-only, behind the same capability as the rest
 	// of Infrastructure, because that is the tab it is read from and the

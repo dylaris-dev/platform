@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { BarChart3, Download, Info, RefreshCw } from 'lucide-react';
+import { BarChart3, Download, Info, RefreshCw, Users } from 'lucide-react';
 import { SkeletonCard, SkeletonStatGrid } from '@/components/Skeleton';
 import {
     downloadMetricsExport,
@@ -17,6 +17,8 @@ import {
     type MetricSeriesInfo,
     type MetricsUnavailableReason,
 } from '@/lib/api/metrics';
+import { useInfra } from './context';
+import { liveStatus } from './livePlayers';
 
 /**
  * The long-term record.
@@ -82,6 +84,43 @@ function HeadlineCard({ h }: { h: MetricHeadline }) {
                 {formatMetric(h.value, h.unit)}
             </span>
             <span className="text-[11px] text-(--base-06)">{how} over the period</span>
+            {h.help && <span className="text-[11px] text-(--base-06) leading-snug">{h.help}</span>}
+        </div>
+    );
+}
+
+/**
+ * Players on the platform right now. Read live rather than from the record, so
+ * it is there even before recording is switched on.
+ */
+function LivePlayersTile() {
+    const { playersOnline, playersAt, playersCheckedAt } = useInfra();
+    // playersCheckedAt is the render clock: it moves on every finished poll, so
+    // the label ages even while polls fail.
+    const status = liveStatus(playersAt, Math.max(playersCheckedAt, playersAt ?? 0));
+    return (
+        <div className="card p-5 flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-1">
+                <span className="mono-label">Players online now</span>
+                <span className="font-display text-4xl font-bold tabular-nums text-(--base-09) leading-none">
+                    {playersOnline ?? '-'}
+                </span>
+                <span className="text-[11px] text-(--base-06)">
+                    Added up from each running server&apos;s own player count.
+                </span>
+            </div>
+            <div className="flex flex-col items-end gap-2 shrink-0">
+                <div className="w-9 h-9 rounded-md bg-(--accent-ghost) text-(--accent-light) border border-(--accent-border) flex items-center justify-center">
+                    <Users size={18} />
+                </div>
+                <span className="flex items-center gap-1.5 text-[11px] text-(--base-07)">
+                    <span
+                        aria-hidden
+                        className={`status-dot ${status.live ? 'bg-(--success-light) shadow-[0_0_8px_var(--success-light)]' : 'bg-(--warning-light)'}`}
+                    />
+                    {status.label}
+                </span>
+            </div>
         </div>
     );
 }
@@ -317,11 +356,17 @@ export default function StatisticsPanel() {
     }
 
     if (unavailable) {
-        return <Unavailable reason={unavailable.reason} message={unavailable.message} />;
+        return (
+            <div className="flex flex-col gap-4">
+                <LivePlayersTile />
+                <Unavailable reason={unavailable.reason} message={unavailable.message} />
+            </div>
+        );
     }
 
     return (
         <div className="flex flex-col gap-4">
+            <LivePlayersTile />
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-col gap-1">
                     <CoverageLine coverage={coverage} />

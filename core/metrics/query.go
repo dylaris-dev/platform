@@ -214,6 +214,8 @@ type Headline struct {
 	// How the value was reduced: "peak", "total" or "avg". Shown, because a
 	// peak and an average of the same series are different claims.
 	How string `json:"how"`
+	// Help says what the number does NOT mean, where the label alone misleads.
+	Help string `json:"help,omitempty"`
 }
 
 // headlineSpec is one row of the summary, and how to reduce it.
@@ -221,6 +223,7 @@ type headlineSpec struct {
 	metric string
 	label  string
 	how    string
+	help   string
 }
 
 // headlineSpecs is the summary, in the order it is read.
@@ -229,20 +232,20 @@ type headlineSpec struct {
 // withstand - rather than to show everything. A peak is the load it actually
 // carried; a total is the work it actually did.
 var headlineSpecs = []headlineSpec{
-	{"platform.players", "Peak players online", "peak"},
-	{"platform.concurrent_users", "Peak concurrent users", "peak"},
-	{"platform.servers_online", "Peak servers running", "peak"},
-	{"platform.player_tx_bps", "Peak player throughput", "peak"},
-	{"platform.bps_per_player", "Peak traffic per player (in + out)", "peak"},
-	{"splice.sessions_opened", "Player sessions carried", "total"},
-	{"splice.handover_ok", "Players carried through an edge restart", "total"},
-	{"splice.players_dropped", "Players dropped in a handover", "total"},
+	{"platform.players_online", "Peak players online", "peak", ""},
+	{"platform.concurrent_users", "Peak concurrent users", "peak", ""},
+	{"platform.servers_online", "Peak servers running", "peak", ""},
+	{"platform.player_tx_bps", "Peak player throughput", "peak", ""},
+	{"platform.bps_per_player", "Peak traffic per player (in + out)", "peak", ""},
+	{"splice.sessions_opened", "Gateway connections", "total", gatewayConnectionsHelp},
+	{"splice.handover_ok", "Players carried through an edge restart", "total", ""},
+	{"splice.players_dropped", "Players dropped in a handover", "total", ""},
 	// "Edge restarts", not "survived": this series counts restarts. Whether
 	// anybody came through one is the line above, which measures it.
-	{"edge.restarts", "Edge restarts", "total"},
-	{"beam.transfers_started", "Beam transfers", "total"},
-	{"node.up", "Node availability", "avg"},
-	{"edge.up", "Edge availability", "avg"},
+	{"edge.restarts", "Edge restarts", "total", ""},
+	{"beam.transfers_started", "Beam transfers", "total", ""},
+	{"node.up", "Node availability", "avg", ""},
+	{"edge.up", "Edge availability", "avg", ""},
 }
 
 // Summary reduces the headline metrics over a window.
@@ -295,7 +298,7 @@ func Summary(ctx context.Context, db *sql.DB, from, to time.Time) ([]Headline, e
 			val *= 100 // a 1/0 availability series reads as a percentage
 		}
 		out = append(out, Headline{
-			Metric: spec.metric, Label: spec.label, Unit: s.Unit, Value: val, How: spec.how,
+			Metric: spec.metric, Label: spec.label, Unit: s.Unit, Value: val, How: spec.how, Help: spec.help,
 		})
 	}
 	return out, nil

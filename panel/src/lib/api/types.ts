@@ -1036,6 +1036,9 @@ export const setEdgeMotd = (serverId: number, mode: EdgeMotdMode, customText: st
 
 // Infrastructure
 export const getInfrastructureOverview = () => fetchAPI('/infrastructure/overview');
+// Players on every server right now, from each server's own list ping.
+export const getPlayersOnline = (): Promise<{ success?: boolean; playersOnline?: number; at?: string }> =>
+    fetchAPI('/infrastructure/players-online');
 export const getRoutingMigrationStatus = () => fetchAPI('/infrastructure/routing-migration');
 
 // Gateway bandwidth dashboard (F2). Types + pure display helpers live in ../bandwidth.

@@ -51,6 +51,8 @@ export interface MetricHeadline {
     unit: MetricUnit;
     value: number;
     how: 'peak' | 'total' | 'avg';
+    /** What the number does NOT mean, where the label alone would mislead. */
+    help?: string;
 }
 
 /**

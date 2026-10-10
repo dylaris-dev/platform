@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **521 routes** in 52 sections: 231 GET, 161 POST, 39 PUT, 36 PATCH, 55 DELETE.
+- **522 routes** in 52 sections: 232 GET, 161 POST, 39 PUT, 36 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **339** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **112** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **340** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **112** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -154,7 +154,7 @@ can still show what exists.
 - [/api/gateway](#apigateway) (19)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
-- [/api/infrastructure](#apiinfrastructure) (2)
+- [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
 - [/api/me](#apime) (30)
@@ -488,6 +488,7 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/infrastructure/overview` | session | `topology.read` | - | `InfrastructureHandler.GetOverview` | one payload for the infrastructure page: edges, links and nodes with their live heartbeat stats, plus route, tunnel and online counts and the recent service errors. |
+| GET | `/api/infrastructure/players-online` | session | `topology.read` | - | `InfrastructureHandler.GetPlayersOnline` | players on every server right now, as each server's own list ping reports it. |
 | GET | `/api/infrastructure/routing-migration` | session | `topology.read` | - | `InfrastructureHandler.GetRoutingMigrationStatus` | progress of the routing migration job. |
 
 ## /api/library

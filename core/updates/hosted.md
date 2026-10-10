@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A Minecraft server that hangs or crashes inside a running container no longer keeps showing its last
+  player count**; it reads 0 after three failed pings. BYON nodes pick this up with their next update.
+
 ## 2026.10.10.9
 
 ### Features

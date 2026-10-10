@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -57,7 +59,7 @@ func Open(ctx context.Context, metricsURL string) (*Handle, error) {
 		return nil, fmt.Errorf("no statistics database is configured")
 	}
 
-	db, err := sql.Open("postgres", metricsURL)
+	db, err := sql.Open("postgres", withBinaryParameters(metricsURL))
 	if err != nil {
 		return nil, fmt.Errorf("open metrics database: %w", err)
 	}
@@ -88,4 +90,28 @@ func Open(ctx context.Context, metricsURL string) (*Handle, error) {
 		Resolution: ResolutionDedicated,
 		Read:       db,
 	}, nil
+}
+
+// withBinaryParameters makes lib/pq send a parameterised query as ONE
+// Parse/Bind/Execute/Sync round instead of its default Parse/Sync followed by
+// Bind/Execute/Sync.
+//
+// The statistics database sits behind pgbouncer in transaction pooling, which
+// may hand each Sync-terminated round to a different server connection. Split
+// in two, the Bind could land where another client had just parsed its own
+// unnamed statement, which is the "bind message supplies 4 parameters, but
+// prepared statement "" requires 3" seen on the summary. Nothing written here
+// passes []byte, the one type this option changes the encoding of.
+func withBinaryParameters(dsn string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		if u, err := url.Parse(dsn); err == nil {
+			q := u.Query()
+			q.Set("binary_parameters", "yes")
+			u.RawQuery = q.Encode()
+			return u.String()
+		}
+		// Unparseable: let sql.Open report it on the DSN as given.
+		return dsn
+	}
+	return dsn + " binary_parameters=yes"
 }

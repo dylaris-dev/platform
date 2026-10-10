@@ -168,15 +168,15 @@ func TestIntegrationSummaryReducesEachHeadlineItsOwnWay(t *testing.T) {
 		t.Fatalf("EnsureSchema: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Exec(`DELETE FROM metric_samples WHERE metric IN ('platform.players','splice.handover_ok','node.up')`)
+		db.Exec(`DELETE FROM metric_samples WHERE metric IN ('platform.players_online','splice.handover_ok','node.up')`)
 	})
 
 	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	st := metrics.NewSQLStore(db)
 	if err := st.Upsert(ctx, []metrics.Row{
 		// Peak 40, never 60 in total.
-		{Time: at, Key: metrics.Key{Metric: "platform.players"}, Bucket: metrics.Bucket{Min: 10, Max: 40, Sum: 50, Count: 2}},
-		{Time: at.Add(time.Minute), Key: metrics.Key{Metric: "platform.players"}, Bucket: metrics.Bucket{Min: 20, Max: 30, Sum: 50, Count: 2}},
+		{Time: at, Key: metrics.Key{Metric: "platform.players_online"}, Bucket: metrics.Bucket{Min: 10, Max: 40, Sum: 50, Count: 2}},
+		{Time: at.Add(time.Minute), Key: metrics.Key{Metric: "platform.players_online"}, Bucket: metrics.Bucket{Min: 20, Max: 30, Sum: 50, Count: 2}},
 		// Total 7 handovers, never a peak of 5.
 		{Time: at, Key: metrics.Key{Metric: "splice.handover_ok", Subject: "h1"}, Bucket: metrics.Bucket{Min: 0, Max: 5, Sum: 5, Count: 2}},
 		{Time: at.Add(time.Minute), Key: metrics.Key{Metric: "splice.handover_ok", Subject: "h1"}, Bucket: metrics.Bucket{Min: 2, Max: 2, Sum: 2, Count: 1}},
@@ -197,8 +197,8 @@ func TestIntegrationSummaryReducesEachHeadlineItsOwnWay(t *testing.T) {
 		how[h.Metric] = h.How
 	}
 
-	if got["platform.players"] != 40 || how["platform.players"] != "peak" {
-		t.Errorf("players = %v (%s), want 40 as a peak", got["platform.players"], how["platform.players"])
+	if got["platform.players_online"] != 40 || how["platform.players_online"] != "peak" {
+		t.Errorf("players = %v (%s), want 40 as a peak", got["platform.players_online"], how["platform.players_online"])
 	}
 	if got["splice.handover_ok"] != 7 || how["splice.handover_ok"] != "total" {
 		t.Errorf("handovers = %v (%s), want 7 as a total", got["splice.handover_ok"], how["splice.handover_ok"])

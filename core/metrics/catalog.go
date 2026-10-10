@@ -48,11 +48,13 @@ type Series struct {
 	PerSubject bool `json:"perSubject,omitempty"`
 }
 
+const gatewayConnectionsHelp = "Every TCP connection to the gateway, including health checks and server-list pings. Not players."
+
 // Catalog is every series, in the order a reader should meet them.
 var Catalog = []Series{
 	// Platform
-	{Metric: "platform.players", Label: "Players online", Group: "Platform", Kind: KindGauge, Unit: UnitCount,
-		Help: "Counted at the edges, where a player connection actually terminates."},
+	{Metric: "platform.players_online", Label: "Players online", Group: "Platform", Kind: KindGauge, Unit: UnitCount,
+		Help: "What each server's own server-list ping reports, added across every running server. A stopped or silent server counts 0."},
 	{Metric: "platform.concurrent_users", Label: "Concurrent panel users", Group: "Platform", Kind: KindGauge, Unit: UnitCount,
 		Help: "People holding a live panel session, counted once each however many tabs they have open."},
 	{Metric: "platform.panel_streams", Label: "Panel sessions", Group: "Platform", Kind: KindGauge, Unit: UnitCount},
@@ -92,6 +94,8 @@ var Catalog = []Series{
 	{Metric: "platform.edges", Label: "Edges", Group: "Edge", Kind: KindGauge, Unit: UnitCount},
 	{Metric: "platform.edges_online", Label: "Edges online", Group: "Edge", Kind: KindGauge, Unit: UnitCount},
 	{Metric: "edge.up", Label: "Edge availability", Group: "Edge", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
+	{Metric: "platform.players", Label: "Gateway streams", Group: "Edge", Kind: KindGauge, Unit: UnitCount,
+		Help: "Streams open at the edges, all of them added. Server-list pings and resume leftovers are streams too, so this is gateway load, not players."},
 	{Metric: "edge.players", Label: "Players per edge", Group: "Edge", Kind: KindGauge, Unit: UnitCount, PerSubject: true},
 	{Metric: "edge.rx_bps", Label: "Edge traffic in", Group: "Edge", Kind: KindGauge, Unit: UnitBps, PerSubject: true},
 	{Metric: "edge.tx_bps", Label: "Edge traffic out", Group: "Edge", Kind: KindGauge, Unit: UnitBps, PerSubject: true},
@@ -102,7 +106,8 @@ var Catalog = []Series{
 	{Metric: "edge.uptime_sec", Label: "Edge uptime", Group: "Edge", Kind: KindGauge, Unit: UnitSeconds, PerSubject: true},
 
 	// Splice - the handover record
-	{Metric: "splice.sessions_opened", Label: "Player sessions opened", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
+	{Metric: "splice.sessions_opened", Label: "Gateway connections", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
+		Help: gatewayConnectionsHelp},
 	{Metric: "splice.handover_attempted", Label: "Handovers attempted", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
 		Help: "A player was mid-session when their edge went away, so another edge had to take them over."},
 	{Metric: "splice.handover_ok", Label: "Players carried over", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,

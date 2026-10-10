@@ -428,6 +428,12 @@ func (c *MetricsCollector) samplePlatform(ctx context.Context, now time.Time) {
 		}
 		c.obs("platform.servers", "", "", float64(len(servers)), now)
 		c.obs("platform.servers_online", "", "", float64(up), now)
+		// The players number the record is read for: what each server's own
+		// list ping reports, added across servers. Not platform.players, which
+		// counts edge streams and so every ping and leftover as a player.
+		if players, err := PlayersOnline(ctx, c.redis, servers, now); err == nil {
+			c.obs("platform.players_online", "", "", float64(players), now)
+		}
 	}
 }
 
@@ -523,8 +529,10 @@ func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
 	if len(edges) > 0 {
 		c.obs("platform.edges", "", "", float64(len(edges)), now)
 		c.obs("platform.edges_online", "", "", float64(onlineEdges), now)
-		// The players number the whole record is built around. It comes from
-		// the edges because that is where a connection actually terminates.
+		// Streams open at the edges. Every server-list ping and every resume
+		// leftover is one, so this is gateway load, not people; the players
+		// figure is platform.players_online. Kept under its old name so the
+		// history recorded so far stays one series.
 		c.obs("platform.players", "", "", float64(players), now)
 		c.obs("platform.player_rx_bps", "", "", float64(totalRxBits), now)
 		c.obs("platform.player_tx_bps", "", "", float64(totalTxBits), now)

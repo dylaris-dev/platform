@@ -318,6 +318,10 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 
 	var lastPing *SLPResponse
 	var pingMu sync.Mutex
+	// A server that stops answering pings (hung, crashed inside a running
+	// container, restarting) would otherwise keep reporting its last player
+	// count forever, and Core sums those into the platform's players online.
+	var pingFails int
 
 	// Cache watching key check (avoid Redis roundtrip every 2s)
 	var watchCache bool
@@ -471,11 +475,9 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		case <-pingTicker.C:
 			go func() {
 				resp, err := pingOnce()
-				if err == nil {
-					pingMu.Lock()
-					lastPing = resp
-					pingMu.Unlock()
-				}
+				pingMu.Lock()
+				lastPing, pingFails = nextPingState(lastPing, pingFails, resp, err)
+				pingMu.Unlock()
 			}()
 		case <-diskTicker.C:
 			go func() {
@@ -774,4 +776,21 @@ func localServerUUIDs() []string {
 		}
 	}
 	return out
+}
+
+// pingFailsToForget is how many pings in a row may fail before the last answer
+// stops counting: one slow ping under load is not a dead server.
+const pingFailsToForget = 3
+
+// nextPingState keeps the last good ping answer through a few failures, then
+// drops it so the server reports no players instead of stale ones.
+func nextPingState(last *SLPResponse, fails int, resp *SLPResponse, err error) (*SLPResponse, int) {
+	if err == nil {
+		return resp, 0
+	}
+	fails++
+	if fails >= pingFailsToForget {
+		return nil, fails
+	}
+	return last, fails
 }
