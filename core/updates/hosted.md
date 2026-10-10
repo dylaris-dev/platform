@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.8
+
+### Features
+- **Custom tabs that show a web map (e.g. BlueMap) load much faster**: map tiles travel compressed and the
+  browser keeps them for a few minutes. Nothing to update on your machine.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.10.7
 
 ### Features

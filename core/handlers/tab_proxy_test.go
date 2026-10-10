@@ -38,29 +38,29 @@ func TestCoreStripHopByHop(t *testing.T) {
 	}
 }
 
-// TestWriteProxyHeaders_CacheControlStaysSingleNoStore covers the WS5/B5
-// cache-correctness fix: serveHTTP/Public always stamp their own
-// authoritative "Cache-Control: no-store" via Set BEFORE relaying the
+// TestWriteProxyHeaders_CacheControlStaysSingle covers the WS5/B5
+// cache-correctness fix: serveHTTP always stamps its own authoritative
+// Cache-Control (browserCacheControl) via Set BEFORE relaying the
 // container's response headers via writeProxyHeaders (which uses Add). If a
 // container-supplied Cache-Control (or Expires/Pragma) were not stripped
 // first, the response would carry two Cache-Control values and a lenient
 // shared cache on the panel origin could honor the container's permissive
 // one for this per-user/per-ticket content.
-func TestWriteProxyHeaders_CacheControlStaysSingleNoStore(t *testing.T) {
+func TestWriteProxyHeaders_CacheControlStaysSingle(t *testing.T) {
 	rec := httptest.NewRecorder()
-	// Mirrors the real call order in serveHTTP: no-store is Set first.
-	rec.Header().Set("Cache-Control", "no-store")
-
-	writeProxyHeaders(rec, []*pb.HttpHeader{
+	hs := []*pb.HttpHeader{
 		{Key: "Content-Type", Value: "text/html"},
 		{Key: "Cache-Control", Value: "public, max-age=3600"},
 		{Key: "Expires", Value: "Wed, 21 Oct 2099 07:28:00 GMT"},
 		{Key: "Pragma", Value: "cache"},
 		{Key: "Set-Cookie", Value: "session=evil; Path=/"},
-	}, false)
+	}
+	// Mirrors the real call order in serveHTTP: Core's value is Set first.
+	rec.Header().Set("Cache-Control", browserCacheControl(headerValue(hs, "Cache-Control")))
+	writeProxyHeaders(rec, hs, false)
 
-	if got := rec.Header().Values("Cache-Control"); len(got) != 1 || got[0] != "no-store" {
-		t.Errorf("Cache-Control = %v, want exactly [\"no-store\"]", got)
+	if got := rec.Header().Values("Cache-Control"); len(got) != 1 || got[0] != "private, max-age=300" {
+		t.Errorf("Cache-Control = %v, want exactly [\"private, max-age=300\"]", got)
 	}
 	if got := rec.Header().Get("Expires"); got != "" {
 		t.Errorf("Expires = %q, want stripped", got)

@@ -27,6 +27,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,14 +75,14 @@ var coreHopByHop = map[string]bool{
 // cookies, so nothing legitimate depends on this passing through.
 //
 // Cache-Control/Expires/Pragma are stripped for a second reason: serveHTTP
-// and Public both stamp their own authoritative "Cache-Control: no-store" on
-// this per-user/per-ticket response via Set, but relaying a container's own
-// Cache-Control (e.g. "public, max-age=3600") through afterwards via Add
-// would put TWO Cache-Control values on the wire - a lenient shared cache
-// could honor the container's permissive one and cache per-user content on
-// the shared panel origin. Stripping them here (the single chokepoint every
-// container header passes through) guarantees "no-store" stays the sole,
-// authoritative value.
+// stamps its own authoritative Cache-Control (browserCacheControl, derived
+// from the container's but never "public") on this per-user/per-ticket
+// response via Set, and relaying the container's own Cache-Control (e.g.
+// "public, max-age=3600") through afterwards via Add would put TWO values on
+// the wire - a lenient shared cache could honor the container's permissive
+// one and cache per-user content on the shared panel origin. Stripping them
+// here (the single chokepoint every container header passes through)
+// guarantees Core's value stays the sole, authoritative one.
 var coreResponseStrip = map[string]bool{
 	"set-cookie":    true,
 	"set-cookie2":   true,
@@ -207,6 +208,16 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 		}
 		body = b
 	}
+	headers := h.forwardRequestHeaders(r)
+	// An explicit Accept-Encoding stops the node's Go transport from asking
+	// for gzip itself and transparently decompressing, so the compressed body
+	// and its Content-Encoding/Content-Length reach the browser as the
+	// container sent them. Measured on BlueMap 5.12: a hi-res tile is 46 KB
+	// this way and 820 KB decompressed, and a BYON/External node sits on a
+	// customer's uplink, not on a local hop.
+	if acceptsGzip(r.Header.Values("Accept-Encoding")) {
+		headers = append(headers, &pb.HttpHeader{Key: "Accept-Encoding", Value: "gzip"})
+	}
 	reqID := uuid.NewString()
 	msg := &pb.NodeMessage{
 		RequestId:  reqID,
@@ -220,7 +231,7 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 			TargetPort: int32(tab.TargetPort),
 			Method:     r.Method,
 			Path:       target,
-			Headers:    h.forwardRequestHeaders(r),
+			Headers:    headers,
 			Body:       body,
 		}},
 	}
@@ -253,12 +264,19 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 		}
 		if hd := resp.GetHttpProxyRespHead(); hd != nil {
 			// The proxied page is per-user/per-ticket - never let a shared
-			// cache in front of Core (or the browser's disk cache) keep it.
+			// cache in front of Core keep it; only the viewer's own browser
+			// may, and only as long as the container itself allows.
 			// This stays the SOLE Cache-Control value: coreResponseStrip
 			// drops any container-supplied Cache-Control/Expires/Pragma
 			// before writeProxyHeaders relays the rest, so a later Add can
 			// never append a second, more permissive value.
-			w.Header().Set("Cache-Control", "no-store")
+			// A 304 without its own Cache-Control keeps the stored entry's;
+			// stamping no-store on it would make the browser drop the copy it
+			// just revalidated.
+			cc := headerValue(hd.Headers, "Cache-Control")
+			if hd.StatusCode != http.StatusNotModified || cc != "" {
+				w.Header().Set("Cache-Control", browserCacheControl(cc))
+			}
 			// Content-Length is relayed unchanged now that nothing rewrites the
 			// body. That is not a detail: a container streaming a chunked
 			// response and one declaring a length both arrive intact, and the
@@ -292,10 +310,9 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 // slice, dropping hop-by-hop and the panel session cookie/Authorization (never
 // forwarded to the container - security invariant #6).
 //
-// Accept-Encoding is still dropped. It no longer HAS to be - nothing rewrites
-// the body since the <base href> injection went away - but asking the container
-// for an identity encoding keeps the relay a byte pipe with no compressed
-// framing to get wrong, and a tab is a local hop, not a bandwidth problem.
+// The browser's Accept-Encoding is dropped here; serveHTTP adds back exactly
+// "gzip" when the browser accepts it (see acceptsGzip). The WebSocket open
+// shares this function and keeps no Accept-Encoding at all.
 func (h *ProxyHandler) forwardRequestHeaders(r *http.Request) []*pb.HttpHeader {
 	out := []*pb.HttpHeader{}
 	for k, vals := range r.Header {
@@ -311,6 +328,85 @@ func (h *ProxyHandler) forwardRequestHeaders(r *http.Request) []*pb.HttpHeader {
 }
 
 // --- pure helpers ---
+
+// acceptsGzip reports whether the browser's Accept-Encoding values list gzip
+// with a non-zero q. Only an explicit gzip counts; "*" is not worth trusting
+// for the one encoding forwarded, and every browser names gzip anyway.
+func acceptsGzip(values []string) bool {
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			name, params, _ := strings.Cut(part, ";")
+			if !strings.EqualFold(strings.TrimSpace(name), "gzip") {
+				continue
+			}
+			q := 1.0
+			for _, p := range strings.Split(params, ";") {
+				k, val, ok := strings.Cut(strings.TrimSpace(p), "=")
+				if ok && strings.EqualFold(strings.TrimSpace(k), "q") {
+					f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
+					if err != nil {
+						f = 0
+					}
+					q = f
+				}
+			}
+			return q > 0
+		}
+	}
+	return false
+}
+
+// tabProxyMaxBrowserCache caps how long a viewer's browser may keep a proxied
+// response: a cached copy is served without asking the gate, so a revoked
+// ticket or an unpublished link leaves it readable until it expires. Held to
+// the ticket's own lifetime, so revocation still takes effect as fast as it
+// did when nothing was cached (owner decision 2026-10-10).
+const tabProxyMaxBrowserCache = int(tabProxyTicketTTL / time.Second)
+
+// browserCacheControl turns the container's Cache-Control into the single
+// value Core sends. It is always private (the content sits behind a per-user
+// ticket on a shared origin), never longer than tabProxyMaxBrowserCache, and
+// no-store whenever the container did not clearly allow caching.
+func browserCacheControl(container string) string {
+	var noStore, noCache, private bool
+	maxAge := -1
+	for _, d := range strings.Split(container, ",") {
+		name, val, _ := strings.Cut(strings.TrimSpace(d), "=")
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "no-store":
+			noStore = true
+		case "no-cache":
+			noCache = true
+		case "private":
+			private = true
+		case "max-age":
+			if n, err := strconv.Atoi(strings.Trim(strings.TrimSpace(val), `"`)); err == nil {
+				maxAge = n
+			}
+		}
+	}
+	switch {
+	case noStore:
+		return "no-store"
+	case noCache:
+		return "private, no-cache"
+	case maxAge > 0 && !private:
+		return "private, max-age=" + strconv.Itoa(min(maxAge, tabProxyMaxBrowserCache))
+	}
+	return "no-store"
+}
+
+// headerValue joins every value of one header in a wire slice, so a directive
+// list split over several header lines is read as one.
+func headerValue(hs []*pb.HttpHeader, key string) string {
+	var vals []string
+	for _, h := range hs {
+		if strings.EqualFold(h.Key, key) {
+			vals = append(vals, h.Value)
+		}
+	}
+	return strings.Join(vals, ", ")
+}
 
 // coreStripHopByHop drops both the true hop-by-hop headers (coreHopByHop) and
 // the response-only strip set (coreResponseStrip, e.g. Set-Cookie) - the

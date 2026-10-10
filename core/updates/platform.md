@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.8
+
+### Features
+- **Proxied custom tabs (e.g. a BlueMap map) load much faster**: compressed responses now pass through
+  unchanged (a map tile 46 KB instead of 820 KB) and the browser may keep them for up to five minutes,
+  the lifetime of a tab ticket, so revoking access still takes effect as fast as before. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.10.7
 
 ### Features
