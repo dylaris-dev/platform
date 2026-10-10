@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -72,13 +74,22 @@ func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	schedule := scheduleOrManual(req.Schedule)
+	if !services.ValidBackupSchedule(schedule) {
+		sendJSONError(w, platformScheduleError, http.StatusBadRequest)
+		return
+	}
+
 	job := &models.PlatformBackupJob{
 		Name:           strings.TrimSpace(req.Name),
-		Schedule:       scheduleOrManual(req.Schedule),
+		Schedule:       schedule,
 		Selection:      req.Selection,
 		StorageID:      req.StorageID,
 		RetentionCount: derefInt(req.RetentionCount, 3),
 		Enabled:        derefBool(req.Enabled, true),
+		// Armed here: the scheduler only ever re-arms a job it has run, so a job
+		// stored without a next run was never picked up (production job 3).
+		NextRunAt: services.ComputeBackupNextRun(schedule, time.Now()),
 	}
 	id, err := h.state.Store.CreatePlatformBackupJob(job)
 	if err != nil {
@@ -103,8 +114,13 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	if strings.TrimSpace(req.Name) != "" {
 		job.Name = strings.TrimSpace(req.Name)
 	}
+	prevSchedule, prevEnabled := job.Schedule, job.Enabled
 	if req.Schedule != "" {
 		job.Schedule = scheduleOrManual(req.Schedule)
+		if !services.ValidBackupSchedule(job.Schedule) {
+			sendJSONError(w, platformScheduleError, http.StatusBadRequest)
+			return
+		}
 	}
 	// A selection is replaced wholesale rather than merged: the components are
 	// booleans, and a merge could never express "stop including the library".
@@ -119,6 +135,12 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	}
 	if req.Enabled != nil {
 		job.Enabled = *req.Enabled
+	}
+	// Re-armed only when the timing changed. Recomputing on every edit would let
+	// a daily rename push the next backup back a day, forever; a stale time left
+	// from before a job was re-enabled would fire it on the next tick.
+	if job.Schedule != prevSchedule || (job.Enabled && !prevEnabled) {
+		job.NextRunAt = services.ComputeBackupNextRun(job.Schedule, time.Now())
 	}
 
 	if err := h.state.Store.UpdatePlatformBackupJob(job); err != nil {
@@ -165,6 +187,14 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runID, rerr := runner.Run(r.Context(), job.ID)
+	if runID != 0 {
+		// A run was opened, so the job ran: record it and count the interval
+		// from here, as the scheduler does. A refusal before any run (no
+		// passphrase, empty selection) leaves both untouched.
+		if err := h.state.Store.SetPlatformBackupJobSchedule(job.ID, services.ComputeBackupNextRun(job.Schedule, time.Now())); err != nil {
+			log.Printf("platform backup: job %d: recording the manual run: %v", job.ID, err)
+		}
+	}
 	if rerr != nil {
 		status := 500
 		if errors.Is(rerr, services.ErrNoBackupPassphrase) ||
@@ -457,6 +487,8 @@ func (a *coreStorageArea) Walk(ctx context.Context) ([]services.BundleFile, erro
 func (a *coreStorageArea) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	return a.prov.GetFile(ctx, key)
 }
+
+const platformScheduleError = `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 1d"`
 
 func scheduleOrManual(s string) string {
 	s = strings.TrimSpace(s)

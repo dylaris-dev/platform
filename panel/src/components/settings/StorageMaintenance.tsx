@@ -315,6 +315,24 @@ export default function StorageMaintenance({ storageId }: { storageId: number })
                                 </div>
                             </div>
                         )}
+
+                        {(scan.unclassified?.length ?? 0) > 0 && (
+                            <details className="text-xs">
+                                <summary className="cursor-pointer text-(--base-06) mono-label">
+                                    Other files, never deleted here ({scan.unclassifiedCount}
+                                    {scan.unclassifiedCount > (scan.unclassified?.length ?? 0) && `, first ${scan.unclassified?.length} shown`})
+                                </summary>
+                                <ul className="mt-2 max-h-64 overflow-auto space-y-1">
+                                    {scan.unclassified?.map(o => (
+                                        <li key={o.key} className="flex items-center gap-3 text-(--base-07)">
+                                            <span className="font-mono flex-1 min-w-0 truncate" title={o.key}>{truncateKey(o.key)}</span>
+                                            <span className="shrink-0 text-(--base-06)">{formatBytes(o.size)}</span>
+                                            <span className="shrink-0 w-12 text-right text-(--base-06)">{o.lastModified ? orphanAge(o.lastModified) : '-'}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </details>
+                        )}
                     </>
                 )}
             </section>

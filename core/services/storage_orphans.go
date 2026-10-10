@@ -8,10 +8,13 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
+
+	"dylaris-pkg/validate"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -40,14 +43,21 @@ const (
 	OrphanProbe             = "probe"
 )
 
+// orphanServerIDPattern is validate.ServerUUID without its anchors. Real ids are
+// "<uuid>_<random>", so a bare 36-char UUID pattern classified every real
+// backup as unclassified and could never find an orphan of one.
+var orphanServerIDPattern = strings.TrimSuffix(strings.TrimPrefix(validate.ServerUUID.String(), "^"), "$")
+
 var (
 	// NewBackupStorageKey; the random suffix is optional because keys written
 	// before it existed are still around.
-	serverBackupKeyRe = regexp.MustCompile(`^backups/([0-9a-fA-F-]{36})/job-([0-9]+)/[0-9]{8}-[0-9]{6}(-[0-9a-f]{8})?\.tar\.gz$`)
+	serverBackupKeyRe = regexp.MustCompile(`^backups/(` + orphanServerIDPattern + `)/job-([0-9]+)/[0-9]{8}-[0-9]{6}(-[0-9a-f]{8})?\.tar\.gz$`)
 	// PlatformBackupRunner.upload.
 	platformBackupKeyRe = regexp.MustCompile(`^platform-backups/([0-9]+)/[0-9]{8}-[0-9]{6}-[^/]+\.dylaris-bundle$`)
-	// MigrationOrchestrator.transferViaR2.
-	migrationTransferKeyRe = regexp.MustCompile(`^migration-transfer/([0-9a-fA-F-]{36})-[^/]+\.zip$`)
+	// MigrationOrchestrator.transferViaR2: "<server id>-<attempt>". The id may
+	// contain '-' and the attempt (hex) does not, so the greedy group ends at
+	// the last '-'.
+	migrationTransferKeyRe = regexp.MustCompile(`^migration-transfer/(` + orphanServerIDPattern + `)-[^/]+\.zip$`)
 	// handlers/backup_probe.go, a connection test that died between write and delete.
 	probeKeyRe = regexp.MustCompile(`^__dylaris_probe_[0-9a-f]+\.(txt|multipart)$`)
 )
@@ -86,6 +96,17 @@ type OrphanCandidate struct {
 	JobExists    *bool `json:"jobExists,omitempty"`
 }
 
+// MaxUnclassifiedListed caps OrphanScan.Unclassified; the counts cover the rest.
+const MaxUnclassifiedListed = 200
+
+// OrphanObject is a file the scan only reports, never offers.
+type OrphanObject struct {
+	Key  string `json:"key"`
+	Size int64  `json:"size"`
+	// LastModified is absent where the storage did not say.
+	LastModified *time.Time `json:"lastModified,omitempty"`
+}
+
 // OrphanScan is the dry run: what would be offered, and what was left alone.
 type OrphanScan struct {
 	Candidates     []OrphanCandidate `json:"candidates"`
@@ -103,7 +124,9 @@ type OrphanScan struct {
 	RecentBytes       int64             `json:"recentBytes"`
 	UnclassifiedCount int               `json:"unclassifiedCount"`
 	UnclassifiedBytes int64             `json:"unclassifiedBytes"`
-	ScannedAt         time.Time         `json:"scannedAt"`
+	// Unclassified lists the first MaxUnclassifiedListed of them, read-only.
+	Unclassified []OrphanObject `json:"unclassified"`
+	ScannedAt    time.Time      `json:"scannedAt"`
 }
 
 // isOrphanCandidate is the one rule both the scan and the delete apply.
@@ -116,13 +139,21 @@ func isOrphanCandidate(key string, lastModified time.Time, referenced map[string
 // ClassifyOrphans sorts a listing into candidates and the three kinds of
 // object that are left alone. Pure: existence badges are filled in afterwards.
 func ClassifyOrphans(objs []backupstorage.Object, referenced map[string]bool, now time.Time) OrphanScan {
-	scan := OrphanScan{Candidates: []OrphanCandidate{}, ScannedAt: now}
+	scan := OrphanScan{Candidates: []OrphanCandidate{}, Unclassified: []OrphanObject{}, ScannedAt: now}
 	for _, o := range objs {
 		kind, serverUUID, jobID, ok := ClassifyOrphanKey(o.Key)
 		switch {
 		case !ok:
 			scan.UnclassifiedCount++
 			scan.UnclassifiedBytes += o.Size
+			if len(scan.Unclassified) < MaxUnclassifiedListed {
+				u := OrphanObject{Key: o.Key, Size: o.Size}
+				if !o.LastModified.IsZero() {
+					t := o.LastModified
+					u.LastModified = &t
+				}
+				scan.Unclassified = append(scan.Unclassified, u)
+			}
 		case referenced[o.Key]:
 			scan.ReferencedCount++
 			scan.ReferencedBytes += o.Size

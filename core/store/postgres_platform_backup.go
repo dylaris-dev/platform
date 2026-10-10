@@ -78,9 +78,9 @@ func (s *PostgresStore) CreatePlatformBackupJob(j *models.PlatformBackupJob) (in
 	}
 	var id int
 	err = s.db.QueryRow(`
-		INSERT INTO platform_backup_jobs (name, schedule, selection, storage_id, retention_count, enabled)
-		VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id`,
-		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled).Scan(&id)
+		INSERT INTO platform_backup_jobs (name, schedule, selection, storage_id, retention_count, enabled, next_run_at)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id`,
+		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt)).Scan(&id)
 	return id, err
 }
 
@@ -107,12 +107,16 @@ func (s *PostgresStore) ListPlatformBackupJobs() ([]models.PlatformBackupJob, er
 	return out, rows.Err()
 }
 
-// ListDuePlatformBackupJobs returns the enabled jobs whose next run has come.
+// ListDuePlatformBackupJobs returns the enabled jobs whose next run has come,
+// and the enabled jobs that have NO next run. The second kind is a job nothing
+// ever armed (production job 3 sat like that for eleven days, because the insert
+// never wrote one); the scheduler, which can parse a schedule, decides whether
+// it runs now or is manual.
 func (s *PostgresStore) ListDuePlatformBackupJobs() ([]models.PlatformBackupJob, error) {
 	rows, err := s.db.Query(`SELECT ` + platformBackupJobCols + `
 		FROM platform_backup_jobs
-		WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= NOW()
-		ORDER BY next_run_at ASC`)
+		WHERE enabled = TRUE AND (next_run_at IS NULL OR next_run_at <= NOW())
+		ORDER BY next_run_at ASC NULLS FIRST`)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +140,9 @@ func (s *PostgresStore) UpdatePlatformBackupJob(j *models.PlatformBackupJob) err
 	}
 	res, err := s.db.Exec(`
 		UPDATE platform_backup_jobs
-		SET name=$1, schedule=$2, selection=$3::jsonb, storage_id=$4, retention_count=$5, enabled=$6
-		WHERE id=$7`,
-		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, j.ID)
+		SET name=$1, schedule=$2, selection=$3::jsonb, storage_id=$4, retention_count=$5, enabled=$6, next_run_at=$7
+		WHERE id=$8`,
+		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), j.ID)
 	if err != nil {
 		return err
 	}

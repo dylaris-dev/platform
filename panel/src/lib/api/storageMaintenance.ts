@@ -36,6 +36,8 @@ export interface OrphanScan {
     recentBytes: number;
     unclassifiedCount: number;
     unclassifiedBytes: number;
+    /** The first 200 files Core does not recognise as its own, read-only. Absent from an older Core. */
+    unclassified?: { key: string; size: number; lastModified?: string }[];
     scannedAt: string;
 }
 

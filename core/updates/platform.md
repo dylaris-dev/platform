@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Scheduled platform backups never ran.** A new job was never given a next run time, so only manual runs
+  happened; existing jobs now run at the next scheduler tick and then on schedule. `core`
+- **Platform Backups shows the last and next run** and warns when an enabled job has no next run or is
+  overdue. `panel`
+- **The orphan scan recognises every server ID**, so orphans of servers with a suffixed ID are found too,
+  and the files it never deletes are listed. `core` `panel`
+
 ## 2026.10.10
 
 ### Features

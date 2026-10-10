@@ -306,3 +306,65 @@ func TestIntegrationAnUnreadableSelectionSelectsNothing(t *testing.T) {
 		t.Error("an unreadable selection passed validation instead of refusing the run")
 	}
 }
+
+// Production, 2026-10-10: job 3 ('every 1d', enabled) had next_run_at NULL from
+// the day it was created, and the due query required next_run_at IS NOT NULL,
+// so in eleven days it never ran on its schedule. The insert never wrote a next
+// run and nothing else ever armed one. This is that row, exactly.
+func TestIntegrationAnEnabledJobThatWasNeverArmedIsDue(t *testing.T) {
+	db := freshSchemaDB(t)
+	st := store.NewPostgresStore(db)
+
+	sel := models.PlatformBackupSelection{Database: true, MetricsDB: true}
+	never, err := st.CreatePlatformBackupJob(&models.PlatformBackupJob{
+		Name: "Daily platform databases", Schedule: "every 1d", Selection: sel, RetentionCount: 14, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePlatformBackupJob: %v", err)
+	}
+	off, err := st.CreatePlatformBackupJob(&models.PlatformBackupJob{
+		Name: "off", Schedule: "every 1d", Selection: sel, Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("CreatePlatformBackupJob: %v", err)
+	}
+	future := time.Now().Add(time.Hour).UTC()
+	later, err := st.CreatePlatformBackupJob(&models.PlatformBackupJob{
+		Name: "later", Schedule: "every 1d", Selection: sel, Enabled: true, NextRunAt: &future,
+	})
+	if err != nil {
+		t.Fatalf("CreatePlatformBackupJob: %v", err)
+	}
+
+	due, err := st.ListDuePlatformBackupJobs()
+	if err != nil {
+		t.Fatalf("ListDuePlatformBackupJobs: %v", err)
+	}
+	ids := map[int]bool{}
+	for _, j := range due {
+		ids[j.ID] = true
+	}
+	if !ids[never] {
+		t.Error("an enabled job with no next run is not due, so it never runs")
+	}
+	if ids[off] {
+		t.Error("a disabled job is due")
+	}
+	if ids[later] {
+		t.Error("a job armed for the future is due now")
+	}
+
+	// The next run a caller computes must reach the row, on create and update.
+	got, _ := st.GetPlatformBackupJob(later)
+	if got == nil || got.NextRunAt == nil || got.NextRunAt.Sub(future).Abs() > time.Second {
+		t.Fatalf("create stored next = %v, want %v", got.NextRunAt, future)
+	}
+	got.NextRunAt = nil
+	if err := st.UpdatePlatformBackupJob(got); err != nil {
+		t.Fatalf("UpdatePlatformBackupJob: %v", err)
+	}
+	got, _ = st.GetPlatformBackupJob(later)
+	if got.NextRunAt != nil {
+		t.Errorf("update did not write next_run_at: %v", got.NextRunAt)
+	}
+}

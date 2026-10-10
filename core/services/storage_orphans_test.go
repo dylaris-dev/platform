@@ -224,3 +224,62 @@ func TestLiveOrphansAreKeptApart(t *testing.T) {
 		t.Fatalf("with includeLive the live file must go: %+v, %v", res, err)
 	}
 }
+
+// Real server ids are "<uuid>_<random>" (validate.ServerUUID), not a bare
+// 36-char UUID. Production 2026-10-10: the three real backups of server 32 were
+// all "unclassified", so a real orphan of any such server could never be found.
+const suffixedUUID = "f3e13e73-63fe-4d73-a3df-fa10dad2c981_mz26xsfr6r"
+
+func TestOrphanKeysAcceptRealServerIDs(t *testing.T) {
+	backup := "backups/" + suffixedUUID + "/job-15/20261001-020304-deadbeef.tar.gz"
+	transfer := "migration-transfer/" + suffixedUUID + "-0a1b2c3d4e5f.zip"
+	for key, want := range map[string]string{backup: OrphanServerBackup, transfer: OrphanMigrationTransfer} {
+		kind, uuid, _, ok := ClassifyOrphanKey(key)
+		if !ok || kind != want || uuid != suffixedUUID {
+			t.Errorf("ClassifyOrphanKey(%q) = %q %q %v, want %q %q", key, kind, uuid, ok, want, suffixedUUID)
+		}
+	}
+
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-48 * time.Hour)
+	orphan := "backups/" + suffixedUUID + "/job-15/20261002-020304-cafebabe.tar.gz"
+	scan := ClassifyOrphans([]backupstorage.Object{
+		{Key: backup, Size: 13, LastModified: old},
+		{Key: orphan, Size: 7, LastModified: old},
+	}, map[string]bool{backup: true}, now)
+	if scan.ReferencedCount != 1 {
+		t.Errorf("referenced = %d, want the referenced backup counted as referenced", scan.ReferencedCount)
+	}
+	if len(scan.Candidates) != 1 || scan.Candidates[0].Key != orphan || scan.Candidates[0].ServerUUID != suffixedUUID {
+		t.Errorf("candidates = %+v, want only %s", scan.Candidates, orphan)
+	}
+	if scan.UnclassifiedCount != 0 {
+		t.Errorf("unclassified = %d, want 0", scan.UnclassifiedCount)
+	}
+}
+
+// Unclassified files are listed read-only, capped, so an operator can see WHAT
+// is being left alone rather than only how much.
+func TestUnclassifiedFilesAreListedAndCapped(t *testing.T) {
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	objs := []backupstorage.Object{{Key: "modpacks/x/pack.mrpack", Size: 100, LastModified: now}}
+	for i := 0; i < MaxUnclassifiedListed+5; i++ {
+		objs = append(objs, backupstorage.Object{Key: fmt.Sprintf("library/%03d.jar", i), Size: 1})
+	}
+	scan := ClassifyOrphans(objs, nil, now)
+	if scan.UnclassifiedCount != MaxUnclassifiedListed+6 {
+		t.Fatalf("unclassified count = %d", scan.UnclassifiedCount)
+	}
+	if len(scan.Unclassified) != MaxUnclassifiedListed {
+		t.Fatalf("listed %d unclassified, want the cap %d", len(scan.Unclassified), MaxUnclassifiedListed)
+	}
+	if u := scan.Unclassified[0]; u.Key != "modpacks/x/pack.mrpack" || u.Size != 100 || u.LastModified == nil || !u.LastModified.Equal(now) {
+		t.Errorf("first unclassified = %+v", u)
+	}
+	if scan.Unclassified[1].LastModified != nil {
+		t.Errorf("an unknown modification time reads as %v", scan.Unclassified[1].LastModified)
+	}
+	if empty := ClassifyOrphans(nil, nil, now); empty.Unclassified == nil {
+		t.Error("an empty scan answers null instead of an empty list")
+	}
+}

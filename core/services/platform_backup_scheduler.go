@@ -76,6 +76,13 @@ func (s *PlatformBackupScheduler) tick(ctx context.Context) {
 		return
 	}
 	for i := range jobs {
+		// The due list includes enabled jobs with no next run. One that has a
+		// schedule was never armed and is overdue by definition, so it runs now
+		// and runDue arms it. One without (manual, or a schedule nothing can
+		// parse) must not run here, or it would run every minute.
+		if jobs[i].NextRunAt == nil && ComputeBackupNextRun(jobs[i].Schedule, time.Now()) == nil {
+			continue
+		}
 		s.runDue(ctx, &jobs[i])
 	}
 }

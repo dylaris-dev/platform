@@ -22,6 +22,7 @@ import { SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { useBusy } from '@/lib/useBusy';
+import { scheduleIntervalMs, scheduleWarning } from '@/lib/platformBackupSchedule';
 
 const MIN_PASSPHRASE = 12;
 
@@ -236,7 +237,13 @@ export default function PlatformBackupsTab() {
                                     </p>
                                     <p className="text-xs text-(--base-06) truncate">
                                         {summarise(job.selection, targets)} &middot; {job.schedule} &middot; last run {formatWhen(job.lastRunAt)}
+                                        {job.enabled && scheduleIntervalMs(job.schedule) !== null && job.nextRunAt && <> &middot; next run {formatWhen(job.nextRunAt)}</>}
                                     </p>
+                                    {scheduleWarning(job) && (
+                                        <p className="text-xs text-(--warning-light) flex items-center gap-1 mt-0.5">
+                                            <AlertTriangle size={12} className="shrink-0" /> {scheduleWarning(job)}
+                                        </p>
+                                    )}
                                 </div>
                                 <button type="button" onClick={() => runNow(job)} disabled={running || !passphraseSet}
                                     className="btn btn-sm flex items-center gap-1.5">

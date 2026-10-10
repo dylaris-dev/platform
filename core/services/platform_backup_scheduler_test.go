@@ -116,6 +116,10 @@ func TestSchedulerRearmsEvenWhenTheRunFails(t *testing.T) {
 func TestSchedulerLeavesAManualJobUnscheduled(t *testing.T) {
 	job := scheduledJob()
 	job.Schedule = "manual"
+	// Due only through a stale next run left from before it became manual; a
+	// manual job with none is skipped (TestSchedulerRunsANeverArmedJob...).
+	past := time.Now().Add(-time.Minute)
+	job.NextRunAt = &past
 	st := newSchedulerStore(job)
 	st.due = []models.PlatformBackupJob{*job}
 
@@ -252,5 +256,51 @@ func TestPruneSkipsTheDeleteForARunWithNoArchive(t *testing.T) {
 	}
 	if len(st.deleted) != 1 {
 		t.Errorf("deleted %v, want the row to go", st.deleted)
+	}
+}
+
+// The due query returns an enabled job with NO next run, because that is what
+// a job looked like that nothing ever armed (production job 3, eleven days
+// without a scheduled run). The scheduler decides: a schedulable one runs now
+// and is armed, a manual or unparseable one is left alone - otherwise every
+// manual job would run every minute.
+func TestSchedulerRunsANeverArmedJobOnlyWhenItHasASchedule(t *testing.T) {
+	cases := []struct {
+		schedule string
+		wantRun  bool
+	}{
+		{"every 1d", true},
+		{"every 6h", true},
+		{"manual", false},
+		{"", false},
+		{"daily", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.schedule, func(t *testing.T) {
+			job := scheduledJob()
+			job.Schedule = tc.schedule
+			job.NextRunAt = nil
+			job.LastRunAt = nil
+			st := newSchedulerStore(job)
+			st.due = []models.PlatformBackupJob{*job}
+
+			var built int
+			s := NewPlatformBackupScheduler(st, nil, func() (*PlatformBackupRunner, error) {
+				built++
+				return nil, errors.New("no runner in this test")
+			}, nil)
+			s.tick(context.Background())
+
+			if ran := built > 0; ran != tc.wantRun {
+				t.Fatalf("ran = %v, want %v", ran, tc.wantRun)
+			}
+			next, armed := st.rearmed[1]
+			if armed != tc.wantRun {
+				t.Fatalf("armed = %v, want %v", armed, tc.wantRun)
+			}
+			if tc.wantRun && (next == nil || !next.After(time.Now())) {
+				t.Errorf("re-armed to %v, want a time in the future", next)
+			}
+		})
 	}
 }
