@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil, History as HistoryIcon, ChevronDown, LogOut } from 'lucide-react';
+import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil, History as HistoryIcon, ChevronDown, LogOut, Contrast } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes, logoutEverywhere } from '@/lib/api/auth';
 import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
@@ -11,6 +11,7 @@ import { getRegistrationStatus } from '@/lib/api/registration';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { isHighContrast, setHighContrast } from '@/lib/contrastMode';
 
 interface UserProfile {
     username: string;
@@ -330,6 +331,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                   />
                 </Field>
                 <UsernameHistorySection />
+                <HighContrastRow />
               </div>
             )}
 
@@ -525,8 +527,43 @@ function SignOutEverywhereRow() {
         )}
       </div>
       {note ? (
-        <p role="status" className={`mt-2 text-xs ${note.ok ? 'text-(--success)' : 'text-(--warning)'}`}>{note.text}</p>
+        <p role="status" className={`mt-2 text-xs ${note.ok ? 'text-(--success-light)' : 'text-(--warning)'}`}>{note.text}</p>
       ) : null}
+    </div>
+  );
+}
+
+// Applies at once and is stored in this browser only, like Developer Mode, so
+// it sits outside the form and needs no password.
+function HighContrastRow() {
+  const [on, setOn] = useState(isHighContrast);
+
+  const toggle = () => {
+    setHighContrast(!on);
+    setOn(!on);
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
+      <div className="flex items-start gap-2.5 min-w-0">
+        <Contrast size={16} className={`shrink-0 mt-0.5 ${on ? 'text-(--accent-light)' : 'text-(--base-07)'}`} />
+        <div className="min-w-0">
+          <div id="high-contrast-label" className="font-medium text-sm text-(--base-09)">High contrast</div>
+          <div className="text-xs text-(--base-06)">
+            Brighter text, stronger borders and focus rings. Saved in this browser only.
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-labelledby="high-contrast-label"
+        onClick={toggle}
+        className={`toggle-track shrink-0 ${on ? 'toggle-track-on' : 'toggle-track-off'}`}
+      >
+        <span className={`toggle-knob ${on ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+      </button>
     </div>
   );
 }

@@ -103,7 +103,7 @@ export default function NodeJoinAttempts({ onAdmitted }: { onAdmitted: () => voi
             icon={ShieldQuestion}
         >
             {error && (
-                <div className="p-3 border border-(--error) rounded-md text-(--error) text-sm mb-3">{error}</div>
+                <div className="p-3 border border-(--error) rounded-md text-(--error-light) text-sm mb-3">{error}</div>
             )}
 
             <div className="space-y-3">

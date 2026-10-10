@@ -1054,7 +1054,7 @@ export default function ServerContentPage() {
                                                                 <div className="min-w-0 flex-1">
                                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                                         <span className="text-sm font-medium text-(--base-09) truncate">{v.version_number}</span>
-                                                                        {state === 'installed' && <span className="mono-label text-(--success) shrink-0">on this server</span>}
+                                                                        {state === 'installed' && <span className="mono-label text-(--success-light) shrink-0">on this server</span>}
                                                                         {state === 'installing' && <span className="mono-label text-(--base-06) shrink-0">installing…</span>}
                                                                         {state === 'failed' && <span className="mono-label text-(--warning-light) shrink-0">install failed</span>}
                                                                         {highlight && state === null && <span className="mono-label text-(--accent-light) shrink-0">newest · {defaultMcVersion}</span>}
@@ -1252,7 +1252,7 @@ export default function ServerContentPage() {
                                             <ExternalLink size={12} />
                                         </a>
                                         <button onClick={() => handleUninstall(m)} className="btn btn-secondary btn-sm">
-                                            <Trash2 size={12} className="text-(--error)" />
+                                            <Trash2 size={12} className="text-(--error-light)" />
                                             Remove
                                         </button>
                                     </div>
@@ -1371,7 +1371,7 @@ function ModListRow({
                 )}
                 {installed && (
                     <button onClick={stopAnd(onRemove)} disabled={busy} className="btn btn-secondary btn-sm" title="Remove">
-                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} className="text-(--error)" />}
+                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} className="text-(--error-light)" />}
                         Remove
                     </button>
                 )}

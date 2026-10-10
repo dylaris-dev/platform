@@ -133,7 +133,7 @@ export default function SshKeysPage() {
                                 </div>
                             </div>
                             <button onClick={() => setDeleting(k)} className="btn btn-secondary btn-sm shrink-0">
-                                <Trash2 size={12} className="text-(--error)" />
+                                <Trash2 size={12} className="text-(--error-light)" />
                                 Remove
                             </button>
                         </article>

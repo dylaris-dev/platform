@@ -202,7 +202,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                                     </div>
                                     <button
                                         onClick={() => setDeleteTarget(route)}
-                                        className="text-(--error-light) hover:text-(--error) transition-colors p-1"
+                                        className="text-(--error-light) hover:bg-(--error-ghost) rounded transition-colors p-1"
                                         title="Delete route"
                                     >
                                         <Trash2 size={14} />

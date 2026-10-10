@@ -845,7 +845,7 @@ export default function BuildContentEditorPage() {
                                         title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Remove'}
                                         disabled={disabled}
                                     >
-                                        <Trash2 size={11} className="text-(--error)" />
+                                        <Trash2 size={11} className="text-(--error-light)" />
                                     </button>
                                 </article>
                             ))

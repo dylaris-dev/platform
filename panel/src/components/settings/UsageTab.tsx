@@ -82,7 +82,7 @@ export default function UsageTab() {
             </div>
 
             {error && (
-                <div className="rounded-md border border-(--error) bg-(--error)/10 p-3 text-sm text-(--error)">
+                <div className="rounded-md border border-(--error) bg-(--error)/10 p-3 text-sm text-(--error-light)">
                     {error}
                 </div>
             )}
@@ -164,7 +164,7 @@ function Td({ children, right, strong }: { children: React.ReactNode; right?: bo
 // when over (traffic limits are warn-only — display, not enforcement).
 function UsageCell({ bytes, limitGb, over, strong }: { bytes: number; limitGb?: number; over?: boolean; strong?: boolean }) {
     return (
-        <td className={`px-4 py-2.5 text-right font-mono ${over ? 'text-(--error)' : strong ? 'text-(--base-09)' : 'text-(--base-07)'}`}>
+        <td className={`px-4 py-2.5 text-right font-mono ${over ? 'text-(--error-light)' : strong ? 'text-(--base-09)' : 'text-(--base-07)'}`}>
             <span className="inline-flex items-center justify-end gap-1">
                 {over && <AlertTriangle size={12} />}
                 {formatBytes(bytes)}

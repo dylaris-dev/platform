@@ -179,7 +179,7 @@ export default function OwnBackupStoragePage() {
                                         </button>
                                         <button
                                             onClick={() => setConfirmDelete(s)}
-                                            className="btn btn-icon btn-sm text-(--error)"
+                                            className="btn btn-icon btn-sm text-(--error-light)"
                                             aria-label={`Remove ${s.name}`}
                                         >
                                             <Trash2 size={15} />

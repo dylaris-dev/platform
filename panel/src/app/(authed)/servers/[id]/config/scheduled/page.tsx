@@ -299,7 +299,7 @@ export default function ServerConfigScheduledPage() {
                                     <Pencil size={12} />
                                 </button>
                                 <button onClick={() => setDeletePrompt(t)} className="btn btn-secondary btn-sm" title="Delete task">
-                                    <Trash2 size={12} className="text-(--error)" />
+                                    <Trash2 size={12} className="text-(--error-light)" />
                                 </button>
                             </div>
                         </article>

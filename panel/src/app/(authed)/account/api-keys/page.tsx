@@ -215,7 +215,7 @@ export default function ApiKeysPage() {
                             </div>
                             {!k.revokedAt && (
                                 <button onClick={() => setRevoking(k)} className="btn btn-secondary btn-sm shrink-0">
-                                    <Trash2 size={12} className="text-(--error)" />
+                                    <Trash2 size={12} className="text-(--error-light)" />
                                     Revoke
                                 </button>
                             )}

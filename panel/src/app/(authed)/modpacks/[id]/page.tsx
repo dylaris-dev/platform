@@ -218,7 +218,7 @@ export default function PackDetailPage() {
                                     disabled={modpacksDisabled}
                                     title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Delete build'}
                                 >
-                                    <Trash2 size={12} className="text-(--error)" />
+                                    <Trash2 size={12} className="text-(--error-light)" />
                                 </button>
                             </article>
                         ))}

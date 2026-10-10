@@ -269,7 +269,7 @@ export default function AdminServersPage() {
                                         </div>
                                     </td>
                                     <td className="py-2.5 pr-4">
-                                        <span className="text-(--base-07)">{s.owner ?? <span className="text-(--base-04) italic">unassigned</span>}</span>
+                                        <span className="text-(--base-07)">{s.owner ?? <span className="text-(--base-05) italic">unassigned</span>}</span>
                                     </td>
                                     <td className="py-2.5 pr-4 hidden md:table-cell">
                                         <TypeBadge type={s.serverType} />

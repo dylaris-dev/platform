@@ -36,7 +36,7 @@ export function describeClaim(
         };
       }
       return {
-        tone: 'text-(--success)',
+        tone: 'text-(--success-light)',
         title: 'Verified',
         body: 'You have proven you own this domain. Keep the TXT record below published: we check it daily, and a domain without it for 7 days loses its routes.',
       };
@@ -71,7 +71,7 @@ export function describeClaim(
       };
     default:
       return {
-        tone: 'text-(--error)',
+        tone: 'text-(--error-light)',
         title: 'Blocked',
         body: 'Too many failed checks. Publish the TXT record below to prove you own this domain.',
       };
@@ -283,7 +283,7 @@ export function CustomDomainsPanel() {
               ) : null}
 
               {note && note.domain === d.domain ? (
-                <p className={`mt-2 text-xs ${note.ok ? 'text-(--success)' : 'text-(--warning)'}`}>
+                <p className={`mt-2 text-xs ${note.ok ? 'text-(--success-light)' : 'text-(--warning)'}`}>
                   {note.text}
                 </p>
               ) : null}

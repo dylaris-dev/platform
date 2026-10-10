@@ -90,7 +90,7 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                 <button
                     {...attributes}
                     {...listeners}
-                    className="text-(--base-04) hover:text-(--base-07) cursor-grab active:cursor-grabbing p-0.5 touch-none"
+                    className="text-(--base-05) hover:text-(--base-07) cursor-grab active:cursor-grabbing p-0.5 touch-none"
                     title="Drag to reorder"
                     tabIndex={-1}
                 >
@@ -319,7 +319,7 @@ export default function ModulesTab({ modules, onModulesChange }: ModulesTabProps
                 </button>
             </div>
 
-            {actionError && <p role="alert" className="text-sm text-(--error) mb-4">{actionError}</p>}
+            {actionError && <p role="alert" className="text-sm text-(--error-light) mb-4">{actionError}</p>}
 
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={sortedModules.map(m => m.id)} strategy={verticalListSortingStrategy}>

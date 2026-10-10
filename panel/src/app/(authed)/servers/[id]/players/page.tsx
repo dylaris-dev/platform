@@ -523,7 +523,7 @@ export default function ServerPlayersPage() {
                                                     </button>
                                                 ) : (
                                                     <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title="Ban" aria-label={`Ban ${p.name}`}>
-                                                        <Skull size={12} className="text-(--error)" />
+                                                        <Skull size={12} className="text-(--error-light)" />
                                                     </button>
                                                 )}
                                             </>
@@ -541,7 +541,7 @@ export default function ServerPlayersPage() {
                                                 <ShieldOff size={12} />
                                             </button>
                                             <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title="Ban">
-                                                <Skull size={12} className="text-(--error)" />
+                                                <Skull size={12} className="text-(--error-light)" />
                                             </button>
                                         </>
                                     )}
@@ -553,12 +553,12 @@ export default function ServerPlayersPage() {
                                     )}
                                     {section === 'whitelist' && (
                                         <button onClick={() => handleWhitelistRemove(p.name)} className="btn btn-secondary btn-sm" title="Remove">
-                                            <Trash2 size={12} className="text-(--error)" />
+                                            <Trash2 size={12} className="text-(--error-light)" />
                                         </button>
                                     )}
                                     {section === 'ops' && (
                                         <button onClick={() => handleDeop(p.name)} className="btn btn-secondary btn-sm" title="De-op">
-                                            <Crown size={12} className="text-(--error)" />
+                                            <Crown size={12} className="text-(--error-light)" />
                                         </button>
                                     )}
                                 </fieldset>

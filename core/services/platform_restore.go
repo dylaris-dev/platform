@@ -33,13 +33,16 @@ import (
 
 // PlatformRestoreSelection is what an operator asked to bring back.
 type PlatformRestoreSelection struct {
-	Database bool `json:"database"`
-	Library  bool `json:"library"`
-	Modpacks bool `json:"modpacks"`
+	Database  bool `json:"database"`
+	MetricsDB bool `json:"metricsDb"`
+	Library   bool `json:"library"`
+	Modpacks  bool `json:"modpacks"`
 }
 
 // Any reports whether anything at all was selected.
-func (s PlatformRestoreSelection) Any() bool { return s.Database || s.Library || s.Modpacks }
+func (s PlatformRestoreSelection) Any() bool {
+	return s.Database || s.MetricsDB || s.Library || s.Modpacks
+}
 
 // PlatformRestoreResult is what happened, per part.
 type PlatformRestoreResult struct {
@@ -115,6 +118,9 @@ type PlatformRestorer struct {
 
 	// RestoreDatabaseInto loads the dump into the operator's target database.
 	RestoreDatabaseInto func(ctx context.Context, src io.Reader) error
+	// RestoreMetricsInto loads the statistics dump into the operator's second
+	// target. sourceVersion is the TimescaleDB version the dump was taken from.
+	RestoreMetricsInto func(ctx context.Context, src io.Reader, sourceVersion string) error
 	// TargetIsEmpty answers whether that database already holds anything.
 	TargetIsEmpty func(ctx context.Context) (bool, error)
 	// OpenTarget binds a store to the RESTORED database, for the reseal.
@@ -142,7 +148,7 @@ func Inspect(src io.Reader, passphrase string) (*bundle.Header, *bundle.Manifest
 // A wrong passphrase is refused by bundle.Open before a single byte of payload
 // is decrypted, which is the whole reason the verifier sits in the header.
 func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphrase string,
-	sel PlatformRestoreSelection, overwriteTarget bool) (*PlatformRestoreResult, error) {
+	sel PlatformRestoreSelection, overwriteTarget bool) (res *PlatformRestoreResult, err error) {
 
 	if !sel.Any() {
 		return nil, ErrNothingSelected
@@ -152,11 +158,16 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 		return nil, err
 	}
 
-	res := &PlatformRestoreResult{Source: header.Source, CreatedAt: header.CreatedAt}
+	res = &PlatformRestoreResult{Source: header.Source, CreatedAt: header.CreatedAt}
 	if manifest != nil && manifest.Source != "" {
 		res.Source = manifest.Source
 	}
 
+	// Refused before anything is written: finding out at the end of the bundle
+	// would come after the platform database had already been restored.
+	if sel.MetricsDB && !manifestHolds(manifest, MetricsDBComponent) {
+		return nil, ErrBundleHasNoMetricsDB
+	}
 	if sel.Database {
 		if err := r.checkTargetEmpty(ctx, overwriteTarget); err != nil {
 			return nil, err
@@ -183,6 +194,21 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 
 	counts := map[string]int64{}
 	restoredDB := false
+	// A restored database is resealed whatever fails AFTER it. Returning early
+	// would leave it holding credentials sealed under the source's secret, which
+	// nothing on this installation can open.
+	defer func() {
+		if !restoredDB {
+			return
+		}
+		if rerr := r.resealRestored(ctx, manifest, res); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
+		res.Warnings = append(res.Warnings,
+			"The database was restored into the target you named. This Core is still running on its own database: restart it with the new DB_* values once you have checked the result.")
+	}()
+	restoredMetrics := false
+	metricsVersion := ""
 
 	for {
 		hdr, terr := tr.Next()
@@ -225,6 +251,34 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 				Kind: "database", Status: models.PlatformBackupIncluded, SizeBytes: hdr.Size,
 			})
 
+		case name == metricsVersionMember:
+			b, err := io.ReadAll(io.LimitReader(tr, 64))
+			if err != nil {
+				return res, fmt.Errorf("reading the bundle: %w", err)
+			}
+			metricsVersion = strings.TrimSpace(string(b))
+
+		case name == metricsDumpMember:
+			if !sel.MetricsDB {
+				continue
+			}
+			err := errors.New("no target statistics database was given")
+			if r.RestoreMetricsInto != nil {
+				err = r.spoolInto(tr, func(f *os.File) error {
+					return r.RestoreMetricsInto(ctx, f, metricsVersion)
+				})
+			}
+			if err != nil {
+				res.Components = append(res.Components, models.PlatformBackupComponent{
+					Kind: MetricsDBComponent, Status: models.PlatformBackupFailed, Message: err.Error(),
+				})
+				return res, fmt.Errorf("statistics database: %w", err)
+			}
+			restoredMetrics = true
+			res.Components = append(res.Components, models.PlatformBackupComponent{
+				Kind: MetricsDBComponent, Status: models.PlatformBackupIncluded, SizeBytes: hdr.Size,
+			})
+
 		case strings.HasPrefix(name, "library/"), strings.HasPrefix(name, "modpacks/"):
 			area, key, _ := strings.Cut(name, "/")
 			if (area == "library" && !sel.Library) || (area == "modpacks" && !sel.Modpacks) {
@@ -256,14 +310,30 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 		})
 	}
 
-	if restoredDB {
-		if err := r.resealRestored(ctx, manifest, res); err != nil {
-			return res, err
-		}
-		res.Warnings = append(res.Warnings,
-			"The database was restored into the target you named. This Core is still running on its own database: restart it with the new DB_* values once you have checked the result.")
+	if sel.MetricsDB && !restoredMetrics {
+		// The manifest promised it and the payload did not carry it.
+		res.Components = append(res.Components, models.PlatformBackupComponent{
+			Kind: MetricsDBComponent, Status: models.PlatformBackupFailed, Message: ErrBundleHasNoMetricsDB.Error(),
+		})
+		return res, ErrBundleHasNoMetricsDB
 	}
 	return res, nil
+}
+
+// ErrBundleHasNoMetricsDB is a statistics restore from a bundle without one.
+var ErrBundleHasNoMetricsDB = errors.New("this bundle holds no statistics database; bundles written before it was covered, or on an installation without one, do not")
+
+// manifestHolds reports whether the bundle set out to include kind.
+func manifestHolds(m *bundle.Manifest, kind string) bool {
+	if m == nil {
+		return false
+	}
+	for _, c := range m.Components {
+		if c.Kind == kind && c.Status == models.PlatformBackupIncluded {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *PlatformRestorer) checkTargetEmpty(ctx context.Context, overwrite bool) error {
@@ -284,14 +354,27 @@ func (r *PlatformRestorer) checkTargetEmpty(ctx context.Context, overwrite bool)
 }
 
 // restoreDatabase spools the dump before loading it.
-//
-// Spooled because pg_restore reads its input more than once for a custom-format
-// archive - it reads the table of contents, then the data - and a tar member is
-// a forward-only stream.
 func (r *PlatformRestorer) restoreDatabase(ctx context.Context, src io.Reader) error {
 	if r.RestoreDatabaseInto == nil {
 		return errors.New("no target database was given")
 	}
+	return r.spoolInto(src, func(f *os.File) error {
+		if err := r.RestoreDatabaseInto(ctx, f); err != nil {
+			if needsSuperuser(err) {
+				return fmt.Errorf("%w (%v)", ErrTargetNeedsSuperuser, err)
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+// spoolInto copies src to a temporary file and hands it to load, rewound.
+//
+// Spooled because pg_restore reads its input more than once for a custom-format
+// archive - it reads the table of contents, then the data - and a tar member is
+// a forward-only stream.
+func (r *PlatformRestorer) spoolInto(src io.Reader, load func(f *os.File) error) error {
 	if err := os.MkdirAll(r.WorkDir, 0o700); err != nil {
 		return fmt.Errorf("work directory: %w", err)
 	}
@@ -311,13 +394,7 @@ func (r *PlatformRestorer) restoreDatabase(ctx context.Context, src io.Reader) e
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	if err := r.RestoreDatabaseInto(ctx, f); err != nil {
-		if needsSuperuser(err) {
-			return fmt.Errorf("%w (%v)", ErrTargetNeedsSuperuser, err)
-		}
-		return err
-	}
-	return nil
+	return load(f)
 }
 
 // resealRestored moves every at-rest value in the RESTORED database from the

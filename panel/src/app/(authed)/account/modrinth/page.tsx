@@ -121,7 +121,7 @@ export default function ModrinthIntegrationPage() {
                             )}
                         </div>
                         <button onClick={handleClear} className="btn btn-secondary btn-sm">
-                            <Trash2 size={12} className="text-(--error)" />
+                            <Trash2 size={12} className="text-(--error-light)" />
                             Disconnect
                         </button>
                     </header>

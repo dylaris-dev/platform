@@ -143,3 +143,17 @@ func TestPGToolPathFallsBackToThePathWhenNothingIsVersioned(t *testing.T) {
 		t.Fatal("a tool that exists nowhere was reported as found")
 	}
 }
+
+// Both dumps - the platform database and the statistics one - go through
+// dumpArgs, so a dump stuck behind an exclusive lock fails after a minute
+// instead of holding the backup run open forever. The password never appears.
+func TestDumpArgsBoundTheLockWait(t *testing.T) {
+	args := PGConn{Host: "db", User: "u", Password: "secret", Name: "n"}.dumpArgs()
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--lock-wait-timeout=60s") || !strings.Contains(joined, "--format=custom") {
+		t.Errorf("args = %v", args)
+	}
+	if strings.Contains(joined, "secret") {
+		t.Errorf("the password is in the argument list: %v", args)
+	}
+}

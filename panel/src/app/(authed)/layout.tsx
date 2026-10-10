@@ -275,7 +275,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                         <Store size={20} className="mr-3" /> Dylaris Store
                                     </GuardedLink>
                                 )}
-                                <button onClick={() => { setIsProfileDropdownOpen(false); logout(); router.push('/login'); }} className="dropdown-item text-(--error) hover:bg-(--error-ghost) mt-1">
+                                <button onClick={() => { setIsProfileDropdownOpen(false); logout(); router.push('/login'); }} className="dropdown-item text-(--error-light) hover:bg-(--error-ghost) mt-1">
                                     <LogOut size={20} className="mr-3" /> Logout
                                 </button>
                             </div>

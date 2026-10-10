@@ -292,7 +292,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                     <ModalPanel className="card w-full max-w-sm p-6 flex flex-col gap-4">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                                <AlertTriangle size={16} className="text-(--error)" />
+                                <AlertTriangle size={16} className="text-(--error-light)" />
                                 <h2 className="font-display text-base font-bold text-(--base-09)">Delete Route</h2>
                             </div>
                             <button onClick={() => setDeleteModal(null)} className="p-1 text-(--base-06) hover:text-(--base-09)">

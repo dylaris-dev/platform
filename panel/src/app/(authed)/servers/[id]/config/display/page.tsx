@@ -407,7 +407,7 @@ export default function ServerConfigDisplayPage() {
                             className="btn btn-secondary btn-sm"
                             disabled={uploadingIcon}
                         >
-                            <Trash2 size={13} className="text-(--error)" />
+                            <Trash2 size={13} className="text-(--error-light)" />
                             Remove
                         </button>
                     </div>

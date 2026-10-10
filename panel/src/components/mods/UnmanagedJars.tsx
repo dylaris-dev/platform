@@ -193,7 +193,7 @@ export function UnmanagedJars({
                                     disabled={removing === key}
                                     className="btn btn-secondary btn-sm shrink-0"
                                 >
-                                    <Trash2 size={11} className="text-(--error)" />
+                                    <Trash2 size={11} className="text-(--error-light)" />
                                     {removing === key ? 'Deleting…' : 'Delete'}
                                 </button>
                             )}

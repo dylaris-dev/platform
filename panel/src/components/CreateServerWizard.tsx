@@ -795,7 +795,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
                 {formError && (
                     <div className="px-6 pb-2">
-                        <p role="alert" className="text-sm text-(--error)">{formError}</p>
+                        <p role="alert" className="text-sm text-(--error-light)">{formError}</p>
                     </div>
                 )}
 

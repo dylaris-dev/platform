@@ -19,7 +19,7 @@ const LOCKED = 'bg-(--base-02) border-(--base-03) text-(--base-05) cursor-not-al
 
 const PRIMARY: Record<'start' | 'stop' | 'busy', string> = {
     start: 'bg-(--success) border-(--success) text-white hover:bg-(--success-light) hover:border-(--success-light) active:bg-(--success)',
-    stop: 'bg-(--base-04) border-(--base-05) text-(--base-09) hover:bg-(--base-05) active:bg-(--base-04)',
+    stop: 'bg-(--base-03) border-(--base-05) text-(--base-09) hover:bg-(--base-04) active:bg-(--base-03)',
     busy: 'bg-(--base-03) border-(--base-04) text-(--base-08) cursor-progress',
 };
 const GHOST = 'bg-transparent border-(--base-04) text-(--base-08) hover:bg-(--base-03) hover:text-(--base-09) active:bg-(--base-04) disabled:bg-transparent disabled:border-(--base-03) disabled:text-(--base-05) disabled:cursor-not-allowed';

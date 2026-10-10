@@ -856,8 +856,8 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
                                     title="Cancel this migration and roll the server back to its current node. Only possible before cutover; the old node is kept until the move is verified."
                                 >
-                                    <Undo2 size={16} className="text-(--error)" />
-                                    <span className="text-xs font-semibold text-(--error)">{cancellingMigration ? 'Cancelling...' : 'Cancel Migration'}</span>
+                                    <Undo2 size={16} className="text-(--error-light)" />
+                                    <span className="text-xs font-semibold text-(--error-light)">{cancellingMigration ? 'Cancelling...' : 'Cancel Migration'}</span>
                                 </button>
                             )}
                         </div>
@@ -1040,7 +1040,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
 
             {oomBanner && (
                 <div className="px-6 pt-3 shrink-0">
-                    <div role="alert" className="flex items-start gap-2.5 px-3 py-2 rounded-md bg-(--error-ghost) border border-(--error)/15 text-(--error) text-xs">
+                    <div role="alert" className="flex items-start gap-2.5 px-3 py-2 rounded-md bg-(--error-ghost) border border-(--error)/15 text-(--error-light) text-xs">
                         <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                         <span className="flex-1">
                             <strong className="font-semibold">Killed: out of memory</strong>
@@ -1158,7 +1158,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                     <ModalPanel onClose={() => setShowKillConfirm(false)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
-                                <Zap size={20} className="text-(--error)" />
+                                <Zap size={20} className="text-(--error-light)" />
                                 Force kill server?
                             </h3>
                         </div>

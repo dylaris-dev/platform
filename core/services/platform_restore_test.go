@@ -464,3 +464,123 @@ func TestRestoreNamesTheSuperuserRequirement(t *testing.T) {
 		t.Errorf("an unrelated failure was relabelled: %v", err)
 	}
 }
+
+// A bundle written by the runner carries the statistics dump and the TimescaleDB
+// version it came from, and the version reaches the restore BEFORE the dump does,
+// so a mismatched target can be refused without loading anything.
+func TestRestoreBringsBackTheMetricsDBWithItsVersion(t *testing.T) {
+	st := storeWith(models.PlatformBackupSelection{MetricsDB: true})
+	dest := &fakeDest{}
+	w := newRunner(t, st, dest)
+	w.DumpMetrics = func(_ context.Context, out io.Writer) (string, error) {
+		_, err := io.WriteString(out, "PGDMP-metrics")
+		return "2.17.2", err
+	}
+	if _, err := w.Run(context.Background(), 3); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The runner and this file use different passphrases; reopen under its own.
+	rig := newRig(t, "the-source-cluster-secret")
+	var gotBody, gotVersion string
+	rig.r.RestoreMetricsInto = func(_ context.Context, src io.Reader, v string) error {
+		b, err := io.ReadAll(src)
+		gotBody, gotVersion = string(b), v
+		return err
+	}
+	res, err := rig.r.Restore(context.Background(), bytes.NewReader(dest.body), runnerPassphrase,
+		PlatformRestoreSelection{MetricsDB: true}, false)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if gotBody != "PGDMP-metrics" || gotVersion != "2.17.2" {
+		t.Errorf("restored %q at version %q", gotBody, gotVersion)
+	}
+	if rig.dbCalls != 0 {
+		t.Error("restoring only the statistics database touched the platform database")
+	}
+	if len(res.Components) != 1 || res.Components[0].Kind != MetricsDBComponent ||
+		res.Components[0].Status != models.PlatformBackupIncluded {
+		t.Errorf("components = %+v", res.Components)
+	}
+
+	// A failing load is reported per component and fails the restore.
+	rig = newRig(t, "the-source-cluster-secret")
+	rig.r.RestoreMetricsInto = func(context.Context, io.Reader, string) error {
+		return ErrMetricsTargetNotReady
+	}
+	res, err = rig.r.Restore(context.Background(), bytes.NewReader(dest.body), runnerPassphrase,
+		PlatformRestoreSelection{MetricsDB: true}, false)
+	if !errors.Is(err, ErrMetricsTargetNotReady) || len(res.Components) != 1 ||
+		res.Components[0].Status != models.PlatformBackupFailed {
+		t.Errorf("err = %v, components = %+v", err, res.Components)
+	}
+}
+
+// writeMetricsBundle is a bundle with the platform database and the statistics
+// dump, in the order the runner writes them, and a manifest that lists both.
+func writeMetricsBundle(t *testing.T, clusterSecret string) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	w, err := bundle.NewWriter(&out, restorePass, "2026.09.08")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&bundle.Manifest{
+		Schema: bundle.Schema, Source: "2026.09.08", ClusterSecret: clusterSecret,
+		Selection: models.PlatformBackupSelection{Database: true, MetricsDB: true},
+		Components: []models.PlatformBackupComponent{
+			{Kind: "database", Status: models.PlatformBackupIncluded},
+			{Kind: MetricsDBComponent, Status: models.PlatformBackupIncluded},
+		},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	for _, m := range [][2]string{{"database.dump", "PGDMP..."}, {metricsVersionMember, "2.17.2"}, {metricsDumpMember, "PGDMP-metrics"}} {
+		if err := w.AddBytes(m[0], []byte(m[1])); err != nil {
+			t.Fatalf("AddBytes %s: %v", m[0], err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	return out.Bytes()
+}
+
+// A statistics failure AFTER the platform database landed must not skip the
+// reseal: that would leave a restored database whose credentials only the
+// source installation can open.
+func TestRestoreResealsTheDatabaseWhenTheMetricsDBFails(t *testing.T) {
+	raw := writeMetricsBundle(t, "source-secret")
+	rig := newRig(t, "this-instances-secret")
+	rig.r.RestoreMetricsInto = func(context.Context, io.Reader, string) error {
+		return ErrMetricsTargetNotReady
+	}
+	_, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
+		PlatformRestoreSelection{Database: true, MetricsDB: true}, false)
+	if !errors.Is(err, ErrMetricsTargetNotReady) {
+		t.Fatalf("err = %v, want the metrics failure", err)
+	}
+	if rig.dbCalls != 1 || rig.reseal.calls != 1 || rig.reseal.from != "source-secret" {
+		t.Errorf("db loads = %d, reseals = %d from %q; want the restored database resealed",
+			rig.dbCalls, rig.reseal.calls, rig.reseal.from)
+	}
+}
+
+// An older bundle has no statistics dump. Selecting it is refused before a
+// single byte is written, so the platform database is not restored either.
+func TestRestoreRefusesAMetricsDBTheBundleDoesNotHold(t *testing.T) {
+	raw := writeTestBundle(t, "source-secret", map[string]string{"database.dump": "PGDMP...", "library/a.jar": "JAR"})
+	rig := newRig(t, "source-secret")
+	rig.r.RestoreMetricsInto = func(context.Context, io.Reader, string) error {
+		t.Error("loaded a dump that does not exist")
+		return nil
+	}
+	_, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
+		PlatformRestoreSelection{Database: true, MetricsDB: true, Library: true}, false)
+	if !errors.Is(err, ErrBundleHasNoMetricsDB) {
+		t.Fatalf("err = %v, want ErrBundleHasNoMetricsDB", err)
+	}
+	if rig.dbCalls != 0 || len(rig.lib.written) != 0 {
+		t.Errorf("wrote before refusing: db loads = %d, library = %v", rig.dbCalls, rig.lib.written)
+	}
+}

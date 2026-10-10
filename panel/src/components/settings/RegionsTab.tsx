@@ -140,7 +140,7 @@ export default function RegionsTab() {
                     <tbody>
                         {loadError ? (
                             <tr>
-                                <td colSpan={5} className="text-center py-8 text-(--error) text-sm">
+                                <td colSpan={5} className="text-center py-8 text-(--error-light) text-sm">
                                     {loadError}
                                 </td>
                             </tr>

@@ -296,7 +296,7 @@ export default function ServerConfigProfilingPage() {
                                     </div>
                                 </div>
                                 <button onClick={() => handleDelete(p)} className="btn btn-secondary btn-sm">
-                                    <Trash2 size={12} className="text-(--error)" />
+                                    <Trash2 size={12} className="text-(--error-light)" />
                                 </button>
                             </article>
                         ))}

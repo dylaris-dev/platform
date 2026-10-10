@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.5
+
+### Features
+- **Readable panel**: text and muted labels meet WCAG AA contrast now, and a High contrast switch in your
+  profile raises everything further.
+- **The Audit tab reads like sentences**; click an entry for all details and page through with the arrow keys.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.10.4
 
 ### Features

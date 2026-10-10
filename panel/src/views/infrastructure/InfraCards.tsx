@@ -231,7 +231,7 @@ export function NodeCard({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className={`mono-label ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
+          <span className={`mono-label ${isOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
             {node.status}
           </span>
         </div>
@@ -497,7 +497,7 @@ export function EdgeCard({ edge }: { edge: GatewayEdge }) {
             <p className="text-[10px] font-mono text-(--base-05) truncate">{edge.ip}:{edge.service_port}</p>
           </div>
         </div>
-        <span className={`mono-label shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error)'}`}>
+        <span className={`mono-label shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
           {edge.status}
         </span>
       </div>
@@ -513,7 +513,7 @@ export function EdgeCard({ edge }: { edge: GatewayEdge }) {
             </span>
           ) : imageMismatch ? (
             <span
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--danger)/10 mono-label text-(--danger-light)"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--error)/10 mono-label text-(--error-light)"
               title={`Running image ${runImg.slice(7, 19)}, SPLICE_IMAGE resolves to ${availImg.slice(7, 19)}. The pinned tag moved; redeploy the edge stack to recreate the sidecar.`}
             >
               <ArrowUpCircle size={9} /> v{running || latest} &middot; wrong image
@@ -680,7 +680,7 @@ export function ServiceErrorList({ entries }: { entries: FlatServiceError[] }) {
 
 export function LevelIcon({ level }: { level: ServiceErrorEntry['level'] }) {
   const l = level?.toUpperCase();
-  if (l === 'ERROR') return <AlertCircle size={15} className="shrink-0 mt-0.5 text-(--error)" aria-label="Error" />;
+  if (l === 'ERROR') return <AlertCircle size={15} className="shrink-0 mt-0.5 text-(--error-light)" aria-label="Error" />;
   if (l === 'WARN') return <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--warning-light)" aria-label="Warning" />;
   return <Info size={15} className="shrink-0 mt-0.5 text-(--base-06)" aria-label="Info" />;
 }

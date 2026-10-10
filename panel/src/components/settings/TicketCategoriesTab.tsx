@@ -162,7 +162,7 @@ export default function TicketCategoriesTab() {
                     <tbody>
                         {loadError ? (
                             <tr>
-                                <td colSpan={6} className="text-center py-8 text-(--error) text-sm">
+                                <td colSpan={6} className="text-center py-8 text-(--error-light) text-sm">
                                     {loadError}
                                 </td>
                             </tr>

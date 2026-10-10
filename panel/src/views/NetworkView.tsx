@@ -131,7 +131,7 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
                 <button
                   onClick={() => handleUnlink(server.id)}
                   disabled={linkLoading}
-                  className="btn btn-ghost btn-sm text-(--error) hover:bg-(--error-ghost)"
+                  className="btn btn-ghost btn-sm text-(--error-light) hover:bg-(--error-ghost)"
                 >
                   <Unlink size={12} />
                   Unlink
@@ -191,7 +191,7 @@ export default function NetworkView({ server, allServers, onServerSelect, onRefr
                     <button
                       onClick={() => handleUnlink(child.id)}
                       disabled={linkLoading}
-                      className="btn btn-ghost btn-sm text-(--error) hover:bg-(--error-ghost)"
+                      className="btn btn-ghost btn-sm text-(--error-light) hover:bg-(--error-ghost)"
                     >
                       <Unlink size={12} />
                     </button>

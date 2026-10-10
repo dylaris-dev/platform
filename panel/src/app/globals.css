@@ -15,15 +15,15 @@
 
   /* Base Scale (Carbon Steel) */
   --color-base-00: #080909;
-  --color-base-01: #0B0C0C;
-  --color-base-02: #141618;
-  --color-base-03: #1C1F24;
-  --color-base-04: #2C3038;
-  --color-base-05: #3E4450;
-  --color-base-06: #5A6272;
-  --color-base-07: #8A95A8;
-  --color-base-08: #B8C0CC;
-  --color-base-09: #D8DDE6;
+  --color-base-01: #0C0D0E;
+  --color-base-02: #15171A;
+  --color-base-03: #1E2126;
+  --color-base-04: #333843;
+  --color-base-05: #808A9C;
+  --color-base-06: #97A1B2;
+  --color-base-07: #AEB7C5;
+  --color-base-08: #C7CED9;
+  --color-base-09: #E4E8EF;
 
   /* Primary (Steel Blue) */
   --color-primary: #3C6E9C;
@@ -44,12 +44,12 @@
   --color-success-light: #5EADA5;
   --color-success-ghost: rgba(61,122,114,0.10);
   --color-success-border: rgba(61,122,114,0.25);
-  --color-warning: #B87B32;
+  --color-warning: #C4873A;
   --color-warning-light: #D4953E;
   --color-warning-ghost: rgba(184,123,50,0.10);
   --color-warning-border: rgba(184,123,50,0.25);
   --color-error: #963838;
-  --color-error-light: #E06060;
+  --color-error-light: #EC6E6E;
   --color-error-ghost: rgba(150,56,56,0.10);
   --color-error-border: rgba(150,56,56,0.25);
 
@@ -75,8 +75,9 @@
      fallback cannot drift apart. Two layers on purpose: --accent-ghost is 10%
      alpha, which over --base-00 lands around 1.05:1 and is effectively
      invisible, so the halo alone would be decoration rather than an indicator.
-     The solid inner ring is the part that carries the contrast. */
-  --focus-ring: 0 0 0 1px var(--color-accent), 0 0 0 4px var(--color-accent-ghost);
+     The solid inner ring is the part that carries the contrast, and it is
+     --accent-light because --accent measured under 3:1 on cards and inputs. */
+  --focus-ring: 0 0 0 1px var(--color-accent-light), 0 0 0 4px var(--color-accent-ghost);
 
   --success: var(--color-success);
   --success-light: var(--color-success-light);
@@ -411,11 +412,11 @@ input[type="number"] {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .input-field:focus {
-  border-color: var(--accent);
+  border-color: var(--accent-light);
   box-shadow: 0 0 0 3px var(--accent-ghost);
 }
 .input-field-error {
-  border-color: var(--error);
+  border-color: var(--error-light);
   box-shadow: 0 0 0 3px var(--error-ghost);
 }
 .input-mono {
@@ -430,7 +431,7 @@ input[type="number"] {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .input-mono:focus {
-  border-color: var(--accent);
+  border-color: var(--accent-light);
   box-shadow: 0 0 0 3px var(--accent-ghost);
 }
 
@@ -1095,4 +1096,72 @@ input[type="number"] {
 .server-row:hover {
   border-color: var(--base-04);
   background: var(--base-04);
+}
+
+/* Browser default placeholders are #757575 in a light colour scheme, about 3.5:1
+   on an input here. Measured pairs live in globalsContrast.test.ts. */
+::placeholder {
+  color: var(--base-06);
+  opacity: 1;
+}
+
+/* ── High contrast ──
+   Opt-in per viewer from the profile popup, or by default when the OS asks for
+   more contrast (prefers-contrast: more). The attribute is set on <html> before
+   first paint by the inline script in app/layout.tsx; lib/contrastMode.ts owns
+   the storage key. Only token VALUES change here, so every call site follows,
+   plus the few things a token cannot express: neutral borders, the ring width
+   and link underlines. Held to the same tests as the default set, and never
+   below it. */
+:root[data-contrast="high"] {
+  --color-base-00: #000000;
+  --color-base-01: #040405;
+  --color-base-02: #0A0B0D;
+  --color-base-03: #121418;
+  --color-base-04: #22262D;
+  --color-base-05: #BCC3CE;
+  --color-base-06: #CDD3DC;
+  --color-base-07: #DCE0E7;
+  --color-base-08: #EBEEF2;
+  --color-base-09: #FFFFFF;
+
+  --color-accent-light: #C4AEFF;
+  --color-error-light: #FF9090;
+  --color-warning: #E0A050;
+  --color-warning-light: #F2BA6A;
+  --color-success-light: #84DACF;
+  --color-primary-light: #A2C8E8;
+
+  --color-primary-ghost: rgba(60,110,156,0.22);
+  --color-accent-ghost: rgba(112,72,200,0.22);
+  --color-success-ghost: rgba(61,122,114,0.22);
+  --color-warning-ghost: rgba(184,123,50,0.22);
+  --color-error-ghost: rgba(150,56,56,0.22);
+  --color-primary-border: rgba(106,158,196,0.75);
+  --color-accent-border: rgba(160,126,232,0.75);
+  --color-success-border: rgba(94,173,165,0.75);
+  --color-warning-border: rgba(212,149,62,0.75);
+  --color-error-border: rgba(224,96,96,0.75);
+
+  --focus-ring: 0 0 0 2px var(--color-base-00), 0 0 0 4px var(--color-accent-light);
+}
+/* --base-03/--base-04 are both a surface and the usual border, and as a surface
+   they must stay dark for text to read. So the neutral borders are lifted to
+   --base-05 directly instead of through the token. */
+:root[data-contrast="high"] :is(
+  .border-\(--base-03\), .border-\(--base-04\), .divide-\(--base-03\) > :not(:last-child),
+  .card, .card-stat, .badge-neutral, .table-wrapper, .modal-panel, .toast,
+  .dropdown-menu, .help-pop, .help-panel, .server-row
+) {
+  border-color: var(--base-05);
+}
+/* Inputs separately: inside the list above this selector would outrank
+   .input-field:focus and .input-field-error and turn both borders grey. Matching
+   only the resting state leaves those two rules untouched. */
+:root[data-contrast="high"] :is(.input-field, .input-mono):not(:focus):not(.input-field-error) {
+  border-color: var(--base-05);
+}
+:root[data-contrast="high"] a:not(.btn):is(:not([class]), [class*="accent-light"], [class*="primary-light"]) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }

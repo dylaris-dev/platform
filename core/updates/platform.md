@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.5
+
+### Features
+- **Readable panel**: text and muted labels meet WCAG AA contrast now (they sat as low as 1.7:1), and a
+  High contrast switch in your profile raises everything further. `panel`
+- **The Audit tab reads like sentences** ("BartisD set RAM to 16 GB"); click an entry for all details and the
+  raw JSON, and page through with the arrow keys. `panel`
+- **Platform backups include the statistics database** (TimescaleDB). If it cannot be dumped, the run
+  fails visibly instead of skipping it; restore via the API runs TimescaleDB's pre/post restore. `core`
+
+### Breaking
+- **A platform backup that selects the statistics database now fails when that dump fails.** Untick it
+  under Platform Backups if you do not want it backed up. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.10.4
 
 ### Features

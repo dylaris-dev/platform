@@ -1,6 +1,7 @@
 // ci: trigger full pipeline run (no-op, safe to remove)
 import type { Metadata } from "next";
 import "./globals.css";
+import { CONTRAST_BOOTSTRAP } from "@/lib/contrastMode";
 
 import { Syne, Instrument_Sans, DM_Mono, VT323 } from "next/font/google";
 
@@ -53,7 +54,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${syne.variable} ${instrumentSans.variable} ${dmMono.variable} ${vt323.variable}`}>
+    <html lang="en" className={`${syne.variable} ${instrumentSans.variable} ${dmMono.variable} ${vt323.variable}`} suppressHydrationWarning>
       {/* No runtime-config script here on purpose.
 
           Anything in the React tree is ALSO serialised into Next's flight
@@ -64,6 +65,13 @@ export default function RootLayout({
           Core injects the tag directly after <head> instead, where it is
           parser-inserted, nonced like every other script, and runs before the
           app bundle resolves its API URL. See core/panelfs (injectConfig). */}
+      {/* Sets data-contrast before first paint so high contrast does not flash
+          in after hydration; suppressHydrationWarning above is for exactly that
+          attribute. It is a plain script tag, so stamp-nonce.mjs nonces it like
+          the rest. */}
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: CONTRAST_BOOTSTRAP }} />
+      </head>
       <body>{children}</body>
     </html>
   );

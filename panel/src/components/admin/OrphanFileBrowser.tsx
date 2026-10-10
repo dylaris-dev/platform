@@ -162,7 +162,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
           const isLast = i === pathSegments.length - 1;
           return (
             <React.Fragment key={seg}>
-              <ChevronRight size={10} className="text-(--base-04)" />
+              <ChevronRight size={10} className="text-(--base-05)" />
               {isLast ? (
                 <span className="text-(--base-07)">{seg}</span>
               ) : (
@@ -227,7 +227,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
                   </span>
                 )}
                 {entry.is_dir && (
-                  <ChevronRight size={11} className="text-(--base-04) shrink-0" />
+                  <ChevronRight size={11} className="text-(--base-05) shrink-0" />
                 )}
               </button>
             ))

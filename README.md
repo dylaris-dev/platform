@@ -684,6 +684,17 @@ docker compose exec timescaledb pg_dump -U "$DB_USER" "$DB_NAME" > dylaris-backu
 
 Server files live on the Node host under the `dylaris_data` volume; back that up alongside the database.
 
+A platform backup (Settings, Platform backups) with **Statistics database** selected puts a `pg_dump` of the TimescaleDB statistics database into the bundle (`metrics.dump`, with the TimescaleDB version it came from in `metrics.version`). A configured statistics database that cannot be dumped fails the run. TimescaleDB restores such a dump only through its own procedure ([docs](https://docs.timescale.com/self-hosted/latest/backup-and-restore/logical-backup)). The restore API (`POST /api/platform-backups/restore` or `/runs/{id}/restore` with the `metricsDb` component and a `metricsTarget` connection, which must be a superuser on a new, empty database) runs it as follows, which is also the procedure for a `metrics.dump` file restored by hand:
+
+```sql
+CREATE DATABASE metrics_restored;
+\c metrics_restored
+CREATE EXTENSION IF NOT EXISTS timescaledb VERSION '<metrics.version>';  -- same version as the source
+SELECT timescaledb_pre_restore();
+-- shell: pg_restore --no-owner --no-acl --single-transaction -d metrics_restored metrics.dump   (never -j)
+SELECT timescaledb_post_restore();
+```
+
 ## HTTP API
 
 Every route Core serves is listed in **[API.md](API.md)**: path,

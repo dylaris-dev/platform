@@ -59,8 +59,8 @@ export function productShares(p: TrafficPool): { product: string; label: string;
 
 /** The notice a pool has earned. Kept beside the bar so the two never disagree. */
 export function poolTone(warn: number): { bar: string; text: string; label: string } | null {
-    if (warn >= 100) return { bar: 'bg-(--error)', text: 'text-(--error)', label: 'over the allowance' };
-    if (warn >= 90) return { bar: 'bg-(--error)', text: 'text-(--error)', label: '90% used' };
+    if (warn >= 100) return { bar: 'bg-(--error)', text: 'text-(--error-light)', label: 'over the allowance' };
+    if (warn >= 90) return { bar: 'bg-(--error)', text: 'text-(--error-light)', label: '90% used' };
     if (warn >= 80) return { bar: 'bg-(--warning)', text: 'text-(--warning)', label: '80% used' };
     return null;
 }
@@ -213,7 +213,7 @@ export default function TrafficPools() {
                 {traffic.warn !== undefined && traffic.warn >= 80 && (
                     <span
                         className={`flex items-center gap-1.5 text-xs ${
-                            traffic.warn >= 90 ? 'text-(--error)' : 'text-(--warning)'
+                            traffic.warn >= 90 ? 'text-(--error-light)' : 'text-(--warning)'
                         }`}
                     >
                         <AlertTriangle size={13} />
@@ -234,7 +234,7 @@ export default function TrafficPools() {
                         <Loader2 size={13} className="animate-spin" />
                         Reading your subscription to see whether metered traffic can be switched here.
                     </p>}
-                {consentError && <p className="text-xs text-(--error)">{consentError}</p>}
+                {consentError && <p className="text-xs text-(--error-light)">{consentError}</p>}
             </div>
         </div>
     );

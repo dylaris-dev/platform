@@ -325,32 +325,86 @@ func TestPlatformBackupSurvivesAServerThatCannotBeTriggered(t *testing.T) {
 	}
 }
 
-// A dump that only fails at RESTORE time is worse than none, because it is
-// relied on until the hour it is needed. The metrics database is TimescaleDB,
-// so it is recorded as skipped rather than half-taken.
-func TestPlatformBackupRecordsMetricsAsSkipped(t *testing.T) {
-	sel := models.PlatformBackupSelection{Library: true, MetricsDB: true}
-	st := storeWith(sel)
-	r := newRunner(t, st, &fakeDest{})
-	r.OpenCoreStorage = func(string) (CoreStorageArea, error) { return &fakeArea{}, nil }
+// The statistics database is part of the bundle when selected, and a configured
+// one that cannot be dumped fails the WHOLE run. It used to be recorded as
+// skipped while the run reported success, which is the gap being closed.
+func TestPlatformBackupMetricsDB(t *testing.T) {
+	cases := []struct {
+		name       string
+		selected   bool
+		configured bool
+		dumpErr    error
+		wantRun    string
+		wantStatus models.PlatformBackupComponentStatus // "" = no component at all
+		wantDump   bool
+	}{
+		{name: "selected and dumped", selected: true, configured: true,
+			wantRun: "success", wantStatus: models.PlatformBackupIncluded, wantDump: true},
+		{name: "dump fails the run", selected: true, configured: true, dumpErr: errors.New("connection refused"),
+			wantRun: "failed", wantStatus: models.PlatformBackupFailed},
+		{name: "not selected", selected: false, configured: true, wantRun: "success"},
+		{name: "selected but none configured", selected: true, configured: false,
+			wantRun: "success", wantStatus: models.PlatformBackupSkipped},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := storeWith(models.PlatformBackupSelection{Library: true, MetricsDB: tc.selected})
+			dest := &fakeDest{}
+			r := newRunner(t, st, dest)
+			r.OpenCoreStorage = func(string) (CoreStorageArea, error) { return &fakeArea{}, nil }
+			r.MetricsConfigured = func() bool { return tc.configured }
+			calls := 0
+			r.DumpMetrics = func(_ context.Context, w io.Writer) (string, error) {
+				calls++
+				if tc.dumpErr != nil {
+					return "", tc.dumpErr
+				}
+				_, err := io.WriteString(w, "PGDMP-metrics")
+				return "2.17.2", err
+			}
 
-	if _, err := r.Run(context.Background(), 3); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	var found bool
-	for _, c := range st.finished[0].components {
-		if c.Kind == "metrics" {
-			found = true
-			if c.Status != models.PlatformBackupSkipped {
-				t.Errorf("metrics status = %q, want skipped", c.Status)
+			_, err := r.Run(context.Background(), 3)
+			if (err != nil) != (tc.wantRun == "failed") {
+				t.Fatalf("Run err = %v, want run %s", err, tc.wantRun)
 			}
-			if c.Message == "" {
-				t.Error("metrics was skipped with no reason given")
+			if len(st.finished) != 1 || st.finished[0].status != tc.wantRun {
+				t.Fatalf("run = %+v, want %s", st.finished, tc.wantRun)
 			}
-		}
-	}
-	if !found {
-		t.Error("a selected metrics database was silently omitted from the record")
+			if tc.dumpErr != nil && !strings.Contains(st.finished[0].errMessage, "connection refused") {
+				t.Errorf("run error %q does not carry the dump error", st.finished[0].errMessage)
+			}
+			if !tc.selected && calls != 0 {
+				t.Error("an unselected statistics database was dumped")
+			}
+
+			var got *models.PlatformBackupComponent
+			for i, c := range st.finished[0].components {
+				if c.Kind == MetricsDBComponent {
+					got = &st.finished[0].components[i]
+				}
+			}
+			switch {
+			case tc.wantStatus == "" && got != nil:
+				t.Fatalf("unexpected component %+v", *got)
+			case tc.wantStatus != "" && got == nil:
+				t.Fatalf("no %s component in %+v", MetricsDBComponent, st.finished[0].components)
+			case got != nil && got.Status != tc.wantStatus:
+				t.Fatalf("status = %q, want %q", got.Status, tc.wantStatus)
+			case got != nil && got.Status != models.PlatformBackupIncluded && got.Message == "":
+				t.Error("a component that was not included gives no reason")
+			}
+
+			if !tc.wantDump {
+				return
+			}
+			if got.SizeBytes != int64(len("PGDMP-metrics")) {
+				t.Errorf("size = %d", got.SizeBytes)
+			}
+			_, members := entries(t, dest.body)
+			if members[metricsDumpMember] != "PGDMP-metrics" || members[metricsVersionMember] != "2.17.2" {
+				t.Errorf("bundle members = %v", members)
+			}
+		})
 	}
 }
 

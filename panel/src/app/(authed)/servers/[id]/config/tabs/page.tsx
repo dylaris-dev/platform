@@ -336,7 +336,7 @@ export default function ServerConfigTabsPage() {
                                         <Pencil size={12} />
                                     </button>
                                     <button onClick={() => setDeletePrompt(t)} className="btn btn-secondary btn-sm">
-                                        <Trash2 size={12} className="text-(--error)" />
+                                        <Trash2 size={12} className="text-(--error-light)" />
                                     </button>
                                 </div>
                             </div>
@@ -368,7 +368,7 @@ export default function ServerConfigTabsPage() {
                                                     <Pencil size={11} />
                                                 </button>
                                                 <button onClick={() => handleRevoke(t)} className="btn btn-secondary btn-sm" title="Revoke link">
-                                                    <Trash2 size={11} className="text-(--error)" />
+                                                    <Trash2 size={11} className="text-(--error-light)" />
                                                 </button>
                                             </>
                                         ) : (

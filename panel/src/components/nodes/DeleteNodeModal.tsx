@@ -73,7 +73,7 @@ export default function DeleteNodeModal({
             <ModalPanel onClose={onClose} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                 <div className="modal-header flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <AlertTriangle size={18} className="text-(--error)" />
+                        <AlertTriangle size={18} className="text-(--error-light)" />
                         <h3 className="modal-title">Delete node</h3>
                     </div>
                     <button onClick={onClose} className="p-1 text-(--base-06) hover:text-(--base-09) transition-colors" aria-label="Close">
@@ -83,7 +83,7 @@ export default function DeleteNodeModal({
 
                 <div className="modal-body space-y-4">
                     <div className="rounded-md bg-(--error)/10 border border-(--error)/30 p-3">
-                        <p className="text-sm text-(--error)">
+                        <p className="text-sm text-(--error-light)">
                             This permanently deletes node <strong>&quot;{node.name}&quot;</strong>
                             {count > 0 && (
                                 <> and all <strong>{count}</strong> server{count !== 1 ? 's' : ''} on it</>

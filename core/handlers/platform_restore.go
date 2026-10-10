@@ -58,6 +58,10 @@ type restoreRequest struct {
 	Passphrase string                            `json:"passphrase"`
 	Components services.PlatformRestoreSelection `json:"components"`
 	Target     restoreTargetRequest              `json:"target"`
+	// MetricsTarget is a SECOND new database, for the statistics dump. It is a
+	// separate deployment at the source, and TimescaleDB restores it only into
+	// a superuser connection on a database with the same extension version.
+	MetricsTarget restoreTargetRequest `json:"metricsTarget"`
 	// Overwrite confirms a target that already holds tables. Refused without
 	// it: a restore over an existing schema leaves rows from two installations
 	// in one database with nothing afterwards saying which came from where.
@@ -200,7 +204,7 @@ func (h *PlatformBackupHandler) runRestore(w http.ResponseWriter, r *http.Reques
 		// A role without the right to recreate the extension is the operator's
 		// choice of target, not Core failing, so it is answered like the other two.
 		case errors.Is(rerr, services.ErrTargetNotEmpty), errors.Is(rerr, services.ErrNothingSelected),
-			errors.Is(rerr, services.ErrTargetNeedsSuperuser):
+			errors.Is(rerr, services.ErrTargetNeedsSuperuser), errors.Is(rerr, services.ErrMetricsTargetNotReady):
 			status = http.StatusConflict
 		case errors.Is(rerr, services.ErrBundleWrongPassphrase):
 			status = http.StatusForbidden
@@ -232,23 +236,45 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 			return &coreStorageAreaWriter{prov: prov}, nil
 		},
 	}
+	var closers []func()
+	cleanup := func() {
+		for _, c := range closers {
+			c()
+		}
+	}
+	if req.Components.MetricsDB && req.Components.Database &&
+		sameDatabase(req.MetricsTarget.params(), req.Target.params()) {
+		// Two dumps into one database: the second either fails on the first's
+		// tables or, with overwrite, drops them.
+		return nil, nil, errors.New("the statistics database and the platform database must be restored into two different databases")
+	}
+	if req.Components.MetricsDB {
+		mdb, err := h.wireMetricsRestore(ctx, rst, req.MetricsTarget)
+		if err != nil {
+			return nil, nil, err
+		}
+		closers = append(closers, func() { mdb.Close() })
+	}
 	if !req.Components.Database {
 		// No target is needed, and asking for one would refuse a perfectly good
 		// "restore only the Library".
-		return rst, nil, nil
+		return rst, cleanup, nil
 	}
 
 	params := req.Target.params()
 	if params.Host == "" || params.DBName == "" || params.User == "" {
+		cleanup()
 		return nil, nil, errors.New("restoring the database needs a target database to restore into")
 	}
 	db, err := params.Open(ctx, bundleSourceTimeout)
 	if err != nil {
+		cleanup()
 		return nil, nil, err
 	}
 	major, err := services.PGServerMajor(db)
 	if err != nil {
 		db.Close()
+		cleanup()
 		return nil, nil, err
 	}
 	pg := params.PG()
@@ -264,7 +290,48 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 		// the reseal to run against something other than what was restored.
 		return store.NewPostgresStore(db), nil, nil
 	}
-	return rst, func() { db.Close() }, nil
+	closers = append(closers, func() { db.Close() })
+	return rst, cleanup, nil
+}
+
+// sameDatabase reports whether two targets name the same database. The port
+// defaults like libpq's, so "" and "5432" are one server.
+func sameDatabase(a, b services.DBConnParams) bool {
+	port := func(p string) string {
+		if p == "" {
+			return "5432"
+		}
+		return p
+	}
+	return strings.EqualFold(a.Host, b.Host) && port(a.Port) == port(b.Port) && a.DBName == b.DBName
+}
+
+// wireMetricsRestore opens the statistics target and refuses it before anything
+// is written if the documented TimescaleDB procedure cannot run there.
+func (h *PlatformBackupHandler) wireMetricsRestore(ctx context.Context, rst *services.PlatformRestorer,
+	target restoreTargetRequest) (*sql.DB, error) {
+
+	params := target.params()
+	if params.Host == "" || params.DBName == "" || params.User == "" {
+		return nil, errors.New("restoring the statistics database needs a second target database to restore into")
+	}
+	db, err := params.Open(ctx, bundleSourceTimeout)
+	if err != nil {
+		return nil, err
+	}
+	major, err := services.PGServerMajor(db)
+	if err == nil {
+		err = services.CheckMetricsRestoreTarget(ctx, db)
+	}
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	pg := params.PG()
+	rst.RestoreMetricsInto = func(ctx context.Context, src io.Reader, sourceVersion string) error {
+		return services.RestoreMetricsDB(ctx, db, pg, major, src, sourceVersion)
+	}
+	return db, nil
 }
 
 // targetIsEmpty reports whether the operator's database holds any table of its

@@ -1063,7 +1063,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             {toast && (
                 <div className="fixed bottom-6 right-6 z-50">
                     <div className="flex items-center gap-2 px-4 py-2.5 rounded-md bg-(--base-02) border border-(--base-04) shadow-lg">
-                        {toast.ok ? <CircleCheck size={14} className="text-(--success-light)" /> : <CircleAlert size={14} className="text-(--error)" />}
+                        {toast.ok ? <CircleCheck size={14} className="text-(--success-light)" /> : <CircleAlert size={14} className="text-(--error-light)" />}
                         <span className="text-sm text-(--base-09)">{toast.msg}</span>
                     </div>
                 </div>
@@ -1521,7 +1521,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 <p className="text-xs text-(--base-05)">Empty falls back to the platform default. 0 means this user may store none - it is not a way to switch the quota off.</p>
                                 <div className="flex items-center justify-end gap-3">
                                     {toast && (
-                                        <span className={`text-sm ${toast.ok ? 'text-(--success-light)' : 'text-(--error)'}`}>{toast.msg}</span>
+                                        <span className={`text-sm ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{toast.msg}</span>
                                     )}
                                     <button
                                         type="button"

@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"dylaris-core/models"
@@ -87,6 +88,9 @@ type PlatformBackupRunner struct {
 	OpenCoreStorage     func(area string) (CoreStorageArea, error)
 	TriggerServerBackup func(ctx context.Context, serverID int) (ref string, err error)
 	MetricsConfigured   func() bool
+	// DumpMetrics writes the statistics database and returns the TimescaleDB
+	// version it came from ("" for plain Postgres).
+	DumpMetrics func(ctx context.Context, dest io.Writer) (string, error)
 
 	// now is injectable so a test can name the key it expects.
 	now func() time.Time
@@ -216,7 +220,11 @@ func (r *PlatformBackupRunner) build(ctx context.Context, job *models.PlatformBa
 		}
 	}
 	if job.Selection.MetricsDB {
-		components = append(components, r.metricsComponent())
+		c, err := r.addMetrics(ctx, w)
+		components = append(components, c)
+		if err != nil {
+			return "", 0, components, err
+		}
 	}
 	for _, area := range coreStorageAreas(job.Selection) {
 		cs, err := r.addCoreStorage(ctx, w, area)
@@ -275,7 +283,11 @@ func (r *PlatformBackupRunner) plannedComponents(sel models.PlatformBackupSelect
 		out = append(out, models.PlatformBackupComponent{Kind: "database", Status: models.PlatformBackupIncluded})
 	}
 	if sel.MetricsDB {
-		out = append(out, r.metricsComponent())
+		c := models.PlatformBackupComponent{Kind: MetricsDBComponent, Status: models.PlatformBackupIncluded}
+		if !r.metricsConfigured() {
+			c = metricsNotConfigured()
+		}
+		out = append(out, c)
 	}
 	for _, area := range coreStorageAreas(sel) {
 		out = append(out, models.PlatformBackupComponent{Kind: area, Status: models.PlatformBackupIncluded})
@@ -301,36 +313,14 @@ func coreStorageAreas(sel models.PlatformBackupSelection) []string {
 
 func (r *PlatformBackupRunner) addDatabase(ctx context.Context, w *bundle.Writer) (models.PlatformBackupComponent, error) {
 	c := models.PlatformBackupComponent{Kind: "database"}
-
-	f, err := os.CreateTemp(r.WorkDir, "pgdump-*.tmp")
+	f, size, cleanup, err := r.spoolDump(func(dst io.Writer) error {
+		return DumpDatabase(ctx, r.DB, r.ServerMajor, dst)
+	})
+	if err == nil {
+		defer cleanup()
+		err = w.AddReader("database.dump", size, f)
+	}
 	if err != nil {
-		c.Status = models.PlatformBackupFailed
-		c.Message = err.Error()
-		return c, err
-	}
-	path := f.Name()
-	defer func() {
-		f.Close()
-		os.Remove(path)
-	}()
-
-	if err := DumpDatabase(ctx, r.DB, r.ServerMajor, f); err != nil {
-		c.Status = models.PlatformBackupFailed
-		c.Message = err.Error()
-		return c, err
-	}
-	size, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		c.Status = models.PlatformBackupFailed
-		c.Message = err.Error()
-		return c, err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		c.Status = models.PlatformBackupFailed
-		c.Message = err.Error()
-		return c, err
-	}
-	if err := w.AddReader("database.dump", size, f); err != nil {
 		c.Status = models.PlatformBackupFailed
 		c.Message = err.Error()
 		return c, err
@@ -340,18 +330,101 @@ func (r *PlatformBackupRunner) addDatabase(ctx context.Context, w *bundle.Writer
 	return c, nil
 }
 
-// metricsComponent records the statistics database as not covered.
-//
-// Recorded rather than silently omitted, and skipped rather than half-taken:
-// the metrics database is TimescaleDB, whose hypertables do not survive a plain
-// dump and restore. A dump that only fails at restore time is worse than none,
-// because it is relied on until the hour it is needed.
-func (r *PlatformBackupRunner) metricsComponent() models.PlatformBackupComponent {
-	msg := "the statistics database is TimescaleDB and is not covered by a platform bundle yet"
-	if r.MetricsConfigured != nil && !r.MetricsConfigured() {
-		msg = "no statistics database is configured"
+// spoolDump runs dump into a temporary file and returns it rewound, with its
+// size. Spooled because tar needs the size before the bytes; the dump itself is
+// streamed to the file, so memory stays flat however large the database is.
+// cleanup is only to be called when err is nil.
+func (r *PlatformBackupRunner) spoolDump(dump func(io.Writer) error) (*os.File, int64, func(), error) {
+	f, err := os.CreateTemp(r.WorkDir, "pgdump-*.tmp")
+	if err != nil {
+		return nil, 0, nil, err
 	}
-	return models.PlatformBackupComponent{Kind: "metrics", Status: models.PlatformBackupSkipped, Message: msg}
+	cleanup := func() {
+		f.Close()
+		os.Remove(f.Name())
+	}
+	size, err := func() (int64, error) {
+		if err := dump(f); err != nil {
+			return 0, err
+		}
+		size, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			return 0, err
+		}
+		_, err = f.Seek(0, io.SeekStart)
+		return size, err
+	}()
+	if err != nil {
+		cleanup()
+		return nil, 0, nil, err
+	}
+	return f, size, cleanup, nil
+}
+
+// MetricsDBComponent is the statistics database in a run's components, and
+// metricsDumpMember / metricsVersionMember are its entries in the bundle. The
+// version entry is written FIRST so a restore can refuse a mismatched target
+// before it has read a byte of the dump.
+const (
+	MetricsDBComponent   = "metricsDb"
+	metricsDumpMember    = "metrics.dump"
+	metricsVersionMember = "metrics.version"
+)
+
+func (r *PlatformBackupRunner) metricsConfigured() bool {
+	return r.MetricsConfigured == nil || r.MetricsConfigured()
+}
+
+// metricsNotConfigured is a selected statistics database on an installation
+// that has none. Nothing exists to back up, so it is not a failure.
+func metricsNotConfigured() models.PlatformBackupComponent {
+	return models.PlatformBackupComponent{Kind: MetricsDBComponent, Status: models.PlatformBackupSkipped,
+		Message: "no statistics database is configured"}
+}
+
+// addMetrics dumps the statistics database into the bundle.
+//
+// A configured database that cannot be dumped FAILS the run. It used to be
+// recorded as skipped, and a run that reports success while leaving out data
+// the operator selected is the outcome a backup exists to prevent.
+func (r *PlatformBackupRunner) addMetrics(ctx context.Context, w *bundle.Writer) (models.PlatformBackupComponent, error) {
+	if !r.metricsConfigured() {
+		return metricsNotConfigured(), nil
+	}
+	c := models.PlatformBackupComponent{Kind: MetricsDBComponent}
+	fail := func(err error) (models.PlatformBackupComponent, error) {
+		c.Status = models.PlatformBackupFailed
+		c.Message = err.Error()
+		return c, fmt.Errorf("statistics database: %w", err)
+	}
+	if r.DumpMetrics == nil {
+		return fail(errors.New("this Core cannot dump the statistics database"))
+	}
+
+	// The version is only known once the dump has run, but goes in front of it
+	// in the bundle.
+	var version string
+	f, size, cleanup, err := r.spoolDump(func(dst io.Writer) error {
+		var derr error
+		version, derr = r.DumpMetrics(ctx, dst)
+		return derr
+	})
+	if err != nil {
+		return fail(err)
+	}
+	defer cleanup()
+	if err := w.AddReader(metricsVersionMember, int64(len(version)), strings.NewReader(version)); err != nil {
+		return fail(err)
+	}
+	if err := w.AddReader(metricsDumpMember, size, f); err != nil {
+		return fail(err)
+	}
+	c.Status = models.PlatformBackupIncluded
+	c.SizeBytes = size
+	if version != "" {
+		c.Message = "TimescaleDB " + version
+	}
+	return c, nil
 }
 
 func (r *PlatformBackupRunner) addCoreStorage(ctx context.Context, w *bundle.Writer, area string) ([]models.PlatformBackupComponent, error) {

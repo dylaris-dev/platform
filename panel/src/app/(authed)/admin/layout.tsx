@@ -25,7 +25,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (!ready) return null;
     if (!user?.isAdmin) {
         return (
-            <main className="flex-1 flex items-center justify-center text-(--error) font-semibold text-xl font-display">
+            <main className="flex-1 flex items-center justify-center text-(--error-light) font-semibold text-xl font-display">
                 Access denied. Administrator rights required.
             </main>
         );

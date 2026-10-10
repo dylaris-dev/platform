@@ -252,7 +252,7 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                 </p>
                 <div className="space-y-3">
                     {loadError && (
-                        <div className="p-3 border border-(--error) rounded-md text-(--error) text-sm">
+                        <div className="p-3 border border-(--error) rounded-md text-(--error-light) text-sm">
                             {loadError} The list below may be out of date.
                         </div>
                     )}
@@ -371,7 +371,7 @@ export function nodeActionClass(active: boolean, needsAttention: boolean): strin
         return `${base} bg-(--accent)/15 text-(--accent-light) hover:bg-(--accent)/25`;
     }
     if (needsAttention) {
-        return `${base} text-(--accent-light) hover:text-(--accent)`;
+        return `${base} text-(--accent-light) hover:text-(--base-09)`;
     }
     return `${base} text-(--base-06) hover:text-(--accent-light)`;
 }

@@ -42,7 +42,7 @@ const COMPONENTS: { key: keyof Omit<PlatformBackupSelection, 'servers'>; label: 
     { key: 'database', label: 'Platform database', hint: 'Users, servers, jobs, settings, and the encrypted credentials that make the rest usable.' },
     { key: 'library', label: 'Library', hint: 'Server jars, loaders and uploads in Core storage.' },
     { key: 'modpacks', label: 'Modpacks', hint: 'Published packs and their builds in Core storage.' },
-    { key: 'metricsDb', label: 'Statistics database', hint: 'Not covered yet: it is TimescaleDB and needs its own path. Selecting it records the gap rather than backing it up half way.' },
+    { key: 'metricsDb', label: 'Statistics database', hint: 'The TimescaleDB statistics, dumped into the same bundle. If it is configured but cannot be dumped, the run fails. Restoring it needs a superuser on a new database with the same TimescaleDB version.' },
 ];
 
 interface JobDraft {

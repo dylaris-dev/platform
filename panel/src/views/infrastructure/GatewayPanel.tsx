@@ -273,7 +273,7 @@ function EdgeRow({ edge, load }: { edge: GatewayEdge; load: LoadHistory }) {
                             <ArrowUpCircle size={9} /> splice {running ? `v${running}` : 'unknown'} &rarr; v{latest}
                         </span>
                     ) : wrongImage ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--danger)/10 mono-label text-(--danger-light)">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--error)/10 mono-label text-(--error-light)">
                             <ArrowUpCircle size={9} /> splice v{running || latest} &middot; wrong image
                         </span>
                     ) : (running || latest) ? (

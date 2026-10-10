@@ -425,6 +425,9 @@ func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error)
 		MetricsConfigured: func() bool {
 			return services.LoadMetricsDBTarget(h.state.Store).Configured()
 		},
+		DumpMetrics: func(ctx context.Context, dest io.Writer) (string, error) {
+			return services.DumpMetricsDB(ctx, services.LoadMetricsDBTarget(h.state.Store), dest)
+		},
 	}, nil
 }
 

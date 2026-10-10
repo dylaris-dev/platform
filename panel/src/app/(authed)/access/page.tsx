@@ -151,7 +151,7 @@ export default function AccessPage() {
                                 <span className="mono-label">Invited</span>
                                 <button
                                     onClick={() => setPanel({ kind: 'form', editing: null })}
-                                    className="flex items-center gap-1 text-xs text-(--accent-light) hover:text-(--accent)"
+                                    className="flex items-center gap-1 text-xs text-(--accent-light) hover:text-(--base-09)"
                                     aria-label="Invite"
                                 >
                                     <Plus size={14} />
@@ -260,7 +260,7 @@ export default function AccessPage() {
                                             onClick={() => handleRevoke(g)}
                                             className="btn btn-secondary btn-sm"
                                         >
-                                            <Trash2 size={12} className="text-(--error)" />
+                                            <Trash2 size={12} className="text-(--error-light)" />
                                             Revoke
                                         </button>
                                     </div>
