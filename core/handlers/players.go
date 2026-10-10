@@ -290,9 +290,78 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: cmd})
 	if resp.Success {
-		auditPlayerAction(h.state, r, srv.ID, req.Action, req.Player)
+		// The command reached the server, so it is audited either way; a
+		// refusal ("That player does not exist") is recorded as one rather
+		// than as a ban that happened.
+		refused, reason := classifyPlayerCommandOutput(resp.Output)
+		auditPlayerAction(h.state, r, srv.ID, req.Action, req.Player, refused)
+		if refused {
+			resp.Success = false
+			resp.Error = reason
+			resp.status = http.StatusUnprocessableEntity
+		}
 	}
 	writeRconResponse(w, resp)
+}
+
+// playerCommandFailurePrefixes are vanilla's refusals, lowercased, from the
+// en_us lang files: 1.13-1.21 (argument.player.unknown,
+// argument.entity.notfound.player, command.unknown.command/argument) and 1.12
+// (commands.generic.*, commands.<verb>.failed "Could not ..."). Servers send
+// these in English whatever the client's language. The "Nothing changed ..." /
+// "already whitelisted" replies are deliberately absent: the state the
+// moderator asked for already holds.
+var playerCommandFailurePrefixes = []string{
+	"that player does not exist",
+	"no player was found",
+	"unknown or incomplete command",
+	"unknown command",
+	"incorrect argument for command",
+	"invalid command syntax",
+	"an unknown error occurred",
+	"usage: ",
+	"could not ",
+	// EssentialsX replaces kick/ban/tell on most Paper servers and refuses
+	// with "Error: Player not found." once the colour codes are gone.
+	"error: ",
+}
+
+// classifyPlayerCommandOutput reports whether Minecraft refused a player
+// command, plus the reply with formatting codes stripped. A prefix match, not a
+// substring one: success replies echo free text ("Kicked X: <reason>",
+// "You whisper to X: <message>"), and a reason quoting a refusal must not turn
+// a kick that happened into a failure.
+func classifyPlayerCommandOutput(output string) (bool, string) {
+	clean := strings.TrimSpace(stripMinecraftFormatting(output))
+	low := strings.ToLower(clean)
+	for _, p := range playerCommandFailurePrefixes {
+		if strings.HasPrefix(low, p) {
+			return true, clean
+		}
+	}
+	// 1.12: "Player '<name>' cannot be found".
+	if strings.HasPrefix(low, "player '") && strings.Contains(low, "' cannot be found") {
+		return true, clean
+	}
+	return false, clean
+}
+
+// stripMinecraftFormatting drops section-sign codes (a colour or style
+// character after U+00A7).
+func stripMinecraftFormatting(s string) string {
+	var b strings.Builder
+	skip := false
+	for _, r := range s {
+		switch {
+		case skip:
+			skip = false
+		case r == '§':
+			skip = true
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // auditPlayerAction records a player action in the server's own words.
@@ -300,9 +369,12 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 // path, which cannot say who was banned or that the whitelist went off. The
 // reason and whispered text stay out: free text typed by a moderator is not
 // what the trail is for.
-func auditPlayerAction(state *AppState, r *http.Request, serverID int, action, player string) {
+func auditPlayerAction(state *AppState, r *http.Request, serverID int, action, player string, refused bool) {
 	action = strings.TrimSpace(strings.ToLower(action))
 	meta := map[string]interface{}{"action": action}
+	if refused {
+		meta["refused"] = true
+	}
 	if p := strings.TrimSpace(player); p != "" && action != "whitelist_on" && action != "whitelist_off" {
 		meta["player"] = p
 	}

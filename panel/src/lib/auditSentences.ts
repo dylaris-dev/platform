@@ -238,6 +238,7 @@ function predicate(ev: AuditSentenceEvent): string | null {
             const action = str(m, 'action');
             const player = str(m, 'player') || 'a player';
             const fn = own(PLAYER, action);
+            if (m.refused === true) return `tried ${quoted(action || 'unknown')} on ${player}, refused by the server`;
             return fn ? fn(player) : `ran the player action ${quoted(action || 'unknown')}`;
         }
         case 'memory_guard':

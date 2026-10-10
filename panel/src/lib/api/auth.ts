@@ -189,6 +189,26 @@ export const updateProfile = async (data: any) => {
   }
 };
 
+// The Minecraft name only feeds the avatar, so Core takes it without the
+// password the rest of the profile needs. "" clears it.
+export const updateMinecraftUsername = async (minecraftUsername: string) => {
+  try {
+    const res = await fetch(`${API_URL}/auth/profile/minecraft`, {
+      method: 'PUT',
+      headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minecraftUsername }),
+    });
+    // handleResponse reads only `message`; this route may answer in `error`.
+    if (!res.ok && res.status !== 401) {
+      const data = await res.json().catch(() => null);
+      return { success: false, message: data?.error || data?.message || `Request failed (${res.status})` };
+    }
+    return await handleResponse(res);
+  } catch (err) {
+    return handleError(err);
+  }
+};
+
 // Ends every session of the account on every device. Core hands this tab a
 // new session cookie on the same response, so it keeps working; everything
 // else signed in as this account is out at its next request.

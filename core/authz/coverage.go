@@ -116,6 +116,7 @@ var ExemptRoutes = map[string]bool{
 
 	// Self-service 2FA + profile: the caller manages their OWN account.
 	"/api/auth/profile":                     true, // authed; own profile
+	"/api/auth/profile/minecraft":           true, // authed; own avatar name
 	"/api/auth/2fa/setup":                   true, // authed; own 2FA
 	"/api/auth/2fa/verify":                  true, // authed; own 2FA
 	"/api/auth/2fa/disable":                 true, // authed; own 2FA

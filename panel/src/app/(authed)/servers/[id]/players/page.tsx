@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Users, UserRound, Power, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock } from 'lucide-react';
+import { Users, UserRound, Power, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock, Info } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import PlayerHead from '@/components/PlayerHead';
 import {
@@ -13,6 +13,7 @@ import {
     type PlayerListEntry, type PlayerAction, type KnownPlayer,
 } from '@/lib/api/players';
 import { isServerLive, mergeAllPlayers, type AllPlayerRow } from '@/lib/playersView';
+import { playerActionToast } from '@/lib/playerActionResult';
 import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
@@ -214,12 +215,9 @@ export default function ServerPlayersPage() {
         extra?: { reason?: string; message?: string },
     ) => {
         const res = await playerAction(serverId, action, player, extra);
-        if (!res.success) {
-            showToast(`${label}: ${friendlyRconError(res.error, 'failed')}`, false);
-        } else {
-            showToast(`${label} ✓`, true);
-            refresh(true);
-        }
+        const { text, ok } = playerActionToast(label, res);
+        showToast(text, ok);
+        if (ok) refresh(true);
     };
 
     // ---- Action handlers ----
@@ -325,6 +323,14 @@ export default function ServerPlayersPage() {
                     </div>
                 )}
             </header>
+
+            <p className="shrink-0 flex items-start gap-2 px-3 py-2 rounded-md bg-(--base-02) border border-(--base-03) text-(--base-07) text-xs">
+                <Info size={13} className="shrink-0 mt-0.5" />
+                <span>
+                    Player actions run as Minecraft commands over RCON. What you see is the server&apos;s own reply; mods and
+                    plugins can change or delay it. The online list refreshes every 10 seconds.
+                </span>
+            </p>
 
             {/* Section strip */}
             <nav className="flex gap-1 shrink-0 border-b border-(--base-03)">

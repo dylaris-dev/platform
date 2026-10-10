@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, ShieldCheck, ShieldOff, Copy, Check, AlertTriangle, Bug, Trash2, RefreshCw, KeyRound, HelpCircle, Pencil, History as HistoryIcon, ChevronDown, LogOut, Contrast } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes, logoutEverywhere } from '@/lib/api/auth';
+import { setupTOTP, verifyTOTP, disableTOTP, get2FAStatus, regenerateBackupCodes, logoutEverywhere, updateMinecraftUsername } from '@/lib/api/auth';
 import { getSecurityQuestionPool, getMySecurityQuestions, setMySecurityQuestions, SecurityQAItem } from '@/lib/api/securityQuestions';
 import { getMyUsernameHistory, type UsernameHistoryEntry } from '@/lib/api/accountPolicy';
 import { isUsername } from '@/lib/validation';
@@ -12,6 +12,7 @@ import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { isHighContrast, setHighContrast } from '@/lib/contrastMode';
+import { Badge } from '@/components/ui/Badge';
 
 interface UserProfile {
     username: string;
@@ -41,6 +42,8 @@ interface ProfilePopupProps {
       totpCode?: string;
   }) => Promise<ProfileUpdateResult>;
   onTwoFactorChange?: () => void;
+  // Called after the Minecraft name is saved, so the navbar avatar follows.
+  onMinecraftSaved?: () => void;
 }
 
 type FieldKey = 'username' | 'email' | 'minecraft' | 'current' | 'newPassword' | 'confirm' | 'totp';
@@ -48,10 +51,11 @@ type FieldErrors = Partial<Record<FieldKey, string>>;
 
 // The tab each field lives on, in the order a reader meets them: the first
 // one in error is the one focused.
-const FIELD_ORDER: { key: FieldKey; tab: 'general' | 'security' }[] = [
-  { key: 'username', tab: 'general' },
-  { key: 'email', tab: 'general' },
-  { key: 'minecraft', tab: 'general' },
+// The Minecraft name is not in the list: it saves on its own, without the
+// password, from the General tab.
+const FIELD_ORDER: { key: FieldKey; tab: 'account' | 'security' }[] = [
+  { key: 'username', tab: 'account' },
+  { key: 'email', tab: 'account' },
   { key: 'current', tab: 'security' },
   { key: 'newPassword', tab: 'security' },
   { key: 'confirm', tab: 'security' },
@@ -59,6 +63,7 @@ const FIELD_ORDER: { key: FieldKey; tab: 'general' | 'security' }[] = [
 ];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MINECRAFT_RE = /^[A-Za-z0-9_]{3,16}$/;
 
 // Which field a refusal from Core is about. Everything else stays in the
 // banner, where a message about no field in particular belongs.
@@ -88,11 +93,10 @@ function Field({ id, label, hint, error, children }: {
   );
 }
 
-const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpdate, onTwoFactorChange }) => {
+const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpdate, onTwoFactorChange, onMinecraftSaved }) => {
   const [currentView, setCurrentView] = useState("general");
 
   const [newUsername, setNewUsername] = useState(currentUser.username || "");
-  const [minecraftUsername, setMinecraftUsername] = useState(currentUser.minecraftUsername || "");
   const [email, setEmail] = useState(currentUser.email || "");
   const [pendingEmail, setPendingEmail] = useState(currentUser.pendingEmail || "");
 
@@ -173,9 +177,6 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
     if (trimmedEmail !== (currentUser.email || '') && trimmedEmail !== '' && !EMAIL_RE.test(trimmedEmail)) {
       errs.email = "Enter a valid email address";
     }
-    if (minecraftUsername.trim() !== '' && !/^[A-Za-z0-9_]{3,16}$/.test(minecraftUsername.trim())) {
-      errs.minecraft = "3-16 characters: letters, digits or _";
-    }
     if (!oldPassword) errs.current = "Enter your current password to save changes";
     if (confirmPassword && !newPassword) errs.newPassword = "Enter the new password";
     if (newPassword && newPassword.length < minLength) errs.newPassword = `At least ${minLength} characters`;
@@ -201,7 +202,6 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
           newUsername,
           oldPassword,
           newPassword,
-          minecraftUsername,
           email,
           totpCode: needsCode ? totpCode.replace(/\s/g, '') : undefined,
       });
@@ -286,6 +286,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
 
         <div role="tablist" className="flex gap-1 px-6 pt-4 border-b border-(--base-03)">
           <button type="button" role="tab" aria-selected={currentView === "general"} onClick={() => setCurrentView("general")} className={tabClass("general")}>General</button>
+          <button type="button" role="tab" aria-selected={currentView === "account"} onClick={() => setCurrentView("account")} className={tabClass("account")}>Account</button>
           <button type="button" role="tab" aria-selected={currentView === "security"} onClick={() => setCurrentView("security")} className={tabClass("security")}>Security</button>
           {currentUser.isAdmin && (
             <button type="button" role="tab" aria-selected={currentView === "developer"} onClick={() => setCurrentView("developer")} className={tabClass("developer")}>Developer</button>
@@ -296,8 +297,18 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
           {bannerError && <div role="alert" className="alert alert-error mb-4 font-medium">{bannerError}</div>}
           {success && <div role="status" className="alert alert-success mb-4 font-medium">{success}</div>}
 
+          {/* General saves nothing through the form: the Minecraft name has its
+              own Save and contrast applies at once, so neither asks for the
+              password. */}
+          {currentView === "general" && (
+            <div className="space-y-4 animate-fade-in">
+              <MinecraftUsernameRow initial={currentUser.minecraftUsername || ""} onSaved={onMinecraftSaved} />
+              <HighContrastRow />
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
-            {currentView === "general" && (
+            {currentView === "account" && (
               <div className="space-y-4 animate-fade-in">
                 <Field
                   id="profile-username" label="Username" error={errors.username}
@@ -323,15 +334,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
                     disabled={loading} className={fieldClass('email')} {...aria('email', 'profile-email')}
                   />
                 </Field>
-                <Field id="profile-minecraft" label="Minecraft username (for your avatar)" error={errors.minecraft}>
-                  <input
-                    id="profile-minecraft" ref={bind('minecraft')} type="text"
-                    value={minecraftUsername} onChange={e => { setMinecraftUsername(e.target.value); clearError('minecraft'); }}
-                    disabled={loading} className={fieldClass('minecraft')} {...aria('minecraft', 'profile-minecraft')}
-                  />
-                </Field>
                 <UsernameHistorySection />
-                <HighContrastRow />
               </div>
             )}
 
@@ -437,10 +440,10 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
               </div>
             )}
 
-            {/* On the General tab the current password confirms the save at
+            {/* On the Account tab the current password confirms the save at
                 the end; on Security it opens the password change, before the
-                new one. The developer tab saves nothing. */}
-            {currentView === "general" && (
+                new one. General and Developer save nothing through here. */}
+            {currentView === "account" && (
               <div className="pt-4 border-t border-(--base-03) space-y-3">
                 {currentPasswordField}
                 {totpField}
@@ -529,6 +532,81 @@ function SignOutEverywhereRow() {
       {note ? (
         <p role="status" className={`mt-2 text-xs ${note.ok ? 'text-(--success-light)' : 'text-(--warning)'}`}>{note.text}</p>
       ) : null}
+    </div>
+  );
+}
+
+// Saved on its own route without the password: the name only picks the avatar.
+// Nothing checks it against Mojang yet, hence the badge; Verify is where a
+// Microsoft sign-in will go.
+function MinecraftUsernameRow({ initial, onSaved }: { initial: string; onSaved?: () => void }) {
+  const [saved, setSaved] = useState(initial);
+  const [value, setValue] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const trimmed = value.trim();
+  const unchanged = trimmed === saved;
+
+  const save = async () => {
+    if (trimmed !== '' && !MINECRAFT_RE.test(trimmed)) {
+      setNote({ ok: false, text: '3-16 characters: letters, digits or _' });
+      return;
+    }
+    setBusy(true);
+    setNote(null);
+    const res = await updateMinecraftUsername(trimmed);
+    setBusy(false);
+    if (!res?.success) {
+      setNote({ ok: false, text: res?.message || 'Could not save your Minecraft username.' });
+      return;
+    }
+    const name = typeof res.minecraftUsername === 'string' ? res.minecraftUsername : trimmed;
+    setSaved(name);
+    setValue(name);
+    setNote({ ok: true, text: name ? 'Minecraft username saved.' : 'Minecraft username removed.' });
+    onSaved?.();
+  };
+
+  return (
+    <div className="p-3 rounded-md bg-(--base-02) border border-(--base-03) space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor="profile-minecraft" className="input-label">Minecraft username</label>
+        {saved && <Badge variant="warning">Unverified</Badge>}
+      </div>
+      <div className="flex gap-2">
+        <input
+          id="profile-minecraft" type="text" value={value} maxLength={16} autoComplete="off"
+          onChange={e => { setValue(e.target.value); setNote(null); }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (!busy && !unchanged) save(); } }}
+          disabled={busy}
+          className={`input-field w-full min-w-0 disabled:opacity-40 disabled:cursor-not-allowed ${note && !note.ok ? 'input-field-error' : ''}`}
+          aria-invalid={(note && !note.ok) || undefined}
+          aria-describedby="profile-minecraft-note"
+        />
+        <button type="button" onClick={save} disabled={busy || unchanged} className="btn btn-primary btn-sm shrink-0">
+          {busy ? 'Saving...' : 'Save'}
+        </button>
+        {/* The wrapper carries the tooltip: a disabled button fires no hover in
+            every browser. The same words sit below for keyboard and touch. */}
+        <span title="Linking your Microsoft account is coming soon" className="shrink-0 inline-flex">
+          <button type="button" disabled className="btn btn-secondary btn-sm" aria-describedby="profile-minecraft-verify-hint">
+            Verify
+          </button>
+        </span>
+      </div>
+      <div id="profile-minecraft-note" className="space-y-1">
+        {note ? (
+          <p role={note.ok ? 'status' : 'alert'} className={`text-xs ${note.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{note.text}</p>
+        ) : (
+          <p className="text-xs text-(--base-06)">
+            Only used for your avatar. It is not checked against Mojang yet.
+          </p>
+        )}
+        <p id="profile-minecraft-verify-hint" className="text-xs text-(--base-06)">
+          Linking your Microsoft account is coming soon.
+        </p>
+      </div>
     </div>
   );
 }

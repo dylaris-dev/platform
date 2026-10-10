@@ -118,8 +118,10 @@ export async function playerAction(
             body: JSON.stringify({ action, player, ...extra }),
         });
         const data = await res.json();
-        if (!res.ok) return { success: false, error: data.message || 'Request failed' };
-        return data;
+        // A command Minecraft refused comes back 422 with the server's reply in
+        // `error`; reading only `message` showed "Request failed" instead.
+        if (!res.ok || data.success === false) return { success: false, error: data.error || data.message || 'Request failed' };
+        return { success: true, output: data.output };
     } catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Network error' };
     }

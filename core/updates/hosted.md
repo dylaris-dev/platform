@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.6
+
+### Features
+- **Profile split into General, Account and Security**: your Minecraft name and High contrast no longer ask
+  for your password. The Minecraft name is marked unverified until account linking arrives.
+- **The Players tab explains itself**: a short note says actions run as Minecraft commands.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Player actions Minecraft refuses now show an error** ("That player does not exist") instead of
+  reporting success, and other failures show the real reason.
+
 ## 2026.10.10.5
 
 ### Features

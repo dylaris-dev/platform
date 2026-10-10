@@ -295,6 +295,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     currentUser={user}
                     onClose={() => setShowProfilePopup(false)}
                     onUpdate={handleProfileUpdate}
+                    onMinecraftSaved={refreshUser}
                 />
             )}
         </div>

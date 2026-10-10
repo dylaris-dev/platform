@@ -1402,6 +1402,16 @@
       "external": false
     },
     {
+      "method": "PUT",
+      "path": "/api/auth/profile/minecraft",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "sets or clears (empty string) the caller's own Minecraft username.",
+      "handler": "AuthHandler.UpdateMinecraftUsernameHandler",
+      "group": "auth",
+      "external": false
+    },
+    {
       "method": "POST",
       "path": "/api/auth/register",
       "auth": "none",
@@ -5189,16 +5199,16 @@
     }
   ],
   "counts": {
-    "total": 521,
+    "total": 522,
     "byAuth": {
       "none": 31,
-      "session": 474,
+      "session": 475,
       "user API key": 10,
       "warp key": 6
     },
     "byGroup": {
       "admin": 128,
-      "auth": 21,
+      "auth": 22,
       "authz": 3,
       "avatar": 1,
       "backup-jobs": 4,

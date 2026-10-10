@@ -1104,6 +1104,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// password (a stolen session could otherwise guess it without limit) and
 	// an address change sends a mail.
 	api.HandleFunc("/auth/profile", authLimiter.Limit(10, authHandler.AuthMiddleware(authHandler.UpdateProfileHandler))).Methods("PUT")
+	// Own bucket: no password is checked here, and sharing authLimiter would let
+	// a few name saves spend the per-IP login budget.
+	mcNameLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/auth/profile/minecraft", mcNameLimiter.Limit(30, authHandler.AuthMiddleware(authHandler.UpdateMinecraftUsernameHandler))).Methods("PUT")
 	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
 	// The three below compare the account password, so they are rate- and
 	// body-limited like every other credential endpoint: an authenticated

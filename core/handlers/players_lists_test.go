@@ -107,7 +107,7 @@ func TestPlayerActionsAreAudited(t *testing.T) {
 	for _, c := range cases {
 		fs := &playersAuditStore{}
 		r := httptest.NewRequest(http.MethodPost, "/api/servers/7/players/action", nil)
-		auditPlayerAction(&AppState{Store: fs}, r, 7, c.action, c.player)
+		auditPlayerAction(&AppState{Store: fs}, r, 7, c.action, c.player, false)
 		if len(fs.audits) != 1 {
 			t.Fatalf("%s: %d audit rows, want 1", c.action, len(fs.audits))
 		}

@@ -1083,6 +1083,42 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
+// UpdateMinecraftUsernameHandler PUT /api/auth/profile/minecraft - sets or
+// clears (empty string) the caller's own Minecraft username. No current
+// password: the name is unverified and only picks the avatar head, so it
+// grants nothing the session does not already have.
+func (h *AuthHandler) UpdateMinecraftUsernameHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		return
+	}
+	username := r.Context().Value("username").(string)
+
+	var req struct {
+		MinecraftUsername *string `json:"minecraftUsername"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MinecraftUsername == nil {
+		sendJSONError(w, "minecraftUsername is required", http.StatusBadRequest)
+		return
+	}
+	mc := strings.TrimSpace(*req.MinecraftUsername)
+	if mc != "" && !validate.IsMinecraftUsername(mc) {
+		sendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.state.Store.GetUserByUsername(username)
+	if err != nil || user == nil {
+		sendJSONError(w, "User not found", 404)
+		return
+	}
+	if err := h.state.Store.SetUserMinecraftUsername(user.ID, mc); err != nil {
+		sendJSONError(w, "Update failed", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "minecraftUsername": mc})
+}
+
 // Logout POST /api/auth/logout - drops the session cookie.
 //
 // There was no such endpoint before, and there did not need to be: the session

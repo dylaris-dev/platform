@@ -35,6 +35,7 @@ describe('auditSentence: named server events', () => {
         ['whitelist add', 'player_action', { action: 'whitelist_add', player: 'Isthaltdave' }, { actorName: 'Dave' }, 'Dave added Isthaltdave to the whitelist'],
         ['whitelist remove', 'player_action', { action: 'whitelist_remove', player: 'X' }, {}, 'BartisD removed X from the whitelist'],
         ['kick', 'player_action', { action: 'kick', player: 'X' }, {}, 'BartisD kicked X'],
+        ['refused kick', 'player_action', { action: 'kick', player: 'X', refused: true }, {}, 'BartisD tried "kick" on X, refused by the server'],
         ['ban', 'player_action', { action: 'ban', player: 'X' }, {}, 'BartisD banned X'],
         ['unban', 'player_action', { action: 'unban', player: 'X' }, {}, 'BartisD unbanned X'],
         ['op', 'player_action', { action: 'op', player: 'X' }, {}, 'BartisD made X an operator'],
