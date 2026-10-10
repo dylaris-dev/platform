@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.3
+
+### Features
+- **New power controls**: one main button that fits the state (Start or Stop), Restart beside it and Force
+  kill in a menu. The clicked button shows the progress ("Stopping... 12s") until the server got there. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Power actions show their effect at once**: the "stopping" and "starting" states reach the page
+  immediately, and the server status is checked every 2 seconds instead of 5. `core`
+- **After Force kill nothing else is clickable** until the server is really off, and Stop and Force kill
+  no longer look alike. `panel`
+
 ## 2026.10.10.2
 
 ### Features

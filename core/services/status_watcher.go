@@ -28,9 +28,20 @@ func NewStatusWatcherService(s store.Store, r *redis.Client) *StatusWatcherServi
 // run on the elected Core; followers idle through each tick.
 func (s *StatusWatcherService) SetLeader(l leader.Election) { s.leader = l }
 
+// statusScanInterval is how often a node-reported status reaches the database
+// and the panel. It was 5 s, which was most of the wait a user saw after a stop
+// or start had already finished on the node.
+//
+// ponytail: each tick runs three keyspace SCANs (status, port,
+// reconcile_failed), three full-table server reads, one GetServerByUUID per
+// port key and a pipeline of about five SETs per server. Cheap at hundreds of
+// servers; past that, have the node PUBLISH its status and keep this as a slow
+// backstop instead of shortening it further.
+const statusScanInterval = 2 * time.Second
+
 func (s *StatusWatcherService) Start() {
 	log.Println("Status Watcher Service started")
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(statusScanInterval)
 	go func() {
 		for range ticker.C {
 			if s.leader != nil && !s.leader.IsLeader() {
@@ -50,7 +61,7 @@ func (s *StatusWatcherService) scan() {
 	// boot at once.
 	dirty := false
 
-	// SCAN (not KEYS) so this 5s poll stays O(batch) instead of blocking Redis
+	// SCAN (not KEYS) so this poll stays O(batch) instead of blocking Redis
 	// with an O(N) keyspace walk as the number of servers grows.
 	var cursor uint64
 	for {

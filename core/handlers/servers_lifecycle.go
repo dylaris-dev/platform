@@ -1389,6 +1389,10 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "stopped")
 	}
 	h.state.Store.UpdateServerStatus(srv.ID, newStatus)
+	// The status watcher publishes only when the NODE reports a change, so the
+	// "stopping"/"starting" written here reached the panel never or a tick
+	// late, and the buttons sat on the old state while the node worked.
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	if h.state.Queue != nil {
 		configPayload := map[string]interface{}{

@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-    Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull,
+    Pencil, SlidersHorizontal, Trash2, AlertTriangle, Zap,
     HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2, X,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
@@ -37,11 +37,16 @@ import {
 } from '@/lib/ramPadding';
 import { MEMORY_GUARD_HELP, MEMORY_GUARD_OPTIONS, memoryGuardPatch, oomDismissKey, showOomBanner } from '@/lib/memoryGuard';
 import type { MemoryGuardAction } from '@/lib/api/types';
+import PowerControls from '@/components/server/PowerControls';
+import { advancePending, startPending, type PendingPower, type PowerAction } from '@/lib/powerControls';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
 // layout.tsx can be a server component - generateStaticParams cannot be
 // exported from a client one, and the static export requires it.
+// Statuses that get a badge beside the name: the server is between states.
+const TRANSITIONAL_STATUSES = ['starting', 'stopping', 'restarting', 'installing', 'migrating'];
+
 export default function ServerShell({ children }: { children: React.ReactNode }) {
     const paramId = useRouteId('servers');
     const pathname = usePathname();
@@ -100,8 +105,9 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     const [storageMigrating, setStorageMigrating] = useState(false);
     const [storageMigrateMsg, setStorageMigrateMsg] = useState('');
 
-    const [powerLoading, setPowerLoading] = useState<string | null>(null);
-    const [waitingForStatus, setWaitingForStatus] = useState<string | null>(null);
+    // Power action this browser sent and is waiting on, per server id. It ends
+    // only on an outcome or a refusal; see lib/powerControls.
+    const [pendingPower, setPendingPower] = useState<Record<number, PendingPower>>({});
     const [killCooldown, setKillCooldown] = useState(false);
     const [showKillConfirm, setShowKillConfirm] = useState(false);
     const [powerError, setPowerError] = useState<string>('');
@@ -170,17 +176,22 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         return () => window.removeEventListener(ROUTES_CHANGED_EVENT, onChanged);
     }, [selectedServer?.id, gatewayEnabled]);
 
-    // Clear waitingForStatus when server reaches expected status
+    // Every pending action follows its own server's status, so one sent before
+    // switching to another server still ends when that server gets there.
     useEffect(() => {
-        if (waitingForStatus && selectedServer?.status === waitingForStatus) setWaitingForStatus(null);
-    }, [selectedServer?.status, waitingForStatus]);
-
-    // Fallback: reset waitingForStatus after 60s
-    useEffect(() => {
-        if (!waitingForStatus) return;
-        const timeout = setTimeout(() => setWaitingForStatus(null), 60000);
-        return () => clearTimeout(timeout);
-    }, [waitingForStatus]);
+        setPendingPower(prev => {
+            let next = prev;
+            for (const [id, p] of Object.entries(prev)) {
+                const srv = servers.find(s => s.id === Number(id));
+                const after = srv ? advancePending(p, srv.status) : null;
+                if (after === p) continue;
+                if (next === prev) next = { ...prev };
+                if (after) next[Number(id)] = after;
+                else delete next[Number(id)];
+            }
+            return next;
+        });
+    }, [servers]);
 
     // Migration status poll. Runs while the server DB status is `migrating`
     // (set by the orchestrator during a move) so the status line keeps current
@@ -268,7 +279,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     const isPendingSetup = selectedServer.status === 'pending_setup';
     const isDiskFull = selectedServer.status === 'disk_full';
     const isServerOffline = ['stopped', 'offline', 'pending_setup', 'disk_full'].includes(selectedServer.status);
-    const powerWaiting = waitingForStatus !== null || powerLoading !== null;
     // While the server is migrating to another node, ALL power actions are locked
     // (including for admins) so a user can't fight the move. Admins additionally
     // get a cancel/rollback button (see the header) that aborts a pre-cutover move.
@@ -585,7 +595,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         setStorageMigrating(false);
     };
 
-    const handlePower = async (action: 'start' | 'stop' | 'restart' | 'kill', opts?: { skipCooldownPrompt?: boolean }) => {
+    const handlePower = async (action: PowerAction, opts?: { skipCooldownPrompt?: boolean }) => {
         // Admins get an explicit "still settling" prompt before we send the
         // command. Non-admins are already disabled by powerCooldownActive
         // upstream, so this branch only ever fires for admins.
@@ -593,34 +603,35 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             setPendingCooldownAction(action);
             return;
         }
-        setPowerLoading(action);
-        if (action === 'kill') {
-            setWaitingForStatus(null);
-            if (!user?.isAdmin) setKillCooldown(true);
-        } else {
-            setWaitingForStatus(action === 'stop' ? 'stopped' : 'online');
+        const sid = selectedServer.id;
+        const clearPending = () => setPendingPower(prev => {
+            const next = { ...prev };
+            delete next[sid];
+            return next;
+        });
+        // Set before the request: the servers.changed Core publishes can land
+        // before the response does.
+        setPendingPower(prev => ({ ...prev, [sid]: startPending(action, selectedServer.status, Date.now()) }));
+        if (action === 'kill' && !user?.isAdmin) {
+            setKillCooldown(true);
+            setTimeout(() => setKillCooldown(false), 60000);
         }
         try {
-            const res: any = await serverPower(selectedServer.id, action);
+            const res: any = await serverPower(sid, action);
             // The backend may reject (e.g. 429 install cooldown). fetchAPI
-            // now wraps that as {success:false, error, message}. Reset the
-            // optimistic waiter and surface the message so the user knows
-            // why nothing happened.
+            // wraps that as {success:false, error, message}. Drop the wait and
+            // surface the message so the user knows why nothing happened.
             if (res && (res.success === false || res.error)) {
-                setWaitingForStatus(null);
+                clearPending();
                 setPowerError(res.error || res.message || 'Action rejected');
-                // Re-fetch cooldown — a 429 means we missed the install
+                // Re-fetch cooldown: a 429 means we missed the install
                 // window's start (different tab finished setup, etc.).
                 try {
-                    const c = await getInstallCooldown(selectedServer.id);
+                    const c = await getInstallCooldown(sid);
                     if (c?.seconds && c.seconds > 0) setCooldownEndsAt(Date.now() + c.seconds * 1000);
                 } catch { /* non-fatal */ }
             }
-        } catch { /* network error — leave waiter, user can retry */ }
-        setPowerLoading(null);
-        if (action === 'kill' && !user?.isAdmin) {
-            setTimeout(() => setKillCooldown(false), 60000);
-        }
+        } catch { /* network error: the command may have gone out, so keep waiting; the timeout says so */ }
     };
 
     const copyOwnerId = () => {
@@ -750,6 +761,15 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                         {nameMsg && (
                             <span className="text-xs text-(--error-light)" role="alert">{nameMsg}</span>
                         )}
+                        {TRANSITIONAL_STATUSES.includes(selectedServer.status) && (
+                            <span
+                                className="mono-label font-medium px-2.5 py-1 rounded-sm border bg-(--warning-ghost) flex items-center gap-2 border-(--warning)/20 text-(--warning)"
+                                title={isMigrating ? 'Server is migrating to another node. Power actions are locked until it finishes.' : undefined}
+                            >
+                                <span className="w-[5px] h-[5px] rounded-full bg-(--warning) animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+                                {selectedServer.status}
+                            </span>
+                        )}
                         {isDemoView && (
                             <span className="mono-label bg-(--accent-ghost) border border-(--accent-border) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1">
                                 Demo · read-only
@@ -814,61 +834,21 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     Settling {cooldownSecondsLeft}s
                                 </span>
                             )}
-                            {(isMigrating || selectedServer.status === 'starting') && (
-                                <span
-                                    className="mono-label font-medium px-2.5 py-1 rounded-sm border bg-(--warning-ghost) flex items-center gap-2 border-(--warning)/20 text-(--warning)"
-                                    title={isMigrating ? 'Server is migrating to another node — power actions are locked until it finishes.' : 'Server is starting.'}
-                                >
-                                    <div className="w-[5px] h-[5px] rounded-full bg-(--warning) animate-pulse"></div>
-                                    {selectedServer.status}
-                                </span>
-                            )}
-                            <button
-                                onClick={() => handlePower('start')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || !isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed border ${
-                                    isServerOffline && !isPendingSetup && !isDiskFull && canPower
-                                        ? 'bg-(--success) text-white border-(--success) hover:bg-(--success-light)'
-                                        : 'bg-(--success-ghost) text-(--success-light) border-(--success)/15 hover:bg-(--success)/15'
-                                }`}
-                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Storage full - delete files or raise the limit' : canPower ? 'Start server' : 'No permission'}
-                            >
-                                <Play size={16} />
-                                <span className="text-xs font-semibold">Start</span>
-                            </button>
-                            <button
-                                onClick={() => handlePower('restart')}
-                                disabled={!canPower || isPendingSetup || isDiskFull || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--warning-ghost) hover:bg-(--warning)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--warning)/15"
-                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : isDiskFull ? 'Storage full' : canPower ? 'Restart server' : 'No permission'}
-                            >
-                                <RotateCcw size={16} className="text-(--warning)" />
-                                <span className="text-xs font-semibold text-(--warning)">Restart</span>
-                            </button>
-                            <button
-                                onClick={() => handlePower('stop')}
-                                disabled={!canPower || isPendingSetup || powerWaiting || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
-                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : canPower ? 'Stop server' : 'No permission'}
-                            >
-                                <Square size={16} className="text-(--error)" />
-                                <span className="text-xs font-semibold text-(--error)">Stop</span>
-                            </button>
-                            <button
-                                onClick={() => {
-                                    if (cooldownSecondsLeft > 0 && user?.isAdmin) {
-                                        setPendingCooldownAction('kill');
-                                    } else {
-                                        setShowKillConfirm(true);
-                                    }
+                            <PowerControls
+                                status={selectedServer.status}
+                                pending={pendingPower[selectedServer.id] ?? null}
+                                gates={{
+                                    canPower,
+                                    uploadLocked,
+                                    cooldownSeconds: powerCooldownActive ? cooldownSecondsLeft : 0,
+                                    killCooldown,
                                 }}
-                                disabled={!canPower || killCooldown || isServerOffline || uploadLocked || powerCooldownActive || isMigrating}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
-                                title={powerCooldownActive ? `Server is settling — ${cooldownSecondsLeft}s remaining` : canPower ? 'Force kill container' : 'No permission'}
-                            >
-                                <Skull size={16} className="text-(--error)" />
-                                <span className="text-xs font-semibold text-(--error)">Kill</span>
-                            </button>
+                                onAction={action => {
+                                    if (action !== 'kill') handlePower(action);
+                                    else if (cooldownSecondsLeft > 0 && user?.isAdmin) setPendingCooldownAction('kill');
+                                    else setShowKillConfirm(true);
+                                }}
+                            />
                             {isMigrating && user?.isAdmin && (
                                 <button
                                     onClick={handleCancelMigration}
@@ -1178,13 +1158,13 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                     <ModalPanel onClose={() => setShowKillConfirm(false)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2">
-                                <Skull size={20} className="text-(--error)" />
-                                Kill Server?
+                                <Zap size={20} className="text-(--error)" />
+                                Force kill server?
                             </h3>
                         </div>
                         <div className="modal-body">
                             <p className="text-sm text-(--base-07)">
-                                The container will be stopped immediately. Unsaved data will be lost.
+                                Stops the server immediately without saving. Anything not yet saved to the world is lost.
                             </p>
                         </div>
                         <div className="modal-footer">
@@ -1200,7 +1180,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 }}
                                 className="btn btn-danger"
                             >
-                                Kill
+                                Force kill
                             </button>
                         </div>
                     </ModalPanel>
