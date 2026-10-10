@@ -102,7 +102,7 @@ var (
 	danglingFragment = regexp.MustCompile(`(?is)(,|\(|\bAND\b|\bOR\b|\bNOT\b|\bWHERE\b|\bSET\b|\bVALUES\b|\bFROM\b|\bINTO\b|\bJOIN\b)\s*$`)
 	// TimescaleDB's own functions and catalog. Absent by design here: the suite
 	// runs plain postgres so ensureSchema takes the ordinary-table path.
-	timescaleOnly = regexp.MustCompile(`(?i)(create_hypertable|add_retention_policy|timescaledb_information)`)
+	timescaleOnly = regexp.MustCompile(`(?i)(create_hypertable|add_retention_policy|timescaledb_information|timescaledb_pre_restore|timescaledb_post_restore)`)
 	// Statements assembled with fmt.Sprintf are templates, not SQL.
 	formatTemplate = regexp.MustCompile(`%[sdqv]`)
 )

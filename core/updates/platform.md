@@ -16,7 +16,7 @@ Newest release first. The format is fixed and checked in CI - see the
 - **The Audit tab reads like sentences** ("BartisD set RAM to 16 GB"); click an entry for all details and the
   raw JSON, and page through with the arrow keys. `panel`
 - **Platform backups include the statistics database** (TimescaleDB). If it cannot be dumped, the run
-  fails visibly instead of skipping it; restore via the API runs TimescaleDB's pre/post restore. `core`
+  fails visibly instead of skipping it. Restoring it is API-only for now (the panel card does not offer it). `core`
 
 ### Breaking
 - **A platform backup that selects the statistics database now fails when that dump fails.** Untick it
