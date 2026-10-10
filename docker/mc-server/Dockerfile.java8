@@ -1,5 +1,5 @@
 FROM eclipse-temurin:8-jre-alpine
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata libstdc++
 COPY log-shipper-linux /usr/local/bin/log-shipper
 RUN chmod +x /usr/local/bin/log-shipper && mkdir -p /data
 

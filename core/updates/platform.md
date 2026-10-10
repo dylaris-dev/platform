@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.9
+
+### Features
+- **spark can use its precise async profiler**: the Minecraft runtime images (Java 8, 17, 21, 25) now ship
+  libstdc++. A server picks it up when its container is next recreated, not on a plain restart. `log-shipper`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.10.8
 
 ### Features

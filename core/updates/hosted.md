@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.9
+
+### Features
+- **spark can use its precise async profiler** on your Minecraft servers. A server picks this up when its
+  container is next recreated (for example after a resource change or reinstall), not on a plain restart.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.10.8
 
 ### Features
