@@ -795,6 +795,46 @@
     },
     {
       "method": "GET",
+      "path": "/api/admin/storage/{id:[0-9]+}/lifecycle",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "the bucket's current lifecycle rules, with Core's own marked, and the rules Apply would set.",
+      "handler": "BackupHandler.GetLifecycle",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/storage/{id:[0-9]+}/lifecycle",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "merges Core's rules into the bucket's lifecycle configuration: incomplete multipart uploads under the storage's folder are aborted after 3 days, and on the storage that receives migration transfers those expire one day after their download links (at least 2 days).",
+      "handler": "BackupHandler.ApplyLifecycle",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/storage/{id:[0-9]+}/orphans",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "dry run.",
+      "handler": "BackupHandler.ScanOrphans",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/storage/{id:[0-9]+}/orphans/delete",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "deletes the listed keys (at most 1000) from a platform storage.",
+      "handler": "BackupHandler.DeleteOrphans",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/ticket-canned-responses",
       "auth": "session",
       "authorization": "tickets.read",
@@ -3157,6 +3197,7 @@
       "path": "/api/platform-backups/jobs/{id:[0-9]+}",
       "auth": "session",
       "authorization": "no capability on this method",
+      "description": "deletes the job's bundles from their storage, then its runs, then the job.",
       "handler": "PlatformBackupHandler.DeleteJob",
       "group": "platform-backups",
       "external": false
@@ -5148,15 +5189,15 @@
     }
   ],
   "counts": {
-    "total": 517,
+    "total": 521,
     "byAuth": {
       "none": 31,
-      "session": 470,
+      "session": 474,
       "user API key": 10,
       "warp key": 6
     },
     "byGroup": {
-      "admin": 124,
+      "admin": 128,
       "auth": 21,
       "authz": 3,
       "avatar": 1,

@@ -76,3 +76,35 @@ func scanBackupRunRefs(rows *sql.Rows) ([]BackupRunRef, error) {
 	}
 	return out, rows.Err()
 }
+
+// ListReferencedBackupKeys returns every storage key a server-backup run or a
+// platform-backup run names, in ANY status - a running run's archive is still
+// being written - and on ANY storage.
+//
+// Deliberately not narrowed to one storage. Two platform storages may point at
+// the same bucket and folder (an inline s3 row and a connection to that bucket),
+// and a run whose job and run both say NULL resolves through whatever the
+// default is TODAY, not where it was written. Matching per storage would report
+// the live archives of the other row as orphans; matching on the key alone can
+// only ever leave a real orphan unreported. Keys carry the server, the job, a
+// timestamp and a random suffix, so a false match across storages is a copy of
+// the same archive, which is exactly what must not be deleted unseen.
+func (s *PostgresStore) ListReferencedBackupKeys() (map[string]bool, error) {
+	rows, err := s.db.Query(`
+		SELECT storage_key FROM backup_runs WHERE storage_key <> ''
+		UNION
+		SELECT storage_key FROM platform_backup_runs WHERE storage_key <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		out[k] = true
+	}
+	return out, rows.Err()
+}

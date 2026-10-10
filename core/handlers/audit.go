@@ -86,6 +86,8 @@ const (
 	AuditEventStorageMigrationStart  = "storage_migration_started"
 	AuditEventStorageMigrationCancel = "storage_migration_cancelled"
 	AuditEventStorageManifestDeleted = "storage_manifest_deleted"
+	AuditEventStorageOrphansDeleted  = "storage_orphans_deleted"
+	AuditEventStorageLifecycleSet    = "storage_lifecycle_applied"
 
 	// Tickets (ticket-scoped audit, written to ticket_audit_events
 	// rather than audit_events_identity).

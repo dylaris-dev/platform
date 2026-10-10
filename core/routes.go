@@ -495,6 +495,13 @@ var requiredCaps = map[string]string{
 	"/api/settings/beam":         "settings.write", // GET exempt, POST settings.write
 	"/api/settings/routing-mode": "settings.write", // GET exempt, POST settings.write
 	"/api/modules":               "settings.write", // GET exempt (navbar), POST settings.write
+
+	// The platform storage's own maintenance. settings.write even for the two
+	// GETs: the scan lists a whole bucket and names every server in it, and the
+	// lifecycle read is a bucket call with the storage's credentials.
+	"/api/admin/storage/{id:[0-9]+}/orphans":        "settings.write",
+	"/api/admin/storage/{id:[0-9]+}/orphans/delete": "settings.write",
+	"/api/admin/storage/{id:[0-9]+}/lifecycle":      "settings.write",
 }
 
 // buildAPIRouter constructs every request handler + the warp service and
@@ -1747,6 +1754,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.UpdateStorage))).Methods("PATCH")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteStorage))).Methods("DELETE")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.TestStorage))).Methods("POST")
+	api.HandleFunc("/admin/storage/{id:[0-9]+}/orphans", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.ScanOrphans))).Methods("GET")
+	api.HandleFunc("/admin/storage/{id:[0-9]+}/orphans/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteOrphans))).Methods("POST")
+	api.HandleFunc("/admin/storage/{id:[0-9]+}/lifecycle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.GetLifecycle))).Methods("GET")
+	api.HandleFunc("/admin/storage/{id:[0-9]+}/lifecycle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.ApplyLifecycle))).Methods("POST")
 
 	// A tenant's own backup storage. Owner-scoped, so every account holds it
 	// for itself (see the catalog entry); the endpoint they type is dialled

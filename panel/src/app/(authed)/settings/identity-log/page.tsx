@@ -61,6 +61,8 @@ const LABELS: Record<string, string> = {
     storage_migration_started: 'Storage migration started',
     storage_migration_cancelled: 'Storage migration cancelled',
     storage_manifest_deleted: 'Storage manifest deleted',
+    storage_orphans_deleted: 'Orphaned storage files deleted',
+    storage_lifecycle_applied: 'Storage lifecycle rules applied',
 };
 
 export default function IdentityLogPage() {

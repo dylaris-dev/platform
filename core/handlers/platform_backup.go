@@ -128,14 +128,21 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "job": job})
 }
 
-// DeleteJob DELETE /api/platform-backups/jobs/{id}
+// DeleteJob DELETE /api/platform-backups/jobs/{id} - deletes the job's bundles
+// from their storage, then its runs, then the job. 409 while a run of the job is
+// running. A bundle that cannot be deleted keeps the job and answers 502, so
+// the delete can be retried.
 func (h *PlatformBackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	job, ok := h.loadJob(w, r)
 	if !ok {
 		return
 	}
-	if err := h.state.Store.DeletePlatformBackupJob(job.ID); err != nil {
-		sendJSONError(w, "Database error", 500)
+	if err := services.DeletePlatformBackupJob(r.Context(), h.state.Store, job.ID, h.DeleteRunArchive); err != nil {
+		if errors.Is(err, services.ErrPlatformBackupRunning) {
+			sendJSONError(w, "A backup of this job is running; try again when it finishes", http.StatusConflict)
+			return
+		}
+		sendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true})

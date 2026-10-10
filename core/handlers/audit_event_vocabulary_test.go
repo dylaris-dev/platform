@@ -23,6 +23,8 @@ func TestTheDataMovingEventsHaveTheirOwnNames(t *testing.T) {
 		"storage migration":     AuditEventStorageMigrationStart,
 		"storage cancel":        AuditEventStorageMigrationCancel,
 		"manifest delete":       AuditEventStorageManifestDeleted,
+		"orphan delete":         AuditEventStorageOrphansDeleted,
+		"lifecycle apply":       AuditEventStorageLifecycleSet,
 	}
 	seen := map[string]string{}
 	for what, id := range names {

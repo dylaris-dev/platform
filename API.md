@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **516 routes** in 52 sections: 229 GET, 159 POST, 38 PUT, 36 PATCH, 55 DELETE.
+- **520 routes** in 52 sections: 231 GET, 161 POST, 38 PUT, 36 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **111** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **24** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **339** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **111** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (124)
+- [/api/admin](#apiadmin) (128)
 - [/api/auth](#apiauth) (21)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -277,6 +277,10 @@ can still show what exists.
 | POST | `/api/admin/storage/migration` | session | `settings.write` | - | `StorageMigrationHandler.Start` | PANEL settings.write. |
 | POST | `/api/admin/storage/migration/cancel` | session | `settings.write` | - | `StorageMigrationHandler.Cancel` | PANEL settings.write. |
 | GET | `/api/admin/storage/overview` | session | `settings.read` | - | `StorageMigrationHandler.Overview` | PANEL settings.read. |
+| GET | `/api/admin/storage/{id:[0-9]+}/lifecycle` | session | `settings.write` | - | `BackupHandler.GetLifecycle` | the bucket's current lifecycle rules, with Core's own marked, and the rules Apply would set. |
+| POST | `/api/admin/storage/{id:[0-9]+}/lifecycle` | session | `settings.write` | - | `BackupHandler.ApplyLifecycle` | merges Core's rules into the bucket's lifecycle configuration: incomplete multipart uploads under the storage's folder are aborted after 3 days, and on the storage that receives migration transfers those expire one day after their download links (at least 2 days). |
+| GET | `/api/admin/storage/{id:[0-9]+}/orphans` | session | `settings.write` | - | `BackupHandler.ScanOrphans` | dry run. |
+| POST | `/api/admin/storage/{id:[0-9]+}/orphans/delete` | session | `settings.write` | - | `BackupHandler.DeleteOrphans` | deletes the listed keys (at most 1000) from a platform storage. |
 | GET | `/api/admin/ticket-canned-responses` | session | `tickets.read` | RequireTicketsEnabled | `CannedResponsesHandler.AdminList` | RequireCap("tickets.read") at the route, full list. |
 | POST | `/api/admin/ticket-canned-responses` | session | `tickets.write` | RequireTicketsEnabled | `CannedResponsesHandler.Create` | RequireCap("tickets.write") at the route. |
 | PATCH | `/api/admin/ticket-canned-responses/{id:[0-9]+}` | session | `tickets.write` | RequireTicketsEnabled | `CannedResponsesHandler.Update` | RequireCap("tickets.write") at the route. |
@@ -631,7 +635,7 @@ can still show what exists.
 | GET | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListJobs` | - |
 | POST | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.CreateJob` | - |
 | PATCH | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.UpdateJob` | - |
-| DELETE | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.DeleteJob` | - |
+| DELETE | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.DeleteJob` | deletes the job's bundles from their storage, then its runs, then the job. |
 | POST | `/api/platform-backups/jobs/{id:[0-9]+}/run` | session | _uncapped method_ | - | `PlatformBackupHandler.RunJob` | Synchronous on purpose, for now: a platform run is started by a person who is looking at the screen, and the components it covers are the database and the storage areas rather than every world. |
 | GET | `/api/platform-backups/jobs/{id:[0-9]+}/runs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListRuns` | - |
 | GET | `/api/platform-backups/passphrase` | session | _uncapped method_ | - | `PlatformBackupHandler.PassphraseStatus` | whether one is set, never what it is. |

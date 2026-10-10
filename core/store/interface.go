@@ -301,6 +301,8 @@ type Store interface {
 	// an archive's storage key, so these are read BEFORE the rows go.
 	ListBackupRunRefsForJob(jobID int) ([]BackupRunRef, error)
 	ListBackupRunRefsForServers(serverIDs []int) ([]BackupRunRef, error)
+	// Every archive key any backup row names, for the storage orphan scan.
+	ListReferencedBackupKeys() (map[string]bool, error)
 	ListDueBackupJobs(now time.Time) ([]models.BackupJob, error)
 	SetBackupJobScheduled(jobID int, lastRun, nextRun time.Time) error
 

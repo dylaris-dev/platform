@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2, Archive, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2, Archive, Loader2, Wrench } from 'lucide-react';
 import {
     BackupStorage,
     BackupConfig,
@@ -23,6 +23,8 @@ import SettingsCard, { type SavableForm } from '@/components/settings/SettingsCa
 import { readConnTest, CONN_TEST_TIMEOUT_MS, type ConnTestResult } from '@/lib/connectionTest';
 import { ConnectionTestNote } from '@/components/ui/ConnectionTest';
 import ModalPanel from '@/components/ui/ModalPanel';
+import StorageMaintenance from '@/components/settings/StorageMaintenance';
+import { supportsStorageMaintenance } from '@/lib/storageOrphans';
 
 interface LocalConfig {
     basePath: string;
@@ -263,6 +265,8 @@ export default function BackupsTab() {
     // on purpose: a column of stale green ticks says less than one fresh line.
     const [testingId, setTestingId] = useState<number | null>(null);
     const [rowResult, setRowResult] = useState<{ id: number; result: ConnTestResult } | null>(null);
+    // Which storage has its maintenance panel (orphans, lifecycle rules) open.
+    const [maintenanceId, setMaintenanceId] = useState<number | null>(null);
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
@@ -505,6 +509,16 @@ export default function BackupsTab() {
                                                 : <Cable size={12} />}
                                             {testingId === s.id ? 'Testing…' : 'Test'}
                                         </button>
+                                        {supportsStorageMaintenance(s.provider) && (
+                                            <button
+                                                onClick={() => setMaintenanceId(maintenanceId === s.id ? null : s.id)}
+                                                className="btn btn-secondary btn-sm"
+                                                aria-expanded={maintenanceId === s.id}
+                                                title="Orphaned files and bucket lifecycle rules"
+                                            >
+                                                <Wrench size={12} /> Maintenance
+                                            </button>
+                                        )}
                                         <button onClick={() => setEditing(s)} className="btn btn-secondary btn-sm">
                                             <Pencil size={12} /> Edit
                                         </button>
@@ -514,6 +528,7 @@ export default function BackupsTab() {
                                     </div>
                                 </div>
                                 {rowResult?.id === s.id && <ConnectionTestNote result={rowResult.result} />}
+                                {maintenanceId === s.id && <StorageMaintenance storageId={s.id} />}
                                 {testWarnings[s.id] && (
                                     <div className="alert alert-warning text-xs flex items-start gap-2">
                                         <AlertTriangle size={14} className="shrink-0 mt-0.5" />

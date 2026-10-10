@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10
+
+### Features
+- **Find and remove orphaned backup files** under Settings > Backups > Maintenance: a dry-run scan lists
+  archives no backup record points to, and only the ones you select are deleted after a fresh check. `core` `panel`
+- **Lifecycle rules for your own buckets** with one click: unfinished uploads are aborted after 3 days and
+  temporary server-move archives expire; rules managed elsewhere are kept. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting a platform backup job now deletes its archives** instead of leaving them in the bucket. `core`
+
 ## 2026.10.09.15
 
 ### Features
