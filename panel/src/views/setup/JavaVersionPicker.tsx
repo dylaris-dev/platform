@@ -4,7 +4,7 @@ import React from 'react';
 import { Info, AlertTriangle } from 'lucide-react';
 
 // The pure part lives in src/lib/javaVersion so the vitest suite can cover it.
-// Re-exported here because SetupNewWizard/SetupEditMode/SetupViewMode import
+// Re-exported here because SetupNewWizard/SetupEditMode import
 // them from this module.
 export { JAVA_IMAGES, recommendJavaForVersion, effectiveMcVersion } from '@/lib/javaVersion';
 import { JAVA_IMAGES } from '@/lib/javaVersion';
@@ -13,6 +13,8 @@ interface JavaVersionPickerProps {
     value: string;
     onChange: (id: string) => void;
     disabled?: boolean;
+    /** Shows the choice without offering it: legible, unlike disabled. */
+    readOnly?: boolean;
     serverType?: 'game' | 'proxy';
     recommended?: string;
     /** The Minecraft major version string (e.g. "1.20.4") used in the mismatch warning. */
@@ -21,7 +23,7 @@ interface JavaVersionPickerProps {
     versionUnknown?: boolean;
 }
 
-export default function JavaVersionPicker({ value, onChange, disabled, serverType, recommended, mcVersion, versionUnknown }: JavaVersionPickerProps) {
+export default function JavaVersionPicker({ value, onChange, disabled, readOnly, serverType, recommended, mcVersion, versionUnknown }: JavaVersionPickerProps) {
     const isProxy = serverType === 'proxy';
 
     const recommendedImage = recommended ? JAVA_IMAGES.find(j => j.id === recommended) : undefined;
@@ -33,6 +35,23 @@ export default function JavaVersionPicker({ value, onChange, disabled, serverTyp
             <div className="flex flex-wrap gap-2">
                 {JAVA_IMAGES.map(j => {
                     const isRecommended = recommended === j.id;
+                    if (readOnly) {
+                        const selected = value === j.id;
+                        return (
+                            <span
+                                key={j.id}
+                                aria-current={selected ? 'true' : undefined}
+                                className={`flex items-center gap-2 px-4 py-2.5 rounded-md border text-sm ${
+                                    selected
+                                        ? 'border-(--accent-border) bg-(--accent-ghost) text-(--accent-light)'
+                                        : 'border-(--base-03) text-(--base-06)'
+                                }`}
+                            >
+                                <span className="font-medium">{j.label}</span>
+                                <span className="text-xs text-(--base-06)">{isProxy ? j.proxyNote : j.note}</span>
+                            </span>
+                        );
+                    }
                     return (
                         <button
                             key={j.id}

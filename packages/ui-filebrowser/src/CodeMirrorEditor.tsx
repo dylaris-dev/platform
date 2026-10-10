@@ -20,20 +20,30 @@ export function detectLanguage(filename: string): FileLanguage {
   switch (ext) {
     case '.json':
     case '.json5':
+    case '.mcmeta':
       return 'json';
     case '.yml':
     case '.yaml':
       return 'yaml';
+    // ponytail: .toml/.sh/.bat ride the key=value highlighter (no TOML or
+    // shell grammar is installed); swap in a real one if it is ever added.
     case '.properties':
     case '.cfg':
     case '.conf':
     case '.config':
     case '.ini':
+    case '.toml':
+    case '.lang':
+    case '.sh':
+    case '.bat':
       return 'properties';
+    // SNBT (unquoted keys, 2.5d) and ZenScript parse as JS object/call syntax.
     case '.js':
     case '.mjs':
     case '.cjs':
     case '.ts':
+    case '.snbt':
+    case '.zs':
       return 'javascript';
     case '.xml':
     case '.html':

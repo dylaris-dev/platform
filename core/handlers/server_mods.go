@@ -201,23 +201,6 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// it - two clicks in a row is all that takes.
 	installID := uuid.NewString()
 
-	configPayload := map[string]interface{}{
-		"uuid":             srv.UUID,
-		"activeSubServer":  srv.ActiveSubServer,
-		"targetDir":        targetDir,
-		"fileName":         cleanName,
-		"downloadUrl":      req.DownloadURL,
-		"sha512":           req.SHA512,
-		"previousFileName": previousFileName,
-		"installId":        installID,
-		"serverId":         serverID,
-		"projectId":        req.ProjectID,
-	}
-	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "install_mod", configPayload, nil); err != nil {
-		sendJSONError(w, "Failed to queue install", http.StatusInternalServerError)
-		return
-	}
-
 	userID, _ := r.Context().Value("userID").(string)
 	var installedBy *string
 	if userID != "" {
@@ -232,7 +215,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		ModrinthVersionID:   req.VersionID,
 		Title:               req.Title,
 		FileName:            cleanName,
-		// The directory the node was just told to write into. Uninstall reads it
+		// The directory the node is told to write into. Uninstall reads it
 		// back rather than recomputing, so a later loader change cannot point the
 		// removal at a directory the jar was never in.
 		TargetDir:   targetDir,
@@ -248,8 +231,8 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		InstallID: installID,
 	}
 	// Filed BEFORE the upsert, which is the write that destroys it. A history
-	// failure is logged rather than fatal: the install is already queued, and
-	// losing the way back is smaller than losing the install.
+	// failure is logged rather than fatal: losing the way back is smaller than
+	// losing the install.
 	//
 	// Only when the version actually changes. Re-installing the same build is a
 	// repair, not a step worth being able to undo.
@@ -259,8 +242,37 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 				req.ProjectID, err)
 		}
 	}
+	// The row, with this attempt's id, is written BEFORE the node is told: the
+	// result handler only applies a report naming the attempt the row holds, and
+	// a node that answered before the upsert landed had its report dropped,
+	// leaving the row "installing" for good.
 	if _, err := h.state.Store.UpsertServerMod(mod); err != nil {
-		sendJSONError(w, "Install queued, but DB write failed: "+err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, "Could not record the install: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	configPayload := map[string]interface{}{
+		"uuid":             srv.UUID,
+		"activeSubServer":  srv.ActiveSubServer,
+		"targetDir":        targetDir,
+		"fileName":         cleanName,
+		"downloadUrl":      req.DownloadURL,
+		"sha512":           req.SHA512,
+		"previousFileName": previousFileName,
+		"installId":        installID,
+		"serverId":         serverID,
+		"projectId":        req.ProjectID,
+	}
+	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "install_mod", configPayload, nil); err != nil {
+		// The row exists now and names an install the node never received. Failed
+		// is what it is, and the panel already says "the server is still running
+		// whatever it had before" for a failed row.
+		if _, serr := h.state.Store.SetServerModStatus(serverID, srv.ActiveSubServer, req.ProjectID, installID,
+			models.ServerModFailed, "Core could not queue the install for the node."); serr != nil {
+			log.Printf("install mod: marking the undispatched install of %s failed: %v", req.ProjectID, serr)
+		}
+		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+		sendJSONError(w, "Failed to queue install", http.StatusInternalServerError)
 		return
 	}
 
@@ -268,9 +280,13 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		"serverId": serverID,
 	})
 
+	// status tells the panel whether to wait for the node's answer: "installing"
+	// means a report will arrive, "installed" means this node is too old to send
+	// one and there is nothing to wait for.
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Mod install queued. Restart the server to apply.",
+		"status":  mod.Status,
 	})
 }
 

@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.4
+
+### Features
+- **Mod installs show their progress and result** without reloading, keep running when you switch pages,
+  and are listed in a small widget; failures say why (checksum, disk full, download). `core` `panel`
+- **The Setup tab shows the full settings of the active sub-server** read-only, with Edit to change them;
+  clicking another sub-server previews it instead of doing nothing. `panel`
+- **The file editor colours values and more file types** (YAML values, TOML, SNBT, ZenScript, mcmeta)
+  instead of plain grey. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Configuration shows every property** under fixed category headings with a jump list, instead of
+  collapsed groups. `panel`
+- **A mod install that the node finished very quickly could stay "installing"**; the row is now written
+  before the node is asked. `core`
+
 ## 2026.10.10.3
 
 ### Features

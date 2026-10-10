@@ -10,7 +10,7 @@ import { ModDescription } from '@/components/mods/ModDescription';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
-    listInstalledMods, installMod, uninstallMod, pickPrimaryFile,
+    listInstalledMods, uninstallMod, pickPrimaryFile,
     getServerModpackContents, getModHistory, getModrinthVersion,
     type ModHistoryEntry,
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
@@ -32,6 +32,10 @@ import {
     type BulkProgress,
 } from '@/lib/bulkModUpdate';
 import { useBusy } from '@/lib/useBusy';
+import { useModInstalls } from '@/lib/modInstallManager';
+import { isPending, jobLabel, type InstallJob } from '@/lib/modInstallJobs';
+import { InstallBar } from '@/components/ModInstallWidget';
+import { createCoalescer } from '@/lib/coalesce';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
 // sidebar (with the loader + MC-version filters below it, gated behind an
@@ -56,6 +60,10 @@ export default function ServerContentPage() {
     const { servers, refreshServers } = useAppData();
     const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
+    // Installs are followed by the app-level manager, not this page, so they
+    // keep going and keep reporting when the reader navigates away.
+    const installs = useModInstalls();
+    const serverName = server?.name || `Server ${serverId}`;
 
     const defaultLoader = (server?.installerType || '').toLowerCase();
     const defaultMcVersion = server?.minecraftVersion || '';
@@ -263,6 +271,22 @@ export default function ServerContentPage() {
 
     useEffect(() => { refreshInstalled(); }, [refreshInstalled]);
 
+    // Every event-driven re-read goes through here: "Update all" emits two
+    // server_mods.changed frames per mod, and each used to cost two GETs.
+    const coalesce = useRef(createCoalescer(300)).current;
+    const refreshInstalledSoon = useCallback(
+        () => coalesce(serverId, refreshInstalled),
+        [coalesce, serverId, refreshInstalled],
+    );
+
+    // A job settling is also a reason to re-read: the manager may have learned
+    // it by polling (an older Core publishes no event when the node reports).
+    const settledJobs = installs.jobs
+        .filter(j => j.serverId === serverId && !isPending(j))
+        .map(j => j.id)
+        .join(',');
+    useEffect(() => { if (settledJobs) refreshInstalledSoon(); }, [settledJobs, refreshInstalledSoon]);
+
     // Load the modpack snapshot once per server. Fail-open: on any error the map
     // stays empty and the tab behaves exactly as a non-modpack server.
     useEffect(() => {
@@ -284,10 +308,10 @@ export default function ServerContentPage() {
     useEffect(() => {
         const unsub = systemEvents.on('server_mods.changed', (evt) => {
             const sid = (evt.payload as any)?.serverId;
-            if (sid === undefined || sid === serverId) refreshInstalled();
+            if (sid === undefined || sid === serverId) refreshInstalledSoon();
         });
         return () => { unsub(); };
-    }, [serverId, refreshInstalled]);
+    }, [serverId, refreshInstalledSoon]);
 
     // For browse rows that are already installed, fetch the version list
     // filtered by the current loader + MC-version filter, so the row can show
@@ -405,11 +429,12 @@ export default function ServerContentPage() {
     };
 
     // Fires the actual install call (no confirm - callers run
-    // confirmModpackCrossCheck first).
+    // confirmModpackCrossCheck first). Progress and the outcome show on the
+    // button and in the navbar widget; a failure also toasts from the manager.
     const doInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
         const file = pickPrimaryFile(version);
         if (!file) { showToast('Version has no downloadable file', false); return; }
-        const res = await installMod(serverId, {
+        const job = await installs.start(serverId, serverName, {
             projectId: project.id,
             projectSlug: project.slug,
             versionId: version.id,
@@ -418,12 +443,7 @@ export default function ServerContentPage() {
             downloadUrl: file.url,
             sha512: file.hashes.sha512,
         });
-        if (res.success) {
-            showToast(`Installing ${project.title}…`, true);
-            refreshInstalled();
-        } else {
-            showToast(res.message || 'Install failed', false);
-        }
+        if (job.state !== 'failed') refreshInstalledSoon();
     };
 
     const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
@@ -454,7 +474,7 @@ export default function ServerContentPage() {
             }
             const file = pickPrimaryFile(version);
             if (!file) { showToast('That build has no downloadable file', false); return; }
-            const res = await installMod(serverId, {
+            const job = await installs.start(serverId, serverName, {
                 projectId: m.modrinthProjectId,
                 projectSlug: m.modrinthProjectSlug,
                 versionId: version.id,
@@ -463,12 +483,7 @@ export default function ServerContentPage() {
                 downloadUrl: file.url,
                 sha512: file.hashes.sha512,
             });
-            if (res.success) {
-                showToast(`Rolling ${m.title || m.fileName} back to ${version.version_number}…`, true);
-                refreshInstalled();
-            } else {
-                showToast(res.message || 'Rollback failed', false);
-            }
+            if (job.state !== 'failed') refreshInstalledSoon();
         });
     };
 
@@ -501,7 +516,7 @@ export default function ServerContentPage() {
             if (!next) { tally.current++; continue; }
             const file = pickPrimaryFile(next);
             if (!file) { tally.failed++; continue; }
-            const res = await installMod(serverId, {
+            const job = await installs.start(serverId, serverName, {
                 projectId: m.modrinthProjectId,
                 projectSlug: m.modrinthProjectSlug,
                 versionId: next.id,
@@ -510,7 +525,7 @@ export default function ServerContentPage() {
                 downloadUrl: file.url,
                 sha512: file.hashes.sha512,
             });
-            if (res.success) tally.updated++; else tally.failed++;
+            if (job.state !== 'failed') tally.updated++; else tally.failed++;
         }
 
         setBulk(null);
@@ -539,7 +554,7 @@ export default function ServerContentPage() {
             } catch { tally.unknown++; continue; }
             const file = pickPrimaryFile(version);
             if (!file) { tally.failed++; continue; }
-            const res = await installMod(serverId, {
+            const job = await installs.start(serverId, serverName, {
                 projectId: m.modrinthProjectId,
                 projectSlug: m.modrinthProjectSlug,
                 versionId: version.id,
@@ -548,7 +563,7 @@ export default function ServerContentPage() {
                 downloadUrl: file.url,
                 sha512: file.hashes.sha512,
             });
-            if (res.success) tally.updated++; else tally.failed++;
+            if (job.state !== 'failed') tally.updated++; else tally.failed++;
         }
 
         setBulk(null);
@@ -920,6 +935,7 @@ export default function ServerContentPage() {
                                             status={status}
                                             installed={!!installedMod}
                                             busy={busyProjects.has(hit.project_id)}
+                                            job={installs.jobFor(serverId, hit.project_id)}
                                             selected={selectedSlug === hit.slug}
                                             onOpen={() => openProjectDetail(hit.slug)}
                                             onInstall={() => handleRowInstall(hit)}
@@ -1022,6 +1038,9 @@ export default function ServerContentPage() {
                                                         // which build is NEWEST, so the one question you open it
                                                         // with - what have I got - had no answer here.
                                                         const state = installedState(installedByProject.get(projectDetail.id), v.id);
+                                                        const vJob = installs.jobFor(serverId, projectDetail.id);
+                                                        const job = vJob && vJob.versionId === v.id ? vJob : undefined;
+                                                        const jobBusy = !!job && isPending(job);
                                                         return (
                                                             <div
                                                                 key={v.id}
@@ -1043,14 +1062,19 @@ export default function ServerContentPage() {
                                                                     <div className="text-[10px] font-mono text-(--base-06) truncate">
                                                                         {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
                                                                     </div>
+                                                                    {job && jobBusy && <InstallBar job={job} />}
+                                                                    {job && (job.state === 'failed' || job.state === 'unknown') && job.message && (
+                                                                        <p className="mt-1 text-[11px] text-(--warning-light)">{job.message}</p>
+                                                                    )}
                                                                 </div>
                                                                 <button
                                                                     onClick={() => handleInstall(projectDetail, v)}
-                                                                    disabled={state === 'installing'}
+                                                                    disabled={state === 'installing' || jobBusy}
+                                                                    aria-busy={jobBusy}
                                                                     className="btn btn-secondary btn-sm shrink-0"
                                                                 >
-                                                                    <Download size={11} />
-                                                                    {state === 'installed' ? 'Reinstall' : state === 'failed' ? 'Try again' : 'Install'}
+                                                                    {jobBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
+                                                                    {job && jobBusy ? jobLabel(job) : state === 'installed' ? 'Reinstall' : state === 'failed' ? 'Try again' : 'Install'}
                                                                 </button>
                                                             </div>
                                                         );
@@ -1164,6 +1188,15 @@ export default function ServerContentPage() {
                                         {/* The node reported a reason and this is the only place it can
                                             reach. Core used to write this row before dispatching and never
                                             revisit it, so a download that 404ed listed as an installed mod. */}
+                                        {/* Only a job this session is following animates. A row
+                                            left at installing by a lost report keeps the static label
+                                            above instead of pulsing forever. */}
+                                        {(() => {
+                                            const job = installs.jobFor(serverId, m.modrinthProjectId);
+                                            return m.status === 'installing' && job && isPending(job) && job.versionId === m.modrinthVersionId
+                                                ? <InstallBar job={job} />
+                                                : null;
+                                        })()}
                                         {m.status === 'failed' && (
                                             <div className="mt-1 flex items-start gap-1.5 text-xs text-(--warning-light)">
                                                 <AlertTriangle size={12} className="mt-0.5 shrink-0" />
@@ -1239,6 +1272,7 @@ function ModListRow({
     status,
     installed,
     busy,
+    job,
     selected,
     onOpen,
     onInstall,
@@ -1249,6 +1283,7 @@ function ModListRow({
     status: RowStatus;
     installed: boolean;
     busy: boolean;
+    job?: InstallJob;
     selected: boolean;
     onOpen: () => void;
     onInstall: () => void;
@@ -1265,6 +1300,10 @@ function ModListRow({
             onOpen();
         }
     };
+    // The install job outlives the click: busy covers resolving the version,
+    // the job covers Core and the node until they answer.
+    const jobBusy = !!job && isPending(job);
+    const actionBusy = busy || jobBusy;
     const stopAnd = (fn: () => void) => (e: MouseEvent) => {
         e.stopPropagation();
         fn();
@@ -1298,6 +1337,13 @@ function ModListRow({
                     <Download size={10} />
                     {hit.downloads.toLocaleString()}
                 </div>
+                {job && jobBusy && <InstallBar job={job} />}
+                {job && (job.state === 'failed' || job.state === 'unknown') && job.message && (
+                    <p className="mt-1 text-[11px] text-(--warning-light) flex items-start gap-1">
+                        <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                        <span>{job.message}</span>
+                    </p>
+                )}
             </div>
 
             <div className="flex flex-col items-end gap-1.5 shrink-0">
@@ -1312,15 +1358,15 @@ function ModListRow({
                 )}
 
                 {status === 'not-installed' && (
-                    <button onClick={stopAnd(onInstall)} disabled={busy} className="btn btn-primary btn-sm">
-                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
-                        Install
+                    <button onClick={stopAnd(onInstall)} disabled={actionBusy} aria-busy={actionBusy} className="btn btn-primary btn-sm">
+                        {actionBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
+                        {job && jobBusy ? jobLabel(job) : job?.state === 'failed' || job?.state === 'unknown' ? 'Try again' : 'Install'}
                     </button>
                 )}
                 {status === 'update-available' && (
-                    <button onClick={stopAnd(onUpdate)} disabled={busy} className="btn btn-primary btn-sm">
-                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
-                        Update
+                    <button onClick={stopAnd(onUpdate)} disabled={actionBusy} aria-busy={actionBusy} className="btn btn-primary btn-sm">
+                        {actionBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
+                        {job && jobBusy ? jobLabel(job) : 'Update'}
                     </button>
                 )}
                 {installed && (

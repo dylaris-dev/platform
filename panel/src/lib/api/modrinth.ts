@@ -192,7 +192,8 @@ export async function listInstalledMods(serverId: number): Promise<InstalledMod[
     const res = await fetch(`${API_URL}/servers/${serverId}/mods`, { headers: getAuthHeader() });
     const data = await handleResponse(res);
     if (!(data as any)?.success) {
-        throw new Error((data as any)?.message || 'Could not load the installed mods.');
+        // The status rides along so a caller can tell "not allowed" (403) apart.
+        throw Object.assign(new Error((data as any)?.message || 'Could not load the installed mods.'), { status: (data as any)?.status });
     }
     return (data as any).mods || [];
 }
@@ -208,7 +209,9 @@ export interface InstallModPayload {
     targetDir?: 'mods' | 'plugins';
 }
 
-export async function installMod(serverId: number, payload: InstallModPayload): Promise<{ success: boolean; message?: string }> {
+// status is what Core recorded: "installing" when the node will report the
+// outcome, "installed" when it is too old to, and absent from an older Core.
+export async function installMod(serverId: number, payload: InstallModPayload): Promise<{ success: boolean; message?: string; status?: 'installing' | 'installed' }> {
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/mods`, {
             method: 'POST',

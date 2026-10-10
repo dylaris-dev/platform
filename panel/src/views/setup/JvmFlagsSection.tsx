@@ -27,10 +27,12 @@ interface JvmFlagsSectionProps {
     onChange: (flags: string) => void;
     ramMB: number;
     disabled?: boolean;
+    /** Shows the flags without offering to change them. */
+    readOnly?: boolean;
     defaultOpen?: boolean;
 }
 
-export default function JvmFlagsSection({ extraFlags, onChange, ramMB, disabled, defaultOpen = false }: JvmFlagsSectionProps) {
+export default function JvmFlagsSection({ extraFlags, onChange, ramMB, disabled, readOnly, defaultOpen = false }: JvmFlagsSectionProps) {
     const [open, setOpen] = useState(defaultOpen);
     const hasFixedFlagConflict = FIXED_FLAGS.some(f => extraFlags.includes(f));
 
@@ -59,14 +61,15 @@ export default function JvmFlagsSection({ extraFlags, onChange, ramMB, disabled,
                         <textarea
                             value={extraFlags}
                             onChange={e => onChange(e.target.value)}
-                            placeholder="Leave empty for Aikar's optimized flags (recommended)"
+                            placeholder={readOnly ? 'No extra flags' : "Leave empty for Aikar's optimized flags (recommended)"}
                             disabled={disabled}
+                            readOnly={readOnly}
                             rows={3}
                             className={`input-mono flex-1 resize-none ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                         />
                     </div>
 
-                    {!disabled && (
+                    {!disabled && !readOnly && (
                         <div className="flex items-center gap-2">
                             <button
                                 type="button"
@@ -97,7 +100,7 @@ export default function JvmFlagsSection({ extraFlags, onChange, ramMB, disabled,
                         </p>
                     )}
 
-                    {!disabled && (
+                    {!disabled && !readOnly && (
                         <div className="relative group/info inline-flex items-center gap-1.5 w-fit">
                             <Info size={12} className="text-(--accent-light)" />
                             <span className="text-xs text-(--accent-light)">About Aikar&apos;s Flags</span>

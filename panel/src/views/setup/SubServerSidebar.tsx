@@ -13,6 +13,10 @@ interface SubServerSidebarProps {
     // couple of seconds and an early reload would re-fetch the
     // still-present dir and "un-delete" the row visually).
     pendingDelete?: Set<string>;
+    /** The non-active sub-server the form is previewing. */
+    previewSubServer?: string;
+    /** Clicking a row shows it read-only; it never switches. */
+    onPreview?: (name: string) => void;
     onSwitch?: (name: string) => void;
     onAddNew: () => void;
     onEditSubServer?: (name: string) => void;
@@ -29,7 +33,7 @@ const SIDEBAR_WIDTH = 'w-[360px]';
 
 export default function SubServerSidebar({
     subServers, activeSubServer,
-    pendingDelete,
+    pendingDelete, previewSubServer, onPreview,
     onSwitch, onAddNew,
     onEditSubServer, onDeleteSubServer,
     submitting: _submitting, disabled, maxSubServers,
@@ -74,6 +78,7 @@ export default function SubServerSidebar({
 
                 {subServers.map(name => {
                     const isActive = name === activeSubServer;
+                    const isPreview = !isActive && name === previewSubServer;
                     const isPendingDelete = !!pendingDelete?.has(name);
                     const rowDisabled = !!disabled || isPendingDelete;
                     return (
@@ -88,6 +93,8 @@ export default function SubServerSidebar({
                             className={`group relative flex items-center gap-2 px-2.5 py-2 rounded-md text-sm font-mono border transition-opacity ${
                                 isActive
                                     ? 'border-(--success-border) bg-(--success-ghost) text-(--success-light)'
+                                    : isPreview
+                                    ? 'border-(--accent-border) bg-(--accent-ghost) text-(--base-09)'
                                     : 'border-transparent hover:bg-(--base-04) text-(--base-07) hover:text-(--base-09)'
                             } ${isPendingDelete ? 'opacity-50 pointer-events-none' : ''}`}
                         >
@@ -96,7 +103,20 @@ export default function SubServerSidebar({
                             ) : (
                                 <ServerIcon size={14} className="shrink-0" />
                             )}
-                            <span className="truncate flex-1">{name}</span>
+                            {onPreview ? (
+                                <button
+                                    type="button"
+                                    onClick={() => !rowDisabled && onPreview(name)}
+                                    disabled={rowDisabled}
+                                    aria-current={isActive || isPreview ? 'true' : undefined}
+                                    title={isActive ? 'Active sub-server' : 'Preview (does not switch)'}
+                                    className="truncate flex-1 text-left rounded-sm cursor-pointer disabled:cursor-not-allowed"
+                                >
+                                    {name}
+                                </button>
+                            ) : (
+                                <span className="truncate flex-1">{name}</span>
+                            )}
 
                             {/* Inline action buttons. Switch only for
                                 non-active rows; edit/delete on all rows

@@ -21,9 +21,11 @@ import { ReauthDialogRoot } from '@/components/ui/ReauthDialog';
 import { ToastRoot } from '@/components/ui/Toast';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
+import ModInstallWidget from '@/components/ModInstallWidget';
 import BeamDownloadButton from '@/components/BeamDownloadButton';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
+import { ModInstallProvider } from '@/lib/modInstallManager';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
@@ -149,6 +151,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     <UtilityCluster>
                     <BeamDownloadButton />
                     <UploadManagerWidget />
+                    <ModInstallWidget />
                     {/* UpdatesBell is for everyone now: an admin sees the platform notes and
                         every component, a customer sees the customer notes and their own nodes. */}
                     <UpdatesBell />
@@ -489,7 +492,9 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
             <UnsavedChangesProvider>
                 <UploadManagerProvider>
                     <UploadManagerBridge />
-                    <AuthedShell>{children}</AuthedShell>
+                    <ModInstallProvider>
+                        <AuthedShell>{children}</AuthedShell>
+                    </ModInstallProvider>
                 </UploadManagerProvider>
             </UnsavedChangesProvider>
         </AppDataProvider>

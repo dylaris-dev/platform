@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from 'react';
-import { X, RotateCcw, Trash2, RefreshCw, AlertTriangle } from 'lucide-react';
+import { X, RotateCcw, Trash2, RefreshCw, AlertTriangle, Pencil, Eye } from 'lucide-react';
 import JavaVersionPicker, { recommendJavaForVersion } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
@@ -12,6 +12,7 @@ import ModpackPicker from './ModpackPicker';
 import PackPicker from './PackPicker';
 import TechnicPicker from './TechnicPicker';
 import type { SubServerInstall } from '@/lib/api/subServerInstalls';
+import type { SetupPreviewModel } from './setupPreview';
 
 /**
  * What is installed right now, above the picker that would replace it.
@@ -123,6 +124,39 @@ interface SetupEditModeProps {
     /** Something on the form still needs an answer. */
     submitBlocked?: boolean;
     error: string;
+    /**
+     * Set: the same form, read-only, for the active sub-server or a previewed
+     * one. Edit unlocks the active one; a preview offers only the switch.
+     */
+    view?: {
+        model: SetupPreviewModel;
+        canEdit: boolean;
+        onEdit: () => void;
+        onSwitch: () => void;
+    };
+}
+
+/** What is installed, as read-only rows in place of the reinstall pickers. */
+function InstalledSoftware({ model }: { model: SetupPreviewModel }) {
+    if (model.installed.length === 0) {
+        return (
+            <p className="text-sm text-(--base-07)">
+                {model.isActive
+                    ? 'No install details were recorded for this sub-server.'
+                    : 'Details appear after switching. This sub-server was installed before the panel recorded installs.'}
+            </p>
+        );
+    }
+    return (
+        <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-6 gap-y-2.5 text-sm">
+            {model.installed.map(r => (
+                <React.Fragment key={r.label}>
+                    <dt className="text-(--base-06)">{r.label}</dt>
+                    <dd className={`text-(--base-09) break-all ${r.mono ? 'font-mono' : 'font-medium'}`}>{r.value}</dd>
+                </React.Fragment>
+            ))}
+        </dl>
+    );
 }
 
 export default function SetupEditMode(props: SetupEditModeProps) {
@@ -131,27 +165,56 @@ export default function SetupEditMode(props: SetupEditModeProps) {
         [props.targetMcVersion],
     );
     const recommendedJava = useMemo(() => recommendJavaForVersion(effectiveVersion), [effectiveVersion]);
+    const view = props.view;
 
     return (
         <div className="flex-1 card flex flex-col overflow-hidden min-w-0">
             {/* Header */}
             <div className="modal-header flex items-center justify-between shrink-0">
-                <div>
-                    <h3 className="modal-title">Edit Server Config</h3>
-                    <p className="text-xs text-(--base-07) mt-1">
-                        Editing: <span className="font-mono text-(--primary-light)">{props.subName}</span>
-                    </p>
-                </div>
-                <button type="button" onClick={props.onClose} className="text-(--base-07) hover:text-(--error-light) transition-colors">
-                    <X size={20} />
-                </button>
+                {view ? (
+                    <>
+                        <div className="min-w-0">
+                            <h3 className="modal-title">Server Configuration</h3>
+                            <p className="text-xs text-(--base-07) mt-1 flex items-center gap-2 flex-wrap">
+                                {view.model.isActive ? 'Active:' : 'Viewing:'}
+                                <span className="font-mono text-(--primary-light) break-all">{view.model.subServer}</span>
+                                {!view.model.isActive && (
+                                    <span className="badge badge-warning"><Eye size={11} /> Preview - not active</span>
+                                )}
+                            </p>
+                        </div>
+                        {view.model.isActive ? (
+                            view.canEdit && (
+                                <button type="button" onClick={view.onEdit} className="btn btn-secondary btn-sm">
+                                    <Pencil size={14} /> Edit
+                                </button>
+                            )
+                        ) : (
+                            <button type="button" onClick={view.onSwitch} className="btn btn-secondary btn-sm">
+                                <RefreshCw size={14} /> Switch to this sub-server
+                            </button>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <div>
+                            <h3 className="modal-title">Edit Server Config</h3>
+                            <p className="text-xs text-(--base-07) mt-1">
+                                Editing: <span className="font-mono text-(--primary-light)">{props.subName}</span>
+                            </p>
+                        </div>
+                        <button type="button" onClick={props.onClose} aria-label="Close editing" className="text-(--base-07) hover:text-(--error-light) transition-colors">
+                            <X size={20} />
+                        </button>
+                    </>
+                )}
             </div>
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
 
                 {/* Warning banner */}
-                {props.activeServerMissing && (
+                {props.activeServerMissing && (!view || view.model.isActive) && (
                     <div className="alert alert-warning gap-3 rounded-xl">
                         <AlertTriangle size={20} className="text-(--warning-light) shrink-0" />
                         <div className="text-sm">
@@ -165,11 +228,20 @@ export default function SetupEditMode(props: SetupEditModeProps) {
 
                 {/* Card 1: Runtime Settings */}
                 <div className="card p-5 space-y-5">
-                    <p className="text-sm font-semibold text-(--base-09)">Runtime Settings</p>
+                    <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-sm font-semibold text-(--base-09)">Runtime Settings</p>
+                        <span className="text-xs text-(--base-06)">{props.ramMB} MB RAM</span>
+                    </div>
+                    {view && !view.model.isActive && (
+                        <p className="text-xs text-(--base-07) -mt-2">
+                            Java, JVM flags and memory belong to the server and apply to whichever sub-server is active.
+                        </p>
+                    )}
 
                     <JavaVersionPicker
                         value={props.javaImage}
                         onChange={props.onJavaChange}
+                        readOnly={!!view}
                         serverType={props.serverType}
                         recommended={recommendedJava ?? undefined}
                         mcVersion={effectiveVersion || undefined}
@@ -180,12 +252,20 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                         extraFlags={props.extraFlags}
                         onChange={props.onFlagsChange}
                         ramMB={props.ramMB}
+                        readOnly={!!view}
                         defaultOpen
                     />
                 </div>
 
+                {view && (
+                    <div className="card p-5 space-y-4">
+                        <p className="text-sm font-semibold text-(--base-09)">Installed Software</p>
+                        <InstalledSoftware model={view.model} />
+                    </div>
+                )}
+
                 {/* Card 2: Reinstall Software */}
-                <div className="card p-5 space-y-4">
+                {!view && <div className="card p-5 space-y-4">
                     <p className="text-sm font-semibold text-(--base-09)">Reinstall Software</p>
 
                     {/* Install tabs */}
@@ -302,13 +382,13 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                             onSelect={(s) => props.onTechnicSelect?.(s)}
                         />
                     )}
-                </div>
+                </div>}
 
                 {props.error && <p className="text-(--error-light) text-sm font-medium">{props.error}</p>}
             </div>
 
             {/* Footer */}
-            <div className="modal-footer flex gap-2">
+            {!view && <div className="modal-footer flex gap-2">
                 <button
                     type="button"
                     onClick={props.onSubmit}
@@ -328,7 +408,7 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                 >
                     <Trash2 size={16} />
                 </button>
-            </div>
+            </div>}
         </div>
     );
 }

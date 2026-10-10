@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 
-import { AlertTriangle, RotateCcw, Code2, ListChecks, Search, ChevronDown, FileQuestion, Power } from 'lucide-react';
+import { AlertTriangle, RotateCcw, Code2, ListChecks, Search, FileQuestion, Power } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
@@ -174,7 +174,6 @@ export default function ServerPropertiesView() {
     const [savingAdvanced, setSavingAdvanced] = useState(false);
     const [restartPending, setRestartPending] = useState(false);
     const [search, setSearch] = useState('');
-    const [openGroups, setOpenGroups] = useState<Set<PropertyGroup>>(new Set(['world', 'network', 'performance']));
 
     // External-change banner state: the text we last loaded/saved so
     // the background poll can tell apart "nothing changed" from "the
@@ -443,13 +442,8 @@ export default function ServerPropertiesView() {
         return entries;
     }, [doc, search, pending]);
 
-    const toggleGroup = (key: PropertyGroup) => {
-        setOpenGroups(prev => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key); else next.add(key);
-            return next;
-        });
-    };
+    // Sections carry scroll-mt so the sticky search bar does not cover the heading.
+    const jumpTo = (id: string) => document.getElementById(id)?.scrollIntoView({ block: 'start' });
 
     const cmRef = useRef<HTMLDivElement>(null); // lazy-load placeholder
 
@@ -585,34 +579,47 @@ export default function ServerPropertiesView() {
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             placeholder="Search properties…"
-                            className="input-field flex-1 max-w-md"
+                            className="input-field flex-1 max-w-md min-w-40"
                         />
+                        <nav aria-label="Property categories" className="flex items-center gap-1 min-w-0 max-w-full overflow-x-auto whitespace-nowrap">
+                            {(Object.keys(filteredGroups) as PropertyGroup[]).map(group => (
+                                <button
+                                    key={group}
+                                    type="button"
+                                    onClick={() => jumpTo(`props-${group}`)}
+                                    className="px-2 py-1 rounded-md text-xs text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03) active:bg-(--base-04) transition-colors"
+                                >
+                                    {GROUP_LABELS[group]}
+                                </button>
+                            ))}
+                            {unknownEntries.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => jumpTo('props-unknown')}
+                                    className="px-2 py-1 rounded-md text-xs text-(--warning-light) hover:bg-(--base-03) active:bg-(--base-04) transition-colors"
+                                >
+                                    Custom
+                                </button>
+                            )}
+                        </nav>
                     </div>
                     {(Object.keys(filteredGroups) as PropertyGroup[]).map(group => (
-                        <section key={group} className="mb-4">
-                            <button
-                                onClick={() => toggleGroup(group)}
-                                className="w-full flex items-center justify-between py-2 mb-1 mono-label hover:text-(--base-08) transition-colors"
-                            >
-                                <span className="flex items-center gap-1.5">
-                                    <ChevronDown size={12} className={`transition-transform ${openGroups.has(group) ? '' : '-rotate-90'}`} />
-                                    {GROUP_LABELS[group]}
-                                </span>
-                                <span>{filteredGroups[group].length}</span>
-                            </button>
-                            {openGroups.has(group) && (
-                                <div className="pl-3 border-l border-(--base-03)">
-                                    {filteredGroups[group].map(def => (
-                                        <PropertyRow
-                                            key={def.key}
-                                            def={def}
-                                            raw={pending[def.key] ?? doc.values[def.key]}
-                                            edited={def.key in pending}
-                                            onChange={editProperty}
-                                        />
-                                    ))}
-                                </div>
-                            )}
+                        <section key={group} id={`props-${group}`} aria-labelledby={`props-${group}-h`} className="mb-6 scroll-mt-20">
+                            <h2 id={`props-${group}-h`} className="settings-card-title justify-between py-2 mb-1">
+                                {GROUP_LABELS[group]}
+                                <span className="font-mono text-xs font-normal text-(--base-06)">{filteredGroups[group].length}</span>
+                            </h2>
+                            <div className="pl-3 border-l border-(--base-03)">
+                                {filteredGroups[group].map(def => (
+                                    <PropertyRow
+                                        key={def.key}
+                                        def={def}
+                                        raw={pending[def.key] ?? doc.values[def.key]}
+                                        edited={def.key in pending}
+                                        onChange={editProperty}
+                                    />
+                                ))}
+                            </div>
                         </section>
                     ))}
 
@@ -625,7 +632,7 @@ export default function ServerPropertiesView() {
                         input on the right; same inlineSave path as the
                         typed rows. */}
                     {unknownEntries.length > 0 && (
-                        <section className="mb-4 mt-6">
+                        <section id="props-unknown" className="mb-4 mt-6 scroll-mt-20">
                             <div className="flex items-center justify-between py-2 mb-1 mono-label text-(--warning-light)">
                                 <span className="flex items-center gap-1.5">
                                     <FileQuestion size={12} />

@@ -23,6 +23,7 @@ type ModInstallResultService struct {
 	store  store.Store
 	redis  *redis.Client
 	leader LeaderChecker
+	events *SystemEventsPublisher
 }
 
 // LeaderChecker is the slice of the leader election this service needs. Pub/Sub
@@ -33,7 +34,7 @@ type LeaderChecker interface {
 }
 
 func NewModInstallResultService(st store.Store, rdb *redis.Client, leader LeaderChecker) *ModInstallResultService {
-	return &ModInstallResultService{store: st, redis: rdb, leader: leader}
+	return &ModInstallResultService{store: st, redis: rdb, leader: leader, events: NewSystemEventsPublisher(rdb)}
 }
 
 // Start consumes results until ctx is cancelled.
@@ -125,11 +126,20 @@ func (s *ModInstallResultService) apply(channel string, rep modInstallReport) {
 			rep.ServerID, rep.ProjectID, err)
 		return
 	}
-	if !applied {
-		// Not an error and not worth alarming about: the row has moved on to a
-		// newer attempt, so this is a late answer about one that no longer
-		// decides anything.
-		log.Printf("mod install result: ignoring a late report for server %d project %s (attempt %s is no longer current)",
-			rep.ServerID, rep.ProjectID, rep.InstallID)
+	if applied {
+		// The row changing is not enough: the panel only re-reads the list on this
+		// event, so without it a finished install stayed "installing" on screen
+		// until a reload. Leader-gated like the write, so it fires once.
+		s.events.Publish(context.Background(), "server_mods.changed", map[string]interface{}{
+			"serverId":  rep.ServerID,
+			"projectId": rep.ProjectID,
+			"status":    status,
+		})
+		return
 	}
+	// Not an error and not worth alarming about: the row has moved on to a
+	// newer attempt, so this is a late answer about one that no longer
+	// decides anything.
+	log.Printf("mod install result: ignoring a late report for server %d project %s (attempt %s is no longer current)",
+		rep.ServerID, rep.ProjectID, rep.InstallID)
 }

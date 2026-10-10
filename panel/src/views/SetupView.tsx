@@ -11,7 +11,6 @@ import VersionPicker, { VersionEntry, compareVersionsDesc } from './setup/Versio
 import UploadSoftwareChoice from './setup/UploadSoftwareChoice';
 import { readZipEntryNames, detectUploadSoftware, singleTopFolder, readPackMcVersion, type UploadDetection } from '@/lib/uploadDetect';
 import SubServerSidebar from './setup/SubServerSidebar';
-import SetupViewMode from './setup/SetupViewMode';
 import SetupNewWizard from './setup/SetupNewWizard';
 import SetupEditMode from './setup/SetupEditMode';
 import RoutesModal from '@/components/RoutesModal';
@@ -25,6 +24,7 @@ import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { installTargetMcVersion } from '@/views/setup/installTarget';
 import { createUploadStager, uploadStartStep, UPLOAD_ZIP_NAME } from '@/views/setup/uploadStaging';
+import { setupPreviewModel } from '@/views/setup/setupPreview';
 
 // What may be installed over an upload: Core's reinstallableInstallers.
 const UPLOAD_SOFTWARE = ['paper', 'vanilla', 'fabric', 'forge', 'neoforge'];
@@ -64,6 +64,9 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     const [maxSubServers, setMaxSubServers] = useState<number>(3);
     const [formMode, setFormMode] = useState<FormMode>('view');
     const [switchTarget, setSwitchTarget] = useState<string | null>(null);
+    // A sub-server picked in the sidebar to LOOK at. Only the explicit switch
+    // makes it active: that restarts the server and drops its players.
+    const [previewSub, setPreviewSub] = useState<string | null>(null);
     const [activeServerMissing, setActiveServerMissing] = useState(false);
 
     // Form fields
@@ -247,6 +250,20 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         (name: string) => installs.find(i => i.subServerName === name),
         [installs],
     );
+
+    const preview = useMemo(
+        () => setupPreviewModel(server, installs, subServers, previewSub),
+        [server, installs, subServers, previewSub],
+    );
+
+    // The read-only form follows the row when the row changes. Keyed on the row
+    // alone, not on formMode: a runtime save returns to view while the row is
+    // still the pre-save one, and re-reading it then showed the old values.
+    useEffect(() => {
+        if (formMode !== 'view') return;
+        setJavaImage(server.image || JAVA_21);
+        setExtraFlags(server.extraJvmFlags || '');
+    }, [server.image, server.extraJvmFlags]);
 
     /**
      * The versions to put back on the form, preferring the RECORDED install.
@@ -456,6 +473,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
 
     const enterEditMode = () => {
         setFormMode('edit');
+        setPreviewSub(null);
         setSubName(server.activeSubServer || '');
         setJavaImage(server.image || JAVA_21);
         setExtraFlags(server.extraJvmFlags || '');
@@ -974,18 +992,22 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
                 subServers={subServers}
                 activeSubServer={server.activeSubServer}
                 pendingDelete={pendingDelete}
+                previewSubServer={preview.isActive ? undefined : preview.subServer}
+                onPreview={(name) => {
+                    if (formMode !== 'view') return;
+                    setPreviewSub(name === server.activeSubServer ? null : name);
+                }}
                 onSwitch={(name) => {
                     if (formMode !== 'view') return;
                     setSwitchTarget(name);
                 }}
                 onAddNew={enterNewMode}
                 onEditSubServer={(name) => {
-                    // Switch to the right slot first, then jump
-                    // straight into edit. enterEditMode reads
-                    // subName from server.activeSubServer, so we
-                    // need the panel state to match the picked
-                    // entry before we transition.
-                    setSubName(name);
+                    // Edit applies to the ACTIVE sub-server only: enterEditMode
+                    // reads it from the server row, so editing another used to
+                    // open the active one's form under the other's row. Another
+                    // one is previewed; its switch is on the form.
+                    if (name !== server.activeSubServer) { setPreviewSub(name); return; }
                     enterEditMode();
                 }}
                 onDeleteSubServer={(name) => {
@@ -999,12 +1021,32 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
 
             {/* Right panel - mode dependent */}
             {formMode === 'view' && (
-                <SetupViewMode
-                    server={server}
+                <SetupEditMode
+                    currentInstall={installFor(preview.subServer)}
+                    subName={preview.subServer}
+                    javaImage={javaImage}
+                    onJavaChange={setJavaImage}
+                    extraFlags={extraFlags}
+                    onFlagsChange={setExtraFlags}
+                    ramMB={server.memory}
+                    {...installProps}
+                    // The Java recommendation follows what is installed, not the
+                    // pickers, which hold nothing meaningful while viewing.
+                    targetMcVersion={preview.mcVersion}
+                    javaVersionUnknown={false}
                     activeServerMissing={activeServerMissing}
-                    onEdit={enterEditMode}
-                    onAddNew={enterNewMode}
-                    hasSubServers={subServers.length > 0}
+                    activeSubServer={server.activeSubServer}
+                    onSubmit={() => {}}
+                    onClose={() => {}}
+                    onDelete={() => {}}
+                    submitting={submitting}
+                    error={error}
+                    view={{
+                        model: preview,
+                        canEdit: subServers.length > 0,
+                        onEdit: enterEditMode,
+                        onSwitch: () => setSwitchTarget(preview.subServer),
+                    }}
                 />
             )}
 

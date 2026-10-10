@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.4
+
+### Features
+- **Mod installs show their progress and result** without reloading and keep running when you switch
+  pages; failures say why.
+- **The Setup tab shows the full settings of the active sub-server** read-only, with Edit to change them;
+  clicking another sub-server previews it.
+- **The file editor colours values and more file types** instead of plain grey.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Configuration shows every property** under fixed category headings with a jump list, instead of
+  collapsed groups.
+
 ## 2026.10.10.3
 
 ### Features
