@@ -128,6 +128,9 @@ export interface TabPermissions {
     // legacy invite blob, which has no such key. A legacy invite carrying
     // `power` maps to players.read on the backend, so those keep the tab.
     players: boolean;
+    // Resolved players.manage: whether the Players page actions are accepted.
+    // Not a tab, and absent (false) when the member does not hold it.
+    playersManage?: boolean;
     members: boolean;
     network: boolean;
     backups: boolean;

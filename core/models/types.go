@@ -541,10 +541,15 @@ type TabPermissions struct {
 	// legacy invite carrying Power maps to players.read in MapLegacyInviteCaps,
 	// so those keep the tab they had.
 	Players bool `json:"players"`
-	Members bool `json:"members"`
-	Network bool `json:"network"`
-	Backups bool `json:"backups"`
-	Inherit bool `json:"inherit"`
+	// PlayersManage is not a tab: it says whether the Players page's actions
+	// (kick, ban, op, whitelist) will be accepted, from the resolved
+	// players.manage, so the panel can grey them out instead of answering 403.
+	// Never part of the invite vocabulary; omitted when false.
+	PlayersManage bool `json:"playersManage,omitempty"`
+	Members       bool `json:"members"`
+	Network       bool `json:"network"`
+	Backups       bool `json:"backups"`
+	Inherit       bool `json:"inherit"`
 }
 
 // ServerInvite represents an invitation for a user to access a server

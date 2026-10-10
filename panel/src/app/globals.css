@@ -402,7 +402,9 @@ input[type="number"] {
 
 .input-field {
   background: var(--base-03);
-  border: 1px solid var(--base-04);
+  /* --base-05, not --base-04: a resting border is the only edge of the control
+     (WCAG 1.4.11, 3:1), and --base-04 measured 1.4:1 on its own fill. */
+  border: 1px solid var(--base-05);
   color: var(--base-09);
   font-family: var(--font-body);
   font-size: 13px;
@@ -423,7 +425,7 @@ input[type="number"] {
   font-family: var(--font-mono);
   font-size: 12px;
   background: var(--base-01);
-  border: 1px solid var(--base-03);
+  border: 1px solid var(--base-05);
   color: var(--base-09);
   border-radius: var(--radius-md);
   padding: 9px 12px;
@@ -433,6 +435,10 @@ input[type="number"] {
 .input-mono:focus {
   border-color: var(--accent-light);
   box-shadow: 0 0 0 3px var(--accent-ghost);
+}
+/* Excludes focus and error so hovering never repaints either of them grey. */
+:is(.input-field, .input-mono):hover:not(:focus):not(:disabled):not(.input-field-error) {
+  border-color: var(--base-06);
 }
 
 /* ── Datetime picker (opt-in) ──
@@ -1155,10 +1161,17 @@ input[type="number"] {
 ) {
   border-color: var(--base-05);
 }
+/* The rule above outranks every hover:border-* utility (they sit in Tailwind's
+   layer, this does not), so hover feedback is restored here for all of them at
+   once. Not by exempting hovered elements from the rule above: that hands them
+   back to unlayered .card's --base-03 and the border vanishes on hover. */
+:root[data-contrast="high"] [class*="hover:border-"]:hover {
+  border-color: var(--base-07);
+}
 /* Inputs separately: inside the list above this selector would outrank
    .input-field:focus and .input-field-error and turn both borders grey. Matching
    only the resting state leaves those two rules untouched. */
-:root[data-contrast="high"] :is(.input-field, .input-mono):not(:focus):not(.input-field-error) {
+:root[data-contrast="high"] :is(.input-field, .input-mono):not(:focus):not(.input-field-error):not(:hover) {
   border-color: var(--base-05);
 }
 :root[data-contrast="high"] a:not(.btn):is(:not([class]), [class*="accent-light"], [class*="primary-light"]) {

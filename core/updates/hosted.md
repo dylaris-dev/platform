@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.7
+
+### Features
+- **Player actions are greyed out for members without Manage players**, with the reason on hover.
+- **Mod installs survive a page reload**: running installs show up in the progress widget again.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Input borders are visible**: text fields are easier to see and react on hover, also in High contrast mode.
+
 ## 2026.10.10.6
 
 ### Features

@@ -12,7 +12,7 @@ import {
     getPlayerLists, getOnlinePlayers, playerAction,
     type PlayerListEntry, type PlayerAction, type KnownPlayer,
 } from '@/lib/api/players';
-import { isServerLive, mergeAllPlayers, type AllPlayerRow } from '@/lib/playersView';
+import { canManagePlayers, isServerLive, mergeAllPlayers, type AllPlayerRow } from '@/lib/playersView';
 import { playerActionToast } from '@/lib/playerActionResult';
 import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
@@ -92,12 +92,14 @@ export default function ServerPlayersPage() {
     // server.status follows the servers.changed SSE, so this flips without a
     // reload and the refresh below re-runs on it.
     const live = useMemo(() => isServerLive(server?.status), [server?.status]);
-    // The server list carries no players.manage bit, so the one viewer known not
-    // to hold it is a demo visitor. A member without it is refused by Core and
-    // sees that refusal as a toast.
-    const canManage = server?.role !== 'demo';
+    const canManage = canManagePlayers(server);
     const actionsBlocked = !live || !canManage;
-    const blockedHint = !canManage ? 'Read-only: you cannot manage players on this server' : OFFLINE_HINT;
+    const blockedHint = !canManage
+        ? (server?.role === 'demo' ? 'Read-only: you cannot manage players on this server' : 'You need the Manage players permission')
+        : OFFLINE_HINT;
+    // A button's own title wins over the fieldset's, so a blocked one carries
+    // the reason after its name.
+    const actionTip = (label: string) => (actionsBlocked ? `${label}: ${blockedHint}` : label);
     const [allLimit, setAllLimit] = useState(ALL_PAGE);
 
     // With RCON off, the effective section is always 'rcon' (the only usable
@@ -509,26 +511,26 @@ export default function ServerPlayersPage() {
                                         return (
                                             <>
                                                 {(p as AllPlayerRow).online && (
-                                                    <button onClick={() => handleKick(p.name)} className="btn btn-secondary btn-sm" title="Kick" aria-label={`Kick ${p.name}`}>
+                                                    <button onClick={() => handleKick(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Kick')} aria-label={`Kick ${p.name}`}>
                                                         <ShieldOff size={12} />
                                                     </button>
                                                 )}
                                                 {!whitelisted.has(key) && (
-                                                    <button onClick={() => handleWhitelistAdd(p.name)} className="btn btn-secondary btn-sm" title="Add to whitelist" aria-label={`Add ${p.name} to whitelist`}>
+                                                    <button onClick={() => handleWhitelistAdd(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Add to whitelist')} aria-label={`Add ${p.name} to whitelist`}>
                                                         <ListChecks size={12} />
                                                     </button>
                                                 )}
                                                 {!opped.has(key) && (
-                                                    <button onClick={() => handleOp(p.name)} className="btn btn-secondary btn-sm" title="Op" aria-label={`Op ${p.name}`}>
+                                                    <button onClick={() => handleOp(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Op')} aria-label={`Op ${p.name}`}>
                                                         <ShieldCheck size={12} className="text-(--accent-light)" />
                                                     </button>
                                                 )}
                                                 {banned.has(key) ? (
-                                                    <button onClick={() => handleUnban(p.name)} className="btn btn-secondary btn-sm" title="Unban" aria-label={`Unban ${p.name}`}>
+                                                    <button onClick={() => handleUnban(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Unban')} aria-label={`Unban ${p.name}`}>
                                                         <CircleCheck size={12} className="text-(--success-light)" />
                                                     </button>
                                                 ) : (
-                                                    <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title="Ban" aria-label={`Ban ${p.name}`}>
+                                                    <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Ban')} aria-label={`Ban ${p.name}`}>
                                                         <Skull size={12} className="text-(--error-light)" />
                                                     </button>
                                                 )}
@@ -537,16 +539,16 @@ export default function ServerPlayersPage() {
                                     })()}
                                     {section === 'online' && (
                                         <>
-                                            <button onClick={() => setTellPrompt({ player: p.name, message: '' })} className="btn btn-secondary btn-sm" title="Whisper">
+                                            <button onClick={() => setTellPrompt({ player: p.name, message: '' })} className="btn btn-secondary btn-sm" title={actionTip('Whisper')}>
                                                 <MessageSquare size={12} />
                                             </button>
-                                            <button onClick={() => handleOp(p.name)} className="btn btn-secondary btn-sm" title="Op">
+                                            <button onClick={() => handleOp(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Op')}>
                                                 <ShieldCheck size={12} className="text-(--accent-light)" />
                                             </button>
-                                            <button onClick={() => handleKick(p.name)} className="btn btn-secondary btn-sm" title="Kick">
+                                            <button onClick={() => handleKick(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Kick')}>
                                                 <ShieldOff size={12} />
                                             </button>
-                                            <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title="Ban">
+                                            <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Ban')}>
                                                 <Skull size={12} className="text-(--error-light)" />
                                             </button>
                                         </>
@@ -558,12 +560,12 @@ export default function ServerPlayersPage() {
                                         </button>
                                     )}
                                     {section === 'whitelist' && (
-                                        <button onClick={() => handleWhitelistRemove(p.name)} className="btn btn-secondary btn-sm" title="Remove">
+                                        <button onClick={() => handleWhitelistRemove(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Remove')}>
                                             <Trash2 size={12} className="text-(--error-light)" />
                                         </button>
                                     )}
                                     {section === 'ops' && (
-                                        <button onClick={() => handleDeop(p.name)} className="btn btn-secondary btn-sm" title="De-op">
+                                        <button onClick={() => handleDeop(p.name)} className="btn btn-secondary btn-sm" title={actionTip('De-op')}>
                                             <Crown size={12} className="text-(--error-light)" />
                                         </button>
                                     )}

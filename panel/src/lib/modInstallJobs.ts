@@ -69,6 +69,46 @@ export function reconcile(job: InstallJob, rows: readonly InstalledMod[], now: n
     return expire(job, now);
 }
 
+/**
+ * Follows installs this tab did not start: a reload, or another session. Core
+ * writes the row as "installing" with installed_at at dispatch, so that time is
+ * the job's start and the usual timeout still bounds it. A row already past the
+ * timeout is left alone rather than shown as a ghost that can only expire.
+ * Returns `jobs` itself when nothing was added, so a caller can skip a render.
+ */
+export function adopt(
+    jobs: readonly InstallJob[],
+    serverId: number,
+    serverName: string,
+    rows: readonly InstalledMod[],
+    now: number,
+): InstallJob[] {
+    const added: InstallJob[] = [];
+    for (const r of rows) {
+        if (r.status !== 'installing') continue;
+        // A browser clock behind Core's would otherwise stretch the timeout.
+        const startedAt = Math.min(Date.parse(r.installedAt), now);
+        if (!(now - startedAt < INSTALL_TIMEOUT_MS)) continue;
+        const tracked = jobs.some(j => j.serverId === serverId && j.projectId === r.modrinthProjectId
+            && (isPending(j) || j.versionId === r.modrinthVersionId));
+        if (tracked) continue;
+        added.push({
+            id: `mod-${startedAt}-${serverId}-${r.modrinthProjectId}`,
+            serverId,
+            serverName,
+            projectId: r.modrinthProjectId,
+            versionId: r.modrinthVersionId,
+            title: r.title || r.fileName,
+            state: 'installing',
+            startedAt,
+        });
+    }
+    if (added.length === 0) return jobs as InstallJob[];
+    // Same rule as a click: one entry per project and server.
+    const replaced = new Set(added.map(j => j.projectId));
+    return [...jobs.filter(j => !(j.serverId === serverId && replaced.has(j.projectId))), ...added];
+}
+
 /** forbidden: the last read of the mod list was refused (403), so the panel
  * could never have seen the answer and must not suggest looking for it. */
 export function expire(job: InstallJob, now: number, forbidden = false): InstallJob {

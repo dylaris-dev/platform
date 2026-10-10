@@ -247,10 +247,16 @@ export default function ServerContentPage() {
     );
     const [retryingInstalled, retryInstalled] = useBusy();
 
+    // Through a ref: the server list arriving must not cost another GET.
+    const serverNameRef = useRef(serverName);
+    serverNameRef.current = serverName;
+    const adoptInstalls = installs.adopt;
     const refreshInstalled = useCallback(async () => {
         if (!serverId) return;
         try {
-            setInstalled(await listInstalledMods(serverId));
+            const rows = await listInstalledMods(serverId);
+            setInstalled(rows);
+            adoptInstalls(serverId, serverNameRef.current, rows);
             setInstalledError(null);
             // Fail-open, and the difference from the list above is deliberate:
             // the list decides what is on the server, the history only offers a
@@ -267,7 +273,7 @@ export default function ServerContentPage() {
             // says "install it" about everything.
             setInstalledError(e instanceof Error ? e.message : 'Could not load the installed mods.');
         }
-    }, [serverId]);
+    }, [serverId, adoptInstalls]);
 
     useEffect(() => { refreshInstalled(); }, [refreshInstalled]);
 

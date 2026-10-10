@@ -97,6 +97,23 @@ PAIRS.push(['base-08', 'accent-ghost', 'text'], ['base-08', 'warning-ghost', 'te
 for (const bg of ['base-00', 'base-02', 'base-03']) PAIRS.push(['accent-light', bg, 'ui']);
 for (const bg of ['base-01', 'base-02', 'base-03']) PAIRS.push(['base-05', bg, 'ui']);
 PAIRS.push(['error-light', 'base-03', 'ui'], ['success', 'base-02', 'ui']);
+// Read off the input rules themselves, so reverting a border in globals.css
+// fails here rather than only in the token pairs above. Each border is measured
+// on its own fill and on the surfaces an input sits on (page, card, sunken).
+function cssToken(selector: RegExp, prop: string): string {
+    const m = block(selector).match(new RegExp(`\\n\\s*${prop}\\s*:[^;]*var\\(--([a-z0-9-]+)\\)`));
+    if (!m) throw new Error(`${prop} in ${selector} is not a var(--token)`);
+    return m[1];
+}
+for (const cls of ['input-field', 'input-mono']) {
+    const sel = new RegExp(`\\n\\.${cls}\\s*\\{`);
+    const fill = cssToken(sel, 'background');
+    for (const bg of new Set([fill, 'base-00', 'base-01', 'base-02', 'base-03'])) {
+        PAIRS.push([cssToken(sel, 'border'), bg, 'ui']);
+    }
+}
+const hoverBorder = cssToken(/:is\(\.input-field, \.input-mono\):hover[^{]*\{/, 'border-color');
+for (const bg of ['base-01', 'base-03']) PAIRS.push([hoverBorder, bg, 'ui']);
 
 const FIXED: Record<string, string> = { white: '#ffffff', black: '#000000' };
 

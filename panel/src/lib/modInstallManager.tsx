@@ -1,10 +1,10 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { installMod, listInstalledMods, type InstallModPayload } from '@/lib/api/modrinth';
+import { installMod, listInstalledMods, type InstalledMod, type InstallModPayload } from '@/lib/api/modrinth';
 import { systemEvents } from '@/lib/systemEvents';
 import { toast } from '@/components/ui/Toast';
-import { afterPost, expire, isPending, reconcile, type InstallJob } from '@/lib/modInstallJobs';
+import { adopt as adoptRows, afterPost, expire, isPending, reconcile, type InstallJob } from '@/lib/modInstallJobs';
 import { createCoalescer } from '@/lib/coalesce';
 
 // Mod installs live here, above the router, so leaving the Content tab neither
@@ -20,6 +20,8 @@ interface ModInstallCtx {
     start: (serverId: number, serverName: string, payload: InstallModPayload) => Promise<InstallJob>;
     /** The newest job for this project on this server, if any. */
     jobFor: (serverId: number, projectId: string) => InstallJob | undefined;
+    /** Follows rows still "installing" that no job here tracks, e.g. after a reload. */
+    adopt: (serverId: number, serverName: string, rows: readonly InstalledMod[]) => void;
     dismiss: (id: string) => void;
     clearFinished: () => void;
 }
@@ -43,10 +45,15 @@ export function ModInstallProvider({ children }: { children: React.ReactNode }) 
             forbidden = (e as { status?: number })?.status === 403;
         }
         const now = Date.now();
-        setJobs(prev => prev.map(j => {
-            if (j.serverId !== serverId) return j;
-            return rows ? reconcile(j, rows, now) : expire(j, now, forbidden);
-        }));
+        setJobs(prev => {
+            const next = prev.map(j => {
+                if (j.serverId !== serverId) return j;
+                return rows ? reconcile(j, rows, now) : expire(j, now, forbidden);
+            });
+            // Only servers with a job are read here, so one of them has the name.
+            const name = prev.find(j => j.serverId === serverId)?.serverName;
+            return rows && name ? adoptRows(next, serverId, name, rows, now) : next;
+        });
     }, []);
     // A bulk update emits two frames per mod; one read per server per burst.
     const coalesce = useRef(createCoalescer(COALESCE_MS)).current;
@@ -106,11 +113,15 @@ export function ModInstallProvider({ children }: { children: React.ReactNode }) 
         return undefined;
     }, [jobs]);
 
+    const adopt = useCallback<ModInstallCtx['adopt']>((serverId, serverName, rows) => {
+        setJobs(prev => adoptRows(prev, serverId, serverName, rows, Date.now()));
+    }, []);
+
     const dismiss = useCallback((id: string) => setJobs(prev => prev.filter(j => j.id !== id)), []);
     const clearFinished = useCallback(() => setJobs(prev => prev.filter(isPending)), []);
 
     return (
-        <Ctx.Provider value={{ jobs, start, jobFor, dismiss, clearFinished }}>
+        <Ctx.Provider value={{ jobs, start, jobFor, adopt, dismiss, clearFinished }}>
             {children}
         </Ctx.Provider>
     );
@@ -126,6 +137,7 @@ const noop: ModInstallCtx = {
         return afterPost(job, await installMod(serverId, payload), Date.now());
     },
     jobFor: () => undefined,
+    adopt: () => { /* noop */ },
     dismiss: () => { /* noop */ },
     clearFinished: () => { /* noop */ },
 };

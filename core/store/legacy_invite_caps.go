@@ -70,16 +70,17 @@ func TabPermissionsFromCaps(caps []string) models.TabPermissions {
 		has[c] = true
 	}
 	return models.TabPermissions{
-		Console:  has["console.read"],
-		Files:    has["files.read"],
-		Config:   has["config.read"],
-		Setup:    has["server.settings.write"],
-		Overview: has["overview.read"],
-		Power:    has["power.start"] || has["power.stop"] || has["power.restart"] || has["power.kill"],
-		Players:  has["players.read"],
-		Members:  has["members.read"],
-		Network:  has["network.read"],
-		Backups:  has["backups.read"],
+		Console:       has["console.read"],
+		Files:         has["files.read"],
+		Config:        has["config.read"],
+		Setup:         has["server.settings.write"],
+		Overview:      has["overview.read"],
+		Power:         has["power.start"] || has["power.stop"] || has["power.restart"] || has["power.kill"],
+		Players:       has["players.read"],
+		PlayersManage: has["players.manage"],
+		Members:       has["members.read"],
+		Network:       has["network.read"],
+		Backups:       has["backups.read"],
 	}
 }
 

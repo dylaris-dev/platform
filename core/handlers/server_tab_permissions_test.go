@@ -57,6 +57,20 @@ func TestMergeResolvedTabPermissions(t *testing.T) {
 			},
 		},
 		{
+			// The Players page greys its actions out on this bit, so a member
+			// with only players.read must not get it.
+			name: "players.read alone opens the tab but not its actions",
+			base: nil,
+			caps: capSet("players.read"),
+			want: models.TabPermissions{Players: true},
+		},
+		{
+			name: "players.manage lights the action bit",
+			base: nil,
+			caps: capSet("players.read", "players.manage"),
+			want: models.TabPermissions{Players: true, PlayersManage: true},
+		},
+		{
 			name: "a nil resolver leaves the blob untouched",
 			base: &models.TabPermissions{Overview: true},
 			caps: nil,

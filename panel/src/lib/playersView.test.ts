@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isServerLive, mergeAllPlayers } from './playersView';
+import { canManagePlayers, isServerLive, mergeAllPlayers } from './playersView';
 
 describe('isServerLive', () => {
     it('is true only for a running server', () => {
@@ -51,5 +51,26 @@ describe('mergeAllPlayers', () => {
         expect(mergeAllPlayers(renamed, []).map(r => r.name)).toEqual(['NewName', 'Other']);
         // Online under the new name: the old cache entry does not come back.
         expect(mergeAllPlayers(renamed, [{ name: 'newname' }]).map(r => r.name)).toEqual(['newname', 'Other']);
+    });
+});
+
+describe('canManagePlayers', () => {
+    it('lets owners and admins act without a permissions blob', () => {
+        expect(canManagePlayers({ role: 'owner' })).toBe(true);
+        expect(canManagePlayers({ role: 'admin' })).toBe(true);
+        expect(canManagePlayers({})).toBe(true);
+    });
+
+    it('keeps a demo visitor read-only whatever the blob says', () => {
+        expect(canManagePlayers({ role: 'demo', permissions: { playersManage: true } as never })).toBe(false);
+        expect(canManagePlayers(undefined)).toBe(false);
+    });
+
+    it('needs players.manage for a member, players.read is not enough', () => {
+        for (const role of ['invited', 'inherited'] as const) {
+            expect(canManagePlayers({ role })).toBe(false);
+            expect(canManagePlayers({ role, permissions: { players: true } as never })).toBe(false);
+            expect(canManagePlayers({ role, permissions: { players: true, playersManage: true } as never })).toBe(true);
+        }
     });
 });

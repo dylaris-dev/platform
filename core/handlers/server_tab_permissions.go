@@ -32,6 +32,7 @@ var tabPermissionCaps = []struct {
 	// decided "may see the player tools", because players.read gated nothing at
 	// all. It has its own routes now, so it gets its own bit.
 	{"players.read", func(p *models.TabPermissions) { p.Players = true }},
+	{"players.manage", func(p *models.TabPermissions) { p.PlayersManage = true }},
 	{"network.read", func(p *models.TabPermissions) { p.Network = true }},
 	{"overview.read", func(p *models.TabPermissions) { p.Overview = true }},
 	{"members.read", func(p *models.TabPermissions) { p.Members = true }},

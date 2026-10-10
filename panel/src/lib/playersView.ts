@@ -3,6 +3,7 @@
 
 import type { OnlinePlayer } from '@/lib/api/rcon';
 import type { KnownPlayer } from '@/lib/api/players';
+import type { Server } from '@/lib/api/types';
 
 // Only a running server answers RCON. Everything else (stopped, offline,
 // starting, stopping, installing, disk_full, ...) would fail the call, so the
@@ -50,4 +51,14 @@ export function mergeAllPlayers(known: KnownPlayer[], online: OnlinePlayer[]): A
         rest.push({ name: k.name, uuid: k.uuid, online: false });
     }
     return [...top.sort(byName), ...rest.sort(byName)];
+}
+
+// Whether the viewer may run player actions (kick, ban, op, whitelist), i.e.
+// holds players.manage. Owner and admin rows carry no permissions blob and are
+// treated as owners, the same rule ServerShell applies to power; a demo
+// visitor is read-only; a member needs the resolved playersManage bit.
+export function canManagePlayers(server?: Pick<Server, 'role' | 'permissions'>): boolean {
+    if (!server || server.role === 'demo') return false;
+    if (server.role !== 'invited' && server.role !== 'inherited') return true;
+    return !!server.permissions?.playersManage;
 }

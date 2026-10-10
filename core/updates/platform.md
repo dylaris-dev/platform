@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.10.7
+
+### Features
+- **Player actions are greyed out for members without Manage players**, with the reason on hover, instead of
+  failing with a permission error after the click. `core` `panel`
+- **Mod installs survive a page reload**: installs still running show up in the progress widget again once
+  the Content tab is open. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Input borders are visible**: text fields meet 3:1 contrast (they sat at 1.4:1) and react on hover; in
+  High contrast mode hover borders work again. `panel`
+
 ## 2026.10.10.6
 
 ### Features

@@ -31,7 +31,7 @@ func TestTabPermissionsFromCaps(t *testing.T) {
 				"rcon.exec", "players.read", "players.manage",
 			},
 			want: models.TabPermissions{
-				Overview: true, Console: true, Power: true, Players: true,
+				Overview: true, Console: true, Power: true, Players: true, PlayersManage: true,
 			},
 		},
 		{
@@ -86,6 +86,7 @@ func TestTabPermissionsFromCapsAgreesWithTheLegacyMapping(t *testing.T) {
 	// Legacy "power" also conferred players.read, so the Players tab is one
 	// that member has had all along; the blob simply never recorded it.
 	want.Players = true
+	want.PlayersManage = true
 	if got != want {
 		t.Errorf("round trip = %+v, want %+v", got, want)
 	}
