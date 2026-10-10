@@ -11,10 +11,12 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.10.09.15
 
 ### Features
-- **Players shows whether the whitelist is on** and turns it on or off; it used to only edit the list, so a
-  whitelist that was off looked active. Toggles and player actions now land in the audit log. `core` `panel`
-- **New "All players" list** of everyone who has joined, online players first; the tab shows "server is
-  offline" instead of errors while the server is stopped. `core` `panel`
+- **Customer kits update themselves**: Watchtower keeps node and warp current every 15 minutes, and the
+  node replaces the link start-first each night so no player is disconnected. `node` `panel`
+- **Memory guard**: near the container limit a server saves its world and its owner is told; an
+  out-of-memory kill is now named in the panel. Stop or restart can be switched on per server. `core` `node` `panel`
+- **Players shows whether the whitelist is on** and turns it on or off, plus an "All players" list;
+  toggles and player actions land in the audit log. `core` `panel`
 
 ### Breaking
 - Nothing.

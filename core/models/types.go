@@ -496,6 +496,12 @@ type Server struct {
 	ProxyID          *int   `json:"proxyId"`
 	AutoMove         bool   `json:"autoMove"`
 	Region           string `json:"region"`
+	// MemoryGuardAction is what Core does when the node reports the container
+	// held near its memory limit (see memory_guard.go). LastCrash* is the last
+	// OOM kill the node reported; nil when there was none.
+	MemoryGuardAction string     `json:"memoryGuardAction"`
+	LastCrashReason   *string    `json:"lastCrashReason"`
+	LastCrashAt       *time.Time `json:"lastCrashAt"`
 	// RCON config. RconEnabled controls whether the server writes
 	// enable-rcon=true to server.properties on next launch and whether the
 	// panel surfaces RCON-driven UIs (Players tab, /rcon endpoint). RconPort

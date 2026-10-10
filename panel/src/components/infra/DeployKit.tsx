@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon } from 'lucide-react';
 import {
     nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, kitInput,
+    DEPLOY_PORTAINER_NOTE, kitInput, watchtowerNote,
 } from '@/lib/warpDeploy';
 import type { KitProps } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
@@ -223,6 +223,7 @@ export function DeployKit({ kind, ...props }: { kind: 'node' | 'route-only' } & 
                 warp. Saying nothing beats saying the opposite of what the file
                 above now contains. */}
             <Snippet title={composeFileName(kind)} body={compose} />
+            <p className="text-xs text-(--base-06)">{watchtowerNote(kind)}</p>
             <Snippet title="Commands" body={deployCli(kind)} note={deployIntro(kind, platform)} />
             <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>
         </div>

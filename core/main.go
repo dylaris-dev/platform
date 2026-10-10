@@ -925,6 +925,12 @@ func main() {
 	scheduledTasksService.SetLeader(coreLeader)
 	scheduledTasksService.Start(bgCtx)
 
+	// Memory guard - lands the node's memory_warning / memory_critical /
+	// oom_killed events (stop, restart or warn per server). Leader-gated.
+	memoryGuard := services.NewMemoryGuardService(pgStore, redisClient, appState.Queue, appState.Events)
+	memoryGuard.SetLeader(coreLeader)
+	memoryGuard.Start(bgCtx)
+
 	// Recovery-token printer. Background loop that logs either the
 	// Fresh-Install hint or the Lost-Admin token + URL every 30s as long as
 	// the platform has no admin. Stops at the ctx cancel triggered by SIGTERM.

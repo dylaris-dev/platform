@@ -24,6 +24,11 @@ describe('advancedStartsOpen', () => {
         expect(advancedStartsOpen({ ...defaults, hostPort: 25601 })).toBe(true);
         expect(advancedStartsOpen({ ...defaults, containerPort: 25566 })).toBe(true);
     });
+    it('opens for a non-default out-of-memory action only', () => {
+        expect(advancedStartsOpen({ ...defaults, memoryGuardAction: 'off' })).toBe(false);
+        expect(advancedStartsOpen({ ...defaults, memoryGuardAction: 'stop' })).toBe(true);
+        expect(advancedStartsOpen({ ...defaults, memoryGuardAction: 'restart' })).toBe(true);
+    });
     it('ignores ports that cannot be edited', () => {
         expect(advancedStartsOpen({ ...defaults, canEditPorts: false, hostPort: 25601 })).toBe(false);
     });

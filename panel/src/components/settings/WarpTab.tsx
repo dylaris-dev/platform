@@ -12,7 +12,7 @@ import {
 } from '@/lib/api/types';
 import {
     nodeCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitInput,
+    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitInput, watchtowerNote,
 } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
@@ -794,6 +794,7 @@ function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint,
                         </div>
                         <p className="text-xs text-(--base-06)">{platformNote('node', platform)}</p>
                         <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre overflow-x-auto">{compose}</pre>
+                        <p className="text-xs text-(--base-06)">{watchtowerNote('node')}</p>
                     </div>
 
                     <div className="space-y-1">

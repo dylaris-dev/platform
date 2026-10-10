@@ -12,14 +12,17 @@ export const portsEditable = (isAdmin: boolean, routingMode: RoutingMode) =>
 
 /**
  * The Advanced section starts closed unless it holds something set on purpose:
- * a RAM headroom override, or ports that differ from the automatic ones.
+ * a RAM headroom override, a non-default out-of-memory action, or ports that
+ * differ from the automatic ones.
  */
 export function advancedStartsOpen(o: {
     paddingText: string;
     canEditPorts: boolean;
     hostPort: number;
     containerPort: number;
+    memoryGuardAction?: string;
 }): boolean {
     if (o.paddingText.trim() !== '') return true;
+    if (o.memoryGuardAction !== undefined && o.memoryGuardAction !== 'off') return true;
     return o.canEditPorts && (o.hostPort !== 0 || o.containerPort !== DEFAULT_CONTAINER_PORT);
 }

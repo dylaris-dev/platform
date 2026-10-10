@@ -251,6 +251,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyRAMPaddingSchema(db); err != nil {
 		return err
 	}
+	if err := applyMemoryGuardSchema(db); err != nil {
+		return err
+	}
 	if err := applyStorageManifestsSchema(db); err != nil {
 		return err
 	}

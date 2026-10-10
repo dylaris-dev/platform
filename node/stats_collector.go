@@ -127,6 +127,7 @@ type containerSnapshot struct {
 // quota is the filesystem quota provider (may be nil or unavailable).
 func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManager, nid string, bufferMaxLen int64, quota *QuotaSet) {
 	log.Println("Stats collector started")
+	go watchOOMEvents(ctx, rdb, dm)
 
 	tracked := make(map[string]context.CancelFunc) // uuid -> cancel
 	snapshots := make(map[string]*containerSnapshot)
@@ -385,6 +386,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	snap.mu.Unlock()
 
 	var prevCPU *PrevCPUStats
+	var memGuardState memGuard
 	collectAndPublish := func() {
 		stats, newPrev, err := dm.GetContainerStats(containerName, prevCPU)
 		prevCPU = newPrev
@@ -423,6 +425,8 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			payload.MaxPlayers = ping.MaxPlayers
 			payload.MOTD = ping.MOTD
 		}
+
+		applyMemGuard(ctx, rdb, uuid, &memGuardState, stats.GuardMemMB, stats.MemLimitMB)
 
 		data, _ := json.Marshal(payload)
 

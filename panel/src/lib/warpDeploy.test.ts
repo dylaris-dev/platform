@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
     nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
-    kitInput, allowedTargets, genericNodeKitApplies
+    kitInput, allowedTargets, genericNodeKitApplies, watchtowerNote
 } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
@@ -16,14 +16,14 @@ describe('routeOnlyCompose', () => {
 
     // The whole point of the kit: one container, no tunnel into the customer's
     // network and nothing that opens anything of ours but the link's own key.
-    it('is the link alone, with no warp, no privileges and no Redis', () => {
+    it('is the link plus its updater, with no warp, no privileges and no Redis', () => {
         const out = routeOnlyCompose(base);
         expect(out).toContain('ghcr.io/dylaris-dev/gateway-link:latest');
         for (const gone of ['gateway-warp', 'NET_ADMIN', 'cap_add', 'TUNNEL_SUBNETS', 'API_KEY:', 'LINK_BOOT_KEY',
             'REDIS_', 'depends_on', 'LINK_EXTERNAL']) {
             expect(out).not.toContain(gone);
         }
-        expect(out.match(/\n {2}[a-z]+:\n {4}image:/g)).toHaveLength(1);
+        expect(out.match(/\n {2}[a-z]+:\n {4}image:/g)).toEqual(['\n  link:\n    image:', '\n  watchtower:\n    image:']);
     });
 
     // Host networking means anything the link binds lands on the customer's
@@ -32,9 +32,13 @@ describe('routeOnlyCompose', () => {
         expect(routeOnlyCompose(base)).toContain('LINK_PORT: "127.0.0.1:25540"');
     });
 
-    // The link caches nothing; a volume would only suggest it did.
+    // The link caches nothing; a volume would only suggest it did. The only
+    // mount is watchtower's Docker socket.
     it('needs no volume', () => {
-        expect(routeOnlyCompose(base)).not.toContain('volumes:');
+        const out = routeOnlyCompose(base);
+        expect(out.match(/volumes:/g)).toHaveLength(1);
+        expect(out).toContain('    volumes:\n      # keep - watchtower updates containers through Docker itself.\n      - /var/run/docker.sock:/var/run/docker.sock\n');
+        expect(out).not.toMatch(/^volumes:/m);
     });
 
     // LINK_ALLOWED_TARGETS is compared as an exact host string; a port never matches.
@@ -553,7 +557,6 @@ describe('emitted image paths', () => {
 // customers ever get that line from.
 describe('every kit that ships a link sets its drain window', () => {
     const withLink: Array<[string, string]> = [
-        ['route-only', routeOnlyCompose(base)],
         ['node with the link beside it', nodeCompose({ ...base, linkBesideNode: true })],
     ];
 
@@ -815,5 +818,112 @@ describe('genericNodeKitApplies', () => {
     it('waits for the keys instead of reading "not loaded" as "not bound"', () => {
         expect(genericNodeKitApplies(false, [{ boundKey: false }])).toBe(true);
         expect(genericNodeKitApplies(false, [{ boundKey: true }])).toBe(true);
+    });
+});
+
+// Round 100: customer kits update themselves. Watchtower runs in label-enable
+// mode, so only what carries its enable label is ever touched - Minecraft
+// containers carry none. The node and warp are its; the link beside a node is
+// NOT, because the node replaces it start-first and nobody drops. A route-only
+// link has no node, so watchtower takes it nightly and the file says what that
+// costs.
+describe('auto-updates in the kits', () => {
+    const service = (out: string, name: string) => {
+        const start = out.indexOf(`\n  ${name}:\n`);
+        expect(start).toBeGreaterThan(-1);
+        const rest = out.slice(start + 1);
+        const end = rest.search(/\n(?: {2}[a-z_#]|[a-z]+:\n)/);
+        return end === -1 ? rest : rest.slice(0, end + 1);
+    };
+    const enabled = 'com.centurylinklabs.watchtower.enable: "true"';
+    const disabled = 'com.centurylinklabs.watchtower.enable: "false"';
+    const tz = { timeZone: 'America/Chicago' };
+    const nodeKits: Array<[string, string]> = [
+        ['byon', nodeCompose({ ...base, ...tz, linkBesideNode: true })],
+        ['external', nodeCompose({ ...base, ...tz, linkBesideNode: true, externalNode: true })],
+    ];
+
+    it.each(nodeKits)('%s kit polls every 15 minutes in label-enable mode', (_n, out) => {
+        const wt = service(out, 'watchtower');
+        expect(wt).toContain('image: nickfedor/watchtower:1.23.0');
+        expect(wt).not.toContain(':latest');
+        expect(wt).toContain('WATCHTOWER_LABEL_ENABLE: "true"');
+        expect(wt).toContain('WATCHTOWER_POLL_INTERVAL: "900"');
+        expect(wt).toContain('WATCHTOWER_CLEANUP: "true"');
+        expect(wt).not.toContain('WATCHTOWER_SCHEDULE');
+        expect(wt).toContain('- /var/run/docker.sock:/var/run/docker.sock');
+        expect(wt).toContain('TZ: "America/Chicago"');
+        expect(out).toContain('Optional, strongly recommended');
+        expect(out).toContain('your Minecraft servers carry no\n  # such label, so it never touches them.');
+    });
+
+    it.each(nodeKits)('%s kit labels node and warp for watchtower and keeps it off the link', (_n, out) => {
+        expect(service(out, 'node')).toContain(enabled);
+        expect(service(out, 'warp')).toContain(enabled);
+        const link = service(out, 'link');
+        expect(link).toContain(disabled);
+        expect(link).not.toContain(enabled);
+        expect(link).toContain('dylaris.component: "link"');
+        expect(out.match(/watchtower\.enable: "true"/g)).toHaveLength(2);
+    });
+
+    it.each(nodeKits)('%s kit tells the node to update the link itself', (_n, out) => {
+        const node = service(out, 'node');
+        expect(node).toContain('LINK_AUTO_UPDATE: "true"');
+        expect(node).toContain('LINK_UPDATE_TIME: "04:00"');
+        expect(node).toContain('TZ: "America/Chicago"');
+        expect(node).toContain('Nobody is disconnected.');
+    });
+
+    // No link in the file, nothing for the node to update.
+    it('a node kit without a link still updates node and warp, and names no link', () => {
+        const out = nodeCompose({ ...base, ...tz });
+        expect(service(out, 'watchtower')).toContain('WATCHTOWER_POLL_INTERVAL: "900"');
+        expect(service(out, 'node')).toContain(enabled);
+        expect(service(out, 'node')).toContain('TZ: "America/Chicago"');
+        expect(out).not.toContain('LINK_AUTO_UPDATE');
+        expect(out).not.toContain('dylaris.component');
+    });
+
+    it('route-only updates the link nightly at 04:00 and says it disconnects players', () => {
+        const out = routeOnlyCompose({ ...base, ...tz });
+        const wt = service(out, 'watchtower');
+        expect(wt).toContain('WATCHTOWER_LABEL_ENABLE: "true"');
+        expect(wt).toContain('WATCHTOWER_SCHEDULE: "0 0 4 * * *"');
+        expect(wt).not.toContain('WATCHTOWER_POLL_INTERVAL');
+        expect(wt).toContain('TZ: "America/Chicago"');
+        expect(wt).toContain('- /var/run/docker.sock:/var/run/docker.sock');
+        expect(service(out, 'link')).toContain(enabled);
+        expect(out).toContain('every player on your servers is\n      # disconnected once and can rejoin within seconds. Change the time here.');
+        expect(watchtowerNote('route-only')).toContain('disconnected once and can rejoin within seconds');
+        expect(watchtowerNote('node')).toBe('Keeps the node and warp up to date automatically. Optional, strongly recommended. Remove the watchtower service to update by hand.');
+    });
+
+    // Watchtower stops the old link before it starts the new one. A 6h drain
+    // there is a link that refuses every new player until it gives up, so the
+    // route-only link drains briefly and Docker waits just longer than that.
+    it('route-only drains briefly, because watchtower stops before it starts', () => {
+        const link = service(routeOnlyCompose(base), 'link');
+        expect(link).toContain('LINK_DRAIN_TIMEOUT: "20s"');
+        expect(link).toContain('stop_grace_period: 30s');
+        expect(link).not.toContain('6h');
+        expect(link).toContain('a long drain would lock new players out');
+    });
+
+    // The node runs the update start-first; a redeploy mid-drain would see two
+    // links for one service and stop one of them.
+    it.each(nodeKits)('%s kit keeps the 6h drain and warns against redeploying mid-update', (_n, out) => {
+        const link = service(out, 'link');
+        expect(link).toContain('LINK_DRAIN_TIMEOUT: "6h"');
+        expect(link).toContain('stop_grace_period: 6h10m');
+        expect(link).toContain('Do not redeploy this stack while a link update is draining (the node logs\n    # "link update: STARTED"); compose would stop one of the two links.');
+    });
+
+    // Without a zone given, the kit takes the browser's, never an empty TZ.
+    it('defaults TZ to the runtime zone', () => {
+        const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        expect(routeOnlyCompose(base)).toContain(`TZ: "${zone}"`);
+        expect(nodeCompose(base)).toContain(`TZ: "${zone}"`);
+        expect(nodeCompose({ ...base, timeZone: '  ' })).toContain(`TZ: "${zone}"`);
     });
 });

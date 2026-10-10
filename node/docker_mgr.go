@@ -1609,6 +1609,9 @@ type ContainerStats struct {
 	CPUPercent float64 // percentage of one core (e.g. 145.2 = 1.45 cores)
 	MemUsedMB  int64
 	MemLimitMB int64
+	// GuardMemMB is the non-reclaimable part (guardMemoryBytes) the memory
+	// guard judges by; MemUsedMB stays what the panel has always shown.
+	GuardMemMB int64
 }
 
 // PrevCPUStats stores previous CPU counters for accurate delta calculation.
@@ -1688,6 +1691,7 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 		CPUPercent: cpuPercent,
 		MemUsedMB:  int64(memUsage) / (1024 * 1024),
 		MemLimitMB: int64(stats.MemoryStats.Limit) / (1024 * 1024),
+		GuardMemMB: int64(guardMemoryBytes(stats.MemoryStats.Stats, memUsage)) / (1024 * 1024),
 	}, newPrev, nil
 }
 

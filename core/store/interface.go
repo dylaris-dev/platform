@@ -159,6 +159,9 @@ type Store interface {
 	// nil clears it so the level inherits (see models.EffectiveRAMPaddingMB).
 	SetNodeRAMPadding(id int, mb *int) error
 	SetServerRAMPadding(id int, mb *int) error
+	// Memory guard (see services/memory_guard.go).
+	SetServerMemoryGuardAction(id int, action string) error
+	SetServerLastCrash(id int, reason string, at time.Time) error
 	UpdateNodeCapacity(id int, totalCPU float64, totalRAMMB int64) error
 	SetNodeRegion(id int, region string) error
 	SumAllocatedByNode(nodeID int) (totalRAMMB int64, totalCPU float64, err error)

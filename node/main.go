@@ -483,6 +483,7 @@ func main() {
 	// could update or stop it.
 	go dockerMgr.RemoveOwnLinkContainer()
 	removeStaleLinkCreds(nodeSecretDir)
+	go StartLinkUpdater(ctx, dockerMgr) // see link_updater.go; off unless LINK_AUTO_UPDATE=true
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)

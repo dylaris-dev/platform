@@ -198,7 +198,15 @@ export interface Server {
     // value its container gets after server -> node -> global resolution.
     ramPaddingMb?: number | null;
     effectiveRamPaddingMb?: number;
+    // Memory guard (lib/memoryGuard): what Core does when the node reports the
+    // container held near its limit, and the last OOM kill. Absent from an
+    // older Core.
+    memoryGuardAction?: MemoryGuardAction;
+    lastCrashReason?: string | null;
+    lastCrashAt?: string | null;
 }
+
+export type MemoryGuardAction = 'stop' | 'restart' | 'off';
 
 export interface SftpCredentials {
     host: string;
@@ -448,6 +456,8 @@ export const updateServerResources = (
     pinning?: { mode: 'shared' | 'auto' | 'manual'; cpuset?: string },
     // From ramPaddingPatch: absent leaves the RAM headroom override unchanged.
     ramPadding?: { ramPaddingMb?: number; resetRamPadding?: true },
+    // From memoryGuardPatch: absent leaves the out-of-memory action unchanged.
+    memoryGuard?: { memoryGuardAction: MemoryGuardAction },
 ) => fetchAPI(`/servers/${id}/resources`, {
     method: 'PATCH',
     body: JSON.stringify({
@@ -457,6 +467,7 @@ export const updateServerResources = (
         ...(pinning !== undefined ? { cpuPinningMode: pinning.mode } : {}),
         ...(pinning !== undefined && pinning.cpuset !== undefined ? { cpuset: pinning.cpuset } : {}),
         ...ramPadding,
+        ...memoryGuard,
     }),
 });
 

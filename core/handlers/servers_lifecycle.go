@@ -1506,6 +1506,9 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		// (inherit node/global), neither leaves it alone. Same gate as RAM.
 		RAMPaddingMB    *int `json:"ramPaddingMb"`
 		ResetRAMPadding bool `json:"resetRamPadding"`
+		// What Core does when the memory guard reports the server held near its
+		// limit: stop | restart | off. Omitted leaves it alone.
+		MemoryGuardAction *string `json:"memoryGuardAction"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", 400)
@@ -1531,6 +1534,10 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		return
 	}
 	paddingRequested := req.RAMPaddingMB != nil || req.ResetRAMPadding
+	if req.MemoryGuardAction != nil && !models.ValidMemoryGuardAction(*req.MemoryGuardAction) {
+		sendJSONError(w, "memoryGuardAction must be stop, restart or off", 400)
+		return
+	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
@@ -1643,6 +1650,13 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		}
 		srv.RAMPaddingMB = req.RAMPaddingMB
 	}
+	guardChanged := req.MemoryGuardAction != nil && *req.MemoryGuardAction != srv.MemoryGuardAction
+	if guardChanged {
+		if err := h.state.Store.SetServerMemoryGuardAction(serverID, *req.MemoryGuardAction); err != nil {
+			sendJSONError(w, "Failed to save the out-of-memory action", 500)
+			return
+		}
+	}
 	if pinningRequested {
 		if err := h.state.Store.UpdateServerCPUPinning(srv.ID, pinMode, newCpuset); err != nil {
 			sendJSONError(w, "Failed to save CPU pinning", 500)
@@ -1675,6 +1689,9 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 	}
 	if paddingRequested {
 		auditMeta["ramPaddingMb"] = req.RAMPaddingMB
+	}
+	if guardChanged {
+		auditMeta["memoryGuardAction"] = *req.MemoryGuardAction
 	}
 	actorID, _ := r.Context().Value("userID").(string)
 	LogServerAudit(h.state, r, serverID, ServerAuditEventResourcesChanged, actorID, "", auditMeta)

@@ -14,10 +14,11 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.10.09.15
 
 ### Features
-- **Players shows whether the whitelist is on** and turns it on or off; it used to only edit the list, so a
-  whitelist that was off looked active.
-- **New "All players" list** of everyone who has joined, online players first; the tab shows "server is
-  offline" instead of errors while the server is stopped.
+- **Your node can update itself**: deploy the stack again from the panel to get Watchtower, which keeps the
+  node and warp current; the node then updates the link each night without disconnecting anyone. `node`
+- **Memory guard**: near its memory limit a server saves its world and you are told, and an out-of-memory
+  kill is named in the panel. Update your node to get it. `node`
+- **Players shows whether the whitelist is on** and turns it on or off, plus an "All players" list.
 
 ### Breaking
 - Nothing.
@@ -27,6 +28,8 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Fixes
 - **An invited member sees the server at once** instead of only after reloading the page.
+- **Route-only kits**: Watchtower updates the link at 04:00, which disconnects players once; they can
+  rejoin within seconds.
 - **No more "PORT_RANGE not set" notice** for nodes that simply use the default range. `node`
 
 ## 2026.10.09.14

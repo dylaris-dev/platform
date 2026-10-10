@@ -71,6 +71,11 @@ export type WarpDeployInput = {
      * byte-for-byte the tenant's.
      */
     externalNode?: boolean;
+    /**
+     * IANA zone written as TZ for watchtower and the node, which is what the
+     * nightly update times are read in. Defaults to the browser's own zone.
+     */
+    timeZone?: string;
 };
 
 export type DeployPlatform = 'linux' | 'windows';
@@ -107,6 +112,52 @@ const REG = 'ghcr.io/dylaris-dev';
  * which bypasses the proxy entirely.
  */
 const WARP_PROXY_REDIS_PORT = '25571';
+
+/**
+ * Pinned, not :latest. Watchtower carries no enable label, so in label-enable
+ * mode it never updates itself; a pin keeps it that way. An auto-updater that
+ * follows :latest of a third-party image hands that publisher root on every
+ * customer machine (it holds docker.sock) the moment a release is cut.
+ */
+const WATCHTOWER_IMAGE = 'nickfedor/watchtower:1.23.0';
+
+/** The browser's zone at kit generation, UTC when the runtime cannot say. */
+function kitTimeZone(explicit: string | undefined): string {
+    const tz = (explicit ?? '').trim();
+    if (tz !== '') return tz;
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    } catch {
+        return 'UTC';
+    }
+}
+
+/**
+ * The watchtower service. Label-enable mode, so it only ever touches containers
+ * labelled com.centurylinklabs.watchtower.enable=true. Minecraft containers the
+ * node starts carry no such label, so they are never touched.
+ */
+function watchtowerService(what: string, when: string, tz: string): string {
+    return `
+  # Optional, strongly recommended: keeps ${what} up to date automatically.
+  # Remove this service to update by hand. It only touches containers labelled
+  # com.centurylinklabs.watchtower.enable=true; your Minecraft servers carry no
+  # such label, so it never touches them.
+  watchtower:
+    image: ${WATCHTOWER_IMAGE}
+    restart: unless-stopped
+    environment:
+      # keep - only containers labelled for it, and old images are removed.
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+${when}
+      # EDIT if this machine is in another time zone. Filled in from your browser.
+      TZ: "${tz}"
+    volumes:
+      # keep - watchtower updates containers through Docker itself.
+      - /var/run/docker.sock:/var/run/docker.sock
+`;
+}
 
 function or(value: string | undefined, placeholder: string): string {
     const v = (value ?? '').trim();
@@ -221,6 +272,7 @@ export function routeOnlyCompose(i: WarpDeployInput): string {
     const key = i.apiKey === KEY_PLACEHOLDER ? '<your-link-key>' : i.apiKey;
     // Which machine the file is for, in the file: the wrong one fails with
     // nothing but a dial error in the link's log.
+    const tz = kitTimeZone(i.timeZone);
     const header = i.platform === 'windows'
         ? `# Made for Docker Desktop on Windows. On a Linux host, take the Linux file.
 # On Docker Desktop, host networking is the WSL2 VM's rather than Windows',
@@ -261,16 +313,22 @@ services:
       # keep - loopback, so this unauthenticated status port stays off your LAN.
       LINK_PORT: "127.0.0.1:25540"
 
-      # EDIT if you want a shorter window. When you stop or update link, it keeps
-      # the players already on your server until the last one leaves, and only
-      # then shuts down - nobody is kicked. It takes no new players while it
-      # waits. This is how long it waits before giving up on whoever is left.
-      LINK_DRAIN_TIMEOUT: "6h"
+      # keep - short on purpose. Watchtower stops the link before starting the
+      # new one, so a long drain would lock new players out; every player is
+      # disconnected once at the update and can rejoin within seconds.
+      LINK_DRAIN_TIMEOUT: "20s"
     network_mode: host
     # keep - a little longer than LINK_DRAIN_TIMEOUT, so link finishes on its own
-    # terms instead of being killed with players still on it.
-    stop_grace_period: 6h10m
-`;
+    # terms instead of being killed mid-drain.
+    stop_grace_period: 30s
+    labels:
+      # keep - watchtower below updates this link.
+      com.centurylinklabs.watchtower.enable: "true"
+${watchtowerService('the link', `
+      # EDIT the time: nightly at 04:00 (seconds minutes hours, then day, month,
+      # weekday), in TZ below. At this time every player on your servers is
+      # disconnected once and can rejoin within seconds. Change the time here.
+      WATCHTOWER_SCHEDULE: "0 0 4 * * *"`, tz)}`;
 }
 
 /**
@@ -340,6 +398,7 @@ ${i.legacyAdminKey
     // reader doubt one of the two. The node has started no Link since 2026.09.12
     // and a fresh kit pulls a current image.
     const manageLink = '';
+    const tz = kitTimeZone(i.timeZone);
     const linkService = kitLink
         ? `
   link:
@@ -378,6 +437,14 @@ ${i.legacyAdminKey
       - ${kind}_link_data:/data
     # keep - the network the node starts your servers on; link reaches them there.
     networks: [${serverNet}]
+    # Do not redeploy this stack while a link update is draining (the node logs
+    # "link update: STARTED"); compose would stop one of the two links.
+    labels:
+      # keep - watchtower must not restart the link: the node updates it
+      # start-first, so no player drops.
+      com.centurylinklabs.watchtower.enable: "false"
+      # keep - how the node finds this link to update it.
+      dylaris.component: "link"
 `
         : '';
     const tail = kitLink
@@ -423,6 +490,9 @@ services:
       PROXY_BIND_DOCKER_BRIDGES: "true"
     network_mode: host
     cap_add: [NET_ADMIN]
+    labels:
+      # keep - watchtower below keeps warp up to date.
+      com.centurylinklabs.watchtower.enable: "true"
 
   node:
     image: ${REG}/platform-node:latest
@@ -448,7 +518,17 @@ ${manageLink}      # EDIT only for a different name. It ends up in keys and in t
 ${kitLink ? `
       # keep - the Docker network your servers run on, and the only one.
       NODE_DOCKER_NETWORK: "${serverNet}"
+
+      # EDIT LINK_AUTO_UPDATE to "false" to update the link yourself. The node
+      # updates the link start-first: the new link takes every new player while
+      # the old one keeps its players for up to 6 hours. Nobody is disconnected.
+      # LINK_UPDATE_TIME is daily, in TZ below.
+      LINK_AUTO_UPDATE: "true"
+      LINK_UPDATE_TIME: "04:00"
 ` : ''}
+      # EDIT if this machine is in another time zone. Filled in from your browser.
+      TZ: "${tz}"
+
 ${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR, no REDIS_ADDR and no CLUSTER_SECRET, on purpose: the
       # node reaches us through warp's proxy, and it fetches a Redis credential
       # scoped to itself once it has enrolled. Nothing here changes if we move.
@@ -462,7 +542,12 @@ ${grpcTlsLines(i.grpcTlsFingerprint)}      # No CORE_GRPC_ADDR, no REDIS_ADDR an
       - ${kind}_data:/app/dylaris_data
     network_mode: host
     cap_add: [SYS_ADMIN]
-${linkService}
+    labels:
+      # keep - watchtower below keeps the node up to date.
+      com.centurylinklabs.watchtower.enable: "true"
+${linkService}${watchtowerService('the node and warp', `
+      # keep - look for a new node or warp every 15 minutes.
+      WATCHTOWER_POLL_INTERVAL: "900"`, tz)}
 ${tail}`;
 }
 
@@ -588,6 +673,13 @@ export function deployIntro(kind: 'route-only' | 'node', platform: DeployPlatfor
         : `Save the file above as ${file}, open a terminal in that folder, then run:`;
 }
 
+/** The panel's note beside a kit about the watchtower service in it. */
+export function watchtowerNote(kind: 'route-only' | 'node'): string {
+    return kind === 'route-only'
+        ? 'Keeps the link up to date automatically, nightly at 04:00. At this time every player on your servers is disconnected once and can rejoin within seconds; change the time in the file. Optional, strongly recommended. Remove the watchtower service to update by hand.'
+        : 'Keeps the node and warp up to date automatically. Optional, strongly recommended. Remove the watchtower service to update by hand.';
+}
+
 /** For readers who do not want a terminal at all. */
 export const DEPLOY_PORTAINER_NOTE =
     'Using Portainer instead? Stacks, Add stack, Web editor, paste the same file, Deploy. Nothing in it changes.';
@@ -610,9 +702,9 @@ docker compose -f ${file} logs -f link
 
 # 3. Create the route(s) in the panel.
 #
-# Updating later is the same pull + up. With players online the old link lets
-# them finish and takes nobody new meanwhile, so "up" can take up to
-# LINK_DRAIN_TIMEOUT. Update when the server is quiet.`;
+# Updating later is the same pull + up, or the watchtower service in the file
+# does it nightly. Either way every player is disconnected once and can rejoin
+# within seconds.`;
     }
     return `# 1. Start it. Pull first: the tunnel agent is what supplies the internal
 #    addresses, so a stale cached image would leave the rest of the stack

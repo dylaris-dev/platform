@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
     Pencil, SlidersHorizontal, Trash2, AlertTriangle, Play, Square, RotateCcw, Skull,
-    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2,
+    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2, X,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import {
@@ -35,6 +35,8 @@ import { advancedStartsOpen, portsEditable } from '@/lib/resourceDialog';
 import {
     MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput, ramPaddingPatch, resetLabel,
 } from '@/lib/ramPadding';
+import { MEMORY_GUARD_HELP, MEMORY_GUARD_OPTIONS, memoryGuardPatch, oomDismissKey, showOomBanner } from '@/lib/memoryGuard';
+import type { MemoryGuardAction } from '@/lib/api/types';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -73,6 +75,9 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // resolves to; null until the node and global defaults are loaded.
     const [editPaddingText, setEditPaddingText] = useState('');
     const [paddingInherited, setPaddingInherited] = useState<{ value: number; source: 'node' | 'global' } | null>(null);
+    const [editMemoryGuard, setEditMemoryGuard] = useState<MemoryGuardAction>('off');
+    // The lastCrashAt of the OOM banner this viewer dismissed (per browser).
+    const [oomDismissed, setOomDismissed] = useState<string | null>(null);
 
     // Manual move-to-node (admin only). Node list is loaded lazily when the
     // Edit Resources modal opens. migrationStatus is polled while a move is
@@ -108,6 +113,11 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // them client-side so a Kill mid world-generation isn't a silent footgun.
     // Holds the action the admin is trying to perform; null = no prompt.
     const [pendingCooldownAction, setPendingCooldownAction] = useState<'start' | 'stop' | 'restart' | 'kill' | null>(null);
+
+    useEffect(() => {
+        if (!serverId) return;
+        try { setOomDismissed(localStorage.getItem(oomDismissKey(serverId))); } catch { setOomDismissed(null); }
+    }, [serverId]);
 
     // Auto-clear power error after a few seconds so it doesn't stick on screen.
     useEffect(() => {
@@ -349,8 +359,10 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         setEditAutoMove(!!(selectedServer as any).autoMove);
         setEditPaddingText(selectedServer.ramPaddingMb != null ? String(selectedServer.ramPaddingMb) : '');
         setPaddingInherited(null);
+        setEditMemoryGuard(selectedServer.memoryGuardAction ?? 'off');
         setEditResourcesAdvancedOpen(advancedStartsOpen({
             paddingText: selectedServer.ramPaddingMb != null ? String(selectedServer.ramPaddingMb) : '',
+            memoryGuardAction: selectedServer.memoryGuardAction,
             canEditPorts,
             hostPort: selectedServer.hostPort || 0,
             containerPort: selectedServer.containerPort || 25565,
@@ -485,6 +497,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         autoMove: editAutoMove,
         ramPaddingMb: paddingSupported ? editPaddingEffective : selectedServer.effectiveRamPaddingMb,
     }, !isServerOffline, canEditPorts);
+    const memoryGuardSupported = selectedServer.memoryGuardAction !== undefined;
+    const oomTab = pathname.endsWith('/overview') || pathname.endsWith('/console');
+    const oomBanner = oomTab && showOomBanner(selectedServer, now, oomDismissed);
+    const dismissOomBanner = () => {
+        const at = selectedServer.lastCrashAt ?? null;
+        setOomDismissed(at);
+        try { if (at) localStorage.setItem(oomDismissKey(selectedServer.id), at); } catch { /* per-viewer convenience only */ }
+    };
     // An invalid headroom lives in Advanced, so it must not hide there.
     const resourcesAdvancedOpen = editResourcesAdvancedOpen || (paddingSupported && editPaddingInvalid);
 
@@ -511,6 +531,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             selectedServer.id, editRam, editCpuLimit, diskGBToMB(editDiskLimit),
             ports, undefined, { mode: editCpuMode, cpuset: editCpusetCpus },
             paddingSupported ? ramPaddingPatch(currentPaddingOverride, editPadding) : undefined,
+            memoryGuardPatch(selectedServer.memoryGuardAction, editMemoryGuard),
         );
         if (res?.success === false) {
             setResourcesMsg(res.message || res.error || 'The resource change was refused.');
@@ -1037,6 +1058,27 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                 </div>
             )}
 
+            {oomBanner && (
+                <div className="px-6 pt-3 shrink-0">
+                    <div role="alert" className="flex items-start gap-2.5 px-3 py-2 rounded-md bg-(--error-ghost) border border-(--error)/15 text-(--error) text-xs">
+                        <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                        <span className="flex-1">
+                            <strong className="font-semibold">Killed: out of memory</strong>
+                            {selectedServer.lastCrashAt ? ` at ${new Date(selectedServer.lastCrashAt).toLocaleString()}` : ''}.
+                            {' '}The server reached its memory limit and was killed; anything not yet saved was lost. It needs more RAM or RAM headroom.
+                        </span>
+                        {user?.isAdmin && (
+                            <button type="button" onClick={handleOpenEditResources} disabled={uploadLocked} className="btn btn-secondary btn-sm shrink-0">
+                                Open resources
+                            </button>
+                        )}
+                        <button type="button" onClick={dismissOomBanner} aria-label="Dismiss" className="btn btn-ghost btn-sm shrink-0">
+                            <X size={13} />
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div className="flex-1 overflow-y-auto p-6">{children}</div>
 
             {/* Delete Confirmation Popup */}
@@ -1248,7 +1290,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                         <p className="text-xs text-(--base-06)">0 = unlimited</p>
                                     </div>
 
-                                    {(paddingSupported || user?.isAdmin) && (
+                                    {(paddingSupported || memoryGuardSupported || user?.isAdmin) && (
                                         <div className="border-t border-(--base-03) pt-4">
                                             <button type="button" aria-expanded={resourcesAdvancedOpen} aria-controls="edit-resources-advanced" onClick={() => setEditResourcesAdvancedOpen(o => !o)} className="flex items-center gap-2 text-xs text-(--base-06) hover:text-(--base-08) transition-colors w-full">
                                                 <ChevronDown size={13} className={`transition-transform ${resourcesAdvancedOpen ? 'rotate-180' : ''}`} />
@@ -1285,6 +1327,20 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                                                     {paddingInherited ? resetLabel(paddingInherited.source, paddingInherited.value) : 'Reset to default'}
                                                                 </button>
                                                             )}
+                                                        </div>
+                                                    )}
+                                                    {memoryGuardSupported && (
+                                                        <div className="flex flex-col gap-[5px]">
+                                                            <label htmlFor="edit-memory-guard" className="input-label">When memory runs out</label>
+                                                            <select
+                                                                id="edit-memory-guard"
+                                                                value={editMemoryGuard}
+                                                                onChange={e => setEditMemoryGuard(e.target.value as MemoryGuardAction)}
+                                                                className="input-field w-full"
+                                                            >
+                                                                {MEMORY_GUARD_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                                            </select>
+                                                            <p className="text-xs text-(--base-06)">{MEMORY_GUARD_HELP}</p>
                                                         </div>
                                                     )}
                                                     {user?.isAdmin && (
