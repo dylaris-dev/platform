@@ -194,9 +194,13 @@ type netPolicyState struct {
 	// yet, deliberately, because narrowing on a guess would cut a linked proxy
 	// off from its backends. See policySource.
 	unpublished bool
-	failures    int
-	reason      string
-	applied     int
+	// failed is the CURRENT set: server uuid -> why its latest apply failed.
+	// It is replaced by every reconcile round, which visits every running
+	// server, so a later success clears a server and a removed server drops
+	// out. A counter since start-up kept one transient helper timeout on the
+	// panel forever.
+	failed  map[string]string
+	applied int
 }
 
 // errNoInfraAddrs is the one case where applying is worse than not applying:
@@ -210,35 +214,41 @@ func (s *netPolicyState) recordUnpublished() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.unpublished, s.applied = true, 0
+	s.unpublished, s.applied, s.failed = true, 0, nil
 }
 
-func (s *netPolicyState) recordFailure(uuid string, err error) {
-	if s == nil || err == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.failures++
-	s.reason = fmt.Sprintf("%s: %v", shortUUID(uuid), err)
-}
-
-func (s *netPolicyState) recordApplied(n int) {
+// recordRound replaces the state with one reconcile round's outcome: applied
+// servers got their rules, failed maps the ones that did not to the error.
+func (s *netPolicyState) recordRound(applied int, failed map[string]error) {
 	if s == nil {
 		return
 	}
+	m := make(map[string]string, len(failed))
+	for uuid, err := range failed {
+		if err != nil {
+			m[uuid] = fmt.Sprintf("%s: %v", shortUUID(uuid), err)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applied, s.unpublished = n, false
+	s.applied, s.failed, s.unpublished = applied, m, false
 }
 
+// snapshot reports the failure count and one of the reasons, the one of the
+// lowest uuid so the notice does not flicker between heartbeats.
 func (s *netPolicyState) snapshot() (applied, failures int, reason string, unpublished bool) {
 	if s == nil {
 		return 0, 0, "", false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.applied, s.failures, s.reason, s.unpublished
+	first := ""
+	for uuid, r := range s.failed {
+		if first == "" || uuid < first {
+			first, reason = uuid, r
+		}
+	}
+	return s.applied, len(s.failed), reason, s.unpublished
 }
 
 // netPolicyNotice is the one sentence the panel shows, or "" when there is
@@ -261,12 +271,12 @@ func netPolicyNotice(enforced bool, external bool, applied, failures int, lastRe
 	if failures == 0 {
 		return ""
 	}
-	servers := "servers"
+	subject := fmt.Sprintf("%d servers could not be given their rules and are", failures)
 	if failures == 1 {
-		servers = "server"
+		subject = "1 server could not be given its rules and is"
 	}
-	return fmt.Sprintf("On for %d, but %d %s could not be given their rules since this node started and are reachable from any other server. Last error: %s",
-		applied, failures, servers, lastReason)
+	return fmt.Sprintf("On for %d, but %s reachable from any other server. Error: %s",
+		applied, subject, lastReason)
 }
 
 func shortUUID(u string) string {

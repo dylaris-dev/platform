@@ -48,7 +48,11 @@ type BackupJob struct {
 	Enabled         bool       `json:"enabled"`
 	LastRunAt       *time.Time `json:"lastRunAt,omitempty"`
 	NextRunAt       *time.Time `json:"nextRunAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
+	// LastSkipAt/LastSkipReason: the newest scheduled slot that did not run.
+	// Compare with LastRunAt to tell whether the job is currently skipping.
+	LastSkipAt     *time.Time `json:"lastSkipAt,omitempty"`
+	LastSkipReason string     `json:"lastSkipReason,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 // BackupRun records a single execution (in-progress or completed).

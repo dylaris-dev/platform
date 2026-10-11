@@ -2086,15 +2086,15 @@ func (s *PostgresStore) InsertStatsBatch(stats []models.ServerStatRow) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT INTO server_stats (time, server_uuid, cpu, cpu_limit, mem_used, mem_limit, players, max_players)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
+	stmt, err := tx.Prepare(`INSERT INTO server_stats (time, server_uuid, cpu, cpu_limit, mem_used, mem_limit, players, max_players, java_heap_used)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, r := range stats {
-		_, err := stmt.Exec(r.Time, r.ServerUUID, r.CPU, r.CPULimit, r.MemUsed, r.MemLimit, r.Players, r.MaxPlayers)
+		_, err := stmt.Exec(r.Time, r.ServerUUID, r.CPU, r.CPULimit, r.MemUsed, r.MemLimit, r.Players, r.MaxPlayers, r.JavaHeapUsed)
 		if err != nil {
 			return err
 		}
@@ -2130,7 +2130,7 @@ func (s *PostgresStore) InsertGatewayBandwidthBatch(rows []models.GatewayBandwid
 }
 
 func (s *PostgresStore) GetStatsHistory(serverUUID string, since time.Time) ([]models.ServerStatRow, error) {
-	rows, err := s.db.Query(`SELECT time, server_uuid, cpu, cpu_limit, mem_used, mem_limit, players, max_players
+	rows, err := s.db.Query(`SELECT time, server_uuid, cpu, cpu_limit, mem_used, mem_limit, players, max_players, java_heap_used
 		FROM server_stats WHERE server_uuid = $1 AND time >= $2 ORDER BY time ASC`, serverUUID, since)
 	if err != nil {
 		return nil, err
@@ -2140,8 +2140,12 @@ func (s *PostgresStore) GetStatsHistory(serverUUID string, since time.Time) ([]m
 	var result []models.ServerStatRow
 	for rows.Next() {
 		var r models.ServerStatRow
-		if err := rows.Scan(&r.Time, &r.ServerUUID, &r.CPU, &r.CPULimit, &r.MemUsed, &r.MemLimit, &r.Players, &r.MaxPlayers); err != nil {
+		var heap sql.NullInt64
+		if err := rows.Scan(&r.Time, &r.ServerUUID, &r.CPU, &r.CPULimit, &r.MemUsed, &r.MemLimit, &r.Players, &r.MaxPlayers, &heap); err != nil {
 			return nil, err
+		}
+		if heap.Valid {
+			r.JavaHeapUsed = &heap.Int64
 		}
 		result = append(result, r)
 	}

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"dylaris-core/services"
+
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 )
@@ -80,12 +82,21 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := streamContext(r)
 	defer cancel()
 
+	// Say first whether the buffer describes a RUNNING server. The node stops
+	// writing it when the container goes away but the stream stays for an
+	// hour, and replaying it made a stopped server's last hour look current.
+	// A named event, so a panel that does not listen for it ignores it.
+	state := readStatsStreamState(ctx, h.state.Redis, bufferKey, srv.Status, time.Now())
+	if b, err := json.Marshal(state); err == nil {
+		fmt.Fprintf(w, "event: state\ndata: %s\n\n", b)
+	}
+
 	// Send buffered data first (Redis Stream via XRANGE) - on a first connect
-	// only. The id below marks a stream that has already done so, and the
-	// browser sends it back when it reconnects: streams end on a timer now,
-	// and replaying the buffer every time would draw it into the live graph
-	// again.
-	if r.Header.Get("Last-Event-ID") == "" {
+	// only, and only while the server is live. The id below marks a stream
+	// that has already done so, and the browser sends it back when it
+	// reconnects: streams end on a timer now, and replaying the buffer every
+	// time would draw it into the live graph again.
+	if r.Header.Get("Last-Event-ID") == "" && state.Live {
 		entries, err := h.state.Redis.XRange(ctx, bufferKey, "-", "+").Result()
 		if err == nil {
 			for _, msg := range entries {
@@ -122,6 +133,30 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// statsStreamState is the `state` event of the stats stream.
+type statsStreamState struct {
+	Status string `json:"status"` // the server's status as Core has it
+	// Live: the newest buffered sample is fresh, so the buffer describes the
+	// server as it runs now. False means nothing it holds is current.
+	Live bool `json:"live"`
+	// LastSampleAt is the newest sample's time in unix ms, null when none.
+	LastSampleAt *int64 `json:"lastSampleAt"`
+}
+
+func readStatsStreamState(ctx context.Context, rdb *redis.Client, bufferKey, status string, now time.Time) statsStreamState {
+	st := statsStreamState{Status: status}
+	msgs, err := rdb.XRevRangeN(ctx, bufferKey, "+", "-", 1).Result()
+	if err != nil || len(msgs) == 0 {
+		return st
+	}
+	if at, ok := services.StatsEntryTime(msgs[0].ID); ok {
+		ms := at.UnixMilli()
+		st.LastSampleAt = &ms
+		st.Live = services.StatsSampleFresh(at, now)
+	}
+	return st
 }
 
 // GetHistory GET /api/servers/{id}/stats/history?range=24h
@@ -171,18 +206,21 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		MemLimit   int64   `json:"memLimit"`
 		Players    int     `json:"players"`
 		MaxPlayers int     `json:"maxPlayers"`
+		// MB; null when the node reported no heap for that sample.
+		JavaHeapUsed *int64 `json:"javaHeapUsed"`
 	}
 
 	points := make([]historyPoint, 0, len(rows))
 	for _, row := range rows {
 		points = append(points, historyPoint{
-			TS:         row.Time.Unix(),
-			CPU:        row.CPU,
-			CPULimit:   row.CPULimit,
-			MemUsed:    row.MemUsed,
-			MemLimit:   row.MemLimit,
-			Players:    row.Players,
-			MaxPlayers: row.MaxPlayers,
+			TS:           row.Time.Unix(),
+			CPU:          row.CPU,
+			CPULimit:     row.CPULimit,
+			MemUsed:      row.MemUsed,
+			MemLimit:     row.MemLimit,
+			Players:      row.Players,
+			MaxPlayers:   row.MaxPlayers,
+			JavaHeapUsed: row.JavaHeapUsed,
 		})
 	}
 

@@ -269,7 +269,7 @@ func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Clie
 		return
 	}
 	if len(containers) == 0 {
-		dm.netPolicy.recordApplied(0)
+		dm.netPolicy.recordRound(0, nil)
 		return
 	}
 
@@ -279,7 +279,11 @@ func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Clie
 		// lock the server away from its own management and from every player.
 		// That is the one case where applying is worse than not applying.
 		log.Printf("netpolicy: neither this node nor the Link has a resolvable address; leaving every server OPEN")
-		dm.netPolicy.recordFailure("-", errNoInfraAddrs)
+		failed := make(map[string]error, len(containers))
+		for _, c := range containers {
+			failed[c.UUID] = errNoInfraAddrs
+		}
+		dm.netPolicy.recordRound(0, failed)
 		return
 	}
 
@@ -291,6 +295,7 @@ func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Clie
 	}
 
 	applied := 0
+	failed := map[string]error{}
 	for _, c := range containers {
 		allow := append([]string{}, infra...)
 		allow = append(allow, dm.peerAddrs(policy[c.UUID])...)
@@ -299,13 +304,13 @@ func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Clie
 		aerr := dm.applyNetPolicy(applyCtx, c.ContainerName, allow, eg)
 		cancel()
 		if aerr != nil {
-			dm.netPolicy.recordFailure(c.UUID, aerr)
+			failed[c.UUID] = aerr
 			log.Printf("netpolicy: %s left OPEN: %v", c.ContainerName, aerr)
 			continue
 		}
 		applied++
 	}
-	dm.netPolicy.recordApplied(applied)
+	dm.netPolicy.recordRound(applied, failed)
 }
 
 // startNetPolicyReconciler runs the loop until the context ends.

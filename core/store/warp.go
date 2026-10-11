@@ -256,6 +256,17 @@ func (s *PostgresStore) ListAllWarpPeers() ([]WarpPeer, error) {
 	return scanWarpPeers(rows)
 }
 
+// CountWarpPeersByOwnership splits the overlay peers by whether their key has a
+// tenant owner. An owner-less key is admin-minted: the platform's own machines
+// (an External node's warp), not a customer's.
+func (s *PostgresStore) CountWarpPeersByOwnership() (customer, platform int, err error) {
+	err = s.db.QueryRow(`
+		SELECT COUNT(*) FILTER (WHERE k.owner_id IS NOT NULL),
+		       COUNT(*) FILTER (WHERE k.owner_id IS NULL)
+		FROM warp_peers p JOIN warp_api_keys k ON k.id = p.api_key_id`).Scan(&customer, &platform)
+	return customer, platform, err
+}
+
 // ListWarpPeersByRegion returns every peer pinned to a region — the full peer set
 // a leader of that region must hold (used by the per-leader resync push).
 func (s *PostgresStore) ListWarpPeersByRegion(region string) ([]WarpPeer, error) {

@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.3
+
+### Features
+- **Infrastructure > Statistics is one screen**: headline numbers sit on their charts, a fleet row counts
+  platform, External and BYON nodes plus BYON and route-only customers, and live players list their servers. `core` `panel`
+- **Backups show every kept run** with count, total size, last and next run, and say when a scheduled run
+  was skipped and why. `core` `panel`
+- **The server's memory chart shows container memory and Java heap together**, live and in history, and
+  history leaves gaps where the server was offline. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Disk capacity counts what servers have not written yet**: it read the whole filesystem's use, so a node
+  looked up to ~60 GB freer than it was and placement could promise space twice. `core`
+- **A skipped scheduled backup no longer shows as "last run"**, and schedules no longer drift a minute per run. `core`
+- **Small display fixes**: admin server list showed every disk limit as "0 MB", a stopped server showed
+  old live values, the console CPU bar was divided twice, the network-policy warning never cleared and CPU %
+  went wrong after a live CPU change. `core` `panel` `node`
+
 ## 2026.10.11.2
 
 ### Features

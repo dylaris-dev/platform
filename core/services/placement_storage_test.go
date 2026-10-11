@@ -184,7 +184,7 @@ func TestCheckDiskCapacityCountsPromisesNotJustUsage(t *testing.T) {
 		t.Fatalf("committed = %d GB, want 1000 GB", got)
 	}
 
-	req := DiskCapacityRequest{Storage: storage, Committed: committed, HeadroomGB: 50, WantMB: 50 * 1024}
+	req := DiskCapacityRequest{Storage: storage, Unwritten: UnwrittenBytesByPath(storage, limits, nil), HeadroomGB: 50, WantMB: 50 * 1024}
 	res := CheckDiskCapacity(req)
 	if res.Fits {
 		t.Errorf("Fits = true, want false: 900 GB free but %d GB of it is already promised", res.UnwrittenGB)
@@ -197,16 +197,17 @@ func TestCheckDiskCapacityCountsPromisesNotJustUsage(t *testing.T) {
 }
 
 // Servers that already wrote their data must not be counted twice: what is on
-// disk is in UsedBytes, and only the unwritten remainder is still a reservation.
+// disk is already out of FreeBytes, and only the unwritten remainder is still a
+// reservation.
 func TestCheckDiskCapacitySubtractsOnlyUnwrittenPromises(t *testing.T) {
 	storage := []HeartbeatStoragePath{{
 		Path: "/a", FreeBytes: 500 * gib, UsedBytes: 500 * gib, ServerUUIDs: []string{"s1"},
 	}}
-	// Promised 400 GB, already wrote 500 GB worth on this path: nothing is left
-	// to reserve, so the full 500 GB free (minus headroom) is available.
+	// Promised 400 GB, the server itself measured 500 GB: nothing is left to
+	// reserve, so the full 500 GB free (minus headroom) is available.
 	res := CheckDiskCapacity(DiskCapacityRequest{
 		Storage:    storage,
-		Committed:  CommittedBytesByPath(storage, map[string]int64{"s1": 400 * 1024}),
+		Unwritten:  UnwrittenBytesByPath(storage, map[string]int64{"s1": 400 * 1024}, map[string]int64{"s1": 500 * gib}),
 		HeadroomGB: 50,
 		WantMB:     400 * 1024,
 	})
@@ -280,8 +281,10 @@ func TestPathStatusesProjectPromises(t *testing.T) {
 				TotalBytes: tt.totalGB * gib, FreeBytes: tt.freeGB * gib, UsedBytes: tt.usedGB * gib,
 			}}
 			committed := map[string]int64{"/a": tt.committedGB * gib}
+			// Every used byte belongs to a server in these cases.
+			unwritten := map[string]int64{"/a": max(0, tt.committedGB-tt.usedGB) * gib}
 
-			got := PathStatuses(storage, committed, tt.headroomGB, DefaultDiskWarnPercent, DefaultDiskCritPercent)
+			got := PathStatuses(storage, committed, unwritten, tt.headroomGB, DefaultDiskWarnPercent, DefaultDiskCritPercent)
 			if len(got) != 1 {
 				t.Fatalf("PathStatuses returned %d entries, want 1", len(got))
 			}
@@ -331,5 +334,53 @@ func TestCheckDiskCapacityTreatsUnknownAsFitting(t *testing.T) {
 				t.Error("Undetermined = false, want true so callers can tell a real answer from a missing metric")
 			}
 		})
+	}
+}
+
+// The production shape that exposed the old formula: one server with an 80 GiB
+// limit that has written 18.2 GB, on a 432 GB disk whose filesystem reports
+// 228 GB used (OS, images, other workloads). The old formula subtracted the
+// FILESYSTEM usage from the promise, clamped to zero and called all 204 GB
+// promisable. The server can still write ~61.8 GB of it.
+func TestUnwrittenIsPerServerNotFilesystemUsage(t *testing.T) {
+	const gb = int64(1000 * 1000 * 1000)
+	storage := []HeartbeatStoragePath{{
+		Path: "/srv", TotalBytes: 432 * gb, UsedBytes: 228 * gb, FreeBytes: 204 * gb,
+		ServerUUIDs: []string{"s329"},
+	}}
+	limits := map[string]int64{"s329": 80 * 1024}
+	used := map[string]int64{"s329": 18_200_000_000}
+
+	unwritten := UnwrittenBytesByPath(storage, limits, used)
+	want := 80*gib - 18_200_000_000
+	if unwritten["/srv"] != want {
+		t.Fatalf("unwritten = %d, want %d", unwritten["/srv"], want)
+	}
+
+	res := CheckDiskCapacity(DiskCapacityRequest{Storage: storage, Unwritten: unwritten, HeadroomGB: 50, WantMB: 1024})
+	if wantAvail := (204*gb - want - 50*gib) / gib; res.AvailableGB != wantAvail {
+		t.Errorf("AvailableGB = %d, want %d", res.AvailableGB, wantAvail)
+	}
+	if res.UnwrittenGB != want/gib {
+		t.Errorf("UnwrittenGB = %d, want %d", res.UnwrittenGB, want/gib)
+	}
+
+	st := PathStatuses(storage, CommittedBytesByPath(storage, limits), unwritten, 50, DefaultDiskWarnPercent, DefaultDiskCritPercent)
+	if wantPct := int((228*gb + want) * 100 / (432 * gb)); st[0].ProjectedPercent != wantPct {
+		t.Errorf("ProjectedPercent = %d, want %d", st[0].ProjectedPercent, wantPct)
+	}
+	if st[0].UnwrittenGB != want/gib {
+		t.Errorf("status UnwrittenGB = %d, want %d", st[0].UnwrittenGB, want/gib)
+	}
+}
+
+func TestUnwrittenBytesByPath(t *testing.T) {
+	storage := []HeartbeatStoragePath{{Path: "/a", ServerUUIDs: []string{"a", "b", "c", "d"}}}
+	limits := map[string]int64{"a": 10 * 1024, "b": 10 * 1024, "c": 10 * 1024, "d": 0}
+	used := map[string]int64{"a": 4 * gib, "b": 12 * gib, "d": 99 * gib} // c unmeasured
+	// a: 6 left; b: over its limit, 0 (never negative); c: unknown, whole 10;
+	// d: unlimited, promised nothing.
+	if got, want := UnwrittenBytesByPath(storage, limits, used)["/a"], 16*gib; got != want {
+		t.Errorf("unwritten = %d GiB, want %d GiB", got/gib, want/gib)
 	}
 }

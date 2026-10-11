@@ -28,6 +28,7 @@ import { toast } from '@/components/ui/Toast';
 import { regionFlag, regionLabelFrom } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import { linkMissing, LINK_MISSING_MESSAGE } from '@/lib/linkPresence';
+import { formatBytes, formatMB } from '@/lib/format';
 import {
     DEFAULT_RAM_PADDING_MB, MAX_RAM_PADDING_MB, RAM_PADDING_HELP,
     inheritedRamPadding, parseRamPaddingInput, parseRequiredRamPadding, resetLabel,
@@ -772,11 +773,11 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         </span>
                     ) : '—'}
                 />
-                <Stat label="Total RAM" value={node.totalRamMb ? `${(node.totalRamMb / 1024).toFixed(1)} GB` : '—'} />
+                <Stat label="Total RAM" value={node.totalRamMb ? formatMB(node.totalRamMb) : '—'} />
                 <Stat
                     label="Storage"
                     value={nodeStorage && nodeStorage.length > 0
-                        ? `${(nodeStorage.reduce((a, s) => a + s.free_bytes, 0) / 1e9).toFixed(0)} / ${(nodeStorage.reduce((a, s) => a + s.total_bytes, 0) / 1e9).toFixed(0)} GB free`
+                        ? `${formatBytes(nodeStorage.reduce((a, s) => a + s.free_bytes, 0))} / ${formatBytes(nodeStorage.reduce((a, s) => a + s.total_bytes, 0))} free`
                         : '—'}
                 />
                 <Stat

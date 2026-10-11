@@ -26,6 +26,7 @@ import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeLabel } from '@/lib/nodeLabel';
 import { isAttention, type FlatServiceError, type ServiceErrorEntry } from '@/lib/serviceErrors';
 import { linkMissing, LINK_MISSING_MESSAGE } from '@/lib/linkPresence';
+import { formatBytes } from '@/lib/format';
 
 export interface StorageInfo {
   path: string;
@@ -90,6 +91,9 @@ export interface NodeInfo {
   ramFree?: number;
   ramTotal?: number;
   linkCount?: number;
+  // Whether the Link carrying this node's players holds its tunnel. Absent when
+  // Core could not ask or cannot trust the answer for this node.
+  linkOnline?: boolean;
   portRange?: string;
   portRangeNotice?: string;
   // Non-empty when the node found one of its storage paths mounted into another
@@ -141,14 +145,6 @@ export interface CustomerSummary {
 
 type Tab = 'nodes' | 'edges' | 'routes' | 'bandwidth' | 'errors';
 
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
-}
-
 /**
  * A node's network speed, which arrives in BYTES per second (`rx_speed`).
  *
@@ -183,6 +179,10 @@ export function StatCard({ label, value, sub, icon }: { label: string; value: st
   );
 }
 
+const LINK_OFFLINE_MESSAGE =
+  'The Link for this node is not connected, so players cannot reach its servers through the gateway. ' +
+  'Check the Link service on this host.';
+
 export function NodeCard({
   node,
   gatewayEnabled,
@@ -199,6 +199,9 @@ export function NodeCard({
   const identity = node.token && node.token !== label ? node.token : '';
   const serverCount = node.serverCount ?? 0;
   const linkCount = node.linkCount ?? 0;
+  // Only meaningful while the node itself is up: an offline machine explains
+  // its own servers being unreachable.
+  const linkOnline = isOnline ? node.linkOnline : undefined;
   const hasStats = (node.ramTotal ?? 0) > 0;
 
   const [storageData, setStorageData] = useState<StorageInfo[] | null>(null);
@@ -267,10 +270,18 @@ export function NodeCard({
             {gatewayEnabled && (
               <div className="flex items-center gap-1.5 shrink-0">
                 <Link2 size={11} className="text-(--base-05)" />
-                <span className="text-xs font-mono text-(--base-07)">
-                  <span className="text-(--base-09) font-semibold">{linkCount}</span>
-                  <span className="text-(--base-06)"> link{linkCount !== 1 ? 's' : ''}</span>
-                </span>
+                {/* The Link's own answer where Core has one; the node's count of
+                    Link containers stays at 1 while that Link reaches no edge. */}
+                {linkOnline !== undefined ? (
+                  <span className={`text-xs font-mono ${linkOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+                    {linkOnline ? 'Link online' : 'Link offline'}
+                  </span>
+                ) : (
+                  <span className="text-xs font-mono text-(--base-07)">
+                    <span className="text-(--base-09) font-semibold">{linkCount}</span>
+                    <span className="text-(--base-06)"> link{linkCount !== 1 ? 's' : ''}</span>
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -279,7 +290,12 @@ export function NodeCard({
 
       {/* Directly under the link count it explains: a node with no Link looks
           healthy everywhere else, while its servers cannot be reached. */}
-      {linkMissing(gatewayEnabled, node) && (
+      {gatewayEnabled && linkOnline === false ? (
+        <p className="flex items-start gap-1.5 rounded-sm border border-(--error-border) bg-(--error-ghost) px-2 py-1.5 text-[10px] font-mono text-(--error-light)">
+          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+          <span>{LINK_OFFLINE_MESSAGE}</span>
+        </p>
+      ) : linkMissing(gatewayEnabled, node) && (
         <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
           <AlertTriangle size={10} className="mt-0.5 shrink-0" />
           <span>{LINK_MISSING_MESSAGE}</span>

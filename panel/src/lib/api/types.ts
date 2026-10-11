@@ -556,6 +556,12 @@ export interface BackupJob {
     enabled: boolean;
     lastRunAt?: string | null;
     nextRunAt?: string | null;
+    // Newest scheduled slot that did not run; current while newer than lastRunAt.
+    lastSkipAt?: string | null;
+    lastSkipReason?: string | null;
+    // Successful runs the job keeps right now, and their total size.
+    keptRuns?: number;
+    keptBytes?: number;
     createdAt?: string;
 }
 export interface BackupRun {
@@ -747,7 +753,7 @@ export interface ServerStats {
     // When present this is the "real" memory usage that fluctuates with
     // GC cycles; memUsed is the container-level metric that always
     // reads near Xmx because the heap is pre-committed.
-    javaHeapUsed?: number;
+    javaHeapUsed?: number | null; // history sends null for "not measured"
     players: number;
     maxPlayers: number;
     motd: string;
@@ -1037,7 +1043,9 @@ export const setEdgeMotd = (serverId: number, mode: EdgeMotdMode, customText: st
 // Infrastructure
 export const getInfrastructureOverview = () => fetchAPI('/infrastructure/overview');
 // Players on every server right now, from each server's own list ping.
-export const getPlayersOnline = (): Promise<{ success?: boolean; playersOnline?: number; at?: string }> =>
+// `servers` is the same sample split per server (players > 0, most first).
+export interface ServerPlayers { serverId: number; name: string; players: number }
+export const getPlayersOnline = (): Promise<{ success?: boolean; playersOnline?: number; servers?: ServerPlayers[]; at?: string }> =>
     fetchAPI('/infrastructure/players-online');
 export const getRoutingMigrationStatus = () => fetchAPI('/infrastructure/routing-migration');
 

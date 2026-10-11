@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"dylaris-core/models"
@@ -26,8 +27,13 @@ func TestScheduledRunWaitsForTheJobsRunInProgress(t *testing.T) {
 	if cmds := dispatchedCommands(t, rdb, "node-hosting"); len(cmds) != 0 {
 		t.Fatalf("a second run reached the node: %v", cmds)
 	}
-	if st.advanced != 1 {
-		t.Fatalf("schedule advanced %d times, want 1", st.advanced)
+	// A skipped slot is recorded as skipped; last_run_at must not claim a run
+	// that never happened.
+	if st.advanced != 0 || st.skipped != 1 {
+		t.Fatalf("advanced %d / skipped %d, want 0 / 1", st.advanced, st.skipped)
+	}
+	if !strings.Contains(st.skipReason, "still in progress") {
+		t.Fatalf("skip reason = %q", st.skipReason)
 	}
 }
 

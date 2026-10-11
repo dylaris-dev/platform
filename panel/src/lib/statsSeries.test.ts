@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { latestValue } from './statsSeries';
+import { latestValue, chartSeries } from './statsSeries';
 
 describe('latestValue', () => {
     it('reads the last sample when it has the value', () => {
@@ -27,5 +27,33 @@ describe('latestValue', () => {
     it('skips values that are not usable numbers', () => {
         expect(latestValue([{ heap: 250 }, { heap: NaN }], 'heap')).toBe(250);
         expect(latestValue([{ heap: 250 }, { heap: undefined }], 'heap')).toBe(250);
+    });
+});
+
+describe('chartSeries', () => {
+    // The History chart drew a straight line across the hours a server was off.
+    it('breaks the line where samples stop for longer than the gap', () => {
+        const out = chartSeries([{ ts: 0, cpu: 1 }, { ts: 120, cpu: 2 }, { ts: 4000, cpu: 3 }], 300);
+        expect(out).toEqual([{ ts: 0, cpu: 1 }, { ts: 120, cpu: 2 }, { ts: 121 }, { ts: 4000, cpu: 3 }]);
+    });
+
+    it('adds nothing to a continuous series and sorts by time', () => {
+        expect(chartSeries([{ ts: 240 }, { ts: 0 }, { ts: 120 }], 300).map(p => p.ts)).toEqual([0, 120, 240]);
+    });
+
+    it('carries the sparse heap forward, but never across a gap', () => {
+        const out = chartSeries([
+            { ts: 0, javaHeapUsed: 500 },
+            { ts: 2 },
+            { ts: 4, javaHeapUsed: null },
+            { ts: 100 },
+        ], 10);
+        expect(out).toEqual([
+            { ts: 0, javaHeapUsed: 500 },
+            { ts: 2, javaHeapUsed: 500 },
+            { ts: 4, javaHeapUsed: 500 },
+            { ts: 5 },
+            { ts: 100 },
+        ]);
     });
 });

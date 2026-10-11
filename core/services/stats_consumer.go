@@ -35,6 +35,8 @@ type statsBatchItem struct {
 	MemLimit   int64   `json:"memLimit"`
 	Players    int     `json:"players"`
 	MaxPlayers int     `json:"maxPlayers"`
+	// The node sends 0 when it has seen no GC yet; stored as NULL.
+	JavaHeapUsed int64 `json:"javaHeapUsed"`
 }
 
 // nodeServerUUIDs is the set of servers placed on the node with this token.
@@ -70,15 +72,20 @@ func statsRows(batch statsBatchPayload, allowed map[string]bool) []models.Server
 			continue
 		}
 		seen[item.UUID] = true
+		var heap *int64
+		if item.JavaHeapUsed > 0 {
+			heap = &item.JavaHeapUsed
+		}
 		rows = append(rows, models.ServerStatRow{
-			Time:       ts,
-			ServerUUID: item.UUID,
-			CPU:        item.CPU,
-			CPULimit:   item.CPULimit,
-			MemUsed:    item.MemUsed,
-			MemLimit:   item.MemLimit,
-			Players:    item.Players,
-			MaxPlayers: item.MaxPlayers,
+			Time:         ts,
+			ServerUUID:   item.UUID,
+			CPU:          item.CPU,
+			CPULimit:     item.CPULimit,
+			MemUsed:      item.MemUsed,
+			MemLimit:     item.MemLimit,
+			Players:      item.Players,
+			MaxPlayers:   item.MaxPlayers,
+			JavaHeapUsed: heap,
 		})
 	}
 	return rows

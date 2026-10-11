@@ -1,22 +1,18 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import {
   Server, ServerStats, DiskUsage, BackupConfig, BackupUsage,
   getStatsHistory, getDiskUsage, getBackupConfig, getBackupUsage,
 } from '@/lib/api';
 import { subscribeEventSource } from '@/lib/sse';
-import { latestValue } from '@/lib/statsSeries';
+import { latestValue, chartSeries } from '@/lib/statsSeries';
+import { jvmHeapMB } from '@/lib/jvmHeap';
+import { formatBytes, formatMB } from '@/lib/format';
+import { timeAgo } from '@/lib/time';
 
-import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive } from 'lucide-react';
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(0)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${bytes} B`;
-}
+import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive, PowerOff } from 'lucide-react';
 
 function formatTime(ts: number): string {
   const d = new Date(ts * 1000);
@@ -28,35 +24,61 @@ function formatTimeShort(ts: number): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 
+const RANGE_SEC: Record<string, number> = { '1h': 3600, '6h': 6 * 3600, '12h': 12 * 3600, '24h': 24 * 3600 };
+// Wider than one sampling interval by a margin: live ticks every 2 s, history
+// rows every 2 min. Anything longer is time the server was not reporting.
+const LIVE_GAP_SEC = 10;
+const HISTORY_GAP_SEC = 300;
+
+// The `state` event Core sends first on the stats stream.
+interface StreamState {
+  live: boolean;
+  lastSampleAt: number | null; // unix ms
+}
+
 interface ChartCardProps {
   icon: React.ReactNode;
   label: string;
-  currentValue: string;
+  currentValue: React.ReactNode;
   accentColor: string;
+  legend?: React.ReactNode;
   children: React.ReactNode;
 }
 
-function ChartCard({ icon, label, currentValue, accentColor, children }: ChartCardProps) {
+function ChartCard({ icon, label, currentValue, accentColor, legend, children }: ChartCardProps) {
   return (
     <div className="rounded-xl bg-(--base-01) border border-(--base-03) overflow-hidden">
-      <div className="flex items-center justify-between px-4 pt-3.5 pb-1">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center">
+      <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
             {icon}
           </div>
           <span className="input-label text-[11px]">{label}</span>
         </div>
         <span
-          className="font-display text-xl font-bold tabular-nums"
+          className="font-display text-xl font-bold tabular-nums whitespace-nowrap"
           style={{ color: accentColor }}
         >
           {currentValue}
         </span>
       </div>
+      {legend && <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-1">{legend}</div>}
       <div className="h-44 px-1 pb-2">
         {children}
       </div>
     </div>
+  );
+}
+
+function LegendItem({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
+  return (
+    <span className="flex items-center gap-1.5 text-[11px] text-(--base-07)">
+      <span
+        className="inline-block w-3 shrink-0"
+        style={dashed ? { borderTop: `1px dashed ${color}` } : { height: 2, borderRadius: 1, backgroundColor: color }}
+      />
+      {label}
+    </span>
   );
 }
 
@@ -67,27 +89,52 @@ interface OverviewViewProps {
 export default function OverviewView({ server }: OverviewViewProps) {
   const [mode, setMode] = useState<'live' | 'history'>('live');
   const [liveData, setLiveData] = useState<ServerStats[]>([]);
+  const [streamState, setStreamState] = useState<StreamState | null>(null);
   const [historyData, setHistoryData] = useState<ServerStats[]>([]);
   const [historyRange, setHistoryRange] = useState('24h');
+  const [historyAt, setHistoryAt] = useState(() => Date.now());
   const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
   const [backupConfig, setBackupConfig] = useState<BackupConfig | null>(null);
   const [backupUsage, setBackupUsage] = useState<BackupUsage | null>(null);
 
+  const isOffline = server.status === 'stopped' || server.status === 'offline' || server.status === 'pending_setup';
+
   useEffect(() => {
     setLiveData([]);
+    setStreamState(null);
 
     return subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
       try {
         const data = JSON.parse(e.data) as ServerStats;
         setLiveData(prev => [...prev.slice(-59), data]);
+        // A sample arriving is the server reporting again.
+        setStreamState(s => (s && !s.live ? { live: true, lastSampleAt: Date.now() } : s));
       } catch { /* ignore */ }
+    }, {
+      // Sent first on every (re)connect. Not live means the buffer is old: what
+      // the chart would hold is a stopped server's last hour, not the present.
+      state: (e) => {
+        try {
+          const s = JSON.parse(e.data) as { live?: boolean; lastSampleAt?: number | null };
+          const live = s.live === true;
+          setStreamState({ live, lastSampleAt: typeof s.lastSampleAt === 'number' ? s.lastSampleAt : null });
+          if (!live) setLiveData([]);
+        } catch { /* ignore */ }
+      },
     });
   }, [server.id]);
+
+  // A stop while watching: drop the live points so a restart does not draw a
+  // line from the old ones to the new.
+  useEffect(() => {
+    if (isOffline) setLiveData([]);
+  }, [isOffline]);
 
   useEffect(() => {
     if (mode !== 'history') return;
     getStatsHistory(server.id, historyRange).then((res: { points?: ServerStats[] }) => {
       setHistoryData(res.points || []);
+      setHistoryAt(Date.now());
     }).catch(() => setHistoryData([]));
   }, [mode, historyRange, server.id]);
 
@@ -129,23 +176,33 @@ export default function OverviewView({ server }: OverviewViewProps) {
     return () => clearInterval(interval);
   }, [server.id, backupConfig]);
 
-  const chartData = mode === 'live' ? liveData : historyData;
+  const rawData = mode === 'live' ? liveData : historyData;
+  const chartData = chartSeries(rawData, mode === 'live' ? LIVE_GAP_SEC : HISTORY_GAP_SEC);
   const timeFormatter = mode === 'live' ? formatTime : formatTimeShort;
+  // History is scaled to the whole range, so the hours the server was off
+  // show as empty space instead of being squeezed out.
+  const historyEnd = Math.floor(historyAt / 1000);
+  const xDomain: [number | string, number | string] = mode === 'history'
+    ? [historyEnd - (RANGE_SEC[historyRange] ?? RANGE_SEC['24h']), historyEnd]
+    : ['dataMin', 'dataMax'];
 
-  const isOffline = server.status === 'stopped' || server.status === 'offline' || server.status === 'pending_setup';
-
-  const latestCpu = chartData.length > 0 ? (chartData[chartData.length - 1].cpu ?? 0) : 0;
-  // Prefer JVM heap (post-GC, fluctuates with the GC cycle) over the
-  // container-level metric: with Xms=Xmx the container always reads
-  // near the limit, hiding the actual live usage. Fall back to memUsed
-  // when no GC has happened yet (early startup) or for Java 8 servers.
-  const ramKey: keyof ServerStats = chartData.some(d => typeof d.javaHeapUsed === 'number' && d.javaHeapUsed > 0)
-    ? 'javaHeapUsed'
-    : 'memUsed';
+  const latestCpu = rawData.length > 0 ? (rawData[rawData.length - 1].cpu ?? 0) : 0;
+  // Two different measurements, both shown: the container's memory (what the
+  // host and the OOM killer see; with Xms=Xmx it sits near the heap size) and
+  // the post-GC JVM heap (what the server actually holds live). The heap is
+  // absent on Java 8 and before the first GC.
+  const hasHeap = rawData.some(d => typeof d.javaHeapUsed === 'number' && d.javaHeapUsed > 0);
+  const latestMemMb = latestValue(rawData, 'memUsed');
   // The LAST sample that carries a value, not simply the last sample: the heap
-  // field is omitted on any tick where no fresh GC reading was available, so
-  // reading the final point alone showed a live server as using 0 MB.
-  const latestRamMb = latestValue(chartData, ramKey);
+  // field is omitted on any tick where no fresh GC reading was available.
+  const latestHeapMb = latestValue(rawData, 'javaHeapUsed');
+  // The node always appends its own -Xmx last, so this is the heap's ceiling.
+  const heapMaxMb = hasHeap && server.memory > 0 ? jvmHeapMB(server.memory) : 0;
+  const memLimitMb = Math.max(latestValue(rawData, 'memLimit'), server.memory || 0);
+
+  const liveOffline = mode === 'live' && liveData.length === 0 && (isOffline || streamState?.live === false);
+  const lastSampleAt = streamState?.lastSampleAt ?? null;
+  const hasChart = !liveOffline && rawData.length > 1;
 
   const tooltipStyle = {
     backgroundColor: 'var(--base-02)',
@@ -157,10 +214,34 @@ export default function OverviewView({ server }: OverviewViewProps) {
     padding: '8px 12px',
   };
 
-  const emptyState = (
-    <div className="h-full flex items-center justify-center text-(--base-06) text-sm font-mono">
-      {isOffline ? 'Server offline' : 'Waiting for data...'}
+  const emptyState = liveOffline ? (
+    <div className="h-full flex flex-col items-center justify-center gap-1.5 text-center px-4">
+      <PowerOff size={18} className="text-(--base-05)" />
+      <span className="text-sm text-(--base-08)">Server offline</span>
+      <span className="text-xs text-(--base-06)">
+        {lastSampleAt
+          ? `Last sample ${new Date(lastSampleAt).toLocaleString()} (${timeAgo(new Date(lastSampleAt).toISOString())})`
+          : 'No recent samples'}
+      </span>
     </div>
+  ) : (
+    <div className="h-full flex items-center justify-center text-(--base-06) text-sm font-mono">
+      {mode === 'history' ? 'No samples in this range' : isOffline ? 'Server offline' : 'Waiting for data...'}
+    </div>
+  );
+
+  const xAxis = (
+    <XAxis
+      dataKey="ts"
+      type="number"
+      scale="time"
+      domain={xDomain}
+      tickFormatter={timeFormatter}
+      tick={{ fontSize: 10, fill: 'var(--base-05)' }}
+      axisLine={false}
+      tickLine={false}
+      minTickGap={24}
+    />
   );
 
   return (
@@ -229,10 +310,10 @@ export default function OverviewView({ server }: OverviewViewProps) {
         <ChartCard
           icon={<Cpu size={14} className="text-(--base-06)" />}
           label="CPU"
-          currentValue={chartData.length > 0 ? `${latestCpu.toFixed(1)}%` : '—'}
+          currentValue={!liveOffline && rawData.length > 0 ? `${latestCpu.toFixed(1)}%` : '—'}
           accentColor="var(--primary-light)"
         >
-          {chartData.length > 1 ? (
+          {hasChart ? (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
                 <defs>
@@ -242,7 +323,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke="var(--base-03)" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="ts" tickFormatter={timeFormatter} tick={{ fontSize: 10, fill: 'var(--base-05)' }} axisLine={false} tickLine={false} />
+                {xAxis}
                 <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--base-05)' }} axisLine={false} tickLine={false} unit="%" />
                 <Tooltip
                   contentStyle={tooltipStyle}
@@ -250,20 +331,33 @@ export default function OverviewView({ server }: OverviewViewProps) {
                   formatter={(v) => [`${Number(v).toFixed(1)}%`, 'CPU']}
                   cursor={{ stroke: 'var(--base-05)', strokeWidth: 1, strokeDasharray: '4 4' }}
                 />
-                <Area type="monotone" dataKey="cpu" stroke="var(--primary)" fill="url(#cpuFill)" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Area type="monotone" dataKey="cpu" stroke="var(--primary)" fill="url(#cpuFill)" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           ) : emptyState}
         </ChartCard>
 
-        {/* RAM Chart */}
+        {/* Memory Chart: container memory and JVM heap, the same two series in
+            Live and History so switching modes does not change what is drawn. */}
         <ChartCard
           icon={<MemoryStick size={14} className="text-(--base-06)" />}
-          label={ramKey === 'javaHeapUsed' ? 'JVM Heap' : 'RAM'}
-          currentValue={chartData.length > 0 ? (latestRamMb >= 1024 ? `${(latestRamMb / 1024).toFixed(1)} GB` : `${Math.round(latestRamMb)} MB`) : '—'}
+          label="Memory"
+          currentValue={!liveOffline && rawData.length > 0 ? (
+            <>
+              {formatMB(latestMemMb)}
+              {hasHeap && <span className="text-sm font-semibold text-(--base-07)"> / heap {formatMB(latestHeapMb)}</span>}
+            </>
+          ) : '—'}
           accentColor="var(--accent-light)"
+          legend={hasChart ? (
+            <>
+              <LegendItem color="var(--accent)" label="Container" />
+              {hasHeap && <LegendItem color="var(--primary)" label="JVM heap (post-GC)" />}
+              {heapMaxMb > 0 && <LegendItem color="var(--base-06)" dashed label={`Heap max ${formatMB(heapMaxMb)}`} />}
+            </>
+          ) : undefined}
         >
-          {chartData.length > 1 ? (
+          {hasChart ? (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
                 <defs>
@@ -271,17 +365,23 @@ export default function OverviewView({ server }: OverviewViewProps) {
                     <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.2} />
                     <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
                   </linearGradient>
+                  <linearGradient id="heapFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.15} />
+                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                  </linearGradient>
                 </defs>
                 <CartesianGrid stroke="var(--base-03)" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="ts" tickFormatter={timeFormatter} tick={{ fontSize: 10, fill: 'var(--base-05)' }} axisLine={false} tickLine={false} />
-                <YAxis domain={[0, server.memory]} tick={{ fontSize: 10, fill: 'var(--base-05)' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => v >= 1024 ? `${(v / 1024).toFixed(1)}G` : `${v}M`} />
+                {xAxis}
+                <YAxis domain={[0, memLimitMb > 0 ? memLimitMb : 'auto']} tick={{ fontSize: 10, fill: 'var(--base-05)' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => formatMB(v)} width={60} />
                 <Tooltip
                   contentStyle={tooltipStyle}
                   labelFormatter={(v) => formatTime(v as number)}
-                  formatter={(v) => { const n = Number(v); return [`${n >= 1024 ? (n / 1024).toFixed(1) + ' GB' : n + ' MB'}`, 'RAM']; }}
+                  formatter={(v, name) => [formatMB(Number(v)), name === 'javaHeapUsed' ? 'JVM heap' : 'Container']}
                   cursor={{ stroke: 'var(--base-05)', strokeWidth: 1, strokeDasharray: '4 4' }}
                 />
-                <Area type="monotone" dataKey={ramKey} stroke="var(--accent)" fill="url(#ramFill)" strokeWidth={2} dot={false} isAnimationActive={false} />
+                {heapMaxMb > 0 && <ReferenceLine y={heapMaxMb} stroke="var(--base-06)" strokeDasharray="4 4" ifOverflow="extendDomain" />}
+                <Area type="monotone" dataKey="memUsed" stroke="var(--accent)" fill="url(#ramFill)" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
+                {hasHeap && <Area type="monotone" dataKey="javaHeapUsed" stroke="var(--primary)" fill="url(#heapFill)" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />}
               </AreaChart>
             </ResponsiveContainer>
           ) : emptyState}

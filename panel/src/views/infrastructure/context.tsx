@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { getInfrastructureOverview, getNodes, getPlayersOnline, GatewayEdge, GatewayLink } from '@/lib/api';
+import { getInfrastructureOverview, getNodes, getPlayersOnline, GatewayEdge, GatewayLink, type ServerPlayers } from '@/lib/api';
+import type { FleetSummary } from '@/lib/statisticsLayout';
 import { flattenServiceErrors, type FlatServiceError } from '@/lib/serviceErrors';
 import type { CustomerSummary, InfrastructureData, NodeInfo } from './InfraCards';
 
@@ -29,6 +30,8 @@ export interface InfraState {
     errors: FlatServiceError[];
     /** What customers run. Null until the overview reports it. */
     customers: CustomerSummary | null;
+    /** Node and customer census. Null until the overview reports it. */
+    fleet: FleetSummary | null;
     /** The feature flag: the gateway is configured. */
     gatewayEnabled: boolean;
     /** The flag AND something actually deployed behind it. */
@@ -36,6 +39,8 @@ export interface InfraState {
     onlineEdgesList: GatewayEdge[];
     /** Players on every server now, per their own list pings. Null until the first reading. */
     playersOnline: number | null;
+    /** The servers that number is made of, most players first. */
+    playersServers: ServerPlayers[];
     /** When that number was last read successfully (ms epoch), for the freshness label. */
     playersAt: number | null;
     /** When the last poll finished, success or not; re-renders the freshness label. */
@@ -57,7 +62,7 @@ const POLL_MS = 10000;
 const PLAYERS_POLL_MS = 5000;
 
 export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: boolean; children: React.ReactNode }) {
-    const [data, setData] = useState<Omit<InfraState, 'loading' | 'refreshing' | 'gatewayEnabled' | 'gatewayDeployed' | 'onlineEdgesList' | 'refresh' | 'playersOnline' | 'playersAt' | 'playersCheckedAt'> | null>(null);
+    const [data, setData] = useState<Omit<InfraState, 'loading' | 'refreshing' | 'gatewayEnabled' | 'gatewayDeployed' | 'onlineEdgesList' | 'refresh' | 'playersOnline' | 'playersServers' | 'playersAt' | 'playersCheckedAt'> | null>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -86,6 +91,7 @@ export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: bo
                     routeCount: res.routeCount ?? 0,
                     onlineEdges: res.onlineEdges ?? 0,
                     customers: res.customers ?? null,
+                    fleet: res.fleet ?? null,
                     // Core has always sent this and the view used to drop it,
                     // which took six components' diagnostics off every screen.
                     errors: flattenServiceErrors(res.errors),
@@ -99,7 +105,7 @@ export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: bo
         }
     }, []);
 
-    const [players, setPlayers] = useState<{ count: number; at: number } | null>(null);
+    const [players, setPlayers] = useState<{ count: number; servers: ServerPlayers[]; at: number } | null>(null);
     const [playersCheckedAt, setPlayersCheckedAt] = useState(0);
 
     useEffect(() => {
@@ -111,7 +117,7 @@ export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: bo
             try {
                 const res = await getPlayersOnline();
                 if (!cancelled && res && res.success !== false && typeof res.playersOnline === 'number') {
-                    setPlayers({ count: res.playersOnline, at: Date.now() });
+                    setPlayers({ count: res.playersOnline, servers: res.servers ?? [], at: Date.now() });
                 }
             } catch {
                 // Keep the last number; the freshness label stops saying "Live".
@@ -147,6 +153,7 @@ export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: bo
         routeCount: data?.routeCount ?? 0,
         onlineEdges: data?.onlineEdges ?? 0,
         customers: data?.customers ?? null,
+        fleet: data?.fleet ?? null,
         errors: data?.errors ?? [],
         gatewayEnabled,
         // Enabled AND something behind it. A tab that renders an empty gateway
@@ -154,6 +161,7 @@ export function InfraProvider({ gatewayEnabled, children }: { gatewayEnabled: bo
         gatewayDeployed: gatewayEnabled && (edges.length > 0 || links.length > 0),
         onlineEdgesList: edges.filter(e => e.status === 'online'),
         playersOnline: players?.count ?? null,
+        playersServers: players?.servers ?? [],
         playersAt: players?.at ?? null,
         playersCheckedAt,
         refresh: fetchData,

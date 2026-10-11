@@ -17,25 +17,20 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { formatBytes } from '@/lib/format';
+import { currentSkip, relativeTime } from '@/lib/backupJobStatus';
 
-function formatBytes(b: number): string {
-    if (!b) return '—';
-    if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} GB`;
-    if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(1)} MB`;
-    if (b >= 1024) return `${(b / 1024).toFixed(0)} KB`;
-    return `${b} B`;
+// A run that archived nothing yet shows a dash rather than "0 B".
+function runSize(b: number): string {
+    return b ? formatBytes(b) : '—';
 }
 
-function formatRel(iso: string | null | undefined): string {
-    if (!iso) return '—';
-    const diff = Date.now() - new Date(iso).getTime();
-    const m = Math.floor(diff / 60000);
-    if (m < 1) return 'just now';
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    return `${Math.floor(h / 24)}d ago`;
+function localTime(iso: string): string {
+    return new Date(iso).toLocaleString();
 }
+
+// Runs shown before "Show all": enough for the usual retention of a few.
+const RUNS_COLLAPSED = 5;
 
 const SCHEDULE_OPTIONS = [
     { value: 'manual', label: 'Manual only' },
@@ -216,6 +211,12 @@ export default function ServerBackupsView() {
     const [restoreCountdown, setRestoreCountdown] = useState(5);
     const [restoring, setRestoring] = useState(false);
     const [restoreHistory, setRestoreHistory] = useState<BackupRestore[]>([]);
+    const [expandedJobs, setExpandedJobs] = useState<Set<number>>(new Set());
+    const toggleRuns = (id: number) => setExpandedJobs(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
@@ -425,10 +426,9 @@ export default function ServerBackupsView() {
                                         {job.subServer ? <span className="badge badge-neutral">{job.subServer}</span> : <span className="badge badge-accent">full container</span>}
                                         {(job.includePatterns?.length || job.excludePatterns?.length) ? <span className="badge badge-accent">selective</span> : null}
                                     </div>
-                                    <div className="flex items-center gap-3 mt-1 text-xs text-(--base-06)">
+                                    <div className="flex items-center gap-x-3 gap-y-1 mt-1 text-xs text-(--base-06) flex-wrap">
                                         <span className="inline-flex items-center gap-1"><Clock size={11} />{job.schedule}</span>
                                         <span>keep {job.retentionCount}</span>
-                                        <span>last: {formatRel(job.lastRunAt)}</span>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-1.5">
@@ -445,16 +445,67 @@ export default function ServerBackupsView() {
                                 </div>
                             </div>
 
-                            {(runs[job.id] ?? []).length > 0 && (
+                            {(() => {
+                                const skip = currentSkip(job);
+                                const scheduled = job.enabled && job.schedule !== 'manual' && job.nextRunAt;
+                                return (
+                                    <>
+                                        <dl className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2.5">
+                                            <div className="min-w-0">
+                                                <dt className="mono-label">Kept</dt>
+                                                <dd className="text-sm text-(--base-09) tabular-nums mt-0.5">
+                                                    {job.keptRuns ?? 0} {(job.keptRuns ?? 0) === 1 ? 'backup' : 'backups'}
+                                                </dd>
+                                            </div>
+                                            <div className="min-w-0">
+                                                <dt className="mono-label">Total size</dt>
+                                                <dd className="text-sm text-(--base-09) tabular-nums mt-0.5">{formatBytes(job.keptBytes ?? 0)}</dd>
+                                            </div>
+                                            <div className="min-w-0">
+                                                <dt className="mono-label">Last run</dt>
+                                                <dd className="text-sm text-(--base-09) mt-0.5 truncate" title={job.lastRunAt ? localTime(job.lastRunAt) : undefined}>
+                                                    {job.lastRunAt ? relativeTime(job.lastRunAt) : 'Never'}
+                                                </dd>
+                                                {job.lastRunAt && <dd className="text-[11px] text-(--base-06) truncate">{localTime(job.lastRunAt)}</dd>}
+                                            </div>
+                                            <div className="min-w-0">
+                                                <dt className="mono-label">Next run</dt>
+                                                <dd className="text-sm text-(--base-09) mt-0.5 truncate">
+                                                    {scheduled ? relativeTime(job.nextRunAt) : job.enabled ? 'Manual only' : 'Disabled'}
+                                                </dd>
+                                                {scheduled && <dd className="text-[11px] text-(--base-06) truncate">{localTime(job.nextRunAt!)}</dd>}
+                                            </div>
+                                        </dl>
+                                        {skip && (
+                                            <div className="alert alert-warning mt-3" role="status">
+                                                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                                <div className="min-w-0">
+                                                    <p className="font-medium">Skipped at {localTime(skip.at)}</p>
+                                                    <p className="text-xs break-words">{skip.reason}</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                );
+                            })()}
+
+                            {(runs[job.id] ?? []).length > 0 && (() => {
+                                const all = runs[job.id];
+                                const open = expandedJobs.has(job.id);
+                                const shown = open ? all : all.slice(0, RUNS_COLLAPSED);
+                                return (
                                 <div className="mt-4 border-t border-(--base-03) pt-3">
-                                    <div className="mono-label mb-2">Recent Runs</div>
+                                    <div className="flex items-center justify-between gap-2 mb-2">
+                                        <span className="mono-label">Runs</span>
+                                        <span className="mono-label">{shown.length} of {all.length}</span>
+                                    </div>
                                     <div className="space-y-1">
-                                        {runs[job.id].slice(0, 5).map(run => (
+                                        {shown.map(run => (
                                             <div key={run.id} className="rounded hover:bg-(--base-03)/40">
                                             <div className="flex items-center gap-3 py-1.5 px-2">
                                                 <span className={`badge-dot ${run.status === 'success' ? 'bg-(--success-light)' : run.status === 'failed' ? 'bg-(--error)' : 'bg-(--warning) animate-pulse'}`} />
-                                                <span className="text-sm text-(--base-08) flex-1">{formatRel(run.startedAt)}</span>
-                                                <span className="text-xs text-(--base-06) tabular-nums w-20 text-right" title={run.status === 'running' ? 'Archived so far' : 'Archive size'}>{formatBytes(run.sizeBytes)}</span>
+                                                <span className="text-sm text-(--base-08) flex-1">{relativeTime(run.startedAt)}</span>
+                                                <span className="text-xs text-(--base-06) tabular-nums w-20 text-right" title={run.status === 'running' ? 'Archived so far' : 'Archive size'}>{runSize(run.sizeBytes)}</span>
                                                 <span className={runBadgeClass(run.status) + ' capitalize'}>{run.status}</span>
                                                 {run.status === 'success' && (
                                                     <>
@@ -486,8 +537,25 @@ export default function ServerBackupsView() {
                                             </div>
                                         ))}
                                     </div>
+                                    {all.length > RUNS_COLLAPSED && (
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleRuns(job.id)}
+                                            aria-expanded={open}
+                                            className="btn btn-ghost btn-sm mt-2 w-full justify-center"
+                                        >
+                                            {open ? 'Show fewer' : `Show all ${all.length} runs`}
+                                        </button>
+                                    )}
+                                    {/* Core lists the newest 50 runs; a longer retention keeps more. */}
+                                    {open && (job.keptRuns ?? 0) > all.filter(r => r.status === 'success').length && (
+                                        <p className="mt-2 text-xs text-(--base-06)">
+                                            Showing the newest {all.length} runs. This job keeps {job.keptRuns} backups in total.
+                                        </p>
+                                    )}
                                 </div>
-                            )}
+                                );
+                            })()}
                         </div>
                     ))}
                 </div>
@@ -509,7 +577,7 @@ export default function ServerBackupsView() {
                                 <span className={`badge-dot ${restore.status === 'success' ? 'bg-(--success-light)' : restore.status === 'failed' ? 'bg-(--error)' : restore.stalled ? 'bg-(--warning)' : 'bg-(--warning) animate-pulse'}`} />
                                 <span className="text-sm text-(--base-08) flex-1">
                                     Run #{restore.runId}
-                                    <span className="text-xs text-(--base-06) ml-2">{formatRel(restore.requestedAt)}</span>
+                                    <span className="text-xs text-(--base-06) ml-2">{relativeTime(restore.requestedAt)}</span>
                                 </span>
                                 <span className="badge badge-neutral capitalize">
                                     {restore.stalled ? 'paused' : restore.status}

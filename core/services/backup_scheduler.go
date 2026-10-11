@@ -760,8 +760,8 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	}
 
 	// Platform backup allowance: skip the scheduled run once the owner is at or
-	// over it. The next_run is still advanced below so we don't re-check on a
-	// tight loop; the run resumes when usage drops or the allowance rises.
+	// over it. The next_run is still advanced so we don't re-check on a tight
+	// loop; the run resumes when usage drops or the allowance rises.
 	//
 	// Skipped entirely when the archive is headed for a storage the TENANT
 	// connected: those bytes are theirs, they are not counted by
@@ -770,10 +770,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// place that did not take that distinction.
 	if exceeded, used, quota := BackupAllowanceExceeded(b.store, srv.OwnerID, b.storeEnabled, storage); exceeded {
 		log.Printf("backup-scheduler: job %d skipped — quota reached (%d/%d GB)", job.ID, used/(1<<30), quota/(1<<30))
-		next := ComputeBackupNextRun(job.Schedule, time.Now())
-		if next != nil {
-			b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
-		}
+		b.skipRun(job, fmt.Sprintf("Backup storage allowance reached (%d of %d GB used).", used/(1<<30), quota/(1<<30)))
 		return nil
 	}
 	// Per-server node-local cap - the same gate startBackupRun takes. Cron is
@@ -785,10 +782,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	if exceeded, used, quota := NodeLocalBackupQuotaExceeded(b.store, b.registry, srv); exceeded {
 		log.Printf("backup-scheduler: job %d skipped — per-server backup quota reached (%.1f/%.1f GB)",
 			job.ID, float64(used)/(1<<30), float64(quota)/(1<<30))
-		next := ComputeBackupNextRun(job.Schedule, time.Now())
-		if next != nil {
-			b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
-		}
+		b.skipRun(job, fmt.Sprintf("Per-server backup quota reached (%.1f of %.1f GB used).", float64(used)/(1<<30), float64(quota)/(1<<30)))
 		return nil
 	}
 
@@ -816,7 +810,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 			log.Printf("backup-scheduler: job %d waits, another backup of its server is in progress", job.ID)
 			return nil
 		}
-		b.advanceSchedule(job)
+		b.skipRun(job, "The previous run of this job was still in progress.")
 		log.Printf("backup-scheduler: job %d skipped, its previous run is still in progress", job.ID)
 		return nil
 	}
@@ -889,12 +883,48 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 // advanceSchedule moves the job's next_run_at past now, so the next tick does
 // not dispatch it again.
 func (b *BackupScheduler) advanceSchedule(job models.BackupJob) {
-	next := ComputeBackupNextRun(job.Schedule, time.Now())
+	now := time.Now()
+	next := nextScheduledRun(job.Schedule, job.NextRunAt, now)
 	if next != nil {
-		b.store.SetBackupJobScheduled(job.ID, time.Now(), *next)
+		b.store.SetBackupJobScheduled(job.ID, now, *next)
 	} else {
-		b.store.SetBackupJobScheduled(job.ID, time.Now(), time.Time{})
+		b.store.SetBackupJobScheduled(job.ID, now, time.Time{})
 	}
+}
+
+// skipRun records a due slot that was NOT run and moves next_run_at on.
+// last_run_at is left alone: stamping it made the panel show "last run 2m ago"
+// for a backup that never happened.
+func (b *BackupScheduler) skipRun(job models.BackupJob, reason string) {
+	now := time.Now()
+	next := nextScheduledRun(job.Schedule, job.NextRunAt, now)
+	if next == nil {
+		return
+	}
+	if err := b.store.SetBackupJobSkipped(job.ID, now, reason, *next); err != nil {
+		logErrf("backup-scheduler", "job %d: recording the skipped run failed: %v", job.ID, err)
+	}
+}
+
+// nextScheduledRun computes the next slot from the PLANNED one rather than from
+// dispatch time: the tick runs once a minute, so "now + interval" drifted every
+// run by however late the tick was. A planned slot more than one interval in the
+// past (Core was down, the job was just re-enabled) is not caught up on; the
+// schedule restarts from now instead.
+func nextScheduledRun(schedule string, planned *time.Time, now time.Time) *time.Time {
+	next := ComputeBackupNextRun(schedule, now)
+	if next == nil || planned == nil || planned.IsZero() {
+		return next
+	}
+	interval := next.Sub(now)
+	if now.Sub(*planned) >= interval {
+		return next
+	}
+	fromPlan := ComputeBackupNextRun(schedule, *planned)
+	if !fromPlan.After(now) {
+		return next
+	}
+	return fromPlan
 }
 
 // NewBackupStorageKey names the archive of a new run, for the manual and the

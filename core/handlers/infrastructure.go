@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/store"
 )
 
 type InfrastructureHandler struct {
@@ -40,6 +42,7 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	// Shared with the metrics collector, which used to read these fields off an
 	// unenriched ListNodes result and record the zero value as a measurement.
 	services.EnrichNodesWithLiveStats(ctx, h.state.Store, h.state.Redis, nodes)
+	setNodesLinkOnline(ctx, h.state, nodes)
 
 	// Aggregate stats. Links are split by who RUNS them: a customer's BYON or
 	// route-only link going down is not an outage of this platform, so the
@@ -71,8 +74,79 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 		"onlineLinks": onlineLinks,
 		"onlineEdges": onlineEdges,
 		"customers":   h.customerSummary(ctx, split),
+		"fleet":       h.fleet(nodes),
 		"errors":      errors,
 	})
+}
+
+// kindCounts is how many nodes of one kind exist and how many are online.
+type kindCounts struct {
+	Total  int `json:"total"`
+	Online int `json:"online"`
+}
+
+// fleetSummary is the at-a-glance census for Infrastructure > Statistics: what
+// kind of machines exist and how many distinct customers run them. Counts only;
+// no owner ids, names or tokens leave this function.
+type fleetSummary struct {
+	Nodes struct {
+		Platform kindCounts `json:"platform"`
+		External kindCounts `json:"external"`
+		BYON     kindCounts `json:"byon"`
+	} `json:"nodes"`
+	// Distinct customer accounts per kind. Route-only = owns at least one
+	// route-only route; Total counts an account that is both only once.
+	Customers struct {
+		BYON      int `json:"byon"`
+		RouteOnly int `json:"routeOnly"`
+		Total     int `json:"total"`
+	} `json:"customers"`
+	RouteOnlyRoutes int `json:"routeOnlyRoutes"`
+	// Users is every registered account, nil when it could not be counted.
+	Users *int `json:"users"`
+}
+
+func (h *InfrastructureHandler) fleet(nodes []models.Node) fleetSummary {
+	routes, err := h.state.Store.ListCoreLinkRoutes()
+	if err != nil {
+		routes = nil
+	}
+	var users *int
+	if n, err := h.state.Store.CountUsers(); err == nil {
+		users = &n
+	}
+	return buildFleetSummary(nodes, routes, users)
+}
+
+func buildFleetSummary(nodes []models.Node, routes []store.CoreLinkRoute, users *int) fleetSummary {
+	var f fleetSummary
+	f.Users = users
+	byon, routeOnly, all := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for i := range nodes {
+		n := &nodes[i]
+		var c *kindCounts
+		switch n.Kind() {
+		case models.NodeKindBYON:
+			c = &f.Nodes.BYON
+			byon[*n.OwnerID], all[*n.OwnerID] = true, true
+		case models.NodeKindExternal:
+			c = &f.Nodes.External
+		default:
+			c = &f.Nodes.Platform
+		}
+		c.Total++
+		if n.Status == "online" {
+			c.Online++
+		}
+	}
+	for _, r := range routes {
+		if r.OwnerID != "" {
+			routeOnly[r.OwnerID], all[r.OwnerID] = true, true
+		}
+	}
+	f.Customers.BYON, f.Customers.RouteOnly, f.Customers.Total = len(byon), len(routeOnly), len(all)
+	f.RouteOnlyRoutes = len(routes)
+	return f
 }
 
 // GetPlayersOnline GET /api/infrastructure/players-online - players on every
@@ -86,7 +160,7 @@ func (h *InfrastructureHandler) GetPlayersOnline(w http.ResponseWriter, r *http.
 		return
 	}
 	now := time.Now()
-	n, err := services.PlayersOnline(r.Context(), h.state.Redis, servers, now)
+	n, per, err := services.PlayersOnlineByServer(r.Context(), h.state.Redis, servers, now)
 	if err != nil {
 		sendJSONError(w, "Could not read live server stats", http.StatusServiceUnavailable)
 		return
@@ -94,6 +168,7 @@ func (h *InfrastructureHandler) GetPlayersOnline(w http.ResponseWriter, r *http.
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":       true,
 		"playersOnline": n,
+		"servers":       per,
 		"at":            now.UTC(),
 	})
 }
@@ -142,13 +217,16 @@ func (h *InfrastructureHandler) customerSummary(ctx context.Context, split servi
 	linksOnline := split.CustomerOnline
 	out.Links = customerCounts{Total: len(split.Customer), Online: &linksOnline}
 
-	if peers, perr := h.state.Store.ListAllWarpPeers(); perr == nil {
-		out.Warps = customerCounts{Total: len(peers)}
-		// A peer is a tenant machine on the overlay, and only the warp leader
-		// can say whether its tunnel is actually up. It publishes that as an
-		// aggregate; until every leader is on a build that does, the honest
-		// answer is a total with no online count rather than a zero.
-		if up, known := services.WarpPeersActive(ctx, h.state.Redis); known {
+	// Only peers whose key has a tenant owner. An owner-less key is admin-minted
+	// for one of our own machines (an External node's warp), and counting it
+	// put the platform's own hardware into the customer figure.
+	if customer, platform, perr := h.state.Store.CountWarpPeersByOwnership(); perr == nil {
+		out.Warps = customerCounts{Total: customer}
+		// Only the warp leader can say whether a tunnel is up, and it publishes
+		// ONE aggregate over every peer. Until every leader is on a build that
+		// does, or while our own peers are inside that aggregate, the honest
+		// answer is a total with no online count: it cannot be split by owner.
+		if up, known := services.WarpPeersActive(ctx, h.state.Redis); known && platform == 0 {
 			out.Warps.Online = &up
 		}
 	}

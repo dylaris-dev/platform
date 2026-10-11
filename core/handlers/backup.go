@@ -343,10 +343,27 @@ func (h *BackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Database error", 500)
 		return
 	}
-	if jobs == nil {
-		jobs = []models.BackupJob{}
+	kept, err := h.state.Store.BackupKeptByJob(serverID)
+	if err != nil {
+		sendJSONError(w, "Database error", 500)
+		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "jobs": jobs})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "jobs": backupJobViews(jobs, kept)})
+}
+
+// backupJobView is a job plus what it currently keeps, so the backups page can
+// show count and size without listing every run.
+type backupJobView struct {
+	models.BackupJob
+	store.BackupJobKept
+}
+
+func backupJobViews(jobs []models.BackupJob, kept map[int]store.BackupJobKept) []backupJobView {
+	out := make([]backupJobView, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, backupJobView{BackupJob: j, BackupJobKept: kept[j.ID]})
+	}
+	return out
 }
 
 // CreateJob POST /api/servers/{id}/backup-jobs - adds a backup schedule and

@@ -305,6 +305,10 @@ type Store interface {
 	ListReferencedBackupKeys() (map[string]bool, error)
 	ListDueBackupJobs(now time.Time) ([]models.BackupJob, error)
 	SetBackupJobScheduled(jobID int, lastRun, nextRun time.Time) error
+	// SetBackupJobSkipped records a scheduled slot that did not run and moves
+	// next_run_at on, leaving last_run_at alone.
+	SetBackupJobSkipped(jobID int, at time.Time, reason string, nextRun time.Time) error
+	BackupKeptByJob(serverID int) (map[int]BackupJobKept, error)
 
 	ListBackupRuns(jobID int, limit int) ([]models.BackupRun, error)
 	GetBackupRun(id int) (*models.BackupRun, error)
@@ -437,6 +441,7 @@ type Store interface {
 	GetWarpPeerByPubkey(pubkey string) (*WarpPeer, error)
 	ListWarpPeersByKey(apiKeyID int) ([]WarpPeer, error)
 	ListAllWarpPeers() ([]WarpPeer, error)
+	CountWarpPeersByOwnership() (customer, platform int, err error)
 	// Custom-domain ownership proof. Keyed on (user, domain) so a block can
 	// never be global - see database/db_custom_domains.go.
 	GetCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)

@@ -69,6 +69,12 @@ func createBackupTables(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_jobs_server ON backup_jobs(server_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_jobs_next_run ON backup_jobs(next_run_at) WHERE enabled = TRUE`,
+		// The last scheduled slot the scheduler did NOT run (allowance full, the
+		// previous run still going) and why. It used to stamp last_run_at instead,
+		// so the panel showed a run that never happened. Kept apart from
+		// last_run_at so both "last ran" and "last skipped" stay true.
+		`ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS last_skip_at TIMESTAMPTZ`,
+		`ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS last_skip_reason TEXT NOT NULL DEFAULT ''`,
 		// One row per actual backup run (snapshot or attempt).
 		`CREATE TABLE IF NOT EXISTS backup_runs (
 			id SERIAL PRIMARY KEY,

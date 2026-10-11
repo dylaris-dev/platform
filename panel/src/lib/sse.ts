@@ -50,6 +50,8 @@ const RETRY_MAX_MS = 30000;
 export function subscribeEventSource(
     path: string,
     onMessage: (e: MessageEvent) => void,
+    // Named events (`event: <name>`), which onmessage never sees.
+    events?: Record<string, (e: MessageEvent) => void>,
 ): () => void {
     let es: EventSource | null = null;
     let stopped = false;
@@ -76,6 +78,9 @@ export function subscribeEventSource(
                 delay = RETRY_START_MS;
                 onMessage(e);
             };
+            for (const [name, handler] of Object.entries(events ?? {})) {
+                next.addEventListener(name, handler as EventListener);
+            }
             next.onerror = () => {
                 if (next.readyState !== EventSource.CLOSED) return; // the browser is reconnecting
                 next.close();

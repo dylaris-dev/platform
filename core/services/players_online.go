@@ -5,6 +5,7 @@ import (
 	"dylaris-core/models"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,23 @@ import (
 // writing when it goes away, while the stream itself stays behind - so an old
 // last entry is a server that stopped, not one that still has its players.
 const playersFreshFor = 60 * time.Second
+
+// StatsSampleFresh reports whether a stats sample taken at `at` still describes
+// a running server, by the same rule players online uses.
+func StatsSampleFresh(at, now time.Time) bool {
+	age := now.Sub(at)
+	return age <= playersFreshFor && age >= -playersFreshFor
+}
+
+// StatsEntryTime is when Redis stamped a stream entry, from its ID. Redis's own
+// clock, not the node's.
+func StatsEntryTime(id string) (time.Time, bool) {
+	ms, err := strconv.ParseInt(strings.SplitN(id, "-", 2)[0], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(ms), true
+}
 
 // playerSample is one server's player count at one moment.
 type playerSample struct {
@@ -32,24 +50,41 @@ type playerSample struct {
 // counted twice. That is what the old edge-stream figure got wrong in a
 // different way: it counted connections, not people.
 func sumLatestPlayers(samples []playerSample, now time.Time) int {
+	total := 0
+	for _, n := range latestPlayers(samples, now) {
+		total += n
+	}
+	return total
+}
+
+// latestPlayers is the newest fresh sample's player count per server, for
+// servers with at least one player.
+func latestPlayers(samples []playerSample, now time.Time) map[string]int {
 	latest := make(map[string]playerSample, len(samples))
 	for _, s := range samples {
 		// Both ways: a sample from the future is a clock or an ID somebody
 		// chose, and would otherwise stay "fresh" for as long as it is ahead.
-		if age := now.Sub(s.at); age > playersFreshFor || age < -playersFreshFor {
+		if !StatsSampleFresh(s.at, now) {
 			continue
 		}
 		if cur, ok := latest[s.server]; !ok || s.at.After(cur.at) {
 			latest[s.server] = s
 		}
 	}
-	total := 0
-	for _, s := range latest {
+	out := make(map[string]int, len(latest))
+	for uuid, s := range latest {
 		if s.players > 0 {
-			total += s.players
+			out[uuid] = s.players
 		}
 	}
-	return total
+	return out
+}
+
+// ServerPlayers is one server's share of players online.
+type ServerPlayers struct {
+	ServerID int    `json:"serverId"`
+	Name     string `json:"name"`
+	Players  int    `json:"players"`
 }
 
 // PlayersOnline reads the newest stats sample of every server and returns how
@@ -59,6 +94,13 @@ func sumLatestPlayers(samples []playerSample, now time.Time) int {
 // server page already reads, so this adds no instrumentation anywhere. One
 // pipelined round trip for the whole fleet.
 func PlayersOnline(ctx context.Context, rdb *redis.Client, servers []models.Server, now time.Time) (int, error) {
+	total, _, err := PlayersOnlineByServer(ctx, rdb, servers, now)
+	return total, err
+}
+
+// PlayersOnlineByServer is PlayersOnline plus the servers it is made of, most
+// players first. Same sample, so the breakdown always adds up to the total.
+func PlayersOnlineByServer(ctx context.Context, rdb *redis.Client, servers []models.Server, now time.Time) (int, []ServerPlayers, error) {
 	// A proxy's ping reports every player on its network, and each backend
 	// reports its own: counting both doubles the network. Players are where
 	// they play, so proxies are left out.
@@ -70,7 +112,7 @@ func PlayersOnline(ctx context.Context, rdb *redis.Client, servers []models.Serv
 	}
 	servers = counted
 	if rdb == nil || len(servers) == 0 {
-		return 0, nil
+		return 0, []ServerPlayers{}, nil
 	}
 	pipe := rdb.Pipeline()
 	cmds := make([]*redis.XMessageSliceCmd, len(servers))
@@ -80,7 +122,7 @@ func PlayersOnline(ctx context.Context, rdb *redis.Client, servers []models.Serv
 	// A missing stream answers an empty list, not an error, so an error here is
 	// Redis itself - and a 0 for it would read as an empty platform.
 	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, fmt.Errorf("read server stats: %w", err)
+		return 0, nil, fmt.Errorf("read server stats: %w", err)
 	}
 	samples := make([]playerSample, 0, len(servers))
 	for i, cmd := range cmds {
@@ -95,8 +137,8 @@ func PlayersOnline(ctx context.Context, rdb *redis.Client, servers []models.Serv
 		// Aged by the entry ID, which Redis stamps from its own clock, rather
 		// than by the payload's `ts`: that one is the NODE's clock, and a
 		// customer's machine with a wrong one would count forever or never.
-		ms, err := strconv.ParseInt(strings.SplitN(msgs[0].ID, "-", 2)[0], 10, 64)
-		if err != nil {
+		at, ok := StatsEntryTime(msgs[0].ID)
+		if !ok {
 			continue
 		}
 		var p struct {
@@ -105,7 +147,17 @@ func PlayersOnline(ctx context.Context, rdb *redis.Client, servers []models.Serv
 		if json.Unmarshal([]byte(data), &p) != nil {
 			continue
 		}
-		samples = append(samples, playerSample{server: servers[i].UUID, at: time.UnixMilli(ms), players: p.Players})
+		samples = append(samples, playerSample{server: servers[i].UUID, at: at, players: p.Players})
 	}
-	return sumLatestPlayers(samples, now), nil
+	latest := latestPlayers(samples, now)
+	total := 0
+	per := make([]ServerPlayers, 0, len(latest))
+	for _, s := range servers {
+		if n, ok := latest[s.UUID]; ok {
+			total += n
+			per = append(per, ServerPlayers{ServerID: s.ID, Name: s.Name, Players: n})
+		}
+	}
+	sort.SliceStable(per, func(a, b int) bool { return per[a].Players > per[b].Players })
+	return total, per, nil
 }

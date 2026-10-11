@@ -579,6 +579,8 @@ type ServerStatRow struct {
 	MemLimit   int64     `json:"memLimit"`
 	Players    int       `json:"players"`
 	MaxPlayers int       `json:"maxPlayers"`
+	// JavaHeapUsed is the post-GC heap in MB; nil when unknown.
+	JavaHeapUsed *int64 `json:"javaHeapUsed"`
 }
 
 // GatewayBandwidthRow is one downsampled bandwidth sample for a gateway

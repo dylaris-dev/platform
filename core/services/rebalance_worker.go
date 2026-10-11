@@ -297,7 +297,7 @@ func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, sr
 		if loads[t.ID] > float64(threshold) {
 			continue
 		}
-		if !nodeHasCapacityFor(w.store, t, heartbeats[t.Token], srv, EffectiveNodePlacement(ctx, w.redis, t.Token)) {
+		if !nodeHasCapacityFor(ctx, w.redis, w.store, t, heartbeats[t.Token], srv, EffectiveNodePlacement(ctx, w.redis, t.Token)) {
 			continue
 		}
 		if best == nil || loads[t.ID] < bestLoad {

@@ -128,15 +128,17 @@ func TestNetPolicyNotice(t *testing.T) {
 		{
 			name: "one server left open", enforced: true, applied: 2, failures: 1, reason: "abc12345: helper exited 1",
 			want: func(s string) bool {
-				return strings.Contains(s, "1 server ") && strings.Contains(s, "reachable from any other server") &&
+				return strings.Contains(s, "1 server could not be given its rules and is reachable from any other server") &&
 					strings.Contains(s, "helper exited 1")
 			},
 			why: "the count, the consequence and the cause; fail-open is only acceptable while it is loud",
 		},
 		{
 			name: "several left open", enforced: true, applied: 0, failures: 4, reason: "x: boom",
-			want: func(s string) bool { return strings.Contains(s, "4 servers ") },
-			why:  "plural, because a sentence that reads wrong reads as a bug in the panel",
+			want: func(s string) bool {
+				return strings.Contains(s, "4 servers could not be given their rules and are reachable")
+			},
+			why: "plural, because a sentence that reads wrong reads as a bug in the panel",
 		},
 		{
 			// Waiting is not failing. Nothing is enforced until Core has
@@ -160,27 +162,72 @@ func TestNetPolicyNotice(t *testing.T) {
 	}
 }
 
-// The counter is written from the reconciler and read from the heartbeat.
-func TestNetPolicyStateKeepsCountAndLastReason(t *testing.T) {
-	var s netPolicyState
-	if a, f, r, unpub := s.snapshot(); a != 0 || f != 0 || r != "" || unpub {
-		t.Fatalf("fresh state = (%d,%d,%q,%v)", a, f, r, unpub)
+// The state is the CURRENT one, rebuilt every reconcile round. It used to be a
+// counter since start-up, so one transient helper timeout kept "1 server could
+// not be given its rules" on the panel forever (eu-node-00, 2026-10).
+func TestNetPolicyStateReflectsTheLatestRound(t *testing.T) {
+	type round struct {
+		applied int
+		failed  map[string]error
 	}
-	s.recordFailure("aaaaaaaa-1111", fmt.Errorf("first"))
-	s.recordFailure("bbbbbbbb-2222", fmt.Errorf("second"))
-	s.recordApplied(5)
-	a, f, r, _ := s.snapshot()
-	if a != 5 || f != 2 {
-		t.Errorf("snapshot = (%d,%d), want (5,2)", a, f)
+	errA, errB := fmt.Errorf("helper timeout"), fmt.Errorf("helper exited 1")
+	tests := []struct {
+		name         string
+		rounds       []round
+		wantApplied  int
+		wantFailures int
+		wantReason   string // substring; "" means the reason must be empty
+	}{
+		{
+			name:         "fail then success clears it",
+			rounds:       []round{{0, map[string]error{"aaaaaaaa-1": errA}}, {1, nil}},
+			wantApplied:  1,
+			wantFailures: 0,
+		},
+		{
+			name:         "a removed server drops out",
+			rounds:       []round{{0, map[string]error{"aaaaaaaa-1": errA, "bbbbbbbb-2": errB}}, {0, map[string]error{"bbbbbbbb-2": errB}}},
+			wantFailures: 1,
+			wantReason:   "bbbbbbbb: helper exited 1",
+		},
+		{
+			name:         "two servers failing count as two, reason is stable",
+			rounds:       []round{{3, map[string]error{"bbbbbbbb-2": errB, "aaaaaaaa-1": errA}}},
+			wantApplied:  3,
+			wantFailures: 2,
+			wantReason:   "aaaaaaaa: helper timeout",
+		},
+		{
+			name:         "a failure repeated across rounds is still one server",
+			rounds:       []round{{1, map[string]error{"aaaaaaaa-1": errA}}, {1, map[string]error{"aaaaaaaa-1": errA}}},
+			wantApplied:  1,
+			wantFailures: 1,
+			wantReason:   "helper timeout",
+		},
+		{
+			name:         "a nil error is not a failure",
+			rounds:       []round{{2, map[string]error{"cccccccc-3": nil}}},
+			wantApplied:  2,
+			wantFailures: 0,
+		},
 	}
-	if !strings.Contains(r, "second") || !strings.Contains(r, "bbbbbbbb") {
-		t.Errorf("reason = %q, want the most recent one with its server", r)
-	}
-	// A nil error is not a failure. A counter that success can increment is a
-	// counter nobody can act on.
-	s.recordFailure("cccc", nil)
-	if _, f2, _, _ := s.snapshot(); f2 != 2 {
-		t.Errorf("a nil error was counted: %d", f2)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var s netPolicyState
+			if a, f, r, unpub := s.snapshot(); a != 0 || f != 0 || r != "" || unpub {
+				t.Fatalf("fresh state = (%d,%d,%q,%v)", a, f, r, unpub)
+			}
+			for _, r := range tt.rounds {
+				s.recordRound(r.applied, r.failed)
+			}
+			a, f, r, _ := s.snapshot()
+			if a != tt.wantApplied || f != tt.wantFailures {
+				t.Errorf("snapshot = (%d,%d), want (%d,%d)", a, f, tt.wantApplied, tt.wantFailures)
+			}
+			if (tt.wantReason == "" && r != "") || !strings.Contains(r, tt.wantReason) {
+				t.Errorf("reason = %q, want %q", r, tt.wantReason)
+			}
+		})
 	}
 }
 

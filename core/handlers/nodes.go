@@ -112,6 +112,51 @@ func (h *NodeHandler) requireOrphan(w http.ResponseWriter, uuid string) bool {
 func isExternalPlatformNode(n models.Node) bool { return n.Kind() == models.NodeKindExternal }
 func isBYONNode(n models.Node) bool             { return n.Kind() == models.NodeKindBYON }
 
+// setNodesLinkOnline fills LinkOnline: is the Link that carries each node's
+// players actually connected? The heartbeat's linkCount says how many Link
+// containers the node sees on its own host, which stays 1 while that Link
+// reaches no edge and nobody can join. This asks the Link itself, through the
+// key it refreshes, about the token this node's ROUTES use - the Hub-named one
+// where there is one, so a machine served by a self-enrolled Link is not
+// reported as dead. Shared by /api/nodes and the infrastructure overview.
+//
+// Only where the answer can be trusted: a machine whose Link the Hub has
+// named, and a customer's machine, whose Link boots with the token Core
+// derives (link-boot hands it out). An in-cluster machine served by a
+// self-enrolled Link runs under a Hub-GENERATED token, so asking about the
+// derived one would report it as not connected for as long as the learner
+// has no answer - a red badge on a machine that is serving players.
+func setNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Node) {
+	if len(nodes) == 0 {
+		return
+	}
+	askFor := func(n *models.Node) string {
+		if n.LinkToken == "" && !isBYONNode(*n) {
+			return ""
+		}
+		return services.EffectiveLinkToken(n, state.ClusterSecret)
+	}
+	tokens := make([]string, 0, len(nodes))
+	for i := range nodes {
+		if t := askFor(&nodes[i]); t != "" {
+			tokens = append(tokens, t)
+		}
+	}
+	online := services.LinkOnline(ctx, state.Redis, tokens)
+	if online == nil {
+		return
+	}
+	for i := range nodes {
+		t := askFor(&nodes[i])
+		if t == "" {
+			continue
+		}
+		if v, ok := online[t]; ok {
+			nodes[i].LinkOnline = &v
+		}
+	}
+}
+
 // ownedBYONNode is the "Your machines" predicate: a BYON node belonging to this
 // caller. An empty caller matches nothing, so a request that arrived without an
 // identity gets an empty list rather than the fleet.
@@ -256,47 +301,9 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	// already drifted.
 	services.EnrichNodesWithLiveStats(r.Context(), h.state.Store, h.state.Redis, nodes)
 
-	// Is the Link that carries this node's players actually connected? The
-	// heartbeat's linkCount says how many Link containers the node sees on its
-	// own host, which stays 1 while that Link reaches no edge and nobody can
-	// join. This asks the Link itself, through the key it refreshes, about the
-	// token this node's ROUTES use - the Hub-named one where there is one, so a
-	// machine served by a self-enrolled Link is not reported as dead.
-	//
 	// One round trip for the whole list, after the scope filter, so it covers
 	// exactly the rows being returned.
-	//
-	// Only where the answer can be trusted: a machine whose Link the Hub has
-	// named, and a customer's machine, whose Link boots with the token Core
-	// derives (link-boot hands it out). An in-cluster machine served by a
-	// self-enrolled Link runs under a Hub-GENERATED token, so asking about the
-	// derived one would report it as not connected for as long as the learner
-	// has no answer - a red badge on a machine that is serving players.
-	if len(nodes) > 0 {
-		askFor := func(n *models.Node) string {
-			if n.LinkToken == "" && !isBYONNode(*n) {
-				return ""
-			}
-			return services.EffectiveLinkToken(n, h.state.ClusterSecret)
-		}
-		tokens := make([]string, 0, len(nodes))
-		for i := range nodes {
-			if t := askFor(&nodes[i]); t != "" {
-				tokens = append(tokens, t)
-			}
-		}
-		if online := services.LinkOnline(r.Context(), h.state.Redis, tokens); online != nil {
-			for i := range nodes {
-				t := askFor(&nodes[i])
-				if t == "" {
-					continue
-				}
-				if v, ok := online[t]; ok {
-					nodes[i].LinkOnline = &v
-				}
-			}
-		}
-	}
+	setNodesLinkOnline(r.Context(), h.state, nodes)
 
 	// Derive the unusable flag at response time (no DB column needed): an
 	// external/home node only routes via gateway+beam, so while the platform
@@ -680,6 +687,7 @@ func (h *NodeHandler) storageCapacity(r *http.Request, node *models.Node) []serv
 	return services.PathStatuses(
 		hb.Storage,
 		services.CommittedBytesByPath(hb.Storage, limits),
+		services.UnwrittenBytesByPath(hb.Storage, limits, services.LoadServerDiskUsage(r.Context(), h.state.Redis, hb.Storage)),
 		services.DiskHeadroomGB(h.state.Store),
 		warn, critical,
 	)

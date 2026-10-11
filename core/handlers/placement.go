@@ -303,7 +303,7 @@ func (h *PlacementHandler) scoreNode(ctx context.Context, n *models.Node, req Pi
 		res := services.CheckDiskCapacity(services.DiskCapacityRequest{
 			Storage:    hb.Storage,
 			Placement:  services.EffectiveNodePlacement(ctx, h.state.Redis, n.Token),
-			Committed:  services.CommittedBytesByPath(hb.Storage, limits),
+			Unwritten:  services.UnwrittenBytesByPath(hb.Storage, limits, services.LoadServerDiskUsage(ctx, h.state.Redis, hb.Storage)),
 			HeadroomGB: services.DiskHeadroomGB(h.state.Store),
 			WantMB:     int64(req.DiskGB) * 1024,
 		})

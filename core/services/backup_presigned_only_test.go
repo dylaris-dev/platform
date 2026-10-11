@@ -58,6 +58,14 @@ func (f *transferFakeStore) SetBackupJobScheduled(int, time.Time, time.Time) err
 	return nil
 }
 
+func (f *transferFakeStore) SetBackupJobSkipped(_ int, _ time.Time, reason string, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.skipped++
+	f.skipReason = reason
+	return nil
+}
+
 func (f *transferFakeStore) StartBackupRunIfIdle(r *models.BackupRun) (int, bool, error) {
 	if f.busy {
 		return 0, false, nil

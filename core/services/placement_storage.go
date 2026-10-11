@@ -146,12 +146,77 @@ func CommittedBytesByPath(storage []HeartbeatStoragePath, limitMB map[string]int
 	return out
 }
 
+// UnwrittenBytesByPath sums, per storage path, what the servers there may still
+// write: max(0, limit - measured usage) per server.
+//
+// It is per SERVER on purpose. The path's UsedBytes is the whole filesystem -
+// the OS, Docker images, anything else on the disk - so subtracting it from the
+// promises (the old formula) clamped to zero on any shared disk and reported the
+// full free space as promisable.
+//
+// usedBytes is uuid -> the node's measured usage. A server with no measurement
+// counts as having written nothing, so its whole limit stays reserved: an
+// unknown must never make more room appear.
+func UnwrittenBytesByPath(storage []HeartbeatStoragePath, limitMB, usedBytes map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(storage))
+	for _, sp := range storage {
+		var sum int64
+		for _, uuid := range sp.ServerUUIDs {
+			if mb := limitMB[uuid]; mb > 0 {
+				if left := mb*1024*1024 - usedBytes[uuid]; left > 0 {
+					sum += left
+				}
+			}
+		}
+		out[sp.Path] = sum
+	}
+	return out
+}
+
+// LoadServerDiskUsage reads the node's per-server disk gauge
+// (dylaris:server:<uuid>:stats:disk, JSON {"total": bytes}) for every server on
+// the given paths. Missing or unreadable entries are simply absent, which
+// UnwrittenBytesByPath treats as "nothing written yet".
+func LoadServerDiskUsage(ctx context.Context, rdb *redis.Client, storage []HeartbeatStoragePath) map[string]int64 {
+	out := map[string]int64{}
+	if rdb == nil {
+		return out
+	}
+	var uuids, keys []string
+	for _, sp := range storage {
+		for _, uuid := range sp.ServerUUIDs {
+			uuids = append(uuids, uuid)
+			keys = append(keys, "dylaris:server:"+uuid+":stats:disk")
+		}
+	}
+	if len(keys) == 0 {
+		return out
+	}
+	vals, err := rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return out
+	}
+	for i, v := range vals {
+		raw, ok := v.(string)
+		if !ok {
+			continue
+		}
+		var gauge struct {
+			Total int64 `json:"total"`
+		}
+		if json.Unmarshal([]byte(raw), &gauge) == nil && gauge.Total > 0 {
+			out[uuids[i]] = gauge.Total
+		}
+	}
+	return out
+}
+
 // DiskCapacityRequest is one placement decision's inputs. Grouped into a struct
 // because the parameters are easy to swap and the units differ.
 type DiskCapacityRequest struct {
 	Storage    []HeartbeatStoragePath
 	Placement  NodePlacement
-	Committed  map[string]int64 // path -> bytes already promised, from CommittedBytesByPath
+	Unwritten  map[string]int64 // path -> bytes promised but not yet written, from UnwrittenBytesByPath
 	HeadroomGB int64            // free space the path must retain
 	WantMB     int64            // the new server's disk limit, in MEGABYTES
 }
@@ -171,8 +236,8 @@ type DiskCapacityResult struct {
 // CheckDiskCapacity decides whether a new server fits on the path the node would
 // actually choose.
 //
-//	unwritten = max(0, committed - used)      promises still to be honoured
-//	available = free - unwritten - headroom   what a NEW promise may consume
+//	unwritten = sum per server of max(0, limit - its usage)   promises still to be honoured
+//	available = free - unwritten - headroom                   what a NEW promise may consume
 //
 // A node reporting no storage at all (offline, or a heartbeat without the field)
 // is Undetermined and treated as fitting: refusing every placement because a
@@ -190,17 +255,7 @@ func CheckDiskCapacity(req DiskCapacityRequest) DiskCapacityResult {
 		return res
 	}
 
-	var usedBytes int64
-	for _, sp := range req.Storage {
-		if sp.Path == path {
-			usedBytes = sp.UsedBytes
-			break
-		}
-	}
-	unwritten := req.Committed[path] - usedBytes
-	if unwritten < 0 {
-		unwritten = 0
-	}
+	unwritten := req.Unwritten[path]
 
 	headroomBytes := headroomGB * gibiByte
 	available := freeBytes - unwritten - headroomBytes
@@ -308,13 +363,10 @@ type DiskPathStatus struct {
 // over total. Reporting current usage would say a path is 10% full right up to
 // the moment twenty servers grow into their limits at once, which is exactly the
 // surprise this is meant to remove.
-func PathStatuses(storage []HeartbeatStoragePath, committed map[string]int64, headroomGB int64, warnPct, critPct int) []DiskPathStatus {
+func PathStatuses(storage []HeartbeatStoragePath, committed, unwrittenByPath map[string]int64, headroomGB int64, warnPct, critPct int) []DiskPathStatus {
 	out := make([]DiskPathStatus, 0, len(storage))
 	for _, sp := range storage {
-		unwritten := committed[sp.Path] - sp.UsedBytes
-		if unwritten < 0 {
-			unwritten = 0
-		}
+		unwritten := unwrittenByPath[sp.Path]
 		available := sp.FreeBytes - unwritten - headroomGB*gibiByte
 
 		st := DiskPathStatus{

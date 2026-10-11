@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -373,21 +374,25 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		}
 	}()
 
-	getCPULimit := func() float64 {
+	// Re-read on every ping tick: CPU and cpuset change on the LIVE container
+	// (ContainerUpdate, no restart), and a divisor read once at start doubled
+	// the shown CPU % after a 4 -> 8 core change.
+	var cpuLimit, cpuDiv float64
+	refreshCPULimit := func() {
 		info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
-		if err != nil {
-			return 0
+		if err != nil || info.HostConfig == nil {
+			return // keep the last good values
 		}
+		cpuLimit = 0
 		if info.HostConfig.NanoCPUs > 0 {
-			return float64(info.HostConfig.NanoCPUs) / 1e9
+			cpuLimit = float64(info.HostConfig.NanoCPUs) / 1e9
 		}
-		return 0
+		cpuDiv = cpuDivisor(info.HostConfig.NanoCPUs, info.HostConfig.CpusetCpus, runtime.NumCPU())
+		snap.mu.Lock()
+		snap.cpuLimit = cpuLimit
+		snap.mu.Unlock()
 	}
-
-	cpuLimit := getCPULimit()
-	snap.mu.Lock()
-	snap.cpuLimit = cpuLimit
-	snap.mu.Unlock()
+	refreshCPULimit()
 
 	var prevCPU *PrevCPUStats
 	var memGuardState memGuard
@@ -402,10 +407,10 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		ping := lastPing
 		pingMu.Unlock()
 
-		// Scale CPU% relative to allocated cores (100% = fully using allocated CPU)
+		// Scale CPU% relative to the cores it may use (100% = all of them busy)
 		cpuPct := stats.CPUPercent
-		if cpuLimit > 0 {
-			cpuPct = cpuPct / cpuLimit
+		if cpuDiv > 0 {
+			cpuPct = cpuPct / cpuDiv
 		}
 
 		payload := StatsPayload{
@@ -473,6 +478,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		case <-liveTicker.C:
 			collectAndPublish()
 		case <-pingTicker.C:
+			refreshCPULimit()
 			go func() {
 				resp, err := pingOnce()
 				pingMu.Lock()
@@ -793,4 +799,20 @@ func nextPingState(last *SLPResponse, fails int, resp *SLPResponse, err error) (
 		return nil, fails
 	}
 	return last, fails
+}
+
+// cpuDivisor is how many cores a container may actually use, which is what
+// its CPU % is divided by so the panel's 0-100 axis means "all of them busy".
+// The tighter of the CPU quota and the cpuset wins; with neither, the host's
+// cores. Docker reports usage as a percentage of ONE core, so dividing by 0
+// would leave an unlimited server showing 800% on an 8-core host.
+func cpuDivisor(nanoCPUs int64, cpuset string, hostCores int) float64 {
+	avail := float64(hostCores)
+	if n := len(parseCPUList(cpuset)); n > 0 {
+		avail = float64(n)
+	}
+	if q := float64(nanoCPUs) / 1e9; q > 0 && (avail <= 0 || q < avail) {
+		return q
+	}
+	return avail
 }

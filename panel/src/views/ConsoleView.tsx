@@ -318,7 +318,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
             <span className="mono-label">CPU</span>
             <span className="text-sm font-semibold font-mono text-(--base-09)">{liveStats.cpu.toFixed(1)}%</span>
             <div className="w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
-              <div className="h-full bg-(--primary) rounded-full transition-all duration-500" style={{ width: `${Math.min(100, liveStats.cpuLimit > 0 ? (liveStats.cpu / (liveStats.cpuLimit * 100)) * 100 : liveStats.cpu)}%` }} />
+              <div className="h-full bg-(--primary) rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.max(0, liveStats.cpu))}%` }} />
             </div>
           </div>
           <div className="flex items-center gap-2">

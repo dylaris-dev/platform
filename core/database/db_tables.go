@@ -362,10 +362,16 @@ func createServerStatsTable(db *sql.DB, useTimescale bool) error {
 		mem_used BIGINT,
 		mem_limit BIGINT,
 		players INT,
-		max_players INT
+		max_players INT,
+		java_heap_used BIGINT
 	)`
 	if _, err := db.Exec(query); err != nil {
 		return err
+	}
+	// Post-GC Java heap in MB, NULL when the node had none (no GC seen yet, or
+	// a node too old to send it). Nullable so an unknown never reads as 0.
+	if _, err := db.Exec(`ALTER TABLE server_stats ADD COLUMN IF NOT EXISTS java_heap_used BIGINT`); err != nil {
+		log.Printf("db: [warn] could not add server_stats.java_heap_used: %v", err)
 	}
 
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_server_stats_uuid_time ON server_stats (server_uuid, time DESC)`)

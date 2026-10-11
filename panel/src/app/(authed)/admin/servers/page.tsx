@@ -8,19 +8,11 @@ import { AssignOwnerModal } from '@/components/admin/AssignOwnerModal';
 import RegionBadge from '@/components/RegionBadge';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonTable } from '@/components/Skeleton';
+import { formatMB } from '@/lib/format';
 
-function formatBytesMB(mb: number | undefined): string {
-    if (!mb || mb <= 0) return '—';
-    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-    return `${mb} MB`;
-}
-
-function formatDiskGB(bytes: number | undefined): string {
-    if (!bytes || bytes <= 0) return '—';
-    const gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return `${gb.toFixed(1)} GB`;
-    const mb = bytes / (1024 * 1024);
-    return `${mb.toFixed(0)} MB`;
+// memory and diskLimit both arrive in MB.
+function formatLimitMB(mb: number | undefined): string {
+    return mb && mb > 0 ? formatMB(mb) : '—';
 }
 
 function formatRelativeDate(iso: string | undefined): string {
@@ -298,8 +290,8 @@ export default function AdminServersPage() {
                                     </td>
                                     <td className="py-2.5 pr-4 hidden lg:table-cell">
                                         <div className="text-xs text-(--base-07) tabular-nums leading-tight">
-                                            <div>{formatBytesMB(s.memory)}</div>
-                                            <div className="text-(--base-05)">{formatDiskGB(s.diskLimit)}</div>
+                                            <div>{formatLimitMB(s.memory)}</div>
+                                            <div className="text-(--base-05)">{formatLimitMB(s.diskLimit)}</div>
                                         </div>
                                     </td>
                                     <td className="py-2.5 pr-4">

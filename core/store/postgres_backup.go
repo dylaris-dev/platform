@@ -292,12 +292,13 @@ func (s *PostgresStore) scanJob(row interface{ Scan(...interface{}) error }) (*m
 	var j models.BackupJob
 	var subServer sql.NullString
 	var storageID sql.NullInt64
-	var lastRun, nextRun sql.NullTime
+	var lastRun, nextRun, lastSkip sql.NullTime
 	var includes, excludes pq.StringArray
 	err := row.Scan(
 		&j.ID, &j.ServerID, &subServer, &j.Name, &j.Schedule,
 		&includes, &excludes, &j.RetentionCount,
 		&storageID, &j.Enabled, &lastRun, &nextRun, &j.CreatedAt,
+		&lastSkip, &j.LastSkipReason,
 	)
 	if err != nil {
 		return nil, err
@@ -318,12 +319,16 @@ func (s *PostgresStore) scanJob(row interface{ Scan(...interface{}) error }) (*m
 		t := nextRun.Time
 		j.NextRunAt = &t
 	}
+	if lastSkip.Valid {
+		t := lastSkip.Time
+		j.LastSkipAt = &t
+	}
 	j.IncludePatterns = []string(includes)
 	j.ExcludePatterns = []string(excludes)
 	return &j, nil
 }
 
-const backupJobCols = `id, server_id, sub_server, name, schedule, include_patterns, exclude_patterns, retention_count, storage_id, enabled, last_run_at, next_run_at, created_at`
+const backupJobCols = `id, server_id, sub_server, name, schedule, include_patterns, exclude_patterns, retention_count, storage_id, enabled, last_run_at, next_run_at, created_at, last_skip_at, last_skip_reason`
 
 func (s *PostgresStore) ListBackupJobs(serverID int) ([]models.BackupJob, error) {
 	rows, err := s.db.Query(`SELECT `+backupJobCols+` FROM backup_jobs WHERE server_id = $1 ORDER BY id`, serverID)
@@ -403,6 +408,42 @@ func (s *PostgresStore) ListDueBackupJobs(now time.Time) ([]models.BackupJob, er
 
 func (s *PostgresStore) SetBackupJobScheduled(jobID int, lastRun, nextRun time.Time) error {
 	_, err := s.db.Exec(`UPDATE backup_jobs SET last_run_at = $1, next_run_at = $2 WHERE id = $3`, lastRun, nextRun, jobID)
+	return err
+}
+
+// BackupJobKept is what a job currently keeps: its successful runs, the ones
+// retention counts.
+type BackupJobKept struct {
+	Runs  int   `json:"keptRuns"`
+	Bytes int64 `json:"keptBytes"`
+}
+
+// BackupKeptByJob returns, per job of the server, the kept runs and their size.
+// A job with no successful run is absent.
+func (s *PostgresStore) BackupKeptByJob(serverID int) (map[int]BackupJobKept, error) {
+	rows, err := s.db.Query(
+		`SELECT br.job_id, COUNT(*), COALESCE(SUM(br.size_bytes), 0)
+		 FROM backup_runs br JOIN backup_jobs bj ON bj.id = br.job_id
+		 WHERE bj.server_id = $1 AND br.status = 'success'
+		 GROUP BY br.job_id`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]BackupJobKept{}
+	for rows.Next() {
+		var id int
+		var k BackupJobKept
+		if err := rows.Scan(&id, &k.Runs, &k.Bytes); err != nil {
+			return nil, err
+		}
+		out[id] = k
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) SetBackupJobSkipped(jobID int, at time.Time, reason string, nextRun time.Time) error {
+	_, err := s.db.Exec(`UPDATE backup_jobs SET last_skip_at = $1, last_skip_reason = $2, next_run_at = $3 WHERE id = $4`, at, reason, nextRun, jobID)
 	return err
 }
 

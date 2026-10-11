@@ -94,3 +94,42 @@ func TestPlayersOnlineReadsNewestEntryPerServer(t *testing.T) {
 		t.Error("an unreachable Redis must be an error, not 0 players")
 	}
 }
+
+// The breakdown names the servers the total is made of: fresh, non-proxy,
+// players > 0, the newest sample each, most players first.
+func TestPlayersOnlineByServerBreakdown(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+	now := time.Now()
+	add := func(uuid string, at time.Time, players int) {
+		t.Helper()
+		if err := rdb.XAdd(ctx, &redis.XAddArgs{
+			Stream: fmt.Sprintf("dylaris:server:%s:stats:buffer", uuid),
+			ID:     fmt.Sprintf("%d-0", at.UnixMilli()),
+			Values: map[string]interface{}{"data": fmt.Sprintf(`{"players":%d}`, players)},
+		}).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("a", now.Add(-20*time.Second), 8)
+	add("a", now.Add(-2*time.Second), 3)
+	add("b", now.Add(-time.Second), 5)
+	add("empty", now.Add(-time.Second), 0)
+	add("stopped", now.Add(-10*time.Minute), 40)
+	add("proxy", now.Add(-time.Second), 8)
+
+	servers := []models.Server{
+		{ID: 1, UUID: "a", Name: "Lobby"}, {ID: 2, UUID: "b", Name: "Survival"},
+		{ID: 3, UUID: "empty", Name: "Empty"}, {ID: 4, UUID: "stopped", Name: "Old"},
+		{ID: 5, UUID: "proxy", Name: "Proxy", ServerType: "proxy"},
+	}
+	total, per, err := PlayersOnlineByServer(ctx, rdb, servers, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ServerPlayers{{ServerID: 2, Name: "Survival", Players: 5}, {ServerID: 1, Name: "Lobby", Players: 3}}
+	if total != 8 || fmt.Sprint(per) != fmt.Sprint(want) {
+		t.Errorf("got total %d, servers %+v; want 8, %+v", total, per, want)
+	}
+}

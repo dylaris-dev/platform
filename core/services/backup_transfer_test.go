@@ -53,7 +53,10 @@ type transferFakeStore struct {
 	// busyOther says the run in progress belongs to another job of the server.
 	busyOther bool
 	advanced  int
-	touches   int
+	// skipped counts SetBackupJobSkipped calls, skipReason holds the last one.
+	skipped    int
+	skipReason string
+	touches    int
 }
 
 func newTransferFakeStore() *transferFakeStore {

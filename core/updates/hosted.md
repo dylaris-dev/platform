@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.3
+
+### Features
+- **Backups show every kept run** with count, total size, last and next run, and say when a scheduled run
+  was skipped and why.
+- **Your server's memory chart shows container memory and Java heap together**, live and in history.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A stopped server no longer shows old live values**, and CPU % stays right after a live CPU change.
+  BYON nodes pick up the CPU part with their next update.
+- **The network-policy warning clears once the rules apply again** instead of staying after one failure.
+
 ## 2026.10.11
 
 ### Features

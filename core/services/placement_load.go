@@ -1,10 +1,13 @@
 package services
 
 import (
+	"context"
 	"strings"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // This file holds the node load/capacity math shared by the placement handler
@@ -49,7 +52,7 @@ func nodeLoadPercent(allocRAMMB int64, allocCPU float64, totalRAMMB int64, total
 // RAM and CPU request under its overcommit ratios, and enough free disk. Mirrors
 // the Available checks in handlers.scoreNode so a rebalance move never lands on
 // a node the scheduler would have rejected.
-func nodeHasCapacityFor(s store.Store, n *models.Node, hb *NodeHeartbeat, srv *models.Server, placement NodePlacement) bool {
+func nodeHasCapacityFor(ctx context.Context, rdb *redis.Client, s store.Store, n *models.Node, hb *NodeHeartbeat, srv *models.Server, placement NodePlacement) bool {
 	allocRAM, allocCPU, err := s.SumAllocatedByNode(n.ID)
 	if err != nil {
 		return false
@@ -88,7 +91,7 @@ func nodeHasCapacityFor(s store.Store, n *models.Node, hb *NodeHeartbeat, srv *m
 		res := CheckDiskCapacity(DiskCapacityRequest{
 			Storage:    hb.Storage,
 			Placement:  placement,
-			Committed:  CommittedBytesByPath(hb.Storage, limits),
+			Unwritten:  UnwrittenBytesByPath(hb.Storage, limits, LoadServerDiskUsage(ctx, rdb, hb.Storage)),
 			HeadroomGB: DiskHeadroomGB(s),
 			WantMB:     srv.DiskLimit,
 		})

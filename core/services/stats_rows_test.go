@@ -1,6 +1,9 @@
 package services
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // A node's batch named any UUID it liked, as many times as it liked, and every
 // one became a history row - a BYON customer's machine could write another
@@ -17,5 +20,21 @@ func TestStatsRowsKeepOnlyTheNodesOwnServersOnce(t *testing.T) {
 	}
 	if rows := statsRows(batch, nil); len(rows) != 0 {
 		t.Fatalf("rows with no known servers = %+v, want none", rows)
+	}
+}
+
+// The node sends javaHeapUsed in every batch item; it was dropped. 0 means the
+// node has seen no GC yet and must be stored as unknown, not as an empty heap.
+func TestStatsRowsCarryJavaHeap(t *testing.T) {
+	var batch statsBatchPayload
+	if err := json.Unmarshal([]byte(`{"ts":1,"stats":[{"uuid":"a","javaHeapUsed":1536},{"uuid":"b","javaHeapUsed":0}]}`), &batch); err != nil {
+		t.Fatal(err)
+	}
+	rows := statsRows(batch, map[string]bool{"a": true, "b": true})
+	if len(rows) != 2 || rows[0].JavaHeapUsed == nil || *rows[0].JavaHeapUsed != 1536 {
+		t.Fatalf("rows = %+v, want a with heap 1536", rows)
+	}
+	if rows[1].JavaHeapUsed != nil {
+		t.Errorf("b heap = %d, want nil for an unknown heap", *rows[1].JavaHeapUsed)
 	}
 }
