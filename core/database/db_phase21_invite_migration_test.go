@@ -36,6 +36,8 @@ func TestMapLegacyInviteCaps_PerBool(t *testing.T) {
 		{"overview", models.TabPermissions{Overview: true}, []string{"overview.read"}},
 		{"members", models.TabPermissions{Members: true}, []string{"members.read", "members.write", "members.delete"}},
 		{"setup", models.TabPermissions{Setup: true}, []string{"server.settings.write"}},
+		{"players", models.TabPermissions{Players: true}, []string{"players.read", "players.manage"}},
+		{"backups", models.TabPermissions{Backups: true}, []string{"backups.read", "backups.create", "backups.delete", "backups.restore"}},
 		{"inherit-only maps to no caps", models.TabPermissions{Inherit: true}, []string{}},
 		{"all false maps to no caps", models.TabPermissions{}, []string{}},
 	}
@@ -46,8 +48,8 @@ func TestMapLegacyInviteCaps_PerBool(t *testing.T) {
 				t.Fatalf("mapLegacyInviteCaps = %v, want %v", got, tc.want)
 			}
 			for _, c := range got {
-				if strings.HasPrefix(c, "backups.") {
-					t.Errorf("migration must never grant a backups cap, got %q", c)
+				if !tc.perm.Backups && strings.HasPrefix(c, "backups.") {
+					t.Errorf("only the backups key may grant a backups cap, got %q", c)
 				}
 				cap, ok := authz.Get(c)
 				if !ok {
@@ -62,7 +64,7 @@ func TestMapLegacyInviteCaps_PerBool(t *testing.T) {
 
 // TestMapLegacyInviteCaps_FullBlob checks a fully-granted legacy invite maps to
 // the union of all bit sets (order preserved, no duplicates), and never leaks a
-// backups cap.
+// backups cap: a pre-migration blob had no players or backups bit.
 func TestMapLegacyInviteCaps_FullBlob(t *testing.T) {
 	full := models.TabPermissions{
 		Console: true, Files: true, Config: true, Setup: true, Overview: true,

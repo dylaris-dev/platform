@@ -122,6 +122,9 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Failed to create server role (the name may already be in use)", 409)
 		return
 	}
+	LogIdentityAudit(h.state, r, AuditEventServerRoleCreated, owner, "", map[string]interface{}{
+		"role_id": id, "name": req.Name, "capabilities": normalizeCaps(req.Capabilities),
+	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: normalizeCaps(req.Capabilities)},
@@ -164,10 +167,18 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, err.Error(), 400)
 		return
 	}
+	// Read first, for the audit row only: the update is what decides ownership.
+	before, _ := h.state.Store.GetServerRole(id)
 	if err := h.state.Store.UpdateServerRole(id, owner, req.Name, req.Capabilities); err != nil {
 		sendJSONError(w, "Server role not found", 404)
 		return
 	}
+	meta := map[string]interface{}{"role_id": id, "name": req.Name, "capabilities": normalizeCaps(req.Capabilities)}
+	if before != nil && before.OwnerUserID == owner {
+		meta["previous_name"] = before.Name
+		meta["previous_capabilities"] = normalizeCaps(before.Capabilities)
+	}
+	LogIdentityAudit(h.state, r, AuditEventServerRoleUpdated, owner, "", meta)
 	// A role's capabilities are every holder's: changing them changes who may
 	// reach the files of every server in this realm.
 	stampBeamAccessForOwner(r.Context(), h.state, owner)
@@ -201,10 +212,18 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 		sendJSONError(w, "Invalid role ID", 400)
 		return
 	}
+	// Read first, for the audit row only: the delete is what decides ownership.
+	before, _ := h.state.Store.GetServerRole(id)
 	if err := h.state.Store.DeleteServerRole(id, owner); err != nil {
 		sendJSONError(w, "Server role not found", 404)
 		return
 	}
+	meta := map[string]interface{}{"role_id": id}
+	if before != nil && before.OwnerUserID == owner {
+		meta["name"] = before.Name
+		meta["capabilities"] = normalizeCaps(before.Capabilities)
+	}
+	LogIdentityAudit(h.state, r, AuditEventServerRoleDeleted, owner, "", meta)
 	stampBeamAccessForOwner(r.Context(), h.state, owner)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

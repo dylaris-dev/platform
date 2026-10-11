@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 )
 
@@ -27,6 +28,12 @@ type panelRolesFakeStore struct {
 	updateCalls int
 	deleteCalls int
 	assignments []store.PanelAssignment
+	audits      []*models.AuditEventIdentity
+}
+
+func (f *panelRolesFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error {
+	f.audits = append(f.audits, ev)
+	return nil
 }
 
 func (f *panelRolesFakeStore) ListPanelRoles() ([]store.PanelRole, error) { return f.roles, nil }
@@ -272,5 +279,30 @@ func TestPanelRoles_ListAssignmentsEmptyIsAList(t *testing.T) {
 	}
 	if raw.Assignments == nil {
 		t.Fatalf("assignments encoded as null, want []: %s", rec.Body.String())
+	}
+}
+
+// Staff role definitions are audited with the definition before and after.
+func TestPanelRoles_CrudIsAudited(t *testing.T) {
+	fs := &panelRolesFakeStore{createID: 5,
+		getRole: &store.PanelRole{ID: 5, Name: "Support", Capabilities: []string{"users.read"}}}
+	h := NewPanelRolesHandler(&AppState{Store: fs})
+	body := map[string]interface{}{"name": "Support2", "capabilities": []string{"users.read"}}
+	vars := map[string]string{"id": "5"}
+	h.CreatePanelRole(httptest.NewRecorder(), panelRoleReq("POST", "/api/admin/panel-roles", nil, true, body))
+	h.UpdatePanelRole(httptest.NewRecorder(), panelRoleReq("PATCH", "/api/admin/panel-roles/5", vars, true, body))
+	h.DeletePanelRole(httptest.NewRecorder(), panelRoleReq("DELETE", "/api/admin/panel-roles/5", vars, true, nil))
+
+	want := []string{AuditEventPanelRoleCreated, AuditEventPanelRoleUpdated, AuditEventPanelRoleDeleted}
+	if len(fs.audits) != len(want) {
+		t.Fatalf("got %d audit rows, want %d", len(fs.audits), len(want))
+	}
+	for i, ev := range fs.audits {
+		if ev.EventType != want[i] || ev.ActorUserID == nil {
+			t.Errorf("row %d = %s by %v, want %s with an actor", i, ev.EventType, ev.ActorUserID, want[i])
+		}
+	}
+	if fs.audits[1].Metadata["previous_name"] != "Support" || fs.audits[2].Metadata["name"] != "Support" {
+		t.Errorf("update/delete rows lost the previous definition: %v / %v", fs.audits[1].Metadata, fs.audits[2].Metadata)
 	}
 }

@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Creating, editing and deleting staff and server roles is now in the identity log**, with the role's
+  capabilities before and after. Assigning a role was logged already, changing what it grants was not. `core` `panel`
+
+### Fixes
+- **The "players" and "backups" keys of the server members API now grant those tabs in full**, backups
+  including delete and restore. They used to grant nothing; only a holder of the full set may hand them on. `core`
+
 ## 2026.10.11.4
 
 ### Features

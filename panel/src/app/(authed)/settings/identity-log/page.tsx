@@ -52,6 +52,14 @@ const LABELS: Record<string, string> = {
     email_verified: 'Address verified',
     password_reset_requested: 'Password reset requested',
     account_grant_assigned: 'Account-wide access granted',
+    account_grant_revoked: 'Account-wide access revoked',
+    user_panel_role_changed: 'Staff role changed',
+    panel_role_created: 'Staff role created',
+    panel_role_updated: 'Staff role edited',
+    panel_role_deleted: 'Staff role deleted',
+    server_role_created: 'Server role created',
+    server_role_updated: 'Server role edited',
+    server_role_deleted: 'Server role deleted',
     maintenance_toggled: 'Maintenance mode changed',
     // Moving the platform's own data. All five of these used to arrive as
     // maintenance_toggled, so this page said "Maintenance mode changed" for

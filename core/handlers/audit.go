@@ -64,6 +64,14 @@ const (
 	AuditEventUserRoleChanged        = "user_role_changed"
 	AuditEventUserPermissionsChanged = "user_permissions_changed"
 	AuditEventUserPanelRoleChanged   = "user_panel_role_changed"
+	// A role's capabilities are every holder's, so editing one changes access
+	// for all of them at once; assigning it was audited, defining it was not.
+	AuditEventPanelRoleCreated  = "panel_role_created"
+	AuditEventPanelRoleUpdated  = "panel_role_updated"
+	AuditEventPanelRoleDeleted  = "panel_role_deleted"
+	AuditEventServerRoleCreated = "server_role_created"
+	AuditEventServerRoleUpdated = "server_role_updated"
+	AuditEventServerRoleDeleted = "server_role_deleted"
 	// Actions an operator takes on an account that left no record before: an
 	// admin setting someone's password is taking the account over, creating
 	// one can create an admin, and a billing change can stop every server the

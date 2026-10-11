@@ -206,3 +206,31 @@ func TestAFailedLookupDeniesInsteadOfPassingThrough(t *testing.T) {
 		t.Errorf("the keys themselves were dropped: %v", got)
 	}
 }
+
+// players and backups grant real capabilities, so a member may only hand them
+// on when they hold every capability the key confers. They used to fall through
+// to "an unrecognised key confers nothing", which was true only while they did.
+func TestPlayersAndBackupsAreCappedToWhatTheCallerHolds(t *testing.T) {
+	sid := capServer
+	fs := &capFakeStore{
+		server: &models.Server{ID: capServer, OwnerID: capOwner},
+		serverGrant: &store.ServerGrant{
+			ServerID: &sid,
+			UserID:   capFriend,
+			// players in full, backups only to look at.
+			CapOverrides: store.CapOverrides{Grant: append(
+				store.MapLegacyInviteCaps(models.TabPermissions{Players: true, Members: true}), "backups.read")},
+		},
+	}
+	h := capHandler(fs)
+
+	got := h.capPermissions(capRequest(capFriend, false), capServer, map[string]bool{
+		"players": true, "backups": true,
+	})
+	if !got["players"] {
+		t.Error("players was capped away from a caller who holds it")
+	}
+	if got["backups"] {
+		t.Error("backups was delegated by a caller who cannot delete or restore")
+	}
+}

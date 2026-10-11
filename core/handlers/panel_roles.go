@@ -167,6 +167,9 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Failed to create panel role (the name may already be in use)", 409)
 		return
 	}
+	LogIdentityAudit(h.state, r, AuditEventPanelRoleCreated, actorID, "", map[string]interface{}{
+		"role_id": id, "name": req.Name, "capabilities": normalizeCaps(req.Capabilities),
+	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"role":    panelRoleView{ID: id, Name: req.Name, Capabilities: normalizeCaps(req.Capabilities), IsSystem: false},
@@ -210,6 +213,11 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Failed to update panel role", 500)
 		return
 	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventPanelRoleUpdated, actorID, "", map[string]interface{}{
+		"role_id": id, "name": req.Name, "previous_name": existing.Name,
+		"capabilities": normalizeCaps(req.Capabilities), "previous_capabilities": normalizeCaps(existing.Capabilities),
+	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"role":    panelRoleView{ID: id, Name: req.Name, Capabilities: normalizeCaps(req.Capabilities), IsSystem: false},
@@ -240,5 +248,9 @@ func (h *PanelRolesHandler) DeletePanelRole(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Failed to delete panel role", 500)
 		return
 	}
+	actorID, _ := r.Context().Value("userID").(string)
+	LogIdentityAudit(h.state, r, AuditEventPanelRoleDeleted, actorID, "", map[string]interface{}{
+		"role_id": id, "name": existing.Name, "capabilities": normalizeCaps(existing.Capabilities),
+	})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

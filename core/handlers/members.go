@@ -171,6 +171,10 @@ func callerMayDelegate(res *authz.Resolution, key string) bool {
 		tp.Overview = true
 	case "network":
 		tp.Network = true
+	case "players":
+		tp.Players = true
+	case "backups":
+		tp.Backups = true
 	default:
 		// An unrecognised key confers nothing: MapLegacyInviteCaps ignores it,
 		// so it cannot grant capabilities however it is stored.

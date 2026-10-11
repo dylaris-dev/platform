@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 )
 
@@ -28,6 +29,14 @@ type serverRolesFakeStore struct {
 	deleteCalls int
 	deleteOwner string
 	mode        string
+	getRole     *store.ServerRole
+	audits      []*models.AuditEventIdentity
+}
+
+func (f *serverRolesFakeStore) GetServerRole(int) (*store.ServerRole, error) { return f.getRole, nil }
+func (f *serverRolesFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error {
+	f.audits = append(f.audits, ev)
+	return nil
 }
 
 func (f *serverRolesFakeStore) GetSetting(string) (string, error) {
@@ -215,5 +224,36 @@ func TestServerRoles_CreateModeGate(t *testing.T) {
 				t.Fatalf("createCalls = %d, wantCall %v", fs.createCalls, tc.wantCall)
 			}
 		})
+	}
+}
+
+// Role definitions are audited: a role's capabilities are every holder's, so
+// changing one changes access for all of them. A delete of a role in another
+// realm must not copy that role's name into this owner's audit row.
+func TestServerRoles_CrudIsAudited(t *testing.T) {
+	fs := &serverRolesFakeStore{mode: "advanced", createID: 9,
+		getRole: &store.ServerRole{ID: 3, OwnerUserID: testActorID, Name: "Old", Capabilities: []string{"files.read"}}}
+	h := NewServerRolesHandler(&AppState{Store: fs})
+	body := map[string]interface{}{"name": "Builders", "capabilities": []string{"files.read"}}
+	h.CreateServerRole(httptest.NewRecorder(), serverRoleReq("POST", "/api/server-roles", nil, body))
+	h.UpdateServerRole(httptest.NewRecorder(), serverRoleReq("PATCH", "/api/server-roles/3", map[string]string{"id": "3"}, body))
+	h.DeleteServerRole(httptest.NewRecorder(), serverRoleReq("DELETE", "/api/server-roles/3", map[string]string{"id": "3"}, nil))
+	fs.getRole = &store.ServerRole{ID: 4, OwnerUserID: "someone-else", Name: "Theirs"}
+	h.DeleteServerRole(httptest.NewRecorder(), serverRoleReq("DELETE", "/api/server-roles/4", map[string]string{"id": "4"}, nil))
+
+	want := []string{AuditEventServerRoleCreated, AuditEventServerRoleUpdated, AuditEventServerRoleDeleted, AuditEventServerRoleDeleted}
+	if len(fs.audits) != len(want) {
+		t.Fatalf("got %d audit rows, want %d", len(fs.audits), len(want))
+	}
+	for i, ev := range fs.audits {
+		if ev.EventType != want[i] || ev.ActorUserID == nil || *ev.ActorUserID != testActorID {
+			t.Errorf("row %d = %s by %v, want %s by %s", i, ev.EventType, ev.ActorUserID, want[i], testActorID)
+		}
+	}
+	if fs.audits[1].Metadata["previous_name"] != "Old" || fs.audits[2].Metadata["name"] != "Old" {
+		t.Errorf("update/delete rows lost the previous definition: %v / %v", fs.audits[1].Metadata, fs.audits[2].Metadata)
+	}
+	if _, leaked := fs.audits[3].Metadata["name"]; leaked {
+		t.Errorf("another realm's role name reached this owner's audit row: %v", fs.audits[3].Metadata)
 	}
 }

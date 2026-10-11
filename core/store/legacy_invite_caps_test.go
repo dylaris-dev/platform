@@ -53,9 +53,20 @@ func TestTabPermissionsFromCaps(t *testing.T) {
 			want: models.TabPermissions{Setup: true},
 		},
 		{
-			name: "the sensitive reads each have their own tab",
+			name: "the sensitive reads each have their own tab; backups.read alone is not the backups key",
 			caps: []string{"members.read", "network.read", "backups.read", "config.read"},
-			want: models.TabPermissions{Members: true, Network: true, Backups: true, Config: true},
+			want: models.TabPermissions{Members: true, Network: true, Config: true},
+		},
+		{
+			// Read back and written again, true would grant delete and restore.
+			name: "backups and players only for the full set their key grants",
+			caps: []string{"backups.read", "backups.create", "players.read"},
+			want: models.TabPermissions{},
+		},
+		{
+			name: "the full backups set",
+			caps: []string{"backups.read", "backups.create", "backups.delete", "backups.restore"},
+			want: models.TabPermissions{Backups: true},
 		},
 	}
 	for _, c := range cases {
@@ -130,5 +141,16 @@ func TestEffectiveGrantCaps(t *testing.T) {
 				t.Errorf("EffectiveGrantCaps = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// The two keys added after the migration read back as the tabs they grant.
+func TestPlayersAndBackupsRoundTrip(t *testing.T) {
+	in := models.TabPermissions{Players: true, Backups: true}
+	got := TabPermissionsFromCaps(MapLegacyInviteCaps(in))
+	want := in
+	want.PlayersManage = true
+	if got != want {
+		t.Errorf("round trip = %+v, want %+v", got, want)
 	}
 }

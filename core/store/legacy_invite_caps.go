@@ -9,9 +9,9 @@ import (
 // MapLegacyInviteCaps maps the legacy 9-bool TabPermissions blob to the new
 // granular SERVER cap set (phase 3 migration). Field order is fixed so the
 // output is deterministic. Inherit is NOT a cap (it stays the invite.inherit
-// column). There was no legacy backups bit, so a migrated friend gets NO
-// backups.* caps - this preserves the old behavior where backups were
-// owner/admin only. Every id here is a real ScopeServer cap in
+// column). Players and Backups were added to the blob later: a pre-migration
+// row never set them, so a migrated friend still gets NO backups.* caps, while
+// an invite that names them now gets that tab's full set. Every id here is a real ScopeServer cap in
 // authz/catalog.go (enforced by db_phase21_invite_migration_test.go in the
 // database package, which already imports both store and authz - this
 // package cannot import authz itself, since authz imports store).
@@ -46,6 +46,12 @@ func MapLegacyInviteCaps(p models.TabPermissions) []string {
 	if p.Setup {
 		caps = append(caps, "server.settings.write")
 	}
+	if p.Players {
+		caps = append(caps, "players.read", "players.manage")
+	}
+	if p.Backups {
+		caps = append(caps, "backups.read", "backups.create", "backups.delete", "backups.restore")
+	}
 	return caps
 }
 
@@ -70,17 +76,20 @@ func TabPermissionsFromCaps(caps []string) models.TabPermissions {
 		has[c] = true
 	}
 	return models.TabPermissions{
-		Console:       has["console.read"],
-		Files:         has["files.read"],
-		Config:        has["config.read"],
-		Setup:         has["server.settings.write"],
-		Overview:      has["overview.read"],
-		Power:         has["power.start"] || has["power.stop"] || has["power.restart"] || has["power.kill"],
-		Players:       has["players.read"],
+		Console:  has["console.read"],
+		Files:    has["files.read"],
+		Config:   has["config.read"],
+		Setup:    has["server.settings.write"],
+		Overview: has["overview.read"],
+		Power:    has["power.start"] || has["power.stop"] || has["power.restart"] || has["power.kill"],
+		// Players and Backups are true only for the full set their invite key
+		// grants: a caller that reads this roster and writes it back must not
+		// turn a read-only member into one who can kick players or restore.
+		Players:       has["players.read"] && has["players.manage"],
 		PlayersManage: has["players.manage"],
 		Members:       has["members.read"],
 		Network:       has["network.read"],
-		Backups:       has["backups.read"],
+		Backups:       has["backups.read"] && has["backups.create"] && has["backups.delete"] && has["backups.restore"],
 	}
 }
 
