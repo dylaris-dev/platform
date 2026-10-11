@@ -222,3 +222,60 @@ func TestHeadlinesOnlyNameCataloguedSeries(t *testing.T) {
 		}
 	}
 }
+
+func TestTheHeadlinesNameNoSpliceSeries(t *testing.T) {
+	// sessions_opened counts every TCP connection and players_dropped every
+	// session the edge closed under a live client - refusals, scanners, kicks.
+	// Neither is a number about players, so neither is a headline.
+	for _, h := range headlineSpecs {
+		if strings.HasPrefix(h.metric, "splice.") || strings.HasPrefix(h.minus, "splice.") {
+			t.Errorf("headline %q is built on %q, a splice series", h.label, h.metric)
+		}
+		if h.metric == "edge.logins" {
+			t.Errorf("edge.logins has a headline card; the owner decided against one for now")
+		}
+	}
+}
+
+func TestBeamHeadlineCountsOnlyRoutedConnections(t *testing.T) {
+	// The relay counts every accepted connection as started and every unrouted
+	// one as failed; in production 410 of 413 were refusals.
+	var found bool
+	for _, h := range headlineSpecs {
+		if h.metric != "beam.transfers_started" {
+			continue
+		}
+		found = true
+		if h.how != "total" || h.minus != "beam.transfers_failed" {
+			t.Fatalf("beam headline = %+v, want a total of transfers_started minus transfers_failed", h)
+		}
+	}
+	if !found {
+		t.Fatal("no beam headline")
+	}
+	for _, h := range headlineSpecs {
+		if h.minus != "" {
+			if _, ok := catalogByMetric[h.minus]; !ok {
+				t.Errorf("headline %q subtracts %q, which is not in the catalog", h.label, h.minus)
+			}
+			if h.how != "total" {
+				t.Errorf("headline %q subtracts from a %q; only a total can be netted", h.label, h.how)
+			}
+		}
+	}
+}
+
+func TestNetTotal(t *testing.T) {
+	for _, tc := range []struct{ total, minus, want float64 }{
+		{413, 410, 3},
+		{5, 0, 5},
+		{0, 0, 0},
+		// A connection still open at the window's edge counts as started in
+		// one window and failed in the next.
+		{2, 3, 0},
+	} {
+		if got := netTotal(tc.total, tc.minus); got != tc.want {
+			t.Errorf("netTotal(%v, %v) = %v, want %v", tc.total, tc.minus, got, tc.want)
+		}
+	}
+}

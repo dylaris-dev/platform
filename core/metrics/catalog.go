@@ -102,6 +102,8 @@ var Catalog = []Series{
 	{Metric: "edge.cpu_pct", Label: "Edge CPU", Group: "Edge", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "edge.ram_pct", Label: "Edge RAM", Group: "Edge", Kind: KindGauge, Unit: UnitPercent, PerSubject: true},
 	{Metric: "edge.tunnels", Label: "Link tunnels per edge", Group: "Edge", Kind: KindGauge, Unit: UnitCount, PerSubject: true},
+	{Metric: "edge.logins", Label: "Player logins", Group: "Edge", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
+		Help: "Real login attempts the edge handed to the server's link. Server-list pings, health checks and refused connections are not counted; a server that is down can still turn one away."},
 	{Metric: "edge.restarts", Label: "Edge restarts", Group: "Edge", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
 	{Metric: "edge.uptime_sec", Label: "Edge uptime", Group: "Edge", Kind: KindGauge, Unit: UnitSeconds, PerSubject: true},
 
@@ -109,11 +111,11 @@ var Catalog = []Series{
 	{Metric: "splice.sessions_opened", Label: "Gateway connections", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
 		Help: gatewayConnectionsHelp},
 	{Metric: "splice.handover_attempted", Label: "Handovers attempted", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
-		Help: "A player was mid-session when their edge went away, so another edge had to take them over."},
+		Help: "The edge closed a session while the client was still connected, so the splice tried to resume it. That is any edge-side close - an edge restart, but also a refused route, a kick or a server stopping."},
 	{Metric: "splice.handover_ok", Label: "Players carried over", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
-		Help: "The player kept playing through an edge restart without noticing."},
+		Help: "A resume an edge accepted, so the session carried on. Includes deliberate returns to the local edge."},
 	{Metric: "splice.players_dropped", Label: "Players dropped", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
-		Help: "No edge could complete the takeover, so the player was disconnected."},
+		Help: "The edge closed a session while the client was still connected and no edge resumed it. A refused connection, a scanner, a kick or a server stop counts here too, so this is not the number of players lost to edge restarts."},
 	{Metric: "splice.resume_refused", Label: "Resumes refused", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
 		Help: "The stream could no longer be reconstructed, so no edge was going to succeed."},
 	{Metric: "splice.splice_back", Label: "Returns to local edge", Group: "Handover", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
@@ -154,7 +156,8 @@ var Catalog = []Series{
 
 	// Beam
 	{Metric: "beam.active_transfers", Label: "Beam transfers in flight", Group: "Beam", Kind: KindGauge, Unit: UnitCount, PerSubject: true},
-	{Metric: "beam.transfers_started", Label: "Beam transfers started", Group: "Beam", Kind: KindCounter, Unit: UnitCount, PerSubject: true},
+	{Metric: "beam.transfers_started", Label: "Beam transfers started", Group: "Beam", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
+		Help: "Every connection the relay accepted, including the ones it refused. Routed transfers are this minus the refused ones."},
 	{Metric: "beam.transfers_failed", Label: "Beam transfers refused", Group: "Beam", Kind: KindCounter, Unit: UnitCount, PerSubject: true,
 		Help: "Reached the relay and did not get through: a bad ticket, no tunnel to the node, or a failed stream."},
 	{Metric: "beam.tunnels", Label: "Beam relay tunnels", Group: "Beam", Kind: KindGauge, Unit: UnitCount, PerSubject: true},

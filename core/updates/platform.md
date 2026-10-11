@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Statistics show only numbers that mean what they say**: the "Gateway connections" and handover cards
+  are gone (they counted health checks, scanners and refused connections), and Beam shows only relay
+  connections that reached a node (3 instead of 413 over 30 days). `core`
+
 ## 2026.10.11
 
 ### Features

@@ -224,6 +224,9 @@ type headlineSpec struct {
 	label  string
 	how    string
 	help   string
+	// minus, on a "total", is a counter subtracted from it - the failures out
+	// of the attempts. Never recorded reads as zero.
+	minus string
 }
 
 // headlineSpecs is the summary, in the order it is read.
@@ -232,20 +235,31 @@ type headlineSpec struct {
 // withstand - rather than to show everything. A peak is the load it actually
 // carried; a total is the work it actually did.
 var headlineSpecs = []headlineSpec{
-	{"platform.players_online", "Peak players online", "peak", ""},
-	{"platform.concurrent_users", "Peak concurrent users", "peak", ""},
-	{"platform.servers_online", "Peak servers running", "peak", ""},
-	{"platform.player_tx_bps", "Peak player throughput", "peak", ""},
-	{"platform.bps_per_player", "Peak traffic per player (in + out)", "peak", ""},
-	{"splice.sessions_opened", "Gateway connections", "total", gatewayConnectionsHelp},
-	{"splice.handover_ok", "Players carried through an edge restart", "total", ""},
-	{"splice.players_dropped", "Players dropped in a handover", "total", ""},
-	// "Edge restarts", not "survived": this series counts restarts. Whether
-	// anybody came through one is the line above, which measures it.
-	{"edge.restarts", "Edge restarts", "total", ""},
-	{"beam.transfers_started", "Beam transfers", "total", ""},
-	{"node.up", "Node availability", "avg", ""},
-	{"edge.up", "Edge availability", "avg", ""},
+	{"platform.players_online", "Peak players online", "peak", "", ""},
+	{"platform.concurrent_users", "Peak concurrent users", "peak", "", ""},
+	{"platform.servers_online", "Peak servers running", "peak", "", ""},
+	{"platform.player_tx_bps", "Peak player throughput", "peak", "", ""},
+	{"platform.bps_per_player", "Peak traffic per player (in + out)", "peak", "", ""},
+	// No splice series here: sessions_opened counts every TCP connection
+	// (pings, health checks) and players_dropped every session the edge closed
+	// while the client was connected, so neither is a number about players.
+	{"edge.restarts", "Edge restarts", "total", "", ""},
+	// The relay counts every connection it accepts as started and every one it
+	// did not route as failed, so most of "started" is refusals. Only what
+	// reached a node is a transfer.
+	{"beam.transfers_started", "Beam connections routed", "total", beamRoutedHelp, "beam.transfers_failed"},
+	{"node.up", "Node availability", "avg", "", ""},
+	{"edge.up", "Edge availability", "avg", "", ""},
+}
+
+const beamRoutedHelp = "Relay connections that reached a node. Beam over LAN or direct to a node does not pass the relay and is not counted."
+
+// netTotal is a total with its failures taken off. Clamped, because the two
+// counters are summed over the same window but a connection still open at its
+// end has counted as started and not yet as failed, and the other way round at
+// its start.
+func netTotal(total, minus float64) float64 {
+	return max(total-minus, 0)
 }
 
 // Summary reduces the headline metrics over a window.
@@ -288,12 +302,21 @@ func Summary(ctx context.Context, db *sql.DB, from, to time.Time) ([]Headline, e
 		}
 		if !v.Valid {
 			// Never recorded in this window. Omitted rather than shown as zero:
-			// "no players were dropped" and "nothing was measuring" are opposite
+			// "nothing was routed" and "nothing was measuring" are opposite
 			// claims and a 0 would state the flattering one.
 			continue
 		}
 		s, _ := Known(spec.metric)
 		val := v.Float64
+		if spec.minus != "" {
+			var m sql.NullFloat64
+			if err := db.QueryRowContext(ctx,
+				`SELECT sum(sum_v) FROM metric_samples WHERE metric = $1 AND time >= $2 AND time < $3`,
+				spec.minus, from.UTC(), to.UTC()).Scan(&m); err != nil {
+				return nil, fmt.Errorf("summary %s: %w", spec.minus, err)
+			}
+			val = netTotal(val, m.Float64)
+		}
 		if s.Unit == UnitPercent && spec.how == "avg" {
 			val *= 100 // a 1/0 availability series reads as a percentage
 		}

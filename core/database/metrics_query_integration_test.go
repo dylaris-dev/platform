@@ -168,7 +168,7 @@ func TestIntegrationSummaryReducesEachHeadlineItsOwnWay(t *testing.T) {
 		t.Fatalf("EnsureSchema: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Exec(`DELETE FROM metric_samples WHERE metric IN ('platform.players_online','splice.handover_ok','node.up')`)
+		db.Exec(`DELETE FROM metric_samples WHERE metric IN ('platform.players_online','edge.restarts','beam.transfers_started','beam.transfers_failed','node.up')`)
 	})
 
 	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
@@ -177,9 +177,12 @@ func TestIntegrationSummaryReducesEachHeadlineItsOwnWay(t *testing.T) {
 		// Peak 40, never 60 in total.
 		{Time: at, Key: metrics.Key{Metric: "platform.players_online"}, Bucket: metrics.Bucket{Min: 10, Max: 40, Sum: 50, Count: 2}},
 		{Time: at.Add(time.Minute), Key: metrics.Key{Metric: "platform.players_online"}, Bucket: metrics.Bucket{Min: 20, Max: 30, Sum: 50, Count: 2}},
-		// Total 7 handovers, never a peak of 5.
-		{Time: at, Key: metrics.Key{Metric: "splice.handover_ok", Subject: "h1"}, Bucket: metrics.Bucket{Min: 0, Max: 5, Sum: 5, Count: 2}},
-		{Time: at.Add(time.Minute), Key: metrics.Key{Metric: "splice.handover_ok", Subject: "h1"}, Bucket: metrics.Bucket{Min: 2, Max: 2, Sum: 2, Count: 1}},
+		// Total 7 restarts, never a peak of 5.
+		{Time: at, Key: metrics.Key{Metric: "edge.restarts", Subject: "h1"}, Bucket: metrics.Bucket{Min: 0, Max: 5, Sum: 5, Count: 2}},
+		{Time: at.Add(time.Minute), Key: metrics.Key{Metric: "edge.restarts", Subject: "h1"}, Bucket: metrics.Bucket{Min: 2, Max: 2, Sum: 2, Count: 1}},
+		// 413 relay connections, 410 of them refused: 3 reached a node.
+		{Time: at, Key: metrics.Key{Metric: "beam.transfers_started", Subject: "r1"}, Bucket: metrics.Bucket{Min: 0, Max: 400, Sum: 413, Count: 2}},
+		{Time: at, Key: metrics.Key{Metric: "beam.transfers_failed", Subject: "r1"}, Bucket: metrics.Bucket{Min: 0, Max: 400, Sum: 410, Count: 2}},
 		// Three samples: up, up, down. Availability is two thirds.
 		{Time: at, Key: metrics.Key{Metric: "node.up", Subject: "n1"}, Bucket: metrics.Bucket{Min: 0, Max: 1, Sum: 2, Count: 3}},
 	}); err != nil {
@@ -200,8 +203,11 @@ func TestIntegrationSummaryReducesEachHeadlineItsOwnWay(t *testing.T) {
 	if got["platform.players_online"] != 40 || how["platform.players_online"] != "peak" {
 		t.Errorf("players = %v (%s), want 40 as a peak", got["platform.players_online"], how["platform.players_online"])
 	}
-	if got["splice.handover_ok"] != 7 || how["splice.handover_ok"] != "total" {
-		t.Errorf("handovers = %v (%s), want 7 as a total", got["splice.handover_ok"], how["splice.handover_ok"])
+	if got["edge.restarts"] != 7 || how["edge.restarts"] != "total" {
+		t.Errorf("restarts = %v (%s), want 7 as a total", got["edge.restarts"], how["edge.restarts"])
+	}
+	if got["beam.transfers_started"] != 3 {
+		t.Errorf("beam routed = %v, want 413 started - 410 refused = 3", got["beam.transfers_started"])
 	}
 	// Recorded as 1/0 and reported as a percentage, because that is how anyone
 	// reads an availability figure.
