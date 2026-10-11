@@ -12,11 +12,15 @@ import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
     listInstalledMods, uninstallMod, pickPrimaryFile,
     getServerModpackContents, getModHistory, getModrinthVersion,
+    getModrinthVersionsByIds, getModrinthProjectsByIds, getLatestVersionsFromHashes,
     type ModHistoryEntry,
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
     type ModrinthVersion, type ModrinthCategory, type InstalledMod,
 } from '@/lib/api/modrinth';
-import { pickNewestMatchingVersion, compareInstalledVsLatest, type ModStatus } from '@/lib/modVersionCompare';
+import {
+    pickNewestMatchingVersion, compareInstalledVsLatest, dependencyProblems, unresolvedDependencyVersionIds,
+    type ModStatus,
+} from '@/lib/modVersionCompare';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
 import { UnmanagedJars } from '@/components/mods/UnmanagedJars';
@@ -27,9 +31,8 @@ import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import { installedState, isOnServer } from '@/lib/installedState';
 import {
-    updatableMods, nextBuildFor, summarise, runWasClean, emptyTally,
-    updateScopeLabel,
-    type BulkProgress,
+    updatableMods, summarise, runWasClean, emptyTally, checkModUpdates,
+    type BulkProgress, type UpdateCheckApi,
 } from '@/lib/bulkModUpdate';
 import { useBusy } from '@/lib/useBusy';
 import { useModInstalls } from '@/lib/modInstallManager';
@@ -53,6 +56,13 @@ const PROJECT_TYPE_FOR_LOADER: Record<string, 'mod' | 'plugin'> = {
     paper: 'plugin', spigot: 'plugin', bukkit: 'plugin', purpur: 'plugin',
     velocity: 'plugin', waterfall: 'plugin', bungeecord: 'plugin',
     fabric: 'mod', forge: 'mod', quilt: 'mod', neoforge: 'mod',
+};
+
+const updateCheckApi: UpdateCheckApi = {
+    versionsByIds: getModrinthVersionsByIds,
+    latestFromHashes: getLatestVersionsFromHashes,
+    projectVersions: getModrinthVersions,
+    projectsByIds: getModrinthProjectsByIds,
 };
 
 export default function ServerContentPage() {
@@ -226,6 +236,9 @@ export default function ServerContentPage() {
     // The ref, not the state, is what the loop checks: state does not update
     // until the next render, and the loop is inside one tick.
     const bulkCancelled = useRef(false);
+    // Mods the last Update all left alone, with why. Kept after the run so the
+    // reader can act on them; the toast alone is gone in seconds.
+    const [bulkSkipped, setBulkSkipped] = useState<{ title: string; reason: string }[]>([]);
 
     // Closing the tab mid-run leaves the rest un-issued. What HAS been issued is
     // queued on Core and finishes regardless, so this warns about the remainder
@@ -434,6 +447,34 @@ export default function ServerContentPage() {
         return true;
     };
 
+    // A single update is the reader's explicit choice, so a dependency problem
+    // warns rather than blocks - unlike Update all, which skips the mod.
+    const confirmDependencies = async (project: ModrinthProject, version: ModrinthVersion): Promise<boolean> => {
+        const ids = new Set(installed.filter(m => isOnServer(m)).map(m => m.modrinthProjectId));
+        // A dependency named only by a build is judged by that build's project.
+        const versionIds = unresolvedDependencyVersionIds(version);
+        const versionProjects = new Map<string, string>();
+        if (versionIds.length) {
+            try { for (const v of await getModrinthVersionsByIds(versionIds)) versionProjects.set(v.id, v.project_id); } catch { /* stays unresolved */ }
+        }
+        const problems = dependencyProblems(version, ids, versionProjects);
+        if (!problems.missing.length && !problems.incompatible.length) return true;
+        const names = new Map<string, string>();
+        try {
+            for (const p of await getModrinthProjectsByIds([...problems.missing, ...problems.incompatible])) names.set(p.id, p.title);
+        } catch { /* ids stay as they are */ }
+        const missing = problems.missing.map(id => names.get(id) ?? id);
+        const incompatible = problems.incompatible.map(id => names.get(id) ?? id);
+        const parts: string[] = [];
+        if (missing.length) parts.push(`It requires ${missing.join(', ')}, which this server does not have as a managed mod.`);
+        if (incompatible.length) parts.push(`It is incompatible with ${incompatible.join(', ')}, which is installed.`);
+        return confirmDialog({
+            title: `${version.version_number} of "${project.title}" may stop the server from starting`,
+            message: parts.join(' '),
+            confirmLabel: 'Update anyway',
+        });
+    };
+
     // Fires the actual install call (no confirm - callers run
     // confirmModpackCrossCheck first). Progress and the outcome show on the
     // button and in the navbar widget; a failure also toasts from the manager.
@@ -493,39 +534,72 @@ export default function ServerContentPage() {
         });
     };
 
-    // Update every installed mod that has a newer matching build.
+    // Update all is pinned to the server's own loader and Minecraft version,
+    // never the Browse filter: a filter the reader cleared (or cannot see from
+    // the Installed tab) must not widen the run to builds for other versions.
+    const pinnedLoader = isKnownLoader(defaultLoader) ? defaultLoader : '';
+    const pinnedMcVersion = isMcVersion(defaultMcVersion) ? defaultMcVersion : '';
+    const updateAllBlocked = !pinnedLoader || !pinnedMcVersion
+        ? "Update all needs this server's loader and Minecraft version. Declare them first."
+        : null;
+
+    // Update every installed mod that has a newer build for this server.
     //
-    // Sequential on purpose. Each install is a queued command plus a Modrinth
-    // version lookup, and firing thirty of both at once buys nothing - the work
-    // happens on the node afterwards either way - while making the failure of
-    // any one of them harder to attribute and the progress meaningless.
+    // Two passes: decide everything first, show what will happen (including
+    // what is skipped and why), and only then install. Sequential on purpose.
+    // Each install is a queued command plus a Modrinth version lookup, and
+    // firing thirty of both at once buys nothing - the work happens on the node
+    // afterwards either way - while making the failure of any one of them
+    // harder to attribute and the progress meaningless.
     const handleUpdateAll = async () => {
+        if (updateAllBlocked) { showToast(updateAllBlocked, false); return; }
         const targets = updatableMods(installed);
         if (targets.length === 0) { showToast('Nothing installed to update', false); return; }
         bulkCancelled.current = false;
+        setBulkSkipped([]);
         const tally = emptyTally();
-        const loaders = filterLoaders.length ? filterLoaders : undefined;
-        const mcVersions = filterVersions.length ? filterVersions : undefined;
+        setBulk({ done: 0, total: targets.length, current: '', checking: true });
+        const check = await checkModUpdates(
+            targets,
+            { loader: pinnedLoader, mcVersion: pinnedMcVersion },
+            updateCheckApi,
+            (done, total) => setBulk({ done, total, current: '', checking: true }),
+            () => bulkCancelled.current,
+        );
+        if (!check) { setBulk(null); return; }
+        tally.current = check.current;
+        tally.unknown = check.unknown;
+        const planned = check.planned;
+        const skipped = check.skipped.map(s => ({ title: s.mod.title || s.mod.fileName, reason: s.reason }));
+        setBulkSkipped(skipped);
+        setBulk(null);
 
-        for (const [i, m] of targets.entries()) {
+        if (planned.length === 0) {
+            const extra = skipped.length ? ` ${skipped.length} skipped, listed below.` : '';
+            showToast(summarise(tally) + extra, runWasClean(tally));
+            return;
+        }
+        const shown = skipped.slice(0, 8).map(s => `${s.title} (${s.reason})`).join('; ');
+        const more = skipped.length > 8 ? `; and ${skipped.length - 8} more, listed on this tab` : '';
+        const ok = await confirmDialog({
+            title: `Update ${planned.length} ${planned.length === 1 ? 'mod' : 'mods'}?`,
+            message: `${planned.length} ${planned.length === 1 ? 'mod moves' : 'mods move'} to a newer build for ${pinnedLoader} ${pinnedMcVersion}, never to a less stable channel.`
+                + (skipped.length ? ` ${skipped.length} skipped: ${shown}${more}.` : ' Nothing skipped.')
+                + (tally.unknown ? ` ${tally.unknown} could not be checked.` : ''),
+            confirmLabel: `Update ${planned.length}`,
+            destructive: false,
+        });
+        if (!ok) return;
+
+        for (const [i, { mod: m, build }] of planned.entries()) {
             if (bulkCancelled.current) break;
-            setBulk({ done: i, total: targets.length, current: m.title || m.fileName });
-            const slug = m.modrinthProjectSlug || m.modrinthProjectId;
-            const candidates = await getModrinthVersions(slug, { loaders, versions: mcVersions });
-            // getModrinthVersions returns [] both for "no build matches" and for
-            // a request that failed, and those are not the same answer. An empty
-            // list is counted as unchecked rather than as current, so the summary
-            // cannot report a mod as up to date on the strength of a lookup that
-            // never happened.
-            if (candidates.length === 0) { tally.unknown++; continue; }
-            const next = nextBuildFor(m, candidates, { loaders, mcVersions });
-            if (!next) { tally.current++; continue; }
-            const file = pickPrimaryFile(next);
+            setBulk({ done: i, total: planned.length, current: m.title || m.fileName });
+            const file = pickPrimaryFile(build);
             if (!file) { tally.failed++; continue; }
             const job = await installs.start(serverId, serverName, {
                 projectId: m.modrinthProjectId,
                 projectSlug: m.modrinthProjectSlug,
-                versionId: next.id,
+                versionId: build.id,
                 title: m.title,
                 fileName: file.filename,
                 downloadUrl: file.url,
@@ -536,7 +610,8 @@ export default function ServerContentPage() {
 
         setBulk(null);
         refreshInstalled();
-        showToast(summarise(tally), runWasClean(tally));
+        const extra = skipped.length ? ` ${skipped.length} skipped, listed below.` : '';
+        showToast(summarise(tally) + extra, runWasClean(tally));
     };
 
     // Put every mod back to the build it had before its last update.
@@ -631,6 +706,7 @@ export default function ServerContentPage() {
             const project = await getModrinthProject(hit.slug);
             if (!project) { showToast('Failed to load project details', false); return; }
             if (!await confirmModpackCrossCheck(project, latest)) return;
+            if (!await confirmDependencies(project, latest)) return;
             const removeRes = await uninstallMod(serverId, installedMod.id);
             if (!removeRes.success) {
                 showToast(removeRes.message || 'Update failed: could not remove the old version', false);
@@ -934,11 +1010,15 @@ export default function ServerContentPage() {
                                         : candidates === undefined
                                             ? 'checking'
                                             : compareInstalledVsLatest(installedMod.modrinthVersionId, candidates, { loaders: filterLoaders, mcVersions: filterVersions });
+                                    // The row may still offer a pre-release (Update all never does),
+                                    // so it says which channel the button moves to.
+                                    const rowLatest = candidates ? pickNewestMatchingVersion(candidates, { loaders: filterLoaders, mcVersions: filterVersions }) : null;
                                     return (
                                         <ModListRow
                                             key={hit.project_id}
                                             hit={hit}
                                             status={status}
+                                            updateChannel={rowLatest?.version_type}
                                             installed={!!installedMod}
                                             busy={busyProjects.has(hit.project_id)}
                                             job={installs.jobFor(serverId, hit.project_id)}
@@ -947,9 +1027,7 @@ export default function ServerContentPage() {
                                             onInstall={() => handleRowInstall(hit)}
                                             onRemove={() => installedMod && handleRowRemove(installedMod)}
                                             onUpdate={() => {
-                                                if (!installedMod || !candidates) return;
-                                                const latest = pickNewestMatchingVersion(candidates, { loaders: filterLoaders, mcVersions: filterVersions });
-                                                if (latest) handleRowUpdate(hit, installedMod, latest);
+                                                if (installedMod && rowLatest) handleRowUpdate(hit, installedMod, rowLatest);
                                             }}
                                         />
                                     );
@@ -1141,13 +1219,17 @@ export default function ServerContentPage() {
                             <div className="flex items-center justify-between gap-3 flex-wrap pb-1">
                                 <div className="text-xs text-(--base-06)">
                                     {bulk
-                                        ? `Working through ${bulk.done + 1} of ${bulk.total} - ${bulk.current}`
-                                        : updateScopeLabel(filterLoaders, filterVersions)}
+                                        ? bulk.checking
+                                            ? `Checked ${bulk.done} of ${bulk.total}`
+                                            : `Working through ${bulk.done + 1} of ${bulk.total} - ${bulk.current}`
+                                        : updateAllBlocked
+                                            ?? `Updates are limited to ${pinnedLoader} · MC ${pinnedMcVersion}, and never move a mod to a less stable channel.`}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     <button
                                         onClick={handleUpdateAll}
-                                        disabled={bulk !== null}
+                                        disabled={bulk !== null || updateAllBlocked !== null}
+                                        title={updateAllBlocked ?? undefined}
                                         className="btn btn-secondary btn-sm"
                                     >
                                         <RefreshCw size={12} className={bulk ? 'animate-spin' : ''} />
@@ -1175,6 +1257,19 @@ export default function ServerContentPage() {
                                     Keep this tab open. Closing it stops the mods that have not been
                                     started yet; the ones already started will finish.
                                 </p>
+                            )}
+                            {bulkSkipped.length > 0 && (
+                                <div className="card p-3 text-xs">
+                                    <div className="flex items-center gap-1.5 text-(--warning-light) font-medium">
+                                        <AlertTriangle size={12} className="shrink-0" />
+                                        Skipped by Update all ({bulkSkipped.length})
+                                    </div>
+                                    <ul className="mt-1.5 space-y-0.5 text-(--base-07)">
+                                        {bulkSkipped.map((s, i) => (
+                                            <li key={`${s.title}-${i}`}>{s.title}: {s.reason}</li>
+                                        ))}
+                                    </ul>
+                                </div>
                             )}
                             {installed.map(m => (
                                 <article key={m.id} className="card p-3 flex items-start gap-3">
@@ -1276,6 +1371,7 @@ export default function ServerContentPage() {
 function ModListRow({
     hit,
     status,
+    updateChannel,
     installed,
     busy,
     job,
@@ -1287,6 +1383,7 @@ function ModListRow({
 }: {
     hit: ModrinthSearchHit;
     status: RowStatus;
+    updateChannel?: string;
     installed: boolean;
     busy: boolean;
     job?: InstallJob;
@@ -1372,7 +1469,7 @@ function ModListRow({
                 {status === 'update-available' && (
                     <button onClick={stopAnd(onUpdate)} disabled={actionBusy} aria-busy={actionBusy} className="btn btn-primary btn-sm">
                         {actionBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
-                        {job && jobBusy ? jobLabel(job) : 'Update'}
+                        {job && jobBusy ? jobLabel(job) : updateChannel && updateChannel !== 'release' ? `Update (${updateChannel})` : 'Update'}
                     </button>
                 )}
                 {installed && (

@@ -2668,11 +2668,31 @@
     },
     {
       "method": "GET",
+      "path": "/api/modrinth/projects",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "several projects in one call, slimmed to what names a project: the description body is most of a project's bytes and nothing reading this renders it.",
+      "handler": "ModrinthHandler.Projects",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/modrinth/search",
       "auth": "session",
       "authorization": "no capability",
       "description": "Query params (Modrinth-compatible): query, limit, offset, facets (JSON array of arrays), loaders (comma list), versions (comma list), categories (comma list), project_type.",
       "handler": "ModrinthHandler.Search",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/modrinth/version-files/update",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "for each installed file hash, the newest version of its project that matches the loaders, game versions and channels.",
+      "handler": "ModrinthHandler.LatestFromHashes",
       "group": "modrinth",
       "external": false
     },
@@ -2683,6 +2703,16 @@
       "authorization": "no capability",
       "description": "single version metadata.",
       "handler": "ModrinthHandler.Version",
+      "group": "modrinth",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/modrinth/versions",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "several versions in one call.",
+      "handler": "ModrinthHandler.Versions",
       "group": "modrinth",
       "external": false
     },
@@ -5209,10 +5239,10 @@
     }
   ],
   "counts": {
-    "total": 523,
+    "total": 526,
     "byAuth": {
       "none": 31,
-      "session": 476,
+      "session": 479,
       "user API key": 10,
       "warp key": 6
     },
@@ -5237,7 +5267,7 @@
       "maintenance": 1,
       "me": 30,
       "mirror": 2,
-      "modrinth": 6,
+      "modrinth": 9,
       "modules": 6,
       "nodes": 14,
       "notifications": 4,

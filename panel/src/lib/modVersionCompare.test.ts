@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { pickNewestMatchingVersion, compareInstalledVsLatest } from './modVersionCompare';
+import {
+    pickNewestMatchingVersion, compareInstalledVsLatest, dependencyProblems, planModUpdate, unresolvedDependencyVersionIds,
+} from './modVersionCompare';
 import type { ModrinthVersion } from './api/modrinth';
 
 function version(overrides: Partial<ModrinthVersion> & { id: string }): ModrinthVersion {
@@ -84,5 +86,200 @@ describe('compareInstalledVsLatest', () => {
 
     it('returns up-to-date for an empty candidate list when installed', () => {
         expect(compareInstalledVsLatest('v1', [], filter)).toBe('up-to-date');
+    });
+});
+
+// Prod audit: Update all moved releases onto betas (one of which required a mod
+// the server did not have), and a cleared filter let it pick builds for every
+// Minecraft version. Each row pins one of those rules.
+describe('planModUpdate', () => {
+    const installedRelease = version({ id: 'inst', loaders: ['forge'], date_published: '2026-01-01T00:00:00Z' });
+    const installedBeta = { ...installedRelease, version_type: 'beta' as const };
+    const forge = (over: Partial<ModrinthVersion> & { id: string }) =>
+        version({ loaders: ['forge'], date_published: '2026-06-01T00:00:00Z', ...over });
+    const target = { loader: 'forge', mcVersion: '1.20.1', installedProjectIds: new Set(['proj', 'dep-a']) };
+
+    const cases: {
+        name: string;
+        installed: ModrinthVersion | null;
+        installedAt?: string;
+        candidates: ModrinthVersion[];
+        want: string; // 'current' | 'unknown' | 'update:<id>' | 'skip:<id>'
+    }[] = [
+        {
+            name: 'release does not move to a newer beta',
+            installed: installedRelease,
+            candidates: [installedRelease, forge({ id: 'b2', version_type: 'beta' })],
+            want: 'current',
+        },
+        {
+            name: 'release does not move to a newer alpha',
+            installed: installedRelease,
+            candidates: [installedRelease, forge({ id: 'a2', version_type: 'alpha' })],
+            want: 'current',
+        },
+        {
+            name: 'release moves to the newest release, past a newer beta',
+            installed: installedRelease,
+            candidates: [
+                installedRelease,
+                forge({ id: 'r2', date_published: '2026-03-01T00:00:00Z' }),
+                forge({ id: 'b3', version_type: 'beta', date_published: '2026-07-01T00:00:00Z' }),
+            ],
+            want: 'update:r2',
+        },
+        {
+            name: 'beta may move to a newer release',
+            installed: installedBeta,
+            candidates: [installedBeta, forge({ id: 'r2' })],
+            want: 'update:r2',
+        },
+        {
+            name: 'beta may move to a newer beta',
+            installed: installedBeta,
+            candidates: [installedBeta, forge({ id: 'b2', version_type: 'beta' })],
+            want: 'update:b2',
+        },
+        {
+            name: 'beta does not move to an alpha',
+            installed: installedBeta,
+            candidates: [installedBeta, forge({ id: 'a2', version_type: 'alpha' })],
+            want: 'current',
+        },
+        {
+            name: 'unknown installed build is treated as a release',
+            installed: null,
+            candidates: [forge({ id: 'b2', version_type: 'beta' })],
+            want: 'current',
+        },
+        {
+            // The installed build was a beta newer than this release; without
+            // it, the release must not be read as an update.
+            name: 'unknown installed build: a release older than the install is unknown, not an update',
+            installed: null,
+            installedAt: '2026-08-01T10:00:00.123456Z',
+            candidates: [forge({ id: 'r-old', date_published: '2026-06-01T00:00:00Z' })],
+            want: 'unknown',
+        },
+        {
+            name: 'unknown installed build: a release published after the install is an update',
+            installed: null,
+            installedAt: '2026-05-01T10:00:00Z',
+            candidates: [forge({ id: 'r-new', date_published: '2026-06-01T00:00:00Z' })],
+            want: 'update:r-new',
+        },
+        {
+            name: 'unknown installed build and no install time is unknown',
+            installed: null,
+            candidates: [forge({ id: 'r-new' })],
+            want: 'unknown',
+        },
+        {
+            name: 'MC version is pinned to the server, other versions are ignored',
+            installed: installedRelease,
+            candidates: [installedRelease, forge({ id: 'r-121', game_versions: ['1.21'] })],
+            want: 'current',
+        },
+        {
+            name: 'loader is pinned to the server',
+            installed: installedRelease,
+            candidates: [installedRelease, forge({ id: 'r-fabric', loaders: ['fabric'] })],
+            want: 'current',
+        },
+        {
+            name: 'never moves to an older build',
+            installed: { ...installedRelease, date_published: '2026-09-01T00:00:00Z' },
+            candidates: [forge({ id: 'older', date_published: '2026-02-01T00:00:00Z' })],
+            want: 'current',
+        },
+        {
+            name: 'missing required dependency is skipped',
+            installed: installedRelease,
+            candidates: [forge({ id: 'r2', dependencies: [{ project_id: 'dragons-plus', dependency_type: 'required' }] })],
+            want: 'skip:r2',
+        },
+        {
+            name: 'installed required dependency is fine',
+            installed: installedRelease,
+            candidates: [forge({ id: 'r2', dependencies: [{ project_id: 'dep-a', dependency_type: 'required' }] })],
+            want: 'update:r2',
+        },
+        {
+            name: 'missing optional dependency is fine',
+            installed: installedRelease,
+            candidates: [forge({ id: 'r2', dependencies: [{ project_id: 'nope', dependency_type: 'optional' }] })],
+            want: 'update:r2',
+        },
+        {
+            name: 'installed incompatible dependency is skipped',
+            installed: installedRelease,
+            candidates: [forge({ id: 'r2', dependencies: [{ project_id: 'dep-a', dependency_type: 'incompatible' }] })],
+            want: 'skip:r2',
+        },
+    ];
+
+    for (const c of cases) {
+        it(c.name, () => {
+            const plan = planModUpdate('inst', c.candidates, { ...target, installed: c.installed, installedAt: c.installedAt });
+            const got = plan.kind === 'current' || plan.kind === 'unknown' ? plan.kind : `${plan.kind}:${plan.build.id}`;
+            expect(got).toBe(c.want);
+        });
+    }
+});
+
+describe('dependencyProblems', () => {
+    it('names missing required and installed incompatible projects, ignores embedded and self', () => {
+        const v = version({
+            id: 'r2',
+            dependencies: [
+                { project_id: 'dragons-plus', dependency_type: 'required' },
+                { version_id: 'ver-only', dependency_type: 'required' },
+                { project_id: 'jei', dependency_type: 'incompatible' },
+                { project_id: 'absent', dependency_type: 'incompatible' },
+                { project_id: 'lib', dependency_type: 'embedded' },
+                { project_id: 'proj', dependency_type: 'required' },
+            ],
+        });
+        expect(dependencyProblems(v, new Set(['jei']))).toEqual({
+            missing: ['dragons-plus', 'ver-only'],
+            incompatible: ['jei'],
+        });
+    });
+});
+
+// A dependency Modrinth names only by a build used to be looked up in the set
+// of PROJECT ids, where a version id never is: always "missing", by raw id.
+describe('dependencyProblems with version-only dependencies', () => {
+    const v = (deps: ModrinthVersion['dependencies']) => version({ id: 'r2', dependencies: deps });
+    const resolved = new Map([['v-dep-a', 'dep-a'], ['v-self', 'proj'], ['v-gone', 'gone']]);
+    const installed = new Set(['dep-a']);
+
+    it.each([
+        ['resolved to an installed project', [{ version_id: 'v-dep-a', dependency_type: 'required' }], { missing: [], incompatible: [] }],
+        ['resolved to its own project', [{ version_id: 'v-self', dependency_type: 'required' }], { missing: [], incompatible: [] }],
+        ['resolved to an absent project', [{ version_id: 'v-gone', dependency_type: 'required' }], { missing: ['gone'], incompatible: [] }],
+        ['unresolved required', [{ version_id: 'v-unknown', dependency_type: 'required' }], { missing: ['v-unknown'], incompatible: [] }],
+        ['unresolved incompatible', [{ version_id: 'v-unknown', dependency_type: 'incompatible' }], { missing: [], incompatible: [] }],
+        ['incompatible resolved to an installed project', [{ version_id: 'v-dep-a', dependency_type: 'incompatible' }], { missing: [], incompatible: ['dep-a'] }],
+    ])('%s', (_name, deps, want) => {
+        expect(dependencyProblems(v(deps), installed, resolved)).toEqual(want);
+    });
+
+    it('a version-only dependency is resolved for planModUpdate', () => {
+        const build = version({ id: 'r2', loaders: ['forge'], date_published: '2026-06-01T00:00:00Z', dependencies: [{ version_id: 'v-dep-a', dependency_type: 'required' }] });
+        const plan = planModUpdate('inst', [build], {
+            loader: 'forge', mcVersion: '1.20.1', installed: version({ id: 'inst', loaders: ['forge'] }),
+            installedProjectIds: installed, versionProjects: resolved,
+        });
+        expect(plan.kind).toBe('update');
+    });
+
+    it('lists only the version ids that need resolving', () => {
+        expect(unresolvedDependencyVersionIds(v([
+            { version_id: 'a', dependency_type: 'required' },
+            { version_id: 'b', project_id: 'pb', dependency_type: 'required' },
+            { version_id: 'c', dependency_type: 'optional' },
+            { version_id: 'd', dependency_type: 'incompatible' },
+        ]))).toEqual(['a', 'd']);
     });
 });

@@ -194,6 +194,9 @@ var ExemptRoutes = map[string]bool{
 	"/api/modrinth/version/{id}":            true, // authed; external proxy
 	"/api/modrinth/categories":              true, // authed; external proxy
 	"/api/modrinth/game-versions":           true, // authed; external proxy
+	"/api/modrinth/versions":                true, // authed; external proxy (bulk)
+	"/api/modrinth/projects":                true, // authed; external proxy (bulk)
+	"/api/modrinth/version-files/update":    true, // authed; external proxy (bulk)
 	"/api/technic/search":                   true, // authed; external proxy
 	"/api/technic/pack/{slug}":              true, // authed; external proxy
 

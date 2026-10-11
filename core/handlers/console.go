@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -57,11 +59,16 @@ func NewConsoleHandler(state *AppState) *ConsoleHandler {
 // ?before=.
 const consoleHistoryMax = 1000
 
+// consoleRetainedLines is the log shipper's maxStreamLen (approximate MAXLEN,
+// so a trimmed stream holds at least this many).
+const consoleRetainedLines = 5000
+
 // GetHistory GET /api/servers/{id}/console/history
 // Returns up to ?count= (default and max 1000) log lines from the Redis Stream,
 // oldest first, with their stream IDs. ?before=<id> pages backwards: only
 // lines strictly older than that ID are returned. "more" says whether older
-// lines exist beyond this page.
+// lines exist beyond this page. On the last page "trimmed" says whether older
+// lines were dropped by retention rather than never written.
 func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
@@ -133,8 +140,18 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	resp := map[string]interface{}{"lines": lines, "ids": ids, "more": more}
+	if !more {
+		// The oldest line here is the stream's oldest. Whether that is where the
+		// log began depends on whether the shipper has trimmed it yet; it trims
+		// to at least consoleRetainedLines, so a shorter stream never was.
+		n, err := h.state.Redis.XLen(r.Context(), streamKey).Result()
+		if err == nil {
+			resp["trimmed"] = n >= consoleRetainedLines
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"lines": lines, "ids": ids, "more": more})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // StreamConsole GET /api/servers/{id}/console/stream
@@ -142,8 +159,10 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 // Auth token can be passed as ?token= query param since EventSource
 // does not support custom headers.
 // Reads directly from the Redis Stream via XREAD BLOCK — no Pub/Sub,
-// no watcher tracking needed. Delivery is reliable: messages are never
-// lost between reconnects because they stay in the stream history.
+// no watcher tracking needed. Every line carries its stream ID as the SSE id,
+// and a reconnect resumes after the Last-Event-ID header or ?after=<id>, so
+// lines printed while disconnected are replayed from the retained stream. An
+// `event: gap` says the resume point was already trimmed.
 func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
 		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
@@ -180,17 +199,19 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	streamKey := consoleStreamKey(srv, subServer)
-	// "$" means: only deliver messages that arrive after this connection opens.
-	// A reconnect names the last line it got (each line goes out with its
-	// stream ID) and resumes right after it, so ending streams on a timer
-	// loses nothing.
-	lastID := "$"
-	if id := r.Header.Get("Last-Event-ID"); sseEventID.MatchString(id) {
-		lastID = id
+	lastID, ok := consoleResumeID(r)
+	if !ok {
+		sendJSONError(w, "Invalid after", http.StatusBadRequest)
+		return
 	}
 
 	ctx, cancel := streamContext(r)
 	defer cancel()
+	if lastID != "$" && consoleResumeLostLines(ctx, h.state.Redis, streamKey, lastID) {
+		// No id: field, so the browser's Last-Event-ID stays on the last line.
+		fmt.Fprint(w, "event: gap\ndata: lines were trimmed before they could be resent\n\n")
+		flusher.Flush()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -236,6 +257,60 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// consoleResumeID picks where a console stream starts. "$" means: only lines
+// that arrive after this connection opens. A reconnect names the last line it
+// got (each line goes out with its stream ID) and resumes right after it, so
+// ending streams on a timer loses nothing.
+//
+// The browser's own reconnect sends Last-Event-ID. A stream the browser gave
+// up on is reopened as a NEW EventSource, which cannot set headers, so the
+// panel names the position in ?after= instead. The header wins: the browser
+// reconnects to the same URL, and its ?after= is older than the header by then.
+// Either is only a position within the stream the caller is already allowed
+// to read. ok is false for a malformed ?after=; a malformed header is ignored
+// as it always was.
+func consoleResumeID(r *http.Request) (id string, ok bool) {
+	if h := r.Header.Get("Last-Event-ID"); sseEventID.MatchString(h) {
+		return h, true
+	}
+	if a := r.URL.Query().Get("after"); a != "" {
+		if !sseEventID.MatchString(a) {
+			return "", false
+		}
+		return a, true
+	}
+	return "$", true
+}
+
+// consoleResumeLostLines reports whether lines after `after` may have been
+// trimmed before this resume could send them: the oldest retained line is
+// newer than the one the client last saw. The log shipper keeps a bounded
+// stream, so a client away long enough loses the lines in between, and the
+// replay alone would join the two ends as if nothing were missing.
+func consoleResumeLostLines(ctx context.Context, rdb *redis.Client, streamKey, after string) bool {
+	oldest, err := rdb.XRangeN(ctx, streamKey, "-", "+", 1).Result()
+	if err != nil || len(oldest) == 0 {
+		return false
+	}
+	return compareStreamIDs(oldest[0].ID, after) > 0
+}
+
+// compareStreamIDs orders two IDs that already match sseEventID.
+func compareStreamIDs(a, b string) int {
+	am, as, _ := strings.Cut(a, "-")
+	bm, bs, _ := strings.Cut(b, "-")
+	num := func(x, y string) int {
+		if c := cmp.Compare(len(x), len(y)); c != 0 {
+			return c
+		}
+		return strings.Compare(x, y)
+	}
+	if c := num(strings.TrimLeft(am, "0"), strings.TrimLeft(bm, "0")); c != 0 {
+		return c
+	}
+	return num(strings.TrimLeft(as, "0"), strings.TrimLeft(bs, "0"))
 }
 
 // SendCommand POST /api/servers/{id}/console/command - pushes one line onto

@@ -823,6 +823,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/modrinth/version/{id}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Version))).Methods("GET")
 	api.HandleFunc("/modrinth/categories", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Categories))).Methods("GET")
 	api.HandleFunc("/modrinth/game-versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.GameVersions))).Methods("GET")
+	// Bulk lookups for Update all: a whole server's mods in a handful of calls.
+	// Their own bucket, so a run neither starves browsing nor is starved by it,
+	// and a low one, since each call stands for up to a thousand mods.
+	modrinthBulkLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/modrinth/versions", modrinthBulkLimiter.Limit(30, authHandler.AuthMiddleware(modrinthHandler.Versions))).Methods("GET")
+	api.HandleFunc("/modrinth/projects", modrinthBulkLimiter.Limit(30, authHandler.AuthMiddleware(modrinthHandler.Projects))).Methods("GET")
+	api.HandleFunc("/modrinth/version-files/update", modrinthBulkLimiter.Limit(30, authHandler.AuthMiddleware(modrinthHandler.LatestFromHashes))).Methods("POST")
 	// Technic Platform metadata, same shape: authed, cached, per-IP limited -
 	// tighter than Modrinth. Technic answers 429 after a short burst, and its
 	// cooldown is shared, so one panel typing fast must not stall every other

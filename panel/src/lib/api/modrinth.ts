@@ -120,6 +120,34 @@ export async function getModrinthProject(slug: string): Promise<ModrinthProject 
     } catch { return null; }
 }
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/**
+ * fetch that waits out a rate limit instead of reporting it as an answer.
+ *
+ * Core answers 429 for its own per-IP bucket and 503 with Retry-After while
+ * Modrinth has it cooling down. Either way the request was never judged, so a
+ * caller that read it as "no versions" would call a mod unchecked - or worse,
+ * current. Retry-After is honoured, capped so one header cannot park the tab.
+ */
+export async function fetchRetryingRateLimit(
+    url: string,
+    init: RequestInit,
+    opts: { retries?: number; maxWaitMs?: number; wait?: (ms: number) => Promise<void> } = {},
+): Promise<Response> {
+    const retries = opts.retries ?? 3;
+    const maxWait = opts.maxWaitMs ?? 60_000;
+    const wait = opts.wait ?? sleep;
+    for (let attempt = 0; ; attempt++) {
+        const res = await fetch(url, init);
+        const limited = res.status === 429 || (res.status === 503 && res.headers.has('Retry-After'));
+        if (!limited || attempt >= retries) return res;
+        const secs = Number(res.headers.get('Retry-After'));
+        const ms = Number.isFinite(secs) && secs > 0 ? secs * 1000 : 2000 * 2 ** attempt;
+        await wait(Math.min(ms, maxWait));
+    }
+}
+
 export async function getModrinthVersions(
     slug: string,
     filter?: { loaders?: string[]; versions?: string[] },
@@ -130,10 +158,76 @@ export async function getModrinthVersions(
         if (filter?.versions?.length) q.set('versions', filter.versions.join(','));
         const qs = q.toString();
         const url = `${API_URL}/modrinth/project/${encodeURIComponent(slug)}/versions${qs ? `?${qs}` : ''}`;
-        const res = await fetch(url, { headers: getAuthHeader() });
+        const res = await fetchRetryingRateLimit(url, { headers: getAuthHeader() });
         if (!res.ok) return [];
         return res.json();
     } catch { return []; }
+}
+
+// --- Bulk lookups (Update all) ---
+//
+// One request per mod is what Update all used to cost, and Core is one IP for
+// every customer against Modrinth's per-IP limit. These answer a whole server
+// in a handful of calls. They THROW on failure: an empty answer means "Modrinth
+// has nothing", which is a different statement from "we never asked".
+
+// Core's caps per call; chunked here so a big server is still a few calls.
+const BULK_IDS = 100;
+const BULK_HASHES = 1000;
+
+function chunks<T>(xs: T[], n: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+    return out;
+}
+
+async function bulkGet<T>(path: string, ids: string[]): Promise<T[]> {
+    const out: T[] = [];
+    for (const part of chunks([...new Set(ids)], BULK_IDS)) {
+        const res = await fetchRetryingRateLimit(`${API_URL}${path}?ids=${encodeURIComponent(part.join(','))}`, { headers: getAuthHeader() });
+        if (!res.ok) throw new Error(`Modrinth lookup failed (${res.status})`);
+        out.push(...await res.json());
+    }
+    return out;
+}
+
+/** Versions by id. Ids Modrinth does not know are absent from the result. */
+export function getModrinthVersionsByIds(ids: string[]): Promise<ModrinthVersion[]> {
+    return ids.length ? bulkGet<ModrinthVersion>('/modrinth/versions', ids) : Promise.resolve([]);
+}
+
+export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title'>;
+
+/** Project names by id (Core slims these to id, slug, title, icon, type). */
+export function getModrinthProjectsByIds(ids: string[]): Promise<ModrinthProjectName[]> {
+    return ids.length ? bulkGet<ModrinthProjectName>('/modrinth/projects', ids) : Promise.resolve([]);
+}
+
+/**
+ * For each sha512, the newest version of that file's project for the loader,
+ * Minecraft version and channels given. A hash with no such version is absent.
+ */
+export async function getLatestVersionsFromHashes(
+    hashes: string[],
+    filter: { loaders: string[]; gameVersions: string[]; versionTypes: ModrinthVersion['version_type'][] },
+): Promise<Record<string, ModrinthVersion>> {
+    const out: Record<string, ModrinthVersion> = {};
+    for (const part of chunks([...new Set(hashes)], BULK_HASHES)) {
+        const res = await fetchRetryingRateLimit(`${API_URL}/modrinth/version-files/update`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hashes: part,
+                algorithm: 'sha512',
+                loaders: filter.loaders,
+                game_versions: filter.gameVersions,
+                version_types: filter.versionTypes,
+            }),
+        });
+        if (!res.ok) throw new Error(`Modrinth update check failed (${res.status})`);
+        Object.assign(out, await res.json());
+    }
+    return out;
 }
 
 // --- Category tags (Content-tab sidebar) ---

@@ -3,10 +3,10 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, memo } from 'react';
 import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
-import { subscribeEventSource } from '@/lib/sse';
+import { subscribeEventSource, type StreamStatus, type Subscription } from '@/lib/sse';
 import { levelClass, type Level } from '@/lib/consoleLog';
 import { appendLive, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
-import { Power, Send, Cpu, MemoryStick, ArrowDown } from 'lucide-react';
+import { Power, Send, Cpu, MemoryStick, ArrowDown, RefreshCw } from 'lucide-react';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
 // ANSI spec for terminal color rendering and are intentionally NOT mapped to
@@ -60,7 +60,9 @@ const ConsoleRow = memo(function ConsoleRow({ text, level }: { text: string; lev
   );
 });
 
-interface HistoryPage { lines?: string[]; ids?: string[]; more?: boolean }
+interface HistoryPage { lines?: string[]; ids?: string[]; more?: boolean; trimmed?: boolean }
+
+const GAP_TEXT = 'Some lines printed while the console was disconnected were not retained.';
 
 function historyLines(data: HistoryPage, nextKey: () => string): { key: string; text: string }[] {
   const ids = data.ids ?? [];
@@ -89,7 +91,12 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   // 'more': older lines can be fetched; 'start': Core said there are none
   // before startKeyRef; 'unknown': a Core that predates paging, so no top row.
   const [olderState, setOlder] = useState<'more' | 'loading' | 'start' | 'unknown'>('unknown');
+  // Whether the start reached is where the log began, or only where retention
+  // cut it. A Core that does not say is taken as the honest "retained" case.
+  const [startTrimmed, setStartTrimmed] = useState(true);
   const startKeyRef = useRef('');
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
+  const streamRef = useRef<Subscription | null>(null);
   // Following trims the top, so the start reached earlier may no longer be
   // the oldest line shown; then there is more to fetch again.
   const oldestId = oldestStreamId(lines);
@@ -139,6 +146,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     const gen = ++genRef.current;
     setLines([]);
     setOlder('unknown');
+    setStartTrimmed(true);
     startKeyRef.current = '';
     anchorRef.current = null;
     followRef.current = true;
@@ -147,8 +155,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     let historyLoaded = false;
 
     const subParam = activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : '';
-    const stopStream = subscribeEventSource(`/servers/${server.id}/console/stream${subParam}`, (e) => {
-      const entry = { key: e.lastEventId || nextKey(), text: e.data };
+    const push = (entry: { key: string; text: string }) => {
       if (!historyLoaded) {
         pendingLines.push({ ...entry, level: 'info' }); // re-levelled on merge
       } else {
@@ -156,7 +163,16 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         // scrolled up slides the text under them.
         setLines(prev => appendLive(prev, entry, followRef.current));
       }
-    });
+    };
+    // A reopened stream resumes after the last line received (?after=), and
+    // appendLive drops anything replayed that is already shown.
+    const stopStream = subscribeEventSource(
+      `/servers/${server.id}/console/stream${subParam}`,
+      (e) => push({ key: e.lastEventId || nextKey(), text: e.data }),
+      { gap: () => push({ key: nextKey(), text: GAP_TEXT }) },
+      { resumeParam: 'after', onStatus: setStreamStatus },
+    );
+    streamRef.current = stopStream;
 
     const settle = (history: ConsoleLine[]) => {
       if (gen !== genRef.current) return;
@@ -170,11 +186,15 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         const oldest = data.ids?.[0] ?? '';
         startKeyRef.current = oldest;
         if (typeof data.more === 'boolean') setOlder(data.more && oldest ? 'more' : 'start');
+        setStartTrimmed(data.trimmed !== false);
         settle(levelled(historyLines(data, nextKey)));
       })
       .catch(() => settle([]));
 
-    return stopStream;
+    return () => {
+      stopStream();
+      if (streamRef.current === stopStream) streamRef.current = null;
+    };
     // historyUrl and nextKey read only server.id, activeSubServer and refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id, activeSubServer]);
@@ -195,6 +215,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         const page = levelled(historyLines(data, nextKey));
         startKeyRef.current = data.ids?.[0] || before;
         setOlder(data.more && page.length > 0 ? 'more' : 'start');
+        setStartTrimmed(data.trimmed !== false);
         if (page.length === 0) return;
         anchorRef.current = logRef.current?.scrollHeight ?? null;
         setLines(prev => mergeOrdered(page, prev));
@@ -310,14 +331,14 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
 
   return (
     <div className="h-full flex flex-col card overflow-hidden">
-      {/* Stats bar */}
-      {liveStats && (
-        <div className="shrink-0 flex items-center gap-6 px-5 h-12 bg-(--base-01) border-b-2 border-(--base-03)">
+      {/* Stats bar, and whether the console stream is live */}
+      <div className="shrink-0 flex items-center gap-4 sm:gap-6 px-5 h-12 bg-(--base-01) border-b-2 border-(--base-03)">
+        {liveStats && (<>
           <div className="flex items-center gap-2">
             <Cpu size={16} className="text-(--base-06)" />
             <span className="mono-label">CPU</span>
             <span className="text-sm font-semibold font-mono text-(--base-09)">{liveStats.cpu.toFixed(1)}%</span>
-            <div className="w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
+            <div className="hidden sm:block w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
               <div className="h-full bg-(--primary) rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.max(0, liveStats.cpu))}%` }} />
             </div>
           </div>
@@ -327,12 +348,27 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
             <span className="text-sm font-semibold font-mono text-(--base-09)">
               {liveStats.memUsed >= 1024 ? `${(liveStats.memUsed / 1024).toFixed(1)}G` : `${liveStats.memUsed}M`}/{liveStats.memLimit >= 1024 ? `${(liveStats.memLimit / 1024).toFixed(1)}G` : `${liveStats.memLimit}M`}
             </span>
-            <div className="w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
+            <div className="hidden sm:block w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
               <div className="h-full bg-(--success) rounded-full transition-all duration-500" style={{ width: `${liveStats.memLimit > 0 ? (liveStats.memUsed / liveStats.memLimit) * 100 : 0}%` }} />
             </div>
           </div>
+        </>)}
+        <div className="ml-auto flex items-center gap-2" role="status" aria-live="polite">
+          {streamStatus === 'live' ? (
+            <span className="badge badge-success"><span className="badge-dot bg-(--success)" />Live</span>
+          ) : streamStatus === 'disconnected' ? (
+            <>
+              <span className="badge badge-error"><span className="badge-dot bg-(--error)" />Disconnected</span>
+              <button type="button" onClick={() => streamRef.current?.reconnect()} className="btn btn-secondary btn-sm">
+                <RefreshCw size={13} />
+                Reconnect
+              </button>
+            </>
+          ) : (
+            <span className="badge badge-warning"><span className="badge-dot bg-(--warning)" />{streamStatus === 'connecting' ? 'Connecting...' : 'Reconnecting...'}</span>
+          )}
         </div>
-      )}
+      </div>
       {/* Log output */}
       <div className="flex-1 min-h-0 relative">
       {/* overflow-anchor off: a prepend is anchored by hand above, and the
@@ -351,7 +387,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
             {/* One fixed-height row for every state, so its text changing never moves the lines below. */}
             {older !== 'unknown' && (
               <p className="h-6 text-xs leading-5 text-(--base-06) italic" aria-live="polite">
-                {older === 'loading' ? 'Loading older lines...' : older === 'start' ? 'Start of log' : ''}
+                {older === 'loading' ? 'Loading older lines...' : older === 'start' ? (startTrimmed ? 'Start of retained history (last 5000 lines)' : 'Start of log') : ''}
               </p>
             )}
             {lines.map(line => <ConsoleRow key={line.key} text={line.text} level={line.level} />)}

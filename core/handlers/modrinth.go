@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -54,6 +55,9 @@ func NewModrinthHandler(state *AppState) *ModrinthHandler {
 // is served straight through: one extra upstream call, no stored megabyte.
 const maxCachedResponseBytes = 512 << 10
 
+// modrinthMaxBody caps how much of one upstream reply is read at all.
+const modrinthMaxBody = 16 << 20
+
 // proxyJSON fetches the URL with caching. The cache key is a sha256 of the
 // full URL so we don't accidentally collide between similar queries.
 func (h *ModrinthHandler) proxyJSON(ctx context.Context, ttl time.Duration, urlStr string, w http.ResponseWriter) {
@@ -64,7 +68,17 @@ func (h *ModrinthHandler) proxyJSON(ctx context.Context, ttl time.Duration, urlS
 // body BEFORE it is cached and before it is written, so a cache hit and a cache
 // miss return the same document.
 func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, urlStr string, w http.ResponseWriter, transform func([]byte) []byte) {
+	h.proxyRequest(ctx, ttl, http.MethodGet, urlStr, nil, w, transform)
+}
+
+// proxyRequest is the one upstream path: cache, cooldown, User-Agent, 429
+// handling. A body (POST) is part of the cache key, since the same URL answers
+// differently per body.
+func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, method, urlStr string, reqBody []byte, w http.ResponseWriter, transform func([]byte) []byte) {
 	cacheKey := "dylaris:modrinth:" + hashURL(urlStr)
+	if reqBody != nil {
+		cacheKey = "dylaris:modrinth:" + hashURL(method+" "+urlStr+" "+string(reqBody))
+	}
 	if h.state.Cache != nil {
 		if cached, ok := h.state.Cache.Get(ctx, cacheKey); ok {
 			w.Header().Set("Content-Type", "application/json")
@@ -79,13 +93,20 @@ func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, 
 		return
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	var bodyReader io.Reader
+	if reqBody != nil {
+		bodyReader = bytes.NewReader(reqBody)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, bodyReader)
 	if err != nil {
 		sendJSONError(w, "Bad upstream request", http.StatusBadGateway)
 		return
 	}
 	req.Header.Set("User-Agent", services.DylarisUserAgent())
 	req.Header.Set("Accept", "application/json")
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := h.http.Do(req)
 	if err != nil {
@@ -97,7 +118,14 @@ func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, 
 		sendCooldown(w, "Modrinth", h.cool.trip(resp.Header, time.Now()))
 		return
 	}
-	body, _ := io.ReadAll(resp.Body)
+	// Bounded: a bulk version-files answer for a large server is a few MB, and
+	// an unbounded read would let one upstream reply take as much memory as it
+	// liked. Over the cap is an error, not a truncated (invalid) JSON body.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, modrinthMaxBody+1))
+	if len(body) > modrinthMaxBody {
+		sendJSONError(w, "Modrinth response too large", http.StatusBadGateway)
+		return
+	}
 
 	// Transform only a successful body: an error response has a different shape
 	// and must reach the caller as it arrived.

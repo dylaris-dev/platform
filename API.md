@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **522 routes** in 52 sections: 232 GET, 161 POST, 39 PUT, 36 PATCH, 55 DELETE.
+- **525 routes** in 52 sections: 234 GET, 162 POST, 39 PUT, 36 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **340** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **112** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **340** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -158,7 +158,7 @@ can still show what exists.
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
 - [/api/me](#apime) (30)
-- [/api/modrinth](#apimodrinth) (6)
+- [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (4)
@@ -551,8 +551,11 @@ can still show what exists.
 | GET | `/api/modrinth/game-versions` | session | _no capability_ | Limit | `ModrinthHandler.GameVersions` | Modrinth's Minecraft version tag list, newest first. |
 | GET | `/api/modrinth/project/{slug}` | session | _no capability_ | Limit | `ModrinthHandler.Project` | full project metadata. |
 | GET | `/api/modrinth/project/{slug}/versions` | session | _no capability_ | Limit | `ModrinthHandler.ProjectVersions` | a cached proxy to Modrinth's version list. |
+| GET | `/api/modrinth/projects` | session | _no capability_ | Limit | `ModrinthHandler.Projects` | several projects in one call, slimmed to what names a project: the description body is most of a project's bytes and nothing reading this renders it. |
 | GET | `/api/modrinth/search` | session | _no capability_ | Limit | `ModrinthHandler.Search` | Query params (Modrinth-compatible): query, limit, offset, facets (JSON array of arrays), loaders (comma list), versions (comma list), categories (comma list), project_type. |
+| POST | `/api/modrinth/version-files/update` | session | _no capability_ | Limit | `ModrinthHandler.LatestFromHashes` | for each installed file hash, the newest version of its project that matches the loaders, game versions and channels. |
 | GET | `/api/modrinth/version/{id}` | session | _no capability_ | Limit | `ModrinthHandler.Version` | single version metadata. |
+| GET | `/api/modrinth/versions` | session | _no capability_ | Limit | `ModrinthHandler.Versions` | several versions in one call. |
 
 ## /api/modules
 

@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.4
+
+### Features
+- **The console shows whether it is live**: Live, Reconnecting or Disconnected with a Reconnect button,
+  and after a dropped connection it fills in the lines it missed.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **"Update all" on the Content tab no longer risks breaking a modpack**: it keeps releases on releases,
+  skips updates whose required mods are missing, stays on the server's own loader and Minecraft version,
+  and asks for confirmation with the list of skipped mods. It now checks hundreds of mods in a handful of
+  requests instead of running into the rate limit.
+
 ## 2026.10.11.3
 
 ### Features
