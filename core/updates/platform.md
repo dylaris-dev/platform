@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A node whose region was already set before 2026.10.11.6 now gets its region created too**, and a
+  customer node reporting an unknown region is logged once instead of every five seconds. `core`
+
 ## 2026.10.11.6
 
 ### Features

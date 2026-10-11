@@ -31,6 +31,10 @@ type DiscoveryService struct {
 	// forty minutes. Only scanNodes touches it, from the single ticker
 	// goroutine in Start, so it needs no lock.
 	badRegionReported map[int]string
+	// regionKnown holds the region ids whose row this process has seen or
+	// created, so a heartbeat costs no query once its region is settled.
+	// Same goroutine as badRegionReported, no lock.
+	regionKnown map[string]bool
 }
 
 // SetLeader wires the leader-election gate. Call once at boot.
@@ -182,6 +186,7 @@ func NewDiscoveryService(s store.Store, r *redis.Client, secret string) *Discove
 		redis:             r,
 		clusterSecret:     secret,
 		badRegionReported: map[int]string{},
+		regionKnown:       map[string]bool{},
 	}
 }
 
@@ -277,10 +282,26 @@ func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported stri
 		}
 		return
 	}
+	// The row is checked even when the column already says this region: a
+	// node can hold a region from before regions were created on report, and
+	// returning early on a matching column would never create its row.
+	if !s.regionKnown[region] {
+		if !s.ensureRegionRow(node, region) {
+			return
+		}
+		s.regionKnown[region] = true
+	}
 	delete(s.badRegionReported, node.ID)
 	if region == node.Region {
 		return
 	}
+	log.Printf("Node region updated for %s: %q -> %q", node.Name, node.Region, region)
+	s.store.SetNodeRegion(node.ID, region)
+}
+
+// ensureRegionRow reports whether a row for region exists, creating it when
+// this node may.
+func (s *DiscoveryService) ensureRegionRow(node *models.Node, region string) bool {
 	if _, err := s.store.GetRegion(region); err != nil {
 		if !s.mayCreateRegion(node) {
 			// A customer's machine names its region freely; letting it create
@@ -290,17 +311,16 @@ func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported stri
 				logErrf("discovery", "customer node %s reports unknown region %q - keeping %q. Only the operator's nodes create regions.",
 					node.Name, region, node.Region)
 			}
-			return
+			return false
 		}
 		if err := s.store.EnsureRegion(region); err != nil {
 			// The column must not name a region no row describes; retry next tick.
 			log.Printf("Node %s reports new region %q but creating it failed: %v", node.Name, region, err)
-			return
+			return false
 		}
 		log.Printf("Region %q created from the heartbeat of node %s", region, node.Name)
 	}
-	log.Printf("Node region updated for %s: %q -> %q", node.Name, node.Region, region)
-	s.store.SetNodeRegion(node.ID, region)
+	return true
 }
 
 // mayCreateRegion: the platform's own nodes and an operator's External node

@@ -21,6 +21,7 @@ type regionFakeStore struct {
 	ensured   []string
 	ensureErr error
 	admins    map[string]bool
+	lookups   int
 }
 
 func (f *regionFakeStore) GetUserByID(id string) (*models.User, error) {
@@ -37,6 +38,7 @@ func (f *regionFakeStore) EnsureRegion(id string) error {
 }
 
 func (f *regionFakeStore) GetRegion(id string) (*models.Region, error) {
+	f.lookups++
 	if f.known[id] {
 		return &models.Region{ID: id}, nil
 	}
@@ -53,7 +55,7 @@ func newRegionDiscovery(known ...string) (*DiscoveryService, *regionFakeStore) {
 	for _, k := range known {
 		f.known[k] = true
 	}
-	return &DiscoveryService{store: f, badRegionReported: map[int]string{}}, f
+	return &DiscoveryService{store: f, badRegionReported: map[int]string{}, regionKnown: map[string]bool{}}, f
 }
 
 // captureLog redirects the standard logger for one test. logErrf writes there
@@ -237,5 +239,41 @@ func TestOnlyTheOperatorsNodesCreateRegions(t *testing.T) {
 				t.Errorf("ensured=%v written=%v, want created=%v written=%v", f.ensured, f.written, tc.created, tc.written)
 			}
 		})
+	}
+}
+
+// Found live: node 325 held region "eu-central" in its column from before
+// regions were created on report, and a matching column returned before the
+// row was checked, so the row never appeared.
+func TestARegionTheColumnAlreadyHoldsStillGetsItsRow(t *testing.T) {
+	d, f := newRegionDiscovery()
+	captureLog(t)
+	d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "eu-central"}, "eu-central")
+	if len(f.ensured) != 1 || len(f.written) != 0 {
+		t.Fatalf("ensured=%v written=%v, want the row created and the column left alone", f.ensured, f.written)
+	}
+}
+
+// Every 5s tick: a settled region costs no query, and a customer node with an
+// unknown region is reported once, not on every tick.
+func TestRepeatedHeartbeatsAreQuiet(t *testing.T) {
+	d, f := newRegionDiscovery("eu")
+	buf := captureLog(t)
+	n := &models.Node{ID: 1, Name: "n1", Region: "eu"}
+	for i := 0; i < 3; i++ {
+		d.applyHeartbeatRegion(n, "eu")
+	}
+	if f.lookups != 1 {
+		t.Errorf("region looked up %d times over three ticks, want 1", f.lookups)
+	}
+
+	cust := "cust"
+	c := &models.Node{ID: 2, Name: "c1", Region: "default", OwnerID: &cust}
+	f.admins = map[string]bool{}
+	for i := 0; i < 3; i++ {
+		d.applyHeartbeatRegion(c, "tenant-made")
+	}
+	if got := strings.Count(buf.String(), "customer node c1"); got != 1 {
+		t.Errorf("customer report logged %d times over three ticks, want 1", got)
 	}
 }
