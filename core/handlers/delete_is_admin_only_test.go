@@ -37,7 +37,7 @@ func TestDeletingServersIsAdminOnly(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			u := tc.user
-			got := ComputeEffectivePermissions(&u, nil).CanDeleteServers
+			got := ComputeEffectivePermissions(&u).CanDeleteServers
 			if got != tc.want {
 				t.Errorf("CanDeleteServers = %v, want %v", got, tc.want)
 			}
@@ -51,7 +51,7 @@ func TestDeletingServersIsAdminOnly(t *testing.T) {
 // "at all", and ownership answers "where".
 func TestChangingResourcesStaysAvailableToNonAdmins(t *testing.T) {
 	u := models.User{Role: "user", CanChangeResources: true}
-	p := ComputeEffectivePermissions(&u, nil)
+	p := ComputeEffectivePermissions(&u)
 	if !p.CanChangeResources {
 		t.Error("a user granted the resource flag lost it")
 	}

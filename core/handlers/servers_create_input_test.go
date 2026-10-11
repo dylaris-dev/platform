@@ -86,3 +86,37 @@ func TestEffectiveOwnerID(t *testing.T) {
 		})
 	}
 }
+
+type autoPlaceStore struct {
+	createInputStore
+	listNodesCalled bool
+}
+
+func (f *autoPlaceStore) GetSetting(string) (string, error) { return "", nil }
+func (f *autoPlaceStore) ListNodes() ([]models.Node, error) {
+	f.listNodesCalled = true
+	return nil, errNoSuchUser
+}
+func (f *autoPlaceStore) GetNodeByID(int) (*models.Node, error) { return nil, errNoSuchUser }
+
+// With no node, no region and no tag the scheduler has to run. It used to be
+// skipped unless a region or tag filter was given, and the create then looked
+// up node 0 and failed with "Node not found" - so a panel that no longer asks
+// for a region could not create a server at all.
+func TestCreateServerWithoutNodeOrFiltersAutoPlaces(t *testing.T) {
+	fs := &autoPlaceStore{createInputStore: createInputStore{user: &models.User{ID: "u1"}}}
+	h := &ServerHandler{state: &AppState{Store: fs}}
+	rec := httptest.NewRecorder()
+	h.CreateServer(rec, createServerReq(map[string]any{
+		"uuid":   "3f1f0e8a-6c1e-4d8a-9c4a-0b1d2e3f4a5b",
+		"name":   "s",
+		"docker": map[string]any{"ram": 1024, "cpuLimit": 1.0, "diskLimit": 2147483648},
+	}, "u1", true))
+
+	if !fs.listNodesCalled {
+		t.Fatalf("the scheduler was not consulted; status %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 from the scheduler: %s", rec.Code, rec.Body.String())
+	}
+}

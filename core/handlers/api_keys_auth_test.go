@@ -91,9 +91,6 @@ func (f *apiKeysAuthFakeStore) GetAPIKeyByHash(hash string) (*models.APIKey, err
 
 func (f *apiKeysAuthFakeStore) TouchAPIKey(id int) error { return nil }
 
-// The external server list applies the panel's region filter.
-func (f *apiKeysAuthFakeStore) GetUserRegionIDs(string) ([]string, error) { return nil, nil }
-
 func (f *apiKeysAuthFakeStore) GetUserByID(id string) (*models.User, error) {
 	if f.getUserErr != nil {
 		return nil, f.getUserErr

@@ -174,7 +174,7 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		// every five seconds with nothing on either side saying why.
 		if errors.Is(err, services.ErrNoWarpLeader) {
 			log.Printf("warp enroll refused (key=%d): %v - add a leader for this region under Settings -> Warp", key.ID, err)
-			sendJSONError(w, "No tunnel endpoint is available for your region yet.", http.StatusConflict)
+			sendJSONError(w, "No tunnel endpoint is available yet.", http.StatusConflict)
 			return
 		}
 		log.Printf("warp enroll failed (key=%d): %v", key.ID, err)

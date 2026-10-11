@@ -69,12 +69,6 @@ type createUserRequest struct {
 	// - never assign this field to the model directly.
 	Password string `json:"password"`
 	adminReauthRequest
-	// Region access. If the caller omits both fields, the new
-	// user defaults to all-regions access — matches the grandfather behavior
-	// applied to existing users at migration time, and avoids creating users
-	// who can see nothing.
-	AllRegions      *bool    `json:"allRegions,omitempty"`
-	RegionsExplicit []string `json:"regionsExplicit,omitempty"`
 }
 
 // createsPrivilegedAccount reports whether this create hands out power rather
@@ -184,21 +178,6 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default to all-regions when caller hasn't specified — preserves
-	// previous behavior where every user had implicit global access.
-	allRegions := true
-	regionsExplicit := []string{}
-	if req.AllRegions != nil {
-		allRegions = *req.AllRegions
-	}
-	if req.RegionsExplicit != nil {
-		regionsExplicit = req.RegionsExplicit
-	}
-	if err := h.state.Store.SetUserRegions(req.User.ID, allRegions, regionsExplicit); err != nil {
-		// Region setup failed but the user already exists — log but don't
-		// roll back; admin can fix the assignment from the user settings panel.
-		log.Printf("CreateUser: SetUserRegions failed for userID=%s: %v", req.User.ID, err)
-	}
 	creatorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
 

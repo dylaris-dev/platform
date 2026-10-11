@@ -300,8 +300,8 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                     <select
                         value={hosterDomain}
                         onChange={e => setHosterDomain(e.target.value)}
-                        aria-label="Region"
-                        title="Region — where your players enter our network"
+                        aria-label="Domain"
+                        title="Domain - the address your players connect to"
                         className="input-field text-sm w-44"
                     >
                         {hosters.map(h => (

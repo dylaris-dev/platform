@@ -243,12 +243,6 @@ function AuthPolicySection({
                         </>
                     }
                 />
-                <ToggleRow
-                    label="New users get all-regions access by default"
-                    description="Off (default): self-registered users see no servers until an admin grants region access. Admin-created users still default to all-regions."
-                    value={policy.defaultNewUserAllRegions}
-                    onChange={v => set({ defaultNewUserAllRegions: v })}
-                />
                 <div className="flex items-center gap-3">
                     <label className="input-label mb-0 shrink-0">Password min length</label>
                     <input

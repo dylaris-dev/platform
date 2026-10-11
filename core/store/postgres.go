@@ -1002,9 +1002,8 @@ func (s *PostgresStore) CreateServer(srv *models.Server) (int64, error) {
 	var id int64
 	// region is written explicitly. It used to be left to the column default, so
 	// every server read back as "default" no matter which node it actually landed
-	// on - and servers.region is what CountServersInRegion counts, which is the
-	// guard that refuses to delete a region still in use. A region full of servers
-	// looked empty to it.
+	// on - and servers.region is what the beam relay pick and the rebalancer's
+	// region fence read.
 	query := `INSERT INTO servers (uuid, name, node_id, owner_id, game_image, port, memory, cpu_limit, start_command, status, is_fixed, active_sub_server, extra_jvm_flags, disk_limit, server_type, proxy_id, auto_move, region, ram_padding_mb)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE(NULLIF($18, ''), 'default'), $19) RETURNING id`
 
@@ -1023,8 +1022,7 @@ func (s *PostgresStore) SetServerAutoMove(id int, enabled bool) error {
 //
 // The region follows the node, because that is what the region MEANS here: where
 // the server physically runs. Leaving it behind would make a migrated server
-// count against a region it no longer occupies, and CountServersInRegion is the
-// guard on deleting a region.
+// count against a region it no longer occupies.
 func (s *PostgresStore) UpdateServerNode(serverID int, newNodeID int) error {
 	_, err := s.db.Exec(
 		`UPDATE servers SET node_id = $1,
@@ -2400,98 +2398,11 @@ func (s *PostgresStore) GetRegion(id string) (*models.Region, error) {
 	return scanRegion(s.db.QueryRow(query, id).Scan)
 }
 
-func (s *PostgresStore) CreateRegion(r *models.Region) error {
+func (s *PostgresStore) EnsureRegion(id string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO regions (id, display_name, enabled, color) VALUES ($1, $2, $3, NULLIF($4, ''))`,
-		r.ID, r.DisplayName, r.Enabled, r.Color,
+		`INSERT INTO regions (id, display_name, enabled) VALUES ($1, $2, TRUE) ON CONFLICT (id) DO NOTHING`, id, id,
 	)
 	return err
-}
-
-func (s *PostgresStore) UpdateRegion(r *models.Region) error {
-	_, err := s.db.Exec(
-		`UPDATE regions SET display_name = $1, enabled = $2, color = NULLIF($3, '') WHERE id = $4`,
-		r.DisplayName, r.Enabled, r.Color, r.ID,
-	)
-	return err
-}
-
-func (s *PostgresStore) DeleteRegion(id string) error {
-	_, err := s.db.Exec(`DELETE FROM regions WHERE id = $1`, id)
-	return err
-}
-
-func (s *PostgresStore) CountServersInRegion(regionID string) (int, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM servers WHERE region = $1`, regionID).Scan(&n)
-	return n, err
-}
-
-func (s *PostgresStore) CountNodesInRegion(regionID string) (int, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE region = $1`, regionID).Scan(&n)
-	return n, err
-}
-
-// ==========================================
-// USER <-> REGION M:N
-// ==========================================
-
-func (s *PostgresStore) GetUserRegionIDs(userID string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT region_id FROM user_regions WHERE user_id = $1 ORDER BY region_id`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var rid string
-		if err := rows.Scan(&rid); err == nil {
-			out = append(out, rid)
-		}
-	}
-	// A short read here silently narrows a user's region access.
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// SetUserRegions replaces the user's region set in one transaction. When
-// allAccess is true the user_regions rows are wiped — all-regions trumps
-// the explicit list. When false, regionIDs becomes the new authoritative set.
-func (s *PostgresStore) SetUserRegions(userID string, allAccess bool, regionIDs []string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(`UPDATE users SET all_regions_access = $1 WHERE id = $2`, allAccess, userID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM user_regions WHERE user_id = $1`, userID); err != nil {
-		return err
-	}
-	if !allAccess {
-		for _, rid := range regionIDs {
-			if _, err := tx.Exec(`INSERT INTO user_regions (user_id, region_id) VALUES ($1, $2)`, userID, rid); err != nil {
-				return err
-			}
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *PostgresStore) SetUserAllRegionsAccess(userID string, allAccess bool) error {
-	_, err := s.db.Exec(`UPDATE users SET all_regions_access = $1 WHERE id = $2`, allAccess, userID)
-	return err
-}
-
-func (s *PostgresStore) GetUserAllRegionsAccess(userID string) (bool, error) {
-	var b bool
-	err := s.db.QueryRow(`SELECT COALESCE(all_regions_access, FALSE) FROM users WHERE id = $1`, userID).Scan(&b)
-	return b, err
 }
 
 // ==========================================

@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **525 routes** in 52 sections: 234 GET, 162 POST, 39 PUT, 36 PATCH, 55 DELETE.
+- **518 routes** in 52 sections: 231 GET, 161 POST, 38 PUT, 35 PATCH, 54 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **340** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **114** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (128)
+- [/api/admin](#apiadmin) (122)
 - [/api/auth](#apiauth) (22)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -157,7 +157,7 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (30)
+- [/api/me](#apime) (29)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
@@ -228,10 +228,6 @@ can still show what exists.
 | GET | `/api/admin/panel-roles/assignments` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelAssignments` | who holds a panel role or a per-user override, all of them at once. |
 | PATCH | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.write` | - | `PanelRolesHandler.UpdatePanelRole` | renames a staff role and replaces its capability set. |
 | DELETE | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.delete` | - | `PanelRolesHandler.DeletePanelRole` | deletes a staff role. |
-| GET | `/api/admin/regions` | session | `regions.read` | - | `RegionsHandler.AdminListRegions` | RequireCap("regions.read") at the route; includes disabled regions. |
-| POST | `/api/admin/regions` | session | `regions.write` | - | `RegionsHandler.CreateRegion` | RequireCap("regions.write") at the route. |
-| PATCH | `/api/admin/regions/{id}` | session | `regions.write` | - | `RegionsHandler.UpdateRegion` | RequireCap("regions.write") at the route. |
-| DELETE | `/api/admin/regions/{id}` | session | `regions.delete` | - | `RegionsHandler.DeleteRegion` | RequireCap("regions.delete") at the route. |
 | GET | `/api/admin/servers` | session | `servers.read` | - | `ServerHandler.GetAdminServers` | returns all DB servers with optional search filter |
 | PATCH | `/api/admin/servers/{id:[0-9]+}/demo` | session | `settings.write` | - | `ServerHandler.SetServerDemo` | PANEL settings.write (RequireCap at the route). |
 | POST | `/api/admin/servers/{id:[0-9]+}/migration/cancel` | session | `servers.write` | RequireGatewayEnabled | `ServerHandler.CancelMigration` | Admin oversight (PANEL servers.write, gateway-gated). |
@@ -315,8 +311,6 @@ can still show what exists.
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/panel-role` | session | `panelroles.read` | - | `UserHandler.GetUserPanelRoleHandler` | Reads the user's level-1 panel role id + per-user override caps, symmetric with the PUT. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/panel-role` | session | `panelroles.write` | - | `UserHandler.SetUserPanelRoleHandler` | Assigns (panelRoleId) or clears (panelRoleId=null) the user's level-1 panel role and their per-user panel cap grant/deny overrides. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/permissions` | session | `users.write` | - | `UserHandler.SetUserPermissionsHandler` | SetUserPermissions PUT /api/admin/users/{id}/permissions Sets per-user capability flags. |
-| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/regions` | session | `regions.read` | - | `UserRegionsHandler.GetUserRegions` | RequireCap("regions.read") at the route. |
-| PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/regions` | session | `regions.write` | - | `UserRegionsHandler.SetUserRegions` | RequireCap("regions.write") at the route. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/role` | session | `users.write` | - | `UserHandler.SetUserRoleHandler` | SetUserRole PUT /api/admin/users/{id}/role Valid roles: "user", "support", "admin". |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/username` | session | `users.write` | - | `UsernameHistoryHandler.AdminRename` | Body: {"username": "newname"} — bypasses cooldown + platform toggle. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/username-history` | session | `users.read` | - | `UsernameHistoryHandler.Admin` | Gated at the route with RequireCap("users.read"); admin short-circuits. |
@@ -532,7 +526,6 @@ can still show what exists.
 | POST | `/api/me/nodes/{id:[0-9]+}/reset-pairing` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.ResetMyNodePairing` | the owner's own Reset pairing, for a machine whose key is wedged or may have leaked. |
 | GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns. |
 | POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
-| GET | `/api/me/regions` | session | _no capability_ | - | `UserRegionsHandler.GetMyRegions` | current user's own region assignment (any authenticated user). |
 | GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
 | PUT | `/api/me/security-questions` | session | _no capability_ | Limit, LimitBody | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
 | GET | `/api/me/servers/via-tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |

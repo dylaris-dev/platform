@@ -12,12 +12,28 @@ import (
 )
 
 // regionFakeStore embeds store.Store (nil) so it satisfies the full interface
-// while implementing only the two calls this path makes; anything else panics
+// while implementing only the calls this path makes; anything else panics
 // loudly rather than passing quietly.
 type regionFakeStore struct {
 	store.Store
-	known   map[string]bool
-	written []string
+	known     map[string]bool
+	written   []string
+	ensured   []string
+	ensureErr error
+	admins    map[string]bool
+}
+
+func (f *regionFakeStore) GetUserByID(id string) (*models.User, error) {
+	return &models.User{ID: id, IsAdmin: f.admins[id]}, nil
+}
+
+func (f *regionFakeStore) EnsureRegion(id string) error {
+	if f.ensureErr != nil {
+		return f.ensureErr
+	}
+	f.ensured = append(f.ensured, id)
+	f.known[id] = true
+	return nil
 }
 
 func (f *regionFakeStore) GetRegion(id string) (*models.Region, error) {
@@ -56,26 +72,75 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// The fact this whole guard exists for: nodes.region is a join key, so a
-// DYLARIS_REGION typo must not reach the column. Before this, it was written
-// through unchecked and the beam relay filter, the rebalancer, the staff
-// visibility filter and the region-delete guard all then answered about a
-// region no row describes.
-func TestAnUnknownHeartbeatRegionIsNotWritten(t *testing.T) {
+// Regions are announced by the machines in them, not created in the panel: a
+// valid id nobody has seen before gets its row and is then applied. Before,
+// it was ignored and the node stayed in "default" until an admin created it.
+func TestANewValidHeartbeatRegionIsCreatedAndApplied(t *testing.T) {
 	d, f := newRegionDiscovery("eu")
 	captureLog(t)
 
-	d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "default"}, "eu-cental")
+	d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "default"}, "us-east")
+
+	if len(f.ensured) != 1 || f.ensured[0] != "us-east" {
+		t.Fatalf("ensured = %v, want exactly [us-east]", f.ensured)
+	}
+	if len(f.written) != 1 || f.written[0] != "us-east" {
+		t.Fatalf("written = %v, want exactly [us-east]", f.written)
+	}
+}
+
+func TestAnExistingRegionIsNotRecreated(t *testing.T) {
+	d, f := newRegionDiscovery("eu")
+	captureLog(t)
+
+	d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "default"}, "eu")
+
+	if len(f.ensured) != 0 {
+		t.Fatalf("an existing region was created again: %v", f.ensured)
+	}
+}
+
+// nodes.region is a join key and a BYON node is a customer machine that sets
+// NODE_REGION freely, so anything that is not a short lowercase id must not
+// reach the column or create a row. 32 is the width of regions.id.
+func TestAnInvalidHeartbeatRegionIsNotWritten(t *testing.T) {
+	for _, bad := range []string{"eu_central", "eu central", "eu/../x", "<script>", "ëu", strings.Repeat("a", 33)} {
+		t.Run(bad, func(t *testing.T) {
+			d, f := newRegionDiscovery("eu")
+			captureLog(t)
+
+			d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "default"}, bad)
+
+			if len(f.written) != 0 || len(f.ensured) != 0 {
+				t.Fatalf("an invalid region got through: written=%v ensured=%v", f.written, f.ensured)
+			}
+		})
+	}
+	d, f := newRegionDiscovery()
+	captureLog(t)
+	d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "default"}, strings.Repeat("a", 32))
+	if len(f.written) != 1 {
+		t.Fatalf("a 32-char id (the column width) was refused: %v", f.written)
+	}
+}
+
+// The column must never name a region no row describes, so a failed insert
+// leaves the node where it is and the next heartbeat tries again.
+func TestARegionThatCouldNotBeCreatedIsNotWritten(t *testing.T) {
+	d, f := newRegionDiscovery("eu")
+	f.ensureErr = errors.New("db down")
+	captureLog(t)
+
+	d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "default"}, "us-east")
 
 	if len(f.written) != 0 {
-		t.Fatalf("an unknown region reached the column: %v", f.written)
+		t.Fatalf("written = %v after the region insert failed", f.written)
 	}
 }
 
 // Refusing over casing alone would be its own bug: the operator named a region
-// that plainly exists. Region ids are canonically lowercase (CreateRegion
-// lowercases, the id regex forbids the rest), so the reported value is
-// normalised to that form rather than rejected.
+// that plainly exists. Region ids are canonically lowercase, so the reported
+// value is normalised to that form rather than rejected.
 func TestAKnownRegionIsNormalisedRatherThanRefused(t *testing.T) {
 	d, f := newRegionDiscovery("eu")
 	captureLog(t)
@@ -118,15 +183,15 @@ func TestAnUnknownRegionIsReportedOncePerDistinctValue(t *testing.T) {
 	node := &models.Node{ID: 1, Name: "n1", Region: "default"}
 
 	for i := 0; i < 5; i++ {
-		d.applyHeartbeatRegion(node, "eu-cental")
+		d.applyHeartbeatRegion(node, "eu_cental")
 	}
-	if got := strings.Count(buf.String(), "eu-cental"); got != 1 {
+	if got := strings.Count(buf.String(), "eu_cental"); got != 1 {
 		t.Fatalf("reported %d times, want 1:\n%s", got, buf.String())
 	}
 
 	// A DIFFERENT bad value is a different mistake and is reported again.
-	d.applyHeartbeatRegion(node, "eu-centrl")
-	if got := strings.Count(buf.String(), "eu-centrl"); got != 1 {
+	d.applyHeartbeatRegion(node, "eu_centrl")
+	if got := strings.Count(buf.String(), "eu_centrl"); got != 1 {
 		t.Fatalf("a second distinct bad value was swallowed:\n%s", buf.String())
 	}
 }
@@ -138,9 +203,39 @@ func TestFixingTheRegionClearsTheReportedValue(t *testing.T) {
 	captureLog(t)
 	node := &models.Node{ID: 1, Name: "n1", Region: "default"}
 
-	d.applyHeartbeatRegion(node, "eu-cental")
+	d.applyHeartbeatRegion(node, "eu_cental")
 	d.applyHeartbeatRegion(node, "eu")
 	if _, still := d.badRegionReported[node.ID]; still {
 		t.Fatal("a node that now reports a valid region is still marked as bad")
+	}
+}
+
+// A customer's BYON node may join an existing region but not create one: it
+// sets NODE_REGION freely and would otherwise fill the platform's region list.
+// An operator's External node is owned by the admin who enrolled it and may.
+func TestOnlyTheOperatorsNodesCreateRegions(t *testing.T) {
+	customer, admin := "cust", "op"
+	cases := []struct {
+		name    string
+		owner   *string
+		region  string
+		created bool
+		written bool
+	}{
+		{"platform node creates", nil, "us-east", true, true},
+		{"admin-owned external node creates", &admin, "eu-central", true, true},
+		{"customer node does not create", &customer, "tenant-made", false, false},
+		{"customer node joins an existing region", &customer, "eu", false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, f := newRegionDiscovery("eu")
+			f.admins = map[string]bool{admin: true}
+			captureLog(t)
+			d.applyHeartbeatRegion(&models.Node{ID: 1, Name: "n1", Region: "default", OwnerID: tc.owner}, tc.region)
+			if (len(f.ensured) > 0) != tc.created || (len(f.written) > 0) != tc.written {
+				t.Errorf("ensured=%v written=%v, want created=%v written=%v", f.ensured, f.written, tc.created, tc.written)
+			}
+		})
 	}
 }

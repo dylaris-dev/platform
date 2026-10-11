@@ -57,10 +57,6 @@ func (f *deleteDispatchFakeStore) GetUserByID(id string) (*models.User, error) {
 	return &models.User{ID: id, IsAdmin: true, Role: "admin"}, nil
 }
 
-func (f *deleteDispatchFakeStore) GetUserRegionIDs(id string) ([]string, error) {
-	return nil, nil
-}
-
 func deleteServerRequest() *http.Request {
 	req := httptest.NewRequest(http.MethodDelete, "/api/servers/7", nil)
 	ctx := context.WithValue(req.Context(), "userID", "alice")

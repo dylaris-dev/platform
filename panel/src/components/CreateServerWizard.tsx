@@ -4,11 +4,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import {
     getUsers, User, createServer, getNodes, Node,
-    getAvailableTags, getAvailableRegions, pickNode, NodeCandidate,
+    getAvailableTags, pickNode, NodeCandidate,
     updateServerResources, API_URL, getPlacementSettings,
 } from '../lib/api';
-import { regionFlag, regionLabelFrom } from '../lib/regions';
-import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, MapPin, Cpu, ChevronDown } from 'lucide-react';
+import { X, Server, CircleCheck, Info, ArrowRight, Rocket, Network, HardDrive, Tag as TagIcon, Move, Cpu, ChevronDown } from 'lucide-react';
 import CpuPinningControl from './CpuPinningControl';
 import { useAppData } from '@/lib/AppDataContext';
 import { sortUsersForPicker } from '@/lib/userOrder';
@@ -45,15 +44,13 @@ interface CreateServerWizardProps {
 }
 
 export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = true }: CreateServerWizardProps) {
-    // Admins get the full scheduling wizard (assign owner, any node, tags,
-    // regions). A BYON tenant gets a slimmed flow: owner is themselves, and only
+    // Admins get the full scheduling wizard (assign owner, any node, tags).
+    // A BYON tenant gets a slimmed flow: owner is themselves, and only
     // their own nodes are selectable. The 'placement' scope is what decides
     // that, for both: it offers unowned machines to an operator and an owned one
     // only to its owner, so the picker cannot suggest a target the create call
     // would refuse.
-    // regions carries the operator's own names for them; regionLabelFrom
-    // prefers those over the built-in map.
-    const { user, regions } = useAppData();
+    const { user } = useAppData();
     const isAdmin = !!user?.isAdmin;
 
     const [step, setStep] = useState(1);
@@ -73,11 +70,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const [availableTags, setAvailableTags] = useState<string[]>([]);
     const [tagPreview, setTagPreview] = useState<NodeCandidate | null>(null);
     const [tagPreviewReason, setTagPreviewReason] = useState<string>('');
-
-    // Region — first-class, env-driven on the node side. Empty string means
-    // "any region" (the scheduler ignores the region filter).
-    const [selectedRegion, setSelectedRegion] = useState<string>('');
-    const [availableRegions, setAvailableRegions] = useState<string[]>([]);
 
     // Validation and create failures used to go to window.alert. A native alert
     // is not part of the design system, blocks the thread, and - the reason it
@@ -108,13 +100,12 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         setNodeId(""); setOwnerId(null); setServerType('game'); setRam(2048); setCpuLimit(0); setDiskLimit(20);
         setSearchTerm(""); setNodeSearch("");
         setTargetMode('node'); setSelectedTags([]); setTagPreview(null); setTagPreviewReason('');
-        setSelectedRegion(''); setAvailableRegions([]);
         setAutoMove(false);
         setCpuMode('shared'); setCpuset('');
         setPaddingText(''); setAdvancedOpen(false);
         setNodesLoaded(false);
 
-        // Owner assignment + tag/region scheduling are admin-only. A tenant owns
+        // Owner assignment + tag scheduling are admin-only. A tenant owns
         // what they create, so skip the (admin-only) user list and pin the owner
         // to themselves.
         if (isAdmin) {
@@ -125,9 +116,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     setUsers(ordered);
                     if (ordered.length > 0) setOwnerId(ordered[0].id);
                 }
-            });
-            getAvailableRegions().then(res => {
-                if (res.success) setAvailableRegions(res.regions || []);
             });
             getPlacementSettings().then(res => {
                 if (res.success && typeof res.settings?.ramPaddingMb === 'number') setGlobalPaddingMb(res.settings.ramPaddingMb);
@@ -145,12 +133,10 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         }).finally(() => setNodesLoaded(true));
     }, [isOpen, isAdmin, user?.id]);
 
-    // Region changed → reload the tag list scoped to that region so admins
-    // can't pick a tag that doesn't exist for the chosen region. Admin-only:
-    // tenants never see the tag/region scheduler.
+    // Admin-only: tenants never see the tag scheduler.
     useEffect(() => {
         if (!isOpen || !isAdmin) return;
-        getAvailableTags(selectedRegion || undefined).then(res => {
+        getAvailableTags().then(res => {
             if (res.success) {
                 const tags = res.tags || [];
                 setAvailableTags(tags);
@@ -158,10 +144,10 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                 setSelectedTags(prev => prev.filter(t => tags.includes(t)));
             }
         });
-    }, [isOpen, isAdmin, selectedRegion]);
+    }, [isOpen, isAdmin]);
 
-    // Scheduler preview: ask which node would be picked whenever region,
-    // tags, or resource shape changes. Surfaces the choice + reason in the
+    // Scheduler preview: ask which node would be picked whenever the tags
+    // or the resource shape change. Surfaces the choice + reason in the
     // wizard so admins aren't deploying blind.
     useEffect(() => {
         if (targetMode !== 'tag') {
@@ -174,7 +160,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         const parsed = parseRamPaddingInput(paddingText);
         const previewPadding = parsed !== null && !Number.isNaN(parsed) ? parsed : null;
         pickNode({
-            region: selectedRegion || undefined,
             tags: selectedTags.length > 0 ? selectedTags : undefined,
             ramMb: ram,
             cpuCores: cpuLimit,
@@ -193,7 +178,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             if (!cancelled) { setTagPreview(null); setTagPreviewReason('Preview failed'); }
         });
         return () => { cancelled = true; };
-    }, [targetMode, selectedRegion, selectedTags, ram, cpuLimit, diskLimit, paddingText]);
+    }, [targetMode, selectedTags, ram, cpuLimit, diskLimit, paddingText]);
 
     // Load storage paths when node changes
     useEffect(() => {
@@ -241,10 +226,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             fail(`RAM headroom must be a whole number of MB from 0 to ${MAX_RAM_PADDING_MB}, or empty for the node's default.`);
             return;
         }
-        if (targetMode === 'tag' && selectedTags.length === 0 && !selectedRegion) {
-            fail("Please select a region or at least one tag.");
-            return;
-        }
 
         const randomPart = Math.random().toString(36).substring(2, 14);
         const serverUuid = `${ownerId}_${randomPart}`;
@@ -262,10 +243,10 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         };
         if (targetMode === 'node') {
             payload.nodeId = nodeId;
-        } else {
-            if (selectedRegion) payload.region = selectedRegion;
-            if (selectedTags.length > 0) payload.tags = selectedTags;
+        } else if (selectedTags.length > 0) {
+            payload.tags = selectedTags;
         }
+        // No nodeId and no tags: Core auto-places across every eligible node.
         if (storagePath !== 'auto') {
             payload.storagePath = storagePath;
         }
@@ -339,57 +320,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
 
                         {step === 1 && (
                             <div className="space-y-5 animate-fade-in">
-                                {/* Region pills (admin scheduling only) */}
-                                {isAdmin && (
-                                <section className="space-y-2">
-                                    <div className="flex items-center gap-2">
-                                        <MapPin size={14} className="text-(--accent-light)" />
-                                        <h3 className="text-base font-display font-bold text-(--base-09)">Region</h3>
-                                        <span className="font-mono text-[10px] text-(--base-06) ml-auto">
-                                            {availableRegions.length === 0
-                                                ? 'no regions configured'
-                                                : selectedRegion ? regionLabelFrom(selectedRegion, regions) : 'any'}
-                                        </span>
-                                    </div>
-                                    {availableRegions.length === 0 ? (
-                                        <div className="rounded-md border border-dashed border-(--base-04) bg-(--base-02) px-3 py-2.5 text-xs text-(--base-06)">
-                                            No node currently reports a region. Set{' '}
-                                            <code className="font-mono bg-(--base-03) px-1.5 py-0.5 rounded text-(--base-08)">NODE_REGION=eu-central</code>{' '}
-                                            on a node and redeploy it — the pill bar will appear once a heartbeat lands.
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedRegion('')}
-                                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors border ${
-                                                    !selectedRegion
-                                                        ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
-                                                        : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:text-(--base-09) hover:border-(--base-05)'
-                                                }`}
-                                            >
-                                                🌐 Any
-                                            </button>
-                                            {availableRegions.map(r => (
-                                                <button
-                                                    key={r}
-                                                    type="button"
-                                                    onClick={() => setSelectedRegion(r)}
-                                                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors inline-flex items-center gap-1.5 border ${
-                                                        selectedRegion === r
-                                                            ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
-                                                            : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:text-(--base-09) hover:border-(--base-05)'
-                                                    }`}
-                                                >
-                                                    <span>{regionFlag(r)}</span>
-                                                    <span>{regionLabelFrom(r, regions)}</span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                </section>
-                                )}
-
                                 <div className={`grid grid-cols-1 gap-6 ${isAdmin ? 'md:grid-cols-2' : ''}`}>
                                 {/* Left: Owner (admin assigns; a tenant owns what they create) */}
                                 {isAdmin && (
@@ -526,9 +456,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             {availableTags.length === 0 ? (
                                                 <div className="flex-1 flex items-center justify-center rounded-md border border-dashed border-(--base-04) bg-(--base-02) p-6 text-center">
                                                     <p className="text-xs text-(--base-06)">
-                                                        {selectedRegion
-                                                            ? <>No tags in region <span className="font-mono">{regionLabelFrom(selectedRegion, regions)}</span>.</>
-                                                            : <>No tags advertised by any online node.<br/>Tag nodes in <span className="font-mono">Settings → Nodes</span> first.</>}
+                                                        No tags advertised by any online node.<br/>The server is placed automatically on any eligible node.
                                                     </p>
                                                 </div>
                                             ) : (
@@ -557,7 +485,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                     </div>
                                                     <p className="mono-label">
                                                         {selectedTags.length === 0
-                                                            ? 'any tag — all nodes in the region are candidates'
+                                                            ? 'any tag - every eligible node is a candidate'
                                                             : `${selectedTags.length} selected — node must have all of them (AND)`}
                                                     </p>
                                                     <div className="flex-1 rounded-md border border-(--base-03) bg-(--base-02) p-3 text-sm">
@@ -827,9 +755,6 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                 setFormError(null);
                                 if (!ownerId) return setFormError("Please assign an owner.");
                                 if (targetMode === 'node' && !nodeId) return setFormError("Please select a node.");
-                                if (targetMode === 'tag' && selectedTags.length === 0 && !selectedRegion) {
-                                    return setFormError("Please select a region or at least one tag.");
-                                }
                                 setStep(2);
                             }}
                             className="btn btn-primary"

@@ -17,7 +17,6 @@ import {
 import { getNodes } from '@/lib/api/resources';
 import { useAppData } from '@/lib/AppDataContext';
 import RoutesModal from '@/components/RoutesModal';
-import RegionBadge from '@/components/RegionBadge';
 import CpuPinningControl from '@/components/CpuPinningControl';
 import { useServerUploadLock } from '@/lib/uploadManager';
 import { Upload } from 'lucide-react';
@@ -797,7 +796,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 </Link>
                             ) : null;
                         })()}
-                        <RegionBadge region={selectedServer.region} size="sm" displayName />
                         <span className="text-xs text-(--base-07)">
                             Owner:{' '}
                             <button

@@ -26,10 +26,6 @@ export interface User {
     is2FAEnabled?: boolean;
     createdAt?: string;
     lastUsernameChange?: string;
-    // Region access. allRegionsAccess=true overrides the
-    // explicit regions list — user sees all current and future regions.
-    allRegionsAccess?: boolean;
-    regions?: string[];
     // Lifecycle (surfaced for UI badges).
     emailVerifiedAt?: string;
     lastLoginAt?: string;
@@ -306,7 +302,7 @@ export const getUsers = () => fetchAPI('/users');
  *  PRIVILEGED (admin, support, or a permission flag); an ordinary account holds
  *  nothing until something is granted to it. Sending it always is simpler than
  *  mirroring that rule here and costs nothing when it is not needed. */
-export const createUser = (data: Partial<User> & { allRegions?: boolean; regionsExplicit?: string[] }, reauth?: Reauth) =>
+export const createUser = (data: Partial<User>, reauth?: Reauth) =>
     fetchAPI('/users', { method: 'POST', body: JSON.stringify({ ...data, reauth }) });
 export const deleteUser = (id: string, reauth?: Reauth) =>
     fetchAPI(`/users/${id}`, { method: 'DELETE', body: JSON.stringify({ reauth }) });
@@ -982,11 +978,9 @@ export interface PickNodeResponse {
 export const getPlacementSettings = () => fetchAPI('/settings/placement');
 export const savePlacementSettings = (data: PlacementSettings) =>
     fetchAPI('/settings/placement', { method: 'POST', body: JSON.stringify(data) });
-export const getAvailableTags = (region?: string): Promise<{ success: boolean; tags: string[] }> =>
-    fetchAPI(`/placement/tags${region ? `?region=${encodeURIComponent(region)}` : ''}`);
-export const getAvailableRegions = (): Promise<{ success: boolean; regions: string[] }> =>
-    fetchAPI('/placement/regions');
-export const pickNode = (data: { region?: string; tags?: string[]; tag?: string; nodeId?: number; ramMb: number; cpuCores: number; diskGb: number; ramPaddingMb?: number }): Promise<PickNodeResponse> =>
+export const getAvailableTags = (): Promise<{ success: boolean; tags: string[] }> =>
+    fetchAPI('/placement/tags');
+export const pickNode = (data: { tags?: string[]; tag?: string; nodeId?: number; ramMb: number; cpuCores: number; diskGb: number; ramPaddingMb?: number }): Promise<PickNodeResponse> =>
     fetchAPI('/placement/pick', { method: 'POST', body: JSON.stringify(data) });
 export const setNodePlacement = (nodeId: number, data: { cpuOvercommitRatio: number; ramOvercommitRatio: number; ramPaddingMb?: number | null }) =>
     fetchAPI(`/nodes/${nodeId}/placement`, { method: 'PUT', body: JSON.stringify(data) });

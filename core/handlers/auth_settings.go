@@ -23,10 +23,9 @@ func NewAuthSettingsHandler(state *AppState) *AuthSettingsHandler {
 // verification, no password policy enforcement beyond what users type.
 // Operators opt in by toggling.
 type AuthPolicy struct {
-	RegistrationEnabled      bool `json:"registrationEnabled"`
-	EmailVerifyRequired      bool `json:"emailVerifyRequired"`
-	PasswordMinLength        int  `json:"passwordMinLength"`
-	DefaultNewUserAllRegions bool `json:"defaultNewUserAllRegions"`
+	RegistrationEnabled bool `json:"registrationEnabled"`
+	EmailVerifyRequired bool `json:"emailVerifyRequired"`
+	PasswordMinLength   int  `json:"passwordMinLength"`
 	// 2FA enforcement. When on, affected users that don't have 2FA
 	// configured are forced through a setup flow at the next login
 	// instead of receiving a normal session token.
@@ -66,7 +65,6 @@ var defaultAuthPolicy = AuthPolicy{
 	RegistrationEnabled:               false,
 	EmailVerifyRequired:               false,
 	PasswordMinLength:                 12,
-	DefaultNewUserAllRegions:          false,
 	Require2FAForAdmins:               false,
 	Require2FAForAllUsers:             false,
 	PasswordResetLinkTTLMinutes:       60,
@@ -97,9 +95,6 @@ func LoadAuthPolicy(state *AppState) AuthPolicy {
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 4 && n <= 128 {
 			p.PasswordMinLength = n
 		}
-	}
-	if v, _ := state.Store.GetSetting("auth.default_new_user_all_regions"); v != "" {
-		p.DefaultNewUserAllRegions = v == "true"
 	}
 	if v, _ := state.Store.GetSetting("auth.require_2fa_for_admins"); v != "" {
 		p.Require2FAForAdmins = v == "true"
@@ -255,7 +250,6 @@ func (h *AuthSettingsHandler) SaveAuthPolicy(w http.ResponseWriter, r *http.Requ
 		{"auth.registration_enabled", fmt.Sprintf("%t", p.RegistrationEnabled)},
 		{"auth.email_verify_required", fmt.Sprintf("%t", p.EmailVerifyRequired)},
 		{"auth.password_min_length", fmt.Sprintf("%d", p.PasswordMinLength)},
-		{"auth.default_new_user_all_regions", fmt.Sprintf("%t", p.DefaultNewUserAllRegions)},
 		{"auth.require_2fa_for_admins", fmt.Sprintf("%t", p.Require2FAForAdmins)},
 		{"auth.require_2fa_for_all_users", fmt.Sprintf("%t", p.Require2FAForAllUsers)},
 		{"auth.password_reset_link_ttl_minutes", fmt.Sprintf("%d", p.PasswordResetLinkTTLMinutes)},

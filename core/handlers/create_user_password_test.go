@@ -44,8 +44,6 @@ func (f *createUserFakeStore) CreateUser(u *models.User) error {
 	return nil
 }
 
-func (f *createUserFakeStore) SetUserRegions(string, bool, []string) error { return nil }
-
 // The admin create-user path takes the password through a struct that embeds
 // models.User, whose Password field is json:"-" so a bcrypt hash can never be
 // serialised back to a client. That tag applies on the way IN as well, and it

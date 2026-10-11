@@ -27,7 +27,6 @@ func (f *internalNoteStore) GetUserByID(id string) (*models.User, error) {
 	}
 	return u, nil
 }
-func (f *internalNoteStore) GetUserRegionIDs(string) ([]string, error) { return nil, nil }
 
 const (
 	noteActor    = "aaaaaaaa-0000-4000-8000-000000000001" // the supporter writing the note

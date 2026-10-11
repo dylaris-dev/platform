@@ -67,10 +67,11 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-placement: when no explicit nodeId is given, defer to the
-	// scheduler. Region and tags (AND-filtered) narrow the candidate
-	// pool. With both empty the scheduler considers every online node.
-	hasFilters := strings.TrimSpace(req.Region) != "" || len(req.Tags) > 0 || strings.TrimSpace(req.Tag) != ""
-	if nodeIDInt == 0 && hasFilters {
+	// scheduler. Region and tags (AND-filtered) are optional filters that
+	// narrow the candidate pool; with neither the scheduler considers every
+	// online node. Placing without them used to be refused with "Node not
+	// found", which left a region-neutral panel no way to create a server.
+	if nodeIDInt == 0 {
 		pickReq := PickNodeRequest{
 			Region:       req.Region,
 			Tags:         req.Tags,
@@ -201,8 +202,8 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		// FILTER - it is only read when there is no explicit nodeId, and even then
 		// it says which nodes were eligible, not where the server ended up. The
 		// node is the only thing that knows where this server physically runs, and
-		// that is what servers.region has to mean for CountServersInRegion (the
-		// guard on deleting a region) to be right.
+		// that is what servers.region has to mean for the beam relay pick and
+		// the rebalancer's region fence to be right.
 		Region: node.Region,
 	}
 

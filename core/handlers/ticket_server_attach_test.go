@@ -42,10 +42,6 @@ func (f *ticketAttachFakeStore) GetUserByID(id string) (*models.User, error) {
 	return nil, sql.ErrNoRows
 }
 
-func (f *ticketAttachFakeStore) GetUserRegionIDs(userID string) ([]string, error) {
-	return nil, nil
-}
-
 func (f *ticketAttachFakeStore) GetUserPanelAuthz(userID string) (*int, store.CapOverrides, error) {
 	return nil, store.CapOverrides{}, nil
 }

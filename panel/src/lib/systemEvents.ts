@@ -5,7 +5,7 @@
 // Reconnects with exponential backoff (1s → 30s cap) so a Core restart or
 // brief network blip recovers without panel reload.
 //
-// The wire envelope is { type: "regions.changed"|..., payload?: {} }. Payload
+// The wire envelope is { type: "servers.changed"|..., payload?: {} }. Payload
 // is usually omitted — listeners just re-fetch their cached list when their
 // event fires.
 

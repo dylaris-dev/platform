@@ -50,10 +50,6 @@ func (f *orphanAssignFakeStore) GetUserByID(string) (*models.User, error) {
 	return f.user, nil
 }
 
-func (f *orphanAssignFakeStore) GetUserRegionIDs(string) ([]string, error) {
-	return nil, nil
-}
-
 func orphanAssignBody() []byte {
 	owner := "b083ff0c-fc16-47c5-9700-7b16486583e7"
 	raw, _ := json.Marshal(AssignOrphanRequest{

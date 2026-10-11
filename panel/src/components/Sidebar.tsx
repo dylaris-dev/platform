@@ -3,7 +3,6 @@
 import React, { useState, useMemo } from 'react';
 
 import { Server } from '../lib/api';
-import RegionBadge from '@/components/RegionBadge';
 import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import GuardedLink from '@/components/GuardedLink';
@@ -167,7 +166,6 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           )}
           <div className="mono-label mt-0.5 flex items-center gap-1">
             <span>{roleLabel}</span>
-            <RegionBadge region={server.region} className="ml-1" />
           </div>
         </div>
         {(() => {
@@ -205,7 +203,6 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             )}
             <div className="mono-label mt-0.5 flex items-center gap-1">
               <span>Proxy</span>
-              <RegionBadge region={group.proxy.region} className="ml-1" />
             </div>
           </div>
           <span className="text-[10px] font-mono text-(--base-05) mr-1">({group.children.length})</span>

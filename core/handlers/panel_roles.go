@@ -38,8 +38,23 @@ func normalizeCaps(caps []string) []string {
 	return caps
 }
 
+// catalogCaps is normalizeCaps minus ids the catalog no longer has (e.g. the
+// retired regions.*). Stored roles and overrides keep such ids, and the role
+// editor sends back what it was shown, so showing one would make every later
+// save fail validatePanelCaps with "unknown capability". Read views only; the
+// audit metadata keeps the stored list as it was.
+func catalogCaps(caps []string) []string {
+	out := make([]string, 0, len(caps))
+	for _, id := range caps {
+		if _, ok := authz.Get(id); ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func toPanelRoleView(pr store.PanelRole) panelRoleView {
-	return panelRoleView{ID: pr.ID, Name: pr.Name, Capabilities: normalizeCaps(pr.Capabilities), IsSystem: pr.IsSystem}
+	return panelRoleView{ID: pr.ID, Name: pr.Name, Capabilities: catalogCaps(pr.Capabilities), IsSystem: pr.IsSystem}
 }
 
 // validatePanelCaps returns an error naming the first capability that is not a
@@ -128,8 +143,8 @@ func (h *PanelRolesHandler) ListPanelAssignments(w http.ResponseWriter, r *http.
 		views = append(views, panelAssignmentView{
 			UserID:      a.UserID,
 			PanelRoleID: a.PanelRoleID,
-			GrantCaps:   normalizeCaps(a.CapOverrides.Grant),
-			DenyCaps:    normalizeCaps(a.CapOverrides.Deny),
+			GrantCaps:   catalogCaps(a.CapOverrides.Grant),
+			DenyCaps:    catalogCaps(a.CapOverrides.Deny),
 		})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "assignments": views})

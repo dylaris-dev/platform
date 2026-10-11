@@ -49,9 +49,6 @@ func (f *attachmentUploadFakeStore) GetTicket(id int) (*models.Ticket, error) {
 	return f.ticket, nil
 }
 func (f *attachmentUploadFakeStore) GetUserByID(id string) (*models.User, error) { return nil, nil }
-func (f *attachmentUploadFakeStore) GetUserRegionIDs(id string) ([]string, error) {
-	return nil, nil
-}
 func (f *attachmentUploadFakeStore) IsTicketWatcher(ticketID int, userID string) (bool, error) {
 	return false, nil
 }

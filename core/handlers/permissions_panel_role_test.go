@@ -17,9 +17,6 @@ type ticketCapStore struct {
 }
 
 func (f *ticketCapStore) GetUserByID(id string) (*models.User, error) { return f.user, nil }
-func (f *ticketCapStore) GetUserRegionIDs(id string) ([]string, error) {
-	return nil, nil
-}
 func (f *ticketCapStore) GetUserPanelAuthz(userID string) (*int, store.CapOverrides, error) {
 	if f.role == nil {
 		return nil, store.CapOverrides{}, nil

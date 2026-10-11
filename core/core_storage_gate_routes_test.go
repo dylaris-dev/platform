@@ -30,9 +30,6 @@ func (f *coreStorageRoutesFakeStore) GetTicket(id int) (*models.Ticket, error) {
 	}
 	return nil, sql.ErrNoRows
 }
-func (f *coreStorageRoutesFakeStore) GetUserRegionIDs(userID string) ([]string, error) {
-	return nil, nil
-}
 func (f *coreStorageRoutesFakeStore) IsTicketWatcher(ticketID int, userID string) (bool, error) {
 	return false, nil
 }

@@ -5,14 +5,12 @@ import {
     getProfile, getModules, getServers, getFeatureSettings, getRoutingMode, getBeamSettings,
     AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings, isGatewayRouting, isByonUsable,
 } from '@/lib/api';
-import { listRegions, Region } from '@/lib/api/regions';
 import { API_URL, GATE_TIMEOUT_MS, getAuthHeader } from '@/lib/api/core';
 import { systemEvents } from '@/lib/systemEvents';
 import { getSystemFeatures, FeatureFlags } from '@/lib/api/featureFlags';
 import { getMyEntitlement, Entitlement } from '@/lib/api/entitlement';
 
 interface CoreInfo {
-    region: string;
     coreId: string;
     // The DNS suffix each proxied custom tab is served under, one host per
     // tab, and whether that is configured at all. Without it a proxied tab has
@@ -52,13 +50,9 @@ interface AppData {
     // dark when the network blips.
     featureFlags: FeatureFlags;
     refreshFeatureFlags: () => Promise<void>;
-    // regions + connected-Core. Loaded once at boot and cached so
-    // child components can call useAppData() without each issuing their own
-    // fetch. Refreshes happen lazily on visible state changes (Settings →
-    // Regions tab triggers refresh after save).
-    regions: Region[];
+    // Connected-Core info. Loaded once at boot and cached so child
+    // components can call useAppData() without each issuing their own fetch.
     coreInfo: CoreInfo | null;
-    refreshRegions: () => Promise<void>;
     // What this user may USE (BYON / route-only), resolved server-side from
     // their plan plus any admin grant. null until the first fetch returns;
     // treat null as "not yet known" and NOT as "no", or the UI briefly tells an
@@ -88,7 +82,6 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const [routingMode, setRoutingMode] = useState<RoutingMode>('ip_port');
     const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>('sftp');
     const [beamSettings, setBeamSettings] = useState<BeamSettings | null>(null);
-    const [regions, setRegions] = useState<Region[]>([]);
     const [coreInfo, setCoreInfo] = useState<CoreInfo | null>(null);
     // modpacks defaults to true (legacy: ships enabled, admin opts out).
     // tickets defaults to false so the nav doesn't briefly flash a Tickets
@@ -129,11 +122,6 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         if (res.success && res.servers) setServers(res.servers);
     }, []);
 
-    const refreshRegions = useCallback(async () => {
-        const res = await listRegions();
-        if (res.success && Array.isArray(res.regions)) setRegions(res.regions);
-    }, []);
-
     const refreshFeatureFlags = useCallback(async () => {
         const res = await getSystemFeatures();
         if (res.success && res.features) setFeatureFlags(res.features);
@@ -155,16 +143,14 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         });
     }, []);
 
-    // /api/system/core-info — public on the auth surface, returns the region
-    // and ID of whichever Core this request landed on. Used by the topbar
-    // chip and any region-aware UX that wants to mark "you're talking to X".
+    // /api/system/core-info — public on the auth surface, returns the ID of
+    // whichever Core this request landed on and the tab proxy configuration.
     const refreshCoreInfo = useCallback(async () => {
         try {
             const res = await fetch(`${API_URL}/system/core-info`, { headers: getAuthHeader() });
             if (!res.ok) return;
             const data = await res.json();
             if (data.success) setCoreInfo({
-                region: data.region,
                 coreId: data.coreId,
                 tabProxyHostSuffix: data.tabProxyHostSuffix || '',
                 tabProxyAvailable: !!data.tabProxyAvailable,
@@ -217,7 +203,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             // no default timeout. Rendering with one stale slice beats not
             // rendering at all; the SSE subscriptions refresh them anyway.
             await Promise.race([
-                Promise.allSettled([refreshModules(), refreshServers(), refreshSettings(), refreshRegions(), refreshCoreInfo(), refreshFeatureFlags(), refreshEntitlement()]),
+                Promise.allSettled([refreshModules(), refreshServers(), refreshSettings(), refreshCoreInfo(), refreshFeatureFlags(), refreshEntitlement()]),
                 new Promise(resolve => setTimeout(resolve, GATE_TIMEOUT_MS)),
             ]);
             setReady(true);
@@ -227,7 +213,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
 
     // subscribe to /api/system/events SSE for live config refresh.
     // Replaces the old 5s setInterval(refreshServers) poll: status flips and
-    // CRUD mutations on any Core publish servers.changed / regions.changed /
+    // CRUD mutations on any Core publish servers.changed /
     // modules.changed / features.changed / maintenance.changed, and each
     // listener re-fetches just its own slice. systemEvents reconnects on
     // its own with exponential backoff if the stream drops.
@@ -236,7 +222,6 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         systemEvents.start();
         const unsubs = [
             systemEvents.on('servers.changed', () => { refreshServers(); }),
-            systemEvents.on('regions.changed', () => { refreshRegions(); }),
             systemEvents.on('modules.changed', () => { refreshModules(); }),
             systemEvents.on('features.changed', () => { refreshSettings(); refreshFeatureFlags(); refreshEntitlement(); }),
             // A grant/revoke publishes users.changed; without this the tenant's own
@@ -257,7 +242,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
             unsubs.forEach(u => u());
             systemEvents.stop();
         };
-    }, [ready, refreshServers, refreshRegions, refreshModules, refreshSettings, refreshFeatureFlags]);
+    }, [ready, refreshServers, refreshModules, refreshSettings, refreshFeatureFlags]);
 
     // The routing mode is the single source of truth for "is the gateway
     // routing traffic": Core gates every gateway write on exactly this
@@ -301,7 +286,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         refreshUser, refreshModules, refreshServers, refreshSettings,
         gatewayEnabled, byonEnabled, routeOnlyEnabled, libraryEnabled,
         featureFlags, refreshFeatureFlags,
-        regions, coreInfo, refreshRegions,
+        coreInfo,
         entitlement, refreshEntitlement,
     };
 

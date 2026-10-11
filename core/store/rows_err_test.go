@@ -93,17 +93,13 @@ func TestDumpTicketTableReportsAShortRead(t *testing.T) {
 	}
 }
 
-// Both of these decide what a user may reach.
+// This decides what a user may reach.
 func TestAccessListsReportAShortRead(t *testing.T) {
 	cases := []struct {
 		name  string
 		table string
 		call  func(*PostgresStore) (int, error)
 	}{
-		{"GetUserRegionIDs", "user_regions", func(s *PostgresStore) (int, error) {
-			ids, err := s.GetUserRegionIDs("user-1")
-			return len(ids), err
-		}},
 		{"GetSFTPAccessByNode", "servers", func(s *PostgresStore) (int, error) {
 			a, err := s.GetSFTPAccessByNode(1)
 			return len(a), err

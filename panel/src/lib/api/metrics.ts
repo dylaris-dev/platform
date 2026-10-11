@@ -126,7 +126,6 @@ export interface SeriesRequest {
     /** Bucket width in seconds. Omitted lets the server pick a drawable one. */
     step?: number;
     subject?: string;
-    region?: string;
     /** One line per component instead of one folded line. */
     split?: boolean;
 }
@@ -137,7 +136,6 @@ export function seriesQueryString(req: SeriesRequest): string {
     p.set('range', req.range);
     if (req.step) p.set('step', String(req.step));
     if (req.subject) p.set('subject', req.subject);
-    if (req.region) p.set('region', req.region);
     if (req.split) p.set('split', '1');
     return p.toString();
 }

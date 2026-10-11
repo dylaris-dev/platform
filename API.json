@@ -307,46 +307,6 @@
     },
     {
       "method": "GET",
-      "path": "/api/admin/regions",
-      "auth": "session",
-      "authorization": "regions.read",
-      "description": "RequireCap(\"regions.read\") at the route; includes disabled regions.",
-      "handler": "RegionsHandler.AdminListRegions",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/admin/regions",
-      "auth": "session",
-      "authorization": "regions.write",
-      "description": "RequireCap(\"regions.write\") at the route.",
-      "handler": "RegionsHandler.CreateRegion",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/admin/regions/{id}",
-      "auth": "session",
-      "authorization": "regions.delete",
-      "description": "RequireCap(\"regions.delete\") at the route.",
-      "handler": "RegionsHandler.DeleteRegion",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "PATCH",
-      "path": "/api/admin/regions/{id}",
-      "auth": "session",
-      "authorization": "regions.write",
-      "description": "RequireCap(\"regions.write\") at the route.",
-      "handler": "RegionsHandler.UpdateRegion",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "GET",
       "path": "/api/admin/servers",
       "auth": "session",
       "authorization": "servers.read",
@@ -1168,26 +1128,6 @@
       "authorization": "users.write",
       "description": "SetUserPermissions PUT /api/admin/users/{id}/permissions Sets per-user capability flags.",
       "handler": "UserHandler.SetUserPermissionsHandler",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/regions",
-      "auth": "session",
-      "authorization": "regions.read",
-      "description": "RequireCap(\"regions.read\") at the route.",
-      "handler": "UserRegionsHandler.GetUserRegions",
-      "group": "admin",
-      "external": false
-    },
-    {
-      "method": "PUT",
-      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/regions",
-      "auth": "session",
-      "authorization": "regions.write",
-      "description": "RequireCap(\"regions.write\") at the route.",
-      "handler": "UserRegionsHandler.SetUserRegions",
       "group": "admin",
       "external": false
     },
@@ -2506,16 +2446,6 @@
       "authorization": "modpack.write",
       "description": "creates a modpack owned by the caller.",
       "handler": "PacksHandler.Create",
-      "group": "me",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/me/regions",
-      "auth": "session",
-      "authorization": "no capability",
-      "description": "current user's own region assignment (any authenticated user).",
-      "handler": "UserRegionsHandler.GetMyRegions",
       "group": "me",
       "external": false
     },
@@ -5239,15 +5169,15 @@
     }
   ],
   "counts": {
-    "total": 526,
+    "total": 519,
     "byAuth": {
       "none": 31,
-      "session": 479,
+      "session": 472,
       "user API key": 10,
       "warp key": 6
     },
     "byGroup": {
-      "admin": 128,
+      "admin": 122,
       "auth": 22,
       "authz": 3,
       "avatar": 1,
@@ -5265,7 +5195,7 @@
       "infrastructure": 3,
       "library": 6,
       "maintenance": 1,
-      "me": 30,
+      "me": 29,
       "mirror": 2,
       "modrinth": 9,
       "modules": 6,

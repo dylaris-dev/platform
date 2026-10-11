@@ -4,7 +4,6 @@ export interface AuthPolicy {
     registrationEnabled: boolean;
     emailVerifyRequired: boolean;
     passwordMinLength: number;
-    defaultNewUserAllRegions: boolean;
     // 2FA enforcement
     require2FAForAdmins: boolean;
     require2FAForAllUsers: boolean;

@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, setUserEmail, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
-import { getUserRegions, setUserRegions } from '@/lib/api/regions';
 import { setUserModpackFlag, clearUserModpackOverride } from '@/lib/api/modpackSettings';
 import {
     getUsernameHistory,
@@ -36,7 +35,6 @@ import TrafficAllowanceFields, {
 import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement, type EntitlementResponse } from '@/lib/api/entitlement';
 import { entitlementOf, formatDaysLeft } from '@/lib/entitlementState';
 import { entitlementExplanation } from '@/lib/entitlementText';
-import UserRegionPicker from '@/components/admin/UserRegionPicker';
 import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -113,26 +111,9 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
     const [resetting2FA, setResetting2FA] = useState(false);
 
-    // Region access — create form (defaults to all-regions for new users)
-    const [createAllRegions, setCreateAllRegions] = useState(true);
-    const [createRegions, setCreateRegions] = useState<string[]>([]);
-
-    // Region access — edit modal
-    const [editAllRegions, setEditAllRegions] = useState(true);
-    const [editRegions, setEditRegions] = useState<string[]>([]);
-    const [editRegionsSaving, setEditRegionsSaving] = useState(false);
     const [editEmail, setEditEmail] = useState('');
     const [emailSaving, setEmailSaving] = useState(false);
     const [emailMsg, setEmailMsg] = useState<{ ok: boolean; text: string } | null>(null);
-    // The picker hides itself on a single-region deployment, and the heading and
-    // Save button around it are ours. Without this the section rendered as a
-    // title over empty space with a Save button under it.
-    const [regionPickerVisible, setRegionPickerVisible] = useState(false);
-    // A region load that FAILED must not save. The state falls back to
-    // "all regions" so the form has something to show, and saving that would
-    // silently widen an account whose real access nobody managed to read.
-    const [editRegionsLoadFailed, setEditRegionsLoadFailed] = useState(false);
-    const onRegionPickerVisibility = useCallback((v: boolean) => setRegionPickerVisible(v), []);
 
     // Deletion-rescue state
     const [cancellingDeletion, setCancellingDeletion] = useState(false);
@@ -273,16 +254,9 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             );
             if (!reauth) return;
         }
-        const res = await createUser({
-            ...userForm,
-            allRegions: createAllRegions,
-            regionsExplicit: createAllRegions ? [] : createRegions,
-        }, reauth);
+        const res = await createUser(userForm, reauth);
         if (res.success) {
             setIsModalOpen(false);
-            // Reset region state for the next open.
-            setCreateAllRegions(true);
-            setCreateRegions([]);
             loadUsers();
         } else setError(res.message || "Error creating user");
     };
@@ -318,21 +292,6 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         }
     };
 
-    const handleSaveRegions = async () => {
-        if (!settingsUser) return;
-        setEditRegionsSaving(true);
-        const res = await setUserRegions(settingsUser.id, {
-            allRegions: editAllRegions,
-            regions: editAllRegions ? [] : editRegions,
-        });
-        if (res.success) {
-            showToast('Region access updated');
-        } else {
-            showToast(res.message || 'Failed to update regions', false);
-        }
-        setEditRegionsSaving(false);
-    };
-
     const handleDeleteUser = async (id: string) => {
         const reauth = await askReauth(
             'Delete user',
@@ -342,7 +301,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         // Core refuses this for real reasons (the last admin, a user still
         // holding servers). Discarding the answer reloaded the list with the
         // user still in it and no word about why, which reads as a bug in the
-        // list rather than a refusal. Same handling as handleUpdateRegions above.
+        // list rather than a refusal.
         const res = await deleteUser(id, reauth);
         if (!res.success) {
             showToast(res.message || res.error || 'Could not delete the user.', false);
@@ -372,26 +331,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             setRouteMax(5);
         }
 
-        // Load region access — keep optimistic defaults until the call resolves.
-        setEditAllRegions(true);
-        setEditRegions([]);
         setEditEmail(user.email || '');
         setEmailMsg(null);
-        try {
-            const res = await getUserRegions(user.id);
-            if (res.success) {
-                setEditAllRegions(!!res.allRegions);
-                setEditRegions(res.regions || []);
-                setEditRegionsLoadFailed(false);
-            } else {
-                setEditRegionsLoadFailed(true);
-            }
-        } catch {
-            // The optimistic default is all-regions, which is the WIDEST answer
-            // there is. Saving it over an account whose access could not be read
-            // would grant more than anyone chose, so the save is blocked instead.
-            setEditRegionsLoadFailed(true);
-        }
 
         // Role + capability flags. User payload already carries these
         // from the list endpoint — no extra request needed.
@@ -622,11 +563,6 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                             className="checkbox" checked={userForm.isAdmin} onChange={e => setUserForm({...userForm, isAdmin: e.target.checked})} />
                                     <label className="text-sm font-medium text-(--base-08)">Administrator Rights</label>
                                 </div>
-                                <UserRegionPicker
-                                    allRegions={createAllRegions}
-                                    regions={createRegions}
-                                    onChange={next => { setCreateAllRegions(next.allRegions); setCreateRegions(next.regions); }}
-                                />
                                 <div className="modal-footer">
                                     <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
                                     <button type="submit" className="btn btn-primary">Create User</button>
@@ -930,37 +866,6 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         </div>
                                     </div>
 
-                                    {/* Region access. The picker hides itself when only the
-                                        default region exists, so the heading and the Save button
-                                        follow it - a section that renders nothing must not leave a
-                                        title and a button behind. */}
-                                    <div className={regionPickerVisible ? '' : 'hidden'}>
-                                        <h4 className="mono-label mb-3">Region Access</h4>
-                                        <UserRegionPicker
-                                            allRegions={editAllRegions}
-                                            regions={editRegions}
-                                            onChange={next => { setEditAllRegions(next.allRegions); setEditRegions(next.regions); }}
-                                            disabled={editRegionsSaving}
-                                            onVisibilityChange={onRegionPickerVisibility}
-                                        />
-                                        {editRegionsLoadFailed && (
-                                            <p className="text-xs text-(--warning-light) mt-2">
-                                                This account&apos;s current region access could not be loaded, so saving
-                                                is disabled — it would write the form&apos;s default of all regions over
-                                                whatever is really stored. Close and reopen to try again.
-                                            </p>
-                                        )}
-                                        <div className="flex justify-end mt-3">
-                                            <button
-                                                type="button"
-                                                onClick={handleSaveRegions}
-                                                disabled={editRegionsSaving || editRegionsLoadFailed}
-                                                className="btn btn-primary btn-sm disabled:opacity-40"
-                                            >
-                                                {editRegionsSaving ? 'Saving…' : 'Save region access'}
-                                            </button>
-                                        </div>
-                                    </div>
                                 </div>
                             )}
 

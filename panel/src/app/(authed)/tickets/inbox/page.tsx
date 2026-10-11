@@ -2,10 +2,9 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Inbox, Filter, ShieldAlert, Globe, Check } from 'lucide-react';
+import { Inbox, Filter, ShieldAlert } from 'lucide-react';
 import { listInboxTickets, listTicketCategories, Ticket, TicketStatus, TicketCategory } from '@/lib/api/tickets';
 import { useAppData } from '@/lib/AppDataContext';
-import RegionBadge from '@/components/RegionBadge';
 import { SkeletonCard } from '@/components/Skeleton';
 import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
 
@@ -26,19 +25,13 @@ const STATUS_FILTERS: { id: 'open_active' | 'waiting_user' | 'resolved' | 'close
 ];
 
 export default function InboxPage() {
-    const { user, regions, featureFlags } = useAppData();
+    const { user, featureFlags } = useAppData();
     const [scope, setScope] = useState<Scope>('all');
     const [status, setStatus] = useState<typeof STATUS_FILTERS[number]['id']>('open_active');
     const [categoryId, setCategoryId] = useState<number | ''>('');
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [categories, setCategories] = useState<TicketCategory[]>([]);
     const [loading, setLoading] = useState(true);
-    // client-side region multi-select. The list endpoint returns
-    // every ticket the user can see; we trim by region locally so the
-    // filter is instant and doesn't need a server round-trip.
-    const [regionFilter, setRegionFilter] = useState<Set<string>>(new Set());
-    const [showRegionMenu, setShowRegionMenu] = useState(false);
-    const multiRegion = regions.length > 1;
 
     const isSupport = user?.role === 'support' || user?.isAdmin;
 
@@ -133,65 +126,6 @@ export default function InboxPage() {
                         <option value="">All categories</option>
                         {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
-                    {multiRegion && (
-                        <div className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setShowRegionMenu(o => !o)}
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border whitespace-nowrap transition-colors ${
-                                    regionFilter.size > 0
-                                        ? 'border-(--accent-border) bg-(--accent-ghost) text-(--accent-light)'
-                                        : 'border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
-                                }`}
-                            >
-                                <Globe size={12} />
-                                Region
-                                {regionFilter.size > 0 && (
-                                    <span className="ml-0.5 px-1 rounded-sm text-[10px] font-mono bg-(--accent-ghost)/60">
-                                        {regionFilter.size}
-                                    </span>
-                                )}
-                            </button>
-                            {showRegionMenu && (
-                                <div
-                                    className="absolute right-0 top-full mt-1.5 z-20 min-w-[180px] rounded-md border border-(--base-04) bg-(--base-02) shadow-lg p-1"
-                                    onMouseLeave={() => setShowRegionMenu(false)}
-                                >
-                                    {regions.map(r => {
-                                        const selected = regionFilter.has(r.id);
-                                        return (
-                                            <button
-                                                key={r.id}
-                                                onClick={() => setRegionFilter(prev => {
-                                                    const next = new Set(prev);
-                                                    if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
-                                                    return next;
-                                                })}
-                                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-sm text-xs text-left transition-colors ${
-                                                    selected ? 'bg-(--accent-ghost) text-(--accent-light)' : 'text-(--base-07) hover:bg-(--base-03)'
-                                                }`}
-                                            >
-                                                <span
-                                                    className="inline-block w-2 h-2 rounded-full shrink-0"
-                                                    style={{ background: r.color || 'var(--base-05)' }}
-                                                />
-                                                <span className="truncate flex-1">{r.displayName || r.id}</span>
-                                                {selected && <Check size={12} className="shrink-0" />}
-                                            </button>
-                                        );
-                                    })}
-                                    {regionFilter.size > 0 && (
-                                        <button
-                                            onClick={() => setRegionFilter(new Set())}
-                                            className="w-full mt-1 pt-1.5 border-t border-(--base-03) px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) hover:text-(--base-09) transition-colors text-left"
-                                        >
-                                            Clear filter
-                                        </button>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -202,24 +136,16 @@ export default function InboxPage() {
                             <SkeletonCard key={i} height="h-16" />
                         ))}
                     </div>
-                ) : (() => {
-                    const filtered = regionFilter.size > 0
-                        ? tickets.filter(t => regionFilter.has(t.region || 'default'))
-                        : tickets;
-                    if (filtered.length === 0) {
-                        return (
-                            <div className="text-center py-16 text-(--base-06)">
-                                <Inbox size={28} className="mx-auto" />
-                                <p className="mt-2 text-sm">No tickets match this filter.</p>
-                            </div>
-                        );
-                    }
-                    return (
-                        <div className="space-y-2">
-                            {filtered.map(t => <InboxRow key={t.id} ticket={t} />)}
-                        </div>
-                    );
-                })()}
+                ) : tickets.length === 0 ? (
+                    <div className="text-center py-16 text-(--base-06)">
+                        <Inbox size={28} className="mx-auto" />
+                        <p className="mt-2 text-sm">No tickets match this filter.</p>
+                    </div>
+                ) : (
+                    <div className="space-y-2">
+                        {tickets.map(t => <InboxRow key={t.id} ticket={t} />)}
+                    </div>
+                )}
             </div>
         </main>
     );
@@ -246,7 +172,6 @@ function InboxRow({ ticket }: { ticket: Ticket }) {
                     </p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                    <RegionBadge region={ticket.region} />
                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-[0.06em] border ${priorityCls}`}>
                         {ticket.priority}
                     </span>

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -252,34 +253,26 @@ func (s *DiscoveryService) checkCPUTopologyChange(ctx context.Context, node *mod
 	s.redis.Set(ctx, sigKey, sig, 0)
 }
 
-// applyHeartbeatRegion stores an auto-discovered node's NODE_REGION, but
-// only once it names a region that EXISTS - a region an operator has created
-// when an admin adopts a node by hand.
+// applyHeartbeatRegion stores an auto-discovered node's NODE_REGION. A
+// region is announced by the machines in it, not managed in the panel, so a
+// value nobody has seen before creates its row on first report.
 //
-// It has to be the same rule because this column is a join key, not a label.
-// It picks the beam relay (a HARD filter, so the wrong value sends a transfer
-// across an ocean), it is what stops the rebalancer moving a server between
-// regions, it decides which servers regional staff may see, and it is copied
-// onto every server created on this node - where CountServersInRegion reads it
-// to decide whether a region may be deleted. A NODE_REGION typo used to be
-// written through unchecked, and each of those consumers then answered about a
-// region no row describes: staff silently lost sight of the servers, and the
-// delete guard counted zero for a region that was really in use.
-//
-// Region ids are canonically lowercase - CreateRegion lowercases and the id
-// regex allows nothing else - so normalise before the lookup. Otherwise
-// NODE_REGION=EU would be refused over its casing while naming a region
-// that plainly exists.
+// The value is still validated first: this column is a join key (beam relay
+// pick, rebalancer fence, copied onto every server created on the node), and
+// a BYON node is a customer machine that sets NODE_REGION to whatever it
+// likes. Anything that is not a short lowercase id is ignored and reported
+// once, and the node keeps its region. Casing is normalised before the check,
+// so NODE_REGION=EU means "eu" rather than being refused.
 func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported string) {
 	region := strings.ToLower(strings.TrimSpace(reported))
 	if region == "" {
 		return
 	}
-	if _, err := s.store.GetRegion(region); err != nil {
+	if !heartbeatRegionRegex.MatchString(region) {
 		// Once per distinct bad value, not once per 5s tick: see badRegionReported.
 		if s.badRegionReported[node.ID] != region {
 			s.badRegionReported[node.ID] = region
-			logErrf("discovery", "node %s reports region %q, which is not a configured region - keeping %q. Create the region or fix NODE_REGION on that node.",
+			logErrf("discovery", "node %s reports region %q, which is not a valid region id (lowercase letters, digits and hyphens, at most 32 chars) - keeping %q. Fix NODE_REGION on that node.",
 				node.Name, reported, node.Region)
 		}
 		return
@@ -288,9 +281,42 @@ func (s *DiscoveryService) applyHeartbeatRegion(node *models.Node, reported stri
 	if region == node.Region {
 		return
 	}
+	if _, err := s.store.GetRegion(region); err != nil {
+		if !s.mayCreateRegion(node) {
+			// A customer's machine names its region freely; letting it create
+			// rows would let one tenant fill the platform's region list.
+			if s.badRegionReported[node.ID] != region {
+				s.badRegionReported[node.ID] = region
+				logErrf("discovery", "customer node %s reports unknown region %q - keeping %q. Only the operator's nodes create regions.",
+					node.Name, region, node.Region)
+			}
+			return
+		}
+		if err := s.store.EnsureRegion(region); err != nil {
+			// The column must not name a region no row describes; retry next tick.
+			log.Printf("Node %s reports new region %q but creating it failed: %v", node.Name, region, err)
+			return
+		}
+		log.Printf("Region %q created from the heartbeat of node %s", region, node.Name)
+	}
 	log.Printf("Node region updated for %s: %q -> %q", node.Name, node.Region, region)
 	s.store.SetNodeRegion(node.ID, region)
 }
+
+// mayCreateRegion: the platform's own nodes and an operator's External node
+// (owned by an admin through its enroll token) may announce a new region; a
+// customer's BYON node may only join one that already exists.
+func (s *DiscoveryService) mayCreateRegion(node *models.Node) bool {
+	if node.OwnerID == nil || *node.OwnerID == "" {
+		return true
+	}
+	owner, err := s.store.GetUserByID(*node.OwnerID)
+	return err == nil && owner != nil && owner.IsAdmin
+}
+
+// heartbeatRegionRegex caps at 32 because regions.id and servers.region are
+// VARCHAR(32); a longer id could not be stored.
+var heartbeatRegionRegex = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 
 // syncNodeMetadataFromHeartbeat applies the two fields a node supplies through
 // its own environment: NODE_TAGS and NODE_REGION.

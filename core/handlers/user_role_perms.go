@@ -316,7 +316,7 @@ func (h *UserHandler) GetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     true,
 		"panelRoleId": roleID,
-		"grantCaps":   normalizeCaps(ov.Grant),
-		"denyCaps":    normalizeCaps(ov.Deny),
+		"grantCaps":   catalogCaps(ov.Grant),
+		"denyCaps":    catalogCaps(ov.Deny),
 	})
 }

@@ -1483,16 +1483,6 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Failed to create user (username may already exist)", 409)
 			return
 		}
-		// Region access, like the other two paths that create a user. This one
-		// was the exception: CreateUser defaults it to all-regions and the
-		// registration flow follows the account policy, while an orphan-assigned
-		// account got no row at all - which the region filter reads as "no
-		// regions" rather than "not decided". Non-fatal like the sibling in
-		// CreateUser: the account exists either way and an admin can fix the
-		// assignment, and failing here would leave a user created but unreported.
-		if err := h.state.Store.SetUserRegions(newUser.ID, true, []string{}); err != nil {
-			log.Printf("AssignOrphan: SetUserRegions failed for userID=%s: %v", newUser.ID, err)
-		}
 		ownerID = newUser.ID
 	}
 

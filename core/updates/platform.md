@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.6
+
+### Features
+- **Regions are no longer something you manage in the panel.** A node's region comes from its own
+  `NODE_REGION`, created on first report by your own nodes; badges and region filters are gone. `core` `panel`
+
+### Breaking
+- **Per-user region access and the Regions settings page are removed**, together with
+  `/api/admin/regions`, `/api/admin/users/{id}/regions` and `/api/me/regions`. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- **Creating a server without choosing a node places it automatically** on any eligible node; before,
+  that only worked when a region or tag was picked. `core` `panel`
+
 ## 2026.10.11.5
 
 ### Features

@@ -47,7 +47,6 @@ func (f *resourcesFakeStore) SetServerRAMPadding(_ int, mb *int) error {
 func (f *resourcesFakeStore) GetUserByID(id string) (*models.User, error) {
 	return &models.User{ID: id, Role: "admin"}, nil
 }
-func (f *resourcesFakeStore) GetUserRegionIDs(string) ([]string, error) { return nil, nil }
 func (f *resourcesFakeStore) GetServerByID(int) (*models.Server, error) {
 	s := *f.server
 	return &s, nil

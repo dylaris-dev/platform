@@ -25,7 +25,7 @@ import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
-import { regionFlag, regionLabelFrom } from '@/lib/regions';
+import { regionFlag, regionLabel } from '@/lib/regions';
 import { useAppData } from '@/lib/AppDataContext';
 import { linkMissing, LINK_MISSING_MESSAGE } from '@/lib/linkPresence';
 import { formatBytes, formatMB } from '@/lib/format';
@@ -547,9 +547,7 @@ function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) 
 }
 
 function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onRollSecret, rollingSecret, onOpenDeleteDialog, revealAddresses, globalRamPaddingMb }: NodeCardProps) {
-    // For the region label: the name an operator gave the region wins over the
-    // built-in map, so renaming it in Settings -> Regions shows up here.
-    const { regions, gatewayEnabled } = useAppData();
+    const { gatewayEnabled } = useAppData();
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
     // The node's RAM headroom override as typed; empty = the global default.
@@ -648,7 +646,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     {node.region && (
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium" title={`Region "${node.region}", from the node's NODE_REGION env`}>
                             <span>{regionFlag(node.region)}</span>
-                            <span>{regionLabelFrom(node.region, regions)}</span>
+                            <span>{regionLabel(node.region)}</span>
                         </span>
                     )}
                     {node.tags && node.tags !== 'auto-discovered' && (
@@ -667,7 +665,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                     {node.needsConfiguration && (
                         <span
                             className="badge badge-warning inline-flex items-center gap-1"
-                            title="This node reports no region, so placement cannot use it. Set NODE_REGION in the node's environment and restart it - region and tags come from the node, not from here."
+                            title="This node reports no region. NODE_REGION is optional: a technical label read from the node's environment, and Core creates the region from it. To set one, add NODE_REGION and restart the node - region and tags come from the node, not from here."
                         >
                             <AlertTriangle size={11} />
                             No region

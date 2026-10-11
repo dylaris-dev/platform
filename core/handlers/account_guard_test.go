@@ -69,7 +69,6 @@ func (f *guardFakeStore) GetUserPanelAuthz(id string) (*int, store.CapOverrides,
 }
 
 func (f *guardFakeStore) GetPanelRole(id int) (*store.PanelRole, error) { return f.roles[id], nil }
-func (f *guardFakeStore) GetUserRegionIDs(string) ([]string, error)     { return nil, nil }
 func (f *guardFakeStore) GetSetting(string) (string, error)             { return "", nil }
 
 func (f *guardFakeStore) UpdateUserPassword(id, _ string) error {

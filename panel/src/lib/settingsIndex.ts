@@ -50,7 +50,6 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
     { page: 'roles', label: 'Roles and permissions', where: 'Access', keywords: ['role', 'permission', 'capability', 'authz', 'access'] },
 
     // Infrastructure
-    { page: 'regions', label: 'Regions', where: 'Infrastructure', keywords: ['region', 'location', 'datacenter'] },
     { page: 'nodes', tab: 'nodes', label: 'Nodes', where: 'Infrastructure → Nodes', keywords: ['node', 'machine', 'agent', 'cpu', 'pinning', 'cpuset'] },
     { page: 'nodes', tab: 'placement', label: 'Server placement', where: 'Infrastructure → Nodes', keywords: ['placement', 'scheduling', 'disk', 'most free', 'storage order'] },
     { page: 'nodes', tab: 'enrollment', label: 'Node admission and enroll tokens', where: 'Infrastructure → Nodes', keywords: ['enroll', 'admission', 'join', 'token', 'allowlist', 'cidr', 'pairing'] },

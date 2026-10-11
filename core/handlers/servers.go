@@ -171,11 +171,6 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 		servers = []models.Server{}
 	}
 
-	// Region filter. Admins + all-regions users pass through;
-	// explicit-regions users only see servers in their allowed set.
-	perms := LoadEffectivePermissions(h.state, userID)
-	servers = FilterServersByRegion(servers, perms, userID)
-
 	username, _ := r.Context().Value("username").(string)
 	servers = applyResolvedTabPermissions(h.state, servers, userID, username)
 

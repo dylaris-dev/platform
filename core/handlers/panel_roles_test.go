@@ -306,3 +306,20 @@ func TestPanelRoles_CrudIsAudited(t *testing.T) {
 		t.Errorf("update/delete rows lost the previous definition: %v / %v", fs.audits[1].Metadata, fs.audits[2].Metadata)
 	}
 }
+
+// A stored role or override can still list a capability the catalog has
+// retired (regions.*). The role editor sends back what it was shown, so the
+// views drop such ids; otherwise every later save of that role would fail
+// validatePanelCaps with "unknown capability".
+func TestRoleViewsDropRetiredCapabilities(t *testing.T) {
+	v := toPanelRoleView(store.PanelRole{ID: 1, Name: "regional", Capabilities: []string{"regions.read", "tickets.read", "regions.write"}})
+	if len(v.Capabilities) != 1 || v.Capabilities[0] != "tickets.read" {
+		t.Fatalf("capabilities = %v, want only [tickets.read]", v.Capabilities)
+	}
+	if err := validatePanelCaps(v.Capabilities); err != nil {
+		t.Fatalf("the view no longer round-trips through validation: %v", err)
+	}
+	if got := catalogCaps(nil); got == nil || len(got) != 0 {
+		t.Fatalf("catalogCaps(nil) = %#v, want an empty non-nil slice", got)
+	}
+}

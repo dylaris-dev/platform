@@ -25,9 +25,8 @@ func (f *inboxScopeStore) ListTickets(filter store.TicketFilter) ([]models.Ticke
 	f.gotFilter = filter
 	return f.tickets, nil
 }
-func (f *inboxScopeStore) GetUserByID(string) (*models.User, error)  { return f.user, nil }
-func (f *inboxScopeStore) GetUserRegionIDs(string) ([]string, error) { return nil, nil }
-func (f *inboxScopeStore) GetSetting(string) (string, error)         { return "", nil }
+func (f *inboxScopeStore) GetUserByID(string) (*models.User, error) { return f.user, nil }
+func (f *inboxScopeStore) GetSetting(string) (string, error)        { return "", nil }
 
 const inboxAdmin = "aaaaaaaa-1111-4111-8111-111111111111"
 

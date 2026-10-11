@@ -508,17 +508,9 @@ type Store interface {
 	// --- Regions ---
 	ListRegions(includeDisabled bool) ([]models.Region, error)
 	GetRegion(id string) (*models.Region, error)
-	CreateRegion(r *models.Region) error
-	UpdateRegion(r *models.Region) error
-	DeleteRegion(id string) error
-	CountServersInRegion(regionID string) (int, error)
-	CountNodesInRegion(regionID string) (int, error)
-
-	// --- User <-> Region M:N ---
-	GetUserRegionIDs(userID string) ([]string, error)
-	SetUserRegions(userID string, allAccess bool, regionIDs []string) error
-	SetUserAllRegionsAccess(userID string, allAccess bool) error
-	GetUserAllRegionsAccess(userID string) (bool, error)
+	// EnsureRegion creates the row for an announced region id if it is
+	// missing (display name = id, enabled) and leaves an existing one alone.
+	EnsureRegion(id string) error
 
 	// --- Identity Audit Log (append-only) ---
 	InsertAuditIdentity(ev *models.AuditEventIdentity) error

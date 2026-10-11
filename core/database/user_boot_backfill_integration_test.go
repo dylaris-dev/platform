@@ -27,10 +27,6 @@ func TestIntegrationABootLeavesVerificationAndRegionsAlone(t *testing.T) {
 		t.Fatalf("CreateUser (self-registered): %v", err)
 	}
 	t.Cleanup(func() { db.Exec(`DELETE FROM users WHERE id = $1`, waiting.ID) })
-	// The registration flow under a "no regions" default.
-	if err := st.SetUserRegions(waiting.ID, false, []string{}); err != nil {
-		t.Fatalf("SetUserRegions: %v", err)
-	}
 
 	verifiedAt := time.Now()
 	vouched := &models.User{Username: uniqueName("vouched_"), Password: "x", EmailVerifiedAt: &verifiedAt}
@@ -50,12 +46,10 @@ func TestIntegrationABootLeavesVerificationAndRegionsAlone(t *testing.T) {
 	if got.EmailVerifiedAt != nil {
 		t.Errorf("a restart verified an account that never confirmed its address (verified at %v)", got.EmailVerifiedAt)
 	}
-	all, err := st.GetUserAllRegionsAccess(waiting.ID)
-	if err != nil {
-		t.Fatalf("GetUserAllRegionsAccess: %v", err)
-	}
-	if all {
-		t.Error("a restart gave all regions to a user the policy had given none")
+	// users.all_regions_access is no longer read by this Core, but a rollback
+	// to the previous image reads it again, so a boot must not flip it either.
+	if got.AllRegionsAccess {
+		t.Error("a restart gave all regions to a user that had none")
 	}
 
 	got, err = st.GetUserByID(vouched.ID)

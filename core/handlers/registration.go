@@ -140,13 +140,6 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Region access default — self-registered users get whatever the admin
-	// configured (default: no access, admin must grant). This is distinct
-	// from admin-created users, who default to all-regions.
-	if err := h.state.Store.SetUserRegions(user.ID, policy.DefaultNewUserAllRegions, []string{}); err != nil {
-		log.Printf("registration: SetUserRegions failed for userID=%s: %v", user.ID, err)
-	}
-
 	// Security questions. When required at signup, the user
 	// MUST have submitted a valid set. When optional, we accept them if
 	// provided but don't require them.

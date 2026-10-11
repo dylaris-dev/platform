@@ -187,9 +187,11 @@ var catalog = []Capability{
 	{ID: "topology.read", Label: "View global topology", Category: "Topology", Scope: ScopePanel, Verb: VerbRead},
 	{ID: "topology.write", Label: "Edit global topology", Category: "Topology", Scope: ScopePanel, Verb: VerbWrite},
 
-	{ID: "regions.read", Label: "View regions", Category: "Regions", Scope: ScopePanel, Verb: VerbRead},
-	{ID: "regions.write", Label: "Edit regions", Category: "Regions", Scope: ScopePanel, Verb: VerbWrite},
-	{ID: "regions.delete", Label: "Delete regions", Category: "Regions", Scope: ScopePanel, Verb: VerbDelete},
+	// regions.read/write/delete used to sit here. Regions are announced by
+	// nodes (NODE_REGION) and created on first heartbeat; the admin region CRUD
+	// and per-user region access they gated are gone. Stored roles may still
+	// list them: the role views drop unknown ids (catalogCaps) so an edit does
+	// not fail validation on them.
 
 	{ID: "tickets.read", Label: "View tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbRead},
 	{ID: "tickets.write", Label: "Edit tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbWrite},

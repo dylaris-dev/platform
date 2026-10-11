@@ -217,6 +217,18 @@ func doJSON(t *testing.T, h http.Handler, method, path, body string, id testIden
 	return rec.Code
 }
 
+// deniedAtChokepoint reports whether RequireCap itself refused the request
+// (authz.denyJSON's body), as opposed to a handler past it answering 403 on
+// a business rule of its own, such as delete being admin-only.
+func deniedAtChokepoint(t *testing.T, h http.Handler, method, path string, id testIdentity) bool {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", "Bearer "+mintToken(t, id))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code == http.StatusForbidden && rec.Body.String() == `{"error":"Forbidden"}`
+}
+
 // --- Phase 4 Task 3: server lifecycle / power / proxy / storage ---
 
 func TestCap_ServerDelete(t *testing.T) {
@@ -226,8 +238,10 @@ func TestCap_ServerDelete(t *testing.T) {
 	admin := fs.addUser("admin-id", "root", true)
 	fs.servers = map[int]*models.Server{7: {ID: 7, OwnerID: owner.ID, OwnerName: "owner"}}
 	srv := newAuthzTestServer(t, fs)
-	if c := doAs(t, srv, "DELETE", "/api/servers/7", testIdentity{UserID: owner.ID, Username: "owner"}); c == 403 {
-		t.Errorf("owner must not be 403 on server.delete, got 403")
+	// Past the chokepoint the handler refuses a non-admin on its own (delete is
+	// admin-only), so only the chokepoint's answer is asserted here.
+	if deniedAtChokepoint(t, srv, "DELETE", "/api/servers/7", testIdentity{UserID: owner.ID, Username: "owner"}) {
+		t.Errorf("owner must pass the server.delete chokepoint")
 	}
 	if c := doAs(t, srv, "DELETE", "/api/servers/7", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
 		t.Errorf("admin must not be 403, got 403")
@@ -248,8 +262,8 @@ func TestCap_ServerResources_GrantHolderPasses(t *testing.T) {
 		skey(7, "friend-id"): {UserID: "friend-id", ServerRoleID: intPtr(2)},
 	}
 	srv := newAuthzTestServer(t, fs)
-	if c := doAs(t, srv, "PATCH", "/api/servers/7/resources", testIdentity{UserID: "friend-id", Username: "friend"}); c == 403 {
-		t.Errorf("grant holder of server.settings.write must not be 403")
+	if deniedAtChokepoint(t, srv, "PATCH", "/api/servers/7/resources", testIdentity{UserID: "friend-id", Username: "friend"}) {
+		t.Errorf("grant holder of server.settings.write must pass the chokepoint")
 	}
 	if c := doAs(t, srv, "PATCH", "/api/servers/7/resources", testIdentity{UserID: "nobody", Username: "nobody"}); c != 403 {
 		t.Errorf("ungranted user must be 403, got %d", c)
@@ -1048,22 +1062,27 @@ func TestCap_EnrollTokenAndPlacementHelpers_ExemptAuthed(t *testing.T) {
 	}
 }
 
-// TestCap_RegionsPanel proves /admin/regions is gated PANEL regions.read
-// (list) vs regions.write (create): a regions.read holder can list but not
-// create, and an ordinary user is 403.
-func TestCap_RegionsPanel(t *testing.T) {
+// TestRegionAdminRoutesAreGone pins the region-neutral panel: regions are
+// announced by nodes, so the admin region CRUD and the per-user region
+// assignment routes no longer exist, even for an admin. GET /api/regions (the
+// read-only list) stays.
+func TestRegionAdminRoutesAreGone(t *testing.T) {
 	fs := &authzFakeStore{}
-	panelHolder(fs, "rr-id", "rr", "regions.read")
-	fs.addUser("plain-id", "plain", false)
+	admin := fs.addUser("admin-id", "root", true)
 	srv := newAuthzTestServer(t, fs)
-	if c := doAs(t, srv, "GET", "/api/admin/regions", testIdentity{UserID: "rr-id", Username: "rr"}); c == 403 {
-		t.Error("regions.read holder must list regions")
-	}
-	if c := doAs(t, srv, "POST", "/api/admin/regions", testIdentity{UserID: "rr-id", Username: "rr"}); c != 403 {
-		t.Errorf("regions.read-only holder must be 403 on POST (needs regions.write), got %d", c)
-	}
-	if c := doAs(t, srv, "GET", "/api/admin/regions", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
-		t.Errorf("ordinary user must be 403 on admin regions, got %d", c)
+	id := testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/api/admin/regions"},
+		{"POST", "/api/admin/regions"},
+		{"PATCH", "/api/admin/regions/eu"},
+		{"DELETE", "/api/admin/regions/eu"},
+		{"GET", "/api/admin/users/11111111-1111-4111-8111-111111111111/regions"},
+		{"PUT", "/api/admin/users/11111111-1111-4111-8111-111111111111/regions"},
+		{"GET", "/api/me/regions"},
+	} {
+		if c := doAs(t, srv, tc.method, tc.path, id); c != http.StatusNotFound && c != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s = %d, want the route gone (404/405)", tc.method, tc.path, c)
+		}
 	}
 }
 

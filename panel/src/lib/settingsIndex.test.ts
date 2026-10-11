@@ -106,6 +106,6 @@ describe('hrefFor', () => {
     });
 
     it('omits it for a page with no tabs', () => {
-        expect(hrefFor({ page: 'regions', label: 'x', where: 'y' })).toBe('/settings/regions');
+        expect(hrefFor({ page: 'warp', label: 'x', where: 'y' })).toBe('/settings/warp');
     });
 });

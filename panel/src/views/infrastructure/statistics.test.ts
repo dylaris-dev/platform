@@ -76,7 +76,6 @@ describe('the series request', () => {
         // holding nothing.
         const qs = seriesQueryString({ metrics: ['a.b'], range: '24h' });
         expect(qs).not.toContain('subject=');
-        expect(qs).not.toContain('region=');
         expect(qs).not.toContain('split=');
     });
 });

@@ -31,7 +31,6 @@ type portConflictFakeStore struct {
 func (f *portConflictFakeStore) GetUserByID(id string) (*models.User, error) {
 	return &models.User{ID: id, Role: "admin"}, nil
 }
-func (f *portConflictFakeStore) GetUserRegionIDs(string) ([]string, error) { return nil, nil }
 
 func (f *portConflictFakeStore) GetServerByID(id int) (*models.Server, error) {
 	return &models.Server{ID: id, UUID: "srv-1", NodeID: 7, HostPort: 25600, ContainerPort: 25565}, nil
