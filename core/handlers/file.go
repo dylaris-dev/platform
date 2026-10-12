@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -35,7 +36,9 @@ type FileHandler struct {
 	state    *AppState
 }
 
-// Regex for sanitizing filenames
+// Regex for sanitizing library upload names, which become object-store keys.
+// Server files are checked with validate.IsPlainFileName instead: their names
+// are the tenant's, and rewriting them turned "New World" into "New_World".
 var validFilenameRegex = regexp.MustCompile(`[^a-zA-Z0-9._\-+]`)
 
 func sanitizeFilename(name string) string {
@@ -579,9 +582,10 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	dir, file := filepath.Split(req.Path)
-	cleanFile := sanitizeFilename(file)
-	req.Path = filepath.Join(dir, cleanFile)
+	if _, file := path.Split(req.Path); !validate.IsPlainFileName(file) {
+		sendJSONError(w, "Invalid file name", http.StatusBadRequest)
+		return
+	}
 
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
@@ -638,8 +642,11 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	_, newFile := filepath.Split(req.NewPath)
-	cleanFile := sanitizeFilename(newFile)
+	_, newFile := path.Split(req.NewPath)
+	if !validate.IsPlainFileName(newFile) {
+		sendJSONError(w, "Invalid file name", http.StatusBadRequest)
+		return
+	}
 
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
@@ -660,10 +667,15 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if oldNodeWouldRewrite(newFile) && !h.nodeRenamesFreely(r.Context(), nodeID) {
+		sendJSONError(w, "This server's node must be updated before a file can be renamed to a name with spaces or special characters.", http.StatusConflict)
+		return
+	}
+
 	resp, err := h.sendGRPCMsg(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
-		Payload:    &pb.NodeMessage_RenameReq{RenameReq: &pb.RenameFileReq{OldPath: req.OldPath, NewName: cleanFile}},
+		Payload:    &pb.NodeMessage_RenameReq{RenameReq: &pb.RenameFileReq{OldPath: req.OldPath, NewName: newFile}},
 	}, 30*time.Second)
 	if err != nil {
 		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
@@ -675,6 +687,28 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// oldNodeWouldRewrite reports whether a node before services.NodeRenamesFreely
+// would strip characters from name.
+func oldNodeWouldRewrite(name string) bool {
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._+-", c)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *FileHandler) nodeRenamesFreely(ctx context.Context, nodeID int) bool {
+	if h.state.Redis == nil {
+		return false
+	}
+	node, err := h.state.Store.GetNodeByID(nodeID)
+	if err != nil || node == nil {
+		return false
+	}
+	return services.NodeRenamesFreely(ctx, h.state.Redis, node.Token)
 }
 
 // CopyFileHandler handles copying files and directories
@@ -1115,10 +1149,18 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	files := r.MultipartForm.File["files"]
+	// Checked before anything is written, so a bad name refuses the request
+	// instead of being skipped while the answer says success.
+	for _, fileHeader := range files {
+		if !validate.IsPlainFileName(fileHeader.Filename) {
+			sendJSONError(w, fmt.Sprintf("Invalid file name %q", fileHeader.Filename), http.StatusBadRequest)
+			return
+		}
+	}
 	var uploadedBytes int64 // actual bytes streamed, for the daily quota counter
 	for _, fileHeader := range files {
-		sanitizedName := sanitizeFilename(fileHeader.Filename)
-		if sanitizedName == "" || sanitizedName == ".active_server" {
+		sanitizedName := fileHeader.Filename
+		if sanitizedName == ".active_server" {
 			continue
 		}
 

@@ -20,6 +20,10 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Fixes
+- **File names with spaces, '+' or accents can be created, renamed and uploaded in the file manager.**
+  Before, they were refused or quietly rewritten; renaming to one needs the node on this release. `panel` `core` `node`
+- **Opening a folder that does not exist shows an error** instead of an empty folder, and files sort
+  by number (world2 before world10). `panel` `node`
 - **A node whose region was already set before 2026.10.11.6 now gets its region created too**, and a
   customer node reporting an unknown region is logged once instead of every five seconds. `core`
 

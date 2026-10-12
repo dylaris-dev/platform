@@ -88,6 +88,17 @@ func nodeTakesPresignedTransfers(ctx context.Context, rdb *redis.Client, nodeTok
 	return nodeAtLeast(ctx, rdb, nodeToken, presignedMultipartSince)
 }
 
+// freeRenameSince is the first node release that renames to the name it is
+// given. Older nodes strip every character outside [A-Za-z0-9._+-] first.
+const freeRenameSince = "2026.10.11.7"
+
+// NodeRenamesFreely reports whether the node keeps a rename's new name as sent.
+// An older node would rename "b c.txt" to "bc.txt", silently replacing a file
+// of that name, so Core refuses such a rename to it instead.
+func NodeRenamesFreely(ctx context.Context, rdb *redis.Client, nodeToken string) bool {
+	return nodeAtLeast(ctx, rdb, nodeToken, freeRenameSince)
+}
+
 // nodeAtLeast reports whether the node's heartbeat names release `since` or
 // newer, with the reading nodeTakesPresignedTransfers documents: no heartbeat
 // or an unparseable version is old, no version at all is a development build.

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
 )
 
@@ -280,6 +281,8 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return errorMsg(reqID, 403, err.Error())
 	}
+	// The jail reports ErrNotExist only for the server directory itself.
+	serverDirMissing := err != nil
 	var entries []fs.DirEntry
 	if err == nil {
 		defer root.Close()
@@ -292,8 +295,14 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 		}
 	}
 	if err != nil {
+		// Only a server directory that does not exist yet lists as empty: setup
+		// asks for the root of a fresh server before anything is installed. A
+		// missing folder inside it is a 404, like a read, so a deleted or mistyped
+		// folder is reported instead of shown as an empty one.
+		if errors.Is(err, fs.ErrNotExist) && !serverDirMissing {
+			return errorMsg(reqID, 404, "not found")
+		}
 		if errors.Is(err, fs.ErrNotExist) {
-			// Return empty list for non-existent directories
 			return &pb.NodeMessage{
 				RequestId: reqID,
 				Payload: &pb.NodeMessage_ListResp{
@@ -806,19 +815,18 @@ func (h *StreamHandler) handleRename(reqID, serverUUID string, req *pb.RenameFil
 	}
 	defer root.Close()
 
-	// New name is just the filename, keep same parent directory
-	newName := sanitizeFilename(req.NewName)
-	// "." and ".." survive sanitizeFilename and are not file names: joined to
-	// the parent they name the parent itself or ITS parent. Only the kernel
-	// refusing to rename onto a non-empty directory stopped that before.
-	if newName == "" || newName == "." || newName == ".." {
+	// New name is just the filename, keep same parent directory. It is checked,
+	// not rewritten: a character allowlist used to strip spaces, so "New World"
+	// was renamed to "NewWorld". "." and ".." are refused because joined to the
+	// parent they name the parent itself or ITS parent.
+	newName := req.NewName
+	if !validate.IsPlainFileName(newName) {
 		return errorMsg(reqID, 400, "invalid filename")
 	}
 	// The destination gets the same check as the source, not a hand-picked
 	// subset of it. This used to compare against ".active_server" alone while
-	// isProtectedFile knows four names plus two prefixes, and sanitizeFilename
-	// keeps '.', '-' and '_', so .node_config.json, .dylaris.json and
-	// .dylaris-backups all survived it intact and could be renamed over.
+	// isProtectedFile knows four names plus two prefixes, so .node_config.json,
+	// .dylaris.json and .dylaris-backups could be renamed over.
 	if isProtectedFile(newName) {
 		return errorMsg(reqID, 403, "cannot use protected filename")
 	}
@@ -1038,16 +1046,6 @@ func errorMsg(reqID string, code int32, message string) *pb.NodeMessage {
 			Error: &pb.OpError{Code: code, Message: message},
 		},
 	}
-}
-
-func sanitizeFilename(name string) string {
-	var result []byte
-	for _, c := range []byte(name) {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_' || c == '+' {
-			result = append(result, c)
-		}
-	}
-	return string(result)
 }
 
 // copyFile and copyDir are defined in installer.go — reused here.

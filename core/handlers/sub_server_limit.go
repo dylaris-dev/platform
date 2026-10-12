@@ -30,6 +30,12 @@ func listServerDirFor(state *AppState, nodeID int, serverUUID, dir string) ([]*p
 		return nil, err
 	}
 	if e := resp.GetError(); e != nil {
+		// Every caller here asks for a folder that may legitimately not exist
+		// (mods/ on a vanilla server). Nodes before 2026.10.11.7 answered that
+		// with an empty list and newer ones with a 404; both mean "nothing".
+		if e.Code == 404 {
+			return []*pb.FileInfo{}, nil
+		}
 		return nil, fmt.Errorf("%s", e.Message)
 	}
 	list := resp.GetListResp()

@@ -59,8 +59,8 @@ func (h *ServerModsHandler) UnmanagedMods(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
-	// The node answers a missing directory with an EMPTY list, not an error, so
-	// any error here is a real failure to look. Reporting that as "nothing
+	// A missing directory lists as EMPTY (listServerDirFor turns the node's 404
+	// into that), so any error here is a real failure to look. Reporting that as "nothing
 	// unmanaged" would hide exactly the thing this endpoint exists to reveal, so
 	// a failure on every directory is surfaced instead of swallowed.
 	listings := map[string][]dirEntry{}

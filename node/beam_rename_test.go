@@ -93,10 +93,10 @@ func TestBeamRenameCannotOverwriteAProtectedName(t *testing.T) {
 	}
 }
 
-// gRPC's handleRename sanitizes the new name down to a bare filename, so it
-// cannot traverse - but its protected-name check is one hand-written string
-// compare while isProtectedFile knows four names plus two prefixes, and the
-// sanitizer keeps '.', '-' and '_', so every one of them survives it intact.
+// gRPC's handleRename only accepts a bare filename, so it cannot traverse -
+// but its protected-name check was one hand-written string compare while
+// isProtectedFile knows four names plus two prefixes, and every one of them is
+// a bare filename.
 func TestGRPCRenameCannotOverwriteAProtectedName(t *testing.T) {
 	sm := NewStorageManager(t.TempDir(), nil)
 	h := NewStreamHandler(sm)

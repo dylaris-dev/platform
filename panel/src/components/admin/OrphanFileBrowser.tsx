@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Folder, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
 import { listOrphanFiles, getOrphanFileContent } from '@/lib/api/orphans';
+import { compareNames } from '@dylaris/ui-filebrowser/src/utils';
 import { SkeletonList, Skeleton } from '@/components/Skeleton';
 
 interface FileEntry {
@@ -57,7 +58,7 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
       // Sort: directories first, then files, both alphabetically
       const sorted = [...res.files].sort((a: FileEntry, b: FileEntry) => {
         if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-        return a.name.localeCompare(b.name);
+        return compareNames(a.name, b.name);
       });
       setEntries(sorted);
     } else {

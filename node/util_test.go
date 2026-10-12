@@ -23,22 +23,6 @@ func TestIsProtectedFile(t *testing.T) {
 	}
 }
 
-func TestSanitizeFilename(t *testing.T) {
-	cases := []struct{ input, want string }{
-		{"server.jar", "server.jar"},
-		{"my file.jar", "myfile.jar"},                        // space removed
-		{"../etc/passwd", "..etcpasswd"},                     // slashes removed
-		{"mod-name_1.0+patch.jar", "mod-name_1.0+patch.jar"}, // allowed chars preserved
-		{"file!@#$.txt", "file.txt"},                         // special chars removed
-		{"", ""},
-	}
-	for _, c := range cases {
-		if got := sanitizeFilename(c.input); got != c.want {
-			t.Errorf("sanitizeFilename(%q) = %q, want %q", c.input, got, c.want)
-		}
-	}
-}
-
 func TestFormatBytes(t *testing.T) {
 	cases := []struct {
 		input uint64

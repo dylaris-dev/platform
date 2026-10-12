@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.11.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **File names with spaces, '+' or accents can be created, renamed and uploaded in the file manager**,
+  and files sort by number (world2 before world10). BYON nodes pick this up with their next update.
+- **Opening a folder that does not exist shows an error** instead of an empty folder.
+
 ## 2026.10.11.4
 
 ### Features

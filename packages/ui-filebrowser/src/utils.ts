@@ -9,7 +9,16 @@ export const formatBytes = (bytes: number, decimals = 2): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
-export const validFilenameRegex = /^[a-zA-Z0-9._-]+$/;
+// A name, not a path: anything but a separator or a control character, and
+// not "." or "..". It used to allow only [a-zA-Z0-9._-], so "New World" and
+// "fabric-api+1.20.1.jar" (names Minecraft and mod authors write) could not be
+// renamed, created or uploaded. Core and the node refuse separators and the
+// dot names too (validate.IsPlainFileName); control characters only here.
+export const validFilenameRegex = /^(?!\.{1,2}$)[^/\\\x00-\x1f\x7f]{1,255}$/;
+export const INVALID_NAME_MESSAGE = 'Invalid name. It cannot contain / or \\, or be "." or "..".';
+
+// Files sort the way people count: world2 before world10, case ignored.
+export const compareNames = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
 
 export const editableExtensions = [
   '.txt', '.log', '.md', '.yml', '.yaml', '.json', '.json5', '.toml', '.xml',

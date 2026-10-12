@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspens
 import JSZip from 'jszip';
 import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import type { FileEntry, FileBrowserProps } from './types';
-import { formatBytes, validFilenameRegex, getCopyName, getTruncatedPath, isOpenableFile, isGzipName, findMatches, OPEN_MAX_BYTES } from './utils';
+import { formatBytes, validFilenameRegex, INVALID_NAME_MESSAGE, compareNames, getCopyName, getTruncatedPath, isOpenableFile, isGzipName, findMatches, OPEN_MAX_BYTES } from './utils';
 import { useDelayedFlag } from './useDelayedFlag';
 import { beamConnectionModeMeta } from './connectionMode';
 import Toast from './Toast';
@@ -427,7 +427,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   const handleRenameSubmit = async () => {
     if (!validFilenameRegex.test(tempFileName)) {
-      showToast("Invalid filename.", 'error');
+      showToast(INVALID_NAME_MESSAGE, 'error');
       return;
     }
     const oldPath = currentPath ? `${currentPath}/${editingFile}` : editingFile;
@@ -603,7 +603,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   const handlePopupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validFilenameRegex.test(newName)) {
-      setPopupError("Invalid name. Use letters, numbers, dot, underscore, hyphen.");
+      setPopupError(INVALID_NAME_MESSAGE);
       return;
     }
     setLoading(true);
@@ -675,7 +675,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       itemsForUpload = fileObjects;
     }
 
-    const finalName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const finalName = originalName;
 
     // Check upload size limit
     if (uploadLimit > 0) {
@@ -697,7 +697,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   const executeUpload = async (finalName: string, items: any[], isFolder: boolean, strategy: 'check' | 'replace' | 'merge' = 'check', mergeConflictStrategy? : 'replace' | 'ignore') => {
     if (!validFilenameRegex.test(finalName)) {
-      setPopupError("Invalid filename. Only letters, numbers, dot, underscore, and hyphen are allowed.");
+      setPopupError(INVALID_NAME_MESSAGE);
       setUploadPopupView('select');
       return;
     }
@@ -783,7 +783,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       } else {
         // items are already materialized File objects (startUploadProcess
         // calls getAsFile during the drop event), so just re-wrap with the
-        // sanitized name.
+        // name the user confirmed.
         filesToActuallyUpload = items.map((file: any) => new File([file], finalName, { type: file.type }));
       }
 
@@ -819,8 +819,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   };
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const sanitized = e.target.value.replace(/[^a-zA-Z0-9._-]/g, '');
-    setNewName(sanitized);
+    setNewName(e.target.value);
   };
 
 
@@ -839,7 +838,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     return [...filesToDisplay].sort((a, b) => {
         if (a.is_dir && !b.is_dir) return -1;
         if (!a.is_dir && b.is_dir) return 1;
-        return a.name.localeCompare(b.name);
+        return compareNames(a.name, b.name);
     });
   }, [files, globalSearchTerm, searchResults]);
   
@@ -1133,7 +1132,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                     <div className="mb-5 space-y-2">
                         <label className="input-label block">1. Rename (Recommended)</label>
                         <div className="flex items-center gap-2">
-                            <input type="text" value={conflictFile.newName} onChange={(e) => setConflictFile({...conflictFile, newName: e.target.value.replace(/[^a-zA-Z0-9._-]/g, '')})} className="input-field w-full" />
+                            <input type="text" value={conflictFile.newName} onChange={(e) => setConflictFile({...conflictFile, newName: e.target.value})} className="input-field w-full" />
                             <button onClick={() => {
                                 executeUpload(conflictFile.newName, uploadItems.items, uploadItems.isFolder, 'replace');
                             }} className="btn btn-primary px-4 py-2 text-sm whitespace-nowrap">Upload with New Name</button>
