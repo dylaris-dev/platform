@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.12.3
+
+### Features
+- **The panel keeps you signed in for 30 days after your last visit** (at most 90 days after you
+  typed your password), instead of signing you out every day.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Signing out ends that session on our side too**, so a copied login stops working with it.
+
+### Fixes
+- **When your session ends, the panel goes to the login page by itself** in every open tab,
+  instead of hanging until you reload.
+- **Our maintenance restarts no longer sign you out** or show the setup page.
+
 ## 2026.10.12.2
 
 ### Features

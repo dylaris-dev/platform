@@ -1,5 +1,6 @@
 import { forgetSessionHint, purgeLegacyTokens } from '@/lib/api/sessionState';
 import { API_URL, GATE_TIMEOUT_MS, getAuthHeader, handleResponse, handleError } from './core';
+import { announceSignedOut } from './session';
 
 export const login = async (username: string, password: string, totpCode?: string) => {
   try {
@@ -164,7 +165,12 @@ export const getProfile = async () => {
     signal: AbortSignal.timeout(GATE_TIMEOUT_MS),
   });
   const data = await handleResponse(res);
-  return data.success ? data.user : null;
+  if (data.success) return data.user;
+  // Only a 401 says the session is gone. Anything else (a 502 during a deploy,
+  // a 503) is "could not ask", and callers treat a throw as unreachable rather
+  // than signed out.
+  if (res.status === 401) return null;
+  throw new Error(`profile ${res.status}`);
 };
 
 export const updateProfile = async (data: any) => {
@@ -240,6 +246,7 @@ export const logout = async (): Promise<void> => {
   } catch {
     // See above.
   }
+  announceSignedOut();
 };
 // Read-only demo session, no credentials. The account is forced GET-only
 // server-side (AuthMiddleware), so this session can look but never change

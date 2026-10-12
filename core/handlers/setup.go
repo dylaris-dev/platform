@@ -65,8 +65,14 @@ type setupStatusResp struct {
 // middleware passes /api/setup/* through unchanged). adminSecretConfigured lets
 // the panel pick its wizard UI without exposing the secret itself.
 func (h *SetupHandler) Status(w http.ResponseWriter, r *http.Request) {
-	adminCount, _ := h.state.Store.CountAdmins()
-	userCount, _ := h.state.Store.CountUsers()
+	// A failed count read as zero admins, and the panel took a database blip
+	// for a fresh install and sent everyone to the setup wizard.
+	adminCount, aerr := h.state.Store.CountAdmins()
+	userCount, uerr := h.state.Store.CountUsers()
+	if aerr != nil || uerr != nil {
+		sendJSONError(w, "Could not read the setup state", http.StatusServiceUnavailable)
+		return
+	}
 	gate := h.setupGate(userCount, adminCount)
 	out := setupStatusResp{
 		Success:               true,

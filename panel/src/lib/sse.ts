@@ -10,6 +10,7 @@
 // opens the streams and nothing else, and a password change ends it.
 
 import { API_URL, getAuthHeader } from '@/lib/api/core';
+import { handleUnauthorized } from '@/lib/api/session';
 
 /**
  * Mint an SSE ticket and open an EventSource for `path` (e.g.
@@ -22,6 +23,10 @@ export async function createEventSource(path: string): Promise<EventSource> {
         headers: getAuthHeader(),
     });
     if (!res.ok) {
+        // A stream cannot report a dead session itself, so the ticket mint is
+        // where it shows: without this, every live view retried forever and the
+        // page sat on "reconnecting" until someone reloaded it.
+        handleUnauthorized(res);
         throw new Error(`sse-ticket mint failed: ${res.status}`);
     }
     const data = await res.json();

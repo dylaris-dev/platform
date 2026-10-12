@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.12.3
+
+### Features
+- **The panel keeps you signed in for 30 days after your last visit** (at most 90 days after you
+  typed your password), instead of signing everyone out once a day. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- **Signing out ends that session on the server too**, so a copied cookie stops working with it.
+  Sign out everywhere and a password change still end every session at once. `core`
+
+### Fixes
+- **A tab whose session ended goes to the login page by itself**, including idle tabs, live views
+  and the other open tabs, instead of sitting there failing every click. `panel`
+- **A Core restart no longer sends open tabs to the login page or the setup wizard**; a moment of
+  502 or a database error is shown as unreachable instead. `core` `panel`
+
 ## 2026.10.12.2
 
 ### Features

@@ -29,6 +29,8 @@ import { ModInstallProvider } from '@/lib/modInstallManager';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
+import { followSignOuts, markSessionSeen } from '@/lib/api/session';
+import { getProfile } from '@/lib/api/auth';
 import PlayerHead from '@/components/PlayerHead';
 
 
@@ -430,10 +432,34 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
                 router.push('/login');
                 return;
             }
+            markSessionSeen();
             setTokenChecked(true);
         })();
         return () => { cancelled = true; };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // A tab nobody touches makes no requests, so it never heard that its
+    // session ended: it sat there until a click failed. It now follows a
+    // sign-out from another tab at once, and asks Core when it is looked at
+    // again. A 401 there takes the normal way to /login; an unreachable Core
+    // is not a sign-out and is ignored.
+    useEffect(() => {
+        if (!tokenChecked) return;
+        const unfollow = followSignOuts();
+        let lastCheck = Date.now();
+        const check = () => {
+            if (document.visibilityState !== 'visible' || Date.now() - lastCheck < 60_000) return;
+            lastCheck = Date.now();
+            getProfile().catch(() => {});
+        };
+        document.addEventListener('visibilitychange', check);
+        window.addEventListener('focus', check);
+        return () => {
+            unfollow();
+            document.removeEventListener('visibilitychange', check);
+            window.removeEventListener('focus', check);
+        };
+    }, [tokenChecked]);
 
     const handleUnauthenticated = () => {
         localStorage.removeItem('token');

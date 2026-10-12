@@ -32,7 +32,7 @@ func NewAuthHandler(state *AppState, jwtSecret string) *AuthHandler {
 	return &AuthHandler{state: state, jwtKey: []byte(jwtSecret)}
 }
 
-// IssueToken signs a standard 24h session JWT for the given user. Extracted
+// IssueToken signs a standard session JWT for the given user. Extracted
 // from the login handler so other handlers (the setup wizard, future
 // admin-impersonation flows) can mint tokens without duplicating the signing
 // + claim shape.
@@ -40,22 +40,9 @@ func NewAuthHandler(state *AppState, jwtSecret string) *AuthHandler {
 // (see passwordFingerprint). Callers that genuinely have no hash to bind to -
 // the demo account short-circuit - pass "", and such a session is simply not
 // password-bound; there is nothing for a reset to invalidate.
-// sessionTTL is how long a session lives, in ONE place: the JWT expiry and the
-// cookie Max-Age are the same window by construction. Two numbers here would
-// drift, and the failure is quiet in both directions - a cookie that outlives
-// its token is a browser resending a dead credential, and one that dies first
-// logs out a session the server still considers valid.
-const sessionTTL = 24 * time.Hour
-
+// Lifetime and sliding: session_lifetime.go.
 func (h *AuthHandler) IssueToken(username string, isAdmin bool, pwdHash string) (string, error) {
-	expirationTime := time.Now().Add(sessionTTL)
-	claims := &Claims{
-		Username:         username,
-		IsAdmin:          isAdmin,
-		PwdFp:            passwordFingerprint(pwdHash),
-		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, newSessionClaims(username, isAdmin, pwdHash))
 	return token.SignedString(h.jwtKey)
 }
 
@@ -187,6 +174,9 @@ type Claims struct {
 	// changing the password ends every session that predates it. See
 	// passwordFingerprint and the check in AuthMiddleware.
 	PwdFp string `json:"pfp,omitempty"`
+	// LoginAt is when the password was typed (unix seconds). Sliding keeps it,
+	// so the absolute cap counts from the real login.
+	LoginAt int64 `json:"lat,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -405,13 +395,23 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}, jwt.WithValidMethods([]string{"HS256"}))
 		if err != nil || !token.Valid {
 			// A dead cookie is removed rather than left to be resent on every
-			// request for the next 24 hours: the browser keeps sending it, and
+			// request until it expires: the browser keeps sending it, and
 			// each rejection looks to the panel like a server fault rather than
 			// a signed-out state.
 			if cookieAuth {
 				clearSessionCookie(w, r)
 			}
 			sendJSONError(w, "Invalid Token", http.StatusUnauthorized)
+			return
+		}
+		// Signed out on this device. Same answer as a dead token: to the panel
+		// both mean "sign in again".
+		withSessionID(claims, tokenString)
+		if sessionRevoked(r.Context(), h.state.Redis, claims.ID) {
+			if cookieAuth {
+				clearSessionCookie(w, r)
+			}
+			sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 			return
 		}
 
@@ -469,6 +469,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// for its bearer; a normal session token is long-lived and stealable and
 		// proves nothing about who is holding it right now.
 		ctx = context.WithValue(ctx, tokenPurposeKey, claims.Purpose)
+		ctx = context.WithValue(ctx, sessionClaimsKey, claims)
 
 		// Resolve userID from DB for invite checks.
 		//
@@ -563,6 +564,12 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
 					return
 				}
+			}
+
+			// Only a full panel session in a cookie slides; a bearer copy has
+			// no jar to receive the new one.
+			if cookieAuth && claims.Purpose == "" {
+				h.slideSession(w, r, claims)
 			}
 		}
 
@@ -705,18 +712,13 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The same window IssueToken uses; the cookie's Max-Age is set from it too.
-	expirationTime := time.Now().Add(sessionTTL)
-	claims := &Claims{
-		Username: user.Username,
-		IsAdmin:  user.IsAdmin,
-		// Binds the session to the password it was issued against.
-		PwdFp:            passwordFingerprint(sessionKey(user)),
-		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expirationTime)},
+	// Bound to the password it was issued against; the cookie's Max-Age is the
+	// same window as the token.
+	tokenString, err := h.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
+	if err != nil {
+		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
+		return
 	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, _ := token.SignedString(h.jwtKey)
 
 	// Best-effort last-login stamp. Auto-delete reads this to distinguish
 	// active vs dormant users — a stale value here is harmless.
@@ -1131,10 +1133,26 @@ func (h *AuthHandler) UpdateMinecraftUsernameHandler(w http.ResponseWriter, r *h
 // an expired or corrupted one could never be cleared, which is exactly the state
 // somebody trying to log out is most likely in.
 //
-// The body token, if a caller still holds one, is not invalidated here. Sessions
-// are stateless JWTs - the mechanism that ends them early is the password
-// fingerprint, and that is what a password change already uses.
+// The session named by the cookie is ended server-side (revokeSession), and
+// with it every copy that shares its id, Beam's bearer included.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// The session itself ends too, not only this browser's cookie: with a
+	// 30-day sliding session a copy of the cookie would otherwise outlive the
+	// sign-out by a month. Only a validly signed token is listed, so nobody can
+	// fill the list by posting garbage here.
+	// Same-origin only for the server-side half: a page on another site may
+	// still clear the cookie, as before, but not end the session.
+	if tok := sessionTokenFromCookie(r); tok != "" && requireSameOriginForCookieAuth(r, h.state.FrontendURL) {
+		claims := &Claims{}
+		if t, err := jwt.ParseWithClaims(tok, claims, func(*jwt.Token) (interface{}, error) {
+			return h.jwtKey, nil
+		}, jwt.WithValidMethods([]string{"HS256"})); err == nil && t.Valid && claims.Purpose == "" {
+			withSessionID(claims, tok)
+			if err := revokeSession(r.Context(), h.state.Redis, claims); err != nil {
+				log.Printf("auth: could not end the session of %s on sign-out: %v", claims.Username, err)
+			}
+		}
+	}
 	clearSessionCookie(w, r)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
@@ -1248,7 +1266,10 @@ func (h *AuthHandler) SessionToken(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
 		return
 	}
-	token, err := h.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
+	// A copy of THIS session, not a new one: signing out in the webview then
+	// ends the bearer too, and it cannot be renewed past the 90-day cap.
+	caller, _ := r.Context().Value(sessionClaimsKey).(*Claims)
+	token, err := h.copyOfSession(caller, user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
 		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return

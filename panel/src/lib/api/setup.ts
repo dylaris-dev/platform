@@ -77,7 +77,12 @@ export async function getSetupStatus(): Promise<SetupStatus> {
         const res = await fetch(`${API_URL}/setup/status`, {
             signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS),
         });
-        return (await handleResponse(res)) as any;
+        const data = (await handleResponse(res)) as any;
+        // A proxy's 502 page or a 503 is not an answer about setup. Taking its
+        // missing mode for "not complete" sent every open tab to the wizard
+        // during a deploy.
+        if (!data.success || !data.mode) throw new Error(`setup status ${data.status}`);
+        return data;
     } catch (err) {
         // On hard transport failure, fall back to "complete" so a flaky
         // network doesn't lock the user into the wizard forever. The next

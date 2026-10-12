@@ -38,8 +38,8 @@ func TestIssueToken_HS256(t *testing.T) {
 	if !claims.IsAdmin {
 		t.Error("IsAdmin = false, want true")
 	}
-	if claims.ExpiresAt == nil || claims.ExpiresAt.Before(time.Now().Add(23*time.Hour)) {
-		t.Errorf("ExpiresAt = %v, want ~24h from now", claims.ExpiresAt)
+	if claims.ExpiresAt == nil || claims.ExpiresAt.Before(time.Now().Add(sessionTTL-time.Minute)) {
+		t.Errorf("ExpiresAt = %v, want sessionTTL from now", claims.ExpiresAt)
 	}
 }
 

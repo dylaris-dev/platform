@@ -413,3 +413,14 @@ func TestBackupCodeResponsesAreNotCached(t *testing.T) {
 		}
 	}
 }
+
+// A failed count read as zero admins, so a database blip told every open panel
+// the install was fresh and sent it to the setup wizard.
+func TestSetupStatusDoesNotGuessOnADatabaseError(t *testing.T) {
+	h := newSetupTestHandler(&setupFakeStore{adminCount: 1, countErr: errors.New("connection refused")}, "")
+	rec := httptest.NewRecorder()
+	h.Status(rec, httptest.NewRequest(http.MethodGet, "/api/setup/status", nil))
+	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "fresh_install") {
+		t.Fatalf("status %d body %s: want 503 and no mode", rec.Code, rec.Body.String())
+	}
+}
