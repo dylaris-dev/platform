@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Signing out also ends your open console and live views** in that browser session.
+
+### Fixes
+- **Beam shows a folder that no longer exists as missing** instead of empty, once your node runs
+  this release. `node`
+
 ## 2026.10.12.3
 
 ### Features

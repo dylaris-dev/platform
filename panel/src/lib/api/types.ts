@@ -351,7 +351,7 @@ export const getNodeCpu = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/cpu`);
 export interface StoragePlacement { mode: 'auto' | 'manual'; order: string[]; }
 // Returns { success, storage: StorageInfo[], placement: StoragePlacement }.
 export const getNodeStorage = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/storage`);
-// Returns { success, nodeId, grpcTlsFingerprint, linkSecret, linkDiscoveryProof }.
+// Returns { success, nodeId, grpcTlsFingerprint }.
 // The secret-free BYON deploy bundle for an already-enrolled node.
 export const getNodeDeployBundle = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/deploy-bundle`);
 

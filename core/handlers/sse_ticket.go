@@ -45,14 +45,20 @@ func streamContext(r *http.Request) (context.Context, context.CancelFunc) {
 // accepts.
 var sseEventID = regexp.MustCompile(`^[0-9]{1,20}-[0-9]{1,20}$`)
 
-// parseSSETicket splits a stored ticket value. A ticket minted before the
-// fingerprint existed has none, and is honoured once without being extended,
-// so a stream open across the deploy reconnects instead of going silent.
-func parseSSETicket(val string) (username, fp string, legacy bool) {
-	if i := strings.Index(val, sseTicketSep); i >= 0 {
-		return val[:i], val[i+len(sseTicketSep):], false
+// parseSSETicket splits a stored ticket value: username, fingerprint, and the
+// id of the session that minted it. A ticket minted before the fingerprint
+// existed has none, and is honoured once without being extended, so a stream
+// open across the deploy reconnects instead of going silent; one minted before
+// the session id has no id and runs out on its own.
+func parseSSETicket(val string) (username, fp, sessionID string, legacy bool) {
+	parts := strings.SplitN(val, sseTicketSep, 3)
+	switch len(parts) {
+	case 1:
+		return val, "", "", true
+	case 2:
+		return parts[0], parts[1], "", false
 	}
-	return val, "", true
+	return parts[0], parts[1], parts[2], false
 }
 
 // MintSSETicket issues a short-lived, single-purpose ticket that an
@@ -94,7 +100,11 @@ func (h *AuthHandler) MintSSETicket(w http.ResponseWriter, r *http.Request) {
 	}
 	ticket := hex.EncodeToString(buf)
 
-	if err := h.state.Redis.Set(r.Context(), "sse:ticket:"+ticket, username+sseTicketSep+fp, sseTicketTTL).Err(); err != nil {
+	sid := ""
+	if c, _ := r.Context().Value(sessionClaimsKey).(*Claims); c != nil {
+		sid = c.ID
+	}
+	if err := h.state.Redis.Set(r.Context(), "sse:ticket:"+ticket, username+sseTicketSep+fp+sseTicketSep+sid, sseTicketTTL).Err(); err != nil {
 		sendJSONError(w, "Failed to store ticket", http.StatusServiceUnavailable)
 		return
 	}

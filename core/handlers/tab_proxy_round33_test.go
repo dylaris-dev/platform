@@ -13,8 +13,8 @@ import (
 // out of every other tab.
 func TestATossedTabCookieDoesNotLockOutTheRealOne(t *testing.T) {
 	h, ah := newHostGateHandler(t, true, false)
-	foreign, _ := ah.IssueTabProxyTicket("owner", false, 1, 99, false)
-	own, _ := ah.IssueTabProxyTicket("owner", false, 1, 2, false)
+	foreign, _ := ah.IssueTabProxyTicket("", "owner", false, 1, 99, false)
+	own, _ := ah.IssueTabProxyTicket("", "owner", false, 1, 2, false)
 	r := httptest.NewRequest(http.MethodGet, "https://x.share.example.com/", nil)
 	r.AddCookie(&http.Cookie{Name: proxyCookieName, Value: foreign})
 	r.AddCookie(&http.Cookie{Name: proxyCookieName, Value: own})

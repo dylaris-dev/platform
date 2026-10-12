@@ -735,9 +735,8 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         </button>
                         <HelpTip label="About the setup values">
                             <p className="mb-2">
-                                Shows this node&apos;s connection values again: its identity, the TLS
-                                fingerprint to pin, and its link token. They are the same ones the
-                                enrolment gave you once, and this is the only way back to them.
+                                Shows this node&apos;s connection values again: its identity and the TLS
+                                fingerprint to pin. They are the same ones the enrolment gave you.
                             </p>
                             <p className="mb-2">
                                 You need it when you rebuild the host, move the node to another
@@ -746,10 +745,10 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                                 open it.
                             </p>
                             <p>
-                                Treat what it shows as a credential: the link token in it
-                                authenticates that node&apos;s tunnel. It does not contain the cluster
-                                secret. If the node&apos;s own secret is gone rather than mislaid,
-                                re-pairing is the way back, not this.
+                                It contains no secret: the Link fetches its own credentials with the
+                                machine&apos;s warp key, and the cluster secret is never part of it. If
+                                the node&apos;s own secret is gone rather than mislaid, re-pairing is
+                                the way back, not this.
                             </p>
                         </HelpTip>
                     </span>

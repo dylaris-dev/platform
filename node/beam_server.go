@@ -797,8 +797,11 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 	// A link a plugin plants onto the backup store lists it under its own name.
 	entries, err := readTenantDir(root, dirName, nodeOwnedIdentities(root, true))
 	if err != nil {
+		// The server directory is open, so what is missing is the folder: a
+		// not-found, as the panel's listing answers, not an empty folder that
+		// a client would show and let files be uploaded into.
 		if errors.Is(err, fs.ErrNotExist) {
-			return &pb.BeamFileListResp{Files: []*pb.BeamFileInfo{}}, nil
+			return nil, status.Error(codes.NotFound, "folder not found")
 		}
 		return nil, status.Errorf(codes.Internal, "read dir: %v", err)
 	}

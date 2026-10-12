@@ -60,7 +60,10 @@ const tabProxyTicketTTL = 5 * time.Minute
 // with the same key as a normal session token but is rejected by
 // AuthMiddleware everywhere else (Purpose == "tab_proxy" is 403'd, see
 // below) - it can never stand in for the real session token.
-func (h *AuthHandler) IssueTabProxyTicket(username string, isAdmin bool, serverID, tabID int, readOnly bool) (string, error) {
+//
+// sessionID is the minting session's id, so signing that session out ends the
+// ticket too (ParseTabProxyTicket).
+func (h *AuthHandler) IssueTabProxyTicket(sessionID, username string, isAdmin bool, serverID, tabID int, readOnly bool) (string, error) {
 	expiresAt := time.Now().Add(tabProxyTicketTTL)
 	claims := &Claims{
 		Username:         username,
@@ -69,7 +72,7 @@ func (h *AuthHandler) IssueTabProxyTicket(username string, isAdmin bool, serverI
 		ServerID:         serverID,
 		TabID:            tabID,
 		ReadOnly:         readOnly,
-		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(expiresAt)},
+		RegisteredClaims: jwt.RegisteredClaims{ID: sessionID, ExpiresAt: jwt.NewNumericDate(expiresAt)},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(h.jwtKey)
@@ -89,6 +92,11 @@ func (h *AuthHandler) ParseTabProxyTicket(tokenString string) (*Claims, error) {
 	}
 	if claims.Purpose != "tab_proxy" {
 		return nil, errors.New("wrong token purpose")
+	}
+	// A ticket from before tickets carried the session has no id and lapses
+	// within its five minutes.
+	if h.state != nil && sessionRevoked(context.Background(), h.state.Redis, claims.ID) {
+		return nil, errors.New("session ended")
 	}
 	return claims, nil
 }
@@ -293,9 +301,16 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 				key := "sse:ticket:" + ticket
 				if stored, err := h.state.Redis.Get(r.Context(), key).Result(); err == nil && stored != "" {
-					username, ticketFp, legacy := parseSSETicket(stored)
+					username, ticketFp, ticketSID, legacy := parseSSETicket(stored)
 					w.Header().Set("Referrer-Policy", "no-referrer")
 					w.Header().Set("Cache-Control", "no-store")
+					// Checked before the slide: a stream reconnecting every few
+					// minutes kept a signed-out session's ticket alive for good.
+					if sessionRevoked(r.Context(), h.state.Redis, ticketSID) {
+						h.state.Redis.Del(r.Context(), key)
+						sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
+						return
+					}
 					// Sliding window: keep long-lived streams alive.
 					if !legacy {
 						h.state.Redis.Expire(r.Context(), key, sseTicketTTL)

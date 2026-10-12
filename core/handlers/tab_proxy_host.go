@@ -362,7 +362,11 @@ func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	readOnly := !isAdmin && isDemoAccount(h.state, userID)
-	ticket, terr := h.auth.IssueTabProxyTicket(username, isAdmin, tab.ServerID, tab.ID, readOnly)
+	sid := ""
+	if c, _ := r.Context().Value(sessionClaimsKey).(*Claims); c != nil {
+		sid = c.ID
+	}
+	ticket, terr := h.auth.IssueTabProxyTicket(sid, username, isAdmin, tab.ServerID, tab.ID, readOnly)
 	if terr != nil {
 		sendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
 		return

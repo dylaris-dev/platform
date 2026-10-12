@@ -92,7 +92,7 @@ func TestAnOrdinarySessionStillAuthenticates(t *testing.T) {
 // one hole for another.
 func TestTabProxyTicketStillRejectedOnTheAPI(t *testing.T) {
 	h := &AuthHandler{state: &AppState{}, jwtKey: []byte(testJWTSecret)}
-	ticket, err := h.IssueTabProxyTicket("someone", false, 1, 2, false)
+	ticket, err := h.IssueTabProxyTicket("", "someone", false, 1, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}

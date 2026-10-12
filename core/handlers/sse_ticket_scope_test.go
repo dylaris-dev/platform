@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/models"
@@ -93,5 +94,48 @@ func TestALegacySSETicketIsNotExtended(t *testing.T) {
 	}
 	if ttl := mr.TTL("sse:ticket:old"); ttl > sseTicketTTL/5 {
 		t.Fatalf("a legacy ticket was extended to %s", ttl)
+	}
+}
+
+// A plain sign-out ends the session; a ticket it minted ends with it. A stream
+// reconnecting every few minutes used to keep that ticket sliding for good. A
+// ticket minted before tickets named their session still works.
+func TestSSETicketEndsWithItsSession(t *testing.T) {
+	h, mr := ticketFixture(t, &models.User{ID: "u1", Username: "alice", Password: "hash-1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/sse-ticket", nil)
+	ctx := context.WithValue(req.Context(), "username", "alice")
+	ctx = context.WithValue(ctx, sessionClaimsKey, &Claims{RegisteredClaims: jwt.RegisteredClaims{ID: "s1"}})
+	rec := httptest.NewRecorder()
+	h.MintSSETicket(rec, req.WithContext(ctx))
+	var out struct{ Ticket string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+
+	if _, called := ticketGet(h, "/api/system/events?ticket="+out.Ticket); !called {
+		t.Fatal("a live session's ticket was refused")
+	}
+	mr.Set(revokedSessionKey("s1"), "1")
+	if code, called := ticketGet(h, "/api/system/events?ticket="+out.Ticket); called || code != http.StatusUnauthorized {
+		t.Fatalf("after sign-out: status %d, next called %v; want 401", code, called)
+	}
+
+	mr.Set("sse:ticket:pre", "alice"+sseTicketSep+passwordFingerprint(sessionKey(&models.User{Password: "hash-1"})))
+	if _, called := ticketGet(h, "/api/system/events?ticket=pre"); !called {
+		t.Fatal("a ticket minted before tickets named their session was refused")
+	}
+}
+
+// A tab-proxy ticket names the session that minted it, and stops with it.
+func TestATabProxyTicketEndsWithItsSession(t *testing.T) {
+	h, mr := ticketFixture(t, &models.User{ID: "u1", Username: "alice", Password: "hash-1"})
+	tk, err := h.IssueTabProxyTicket("s2", "alice", false, 1, 2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ParseTabProxyTicket(tk); err != nil {
+		t.Fatalf("a live session's ticket was refused: %v", err)
+	}
+	mr.Set(revokedSessionKey("s2"), "1")
+	if _, err := h.ParseTabProxyTicket(tk); err == nil {
+		t.Fatal("the ticket outlived its session's sign-out")
 	}
 }

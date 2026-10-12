@@ -213,6 +213,13 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 			sendJSONError(w, "Node could not hash these files: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		var sha1s []string
+		for _, fh := range hashes {
+			if fh.Error == "" {
+				sha1s = append(sha1s, fh.Sha1)
+			}
+		}
+		known, lookupErr := services.ModrinthByHashes(sha1s)
 		for _, fh := range hashes {
 			res := identifyResult{Directory: dir, Name: fh.Name}
 			if fh.Error != "" {
@@ -220,8 +227,7 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 				results = append(results, res)
 				continue
 			}
-			v, lookupErr := services.ModrinthByHashErr(fh.Sha1)
-			if lookupErr != nil && !services.ModrinthNotFound(lookupErr) {
+			if lookupErr != nil {
 				// Not the same answer as "unknown", and it must not read like
 				// one: an operator told a jar is not on Modrinth may well
 				// delete it.
@@ -229,7 +235,8 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 				results = append(results, res)
 				continue
 			}
-			if v == nil || v.ID == "" {
+			v, found := known[fh.Sha1]
+			if !found || v.ID == "" {
 				res.Reason = "no Modrinth version has this file's hash"
 				results = append(results, res)
 				continue

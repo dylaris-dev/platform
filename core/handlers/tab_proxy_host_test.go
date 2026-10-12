@@ -222,7 +222,7 @@ func TestHostGate_TicketForAnotherTabIsForbidden(t *testing.T) {
 	// Valid signature, valid purpose, wrong tab. The cookie is host-only per
 	// content host, so this should not be reachable in a browser at all - the
 	// claim check is the second lock on the same door.
-	ticket, err := ah.IssueTabProxyTicket("owner", false, 1, 99, false)
+	ticket, err := ah.IssueTabProxyTicket("", "owner", false, 1, 99, false)
 	if err != nil {
 		t.Fatalf("IssueTabProxyTicket: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestHostGate_SessionTokenIsNotATicket(t *testing.T) {
 
 func TestHostGate_ExpiredTicketIsUnauthorized(t *testing.T) {
 	h, ah := newHostGateHandler(t, true, true)
-	ticket, err := ah.IssueTabProxyTicket("owner", false, 1, 2, false)
+	ticket, err := ah.IssueTabProxyTicket("", "owner", false, 1, 2, false)
 	if err != nil {
 		t.Fatalf("IssueTabProxyTicket: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestHostGate_ExpiredLinkIsGone(t *testing.T) {
 // nothing can be inspected once it is upgraded.
 func TestHostGate_ReadOnlyTicket(t *testing.T) {
 	h, ah := newHostGateHandler(t, true, true)
-	ticket, err := ah.IssueTabProxyTicket("demo", false, 1, 2, true)
+	ticket, err := ah.IssueTabProxyTicket("", "demo", false, 1, 2, true)
 	if err != nil {
 		t.Fatalf("IssueTabProxyTicket: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestAllowMint_TakesATicketForThisTab(t *testing.T) {
 	h, ah := newHostGateHandler(t, true, true)
 	tab := proxiedTab("private", "tok")
 
-	ticket, err := ah.IssueTabProxyTicket("owner", false, tab.ServerID, tab.ID, false)
+	ticket, err := ah.IssueTabProxyTicket("", "owner", false, tab.ServerID, tab.ID, false)
 	if err != nil {
 		t.Fatalf("IssueTabProxyTicket: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestAllowMint_RefusesEverythingElse(t *testing.T) {
 	h, ah := newHostGateHandler(t, true, true)
 	tab := proxiedTab("private", "tok")
 
-	otherTab, err := ah.IssueTabProxyTicket("owner", false, tab.ServerID, 99, false)
+	otherTab, err := ah.IssueTabProxyTicket("", "owner", false, tab.ServerID, 99, false)
 	if err != nil {
 		t.Fatalf("IssueTabProxyTicket: %v", err)
 	}

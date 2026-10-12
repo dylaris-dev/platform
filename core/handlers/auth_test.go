@@ -141,7 +141,7 @@ func TestIssueTabProxyTicket_ClaimsAndExpiry(t *testing.T) {
 	h := newTestAuthHandler()
 
 	before := time.Now()
-	tok, err := h.IssueTabProxyTicket("alice", true, 42, 7, true)
+	tok, err := h.IssueTabProxyTicket("", "alice", true, 42, 7, true)
 	after := time.Now()
 	if err != nil {
 		t.Fatalf("IssueTabProxyTicket: %v", err)
@@ -215,7 +215,7 @@ func TestParseTabProxyTicket_RejectsNonTabProxyPurpose(t *testing.T) {
 func TestAuthMiddleware_RejectsTabProxyPurposeToken(t *testing.T) {
 	h := &AuthHandler{state: &AppState{}, jwtKey: []byte("test-jwt-secret-value-not-a-real-secret")}
 
-	ticket, err := h.IssueTabProxyTicket("owner", false, 1, 2, false)
+	ticket, err := h.IssueTabProxyTicket("", "owner", false, 1, 2, false)
 	if err != nil {
 		t.Fatalf("IssueTabProxyTicket: %v", err)
 	}

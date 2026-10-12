@@ -117,6 +117,45 @@ func ModrinthByHashErr(sha1hex string) (*modrinthVersion, error) {
 	return &v, nil
 }
 
+// ModrinthByHashes looks many sha1 hashes up in one request. A hash missing
+// from the map is not on Modrinth; an error means Modrinth answered for none of
+// them. One request instead of one per jar: identifying a modpack's few
+// hundred jars spent Core's whole shared Modrinth budget at once.
+func ModrinthByHashes(sha1s []string) (map[string]ModrinthVersion, error) {
+	out := map[string]ModrinthVersion{}
+	// ponytail: 500 per request is our own bound, Modrinth documents none;
+	// lower it if they start refusing big bodies.
+	for start := 0; start < len(sha1s); start += modrinthHashBatch {
+		end := min(start+modrinthHashBatch, len(sha1s))
+		if err := modrinthByHashesBatch(sha1s[start:end], out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+const modrinthHashBatch = 500
+
+func modrinthByHashesBatch(sha1s []string, out map[string]ModrinthVersion) error {
+	buf, err := json.Marshal(map[string]interface{}{"hashes": sha1s, "algorithm": "sha1"})
+	if err != nil {
+		return err
+	}
+	req, _ := http.NewRequest("POST", modrinthAPI+"/version_files", bytes.NewReader(buf))
+	req.Header.Set("User-Agent", DylarisUserAgent())
+	req.Header.Set("Content-Type", "application/json")
+	res, err := modrinthHTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		b, _ := io.ReadAll(res.Body)
+		return &ModrinthHTTPError{Path: "/version_files", Status: res.StatusCode, Body: string(b)}
+	}
+	return json.NewDecoder(res.Body).Decode(&out)
+}
+
 // CheckLatestVersions batch-queries Modrinth for the latest version matching the
 // given loaders + game versions for each file hash. loaders and game_versions are
 // REQUIRED by the endpoint. The result map is keyed by the ORIGINAL input hash.

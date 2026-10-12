@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Signing out also ends that session's live views and dashboard tabs**: their tickets used to
+  keep a console or stats stream running after the sign-out. `core`
+
+### Fixes
+- **Identifying a modpack's jars asks Modrinth once per folder** instead of once per jar, so a large
+  pack no longer uses up the shared Modrinth budget. `core`
+- **Beam reports a folder that does not exist** instead of showing it as empty, like the panel's
+  file manager does. `node`
+- The node's "Show setup values" help no longer mentions a link token; the values hold no secret. `panel`
+
 ## 2026.10.12.3
 
 ### Features
