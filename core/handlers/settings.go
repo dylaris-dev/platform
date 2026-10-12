@@ -404,11 +404,11 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	cleaned := make([]HosterDomain, 0, len(req.HosterDomains))
 	seen := map[string]bool{}
 	for _, hd := range req.HosterDomains {
-		dom := strings.ToLower(strings.TrimSpace(hd.Domain))
+		dom := normHost(hd.Domain)
 		if dom == "" {
 			continue
 		}
-		if !domainRegex.MatchString(dom) {
+		if !isHostname(dom, 2) {
 			sendJSONError(w, "Invalid hoster domain: "+dom, http.StatusBadRequest)
 			return
 		}

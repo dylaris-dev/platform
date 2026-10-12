@@ -42,7 +42,7 @@ func validateLocalTarget(host string) error {
 		return nil // any other IP literal, including LAN / loopback
 	}
 	// Hostname (e.g. localhost, my-pc.local): basic format check, no wildcard.
-	if strings.HasPrefix(host, "*.") || !domainRegex.MatchString(host) {
+	if !isHostname(host, 1) {
 		return fmt.Errorf("invalid target host")
 	}
 	return nil

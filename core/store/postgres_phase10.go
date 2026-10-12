@@ -31,6 +31,12 @@ func scanServerMod(row interface {
 	return &m, nil
 }
 
+func (s *PostgresStore) SetServerModProjectMeta(id int, slug, title string) error {
+	_, err := s.db.Exec(`UPDATE server_mods SET modrinth_project_slug = $2, title = $3
+		WHERE id = $1 AND modrinth_project_slug = ''`, id, slug, title)
+	return err
+}
+
 func (s *PostgresStore) UpsertServerMod(m *models.ServerMod) (int, error) {
 	var installedBy interface{}
 	if m.InstalledBy != nil {

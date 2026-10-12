@@ -188,10 +188,10 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 	}
 	runID, rerr := runner.Run(r.Context(), job.ID)
 	if runID != 0 {
-		// A run was opened, so the job ran: record it and count the interval
-		// from here, as the scheduler does. A refusal before any run (no
+		// A run was opened, so the job ran: record it, and arm a job that has
+		// no next run, but keep a planned slot. A refusal before any run (no
 		// passphrase, empty selection) leaves both untouched.
-		if err := h.state.Store.SetPlatformBackupJobSchedule(job.ID, services.ComputeBackupNextRun(job.Schedule, time.Now())); err != nil {
+		if err := h.state.Store.SetPlatformBackupJobRanByHand(job.ID, services.ComputeBackupNextRun(job.Schedule, time.Now())); err != nil {
 			log.Printf("platform backup: job %d: recording the manual run: %v", job.ID, err)
 		}
 	}

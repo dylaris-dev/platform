@@ -38,6 +38,17 @@ type presignedOnlyStore struct {
 	deleted        []int
 	restoring      bool // a restore is waiting on the run
 	serverStatus   string
+	ranByHand      int
+}
+
+// Only the by-hand record is implemented: SetBackupJobScheduled would panic on
+// the nil embedded store, which is the point - a manual run must not move the
+// schedule.
+func (f *presignedOnlyStore) SetBackupJobRanByHand(int, time.Time, *time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ranByHand++
+	return nil
 }
 
 func (f *presignedOnlyStore) GetServerByID(id int) (*models.Server, error) {
@@ -247,12 +258,15 @@ func TestTriggerJob_ObjectStorage(t *testing.T) {
 		}
 	})
 	t.Run("a current node gets a multipart command without secrets", func(t *testing.T) {
-		h, _, rdb, _ := presignedOnlyHandler(t, currentNodeVersion, models.BackupRun{})
+		h, fs, rdb, _ := presignedOnlyHandler(t, currentNodeVersion, models.BackupRun{})
 		rw := httptest.NewRecorder()
 		h.TriggerJob(rw, backupJobRequest(http.MethodPost, "/api/backup-jobs/10/trigger", "", map[string]string{"jobId": "10"}))
 
 		if rw.Code != http.StatusOK {
 			t.Fatalf("status = %d (body %s)", rw.Code, rw.Body.String())
+		}
+		if fs.ranByHand != 1 {
+			t.Errorf("manual run recorded %d times, want once", fs.ranByHand)
 		}
 		cmds := queuedCommands(t, rdb)
 		if len(cmds) != 1 {

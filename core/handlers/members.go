@@ -238,6 +238,9 @@ func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if invites == nil {
+		invites = []models.ServerInvite{}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"members": invites,

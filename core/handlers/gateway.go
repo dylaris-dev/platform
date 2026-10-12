@@ -24,7 +24,32 @@ func NewGatewayHandler(state *AppState) *GatewayHandler {
 	return &GatewayHandler{state: state}
 }
 
-var domainRegex = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+// normHost is how a typed domain is stored: lowercase, and without the one
+// trailing dot of a fully qualified name. The edge strips that dot from the
+// player's handshake before it looks the route up, so a stored dot would be a
+// route nobody can reach.
+func normHost(s string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s)), ".")
+}
+
+// isHostname reports whether s is a lowercase DNS name of at least minLabels
+// labels: each label 1-63 letters, digits or inner hyphens, 253 in all. No
+// wildcard - the gateway routes exact Minecraft hostnames only.
+func isHostname(s string, minLabels int) bool {
+	if len(s) > 253 {
+		return false
+	}
+	labels := strings.Split(s, ".")
+	if len(labels) < minLabels {
+		return false
+	}
+	for _, l := range labels {
+		if len(l) > 63 || !subRegexDNS.MatchString(l) {
+			return false
+		}
+	}
+	return true
+}
 
 // Per-hoster subdomain validation regexes — kept narrow on purpose so the
 // admin's choice in settings actually constrains what users can register.
@@ -392,18 +417,24 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// That is also the only account a managed route can be traced back to - the
 	// hub publishes it with no owner, so a claim held by anyone else could
 	// never find it to remove it.
-	account := userID
-	if !IsAdmin(r) {
-		srv, serr := h.state.Store.GetServerByID(serverID)
-		if serr != nil || srv == nil {
-			http.Error(w, "Server not found", http.StatusNotFound)
-			return
-		}
-		account = srv.OwnerID
+	// An admin creating it is no exception, or the hub row names the admin. Only
+	// a platform server, which has no owner, falls back to the caller.
+	srv, serr := h.state.Store.GetServerByID(serverID)
+	if serr != nil || srv == nil {
+		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	account := srv.OwnerID
+	if account == "" {
+		account = userID
 	}
 	// A cut-off owner kept claiming addresses on our domains and custom-domain
-	// proofs, which nobody else could then take.
-	if msg := ownerRefusal(h.state, r, account); msg != "" {
+	// proofs, which nobody else could then take. An admin may still act for one.
+	refusalFor := account
+	if IsAdmin(r) {
+		refusalFor = userID
+	}
+	if msg := ownerRefusal(h.state, r, refusalFor); msg != "" {
 		http.Error(w, msg, http.StatusForbidden)
 		return
 	}
@@ -527,7 +558,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 	// 1) Hoster-picker path
 	if req.Subdomain != "" || req.HosterDomain != "" {
 		sub := strings.ToLower(strings.TrimSpace(req.Subdomain))
-		host := strings.ToLower(strings.TrimSpace(req.HosterDomain))
+		host := normHost(req.HosterDomain)
 		if sub == "" || host == "" {
 			return "", false, fmt.Errorf("subdomain and hosterDomain must both be set")
 		}
@@ -546,7 +577,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 
 	// 2) Custom-domain path
 	if req.CustomDomain != "" {
-		return resolveBroughtDomain(strings.ToLower(strings.TrimSpace(req.CustomDomain)), hosters, customEnabled, blocked)
+		return resolveBroughtDomain(normHost(req.CustomDomain), hosters, customEnabled, blocked)
 	}
 
 	// 3) Raw-FQDN path (admin tools, scripts, backwards compat).
@@ -567,8 +598,8 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 	// answers to that path's rules, the ownership proof included (the isCustom
 	// return is what arms it at the call site).
 	if req.Domain != "" {
-		dom := strings.ToLower(strings.TrimSpace(req.Domain))
-		if !domainRegex.MatchString(dom) {
+		dom := normHost(req.Domain)
+		if !isHostname(dom, 2) {
 			return "", false, fmt.Errorf("invalid domain format")
 		}
 		if isAdmin {
@@ -624,7 +655,7 @@ func resolveBroughtDomain(dom string, hosters []HosterDomain, customEnabled bool
 	if !customEnabled {
 		return "", false, fmt.Errorf("custom domains are not enabled")
 	}
-	if !domainRegex.MatchString(dom) || strings.HasPrefix(dom, "*.") {
+	if !isHostname(dom, 1) {
 		return "", false, fmt.Errorf("invalid custom domain format")
 	}
 	labels := strings.Split(dom, ".")

@@ -618,3 +618,35 @@ func TestRawDomainFromATenantIsNotAThirdPath(t *testing.T) {
 		}
 	})
 }
+
+// A fully qualified name ends in a dot, and the edge strips that dot from the
+// handshake before it looks a route up, so the dot is dropped rather than
+// refused. Names the old pattern let through - empty labels, edge hyphens, a
+// single label, a wildcard - are refused on the admin's raw path too.
+func TestRouteDomainsAreNormalisedAndStrict(t *testing.T) {
+	hosters := hosterDomainsJSON(t, []HosterDomain{{Domain: "dylaris.com", Validation: "dns"}})
+	h := newGatewayDomainHandler(map[string]string{
+		"gateway_hoster_domains":         hosters,
+		"gateway_custom_domains_enabled": "true",
+	})
+	accept := []struct {
+		name string
+		req  *routeDomainReqT
+		want string
+	}{
+		{"custom with trailing dot", routeDomainReq("", "", "", "Play.Example.com.", 25565), "play.example.com"},
+		{"hoster with trailing dot", routeDomainReq("", "myserver", "dylaris.com.", "", 25565), "myserver.dylaris.com"},
+		{"admin raw with trailing dot", routeDomainReq("mc.example.org.", "", "", "", 25565), "mc.example.org"},
+	}
+	for _, tt := range accept {
+		got, _, err := h.resolveRouteDomain(tt.req, true)
+		if err != nil || got != tt.want {
+			t.Errorf("%s: got %q, %v; want %q", tt.name, got, err, tt.want)
+		}
+	}
+	for _, dom := range []string{"a..b.com", "a.-b.com", "a-.com", "localhost", "*.example.com", "x." + strings.Repeat("a", 64) + ".com", "a.b.com.."} {
+		if got, _, err := h.resolveRouteDomain(routeDomainReq(dom, "", "", "", 25565), true); err == nil {
+			t.Errorf("admin raw %q accepted as %q", dom, got)
+		}
+	}
+}

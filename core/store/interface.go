@@ -305,6 +305,9 @@ type Store interface {
 	ListReferencedBackupKeys() (map[string]bool, error)
 	ListDueBackupJobs(now time.Time) ([]models.BackupJob, error)
 	SetBackupJobScheduled(jobID int, lastRun, nextRun time.Time) error
+	// SetBackupJobRanByHand records a manual run. It arms a job that has no next
+	// run yet and leaves a planned one where it is.
+	SetBackupJobRanByHand(jobID int, lastRun time.Time, next *time.Time) error
 	// SetBackupJobSkipped records a scheduled slot that did not run and moves
 	// next_run_at on, leaving last_run_at alone.
 	SetBackupJobSkipped(jobID int, at time.Time, reason string, nextRun time.Time) error
@@ -754,6 +757,9 @@ type Store interface {
 	// Drives the "Installed" view + the lazy update-detection scan.
 	UpsertServerMod(m *models.ServerMod) (int, error)
 	ListServerMods(serverID int, subServerName string) ([]models.ServerMod, error)
+	// SetServerModProjectMeta fills title and slug on a row that has no slug
+	// yet, and only then, so it never overwrites an install that landed since.
+	SetServerModProjectMeta(id int, slug, title string) error
 	// ListServerModSubServers lists sub-servers that HAVE mod rows, which is not
 	// the same set as the ones with install records.
 	ListServerModSubServers(serverID int) ([]string, error)
@@ -804,6 +810,8 @@ type Store interface {
 	UpdatePlatformBackupJob(j *models.PlatformBackupJob) error
 	DeletePlatformBackupJob(id int) error
 	SetPlatformBackupJobSchedule(id int, next *time.Time) error
+	// SetPlatformBackupJobRanByHand is SetBackupJobRanByHand for a platform job.
+	SetPlatformBackupJobRanByHand(id int, next *time.Time) error
 	CreatePlatformBackupRun(jobID int, storageID *int) (int, error)
 	FinishPlatformBackupRun(id int, status string, sizeBytes int64,
 		storageKey, errMessage string, components []models.PlatformBackupComponent) error

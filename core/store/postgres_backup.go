@@ -411,6 +411,16 @@ func (s *PostgresStore) SetBackupJobScheduled(jobID int, lastRun, nextRun time.T
 	return err
 }
 
+func (s *PostgresStore) SetBackupJobRanByHand(jobID int, lastRun time.Time, next *time.Time) error {
+	var v any
+	if next != nil {
+		v = *next
+	}
+	_, err := s.db.Exec(`UPDATE backup_jobs SET last_run_at = $1, next_run_at = COALESCE(next_run_at, $2) WHERE id = $3`,
+		lastRun, v, jobID)
+	return err
+}
+
 // BackupJobKept is what a job currently keeps: its successful runs, the ones
 // retention counts.
 type BackupJobKept struct {

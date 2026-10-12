@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.12.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Mods identified from their jar show the mod's name and link**, not the version name; ones
+  identified earlier heal the next time the mod list loads. `core`
+- **"Run now" on a backup no longer moves its schedule**, and a scheduled platform backup no longer
+  drifts later by its own run time each day. `core`
+- **Addresses ending in a dot are accepted and stored without it**; names with empty labels or
+  hyphens at a label's edge are refused, and an admin's route belongs to the server's owner. `core` `panel`
+- The members API answers an empty list instead of null for a server without members. `core`
+
 ## 2026.10.12
 
 ### Features

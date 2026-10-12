@@ -24,6 +24,7 @@ type platformScheduleStore struct {
 	runOpen  bool
 	armedSet bool
 	armed    *time.Time
+	byHand   bool
 }
 
 func (f *platformScheduleStore) CreatePlatformBackupJob(j *models.PlatformBackupJob) (int, error) {
@@ -55,6 +56,11 @@ func (f *platformScheduleStore) FinishPlatformBackupRun(int, string, int64, stri
 }
 func (f *platformScheduleStore) SetPlatformBackupJobSchedule(_ int, next *time.Time) error {
 	f.armedSet = true
+	f.armed = next
+	return nil
+}
+func (f *platformScheduleStore) SetPlatformBackupJobRanByHand(_ int, next *time.Time) error {
+	f.byHand = true
 	f.armed = next
 	return nil
 }
@@ -148,8 +154,10 @@ func TestRunningAPlatformBackupJobByHandRecordsIt(t *testing.T) {
 	if !st.runOpen {
 		t.Fatalf("no run was opened (%d: %s)", rec.Code, rec.Body.String())
 	}
-	if !st.armedSet {
-		t.Fatal("a manual run left last_run_at and next_run_at untouched")
+	// Through the write that keeps a planned slot: a manual run used to move
+	// the schedule to click time plus the interval.
+	if st.armedSet || !st.byHand {
+		t.Fatalf("schedule rewritten %v, recorded by hand %v: want only the by-hand record", st.armedSet, st.byHand)
 	}
 	aboutADayFromNow(t, st.armed)
 }

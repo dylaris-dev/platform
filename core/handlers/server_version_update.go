@@ -274,6 +274,20 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 	}
 
 	if linked > 0 {
+		// A hash names the version, not the project: fetch the project's title
+		// and slug for the new rows in one call, and answer with them.
+		if mods, lerr := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer); lerr == nil {
+			h.fillProjectMeta(r.Context(), mods)
+			titles := map[string]string{}
+			for _, m := range mods {
+				titles[m.ModrinthProjectID] = m.Title
+			}
+			for i := range results {
+				if t := titles[results[i].ProjectID]; results[i].Matched && t != "" {
+					results[i].Title = t
+				}
+			}
+		}
 		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "linked": linked, "results": results})

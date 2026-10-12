@@ -8,8 +8,10 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-pkg/validate"
 
 	"github.com/google/uuid"
@@ -73,10 +75,55 @@ func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
+	h.fillProjectMeta(r.Context(), mods)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"mods":    mods,
 	})
+}
+
+// fetchModProjects is a variable so tests can stand in for Modrinth.
+var fetchModProjects = services.FetchProjects
+
+// modMetaWait bounds the lookup: it sits on the mod list, which used to be a
+// database read, and a slow Modrinth must not hold the Content tab open.
+var modMetaWait = 3 * time.Second
+
+// fillProjectMeta gives rows without a slug the project's title and slug, and
+// writes them back. Identifying a jar by its hash only learns the VERSION, so
+// those rows carried the version name as their title and no slug at all, and
+// every update re-sent both. A failed lookup leaves the rows as they are.
+//
+// ponytail: a project Modrinth no longer has is asked for on every listing; a
+// "looked up, gone" marker if that ever shows in the rate budget.
+func (h *ServerModsHandler) fillProjectMeta(ctx context.Context, mods []models.ServerMod) {
+	var ids []string
+	for _, m := range mods {
+		if m.ModrinthProjectID != "" && m.ModrinthProjectSlug == "" {
+			ids = append(ids, m.ModrinthProjectID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, modMetaWait)
+	defer cancel()
+	meta, err := fetchModProjects(ctx, ids)
+	if err != nil {
+		log.Printf("[mods] project titles for %d identified mods: %v", len(ids), err)
+		return
+	}
+	for i := range mods {
+		p, ok := meta[mods[i].ModrinthProjectID]
+		if !ok || p.Slug == "" || mods[i].ModrinthProjectSlug != "" {
+			continue
+		}
+		if err := h.state.Store.SetServerModProjectMeta(mods[i].ID, p.Slug, p.Title); err != nil {
+			log.Printf("[mods] storing the project title of mod %d: %v", mods[i].ID, err)
+			continue
+		}
+		mods[i].ModrinthProjectSlug, mods[i].Title = p.Slug, p.Title
+	}
 }
 
 // ModpackContents returns the modpack snapshot for the active sub-server: the

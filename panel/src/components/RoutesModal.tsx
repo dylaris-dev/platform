@@ -179,7 +179,7 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
                 </div>
 
                 <div className="modal-body flex-1 overflow-y-auto space-y-4">
-                    <p className="text-sm text-(--base-07)">Map custom domains to this server through the gateway. Players connect to these domains instead of the raw IP.</p>
+                    <p className="text-sm text-(--base-07)">The addresses players use to join this server. Each one reaches it through the gateway.</p>
 
                     {routesLoading ? (
                         <p className="text-sm text-(--base-07)">Loading routes…</p>

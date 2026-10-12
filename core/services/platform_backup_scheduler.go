@@ -121,7 +121,9 @@ func (s *PlatformBackupScheduler) runDue(ctx context.Context, job *models.Platfo
 }
 
 func (s *PlatformBackupScheduler) rearm(job *models.PlatformBackupJob) {
-	next := ComputeBackupNextRun(job.Schedule, time.Now())
+	// From the planned slot, so a run does not push the schedule back by its
+	// own duration every time.
+	next := nextScheduledRun(job.Schedule, job.NextRunAt, time.Now())
 	if err := s.store.SetPlatformBackupJobSchedule(job.ID, next); err != nil {
 		logErrf("platform-backup", "job %d: re-arming the schedule: %v", job.ID, err)
 	}

@@ -45,11 +45,17 @@ const VALIDATION_REGEX: Record<HosterValidation, RegExp> = {
     dns: /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
 };
 
-// Up to apex + 2 subdomains (a.b.c.d = 4 labels max)
-const CUSTOM_DOMAIN_REGEX = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
-function customDomainLabelsOk(d: string) {
-    const labels = d.split('.').filter(Boolean);
-    return labels.length >= 2 && labels.length <= 4;
+// The one trailing dot of a fully qualified name is dropped, as Core does.
+export function normHost(d: string) {
+    return d.trim().toLowerCase().replace(/\.$/, '');
+}
+
+// Apex up to apex + 2 subdomains (a.b.c.d = 4 labels max), each label a DNS
+// label. Mirrors Core's isHostname.
+export function customDomainOk(d: string) {
+    const labels = d.split('.');
+    return d.length <= 253 && labels.length >= 2 && labels.length <= 4
+        && labels.every(l => l.length <= 63 && VALIDATION_REGEX.dns.test(l));
 }
 
 /**
@@ -120,7 +126,7 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
             return `${subdomain}.${hosterDomain}`.toLowerCase();
         }
         if ((mode === 'custom' || mode === 'legacy') && customDomain) {
-            return customDomain.toLowerCase();
+            return normHost(customDomain);
         }
         return '';
     }, [mode, subdomain, hosterDomain, customDomain]);
@@ -138,12 +144,12 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                 req = { subdomain: lower, hosterDomain };
             }
         } else if (mode === 'custom' && customDomain) {
-            const lower = customDomain.toLowerCase();
-            if (CUSTOM_DOMAIN_REGEX.test(lower) && customDomainLabelsOk(lower)) {
+            const lower = normHost(customDomain);
+            if (customDomainOk(lower)) {
                 req = { customDomain: lower };
             }
         } else if (mode === 'legacy' && customDomain) {
-            req = { domain: customDomain.toLowerCase() };
+            req = { domain: normHost(customDomain) };
         }
 
         if (!req) {
@@ -207,8 +213,8 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
         const ok = VALIDATION_REGEX[activeHoster.validation].test(subdomain.toLowerCase());
         if (!ok) hint = `Allowed: ${VALIDATION_HINT[activeHoster.validation]}`;
     } else if (mode === 'custom' && customDomain) {
-        const lower = customDomain.toLowerCase();
-        if (!CUSTOM_DOMAIN_REGEX.test(lower) || !customDomainLabelsOk(lower)) {
+        const lower = normHost(customDomain);
+        if (!customDomainOk(lower)) {
             hint = 'Format: yourdomain.com — up to 2 subdomain levels (e.g. play.mc.example.com)';
         } else if (hosters.some(h => lower === h.domain || lower.endsWith('.' + h.domain))) {
             hint = `${lower} is on a hoster domain — use the subdomain picker instead.`;

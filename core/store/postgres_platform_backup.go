@@ -172,6 +172,17 @@ func (s *PostgresStore) SetPlatformBackupJobSchedule(id int, next *time.Time) er
 	return err
 }
 
+func (s *PostgresStore) SetPlatformBackupJobRanByHand(id int, next *time.Time) error {
+	var v any
+	if next != nil {
+		v = *next
+	}
+	_, err := s.db.Exec(
+		`UPDATE platform_backup_jobs SET last_run_at = NOW(), next_run_at = COALESCE(next_run_at, $1) WHERE id = $2`,
+		v, id)
+	return err
+}
+
 const platformBackupRunCols = `id, job_id, started_at, completed_at, status, size_bytes, storage_key, storage_id, error_message, components`
 
 func scanPlatformBackupRun(sc interface{ Scan(...any) error }) (*models.PlatformBackupRun, error) {

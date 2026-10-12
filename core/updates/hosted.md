@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.12.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Mods identified from their jar show the mod's name and link** instead of the version name; ones
+  identified earlier are corrected the next time you open the mod list.
+- **"Run now" on a backup no longer moves its schedule**: the next planned backup still runs on time.
+- **An address typed with a dot at the end is accepted**; the dot is dropped.
+
 ## 2026.10.12
 
 ### Features

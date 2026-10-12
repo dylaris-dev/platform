@@ -199,6 +199,21 @@ func TestAServerRouteIsTheServerOwners(t *testing.T) {
 			t.Fatalf("route filed under %q, want the server owner %q", got, linkRouteUserID)
 		}
 	})
+
+	// An admin skipped the server lookup, so a route an admin made for a
+	// customer was filed under the admin.
+	t.Run("an admin's route is filed under the owner too", func(t *testing.T) {
+		gw := &linkRouteFakeGateway{}
+		rec := httptest.NewRecorder()
+		newLinkRouteHandler(fs, gw, rdb).CreateServerRoute(rec, serverRouteReq("admin-1", true,
+			map[string]interface{}{"domain": "byadmin.example.com", "targetPort": 25565}))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		if got := gw.createRouteServerCalls[0].ownerID; got != linkRouteUserID {
+			t.Fatalf("route filed under %q, want the server owner %q", got, linkRouteUserID)
+		}
+	})
 }
 
 // Routes on a tenant's own domains cost us no address, and that is why they

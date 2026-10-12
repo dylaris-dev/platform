@@ -1174,11 +1174,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 		return 0, errBackupAlreadyRunning
 	}
 
-	// Mark scheduled bookkeeping. Manual triggers don't change the next-run.
+	// A manual run is recorded but leaves the planned slot alone: it used to
+	// move the schedule to click time plus the interval.
 	now := time.Now()
-	next := services.ComputeBackupNextRun(job.Schedule, now)
-	if next != nil {
-		h.state.Store.SetBackupJobScheduled(job.ID, now, *next)
+	if err := h.state.Store.SetBackupJobRanByHand(job.ID, now, services.ComputeBackupNextRun(job.Schedule, now)); err != nil {
+		log.Printf("backup: job %d: recording the manual run: %v", job.ID, err)
 	}
 
 	if h.state.Queue == nil {

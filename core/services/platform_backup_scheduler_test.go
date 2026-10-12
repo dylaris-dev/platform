@@ -304,3 +304,23 @@ func TestSchedulerRunsANeverArmedJobOnlyWhenItHasASchedule(t *testing.T) {
 		})
 	}
 }
+
+// The next run counts from the planned slot, not from when the run finished:
+// counting from now pushed every daily backup back by its own duration.
+func TestSchedulerRearmsFromThePlannedSlot(t *testing.T) {
+	job := scheduledJob()
+	planned := time.Now().Add(-40 * time.Second).Truncate(time.Second)
+	job.NextRunAt = &planned
+	st := newSchedulerStore(job)
+	st.due = []models.PlatformBackupJob{*job}
+
+	s := NewPlatformBackupScheduler(st, nil, func() (*PlatformBackupRunner, error) {
+		return nil, errors.New("destination unreachable")
+	}, nil)
+	s.tick(context.Background())
+
+	next := st.rearmed[1]
+	if want := planned.Add(24 * time.Hour); next == nil || !next.Equal(want) {
+		t.Fatalf("re-armed to %v, want the planned slot plus a day, %v", next, want)
+	}
+}
