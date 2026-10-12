@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -60,6 +61,9 @@ type NodeHeartbeat struct {
 	// A POINTER for the same reason as NetPolicy: a heartbeat without it is
 	// unknown, and the panel warns about a 0.
 	LinkCount *int `json:"linkCount,omitempty"`
+	// LinkKeySwap is set while the node would move its Link onto warp's new key
+	// by itself (node 2026.10.12+, link updater running, a managed Link found).
+	LinkKeySwap bool `json:"linkKeySwap,omitempty"`
 	// PortRange is the node's effective MC host-port range ("25600-25699") and
 	// PortRangeNotice is set only when the node fell back to its default because
 	// PORT_RANGE was unset or unparseable. Surfaced so an admin sees the ports
@@ -178,6 +182,9 @@ func LoadHeartbeat(ctx context.Context, r *redis.Client, nodeToken string) *Node
 type NodeIPs struct {
 	Public  string   `json:"public"`
 	Private []string `json:"private"`
+	// What each private address is (lan, docker, overlay), as the node read it
+	// off its interfaces. Absent from a node before 2026.10.12.
+	Kinds map[string]string `json:"kinds,omitempty"`
 }
 
 func NewDiscoveryService(s store.Store, r *redis.Client, secret string) *DiscoveryService {
@@ -458,11 +465,7 @@ func (s *DiscoveryService) scanNodes() {
 				s.store.SetNodeAddress(node.ID, hb.IP)
 			}
 
-			if hb.IPs.Public != "" || len(hb.IPs.Private) > 0 {
-				if hb.IPs.Public != node.PublicIP || !slicesEqual(hb.IPs.Private, node.PrivateIPs) {
-					s.store.SetNodeIPs(node.ID, hb.IPs.Public, hb.IPs.Private)
-				}
-			}
+			s.syncNodeIPs(node, hb.IPs)
 
 			// Cache physical capacity for the scheduler. Older nodes may
 			// not yet report total_cpu — we still update RAM in that case.
@@ -504,6 +507,18 @@ func (s *DiscoveryService) scanNodes() {
 				s.publishServersChanged(ctx)
 			}
 		}
+	}
+}
+
+// syncNodeIPs writes the heartbeat's addresses when any of them changed,
+// including only what each one is: a node updated to report kinds keeps the
+// same addresses, and comparing those alone would never store the kinds.
+func (s *DiscoveryService) syncNodeIPs(node *models.Node, ips NodeIPs) {
+	if ips.Public == "" && len(ips.Private) == 0 {
+		return
+	}
+	if ips.Public != node.PublicIP || !slicesEqual(ips.Private, node.PrivateIPs) || !maps.Equal(ips.Kinds, node.PrivateIPKinds) {
+		s.store.SetNodeIPs(node.ID, ips.Public, ips.Private, ips.Kinds)
 	}
 }
 

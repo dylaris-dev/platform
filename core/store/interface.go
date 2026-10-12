@@ -62,7 +62,7 @@ type Store interface {
 	SetNodeTags(id int, tags string) error
 	SetNodeName(id int, name string) error
 	SetNodeAddress(id int, address string) error
-	SetNodeIPs(id int, publicIP string, privateIPs []string) error
+	SetNodeIPs(id int, publicIP string, privateIPs []string, kinds map[string]string) error
 	UpdateNodeCpusetCpus(id int, cpusetCpus string) error
 	SetNodeOwner(id int, ownerID *string) error
 	GetNodeSecretEnc(id int) (string, error)

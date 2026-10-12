@@ -1297,6 +1297,16 @@ func TestCap_WarpRegionsTopologyPanel(t *testing.T) {
 	if c := doAs(t, srv, "POST", "/api/admin/warp/external-nodes", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
 		t.Errorf("ordinary user must be 403 minting an External node key, got %d", c)
 	}
+	// A roll hands back the new secret that boots the machine's Link, so it is
+	// gated exactly like the mint.
+	for _, id := range []testIdentity{{UserID: "tw-id", Username: "tw"}, {UserID: "tp-id", Username: "tp"}, {UserID: "plain-id", Username: "plain"}} {
+		if c := doAs(t, srv, "POST", "/api/admin/warp/keys/1/roll", id); c != 403 {
+			t.Errorf("%s must be 403 rolling an External node key, got %d", id.Username, c)
+		}
+	}
+	if c := doAs(t, srv, "POST", "/api/admin/warp/keys/1/roll", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+		t.Error("an admin must not be 403 rolling an External node key")
+	}
 	if c := doAs(t, srv, "GET", "/api/warp/regions", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
 		t.Errorf("ordinary user must be 403 on warp regions, got %d", c)
 	}

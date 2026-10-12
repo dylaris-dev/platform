@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.12
+
+### Features
+- **External nodes are managed in one place, Settings -> Nodes -> External nodes:** add a machine,
+  show its deploy file, or get a new key with the file filled in. `panel` `core`
+- **A new key moves the Link over without disconnecting anyone.** Redeploy warp and the node only;
+  the node starts the new Link on the new key before the old one stops (needs LINK_AUTO_UPDATE on). `node` `core` `panel`
+- **Node cards show the LAN address**, with Docker networks and tunnels behind "Show all"; the node
+  reports which interface each address is on. `node` `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- **A rolled overlay or link key keeps working for one more hour**, so a restart before the redeploy
+  does not take the machine offline. Revoke still cuts it off at once. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.11.7
 
 ### Features

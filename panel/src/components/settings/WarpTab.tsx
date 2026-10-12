@@ -1,49 +1,21 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Server, Circle, Shield, Check, KeyRound, Terminal, RefreshCw, Ban } from 'lucide-react';
+import { AlertTriangle, Plus, Network, Trash2, Server, Circle, Shield } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getWarpRegions, upsertWarpRegion, deleteWarpRegion,
-    upsertWarpLeader, deleteWarpLeader, mintExternalNodeKey,
+    upsertWarpLeader, deleteWarpLeader,
     getWarpFirewallSettings, saveWarpFirewallSettings,
-    listWarpKeys, revokeWarpKey, deleteWarpKey,
-    type WarpRegionView, type WarpKeyView,
+    type WarpRegionView,
 } from '@/lib/api/types';
-import {
-    nodeCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitInput, watchtowerNote,
-} from '@/lib/warpDeploy';
-import type { DeployPlatform } from '@/lib/warpDeploy';
-import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
-import { coreOrigin } from '@/lib/api/core';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
-import HelpTip from '@/components/ui/HelpTip';
-import { platformNote, useDeployPlatform } from '@/components/infra/DeployKit';
-import { isLocationName } from '@/lib/validation';
-import ModalPanel from '@/components/ui/ModalPanel';
-
-const enrollUrl = coreOrigin();
-
-// The same rule Core applies (validate.IsLocationName): the name is slugged into
-// the node's NODE_ID by the deploy file.
-const EXTERNAL_NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
-
-type WarpSubTab = 'settings' | 'nodes';
 
 export default function WarpTab() {
     const { gatewayEnabled, fileAccessMode } = useAppData();
-    const [subTab, setSubTab] = useState<WarpSubTab>('settings');
-    // The External Nodes sub-tab used to show only with store wiring or the BYON
-    // flag, because it minted keys for customer machines as well. It now adds
-    // only the platform's own External nodes, and Core deliberately does not
-    // gate that on BYON: a self-hoster can run a machine outside their
-    // datacenter too. Customer machines and protected addresses stay behind
-    // BYON on the customer's own pages, not here.
-    //
-    // gatewayEnabled is routing gateway OR both, the same test Core's mint and
-    // warp enrol apply. Beam file access stays required: without it the
-    // servers on such a machine have no file access path.
+    // gatewayEnabled is routing gateway OR both, the same test Core's warp
+    // enrol applies. Beam file access stays required: without it the servers
+    // on an External node have no file access path.
     const gateOpen = gatewayEnabled && fileAccessMode === 'beam';
 
     const [regions, setRegions] = useState<WarpRegionView[]>([]);
@@ -53,19 +25,6 @@ export default function WarpTab() {
     const [newRegion, setNewRegion] = useState({ region: '', subnet: '' });
     const [addingRegion, setAddingRegion] = useState(false);
 
-    const [extName, setExtName] = useState('');
-    const extNameValid = isLocationName(extName.trim());
-    const [minting, setMinting] = useState(false);
-    // Both secrets of a freshly minted External node, shown once.
-    const [revealed, setRevealed] = useState<{
-        name: string; nodeId: string; apiKey: string; enrollToken: string; grpcTlsFingerprint: string;
-    } | null>(null);
-    const [keys, setKeys] = useState<WarpKeyView[]>([]);
-    const [keysLoading, setKeysLoading] = useState(true);
-    // Deploy instructions for an already-minted key: same panel as the reveal
-    // modal, minus the secret, which cannot be shown again.
-    const [showDeploy, setShowDeploy] = useState<WarpKeyView | null>(null);
-
     const [fwPorts, setFwPorts] = useState('');
     const [fwSubnets, setFwSubnets] = useState('');
     // What Core detected, shown when nothing is stored yet so the operator can
@@ -74,9 +33,6 @@ export default function WarpTab() {
     const [subnetHint, setSubnetHint] = useState<{ suggested: string; candidates: string[]; source: string } | null>(null);
     const [fwLoaded, setFwLoaded] = useState(false);
     const [savingFw, setSavingFw] = useState(false);
-    // Core's overlay-side gRPC and Redis addresses, so the deploy snippet is a
-    // copy-paste rather than two values the operator has to go and find.
-    const [deployConfig, setDeployConfig] = useState<WarpDeployConfig | null>(null);
 
     const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
@@ -101,66 +57,7 @@ export default function WarpTab() {
         }
     }, []);
 
-    const loadKeys = useCallback(async () => {
-        try {
-            const res = await listWarpKeys();
-            if (res.success) setKeys(res.keys || []);
-        } catch {
-            // Non-fatal: the rest of the tab still works without the inventory.
-        } finally {
-            setKeysLoading(false);
-        }
-    }, []);
-
-    useEffect(() => { load(); loadKeys(); }, [load, loadKeys]);
-
-    useEffect(() => {
-        let cancelled = false;
-        getWarpDeployConfig().then(res => {
-            if (!cancelled && res.success && res.config) setDeployConfig(res.config);
-        }).catch(() => { /* the snippet falls back to its placeholders */ });
-        return () => { cancelled = true; };
-    }, []);
-
-    const handleRevokeKey = async (k: WarpKeyView) => {
-        const live = k.peers.length;
-        const ok = await confirmDialog({
-            title: `Revoke "${k.name}"?`,
-            message: live > 0
-                ? `${live} connected ${live === 1 ? 'node is' : 'nodes are'} using this key. Revoking blocks future enrolments AND disconnects ${live === 1 ? 'it' : 'them'} from the overlay immediately. The key cannot be restored - you would have to mint a new one and redeploy.${unusedTokenNote(k)}`
-                : `This key has no connected nodes. Revoking blocks any future enrolment with it. It cannot be restored.${unusedTokenNote(k)}`,
-            confirmLabel: 'Revoke',
-            destructive: true,
-        });
-        if (!ok) return;
-        const res = await revokeWarpKey(k.id);
-        if (res.success) {
-            showToast(res.disconnected ? `Revoked. ${res.disconnected} peer(s) disconnected.` : 'Key revoked.');
-            loadKeys();
-        } else {
-            showToast(res.message || 'Revoke failed.', false);
-        }
-    };
-
-    const handleDeleteKey = async (k: WarpKeyView) => {
-        const live = k.peers.length;
-        const ok = await confirmDialog({
-            title: `Delete "${k.name}"?`,
-            message: live > 0
-                ? `Removes the key and its history for good, and disconnects ${live} connected ${live === 1 ? 'node' : 'nodes'} from the overlay. Revoke instead if you want the record kept.${unusedTokenNote(k)}`
-                : `Removes the key and its history for good. Revoke instead if you want the record kept.${unusedTokenNote(k)}`,
-            confirmLabel: 'Delete',
-            destructive: true,
-        });
-        if (!ok) return;
-        const res = await deleteWarpKey(k.id);
-        if (res.success) {
-            showToast(res.disconnected ? `Deleted. ${res.disconnected} peer(s) disconnected.` : 'Key deleted.');
-            loadKeys();
-        } else {
-            showToast(res.message || 'Delete failed.', false);
-        }
-    };
+    useEffect(() => { load(); }, [load]);
 
     const addRegion = async () => {
         const region = newRegion.region.trim();
@@ -212,29 +109,6 @@ export default function WarpTab() {
         else showToast(res.message || res.error || 'Delete failed.', false);
     };
 
-    const handleMint = async () => {
-        const name = extName.trim();
-        if (!isLocationName(name)) { showToast(`Location name: ${EXTERNAL_NAME_RULE}`, false); return; }
-        setMinting(true);
-        try {
-            const res = await mintExternalNodeKey(name);
-            if (res.success && res.warp_key && res.enroll_token && res.node_id) {
-                setRevealed({
-                    name, nodeId: res.node_id, apiKey: res.warp_key, enrollToken: res.enroll_token,
-                    grpcTlsFingerprint: res.grpc_tls_fingerprint ?? '',
-                });
-                setExtName('');
-                loadKeys();
-            } else {
-                showToast(res.message || res.error || 'Mint failed', false);
-            }
-        } catch {
-            showToast('Mint failed: Core could not be reached.', false);
-        } finally {
-            setMinting(false);
-        }
-    };
-
     const saveFw = async () => {
         setSavingFw(true);
         const res = await saveWarpFirewallSettings({ allowedPorts: fwPorts.trim(), tunnelSubnets: fwSubnets.trim() });
@@ -260,27 +134,11 @@ export default function WarpTab() {
                 </p>
             </div>
 
-            <div className="flex gap-1 border-b border-(--base-03)">
-                    {([
-                        { id: 'settings' as const, label: 'Overlay Settings', icon: Shield },
-                        { id: 'nodes' as const, label: 'External Nodes', icon: Server },
-                    ]).map(({ id, label, icon: Icon }) => (
-                        <button
-                            key={id}
-                            onClick={() => setSubTab(id)}
-                            className={`flex items-center gap-2 px-3 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-                                subTab === id
-                                    ? 'border-(--accent) text-(--accent-light)'
-                                    : 'border-transparent text-(--base-07) hover:text-(--base-09)'
-                            }`}
-                        >
-                            <Icon size={14} />
-                            {label}
-                        </button>
-                    ))}
-            </div>
+            <p className="text-xs text-(--base-06)">
+                External nodes are added, deployed and given new keys under{' '}
+                <a href="/settings/nodes?tab=external" className="text-(--accent-light) hover:underline rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">Settings -&gt; Nodes -&gt; External nodes</a>.
+            </p>
 
-            {subTab === 'settings' && (<>
             {/* Regions + leaders */}
             <div className="card p-5 space-y-4">
                 <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Regions & Hubs</h3>
@@ -386,178 +244,9 @@ export default function WarpTab() {
                 </button>
             </div>
 
-            </>)}
-
-            {subTab === 'nodes' && (<>
-            {/* Mint an External node */}
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Connect External Node</h3>
-                {/* This card mints exactly one kind of key. It used to mint a
-                    plain admin key and offer three deploy files for it, and two
-                    of them could never work: link-boot answers only a key made
-                    for one machine, and an admin key was never that. */}
-                <p className="text-xs text-(--base-06)">
-                    An External node is a machine the platform runs outside the datacenter. Minting gives it an
-                    overlay key and a single-use enroll token together. The node it enrols belongs to nobody - not
-                    to you - and appears under{' '}
-                    <a href="/nodes?tab=external" className="text-(--accent-light) hover:underline rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">My infrastructure -&gt; External nodes</a>.
-                    The file offered next runs warp, the node and its Link.
-                </p>
-                <p className="text-xs text-(--base-06)">
-                    Customer machines and protected addresses are not set up here, because a key an admin mints
-                    can never boot their Link. The customer adds a machine under{' '}
-                    <a href="/nodes?tab=machines" className="text-(--accent-light) hover:underline rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">My infrastructure -&gt; Bring your own node</a>{' '}
-                    and a protected address under{' '}
-                    <a href="/nodes?tab=routes" className="text-(--accent-light) hover:underline rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">My infrastructure -&gt; Protected addresses</a>,
-                    and gets the working deploy file there.
-                </p>
-                <fieldset disabled={!gateOpen} className="space-y-2 disabled:opacity-50">
-                    <div className="flex flex-col md:flex-row gap-3 md:items-end">
-                        <div className="flex-1 flex flex-col gap-[5px]">
-                            <label className="input-label" htmlFor="external-node-name">Location name</label>
-                            <input
-                                id="external-node-name"
-                                className="input-field"
-                                value={extName}
-                                onChange={e => setExtName(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter' && extNameValid && !minting) handleMint(); }}
-                                placeholder="ext-frankfurt"
-                                maxLength={20}
-                                aria-invalid={extName !== '' && !extNameValid}
-                                aria-describedby="external-node-name-rule"
-                            />
-                        </div>
-                        <button onClick={handleMint} disabled={minting || !gateOpen || !extNameValid} className="btn btn-primary disabled:opacity-40">
-                            <Plus size={14} /> {minting ? 'Minting...' : 'Mint External node key'}
-                        </button>
-                    </div>
-                    <p id="external-node-name-rule" className={`text-[11px] ${extName !== '' && !extNameValid ? 'text-(--error-light)' : 'text-(--base-06)'}`}>
-                        {EXTERNAL_NAME_RULE} It becomes the node&apos;s NODE_ID in the file.
-                    </p>
-                </fieldset>
-            </div>
-
-            {/* Enrolled external nodes */}
-            <div className="card p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2">
-                        <KeyRound size={15} /> Enrollment Keys &amp; Connected Nodes
-                    </h3>
-                    <button onClick={loadKeys} className="btn btn-secondary btn-sm" title="Refresh">
-                        <RefreshCw size={12} /> Refresh
-                    </button>
-                </div>
-
-                {keysLoading ? (
-                    <p className="text-xs text-(--base-06)">Loading...</p>
-                ) : keys.length === 0 ? (
-                    <p className="text-xs text-(--base-06)">
-                        No enrollment keys yet. Mint one above to connect an external node.
-                    </p>
-                ) : (
-                    <div className="flex flex-col gap-2">
-                        {keys.map(k => (
-                            <div key={k.id} className={`rounded-md border p-3 ${k.revoked ? 'border-(--base-04) opacity-60' : 'border-(--base-03)'}`}>
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-sm text-(--base-09) font-medium truncate">{k.name || `key-${k.id}`}</span>
-                                            {k.revoked
-                                                ? <span className="badge badge-error">Revoked</span>
-                                                : k.peers.length > 0
-                                                    ? <span className="badge badge-success">{k.peers.length} connected</span>
-                                                    : <span className="badge badge-neutral">Not used yet</span>}
-                                            {isExternalNodeKey(k)
-                                                ? <span className="badge badge-accent">External node</span>
-                                                : (
-                                                    <span className="inline-flex items-center gap-1">
-                                                        <span className="badge badge-neutral">Legacy key</span>
-                                                        <HelpTip label="About legacy keys">
-                                                            <p className="mb-2">
-                                                                Minted before External node keys existed. It is not made for
-                                                                one machine, so it can <strong>never boot a Link</strong>, and a
-                                                                node deployed with it cannot be reached by players.
-                                                            </p>
-                                                            <p>
-                                                                Add a new External node for that machine instead, then revoke
-                                                                this key.
-                                                            </p>
-                                                        </HelpTip>
-                                                    </span>
-                                                )}
-                                            <span className="badge badge-neutral">{k.policy === 'fixed' ? 'Fixed (1)' : `General (max ${k.max_conns})`}</span>
-                                            {k.region && <span className="badge badge-accent">{k.region}</span>}
-                                        </div>
-                                        <p className="text-xs text-(--base-06) mt-1">
-                                            Created {new Date(k.created_at).toLocaleString()}
-                                            {k.region ? '' : ' - region assigned at enrolment'}
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        <button onClick={() => setShowDeploy(k)} className="btn btn-secondary btn-sm" title="Show deploy instructions">
-                                            <Terminal size={12} /> Deploy
-                                        </button>
-                                        {!k.revoked && (
-                                            <button onClick={() => handleRevokeKey(k)} className="btn btn-secondary btn-sm" title="Block future enrolments and disconnect its nodes; keeps the record">
-                                                <Ban size={12} /> Revoke
-                                            </button>
-                                        )}
-                                        <button onClick={() => handleDeleteKey(k)} className="btn btn-danger btn-sm" title="Remove the key and its history for good">
-                                            <Trash2 size={12} />
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {k.peers.length > 0 && (
-                                    <div className="mt-3 border-t border-(--base-03) pt-2 flex flex-col gap-1">
-                                        {k.peers.map(p => (
-                                            <div key={p.pubkey} className="flex items-center gap-2 text-xs flex-wrap">
-                                                <Circle size={7} className="fill-(--success-light) text-(--success-light) shrink-0" />
-                                                <code className="font-mono text-(--base-09)">{p.wg_ip}</code>
-                                                <span className="text-(--base-06)">{p.region}</span>
-                                                {p.assigned_leader && <span className="text-(--base-06)">via {p.assigned_leader}</span>}
-                                                <code className="font-mono text-(--base-05) truncate max-w-[14rem]" title={p.pubkey}>{p.pubkey}</code>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-            </>)}
-
-            {(revealed || showDeploy) && (
-                <DeployModal
-                    name={revealed ? revealed.name : (showDeploy!.name || `key-${showDeploy!.id}`)}
-                    keyNodeId={revealed ? revealed.nodeId : showDeploy!.node_id}
-                    apiKey={revealed ? revealed.apiKey : null}
-                    enrollToken={revealed ? revealed.enrollToken : null}
-                    grpcTlsFingerprint={revealed ? revealed.grpcTlsFingerprint : undefined}
-                    enrollUrl={enrollUrl}
-                    tunnelSubnets={fwSubnets}
-                    config={deployConfig}
-                    onClose={() => { setRevealed(null); setShowDeploy(null); }}
-                    showToast={showToast}
-                />
-            )}
-
             {toast && <div className={`fixed bottom-4 right-4 px-4 py-2 rounded-md text-sm font-medium ${toast.ok ? 'bg-(--success)/20 text-(--success-light) border border-(--success)/40' : 'bg-(--error)/20 text-(--error-light) border border-(--error)/40'}`}>{toast.msg}</div>}
         </div>
     );
-}
-
-// An External node key carries a node- identity; admin keys could not have one
-// any other way (Core refuses the prefix on the plain mint).
-function isExternalNodeKey(k: WarpKeyView): boolean {
-    return (k.node_id || '').startsWith('node-');
-}
-
-// Core accepts an External node's enroll token only while its key is live, so
-// revoking or deleting the key retires a token the machine has not used yet.
-function unusedTokenNote(k: WarpKeyView): string {
-    return isExternalNodeKey(k) ? ' Its enroll token stops working too, if the machine has not used it yet.' : '';
 }
 
 function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDeleteLeader }: {
@@ -646,188 +335,3 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
     );
 }
 
-/**
- * DeployModal is the "how do I actually connect this machine" panel.
- *
- * Two entry points, one component: right after minting (the key and the enroll
- * token present, each shown once and never again) and later from the inventory
- * (both null, because only hashes are stored). Everything except the secrets is
- * reproducible, so the second case still gives a complete stack with
- * placeholders where they go.
- *
- * It is locked to one target, the External node. It used to offer BYON and
- * route-only files for the same admin key as well, and neither could work:
- * link-boot answers only a key made for one machine, which an admin key never
- * was. Which file a key gets is decided by the key itself - a node- identity is
- * an External node key and gets its Link, anything else is a key minted before
- * those existed and gets a file that says it cannot have one.
- */
-function DeployModal({ name, keyNodeId, apiKey, enrollToken, grpcTlsFingerprint, enrollUrl, tunnelSubnets, config, onClose, showToast }: {
-    name: string;
-    /** The key's node_id. "node-..." is an External node key; "" or anything else a legacy admin key. */
-    keyNodeId: string;
-    apiKey: string | null;
-    /** The platform enroll token minted with the key; null once it can no longer be shown. */
-    enrollToken: string | null;
-    /** From the mint answer. undefined falls back to Core's deploy config. */
-    grpcTlsFingerprint?: string;
-    enrollUrl: string;
-    /** From the Overlay Segmentation setting; "" leaves a placeholder in the snippet. */
-    tunnelSubnets: string;
-    /** Overlay addresses resolved by Core; null while loading or undetectable. */
-    config: WarpDeployConfig | null;
-    onClose: () => void;
-    showToast: (msg: string, ok?: boolean) => void;
-}) {
-    const external = keyNodeId.startsWith('node-');
-    const [copied, setCopied] = useState<string | null>(null);
-    const [platform, setPlatform] = useDeployPlatform();
-
-    // Through kitInput like every other kit: an object assembled by hand here
-    // is the shape that shipped a file without its link service once already.
-    const compose = nodeCompose(kitInput({
-        warpKey: apiKey,
-        enrollUrl,
-        // The saved setting wins; Core's detected value is the fallback, so a
-        // snippet is complete even before anyone visits Overlay Segmentation.
-        tunnelSubnets,
-        config,
-        grpcTlsFingerprint,
-        nodeId: nodeIdFromLabel(name),
-        nodeEnrollToken: enrollToken ?? undefined,
-        platform,
-        linkBesideNode: external,
-        legacyAdminKey: !external,
-        // Every key in this dialog is the platform's, a legacy one included:
-        // the machine is not the reader's own.
-        externalNode: true,
-    }));
-    const cli = deployCli('node', true);
-
-    const copy = (what: string, text: string) => {
-        navigator.clipboard.writeText(text).then(() => {
-            setCopied(what);
-            setTimeout(() => setCopied(null), 1600);
-            showToast('Copied.');
-        });
-    };
-
-    return (
-        <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <ModalPanel onClose={onClose} className="modal-panel max-w-3xl" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h3 className="modal-title text-(--accent-light)">{name} - deploy</h3>
-                </div>
-                <div className="modal-body space-y-4 max-h-[70vh] overflow-y-auto">
-                    {apiKey ? (
-                        <div className="flex items-start gap-2 p-2.5 rounded-md bg-(--warning)/5 border border-(--warning)/20">
-                            <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
-                            <div className="text-xs text-(--base-07) space-y-1.5 min-w-0 flex-1">
-                                <p>
-                                    The key and the enroll token are shown <strong>once</strong>. Both are stored only as
-                                    hashes, so they cannot be displayed again. The file below already contains them.
-                                </p>
-                                <div className="flex items-center gap-2">
-                                    <code className="font-mono text-xs bg-(--base-02) px-2 py-1 rounded truncate flex-1">{apiKey}</code>
-                                    <button onClick={() => copy('key', apiKey)} className="btn btn-secondary btn-sm shrink-0">
-                                        {copied === 'key' ? <Check size={12} /> : <Copy size={12} />} Copy key
-                                    </button>
-                                </div>
-                                {enrollToken && (
-                                    <div className="flex items-center gap-2">
-                                        <code className="font-mono text-xs bg-(--base-02) px-2 py-1 rounded truncate flex-1">{enrollToken}</code>
-                                        <button onClick={() => copy('token', enrollToken)} className="btn btn-secondary btn-sm shrink-0">
-                                            {copied === 'token' ? <Check size={12} /> : <Copy size={12} />} Copy token
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    ) : external ? (
-                        <p className="text-xs text-(--base-06)">
-                            The key and its enroll token cannot be shown again - only their hashes are stored. Paste
-                            what you saved at mint time where the file says <code className="font-mono">&lt;your-warp-key&gt;</code>{' '}
-                            and <code className="font-mono">&lt;enroll-token-from-panel&gt;</code>. A machine that has
-                            already enrolled no longer needs the token. If it has not and the token is lost, revoke this
-                            key and mint a new one: revoking retires the unused token with it.
-                        </p>
-                    ) : (
-                        <div className="flex items-start gap-2 p-2.5 rounded-md bg-(--warning)/5 border border-(--warning)/40">
-                            <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
-                            <p className="text-xs text-(--base-07)">
-                                This key was minted before External node keys existed. It is not made for one machine,
-                                so it can never boot a Link, and the file below runs none - nobody could reach the
-                                servers on that machine. Mint a new External node key for it instead. The key itself
-                                cannot be shown again either; the file has a placeholder where it goes.
-                            </p>
-                        </div>
-                    )}
-
-                    {external && (
-                        <p className="text-xs text-(--base-06)">
-                            A machine the platform runs outside the datacenter. warp joins the overlay first; the node
-                            then enrols with the token in this file and belongs to nobody, and the link service carries
-                            players to its servers once the node has enrolled - until then it waits and retries. The
-                            machine never holds CLUSTER_SECRET.
-                        </p>
-                    )}
-
-                    <div className="space-y-1">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <label className="font-mono text-sm font-medium text-(--base-09)">{composeFileName('node')}</label>
-                            <div className="flex items-center gap-1" role="group" aria-label="Target machine">
-                                {(['linux', 'windows'] as const).map((p) => (
-                                    <button
-                                        key={p}
-                                        type="button"
-                                        onClick={() => setPlatform(p)}
-                                        aria-pressed={platform === p}
-                                        className={`rounded-md px-2 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${platform === p ? 'bg-(--accent) text-(--base-00)' : 'bg-(--base-02) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'}`}
-                                    >
-                                        {p === 'linux' ? 'Linux' : 'Docker Desktop'}
-                                    </button>
-                                ))}
-                            </div>
-                            <button onClick={() => copy('compose', compose)} className="btn btn-secondary btn-sm">
-                                {copied === 'compose' ? <Check size={12} /> : <Copy size={12} />} Copy
-                            </button>
-                        </div>
-                        <p className="text-xs text-(--base-06)">{platformNote('node', platform)}</p>
-                        <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre overflow-x-auto">{compose}</pre>
-                        <p className="text-xs text-(--base-06)">{watchtowerNote('node')}</p>
-                    </div>
-
-                    <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                            <label className="font-mono text-sm font-medium text-(--base-09)">Commands</label>
-                            <button onClick={() => copy('cli', cli)} className="btn btn-secondary btn-sm">
-                                {copied === 'cli' ? <Check size={12} /> : <Copy size={12} />} Copy
-                            </button>
-                        </div>
-                        <p className="text-xs text-(--base-07)">{deployIntro('node', platform)}</p>
-                        <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre overflow-x-auto">{cli}</pre>
-                        <p className="text-xs text-(--base-06)">{DEPLOY_PORTAINER_NOTE}</p>
-                    </div>
-
-                    <div className="p-2.5 rounded-md bg-(--base-02) border border-(--base-04) space-y-1.5">
-                        <p className="text-xs text-(--base-07)">
-                            <strong>This machine will bind these ports.</strong> <code className="font-mono">NODE_EXTERNAL</code> only
-                            changes the advertised routing and file-access mode - it does not close listeners.
-                            Firewall them if the host is exposed.
-                        </p>
-                        {EXTERNAL_NODE_PORTS.map(p => (
-                            <div key={p.port} className="flex items-center gap-2 text-xs">
-                                <code className="font-mono text-(--accent-light)">{p.port}</code>
-                                <span className="text-(--base-08)">{p.what}</span>
-                                <span className="text-(--base-06)">{p.note}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-                <div className="modal-footer">
-                    <button onClick={onClose} className="btn btn-primary"><EyeOff size={12} /> Done</button>
-                </div>
-            </ModalPanel>
-        </div>
-    );
-}

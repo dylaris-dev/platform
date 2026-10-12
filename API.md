@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **518 routes** in 52 sections: 231 GET, 161 POST, 38 PUT, 35 PATCH, 54 DELETE.
+- **519 routes** in 52 sections: 231 GET, 162 POST, 38 PUT, 35 PATCH, 54 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **334** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **114** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **114** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (122)
+- [/api/admin](#apiadmin) (123)
 - [/api/auth](#apiauth) (22)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -319,6 +319,7 @@ can still show what exists.
 | POST | `/api/admin/warp/keys` | session | `topology.write` | - | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
 | DELETE | `/api/admin/warp/keys/{id:[0-9]+}` | session | `topology.write` | - | `WarpHandler.RevokeAPIKey` | revoke an enrollment key AND disconnect whatever it already enrolled. |
 | DELETE | `/api/admin/warp/keys/{id:[0-9]+}/purge` | session | `topology.write` | - | `WarpHandler.DeleteAPIKey` | remove the key row entirely, after disconnecting whatever it enrolled. |
+| POST | `/api/admin/warp/keys/{id:[0-9]+}/roll` | session | `topology.write` | - | `WarpHandler.RollExternalNodeKey` | a new secret for an External node's key, same identity. |
 
 ## /api/auth
 

@@ -316,6 +316,9 @@ type Node struct {
 	OwnerID    *string  `json:"ownerId,omitempty"`
 	PublicIP   string   `json:"publicIp"`
 	PrivateIPs []string `json:"privateIps"`
+	// lan, docker or overlay per PrivateIPs entry; nil from a node that does
+	// not say.
+	PrivateIPKinds map[string]string `json:"privateIpKinds,omitempty"`
 
 	ServerCount int `json:"serverCount,omitempty"`
 

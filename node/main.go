@@ -952,13 +952,19 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	}
 
 	ts := time.Now().Unix()
+	ips := map[string]interface{}{
+		"public":  publicIP,
+		"private": getPrivateIPs(),
+	}
+	// Beside the flat list rather than in it: an older Core and the migration
+	// LAN probe read "private" as a list of strings.
+	if kinds := privateIPKinds(dm); kinds != nil {
+		ips["kinds"] = kinds
+	}
 	data := map[string]interface{}{
 		"id": id, "name": id, "ip": publicIP,
 		"tags": tags, "region": region, "timestamp": ts,
-		"ips": map[string]interface{}{
-			"public":  publicIP,
-			"private": getPrivateIPs(),
-		},
+		"ips": ips,
 		// The MACHINE this node runs on, as Swarm names it (NODE_HOSTNAME,
 		// falling back to the kernel outside Swarm - see machineHostname).
 		//
@@ -1048,6 +1054,11 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	// node reads as "unknown" rather than as older than every release.
 	if v := nodeReleaseVersion(); !v.IsZero() {
 		data["releaseVersion"] = v.String()
+	}
+	// Core lets a warp key be rolled to "redeploy warp and the node only" just
+	// while this is true: the version alone does not say the updater runs.
+	if linkKeySwapReady.Load() {
+		data["linkKeySwap"] = true
 	}
 	jsonData, _ := json.Marshal(data)
 	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {

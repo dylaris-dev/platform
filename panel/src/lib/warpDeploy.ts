@@ -388,7 +388,7 @@ export function nodeCompose(i: WarpDeployInput): string {
 ${i.legacyAdminKey
             ? `# A link needs an overlay key made for one machine, and this key cannot be one:
 # it was minted before External node keys existed, and it can never boot a link.
-# Mint a new External node key under Settings -> Warp -> External Nodes, then
+# Add a new External node under Settings -> Nodes -> External nodes, then
 # deploy the file offered there - it contains the link.`
             : `# A link needs an overlay key BOUND TO THIS MACHINE, which this key is not. Bind
 # one under the machine in the panel, then take the file offered there - it
@@ -437,7 +437,10 @@ ${i.legacyAdminKey
       - ${kind}_link_data:/data
     # keep - the network the node starts your servers on; link reaches them there.
     networks: [${serverNet}]
-    # Do not redeploy this stack while a link update is draining (the node logs
+    # Redeploy with "up -d --no-deps warp node", never a plain "up -d": compose
+    # stops a link before it starts the new one, so nobody new could join until
+    # the old one has drained. The node moves the link onto a new image or a new
+    # key itself, start-first. Do not redeploy while it does (the node logs
     # "link update: STARTED"); compose would stop one of the two links.
     labels:
       # keep - watchtower must not restart the link: the node updates it
@@ -719,8 +722,28 @@ docker compose -f ${file} logs -f warp
 docker compose -f ${file} exec warp wg show
 
 # 4. The node registers itself; it appears in the panel under ${externalNode
-        ? 'My infrastructure -> External nodes'
+        ? 'Settings -> Nodes -> External nodes'
         : 'Nodes'} within ~30s.
+docker compose -f ${file} logs -f node`;
+}
+
+/**
+ * Commands for a machine that is already running, after its key was rolled or
+ * its file changed. Only warp and the node are recreated: compose stops a
+ * container before starting its replacement, which for the link means no new
+ * player can join until the old one has drained. The node moves the link onto
+ * warp's new key itself, starting the new link first.
+ */
+export function redeployCli(): string {
+    const file = composeFileName('node');
+    return `# 1. Recreate warp and the node only. Not a plain "up -d": that would stop the
+#    link before starting the new one.
+docker compose -f ${file} pull warp node
+docker compose -f ${file} up -d --no-deps warp node
+
+# 2. Within a few minutes the node starts a new link on the new key, waits for
+#    its tunnels, then lets the old one finish with the players it has:
+#    "link update: STARTED, the clone of ... boots with warp's new key".
 docker compose -f ${file} logs -f node`;
 }
 

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
     nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
-    kitInput, allowedTargets, genericNodeKitApplies, watchtowerNote
+    kitInput, allowedTargets, genericNodeKitApplies, watchtowerNote, redeployCli
 } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
@@ -616,7 +616,7 @@ describe('a node kit that cannot boot a link says so', () => {
         const out = nodeCompose({ ...base, legacyAdminKey: true });
         expect(out).toContain('THIS FILE RUNS NO LINK');
         expect(out).toContain('it can never boot a link');
-        expect(out).toContain('Settings -> Warp -> External Nodes');
+        expect(out).toContain('Settings -> Nodes -> External nodes');
         expect(out).not.toContain('under the machine in the panel');
         expect(out).not.toContain('gateway-link');
     });
@@ -647,7 +647,7 @@ describe('the External node kit', () => {
     });
 
     it('names where the node appears', () => {
-        expect(deployCli('node', true)).toContain('it appears in the panel under My infrastructure -> External nodes within ~30s.');
+        expect(deployCli('node', true)).toContain('it appears in the panel under Settings -> Nodes -> External nodes within ~30s.');
         expect(deployCli('node', true)).not.toContain('under Nodes within');
     });
 
@@ -787,7 +787,7 @@ describe('kitInput for the admin External node dialog', () => {
         expect(nodeCompose(ext)).toContain('outside our datacenter');
         const legacy = kitInput({ ...props, legacyAdminKey: true, externalNode: true });
         expect(nodeCompose(legacy)).toContain('THIS FILE RUNS NO LINK');
-        expect(nodeCompose(legacy)).toContain('Mint a new External node key');
+        expect(nodeCompose(legacy)).toContain('Add a new External node under Settings -> Nodes -> External nodes');
     });
 });
 
@@ -916,7 +916,8 @@ describe('auto-updates in the kits', () => {
         const link = service(out, 'link');
         expect(link).toContain('LINK_DRAIN_TIMEOUT: "6h"');
         expect(link).toContain('stop_grace_period: 6h10m');
-        expect(link).toContain('Do not redeploy this stack while a link update is draining (the node logs\n    # "link update: STARTED"); compose would stop one of the two links.');
+        expect(link).toContain('never a plain "up -d"');
+        expect(link).toContain('Do not redeploy while it does (the node logs\n    # "link update: STARTED"); compose would stop one of the two links.');
     });
 
     // Without a zone given, the kit takes the browser's, never an empty TZ.
@@ -925,5 +926,17 @@ describe('auto-updates in the kits', () => {
         expect(routeOnlyCompose(base)).toContain(`TZ: "${zone}"`);
         expect(nodeCompose(base)).toContain(`TZ: "${zone}"`);
         expect(nodeCompose({ ...base, timeZone: '  ' })).toContain(`TZ: "${zone}"`);
+    });
+});
+
+// A redeploy that recreates the link stops it before its replacement runs, so
+// nobody new could join for the whole drain. The commands leave the link to the
+// node, which swaps it start-first.
+describe('redeployCli', () => {
+    it('recreates warp and the node, never the link', () => {
+        const out = redeployCli();
+        expect(out).toContain('up -d --no-deps warp node');
+        expect(out).not.toMatch(/up -d\s*$/m);
+        expect(out).not.toMatch(/up -d[^\n]*link/);
     });
 });

@@ -61,6 +61,19 @@ func applyWarpSchema(db *sql.DB) error {
 		ON warp_api_keys(bound_node_id) WHERE bound_node_id IS NOT NULL AND revoked_at IS NULL`); err != nil {
 		return fmt.Errorf("warp: create warp_api_keys bound_node index: %w", err)
 	}
+	// The secret a roll replaced, still accepted until prev_key_expires_at. A
+	// roll used to stop the old secret at once, so a machine whose warp or link
+	// restarted between the roll and the redeploy could not come back up.
+	if _, err := db.Exec(`ALTER TABLE warp_api_keys ADD COLUMN IF NOT EXISTS prev_key_hash VARCHAR(64)`); err != nil {
+		return fmt.Errorf("warp: add warp_api_keys.prev_key_hash: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE warp_api_keys ADD COLUMN IF NOT EXISTS prev_key_expires_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("warp: add warp_api_keys.prev_key_expires_at: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_warp_api_keys_prev_hash
+		ON warp_api_keys(prev_key_hash) WHERE prev_key_hash IS NOT NULL`); err != nil {
+		return fmt.Errorf("warp: create warp_api_keys prev_key_hash index: %w", err)
+	}
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS warp_regions (
 		region     TEXT PRIMARY KEY,

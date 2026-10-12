@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.12
+
+### Features
+- **Rolling a machine's overlay key no longer disconnects anyone.** Redeploy with
+  `docker compose -f byon-node.yml up -d --no-deps warp node`; your node moves its link onto the new
+  key by itself, once it runs this release with automatic link updates on (the kit's default). `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- **A rolled overlay or link key keeps working for one more hour**, so a restart before you redeploy
+  does not take your machine or address offline. Revoking a key still stops it at once.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.11.7
 
 ### Features

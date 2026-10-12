@@ -114,12 +114,6 @@ function MyNodesInner() {
     }, [tab, requestedTab, router]);
 
     const [nodes, setNodes] = useState<OwnNode[]>([]);
-    // Its own fetch, so its own loading flag and its own read time. Sharing the
-    // BYON list's would have this panel claim "no external machine" the moment
-    // the OTHER request came back.
-    const [external, setExternal] = useState<{ nodes: OwnNode[]; loading: boolean; readAt: number }>(
-        () => ({ nodes: [], loading: true, readAt: Date.now() })
-    );
     const [tokens, setTokens] = useState<NodeEnrollToken[]>([]);
     // The node cap is a LIMIT, not an entitlement: entitlement answers "may
     // they", limits answer "how many". They live in different endpoints because
@@ -146,7 +140,7 @@ function MyNodesInner() {
     // token is absent for a ROLL: the machine enrolled long ago and an enroll
     // token is first-pairing only, so minting one would hand out a credential
     // with nothing to pair.
-    const [revealedNode, setRevealedNode] = useState<{ token?: string; warpKey: string; label: string; grpcTlsFingerprint?: string; rolled?: boolean; linkBeside?: boolean } | null>(null);
+    const [revealedNode, setRevealedNode] = useState<{ token?: string; warpKey: string; label: string; grpcTlsFingerprint?: string; rolled?: boolean; linkSwaps?: boolean; linkBeside?: boolean } | null>(null);
     const [rollingKey, setRollingKey] = useState('');
     const [nodeKeys, setNodeKeys] = useState<NodeWarpKey[]>([]);
     // Until the keys have been read every machine would look unbound, and its
@@ -218,24 +212,6 @@ function MyNodesInner() {
         const t = setInterval(() => { load(); }, 20000);
         return () => clearInterval(t);
     }, [load]);
-
-    // Only an admin may ask for this scope; Core answers 403 to anyone else, so
-    // there is no point spending the request.
-    useEffect(() => {
-        if (!isAdmin) {
-            setExternal({ nodes: [], loading: false, readAt: Date.now() });
-            return;
-        }
-        let cancelled = false;
-        getNodes('external').then(res => {
-            if (cancelled) return;
-            const list = res.success && Array.isArray(res.nodes) ? (res.nodes as OwnNode[]) : [];
-            setExternal({ nodes: list, loading: false, readAt: Date.now() });
-        }).catch(() => {
-            if (!cancelled) setExternal({ nodes: [], loading: false, readAt: Date.now() });
-        });
-        return () => { cancelled = true; };
-    }, [isAdmin]);
 
     // In an effect, not at render: the API base is resolved in the browser (a
     // runtime /config.js may override the built-in one), so reading it during
@@ -357,7 +333,7 @@ function MyNodesInner() {
     const handleRollNodeKey = async (nodeId: string, label: string) => {
         const ok = await confirmDialog({
             title: 'Roll this overlay key?',
-            message: `The current key for ${label} stops working for new connections straight away, and you get a replacement shown once. `
+            message: `The current key for ${label} keeps working for one more hour, then stops opening new connections. You get a replacement shown once. `
                 + 'Your servers and their data are not affected, and the machine keeps running on its current connection until you redeploy it with the new key.',
             confirmLabel: 'Roll the key',
             destructive: false,
@@ -372,7 +348,7 @@ function MyNodesInner() {
             return;
         }
         setRevealedNode({
-            warpKey: res.warp_key, label, rolled: true,
+            warpKey: res.warp_key, label, rolled: true, linkSwaps: !!res.link_swaps,
             // A rolled key keeps its binding, so the file it is shown with can
             // still boot a Link. Without this the kit would carry the "no link"
             // warning for a machine whose key is perfectly able to boot one.
@@ -539,7 +515,7 @@ function MyNodesInner() {
             )}
 
             {tab === 'external' ? (
-                <ExternalNodesPanel nodes={external.nodes} loading={external.loading} readAt={external.readAt} />
+                <ExternalNodesPanel />
             ) : tab === 'routes' ? (
                 <div className="space-y-4">
                     <RouteOnlyPanel
@@ -890,9 +866,20 @@ function MyNodesInner() {
                         <p className="text-xs text-(--base-07)">
                             Only the key changed. Replace <code className="font-mono">API_KEY</code> in
                             this machine&apos;s warp service <strong>and</strong>{' '}
-                            <code className="font-mono">LINK_BOOT_KEY</code> in its link service, then deploy
-                            again — the name, the address and your servers all stay as they are. Until you
-                            do, the machine keeps running on the connection it already has.
+                            <code className="font-mono">LINK_BOOT_KEY</code> in its link service, in the file
+                            you already run - leave everything else as it is.{' '}
+                            {revealedNode.linkSwaps ? (
+                                <>Then redeploy warp and the node only:{' '}
+                                <code className="font-mono">docker compose -f byon-node.yml up -d --no-deps warp node</code>.
+                                The node then moves the link onto the new key itself, starting the new link before
+                                the old one stops, so nobody is disconnected. A plain{' '}
+                                <code className="font-mono">up -d</code> would stop the link first.</>
+                            ) : (
+                                <>Then deploy again. Your node does not move the link over by itself yet (it needs
+                                this release with <code className="font-mono">LINK_AUTO_UPDATE</code> on), so the
+                                link restarts once and its players reconnect.</>
+                            )}{' '}
+                            The old key keeps working for one hour; the name, the address and your servers stay as they are.
                         </p>
                     ) : (
                         <p className="text-xs text-(--base-07)">

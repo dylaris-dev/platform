@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	// The node image is alpine without tzdata, so without this TZ would fall
@@ -321,6 +322,45 @@ type linkUpdater struct {
 	project      string // compose project of the node's own container; "" = label alone
 	hour, minute int
 	lastRun      string
+	// triedKey is the warp key a key swap was last started for, so a key the
+	// clone could not boot with is not tried again every minute.
+	triedKey string
+}
+
+// linkKeySwapReady is whether this node would move its Link onto a new warp
+// key: the updater runs, knows its compose project and sees a Link it manages.
+// The heartbeat reports it, and Core refuses a roll that relies on it otherwise.
+var linkKeySwapReady atomic.Bool
+
+// The kits give the Link the warp key a second time, as LINK_BOOT_KEY. A key
+// roll is redeployed as `up -d warp node`, which leaves the Link alone because
+// compose would stop it before starting its replacement; the node then moves the
+// Link onto warp's new key start-first, the way it moves it onto a new image.
+const (
+	linkBootKeyEnv   = "LINK_BOOT_KEY"
+	warpAPIKeyEnv    = "API_KEY"
+	warpServiceLabel = "com.docker.compose.service=warp"
+)
+
+// withEnv returns env with KEY set to value, replacing every earlier entry.
+func withEnv(env []string, key, value string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if !strings.HasPrefix(e, key+"=") {
+			out = append(out, e)
+		}
+	}
+	return append(out, key+"="+value)
+}
+
+// swapKey returns the key the Link must move to: warp's, when the Link boots
+// with a different one and that key was not already tried. "" means nothing to
+// do, including whenever either side cannot be read.
+func swapKey(warpKey, linkKey, tried string) string {
+	if warpKey == "" || linkKey == "" || warpKey == linkKey || warpKey == tried {
+		return ""
+	}
+	return warpKey
 }
 
 // StartLinkUpdater runs only where LINK_AUTO_UPDATE=true: the BYON/External
@@ -380,10 +420,13 @@ func (u *linkUpdater) list(ctx context.Context) ([]linkCtr, error) {
 func (u *linkUpdater) tick(ctx context.Context, now time.Time) {
 	cs, err := u.list(ctx)
 	if err != nil {
+		linkKeySwapReady.Store(false)
 		log.Printf("link update: %v", err)
 		return
 	}
+	linkKeySwapReady.Store(u.project != "" && len(cs) > 0)
 	due := linkUpdateDue(now, u.hour, u.minute, u.lastRun)
+	ranBefore := u.lastRun
 	if due {
 		u.lastRun = now.Format(time.DateOnly)
 	}
@@ -404,7 +447,12 @@ func (u *linkUpdater) tick(ctx context.Context, now time.Time) {
 			log.Printf("link update: skipped: %s", p.reason)
 		}
 	case linkIdle:
-		if due {
+		if key := u.keyToSwap(ctx, p.target); key != "" {
+			u.swap(ctx, p.target, key)
+			// The image update is still owed today: it runs once the swap
+			// has finished and the Link is idle again.
+			u.lastRun = ranBefore
+		} else if due {
 			u.update(ctx, p.target)
 		}
 	case linkWait:
@@ -450,25 +498,76 @@ func (u *linkUpdater) update(ctx context.Context, target *linkCtr) {
 		log.Printf("link update: %s is up to date (%s)", target.Name, ref)
 		return
 	}
+	if u.startClone(ctx, target, info, "") {
+		log.Printf("link update: STARTED, the clone of %s runs %s (%s); %s is drained once its tunnel is up", target.Name, ref, newImg.ID, target.Name)
+	}
+}
+
+// keyToSwap reads warp's key and the Link's, see swapKey.
+func (u *linkUpdater) keyToSwap(ctx context.Context, target *linkCtr) string {
+	// Without the project the label would match another stack's warp.
+	if u.project == "" {
+		return ""
+	}
+	f := filters.NewArgs(filters.Arg("label", warpServiceLabel), filters.Arg("label", "com.docker.compose.project="+u.project))
+	ws, err := u.cli.ContainerList(ctx, container.ListOptions{Filters: f})
+	if err != nil || len(ws) != 1 {
+		return ""
+	}
+	w, err := u.cli.ContainerInspect(ctx, ws[0].ID)
+	if err != nil || w.Config == nil {
+		return ""
+	}
+	l, err := u.cli.ContainerInspect(ctx, target.ID)
+	if err != nil || l.Config == nil {
+		return ""
+	}
+	return swapKey(envValue(w.Config.Env, warpAPIKeyEnv), envValue(l.Config.Env, linkBootKeyEnv), u.triedKey)
+}
+
+// swap starts a clone of the Link with the new key, on the image its tag names
+// here now (usually the one it runs; a tag pulled by hand since is taken). The
+// rest is the image update's: drain the old one once the clone has a tunnel,
+// or abandon a clone that never gets one, leaving the old Link serving.
+func (u *linkUpdater) swap(ctx context.Context, target *linkCtr, key string) {
+	info, err := u.cli.ContainerInspect(ctx, target.ID)
+	if err != nil || info.Config == nil {
+		log.Printf("link update: cannot inspect %s: %v", target.Name, err)
+		return
+	}
+	// Marked tried only once a clone runs: one that never comes up is what
+	// must not be retried every minute, a create that failed may be.
+	if u.startClone(ctx, target, info, key) {
+		u.triedKey = key
+		log.Printf("link update: STARTED, the clone of %s boots with warp's new key; %s is drained once its tunnel is up", target.Name, target.Name)
+	}
+}
+
+// startClone creates and starts the Link's clone, with LINK_BOOT_KEY replaced
+// when bootKey is set. False when nothing was started.
+func (u *linkUpdater) startClone(ctx context.Context, target *linkCtr, info container.InspectResponse, bootKey string) bool {
 	oldImg, err := u.cli.ImageInspect(ctx, info.Image)
 	if err != nil {
 		log.Printf("link update: ABORTED, cannot inspect the image %s runs on: %v", target.Name, err)
-		return
+		return false
 	}
 	cfg, hc, nc, name := buildLinkClone(info, defaultsOf(oldImg))
+	if bootKey != "" {
+		cfg.Env = withEnv(cfg.Env, linkBootKeyEnv, bootKey)
+	}
 	created, err := u.cli.ContainerCreate(ctx, cfg, hc, nc, nil, name)
 	if err != nil {
 		// Nothing to clean up: a failed create leaves no container, and a name
 		// conflict means one we did not make and must not remove.
 		log.Printf("link update: ABORTED, create %s: %v; %s keeps serving", name, err, target.Name)
-		return
+		return false
 	}
 	if err := u.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
 		log.Printf("link update: ABORTED, start %s: %v; %s keeps serving", name, err, target.Name)
 		u.remove(ctx, &linkCtr{ID: created.ID, Name: name}, true)
-		return
+		return false
 	}
-	log.Printf("link update: STARTED, %s runs %s (%s); %s is drained once its tunnel is up", name, ref, newImg.ID, target.Name)
+	return true
 }
 
 func (u *linkUpdater) checkClone(ctx context.Context, clone, old *linkCtr, now time.Time) {

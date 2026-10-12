@@ -99,6 +99,19 @@ func NodeRenamesFreely(ctx context.Context, rdb *redis.Client, nodeToken string)
 	return nodeAtLeast(ctx, rdb, nodeToken, freeRenameSince)
 }
 
+// NodeSwapsLinkKey reports whether a rolled warp key can reach the node's Link
+// without the Link being recreated by hand, which would stop it before its
+// replacement runs and turn new players away for the whole drain.
+//
+// Read off what the node says it does, not off its version: a current node
+// whose kit predates the link updater, or that runs with LINK_AUTO_UPDATE off,
+// would leave its Link on the old key, which stops working with the grace.
+// No heartbeat (offline) is "no".
+func NodeSwapsLinkKey(ctx context.Context, rdb *redis.Client, nodeToken string) bool {
+	hb := LoadHeartbeat(ctx, rdb, nodeToken)
+	return hb != nil && hb.LinkKeySwap
+}
+
 // nodeAtLeast reports whether the node's heartbeat names release `since` or
 // newer, with the reading nodeTakesPresignedTransfers documents: no heartbeat
 // or an unparseable version is old, no version at all is a development build.

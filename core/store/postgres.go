@@ -621,17 +621,17 @@ const nodeSelectCols = `id, name, address, token, status, is_local, COALESCE(tag
 	COALESCE(public_ip, ''), COALESCE(private_ips::text, '[]'), last_seen_at,
 	COALESCE(cpu_overcommit_ratio, 1.0), COALESCE(ram_overcommit_ratio, 1.0),
 	COALESCE(total_cpu, 0), COALESCE(total_ram_mb, 0), COALESCE(region, ''), COALESCE(configured, false), owner_id,
-	COALESCE(display_name, ''), link_token, ram_padding_mb`
+	COALESCE(display_name, ''), link_token, ram_padding_mb, private_ip_kinds`
 
 func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	var n models.Node
-	var privateIPsJSON []byte
+	var privateIPsJSON, kindsJSON []byte
 	var ownerID sql.NullString
 	var ramPadding sql.NullInt64
 	err := scan(&n.ID, &n.Name, &n.Address, &n.Token, &n.Status, &n.IsLocal, &n.Tags,
 		&n.LinkEnabled, &n.LinkInstances, &n.LinkSecret, &n.CpusetCpus, &n.CreatedAt, &n.PublicIP, &privateIPsJSON, &n.LastSeenAt,
 		&n.CPUOvercommitRatio, &n.RAMOvercommitRatio, &n.TotalCPU, &n.TotalRAMMB, &n.Region, &n.Configured, &ownerID,
-		&n.DisplayName, &n.LinkToken, &ramPadding)
+		&n.DisplayName, &n.LinkToken, &ramPadding, &kindsJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -644,6 +644,9 @@ func scanNode(scan func(dest ...interface{}) error) (*models.Node, error) {
 	}
 	if n.PrivateIPs == nil {
 		n.PrivateIPs = []string{}
+	}
+	if len(kindsJSON) > 0 {
+		json.Unmarshal(kindsJSON, &n.PrivateIPKinds)
 	}
 	return &n, nil
 }
@@ -759,12 +762,22 @@ func (s *PostgresStore) SetNodeAddress(id int, address string) error {
 	return err
 }
 
-func (s *PostgresStore) SetNodeIPs(id int, publicIP string, privateIPs []string) error {
+func (s *PostgresStore) SetNodeIPs(id int, publicIP string, privateIPs []string, kinds map[string]string) error {
 	ipsJSON, err := json.Marshal(privateIPs)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec("UPDATE nodes SET public_ip = $1, private_ips = $2::jsonb WHERE id = $3", publicIP, string(ipsJSON), id)
+	// NULL, not {}, for a node that does not classify: "unknown" and "none
+	// of them is anything" must stay apart for the panel.
+	var kindsJSON any
+	if kinds != nil {
+		b, err := json.Marshal(kinds)
+		if err != nil {
+			return err
+		}
+		kindsJSON = string(b)
+	}
+	_, err = s.db.Exec("UPDATE nodes SET public_ip = $1, private_ips = $2::jsonb, private_ip_kinds = $3::jsonb WHERE id = $4", publicIP, string(ipsJSON), kindsJSON, id)
 	return err
 }
 

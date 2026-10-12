@@ -147,8 +147,8 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     const roll = async (linkIdToRoll: string, name: string) => {
         if (!(await confirmDialog({
             title: 'Roll this link key?',
-            message: `The current key for ${name} stops working straight away, and you get a replacement shown once. `
-                + 'The address and its routes do not change. Redeploy the link with the new key soon: until you do it shows offline, '
+            message: `The current key for ${name} keeps working for one more hour, and you get a replacement shown once. `
+                + 'The address and its routes do not change. Redeploy the link with the new key within that hour: after it, until you do, it shows offline, '
                 + 'and after 24 hours players can no longer connect.',
             confirmLabel: 'Roll the key',
             destructive: false,

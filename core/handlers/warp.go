@@ -444,24 +444,27 @@ func (h *WarpHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 		CreatedAt      string `json:"created_at"`
 	}
 	type keyView struct {
-		ID        int        `json:"id"`
-		Name      string     `json:"name"`
-		Policy    string     `json:"policy"`
-		MaxConns  int        `json:"max_conns"`
-		OnNewConn string     `json:"on_new_conn"`
-		Region    string     `json:"region"`
-		NodeID    string     `json:"node_id"`
-		FixedWGIP string     `json:"fixed_wg_ip"`
-		Revoked   bool       `json:"revoked"`
-		CreatedAt string     `json:"created_at"`
-		Peers     []peerView `json:"peers"`
+		ID        int    `json:"id"`
+		Name      string `json:"name"`
+		Policy    string `json:"policy"`
+		MaxConns  int    `json:"max_conns"`
+		OnNewConn string `json:"on_new_conn"`
+		Region    string `json:"region"`
+		NodeID    string `json:"node_id"`
+		FixedWGIP string `json:"fixed_wg_ip"`
+		// The node an External node key enrolled, so the panel can put the key
+		// beside its machine. 0 until the machine has enrolled.
+		BoundNodeID int        `json:"bound_node_id,omitempty"`
+		Revoked     bool       `json:"revoked"`
+		CreatedAt   string     `json:"created_at"`
+		Peers       []peerView `json:"peers"`
 	}
 	out := make([]keyView, 0, len(keys))
 	for _, k := range keys {
 		kv := keyView{
 			ID: k.ID, Name: k.Name, Policy: k.Policy, MaxConns: k.MaxConns,
 			OnNewConn: k.OnNewConn, Region: k.Region, NodeID: k.NodeID,
-			FixedWGIP: k.FixedWGIP, Revoked: k.RevokedAt != nil,
+			FixedWGIP: k.FixedWGIP, BoundNodeID: k.BoundNodeID, Revoked: k.RevokedAt != nil,
 			CreatedAt: k.CreatedAt.Format(time.RFC3339),
 			Peers:     []peerView{},
 		}
@@ -526,6 +529,60 @@ func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	log.Printf("warp: revoked enrollment key %d (%s), disconnected %d peer(s)", id, key.Name, removed)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "disconnected": removed})
+}
+
+// RollExternalNodeKey POST /api/admin/warp/keys/{id}/roll - a new secret for an
+// External node's key, same identity. The tenant roll refuses owner-less keys
+// because it carries no capability; this one sits behind topology.write AND
+// admin, the same gate as minting the key.
+//
+// The old secret keeps working for store.WarpKeyRollGrace. The admin redeploys
+// warp and node with the new one, and the node then moves its Link onto it
+// start-first. A node that does not say it will (services.NodeSwapsLinkKey)
+// would leave the Link on the old secret, which stops working with the grace,
+// so the roll is refused to it.
+func (h *WarpHandler) RollExternalNodeKey(w http.ResponseWriter, r *http.Request) {
+	if !IsAdmin(r) {
+		sendJSONError(w, "Only an admin can roll an External node key", http.StatusForbidden)
+		return
+	}
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid key id", http.StatusBadRequest)
+		return
+	}
+	key, err := h.state.Store.GetWarpAPIKeyByID(id)
+	if err != nil || key == nil || key.OwnerID != "" || key.RevokedAt != nil || !strings.HasPrefix(key.NodeID, "node-") {
+		sendJSONError(w, "External node key not found", http.StatusNotFound)
+		return
+	}
+	if key.BoundNodeID != 0 {
+		node, err := h.state.Store.GetNodeByID(key.BoundNodeID)
+		if err != nil || node == nil {
+			sendJSONError(w, "Failed to load the node", http.StatusInternalServerError)
+			return
+		}
+		if !services.NodeSwapsLinkKey(r.Context(), h.state.Redis, node.Token) {
+			sendJSONError(w, "This machine's node is offline, or cannot move its Link onto a new key by itself (it needs node 2026.10.12 or later with LINK_AUTO_UPDATE=true). Revoke the key and add the machine again instead.", http.StatusConflict)
+			return
+		}
+	}
+	plaintext, err := generatePlaintextKey()
+	if err != nil {
+		sendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		return
+	}
+	if err := h.state.Store.RollWarpAPIKeyHash(key.NodeID, HashAPIKey(plaintext)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			sendJSONError(w, "External node key not found", http.StatusNotFound)
+			return
+		}
+		sendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("warp: rolled External node key %d (%s); old secret valid for %s", id, key.NodeID, store.WarpKeyRollGrace)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "warp_key": plaintext, "node_id": key.NodeID})
 }
 
 // DeleteAPIKey DELETE /api/admin/warp/keys/{id}/purge - remove the key row
@@ -966,13 +1023,14 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 //
 // It deliberately does NOT disconnect the peer or delete a tunnel key, which is
 // what makes this different from revoke. For a node key a roll is "the machine
-// keeps running, and the old secret stops opening anything new": the customer
-// edits one line and redeploys when it suits them, and the key's kill_old policy
-// replaces the old tunnel at that moment. A route-only link uses its key on
-// every heartbeat, so there the old one stops working at once: the link shows
-// offline until it is redeployed, and its tunnels stay up until the token Core
-// last marked valid expires (24 hours). Revoke is the immediate-cutoff path and
-// already exists beside it - a leaked key wants that one, not this.
+// keeps running, and the old secret stops opening anything new once
+// store.WarpKeyRollGrace has passed": the customer edits one line and redeploys
+// within that hour, and the key's kill_old policy replaces the old tunnel at
+// that moment. A route-only link uses its key on every heartbeat, so there the
+// old one stops working when the grace ends: the link shows offline until it is
+// redeployed, and its tunnels stay up until the token Core last marked valid
+// expires (24 hours). Revoke is the immediate-cutoff path and already exists
+// beside it - a leaked key wants that one, not this.
 func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, id, prefix, notFound string) (string, bool) {
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -1040,12 +1098,25 @@ func (h *WarpHandler) RollNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The customer is told to leave the link alone only when their node says it
+	// will move the link itself; otherwise the old advice, redeploy both.
+	swaps := false
+	if key, err := h.state.Store.GetWarpAPIKeyByNodeID(nodeID); err == nil && key.BoundNodeID != 0 {
+		if node, err := h.state.Store.GetNodeByID(key.BoundNodeID); err == nil && node != nil {
+			swaps = services.NodeSwapsLinkKey(r.Context(), h.state.Redis, node.Token)
+		}
+	}
+	note := "Shown once. Replace API_KEY in the warp service AND LINK_BOOT_KEY in the link service, then redeploy both. The old key keeps working for one hour."
+	if swaps {
+		note = "Shown once. Replace API_KEY in the warp service AND LINK_BOOT_KEY in the link service, then run `docker compose up -d --no-deps warp node`: the node moves the link onto the new key without disconnecting anyone. The old key keeps working for one hour."
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"warp_key": plaintext,
-		"node_id":  nodeID,
-		"note":     "Shown once. Replace API_KEY in the warp service AND LINK_BOOT_KEY in the link service, then redeploy both; nothing else changes.",
+		"success":    true,
+		"warp_key":   plaintext,
+		"node_id":    nodeID,
+		"link_swaps": swaps,
+		"note":       note,
 	})
 }
 
@@ -1063,7 +1134,7 @@ func (h *WarpHandler) RollLinkKit(w http.ResponseWriter, r *http.Request) {
 		"success":  true,
 		"link_key": plaintext,
 		"link_id":  linkID,
-		"note":     "Shown once. Replace LINK_KEY and redeploy. Until you do, the running link is offline in the panel, and its tunnel expires within 24 hours - then players cannot connect.",
+		"note":     "Shown once. Replace LINK_KEY and redeploy within the hour the old key keeps working. After that, until you do, the running link is offline in the panel, and its tunnel expires within 24 hours - then players cannot connect.",
 	})
 }
 

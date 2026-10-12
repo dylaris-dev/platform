@@ -1213,6 +1213,16 @@
     },
     {
       "method": "POST",
+      "path": "/api/admin/warp/keys/{id:[0-9]+}/roll",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "a new secret for an External node's key, same identity.",
+      "handler": "WarpHandler.RollExternalNodeKey",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "POST",
       "path": "/api/auth/2fa/disable",
       "auth": "session",
       "authorization": "no capability",
@@ -5169,15 +5179,15 @@
     }
   ],
   "counts": {
-    "total": 519,
+    "total": 520,
     "byAuth": {
       "none": 31,
-      "session": 472,
+      "session": 473,
       "user API key": 10,
       "warp key": 6
     },
     "byGroup": {
-      "admin": 122,
+      "admin": 123,
       "auth": 22,
       "authz": 3,
       "avatar": 1,

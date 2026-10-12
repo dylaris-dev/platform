@@ -55,7 +55,9 @@ func (s *PostgresStore) GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error) {
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
 		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
-		FROM warp_api_keys WHERE key_hash = $1`, hash).
+		FROM warp_api_keys
+		WHERE key_hash = $1 OR (prev_key_hash = $1 AND prev_key_expires_at > NOW())
+		ORDER BY key_hash = $1 DESC LIMIT 1`, hash).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
 			&fixedIP, &nodeID, &region, &ownerID, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt)
 	if err != nil {
@@ -611,6 +613,11 @@ func (s *PostgresStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {
 	return err
 }
 
+// WarpKeyRollGrace is how long the secret a roll replaced keeps working, so a
+// warp or link that restarts before the machine is redeployed still comes up.
+// Revoke stays the immediate cutoff for a leaked key.
+const WarpKeyRollGrace = "1 hour"
+
 // RollWarpAPIKeyHash replaces the secret of a live key IN PLACE, keeping its
 // row, its id and its node_id. sql.ErrNoRows when there is no live key with
 // that identity, so a caller cannot read "rotated" off a no-op.
@@ -627,8 +634,9 @@ func (s *PostgresStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {
 // force a second edit for no gain.
 func (s *PostgresStore) RollWarpAPIKeyHash(nodeID, newHash string) error {
 	res, err := s.db.Exec(
-		`UPDATE warp_api_keys SET key_hash = $2 WHERE node_id = $1 AND revoked_at IS NULL`,
-		nodeID, newHash)
+		`UPDATE warp_api_keys SET prev_key_hash = key_hash, prev_key_expires_at = NOW() + $3::interval, key_hash = $2
+		 WHERE node_id = $1 AND revoked_at IS NULL`,
+		nodeID, newHash, WarpKeyRollGrace)
 	if err != nil {
 		return err
 	}

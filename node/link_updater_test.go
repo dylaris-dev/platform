@@ -220,6 +220,7 @@ type fakeCtr struct {
 	name, image string
 	running     bool
 	labels      map[string]string
+	env         []string // nil: the default env every fake Link reports
 	created     time.Time
 	started     time.Time // zero: same as created
 	log         string
@@ -241,7 +242,16 @@ func (f *fakeLinkDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && p == "/containers/json":
 		var out []map[string]any
+		var flt struct{ Label map[string]bool }
+		json.Unmarshal([]byte(r.URL.Query().Get("filters")), &flt)
+	ctrs:
 		for id, c := range f.ctrs {
+			for l := range flt.Label {
+				k, v, _ := strings.Cut(l, "=")
+				if c.labels[k] != v {
+					continue ctrs
+				}
+			}
 			state := "exited"
 			if c.running {
 				state = "running"
@@ -260,6 +270,8 @@ func (f *fakeLinkDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch ref {
 		case "reg/gateway-link:latest":
 			w.Write([]byte(`{"Id":"sha256:new","Config":{"Env":["PATH=/new"]}}`))
+		case "sha256:new":
+			w.Write([]byte(`{"Id":"sha256:new","Config":{"Env":["PATH=/new"]}}`))
 		case "sha256:old":
 			w.Write([]byte(`{"Id":"sha256:old","Config":{"Env":["PATH=/old"]}}`))
 		default:
@@ -273,7 +285,7 @@ func (f *fakeLinkDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&body)
 		name := r.URL.Query().Get("name")
 		f.calls = append(f.calls, "create "+name+" "+strings.Join(body.Env, ","))
-		f.ctrs["clone-id"] = &fakeCtr{name: name, image: "sha256:new", labels: body.Labels, created: updateAt}
+		f.ctrs["clone-id"] = &fakeCtr{name: name, image: "sha256:new", labels: body.Labels, env: body.Env, created: updateAt}
 		w.Write([]byte(`{"Id":"clone-id"}`))
 	default:
 		id := ctrID()
@@ -285,6 +297,10 @@ func (f *fakeLinkDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/json"):
+			env := c.env
+			if env == nil {
+				env = []string{"PATH=/old", "CORE_URL=x"}
+			}
 			started := c.started
 			if started.IsZero() {
 				started = c.created
@@ -292,7 +308,7 @@ func (f *fakeLinkDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{
 				"Id": id, "Name": "/" + c.name, "Image": c.image, "Created": c.created.UTC().Format(time.RFC3339Nano),
 				"State":      map[string]any{"Running": c.running, "StartedAt": started.UTC().Format(time.RFC3339Nano)},
-				"Config":     map[string]any{"Image": "reg/gateway-link:latest", "Env": []string{"PATH=/old", "CORE_URL=x"}, "Labels": c.labels},
+				"Config":     map[string]any{"Image": "reg/gateway-link:latest", "Env": env, "Labels": c.labels},
 				"HostConfig": map[string]any{"RestartPolicy": map[string]any{"Name": "unless-stopped"}},
 			})
 			return
@@ -437,4 +453,124 @@ func TestLinkUpdaterUpToDate(t *testing.T) {
 	})
 	u.tick(t.Context(), updateAt)
 	expect("up to date", "pull docker.io/reg/gateway-link:latest")
+}
+
+func TestSwapKey(t *testing.T) {
+	for _, c := range []struct{ warp, link, tried, want string }{
+		{"new", "old", "", "new"},
+		{"same", "same", "", ""},
+		{"", "old", "", ""},       // warp not readable
+		{"new", "", "", ""},       // a Link without LINK_BOOT_KEY is not a kit's
+		{"new", "old", "new", ""}, // already tried, and the clone never came up
+		{"newer", "old", "new", "newer"},
+	} {
+		if got := swapKey(c.warp, c.link, c.tried); got != c.want {
+			t.Errorf("swapKey(%q, %q, %q) = %q, want %q", c.warp, c.link, c.tried, got, c.want)
+		}
+	}
+}
+
+func TestWithEnv(t *testing.T) {
+	got := withEnv([]string{"A=1", "LINK_BOOT_KEY=old", "B=2", "LINK_BOOT_KEY=dup"}, "LINK_BOOT_KEY", "new")
+	if fmt.Sprint(got) != "[A=1 B=2 LINK_BOOT_KEY=new]" {
+		t.Errorf("withEnv = %q", got)
+	}
+}
+
+// After `up -d warp node` with a rolled key, warp holds the new key and the Link
+// still the old one. The node moves the Link onto it start-first, outside the
+// daily update window and without pulling, and leaves it alone afterwards.
+func TestLinkUpdaterSwapsTheLinkOntoWarpsNewKey(t *testing.T) {
+	proj := map[string]string{"dylaris.component": "link", "com.docker.compose.project": "byon"}
+	u, f, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id":  {name: "l", image: "sha256:new", running: true, labels: proj, env: []string{"PATH=/new", "CORE_URL=x", "LINK_BOOT_KEY=old"}, log: edgeA},
+		"warp-id": {name: "w", running: true, labels: map[string]string{"com.docker.compose.service": "warp", "com.docker.compose.project": "byon"}, env: []string{"API_KEY=new"}},
+	})
+	u.project = "byon"
+	ctx := t.Context()
+	early := updateAt.Add(-time.Hour) // not due: the swap does not wait for 04:00
+
+	u.tick(ctx, early)
+	expect("swap", "create l-next CORE_URL=x,LINK_BOOT_KEY=new", "start l-next")
+
+	f.set("clone-id", func(c *fakeCtr) { c.log = edgeA })
+	u.tick(ctx, early)
+	expect("drain", "rename l l-draining", "update l-draining restart=no", "kill l-draining SIGTERM")
+
+	f.set("old-id", func(c *fakeCtr) { c.running = false })
+	u.tick(ctx, early)
+	expect("finish, same image kept", "remove l-draining", "rename l-next l")
+
+	u.tick(ctx, early)
+	expect("on the new key: nothing to do")
+}
+
+// Without the compose project the warp label could name another stack's warp,
+// so nothing is swapped.
+func TestLinkUpdaterNeedsTheProjectToSwap(t *testing.T) {
+	u, _, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id":  {name: "l", image: "sha256:new", running: true, labels: testLinkLabels, env: []string{"LINK_BOOT_KEY=old"}},
+		"warp-id": {name: "w", running: true, labels: map[string]string{"com.docker.compose.service": "warp"}, env: []string{"API_KEY=new"}},
+	})
+	u.tick(t.Context(), updateAt.Add(-time.Hour))
+	expect("no project")
+}
+
+// A key the clone could not boot with (a typo in API_KEY, say) is abandoned
+// like a slow image update, and not tried again every minute: only a different
+// key starts another swap.
+func TestLinkUpdaterTriesAFailedKeyOnce(t *testing.T) {
+	proj := map[string]string{"dylaris.component": "link", "com.docker.compose.project": "byon"}
+	warpLabels := map[string]string{"com.docker.compose.service": "warp", "com.docker.compose.project": "byon"}
+	u, f, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id":  {name: "l", image: "sha256:new", running: true, labels: proj, env: []string{"LINK_BOOT_KEY=old"}, log: edgeA},
+		"warp-id": {name: "w", running: true, labels: warpLabels, env: []string{"API_KEY=typo"}},
+	})
+	u.project = "byon"
+	early := updateAt.Add(-time.Hour)
+
+	u.tick(t.Context(), early)
+	expect("swap", "create l-next LINK_BOOT_KEY=typo", "start l-next")
+
+	// The clone never came up and was cleaned away; the old Link still serves.
+	f.set("clone-id", func(c *fakeCtr) { c.running = false })
+	u.tick(t.Context(), early)
+	expect("abort", "remove l-next")
+	u.tick(t.Context(), early)
+	expect("the same key is not tried again")
+
+	f.set("warp-id", func(c *fakeCtr) { c.env = []string{"API_KEY=fixed"} })
+	u.tick(t.Context(), early)
+	expect("a corrected key is", "create l-next LINK_BOOT_KEY=fixed", "start l-next")
+}
+
+// A swap that falls in the daily window does not use it up: the image update
+// runs once the swap is done. And the node says it can swap only while it
+// knows its project and manages a Link.
+func TestLinkUpdaterSwapKeepsTheDailyUpdateAndReportsReadiness(t *testing.T) {
+	proj := map[string]string{"dylaris.component": "link", "com.docker.compose.project": "byon"}
+	u, f, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id":  {name: "l", image: "sha256:old", running: true, labels: proj, env: []string{"PATH=/old", "LINK_BOOT_KEY=old"}, log: edgeA},
+		"warp-id": {name: "w", running: true, labels: map[string]string{"com.docker.compose.service": "warp", "com.docker.compose.project": "byon"}, env: []string{"API_KEY=new"}},
+	})
+	t.Cleanup(func() { linkKeySwapReady.Store(false) })
+
+	u.tick(t.Context(), updateAt)
+	if linkKeySwapReady.Load() {
+		t.Error("ready without a compose project")
+	}
+	expect("no project: the daily update runs instead", "pull docker.io/reg/gateway-link:latest", "create l-next LINK_BOOT_KEY=old", "start l-next")
+	f.set("clone-id", func(c *fakeCtr) { c.running = false })
+	u.tick(t.Context(), updateAt)
+	expect("cleanup", "remove l-next")
+
+	u.project, u.lastRun = "byon", ""
+	u.tick(t.Context(), updateAt)
+	if !linkKeySwapReady.Load() {
+		t.Error("not ready with a project and a Link")
+	}
+	expect("swap first", "create l-next LINK_BOOT_KEY=new", "start l-next")
+	if u.lastRun != "" {
+		t.Errorf("the swap used up the daily update (lastRun %q)", u.lastRun)
+	}
 }

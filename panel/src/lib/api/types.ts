@@ -64,6 +64,9 @@ export interface Node {
     cpusetCpus?: string;
     publicIp?: string;
     privateIps?: string[];
+    // lan, docker or overlay per privateIps entry, as the node read it off its
+    // interfaces. Absent from a node that does not report it.
+    privateIpKinds?: Record<string, string>;
     // Per-server ingress policy: whether this node refuses server-to-server
     // traffic nothing allowed, how many of its servers currently carry the
     // rules, and the one sentence worth showing. Undefined means the node has
@@ -1180,12 +1183,19 @@ export interface WarpKeyView {
     region: string;
     node_id: string;
     fixed_wg_ip: string;
+    /** The node an External node key enrolled; absent until it has. */
+    bound_node_id?: number;
     revoked: boolean;
     created_at: string;
     peers: WarpKeyPeer[];
 }
 export const listWarpKeys = (): Promise<{ success: boolean; keys: WarpKeyView[] }> =>
     fetchAPI('/admin/warp/keys');
+// A new secret for an External node key, same identity. The old one keeps
+// working for an hour; Core refuses (409) while the machine's node is too old to
+// move its Link onto the new key.
+export const rollExternalNodeKey = (id: number): Promise<{ success: boolean; warp_key?: string; node_id?: string; message?: string; error?: string }> =>
+    fetchAPI(`/admin/warp/keys/${id}/roll`, { method: 'POST' });
 // Revoking also disconnects live peers: an established WireGuard tunnel has no
 // memory of the key that created it and would otherwise keep forwarding.
 export const revokeWarpKey = (id: number): Promise<{ success: boolean; disconnected?: number; message?: string }> =>
@@ -1318,6 +1328,8 @@ export interface MintedNodeWarpKey {
     warp_key: string;
     node_id: string;
     note: string;
+    /** On a roll: the machine's node moves its link onto the new key itself. */
+    link_swaps?: boolean;
     message?: string;
 }
 export const listNodeWarpKeys = (): Promise<{ success: boolean; keys: NodeWarpKey[]; used?: number; limit?: number }> =>

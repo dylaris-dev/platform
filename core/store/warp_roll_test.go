@@ -22,8 +22,9 @@ func TestRollWarpAPIKeyHash_UpdatesTheLiveRowInPlace(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	mock.ExpectExec(regexp.QuoteMeta(
-		`UPDATE warp_api_keys SET key_hash = $2 WHERE node_id = $1 AND revoked_at IS NULL`)).
-		WithArgs("node-abc", "new-hash").
+		`UPDATE warp_api_keys SET prev_key_hash = key_hash, prev_key_expires_at = NOW() + $3::interval, key_hash = $2
+		 WHERE node_id = $1 AND revoked_at IS NULL`)).
+		WithArgs("node-abc", "new-hash", "1 hour").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	if err := s.RollWarpAPIKeyHash("node-abc", "new-hash"); err != nil {
@@ -47,8 +48,9 @@ func TestRollWarpAPIKeyHash_NoLiveRowIsErrNoRows(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	mock.ExpectExec(regexp.QuoteMeta(
-		`UPDATE warp_api_keys SET key_hash = $2 WHERE node_id = $1 AND revoked_at IS NULL`)).
-		WithArgs("node-revoked", "new-hash").
+		`UPDATE warp_api_keys SET prev_key_hash = key_hash, prev_key_expires_at = NOW() + $3::interval, key_hash = $2
+		 WHERE node_id = $1 AND revoked_at IS NULL`)).
+		WithArgs("node-revoked", "new-hash", "1 hour").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err = s.RollWarpAPIKeyHash("node-revoked", "new-hash")

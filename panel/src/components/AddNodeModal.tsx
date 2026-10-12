@@ -19,7 +19,8 @@ import ModalPanel from '@/components/ui/ModalPanel';
 //   - Fleet node: a machine the operator owns, joined to the Swarm/compose
 //     stack. Always available.
 //   - External node: a machine the platform runs outside the datacenter,
-//     reached over the warp overlay. Added under Settings -> Warp, which mints
+//     reached over the warp overlay. Added under Settings -> Nodes -> External
+//     nodes, which mints
 //     its key and enroll token together; the node belongs to nobody. Only
 //     meaningful once the gateway subsystem is routing, so that tab appears only
 //     then. A customer's machine is not added here at all: the customer adds it
@@ -207,8 +208,8 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                                 <span>
                                     The compose file - warp, the node and its Link, with the key and the enroll token
                                     filled in - is generated under{' '}
-                                    <a href="/settings/warp" className="text-(--accent-light) hover:underline inline-flex items-center gap-1">
-                                        Settings &rarr; Warp &rarr; External Nodes <ExternalLink size={10} />
+                                    <a href="/settings/nodes?tab=external" className="text-(--accent-light) hover:underline inline-flex items-center gap-1">
+                                        Settings &rarr; Nodes &rarr; External nodes <ExternalLink size={10} />
                                     </a>
                                     . It cannot be shown here because both are revealed exactly once, when they are minted.
                                     A customer&apos;s machine is not added here: the customer adds it under My infrastructure.
@@ -216,20 +217,16 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                             </div>
                             <ol className="text-sm text-(--base-07) space-y-2 list-decimal pl-5">
                                 <li>
-                                    In <span className="text-(--base-09)">Settings &rarr; Warp &rarr; External Nodes</span>,
-                                    name the location and add the External node.
+                                    In <span className="text-(--base-09)">Settings &rarr; Nodes &rarr; External nodes</span>,
+                                    name the location and add the machine.
                                 </li>
                                 <li>Copy the compose file shown there onto the machine and start it.</li>
                                 <li>
-                                    The node enrols itself and appears under{' '}
-                                    <a href="/nodes?tab=external" className="text-(--accent-light) hover:underline">
-                                        My infrastructure &rarr; External nodes
-                                    </a>
-                                    {' '}within ~30s. Its Link starts once the node has enrolled.
+                                    The node enrols itself and appears in the list there within ~30s. Its Link starts once the node has enrolled.
                                 </li>
                             </ol>
-                            <a href="/settings/warp" className="btn btn-primary btn-sm inline-flex w-fit">
-                                Open Warp settings <ExternalLink size={12} />
+                            <a href="/settings/nodes?tab=external" className="btn btn-primary btn-sm inline-flex w-fit">
+                                Open External nodes <ExternalLink size={12} />
                             </a>
                         </>
                     )}

@@ -39,6 +39,7 @@ import {
     ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, RefreshCw, Eye, EyeOff,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
+import ExternalMachines from '@/components/settings/ExternalMachines';
 import ModalPanel from '@/components/ui/ModalPanel';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node deploy ENV for
@@ -225,6 +226,7 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                 and used to be invisible here entirely. It renders nothing when
                 nothing is being refused. */}
             {kind === 'platform' && <NodeJoinAttempts onAdmitted={loadNodes} />}
+            {kind === 'external' && <ExternalMachines nodes={shownNodes} />}
 
             <div>
                 <div className="flex items-start justify-between gap-3 mb-1">
@@ -445,7 +447,17 @@ interface NodeAddress {
     label: string;
     value: string;
     title: string;
+    /** Shown without "Show all": how the machine is reached, not one of its bridges. */
+    primary: boolean;
 }
+
+// What the node said each private address is. Unknown (an older node) is not
+// guessed from the range: a LAN in 172.16/12 is still a LAN.
+const PRIVATE_KIND: Record<string, { label: string; title: string; primary: boolean }> = {
+    lan: { label: 'LAN', primary: true, title: 'The address of the machine on its local network. Reachable from the other machines there, not from outside.' },
+    docker: { label: 'Docker', primary: false, title: 'A Docker network on the machine. Only its containers use it.' },
+    overlay: { label: 'Overlay', primary: false, title: 'A WireGuard tunnel interface on the machine, such as the overlay warp joins.' },
+};
 
 // addressesOf lists what the panel knows about how to reach a node, in the
 // order an operator asks for it.
@@ -454,7 +466,7 @@ interface NodeAddress {
 // a node in gateway+beam mode reports no public IP by design, and its address
 // is then never refreshed either, because the heartbeat carries no IP to
 // refresh it with. An empty row is honest about that; a stale one would not be.
-export function addressesOf(node: Pick<Node, 'address' | 'publicIp' | 'privateIps'>): NodeAddress[] {
+export function addressesOf(node: Pick<Node, 'address' | 'publicIp' | 'privateIps' | 'privateIpKinds'>): NodeAddress[] {
     const out: NodeAddress[] = [];
     if (node.address) {
         out.push({
@@ -462,6 +474,7 @@ export function addressesOf(node: Pick<Node, 'address' | 'publicIp' | 'privateIp
             label: 'Address',
             value: node.address,
             title: 'The address this node last reported for itself. Core shows it; it does not dial it.',
+            primary: true,
         });
     }
     if (node.publicIp && node.publicIp !== node.address) {
@@ -470,14 +483,17 @@ export function addressesOf(node: Pick<Node, 'address' | 'publicIp' | 'privateIp
             label: 'Public',
             value: node.publicIp,
             title: 'The address the node sees itself as from the internet. A node running gateway+beam reports none on purpose.',
+            primary: true,
         });
     }
     for (const ip of node.privateIps ?? []) {
+        const kind = PRIVATE_KIND[node.privateIpKinds?.[ip] ?? ''];
         out.push({
             key: `private:${ip}`,
-            label: 'Private',
+            label: kind?.label ?? 'Private',
             value: ip,
-            title: 'A private IPv4 address on the node. Reachable from the other machines on its network, not from outside.',
+            title: kind?.title ?? 'A private IPv4 address on the node. This node does not say which interface it is on.',
+            primary: kind?.primary ?? false,
         });
     }
     return out;
@@ -519,9 +535,12 @@ function AddressChip({ addr, revealed, onToggle }: { addr: NodeAddress; revealed
 
 function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) {
     const [shown, setShown] = useState<Record<string, boolean>>({});
-    const addrs = addressesOf(node);
+    const [showAll, setShowAll] = useState(false);
+    const all = addressesOf(node);
+    const hidden = all.filter(a => !a.primary).length;
+    const addrs = showAll ? all : all.filter(a => a.primary);
 
-    if (addrs.length === 0) {
+    if (all.length === 0) {
         return (
             <span className="text-xs text-(--base-05) italic" title="This node has not reported an address. Nodes in gateway+beam mode never do.">
                 no address reported
@@ -542,6 +561,16 @@ function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) 
                     onToggle={revealAll ? null : () => setShown(s => ({ ...s, [addr.key]: !s[addr.key] }))}
                 />
             ))}
+            {hidden > 0 && (
+                <button
+                    type="button"
+                    onClick={() => setShowAll(v => !v)}
+                    aria-expanded={showAll}
+                    className="text-xs text-(--base-06) hover:text-(--accent-light) transition-colors rounded-sm focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                >
+                    {showAll ? 'Show fewer' : `Show all (${all.length})`}
+                </button>
+            )}
         </div>
     );
 }

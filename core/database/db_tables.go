@@ -128,6 +128,9 @@ func migrateSchema(db *sql.DB) error {
 		{"servers", "cpu_limit", "REAL DEFAULT 0"},
 		{"nodes", "public_ip", "TEXT DEFAULT ''"},
 		{"nodes", "private_ips", "JSONB DEFAULT '[]'"},
+		// What each private_ips entry is (lan, docker, overlay); NULL until the
+		// node reports it.
+		{"nodes", "private_ip_kinds", "JSONB"},
 		{"servers", "installer_type", "TEXT DEFAULT ''"},
 		{"servers", "minecraft_version", "TEXT DEFAULT ''"},
 		{"servers", "build_number", "TEXT DEFAULT ''"},
