@@ -49,6 +49,11 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	release, ok := acquireLiveStream(w, r, h.state.Store, "stats", statsStreamsPerUser)
+	if !ok {
+		return
+	}
+	defer release()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

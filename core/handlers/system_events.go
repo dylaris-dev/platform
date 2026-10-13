@@ -36,6 +36,24 @@ type SystemEventsHandler struct {
 // from refreshing; forwarding one leaks an integer. So only a resolution that
 // actually says "no" drops the frame.
 func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
+	return h.mayReceiveCached(r, payload, nil)
+}
+
+// visibilityTTL is how long one stream reuses a server's answer. Resolving
+// per event and subscriber cost several queries each, and a modpack install
+// publishes an event per mod to every open panel. Short, so an invite or a
+// removed grant shows within seconds - and what a stale answer forwards is a
+// bare server id, see above.
+const visibilityTTL = 30 * time.Second
+
+type cachedVisibility struct {
+	visible bool
+	until   time.Time
+}
+
+// mayReceiveCached is mayReceive with the per-server answer kept in visible
+// for visibilityTTL. A nil map caches nothing.
+func (h *SystemEventsHandler) mayReceiveCached(r *http.Request, payload string, visible map[int]cachedVisibility) bool {
 	userID, _ := r.Context().Value("userID").(string)
 	username, _ := r.Context().Value("username").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -69,13 +87,20 @@ func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
 	if h.state == nil || h.state.Authz == nil {
 		return true
 	}
+	if c, ok := visible[serverID]; ok && time.Now().Before(c.until) {
+		return c.visible
+	}
 	res, err := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	if err != nil {
-		return true
+		return true // not cached: the next event asks again
 	}
 	// overview.read is "may this account see that this server exists at all",
 	// which is exactly what a bare id discloses. Every invite carries it.
-	return res.HasCap("overview.read")
+	v := res.HasCap("overview.read")
+	if visible != nil {
+		visible[serverID] = cachedVisibility{visible: v, until: time.Now().Add(visibilityTTL)}
+	}
+	return v
 }
 
 // eventAccountID pulls the account an event is ABOUT out of its payload: the
@@ -139,6 +164,11 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	release, ok := acquireLiveStream(w, r, h.state.Store, "events", eventStreamsPerUser)
+	if !ok {
+		return
+	}
+	defer release()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -159,6 +189,7 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
+	visible := map[int]cachedVisibility{}
 
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
@@ -171,7 +202,7 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 			if !ok {
 				return
 			}
-			if !h.mayReceive(r, msg.Payload) {
+			if !h.mayReceiveCached(r, msg.Payload, visible) {
 				continue
 			}
 			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)

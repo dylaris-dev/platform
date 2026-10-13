@@ -62,11 +62,11 @@ func TestReplayBuffer_LineCapDropsOldestFirst(t *testing.T) {
 	}
 }
 
-// The byte cap is the one that protects the JVM: a single line may be up to 1MB
-// (the scanner's limit), so the line cap alone would allow a gigabyte.
+// The byte cap is the one that protects the JVM: lines vary in size, so the
+// line cap alone does not bound the memory the buffer takes.
 func TestReplayBuffer_ByteCapBitesBeforeTheLineCap(t *testing.T) {
 	var r replayBuffer
-	big := strings.Repeat("x", 1<<20) // 1MB, the largest line the scanner emits
+	big := strings.Repeat("x", 1<<20)
 	for range 20 {
 		r.add([]string{big})
 	}

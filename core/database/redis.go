@@ -42,3 +42,14 @@ func InitRedis(cfg config.Config) (*redis.Client, error) {
 	log.Printf("Successfully connected to Redis at %s (DB: %d)", cfg.RedisAddr, cfg.RedisDB)
 	return client, nil
 }
+
+// NewConsoleRedis is a second client to the same Redis, for the console
+// streams' blocking reads only: each open console holds one connection for
+// its whole life, and on the shared pool enough of them starved every other
+// command of the replica. Room for many consoles; connections are dialled on
+// demand and close when idle, and the handlers cap what one user can take.
+func NewConsoleRedis(base *redis.Client) *redis.Client {
+	opts := *base.Options()
+	opts.PoolSize = 256
+	return redis.NewClient(&opts)
+}

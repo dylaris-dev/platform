@@ -187,6 +187,11 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	release, ok := acquireLiveStream(w, r, h.state.Store, "console", consoleStreamsPerUser)
+	if !ok {
+		return
+	}
+	defer release()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -205,6 +210,10 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	consoleRedis := h.state.ConsoleRedis
+	if consoleRedis == nil {
+		consoleRedis = h.state.Redis
+	}
 	ctx, cancel := streamContext(r)
 	defer cancel()
 	if lastID != "$" && consoleResumeLostLines(ctx, h.state.Redis, streamKey, lastID) {
@@ -231,7 +240,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		if block < time.Millisecond {
 			return
 		}
-		results, err := h.state.Redis.XRead(ctx, &redis.XReadArgs{
+		results, err := consoleRedis.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{streamKey, lastID},
 			Count:   100,
 			Block:   block,

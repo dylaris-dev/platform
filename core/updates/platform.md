@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **One account can hold at most 8 open consoles, 8 stats views and 16 panel tabs per Core.**
+  Open consoles could exhaust Core's Redis connections and stall power actions for everyone. `core`
+
+### Fixes
+- **A log spam during a Redis outage no longer freezes the Minecraft server.** Console lines are
+  buffered, and a server picks this up when its container is next recreated. `log-shipper`
+- The last lines a crashing server printed are no longer lost, and one console line is capped
+  at 64 KB instead of 1 MB. `log-shipper`
+- A download cancelled in the browser stops the transfer from the node instead of finishing
+  it in the background. `core`
+
 ## 2026.10.13.7
 
 ### Features

@@ -119,7 +119,7 @@ func TestApplyCarriageReturnsMatchesTheImplementationItReplaced(t *testing.T) {
 // is tens of gigabytes of copying inside the goroutine whose only job is to keep
 // draining the JVM's stdout - so a single crafted log line stalled the server.
 //
-// Sized against the 1MB line cap, which is what a JVM can actually emit here.
+// Sized well above the 64KB line cap, so the quadratic version is unmistakable.
 // The split version copies 500KB per one-character segment - 125GB in total,
 // tens of seconds; the in-place one touches each byte once and is done in about
 // a millisecond. The 3s budget sits between those, far from either.

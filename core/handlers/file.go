@@ -916,7 +916,12 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 				w.Header().Set("Content-Type", "application/octet-stream")
 				headerWritten = true
 			}
-			w.Write(chunk.Data)
+			if _, err := w.Write(chunk.Data); err != nil {
+				// The browser is gone. Returning stops the node's transfer
+				// (CleanupRequest cancels the flow); reading on fetched the
+				// rest of the file from the node only to drop it.
+				return
+			}
 			bodyStarted = true
 			if canFlush {
 				flusher.Flush()
@@ -1024,7 +1029,12 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 				w.Header().Set("Content-Type", "application/octet-stream")
 				headerWritten = true
 			}
-			w.Write(chunk.Data)
+			if _, err := w.Write(chunk.Data); err != nil {
+				// The browser is gone. Returning stops the node's transfer
+				// (CleanupRequest cancels the flow); reading on fetched the
+				// rest of the file from the node only to drop it.
+				return
+			}
 			bodyStarted = true
 			if canFlush {
 				flusher.Flush()

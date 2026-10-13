@@ -354,9 +354,12 @@ func applyCarriageReturns(line string) string {
 
 // maxLineBytes caps ONE console line. Over it the line is truncated and marked;
 // reading continues either way.
-const maxLineBytes = 1 << 20
+// 64KB: every line is kept up to maxStreamLen times in the shared Redis, so
+// 1MB allowed one server's console to hold gigabytes there. No real log line
+// comes near it.
+const maxLineBytes = 64 << 10
 
-const lineTruncatedMarker = " [dylaris: line truncated at 1MB]"
+const lineTruncatedMarker = " [dylaris: line truncated at 64KB]"
 
 // scanLines reads from r line by line and sends each line to ch.
 //
@@ -413,6 +416,31 @@ func scanLines(r io.Reader, ch chan<- string) {
 	}
 }
 
+// outputDrainGrace bounds how long the supervisor waits, after the process
+// exited, for its output to be read to the end. Normally that is immediate;
+// the bound is for a child process the server left behind that still holds
+// the pipe open, which must not keep a crashed server from being restarted.
+const outputDrainGrace = 5 * time.Second
+
+// drainAfterExit waits for the scanners to read the pipes to EOF, and closes
+// the read ends after grace so they stop either way.
+func drainAfterExit(scanWG *sync.WaitGroup, grace time.Duration, pipes ...*os.File) {
+	done := make(chan struct{})
+	go func() {
+		scanWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(grace):
+		log.Printf("log-shipper: output still open %s after the process exited; closing it", grace)
+	}
+	for _, p := range pipes {
+		p.Close()
+	}
+	<-done
+}
+
 // lossMarker is written into the console once, ahead of the replayed lines, when
 // an outage lasted longer than the buffer could cover. Losing console output is
 // survivable; losing it SILENTLY is the actual bug - a reader who sees a gap
@@ -431,13 +459,15 @@ const (
 	// This process is PID 1 INSIDE the Minecraft container and shares the
 	// container's memory limit with the JVM - container RAM is
 	// "requested + 512MB" and the heap is pinned by Xms=Xmx, so there is no
-	// slack to borrow. A single line may be up to 1MB (the scanner's cap), so
-	// the line cap alone would allow a gigabyte. An unbounded buffer here does
+	// slack to borrow. A single line may be up to 64KB (the scanner's cap), so
+	// the line cap alone would allow 320MB. An unbounded buffer here does
 	// not merely waste memory: it can get the customer's server OOM-killed, and
 	// it grows exactly when something is already wrong.
 	//
 	// 8MB is far above normal console output for replayMaxLines lines (~120
 	// bytes each) and far below anything that threatens the JVM.
+	// While a write hangs, the writer holds the batch it took and the reader
+	// fills a second buffer, so an outage can hold up to twice this.
 	replayMaxBytes = 8 << 20
 )
 
@@ -481,6 +511,15 @@ func (r *replayBuffer) pending() []string {
 
 func (r *replayBuffer) clear() { r.lines, r.bytes, r.dropped = nil, 0, 0 }
 
+// putBack returns what a failed write took out, in front of whatever arrived
+// meanwhile, and applies the caps again.
+func (r *replayBuffer) putBack(taken replayBuffer) {
+	newer := *r
+	*r = taken
+	r.dropped += newer.dropped
+	r.add(newer.lines)
+}
+
 // heapLatest holds the most recent post-GC heap reading (MB) until a flush can
 // publish it. Latest-wins: between two flushes a busy server emits many GC
 // lines, and only the newest is worth writing - the key holds one value.
@@ -507,69 +546,131 @@ func (h *heapLatest) take() (int64, bool) {
 // Side effect: also scans each line for JVM GC summaries and updates a
 // per-server Redis key with the latest post-GC heap size so the node
 // stats collector can surface live heap usage to the panel.
+//
+// Reading lineCh and writing to Redis are two goroutines that share only the
+// replay buffer, because the reader must never wait on Redis. It is all that
+// drains the JVM's stdout pipe, and when the write ran in this loop a Redis
+// that swallowed packets held every flush for 10-15s: under a log spam lineCh
+// filled in a second, then the pipe, and then every logging thread of the
+// Minecraft server blocked on its next line. An outage now only grows the
+// replay buffer, which is capped and counts what it evicts.
 func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string, lineCh <-chan string, rconFilter *rconFilterFlag) {
+	var (
+		mu     sync.Mutex
+		replay replayBuffer
+		heap   heapLatest
+	)
+	wake := make(chan struct{}, 1) // a full batch is waiting
+	final := make(chan struct{})   // the reader is done: flush once more, ignoring the spacing
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		writeLogs(ctx, rdb, streamKey, heapKey, &mu, &replay, &heap, wake, final)
+	}()
+	defer func() {
+		close(final)
+		<-writerDone
+	}()
+
+	for {
+		select {
+		case line, ok := <-lineCh:
+			if !ok {
+				// The process has exited and the scanners have drained. The
+				// deferred final flush is the last chance to get the crash
+				// output out.
+				return
+			}
+			// JVM heap accounting: pulls "100M->50M(2048M)" out of GC
+			// summary lines and stores the post-GC value. Container-level
+			// stats from Docker are anon-RSS = Xms (since we force
+			// Xms=Xmx) and so look pinned at the limit forever; this is
+			// the actual live heap. Recorded only; the writer publishes it.
+			if heapKey != "" {
+				if mb, ok := parseHeapAfterGC(line); ok {
+					mu.Lock()
+					heap.note(mb)
+					mu.Unlock()
+				}
+			}
+			// Hide JVM GC log noise from the user console. Parsing above
+			// still runs so the heap chart keeps updating; only the
+			// stream-shipping is skipped. Without -Xlog the JVM is silent
+			// here anyway, so this is purely about not exposing platform-
+			// internal logs to the operator.
+			if isUnifiedGCLine(line) {
+				continue
+			}
+			// Per-server toggle, off by default. Dropped here rather than at
+			// read time so the filter can be turned on and off on a running
+			// server without restarting it.
+			if rconFilter != nil && rconFilter.on.Load() && isRconNoiseLine(line) {
+				continue
+			}
+			mu.Lock()
+			replay.add([]string{line})
+			full := len(replay.lines) >= batchSize
+			mu.Unlock()
+			if full {
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// writeLogs is the Redis side of shipLogs. On every tick, on a full batch and
+// once at the end it takes everything buffered and writes it out; a failed
+// write puts the lines back in front of whatever arrived meanwhile. While
+// Redis is unreachable attempts are spaced by the shared retry schedule rather
+// than repeated on every 200ms tick.
+func writeLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string, mu *sync.Mutex, replay *replayBuffer, heap *heapLatest, wake, final <-chan struct{}) {
 	ticker := time.NewTicker(batchInterval)
 	defer ticker.Stop()
 
 	var (
-		buf      []string
-		replay   replayBuffer
-		heap     heapLatest
 		bo       retry.Backoff
 		nextTry  time.Time // zero = attempt immediately
 		degraded bool      // true between the first failed write and the recovery
 	)
 
-	// flush moves whatever has accumulated into the replay buffer and tries to
-	// write the buffer out. While Redis is unreachable the attempt is spaced by
-	// the shared retry schedule rather than repeated on every 200ms tick, so an
-	// outage does not put a failing round-trip in front of every batch.
-	//
-	// force ignores that spacing; used on shutdown, where there is no later
+	// force ignores the spacing; used on shutdown, where there is no later
 	// attempt to defer to.
-	flush := func(now time.Time, force bool) {
-		if len(buf) > 0 {
-			replay.add(buf)
-			buf = buf[:0]
-		}
-		if !force && now.Before(nextTry) {
+	flush := func(force bool) {
+		if !force && time.Now().Before(nextTry) {
 			return
 		}
-
-		// The latest post-GC heap reading, written HERE rather than on the line
-		// that produced it.
-		//
-		// rdb.Set is a synchronous round-trip. Doing it per GC line put one in
-		// front of the loop whose whole job is to keep draining lineCh, and -
-		// unlike the stream write below - it obeyed no retry spacing at all.
-		// With Redis unreachable that is not a slow metric, it is a stalled
-		// reader: lineCh (512) fills, both scanners block, the JVM's stdout pipe
-		// fills, and the Minecraft server itself blocks writing a log line. The
-		// replay buffer exists precisely so a log outage delays output instead
-		// of costing anything, and this one unspaced call walked around it.
-		//
-		// Coalescing also drops steady-state round-trips from one per GC line to
-		// at most one per batch. A dropped reading is harmless and always was -
-		// the next GC replaces it.
-		heapFailed := false
+		mu.Lock()
+		var (
+			mb     int64
+			heapOK bool
+		)
 		if heapKey != "" {
-			if mb, ok := heap.take(); ok {
-				heapFailed = rdb.Set(ctx, heapKey, mb, heapKeyTTL).Err() != nil
-			}
+			mb, heapOK = heap.take()
 		}
+		taken := *replay
+		replay.clear()
+		mu.Unlock()
 
-		if replay.empty() {
+		// The latest post-GC heap reading, coalesced to at most one write per
+		// flush. A dropped reading is harmless - the next GC replaces it.
+		heapFailed := heapOK && rdb.Set(ctx, heapKey, mb, heapKeyTTL).Err() != nil
+
+		if taken.empty() {
 			// Nothing to ship, but a failed heap write still means Redis is
 			// unreachable. Fall in behind the same spacing, or a server whose
 			// only output is GC lines - which are filtered out of the stream, so
-			// they never produce one - would retry a blocking write on every
-			// 200ms tick, with no stream write ever there to set the backoff.
+			// they never produce one - would retry on every 200ms tick.
 			if heapFailed && !force && ctx.Err() == nil {
-				nextTry = now.Add(bo.Next())
+				nextTry = time.Now().Add(bo.Next())
 			}
 			return
 		}
-		lines := replay.pending()
+		lines := taken.pending()
 		write := func() error {
 			// Always a FRESH pipeline: go-redis resets a pipeline after Exec, so
 			// re-running the same object would send nothing and look like a
@@ -595,11 +696,17 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 			err = write()
 		}
 		if err != nil {
+			mu.Lock()
+			replay.putBack(taken)
+			mu.Unlock()
 			if ctx.Err() != nil {
 				return // shutting down; the buffer dies with the process
 			}
 			wait := bo.Next()
-			nextTry = now.Add(wait)
+			// From the END of the attempt: measured from its start, a write
+			// that hung for its whole timeout was already "due" again and the
+			// spacing never applied.
+			nextTry = time.Now().Add(wait)
 			// Logged once per outage, not once per failed attempt: this file is
 			// PID 1 of the container, so its own log is the only place an
 			// operator can see this, and a line every 200ms would bury it.
@@ -617,55 +724,16 @@ func shipLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string,
 		// dense retry schedule again each time it drops out.
 		bo.Reset()
 		nextTry = time.Time{}
-		replay.clear()
 	}
 
 	for {
 		select {
-		case line, ok := <-lineCh:
-			if !ok {
-				// The process has exited and the scanners have drained. This is
-				// the last chance to get the crash output out, so ignore the
-				// retry spacing.
-				flush(time.Now(), true)
-				return
-			}
-			// JVM heap accounting: pulls "100M->50M(2048M)" out of GC
-			// summary lines and stores the post-GC value. Container-level
-			// stats from Docker are anon-RSS = Xms (since we force
-			// Xms=Xmx) and so look pinned at the limit forever; this is
-			// the actual live heap.
-			if heapKey != "" {
-				if mb, ok := parseHeapAfterGC(line); ok {
-					// Recorded only. The write happens in flush, which is the
-					// one place that respects the retry schedule; this path
-					// must stay free of Redis round-trips so it keeps draining
-					// lineCh. Stale values fall out via TTL.
-					heap.note(mb)
-				}
-			}
-			// Hide JVM GC log noise from the user console. Parsing above
-			// still runs so the heap chart keeps updating; only the
-			// stream-shipping is skipped. Without -Xlog the JVM is silent
-			// here anyway, so this is purely about not exposing platform-
-			// internal logs to the operator.
-			if isUnifiedGCLine(line) {
-				continue
-			}
-			// Per-server toggle, off by default. Dropped here rather than at
-			// read time so the filter can be turned on and off on a running
-			// server without restarting it.
-			if rconFilter != nil && rconFilter.on.Load() && isRconNoiseLine(line) {
-				continue
-			}
-			buf = append(buf, line)
-			if len(buf) >= batchSize {
-				flush(time.Now(), false)
-			}
-		case now := <-ticker.C:
-			flush(now, false)
-		case <-ctx.Done():
-			flush(time.Now(), true)
+		case <-ticker.C:
+			flush(false)
+		case <-wake:
+			flush(false)
+		case <-final:
+			flush(true)
 			return
 		}
 	}
@@ -800,14 +868,18 @@ func main() {
 		javaCmd.Env = append(os.Environ(), "TERM=xterm-256color")
 		javaCmd.Stdin = nil // stdin managed via pipe below
 
-		stdoutPipe, err := javaCmd.StdoutPipe()
+		// Our own pipes, not StdoutPipe: Wait closes those as soon as the
+		// process exits, and whatever was still unread in them - the end of a
+		// crash, the reason it happened - was lost.
+		stdoutPipe, stdoutW, err := os.Pipe()
 		if err != nil {
-			log.Fatalf("log-shipper: StdoutPipe error: %v", err)
+			log.Fatalf("log-shipper: stdout pipe error: %v", err)
 		}
-		stderrPipe, err := javaCmd.StderrPipe()
+		stderrPipe, stderrW, err := os.Pipe()
 		if err != nil {
-			log.Fatalf("log-shipper: StderrPipe error: %v", err)
+			log.Fatalf("log-shipper: stderr pipe error: %v", err)
 		}
+		javaCmd.Stdout, javaCmd.Stderr = stdoutW, stderrW
 		stdinPipe, err := javaCmd.StdinPipe()
 		if err != nil {
 			log.Fatalf("log-shipper: StdinPipe error: %v", err)
@@ -817,6 +889,10 @@ func main() {
 			log.Fatalf("log-shipper: failed to start process %q: %v", os.Args[1], err)
 		}
 		log.Printf("log-shipper: started PID %d: %s", javaCmd.Process.Pid, strings.Join(os.Args[1:], " "))
+		// The child holds its own copies; ours would keep the readers from
+		// ever seeing EOF.
+		stdoutW.Close()
+		stderrW.Close()
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -848,7 +924,7 @@ func main() {
 		}
 
 		// Wait for scanners to drain, then close lineCh so shipLogs flushes.
-		scanWG.Wait()
+		drainAfterExit(&scanWG, outputDrainGrace, stdoutPipe, stderrPipe)
 		close(lineCh)
 		time.Sleep(300 * time.Millisecond)
 		cancel()

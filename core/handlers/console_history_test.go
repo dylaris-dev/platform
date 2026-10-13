@@ -22,6 +22,9 @@ func (consoleHistoryFakeStore) GetServerByID(id int) (*models.Server, error) {
 	return &models.Server{ID: id, UUID: "srv-uuid"}, nil
 }
 
+// No demo account configured.
+func (consoleHistoryFakeStore) GetSetting(string) (string, error) { return "", nil }
+
 type consoleHistoryResp struct {
 	Lines []string `json:"lines"`
 	IDs   []string `json:"ids"`

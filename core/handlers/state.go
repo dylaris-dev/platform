@@ -24,8 +24,13 @@ type AppState struct {
 	// because a statistics store is never a reason for anything else to fail.
 	Metrics *metrics.Manager
 
-	Store        store.Store
-	Redis        *redis.Client
+	Store store.Store
+	Redis *redis.Client
+	// ConsoleRedis serves the console streams' blocking reads and nothing else.
+	// Each open console holds a connection for its whole life; on the shared
+	// pool, enough of them starved every other Redis command of the replica -
+	// power actions, the leader lease, session checks. nil falls back to Redis.
+	ConsoleRedis *redis.Client
 	Queue        *services.QueueService
 	GRPCRegistry *nodegrpc.Registry
 	Gateway      services.GatewayProvider

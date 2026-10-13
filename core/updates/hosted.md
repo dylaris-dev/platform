@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A log spam while the console service is unreachable no longer freezes your Minecraft
+  server.** A server gets this when its container is next recreated, not on a plain restart.
+- The last lines a crashing server printed now always reach the console.
+
 ## 2026.10.13.7
 
 ### Features
