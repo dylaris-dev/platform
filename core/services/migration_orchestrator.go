@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/rand"
+	beamauth "dylaris-pkg/beam/auth"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,9 @@ import (
 //     the move (holdMigrationLock). We never delete source data before cutover,
 //     so no data loss.
 type MigrationOrchestrator struct {
+	// onMoving, when set, republishes file access at once when a server starts
+	// or stops moving (SFTP goes read-only for the move).
+	onMoving      func()
 	store         store.Store
 	redis         *redis.Client
 	queue         *QueueService
@@ -598,6 +602,11 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 
 	// --- (f) migrate_out (source stages archive) ---
 	o.store.UpdateServerStatus(srv.ID, "migrating")
+	// Open Beam sessions end here and reconnect read-only (a ticket minted
+	// while the server moves carries no write), and end again when the move
+	// does, so they come back with their rights wherever the server landed.
+	o.bumpBeamAccess(srv.UUID)
+	defer o.bumpBeamAccess(srv.UUID)
 	writeStatus("migrating", "")
 	if err := o.queue.SendMigrateOutCommand(ctx, sourceNode.Token, srv.UUID, attempt); err != nil {
 		log.Printf("migration %s: migrate_out queue failed: %v", srv.UUID, err)
@@ -902,6 +911,23 @@ func (o *MigrationOrchestrator) rollbackPreCutover(ctx context.Context, srv *mod
 }
 
 // --- Helpers ---
+
+// SetOnMoving wires the immediate SFTP republish (SFTPSyncService.SyncSoon).
+func (o *MigrationOrchestrator) SetOnMoving(fn func()) { o.onMoving = fn }
+
+func (o *MigrationOrchestrator) bumpBeamAccess(uuid string) {
+	if o.onMoving != nil {
+		o.onMoving()
+	}
+	if o.redis == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := beamauth.BumpAccessEpoch(ctx, o.redis, uuid); err != nil {
+		log.Printf("migration %s: beam access stamp: %v", uuid, err)
+	}
+}
 
 func (o *MigrationOrchestrator) gatewayEnabled() bool {
 	mode, _ := o.store.GetSetting("routing_mode")

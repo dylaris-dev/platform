@@ -1460,19 +1460,38 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("Failed to write .active_server for %s: %v", cmd.Config.UUID, err)
 		}
 
-		// Recreate container with start command pointing to the sub-server
-		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+		// Recreate container with start command pointing to the sub-server -
+		// started, unless the platform no longer means to run it: an owner cut
+		// off while the install ran had the intent flipped to stopped, and the
+		// install booted the server anyway for up to an hour.
+		startIt := true
+		if desired, derr := rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:desired_state", cmd.Config.UUID)).Result(); derr == nil && desired == "stopped" {
+			startIt = false
+		}
+		recreate := dm.RecreateWithCommand
+		if !startIt {
+			recreate = dm.RecreateStopped
+		}
+		started := false
+		if err := recreate(cmd.Config); err != nil {
 			log.Printf("Failed to start server pod %s: %v", cmd.Config.UUID, err)
 		} else {
-			log.Printf("Server %s/%s deployed and running!", cmd.Config.UUID, subName)
+			started = startIt
+			log.Printf("Server %s/%s deployed (started: %v)", cmd.Config.UUID, subName, startIt)
 			saveNodeConfig(serverPath, cmd.Config)
 		}
 		// Best-effort metadata refresh regardless of RecreateWithCommand result
 		// (installation succeeded; the sub-server directory is valid).
 		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 
-		// Notify Core that installation is complete
-		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+		// Notify Core that installation is complete. "starting" when it was
+		// started: "stopped" here sat over a server that was coming up, and the
+		// collector would not correct it for up to 15 seconds.
+		finalStatus := "stopped"
+		if started {
+			finalStatus = "starting"
+		}
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), finalStatus, 30*time.Second)
 
 	case "reconfigure":
 		// Change the Java image or the JVM flags WITHOUT reinstalling.
@@ -1914,13 +1933,20 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		cmd.Config.Docker.Command = startCmd
 
-		// Recreate container with start command
-		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+		// Recreate container with start command - started only while the
+		// platform still means to run it (see setup).
+		reinstallRecreate := dm.RecreateWithCommand
+		reinstallStatus := "starting"
+		if desired, derr := rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:desired_state", cmd.Config.UUID)).Result(); derr == nil && desired == "stopped" {
+			reinstallRecreate = dm.RecreateStopped
+			reinstallStatus = "stopped"
+		}
+		if err := reinstallRecreate(cmd.Config); err != nil {
 			log.Printf("Failed to restart server pod %s: %v", cmd.Config.UUID, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		} else {
-			log.Printf("Server %s/%s reinstalled and running!", cmd.Config.UUID, subName)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			log.Printf("Server %s/%s reinstalled (status %s)", cmd.Config.UUID, subName, reinstallStatus)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), reinstallStatus, 30*time.Second)
 		}
 		// Best-effort metadata refresh regardless of RecreateWithCommand result
 		// (reinstall succeeded; the sub-server directory has new software).

@@ -111,9 +111,33 @@ func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 		{"servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
 		{"servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
 		{"sub_server_limit.go", "refuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
+		{"servers_lifecycle.go", "ReinstallServer", `h.state.Store.UpdateServerDesiredState(srv.ID, "online")`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
 	} {
 		if !strings.Contains(funcBody(t, c.file, c.fn), c.want) {
 			t.Errorf("%s: %s", c.fn, c.why)
+		}
+	}
+}
+
+// A Beam ticket minted while the server moves carries no write: the source copy
+// is deleted after cutover, so a write landing meanwhile was lost.
+func TestABeamTicketIsReadOnlyWhileTheServerMoves(t *testing.T) {
+	body := funcBody(t, "beam.go", "GetBeamTicket")
+	if !strings.Contains(body, `if server.Status == "migrating" {`) || !strings.Contains(body, "filePerms.Write, filePerms.Delete = false, false") {
+		t.Error("a ticket for a moving server still writes")
+	}
+}
+
+// The node asks the intent when an install finishes; a short install used to
+// finish ahead of the scan that published "online" and left the server down.
+// Setup and reinstall publish it before they send the command.
+func TestInstallsPublishTheIntentBeforeTheCommand(t *testing.T) {
+	for fn, action := range map[string]string{"SetupServer": `"setup"`, "ReinstallServer": `"reinstall"`} {
+		body := funcBody(t, "servers_lifecycle.go", fn)
+		pub := strings.Index(body, `services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")`)
+		send := strings.Index(body, "SendCommand(context.Background(), node.Token, "+action)
+		if pub < 0 || send < 0 || pub > send {
+			t.Errorf("%s publishes the intent after the command, or not at all", fn)
 		}
 	}
 }

@@ -240,6 +240,11 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 		if b.Status == "suspended" {
 			return skipped("owner account is suspended for non-payment; restart skipped")
 		}
+		// The over-limit cutoff is the other way an owner loses Start and
+		// Restart (ownerRefusal); this checked only the first.
+		if store.OwnerCutOff(b, 0, OverLimitGrace, time.Now()) {
+			return skipped("owner account is over its plan limit; restart skipped")
+		}
 		// A scheduled restart restarts a RUNNING server and nothing else - the
 		// same rule the power-action handler enforces with a 409. Without it the
 		// nightly restart of a server its owner had deliberately stopped wrote

@@ -30,13 +30,24 @@ type SFTPSyncService struct {
 	store store.Store
 	redis *redis.Client
 	authz *authz.Resolver
+	kick  chan struct{}
 }
 
 // NewSFTPSyncService takes the same resolver the HTTP routes use. Passing a nil
 // one is not supported: this service decides file access, and a nil resolver
 // could only mean publishing everything or nothing.
 func NewSFTPSyncService(s store.Store, r *redis.Client, az *authz.Resolver) *SFTPSyncService {
-	return &SFTPSyncService{store: s, redis: r, authz: az}
+	return &SFTPSyncService{store: s, redis: r, authz: az, kick: make(chan struct{}, 1)}
+}
+
+// SyncSoon runs a sync now instead of at the next tick. A move flips a server
+// read-only, and the minute's wait was a minute of writes that landed after
+// the staging snapshot and went with the deleted source copy.
+func (s *SFTPSyncService) SyncSoon() {
+	select {
+	case s.kick <- struct{}{}:
+	default: // one already pending covers this one
+	}
 }
 
 func (s *SFTPSyncService) Start() {
@@ -45,7 +56,11 @@ func (s *SFTPSyncService) Start() {
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
+		for {
+			select {
+			case <-ticker.C:
+			case <-s.kick:
+			}
 			s.sync()
 		}
 	}()
@@ -313,6 +328,7 @@ func (s *SFTPSyncService) sync() {
 	// Owners suspended for non-payment, the same cut-off Beam applies: their
 	// servers are not offered over SFTP to them or to anyone they invited.
 	suspended := newOwnerSuspension(s.store)
+	moving := newServerMoving(s.store)
 	valid := make(map[string]bool, len(users))
 	// Drop auth keys for users that no longer exist (deleted or renamed). The
 	// TTL above already bounds this at 5 minutes; the prune is what closes the
@@ -364,6 +380,11 @@ func (s *SFTPSyncService) sync() {
 			ok, perms := s.mayUseSFTP(a, adminByUser[a.Username])
 			if !ok {
 				continue
+			}
+			// Read-only while the server moves: the source copy is deleted after
+			// cutover, so a write landing meanwhile was lost without a word.
+			if moving.of(a.ServerID) {
+				perms.Write, perms.Delete = false, false
 			}
 			byUser[a.Username] = append(byUser[a.Username],
 				sftpServerEntry{UUID: a.ServerUUID, Name: a.ServerName, Perms: perms})
@@ -450,6 +471,26 @@ func (s *SFTPSyncService) sync() {
 	// "sftp:auth:<username>" keys from before this was node-scoped, since those
 	// can never appear in `valid` again.
 	s.pruneStaleAuthKeys(ctx, valid, unknown, kerr != nil)
+}
+
+// serverMoving answers "is this server being moved", once per server per sync.
+type serverMoving struct {
+	st   store.Store
+	seen map[int]bool
+}
+
+func newServerMoving(st store.Store) *serverMoving {
+	return &serverMoving{st: st, seen: map[int]bool{}}
+}
+
+func (m *serverMoving) of(serverID int) bool {
+	if v, ok := m.seen[serverID]; ok {
+		return v
+	}
+	srv, err := m.st.GetServerByID(serverID)
+	v := err == nil && srv != nil && srv.Status == "migrating"
+	m.seen[serverID] = v
+	return v
 }
 
 // ownerSuspension answers "is this server's owner suspended for non-payment"

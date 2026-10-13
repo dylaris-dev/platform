@@ -1003,6 +1003,15 @@ func applyIOWeight(hc *container.HostConfig) {
 
 // RecreateWithCommand stops + removes + creates a container with a new sub-server command.
 func (dm *DockerManager) RecreateWithCommand(config ServerConfig) error {
+	return dm.recreate(config, true)
+}
+
+// RecreateStopped is RecreateWithCommand without the start.
+func (dm *DockerManager) RecreateStopped(config ServerConfig) error {
+	return dm.recreate(config, false)
+}
+
+func (dm *DockerManager) recreate(config ServerConfig, start bool) error {
 	log.Printf("Recreating container %s with sub-server: %s", config.UUID, config.ActiveSubServer)
 
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
@@ -1018,7 +1027,7 @@ func (dm *DockerManager) RecreateWithCommand(config ServerConfig) error {
 		return err
 	}
 
-	_, err = dm.startMinecraftContainer(config, netID, netName, true)
+	_, err = dm.startMinecraftContainer(config, netID, netName, start)
 	return err
 }
 

@@ -740,8 +740,16 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		if !recordSetup() {
 			return
 		}
+		// Setup installs and starts the server. The intent is published BEFORE
+		// the command: the node asks it when the install is done, and a short
+		// install finished ahead of the scan that would have published it, read
+		// the old "stopped" and left a fresh server down.
+		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
+			h.state.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
+			services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, srv.DesiredState)
 			// Nothing was sent, so nothing will report back: put the row back
 			// as it was rather than leave it "installing" a sub-server that
 			// exists nowhere.
@@ -753,9 +761,6 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 
 		// Set install cooldown
 		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
-
-		// Setup installs and starts the server — mark desired state as online
-		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
 
 		// Snapshot the modpack's Modrinth members for the Content-tab
 		// cross-check. Advisory only: the helper logs and swallows every
@@ -938,8 +943,16 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			"loader":  req.Installer.Loader,
 		}
 
+		// A reinstall starts the server when it is done, as setup does. Published
+		// before the command for the same reason as there; the node now asks
+		// the intent before it starts, so a suspension landing during the
+		// install keeps the server down.
+		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "reinstall", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
+			h.state.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
+			services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, srv.DesiredState)
 			undo()
 			sendJSONError(w, "Failed to queue reinstall", 500)
 			return

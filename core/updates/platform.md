@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.4
+
+### Features
+- Nothing.
+
+### Breaking
+- **Update Core before the nodes**: a node on this release starts a server after a setup or
+  reinstall only when Core says to run it, and a Core before it does not say so for a reinstall. `core` `node`
+
+### Security
+- **An owner cut off while an install runs no longer gets the server booted** at the end of it, and
+  a scheduled restart now respects the over-limit cut-off too. `core` `node`
+
+### Fixes
+- **SFTP and Beam are read-only while a server is being moved**; a file written during a move was
+  lost with the source copy. `core`
+- A finished setup or reinstall shows "starting" instead of "stopped" for the server it just
+  started. `node`
+
 ## 2026.10.13.3
 
 ### Features

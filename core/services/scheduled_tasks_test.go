@@ -782,3 +782,23 @@ func TestComputeNextRun_MinimumInterval(t *testing.T) {
 		}
 	}
 }
+
+// The over-limit cutoff takes Start and Restart away too (ownerRefusal); the
+// scheduled restart checked only the suspension.
+func TestRunDue_RestartTask_OverLimitOwner_IsSkipped(t *testing.T) {
+	since := time.Now().Add(-30 * 24 * time.Hour)
+	fs := &schedTaskFakeStore{
+		servers: map[int]models.Server{1: {ID: 1, UUID: "srv-1", NodeID: 5, OwnerID: "owner-1", Status: "online"}},
+		nodes:   map[int]models.Node{5: {ID: 5, Token: "node-tok-5"}},
+		billing: map[string]*store.UserBilling{"owner-1": {UserID: "owner-1", Status: "active", OverLimitSince: &since}},
+		due: []models.ScheduledTask{
+			{ID: 100, ServerID: 1, TaskType: "restart", ScheduleCron: "* * * * *"},
+		},
+	}
+	svc, done := newSchedTestService(t, fs)
+	defer done()
+	svc.runDue(context.Background())
+	if len(fs.desiredCalls) != 0 || len(fs.statusCalls) != 0 {
+		t.Fatalf("restarted an over-limit owner's server: desired %+v status %+v", fs.desiredCalls, fs.statusCalls)
+	}
+}

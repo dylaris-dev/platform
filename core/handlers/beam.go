@@ -404,6 +404,12 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	if refuseIfSuspended(w, r, h.state, server) {
 		return
 	}
+	// Read-only while the server moves: the source copy is deleted after
+	// cutover, so a write landing meanwhile was lost. The move bumps the
+	// access stamp at both ends, so a session opened before reconnects to this.
+	if server.Status == "migrating" {
+		filePerms.Write, filePerms.Delete = false, false
+	}
 
 	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID) + direct-connect
 	// hint inputs. Whether these are actually handed out is decided below by relay

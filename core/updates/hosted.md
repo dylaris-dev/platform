@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **SFTP and Beam are read-only while your server is being moved**; a file written during a move
+  could be lost.
+- A finished setup or reinstall shows your server as starting instead of stopped, once your node
+  runs this release. `node`
+
 ## 2026.10.13.3
 
 ### Features
