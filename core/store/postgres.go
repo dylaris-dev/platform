@@ -1037,11 +1037,19 @@ func (s *PostgresStore) SetServerAutoMove(id int, enabled bool) error {
 // the server physically runs. Leaving it behind would make a migrated server
 // count against a region it no longer occupies.
 func (s *PostgresStore) UpdateServerNode(serverID int, newNodeID int) error {
-	_, err := s.db.Exec(
+	res, err := s.db.Exec(
 		`UPDATE servers SET node_id = $1,
 		        region = COALESCE(NULLIF((SELECT region FROM nodes WHERE id = $1), ''), region)
 		  WHERE id = $2`, newNodeID, serverID)
-	return err
+	if err != nil {
+		return err
+	}
+	// A server deleted mid-move is not a cutover: reported as one, the move
+	// went on to "finish" for a row that no longer exists.
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("server %d no longer exists", serverID)
+	}
+	return nil
 }
 
 // ResetAllAutoMove clears every per-server auto-move opt-in in one statement.

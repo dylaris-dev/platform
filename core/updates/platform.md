@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.2
+
+### Features
+- **"stop" in the console or in game now stops the server** instead of restarting it, and no
+  longer counts towards the crash-loop limit; Start brings it back. `node` `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Setup, reinstall, switching, copies and deletes wait while a server is being moved,
+  installed or restored**, and a move waits for those too; running them together could leave a
+  half-moved world or a copy on the other node. `core`
+- **Power actions for one server run one after another on the node**, and changing RAM, JVM flags
+  or the sub-server saves the world first instead of stopping it after 15 seconds. `node`
+- **Switching sub-server after a crash loop no longer leaves the server flickering** between online
+  and offline with Stop refused. `node` `core`
+
 ## 2026.10.13
 
 ### Features

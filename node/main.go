@@ -334,6 +334,12 @@ func main() {
 	globalStorageMgr = storageMgr
 
 	dockerMgr, err := NewDockerManager(storageMgr)
+	if err == nil {
+		dockerMgr.stopGracefully = func(uuid string) { gracefulStop(rdb, uuid, dockerMgr) }
+		dockerMgr.announceStarting = func(uuid string) {
+			rdb.Set(context.Background(), fmt.Sprintf("dylaris:server:%s:status", uuid), "starting", 30*time.Second)
+		}
+	}
 	if err != nil {
 		log.Fatalf("Failed to init Docker Manager: %v", err)
 	}
@@ -1245,6 +1251,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	// applyExternalOverride still forces BYON nodes to gateway.
 	loadModesFromRedis(ctx, rdb)
 
+	if serialisedActions[cmd.Action] && cmd.Config.UUID != "" {
+		release, ok := lockServerPower(cmd.Config.UUID)
+		if !ok {
+			log.Printf("%s for %s dropped: an action on this server is running and another is already waiting", cmd.Action, cmd.Config.UUID)
+			return
+		}
+		defer release()
+	}
+
 	// Apply node-level default cpuset if not set by core
 	if cmd.Config.Docker.CpusetCpus == "" && defaultCpusetCpus != "" {
 		cmd.Config.Docker.CpusetCpus = defaultCpusetCpus
@@ -1352,7 +1367,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// clears the give-up marker like start/restart do. Without this the marker
 		// outlives the install and Core keeps forcing the freshly installed server
 		// back to offline/stopped.
-		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
+		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 
@@ -1505,6 +1520,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		log.Printf("Switching server %s to sub-server: %s", cmd.Config.UUID, subName)
+		// A switch starts the server, so it is a deliberate start: a give-up
+		// marker left from a crash loop on the old sub-server made Core mark the
+		// running server offline every scan, and Stop then refused it.
+		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		activeFile := filepath.Join(serverPath, ".active_server")
@@ -1539,7 +1558,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// decision it recorded: Core reads it (status_watcher's
 		// consumeReconcileFailures), concludes the server should not be running,
 		// and stops the server the user just asked for.
-		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
+		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 		dm.PullContainerImage(cmd.Config.UUID)
 		if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
 			log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
@@ -1566,7 +1585,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "restart":
 		log.Printf("Graceful restart for Server %s ...", cmd.Config.UUID)
 		// Same reason as "start" above: this is a deliberate retry.
-		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
+		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 		gracefulStop(rdb, cmd.Config.UUID, dm)
 		// gracefulStop leaves "stopping" behind, which is true while the JVM is
 		// winding down but reads to a player as "it is not coming back". From
@@ -1843,7 +1862,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseBusy()
 		// Same as the setup path: a reinstall ends by starting the server.
-		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", cmd.Config.UUID))
+		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
 		// Stop the container first
 		dm.PowerAction(cmd.Config.UUID, "stop")

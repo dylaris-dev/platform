@@ -428,6 +428,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
+	if refuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
 
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
@@ -799,6 +802,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
+	if refuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
 
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
@@ -1044,6 +1050,9 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
+	if refuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
 
 	// Rejected, not sanitized. Setup may sanitize because it is NAMING a new
 	// directory; this is picking an existing one, and quietly rewriting the
@@ -1112,6 +1121,12 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 					"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 					"extraJvmFlags": combinedJvmFlags,
 				},
+			}
+			// A switch starts the server, so the platform means to run it now.
+			// After a crash loop the intent read "stopped" while the switched
+			// server ran, and the reconciler would not bring it back if it fell.
+			if err := h.state.Store.UpdateServerDesiredState(serverID, "online"); err != nil {
+				log.Printf("SwitchSubServer: desired state for server %d: %v", serverID, err)
 			}
 			h.state.Queue.SendCommand(context.Background(), node.Token, "switch_server", switchPayload, nil)
 		}
@@ -1358,6 +1373,12 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	switch req.Action {
 	case "start", "restart":
 		newStatus = "starting"
+		// The node clears these when it runs the command, which can be a while
+		// behind a busy queue; until then the status watcher read them as
+		// unlanded and set the intent back to stopped under the start.
+		h.state.Redis.Del(r.Context(),
+			fmt.Sprintf("dylaris:server:%s:reconcile_failed", srv.UUID),
+			fmt.Sprintf("dylaris:server:%s:stopped_by_server", srv.UUID))
 		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
 		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
 		// A server that was stopped starts with nothing waiting on its stdin.
@@ -1938,6 +1959,15 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 		sendJSONError(w, "The server's current node is offline, so its data cannot be moved right now", http.StatusConflict)
 		return
 	}
+	// A move archives the directory while an install or restore rewrites it,
+	// then deletes the source: the target keeps a half-written world.
+	if srv.Status == "installing" {
+		sendJSONError(w, "The server is being installed. Move it when the install has finished.", http.StatusConflict)
+		return
+	}
+	if refuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
 	if err := h.state.Migration.EnqueueMigration(r.Context(), srv.ID, target.ID, reason, requestedBy); err != nil {
 		if errors.Is(err, services.ErrMigrationQueued) {
 			sendJSONError(w, "A move of this server is already queued or running", http.StatusConflict)
@@ -2090,6 +2120,9 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Server not found", 404)
 		return
 	}
+	if refuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
 
 	// Same silence as DeleteServer had, with the same consequence one level down:
 	// the slot disappears from the panel while its directory stays on disk,
@@ -2195,6 +2228,9 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
 		sendJSONError(w, "Server not found", 404)
+		return
+	}
+	if refuseIfMoving(w, r, srv) {
 		return
 	}
 

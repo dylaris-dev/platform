@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"context"
-	"fmt"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -35,7 +35,7 @@ import (
 // cross-component contract in the same sense the status key is: the node is the
 // only writer, Core is a reader, and neither may rename it alone.
 func nodeBusyKey(uuid string) string {
-	return fmt.Sprintf("dylaris:server:%s:node_busy", uuid)
+	return services.NodeBusyKey(uuid)
 }
 
 // installStallReason is what the panel shows. Empty means nothing is wrong.

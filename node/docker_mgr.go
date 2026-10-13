@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	dockerimage "github.com/docker/docker/api/types/image"
@@ -35,6 +36,15 @@ type DockerManager struct {
 	hostPathCache map[string]string // local storage path -> host path (resolved from container mounts)
 	portMgr       *PortManager      // nil when gateway is enabled (port binding not needed)
 	selfHostNet   bool              // true when this node's own container uses --network host
+
+	// stopGracefully saves and stops a running server the way the stop button
+	// does (gracefulStop). Recreating a container used to give it 15 seconds
+	// before SIGKILL, which a large modded world does not finish saving in.
+	stopGracefully func(uuid string)
+	// announceStarting publishes "starting" once a running server's container
+	// was rebuilt: the graceful stop left "stopping" behind, which the panel
+	// and the players' server list showed while it was already coming back.
+	announceStarting func(uuid string)
 
 	// Per-server ingress policy. selfContainer is this node's own container name
 	// (its address is one of the two every server always accepts), and
@@ -993,6 +1003,9 @@ func (dm *DockerManager) RecreateWithCommand(config ServerConfig) error {
 	log.Printf("Recreating container %s with sub-server: %s", config.UUID, config.ActiveSubServer)
 
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
+	if dm.stopGracefully != nil {
+		dm.stopGracefully(config.UUID)
+	}
 	timeout := 15
 	dm.cli.ContainerStop(dm.ctx, containerName, container.StopOptions{Timeout: &timeout})
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
@@ -1027,6 +1040,9 @@ func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 	}
 	wasRunning := info.State != nil && info.State.Running
 
+	if wasRunning && dm.stopGracefully != nil {
+		dm.stopGracefully(config.UUID)
+	}
 	timeout := 15
 	dm.cli.ContainerStop(dm.ctx, containerName, container.StopOptions{Timeout: &timeout})
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
@@ -1036,6 +1052,9 @@ func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 		return nerr
 	}
 	_, err = dm.startMinecraftContainer(config, netID, netName, wasRunning)
+	if err == nil && wasRunning && dm.announceStarting != nil {
+		dm.announceStarting(config.UUID)
+	}
 	return err
 }
 
@@ -1727,6 +1746,18 @@ func (dm *DockerManager) ListRunningMCContainers() ([]MCContainer, error) {
 		}
 	}
 	return result, nil
+}
+
+// exitedCleanlyAfter reports whether a container exited with code 0, not
+// OOM-killed, after since. A host reboot also stops containers cleanly, which
+// is what since is for: those stopped before this node started and are
+// restarted as before. See stoppedItself for what else a clean exit can mean.
+func exitedCleanlyAfter(st *container.State, since time.Time) bool {
+	if st == nil || st.Running || st.OOMKilled || st.ExitCode != 0 {
+		return false
+	}
+	finished, err := time.Parse(time.RFC3339Nano, st.FinishedAt)
+	return err == nil && finished.After(since)
 }
 
 // MCContainerInfo holds info about a Minecraft container including its state.

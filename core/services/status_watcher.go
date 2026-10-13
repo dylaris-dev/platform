@@ -115,6 +115,13 @@ func (s *StatusWatcherService) scan() {
 	if s.consumeReconcileFailures(ctx) {
 		dirty = true
 	}
+	// And a server that stopped itself (stop in the console or in game): the
+	// node holds it down with stopped_by_server; landing it here stops the
+	// platform from intending to run it, so the panel shows it stopped and
+	// Start is the way back.
+	if s.consumeNodeHold(ctx, "stopped_by_server", "stopped", "it stopped itself (stop in the console or in game)") {
+		dirty = true
+	}
 
 	// The same idea for a version move the node refused to make: put back the
 	// columns Core wrote optimistically before dispatching it.
@@ -239,10 +246,17 @@ func (s *StatusWatcherService) syncPortsFromRedis(ctx context.Context) bool {
 // that is where an owner looks. Starting the server again clears the key on the
 // node side and is the deliberate retry.
 func (s *StatusWatcherService) consumeReconcileFailures(ctx context.Context) bool {
+	return s.consumeNodeHold(ctx, "reconcile_failed", "offline", "node gave up restarting it")
+}
+
+// consumeNodeHold lands a marker the node sets to hold a server down: the
+// server gets status, and the intent to run it is cleared. The key is left for
+// the node, which clears it on the next deliberate start.
+func (s *StatusWatcherService) consumeNodeHold(ctx context.Context, suffix, status, why string) bool {
 	var cursor uint64
 	changed := false
 	for {
-		keys, next, err := s.redis.Scan(ctx, cursor, "dylaris:server:*:reconcile_failed", 100).Result()
+		keys, next, err := s.redis.Scan(ctx, cursor, "dylaris:server:*:"+suffix, 100).Result()
 		if err != nil {
 			return changed
 		}
@@ -260,11 +274,21 @@ func (s *StatusWatcherService) consumeReconcileFailures(ctx context.Context) boo
 			if serr != nil || srv == nil {
 				continue
 			}
-			if srv.Status == "offline" && srv.DesiredState == "stopped" {
+			if srv.Status == status && srv.DesiredState == "stopped" {
 				continue // already landed; leave the key for the node to clear on a restart
 			}
-			log.Printf("Server %s: node gave up restarting it (%s) — marking offline and clearing the intent to run it", uuid, reason)
-			s.store.UpdateServerStatus(srv.ID, "offline")
+			// A move, an install or a copy owns the status while it runs, as it
+			// does in the main loop. A server stopped from the console keeps its
+			// marker until it next starts, so this would otherwise write over a
+			// move every scan and reopen power actions in the middle of it.
+			if srv.Status == "migrating" || srv.Status == "installing" {
+				continue
+			}
+			if n, _ := s.redis.Exists(ctx, NodeBusyKey(uuid)).Result(); n > 0 {
+				continue
+			}
+			log.Printf("Server %s: %s (%s) - marking %s and clearing the intent to run it", uuid, why, reason, status)
+			s.store.UpdateServerStatus(srv.ID, status)
 			s.store.UpdateServerDesiredState(srv.ID, "stopped")
 			changed = true
 		}

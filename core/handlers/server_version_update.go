@@ -636,6 +636,9 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	if refuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
+	if refuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
 	var req copySubServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)

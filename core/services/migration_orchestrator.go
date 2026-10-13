@@ -554,6 +554,16 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		queue.MigrationStatusKey(sourceNode.Token, srv.UUID), queue.MigrationMetaKey(sourceNode.Token, srv.UUID),
 		queue.MigrationStatusKey(targetNode.Token, srv.UUID), queue.MigrationMetaKey(targetNode.Token, srv.UUID))
 
+	// Not while the node installs, updates, copies or restores this server: the
+	// archive would hold half of it, and the source is deleted after cutover.
+	// Checked here as well as at enqueue, because the rebalancer queues too and
+	// a job can start in between.
+	if busy, _ := o.redis.Exists(ctx, NodeBusyKey(srv.UUID)).Result(); busy > 0 || srv.Status == "installing" {
+		log.Printf("migration %s: the node is working on the server, not moving it", srv.UUID)
+		writeStatus("failed", "the node is working on this server (install, update or restore); move it when that has finished")
+		return
+	}
+
 	// --- (c) Starting ---
 	writeStatus("starting", "")
 	preStatus := srv.Status

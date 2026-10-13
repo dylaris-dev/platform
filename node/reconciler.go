@@ -174,7 +174,9 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 			// recreating it from the saved config would race the installer over
 			// the same directory.
 			statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
-			if restartBlocked(ctx, rdb, storage, uuid) {
+			// A power action recreates the container remove-then-create; in that
+			// gap it looks deleted, and recreating it here raced the action.
+			if serverPowerActive(uuid) || restartBlocked(ctx, rdb, storage, uuid) {
 				continue
 			}
 
@@ -251,6 +253,11 @@ func restartBlocked(ctx context.Context, rdb *redis.Client, storage *StorageMana
 	if isDiskFull(ctx, rdb, uuid) {
 		return true
 	}
+	// A server that stopped itself. Holds even against a Core too old to land
+	// it as stopped, whose intent still reads "online".
+	if n, err := rdb.Exists(ctx, stoppedByServerKey(uuid)).Result(); err == nil && n > 0 {
+		return true
+	}
 	// A server this node staged a move of. Once Core sets it online for its NEW
 	// node, the desired state reads "online" here too, and this restarted the
 	// stopped source container on data the move's cleanup deletes moments
@@ -312,10 +319,20 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 			}
 
 			// Container is NOT running but desired_state is "online".
-			if restartBlocked(ctx, rdb, storage, c.UUID) {
+			if serverPowerActive(c.UUID) || restartBlocked(ctx, rdb, storage, c.UUID) {
 				continue
 			}
 			statusKey := fmt.Sprintf("dylaris:server:%s:status", c.UUID)
+
+			// It shut itself down cleanly while this node was watching: "stop"
+			// in the console or in game. That is a stop, not a crash.
+			if dm.stoppedItself(ctx, rdb, c.UUID) {
+				log.Printf("reconciler: mc_%s stopped itself cleanly (stop in the console or in game), leaving it stopped", c.UUID)
+				rdb.Set(ctx, stoppedByServerKey(c.UUID), "1", 0)
+				rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+				delete(tracker, c.UUID)
+				continue
+			}
 
 			// Initialize tracker if needed
 			info, exists := tracker[c.UUID]

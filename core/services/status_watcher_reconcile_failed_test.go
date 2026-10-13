@@ -94,3 +94,54 @@ func TestConsumeReconcileFailures_IgnoresServersWithoutTheKey(t *testing.T) {
 		t.Errorf("touched a healthy server: status=%+v desired=%+v", fs.statusCalls, fs.desiredCalls)
 	}
 }
+
+// "stop" typed in the console used to be restarted as a crash. The node now
+// marks a server that stopped itself, and Core lands it as STOPPED - not
+// offline, nothing failed - and stops intending to run it. The marker stays
+// for the node, which clears it on the next start.
+func TestConsumeNodeHold_LandsAServerThatStoppedItself(t *testing.T) {
+	fs := &reconcileFailedFakeStore{}
+	fs.serversByUUID = map[string]models.Server{
+		"srv-1": {ID: 1, UUID: "srv-1", Status: "restarting", DesiredState: "online"},
+	}
+	svc := newReconcileFailedTest(t, fs)
+	ctx := context.Background()
+	svc.redis.Set(ctx, "dylaris:server:srv-1:stopped_by_server", "1", 0)
+
+	// Through the scan tick, so a scan that stops consulting the marker fails.
+	svc.scan()
+	if len(fs.statusCalls) != 1 || fs.statusCalls[0] != (schedStatusCall{1, "stopped"}) {
+		t.Errorf("status calls = %+v, want one write of stopped", fs.statusCalls)
+	}
+	if len(fs.desiredCalls) != 1 || fs.desiredCalls[0] != (desiredCall{1, "stopped"}) {
+		t.Errorf("desired_state calls = %+v, want one write of stopped", fs.desiredCalls)
+	}
+	if n, _ := svc.redis.Exists(ctx, "dylaris:server:srv-1:stopped_by_server").Result(); n != 1 {
+		t.Error("Core removed the marker; the node clears it on the next start")
+	}
+}
+
+// A move or an install owns the status while it runs. A server stopped from the
+// console keeps its marker until it next starts, so landing it then wrote
+// "stopped" over the move every scan.
+func TestConsumeNodeHold_LeavesAMoveAlone(t *testing.T) {
+	for _, status := range []string{"migrating", "installing"} {
+		fs := &reconcileFailedFakeStore{}
+		fs.serversByUUID = map[string]models.Server{"srv-1": {ID: 1, UUID: "srv-1", Status: status, DesiredState: "online"}}
+		svc := newReconcileFailedTest(t, fs)
+		ctx := context.Background()
+		svc.redis.Set(ctx, "dylaris:server:srv-1:stopped_by_server", "1", 0)
+		if svc.consumeNodeHold(ctx, "stopped_by_server", "stopped", "it stopped itself") || len(fs.statusCalls) != 0 {
+			t.Fatalf("%s: overwritten with %+v", status, fs.statusCalls)
+		}
+	}
+	fs := &reconcileFailedFakeStore{}
+	fs.serversByUUID = map[string]models.Server{"srv-1": {ID: 1, UUID: "srv-1", Status: "stopped", DesiredState: "online"}}
+	svc := newReconcileFailedTest(t, fs)
+	ctx := context.Background()
+	svc.redis.Set(ctx, "dylaris:server:srv-1:stopped_by_server", "1", 0)
+	svc.redis.Set(ctx, NodeBusyKey("srv-1"), "installing", 0)
+	if svc.consumeNodeHold(ctx, "stopped_by_server", "stopped", "it stopped itself") {
+		t.Fatal("landed while the node was working on the server")
+	}
+}

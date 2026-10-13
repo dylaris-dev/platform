@@ -400,3 +400,28 @@ func TestAMoveWhoseConfigNeverReachedTheTargetSaysSo(t *testing.T) {
 		t.Errorf("status %q, want stopped", got)
 	}
 }
+
+// A move archives the directory and deletes the source after cutover. Run
+// beside a restore or an install it moved half a world; it now fails before
+// anything is stopped or staged.
+func TestAMoveWaitsForTheNodesOwnWorkOnTheServer(t *testing.T) {
+	for _, tc := range []struct {
+		name, status string
+		busy         bool
+	}{
+		{"the node holds it", "online", true},
+		{"it is installing", "installing", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, fs, sim, rdb := newFlow(t, tc.status)
+			if tc.busy {
+				rdb.Set(context.Background(), NodeBusyKey(fs.srv.UUID), "restarting", 0)
+			}
+			o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"})
+			time.Sleep(400 * time.Millisecond)
+			if fs.status() != tc.status || len(sim.commands(flowSourceToken, "stop")) != 0 || len(sim.commands(flowSourceToken, "migrate_out")) != 0 {
+				t.Fatalf("a busy server was moved: status %q", fs.status())
+			}
+		})
+	}
+}

@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.2
+
+### Features
+- **"stop" in the console or in game now stops your server** instead of restarting it. Start
+  brings it back. Your node picks this up by itself within 15 minutes. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Changing RAM, JVM flags or the sub-server saves your world first**; it used to stop the server
+  after 15 seconds, which a large modpack world may not finish saving in. `node`
+- **Setup, reinstall and deletes now wait while your server is being moved or restored**, so the
+  two can no longer write the same files at once.
+
 ## 2026.10.13
 
 ### Features
