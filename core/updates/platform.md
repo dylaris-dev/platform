@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A platform restore refuses the database Core is running on**, and the statistics database it
+  writes to; with overwrite it replaced the live platform with the snapshot. `core`
+- **Backup download links last five minutes** instead of an hour. `core`
+
+### Fixes
+- **A platform backup or restore started by hand keeps going when the browser tab closes**, and a
+  scheduled and a manual run of one job no longer run at the same time. `core`
+- **Editing a backup schedule no longer pushes its next run back**, unless the schedule itself
+  changed; lifecycle rules of two storages on one bucket no longer remove each other. `core`
+- A restore waits for a backup of the same server to finish, and a restore whose node just came
+  back is not marked failed while it is still about to run. `core` `node`
+
 ## 2026.10.13.5
 
 ### Features

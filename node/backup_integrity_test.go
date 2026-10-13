@@ -121,3 +121,21 @@ func TestSaveConfirmationAcrossVersions(t *testing.T) {
 		t.Fatal("waited on a console that does not know the save commands")
 	}
 }
+
+// A restore does not run while a backup of the same server archives it.
+func TestARestoreWaitsForABackupOfTheServer(t *testing.T) {
+	b, err := os.ReadFile("backup_restore.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `if backupsInFlight.has("server:" + cmd.ServerUUID) {`) {
+		t.Error("a restore runs beside a backup of the same server")
+	}
+	w, err := os.ReadFile("backup_worker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(w), "if restoreServersInFlight.has(cmd.ServerUUID) {") {
+		t.Error("a backup runs beside a restore of the same server")
+	}
+}

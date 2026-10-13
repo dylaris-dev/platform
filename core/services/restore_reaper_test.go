@@ -48,7 +48,9 @@ func TestAnAbandonedRestoreIsClosedButARunningOneIsNot(t *testing.T) {
 		// be a lie the node then overwrites a world under.
 		{ID: 3, ServerUUID: "offline-uuid", NodeID: 2, RequestedAt: now.Add(-7 * time.Hour)},
 	}}
-	b := &BackupScheduler{store: st, redis: rdb, nodeConnected: func(id int) bool { return id == 1 }}
+	b := &BackupScheduler{store: st, redis: rdb, nodeConnected: func(id int) bool { return id == 1 },
+		// Reachable for longer than the settle time already.
+		restoreNodeSeen: map[int]time.Time{1: now.Add(-time.Hour)}, restoreSeenPass: now.Add(-time.Minute)}
 	b.reapAbandonedRestores(context.Background(), now)
 
 	if len(st.closed) != 1 || st.closed[0] != 1 {
@@ -70,8 +72,48 @@ func TestTheSchedulerTickReapsRestores(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
 	st := &restoreReapStore{open: []models.AbandonedBackupRestore{{ID: 7, ServerUUID: "u", RequestedAt: time.Now().Add(-7 * time.Hour)}}}
-	(&BackupScheduler{store: st, redis: rdb, nodeConnected: func(int) bool { return true }}).tick(context.Background())
+	(&BackupScheduler{store: st, redis: rdb, nodeConnected: func(int) bool { return true },
+		restoreNodeSeen: map[int]time.Time{0: time.Now().Add(-time.Hour)}, restoreSeenPass: time.Now().Add(-time.Minute)}).tick(context.Background())
 	if len(st.closed) != 1 {
 		t.Fatalf("the tick closed %v", st.closed)
+	}
+}
+
+// A node that has just reconnected has not read its queue: no busy key says it
+// is restoring yet. The restore is closed only once the node has stayed
+// reachable past the settle time.
+func TestARestoreIsNotReapedRightAfterItsNodeReconnects(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	now := time.Now()
+	st := &restoreReapStore{open: []models.AbandonedBackupRestore{{ID: 1, ServerUUID: "u", NodeID: 1, RequestedAt: now.Add(-7 * time.Hour)}}}
+	b := &BackupScheduler{store: st, redis: rdb, nodeConnected: func(int) bool { return true }}
+	// One pass a minute, as the scheduler ticks.
+	for m := time.Duration(0); m < restoreReapSettle; m += time.Minute {
+		b.reapAbandonedRestores(context.Background(), now.Add(m))
+	}
+	if len(st.closed) != 0 {
+		t.Fatalf("closed %v right after the node reconnected", st.closed)
+	}
+	b.reapAbandonedRestores(context.Background(), now.Add(restoreReapSettle))
+	if len(st.closed) != 1 {
+		t.Fatalf("closed %v once the node had settled, want the restore", st.closed)
+	}
+}
+
+// A first-seen time left from an earlier stretch - this replica was not the
+// leader for a while - must not make a node that just reconnected look settled.
+func TestAStaleFirstSeenDoesNotSkipTheWait(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	now := time.Now()
+	st := &restoreReapStore{open: []models.AbandonedBackupRestore{{ID: 1, ServerUUID: "u", NodeID: 1, RequestedAt: now.Add(-7 * time.Hour)}}}
+	b := &BackupScheduler{store: st, redis: rdb, nodeConnected: func(int) bool { return true },
+		restoreNodeSeen: map[int]time.Time{1: now.Add(-3 * time.Hour)}, restoreSeenPass: now.Add(-2 * time.Hour)}
+	b.reapAbandonedRestores(context.Background(), now)
+	if len(st.closed) != 0 {
+		t.Fatalf("closed %v on a stale first-seen time", st.closed)
 	}
 }

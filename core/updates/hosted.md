@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Backup download links last five minutes** instead of an hour.
+
+### Fixes
+- **Editing a backup schedule no longer pushes its next run back**, unless you changed when it runs.
+- A restore waits for a running backup of the same server to finish, once your node runs this
+  release. `node`
+
 ## 2026.10.13.5
 
 ### Features

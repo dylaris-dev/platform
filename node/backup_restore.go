@@ -90,6 +90,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 	defer restoreServersInFlight.leave(cmd.ServerUUID)
+	// Not while a backup of the server is archiving it: the backup walks the
+	// tree this renames and then deletes, so it failed - and the backup's
+	// save-on at the end could land on the restored world mid-swap.
+	if backupsInFlight.has("server:" + cmd.ServerUUID) {
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "a backup of this server is running on its node; restore once it has finished")
+		return
+	}
 
 	started := time.Now()
 	storage := storageInfo{}

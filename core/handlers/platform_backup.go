@@ -19,6 +19,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-core/storage"
 	backupstorage "dylaris-core/storage/backup"
+	"dylaris-core/store"
 )
 
 // The platform's OWN backups, as opposed to a game server's.
@@ -186,7 +187,11 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, err.Error(), 500)
 		return
 	}
-	runID, rerr := runner.Run(r.Context(), job.ID)
+	// Not on the request's context: a closed tab or a proxy timeout cancelled
+	// it, killing pg_dump or the upload, and the run was recorded failed.
+	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(r.Context()), platformRunBudget)
+	defer cancelRun()
+	runID, rerr := runner.Run(runCtx, job.ID)
 	if runID != 0 {
 		// A run was opened, so the job ran: record it, and arm a job that has
 		// no next run, but keep a planned slot. A refusal before any run (no
@@ -198,7 +203,8 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 	if rerr != nil {
 		status := 500
 		if errors.Is(rerr, services.ErrNoBackupPassphrase) ||
-			errors.Is(rerr, models.ErrEmptyPlatformBackupSelection) {
+			errors.Is(rerr, models.ErrEmptyPlatformBackupSelection) ||
+			errors.Is(rerr, store.ErrPlatformRunInProgress) {
 			// A refusal by policy is the system working. Answering 500 puts it
 			// in the same bucket as a broken queue, which is what alerting and
 			// any API client key off.
@@ -528,3 +534,8 @@ func (h *PlatformBackupHandler) loadJob(w http.ResponseWriter, r *http.Request) 
 	}
 	return job, true
 }
+
+// platformRunBudget bounds a platform backup or restore started by hand, now
+// that it outlives the request: under the six hours after which a run still
+// "running" is taken for one a stopped Core left behind.
+const platformRunBudget = 3 * time.Hour

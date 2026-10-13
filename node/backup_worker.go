@@ -309,6 +309,12 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	// world saving back on under this one's archive. Core starts one per
 	// server; this is a node that queued several while it was away.
 	serverKey := "server:" + cmd.ServerUUID
+	// Not while a restore swaps the server's directory: the archive would
+	// hold a half-swapped tree. The restore refuses the other way round.
+	if restoreServersInFlight.has(cmd.ServerUUID) {
+		reportBackup(ctx, rdb, cmd.RunID, "failed", "a restore of this server was running on the node", 0)
+		return
+	}
 	if !backupsInFlight.enter(serverKey) {
 		log.Printf("backup_run: run %s refused, another backup of server %s is running", key, cmd.ServerUUID)
 		reportBackup(ctx, rdb, cmd.RunID, "failed", "another backup of this server was still running on the node", 0)

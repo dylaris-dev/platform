@@ -28,10 +28,16 @@ import (
 // pushes commands directly to Redis (mirroring handlers.startBackupRun
 // without the HTTP-specific bits) to avoid an import cycle with handlers.
 type BackupScheduler struct {
-	store    store.Store
-	redis    *redis.Client
-	queue    *QueueService      // publishes backup_run to the node's :cmds stream (BC1)
-	registry *nodegrpc.Registry // optional — required only for node-local retention deletes
+	// restoreNodeSeen is when the reaper first saw a node reachable, per node,
+	// while it held a restore past the deadline (see reapAbandonedRestores).
+	restoreNodeSeen map[int]time.Time
+	// restoreSeenPass is when that map was last brought up to date; a map older
+	// than a couple of passes (this replica was not the leader) is not trusted.
+	restoreSeenPass time.Time
+	store           store.Store
+	redis           *redis.Client
+	queue           *QueueService      // publishes backup_run to the node's :cmds stream (BC1)
+	registry        *nodegrpc.Registry // optional — required only for node-local retention deletes
 	// nodeConnected overrides registry.IsConnected, for tests.
 	nodeConnected func(nodeID int) bool
 	leader        leader.Election
@@ -492,8 +498,35 @@ func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Ti
 		logErrf("backup-scheduler", "listing abandoned restores failed: %v", err)
 		return
 	}
+	// Rebuilt each pass, keeping only nodes that hold an overdue restore and
+	// are reachable now: an entry left from an earlier stretch (a restore since
+	// closed, a leadership that moved away and back) would make a node that
+	// has only just reconnected look settled.
+	prev := b.restoreNodeSeen
+	if now.Sub(b.restoreSeenPass) > restoreReapSettle/2 {
+		prev = nil
+	}
+	b.restoreSeenPass = now
+	b.restoreNodeSeen = map[int]time.Time{}
 	for _, r := range restores {
 		if !b.nodeReachable(r.NodeID, r.NodeStatus, false) {
+			continue
+		}
+		if t, ok := prev[r.NodeID]; ok {
+			if _, kept := b.restoreNodeSeen[r.NodeID]; !kept {
+				b.restoreNodeSeen[r.NodeID] = t
+			}
+		}
+		// A node that has just reconnected has not read its queue yet, so no
+		// busy key says it is restoring: closing the restore then told the
+		// customer "failed, restore again" while the node went on to replace
+		// the world. It has to stay reachable for a few minutes first.
+		seen, ok := b.restoreNodeSeen[r.NodeID]
+		if !ok {
+			b.restoreNodeSeen[r.NodeID] = now
+			continue
+		}
+		if now.Sub(seen) < restoreReapSettle {
 			continue
 		}
 		busy, err := b.redis.Exists(ctx, fmt.Sprintf("dylaris:server:%s:node_busy", r.ServerUUID)).Result()
@@ -512,6 +545,10 @@ func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Ti
 		}
 	}
 }
+
+// restoreReapSettle is how long a node must stay reachable before a restore it
+// holds past the deadline is closed as lost.
+const restoreReapSettle = 5 * time.Minute
 
 // How long a run may sit at "running" before it is treated as abandoned.
 //

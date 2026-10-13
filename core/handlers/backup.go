@@ -584,7 +584,12 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	if h.refuseUnusableStorage(w, next.ServerID, next.StorageID) {
 		return
 	}
-	next.NextRunAt = services.ComputeBackupNextRun(next.Schedule, time.Now())
+	// Re-armed only when WHEN it runs changed. Every edit used to restart the
+	// interval from now, so a daily job renamed or given a new retention every
+	// day never ran.
+	if next.Schedule != job.Schedule || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {
+		next.NextRunAt = services.ComputeBackupNextRun(next.Schedule, time.Now())
+	}
 	if err := h.state.Store.UpdateBackupJob(&next); err != nil {
 		log.Printf("update backup job %d: %v", jobID, err)
 		sendJSONError(w, "Failed to update the backup job", 500)
@@ -710,7 +715,9 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prefer pre-signed URL when supported (S3) — keeps Core out of the data path.
-	if url, _ := provider.DownloadURL(r.Context(), run.StorageKey, time.Hour); url != "" {
+	// Short-lived: the browser follows the redirect at once, and an hour let a
+	// member whose backups access was just withdrawn keep downloading.
+	if url, _ := provider.DownloadURL(r.Context(), run.StorageKey, backupDownloadURLTTL); url != "" {
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
@@ -1320,3 +1327,6 @@ func (r *stringReader) Read(p []byte) (int, error) {
 	r.off += n
 	return n, nil
 }
+
+// backupDownloadURLTTL is how long a presigned backup download link works.
+const backupDownloadURLTTL = 5 * time.Minute

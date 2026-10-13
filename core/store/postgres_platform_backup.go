@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"dylaris-core/models"
@@ -220,15 +221,41 @@ func scanPlatformBackupRun(sc interface{ Scan(...any) error }) (*models.Platform
 	return &r, nil
 }
 
+// ErrPlatformRunInProgress refuses a second run of a job while one is running.
+var ErrPlatformRunInProgress = errors.New("a run of this platform backup is already in progress")
+
 // CreatePlatformBackupRun opens a run. The storage is recorded at the START,
 // because it is where the archive is about to go, and a storage that is deleted
 // later must not turn a finished run into one that went nowhere.
+//
+// Unless one of the job is still running:
+// the scheduler (leadership is checked once per tick) and a manual run on any
+// replica could start the same job twice - two bundles, two prunes, twice the
+// load on the database. The advisory lock makes the check-and-insert atomic
+// across replicas.
 func (s *PostgresStore) CreatePlatformBackupRun(jobID int, storageID *int) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(7311, $1)`, jobID); err != nil {
+		return 0, err
+	}
 	var id int
-	err := s.db.QueryRow(
-		`INSERT INTO platform_backup_runs (job_id, storage_id) VALUES ($1, $2) RETURNING id`,
+	err = tx.QueryRow(
+		`INSERT INTO platform_backup_runs (job_id, storage_id)
+		 SELECT $1, $2
+		 WHERE NOT EXISTS (SELECT 1 FROM platform_backup_runs WHERE job_id = $1 AND status = 'running')
+		 RETURNING id`,
 		jobID, nullableInt(storageID)).Scan(&id)
-	return id, err
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrPlatformRunInProgress
+	}
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
 // FinishPlatformBackupRun closes a run with everything it learned.

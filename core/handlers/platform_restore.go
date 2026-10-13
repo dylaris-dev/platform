@@ -197,7 +197,12 @@ func (h *PlatformBackupHandler) runRestore(w http.ResponseWriter, r *http.Reques
 		defer cleanup()
 	}
 
-	res, rerr := restorer.Restore(r.Context(), src, req.Passphrase, req.Components, req.Overwrite)
+	// Not on the request's context, for the reason RunJob gives: a closed tab
+	// stopped pg_restore halfway, which the single transaction rolls back - a
+	// lost restore all the same.
+	restoreCtx, cancelRestore := context.WithTimeout(context.WithoutCancel(r.Context()), platformRunBudget)
+	defer cancelRestore()
+	res, rerr := restorer.Restore(restoreCtx, src, req.Passphrase, req.Components, req.Overwrite)
 	if rerr != nil {
 		status := 500
 		switch {
@@ -247,6 +252,28 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 		// Two dumps into one database: the second either fails on the first's
 		// tables or, with overwrite, drops them.
 		return nil, nil, errors.New("the statistics database and the platform database must be restored into two different databases")
+	}
+	// Never over the databases this Core runs on. With overwrite the restore
+	// is --clean --single-transaction: it replaces the live platform with the
+	// snapshot and everything since is gone. The comment promising this held
+	// had no check behind it. Compared by host, port and name, so an alias for
+	// the same server is not caught; that is the operator's to get right.
+	// Each target against BOTH live databases: a statistics restore aimed at
+	// the platform database destroys it just as well.
+	var liveDBs []services.DBConnParams
+	if h.state.PlatformDB.Name != "" {
+		liveDBs = append(liveDBs, services.DBConnParams{Host: h.state.PlatformDB.Host, Port: h.state.PlatformDB.Port, DBName: h.state.PlatformDB.Name})
+	}
+	if h.state.Store != nil {
+		if m := services.LoadMetricsDBTarget(h.state.Store); m.Configured() {
+			liveDBs = append(liveDBs, services.DBConnParams{Host: m.Host, Port: m.Port, DBName: m.DBName})
+		}
+	}
+	for _, live := range liveDBs {
+		if (req.Components.Database && sameDatabase(req.Target.params(), live)) ||
+			(req.Components.MetricsDB && sameDatabase(req.MetricsTarget.params(), live)) {
+			return nil, nil, errors.New("that is a database this Core is running on; restore into a different one and point Core at it once it is checked")
+		}
 	}
 	if req.Components.MetricsDB {
 		mdb, err := h.wireMetricsRestore(ctx, rst, req.MetricsTarget)

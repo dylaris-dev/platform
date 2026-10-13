@@ -29,22 +29,34 @@ func TestMergeLifecycleRules(t *testing.T) {
 		ID: aws.String("Default Multipart Abort Rule"), Status: types.ExpirationStatusEnabled,
 		AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(7)},
 	}
+	// Written before rule IDs carried the folder: same folder, plain ID.
 	staleOurs := types.LifecycleRule{
 		ID: aws.String(LifecycleRuleAbortMultipart), Status: types.ExpirationStatusEnabled,
+		Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String("pfx/")},
 		AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(9)},
 	}
+	// Another storage on the same bucket. Applying this storage's rules used to
+	// remove it, because every Core rule counted as "ours".
+	otherStorage := types.LifecycleRule{
+		ID: aws.String(lifecycleRuleID(LifecycleRuleAbortMultipart, "other/")), Status: types.ExpirationStatusEnabled,
+		Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String("other/")},
+		AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(3)},
+	}
 	ours := DylarisLifecycleRules("pfx/", 2)
+	abort, expiry := lifecycleRuleID(LifecycleRuleAbortMultipart, "pfx/"), lifecycleRuleID(LifecycleRuleMigrationExpiry, "pfx/")
 
 	cases := []struct {
 		name     string
 		existing []types.LifecycleRule
 		want     []string
 	}{
-		{"empty bucket", nil, []string{LifecycleRuleAbortMultipart, LifecycleRuleMigrationExpiry}},
+		{"empty bucket", nil, []string{abort, expiry}},
 		{"keeps foreign rules in order", []types.LifecycleRule{foreign, r2Default},
-			[]string{"customer-logs", "Default Multipart Abort Rule", LifecycleRuleAbortMultipart, LifecycleRuleMigrationExpiry}},
+			[]string{"customer-logs", "Default Multipart Abort Rule", abort, expiry}},
 		{"replaces an old copy of ours", []types.LifecycleRule{staleOurs, foreign},
-			[]string{"customer-logs", LifecycleRuleAbortMultipart, LifecycleRuleMigrationExpiry}},
+			[]string{"customer-logs", abort, expiry}},
+		{"keeps another storage's rules", []types.LifecycleRule{otherStorage, foreign},
+			[]string{aws.ToString(otherStorage.ID), "customer-logs", abort, expiry}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,7 +65,7 @@ func TestMergeLifecycleRules(t *testing.T) {
 				t.Fatalf("ids = %v, want %v", ruleIDs(got), tc.want)
 			}
 			for _, r := range got {
-				if aws.ToString(r.ID) == LifecycleRuleAbortMultipart && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) != 3 {
+				if aws.ToString(r.ID) == abort && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) != 3 {
 					t.Fatal("the stale copy of our rule survived the merge")
 				}
 				if aws.ToString(r.ID) == "customer-logs" && !reflect.DeepEqual(r, foreign) {

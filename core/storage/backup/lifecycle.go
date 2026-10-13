@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -116,14 +118,14 @@ func MigrationExpiryDays(urlTTL time.Duration) int32 {
 // is the storage's KeyPrefix; empty means the whole bucket.
 func DylarisLifecycleRules(keyPrefix string, migrationExpiryDays int32) []types.LifecycleRule {
 	rules := []types.LifecycleRule{{
-		ID:                             aws.String(LifecycleRuleAbortMultipart),
+		ID:                             aws.String(lifecycleRuleID(LifecycleRuleAbortMultipart, keyPrefix)),
 		Status:                         types.ExpirationStatusEnabled,
 		Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String(keyPrefix)},
 		AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(abortMultipartDays)},
 	}}
 	if migrationExpiryDays > 0 {
 		rules = append(rules, types.LifecycleRule{
-			ID:         aws.String(LifecycleRuleMigrationExpiry),
+			ID:         aws.String(lifecycleRuleID(LifecycleRuleMigrationExpiry, keyPrefix)),
 			Status:     types.ExpirationStatusEnabled,
 			Filter:     &types.LifecycleRuleFilter{Prefix: aws.String(keyPrefix + MigrationTransferDir)},
 			Expiration: &types.LifecycleExpiration{Days: aws.Int32(migrationExpiryDays)},
@@ -132,13 +134,35 @@ func DylarisLifecycleRules(keyPrefix string, migrationExpiryDays int32) []types.
 	return rules
 }
 
-// MergeLifecycleRules keeps every rule of existing that is not ours, in its
-// order, and appends ours. Applying it twice gives the same document, so the
-// admin action can be pressed again without stacking duplicates.
+// lifecycleRuleID names a rule per storage folder. Two storages on one bucket
+// with different prefixes used to share one ID, and applying the rules for
+// one dropped the other's. A whole-bucket storage keeps the plain ID.
+func lifecycleRuleID(base, keyPrefix string) string {
+	if keyPrefix == "" {
+		return base
+	}
+	sum := sha1.Sum([]byte(keyPrefix))
+	return base + "-" + hex.EncodeToString(sum[:4])
+}
+
+// MergeLifecycleRules keeps every rule of existing that is not one of ours, in
+// its order, and appends ours. "Ours" is a Core rule with one of these IDs or
+// over one of these folders (which also replaces a rule written before IDs
+// carried the folder) - not every Core rule, which removed the rules of the
+// other storages on the same bucket. Applying it twice gives the same
+// document, so the admin action can be pressed again without stacking
+// duplicates.
 func MergeLifecycleRules(existing, ours []types.LifecycleRule) []types.LifecycleRule {
+	ids, prefixes := map[string]bool{}, map[string]bool{}
+	for _, r := range ours {
+		ids[aws.ToString(r.ID)] = true
+		if r.Filter != nil {
+			prefixes[aws.ToString(r.Filter.Prefix)] = true
+		}
+	}
 	out := make([]types.LifecycleRule, 0, len(existing)+len(ours))
 	for _, r := range existing {
-		if IsDylarisLifecycleRule(r) {
+		if IsDylarisLifecycleRule(r) && (ids[aws.ToString(r.ID)] || (r.Filter != nil && prefixes[aws.ToString(r.Filter.Prefix)])) {
 			continue
 		}
 		out = append(out, r)

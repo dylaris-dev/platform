@@ -541,11 +541,24 @@ func (s *PostgresStore) CreateBackupRun(r *models.BackupRun) (int, error) {
 // StartBackupRunIfIdle creates a running run for a job only while no job of
 // the same SERVER has a run in progress, and reports whether it did. Per job,
 // a "full" and a "world" job due together ran side by side, and the first to
-// finish switched world saving back on under the other's archive. One
-// statement, so a check made beforehand cannot be overtaken.
+// finish switched world saving back on under the other's archive. Checked and
+// inserted under a per-server advisory lock, so a check made beforehand cannot
+// be overtaken.
 func (s *PostgresStore) StartBackupRunIfIdle(r *models.BackupRun) (int, bool, error) {
+	// The check-and-insert alone is not atomic under READ COMMITTED: two starts
+	// at once (a double click on two replicas, a manual run beside the
+	// scheduler) both saw no running row and both inserted. A lock per server
+	// for the length of this transaction serialises them.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(7312, (SELECT server_id FROM backup_jobs WHERE id = $1))`, r.JobID); err != nil {
+		return 0, false, err
+	}
 	var id int
-	err := s.db.QueryRow(
+	err = tx.QueryRow(
 		`INSERT INTO backup_runs (job_id, status, storage_key, storage_id)
 		 SELECT $1, $2, $3, $4
 		 WHERE NOT EXISTS (
@@ -558,7 +571,13 @@ func (s *PostgresStore) StartBackupRunIfIdle(r *models.BackupRun) (int, bool, er
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
-	return id, err == nil, err
+	if err != nil {
+		return 0, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
 }
 
 func (s *PostgresStore) UpdateBackupRunStatus(id int, status, errorMsg string, sizeBytes int64, storageKey string, completed time.Time) error {
