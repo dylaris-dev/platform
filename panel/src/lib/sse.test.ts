@@ -146,11 +146,11 @@ describe('subscribeEventSource resume', () => {
 
 describe('replayed lines', () => {
     it('are not shown twice', () => {
-        let lines = appendLive([], { key: '7-0', text: 'a' }, true);
-        lines = appendLive(lines, { key: '8-0', text: 'b' }, true);
+        let lines = appendLive([], [{ key: '7-0', text: 'a' }]);
+        lines = appendLive(lines, [{ key: '8-0', text: 'b' }]);
         // A resume after 7-0 replays 8-0 again before the new line.
-        lines = appendLive(lines, { key: '8-0', text: 'b' }, true);
-        lines = appendLive(lines, { key: '9-0', text: 'c' }, true);
+        lines = appendLive(lines, [{ key: '8-0', text: 'b' }]);
+        lines = appendLive(lines, [{ key: '9-0', text: 'c' }]);
         expect(lines.map(l => l.key)).toEqual(['7-0', '8-0', '9-0']);
     });
 });

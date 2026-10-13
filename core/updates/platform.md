@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The console no longer freezes the browser when a server spams its log.** New lines are drawn
+  in batches, and a repeated message shows once with a count instead of filling the view. `core` `panel`
+- While you are scrolled up, new lines wait behind the "new lines" button instead of growing the
+  console without limit. `panel`
+
 ## 2026.10.13.6
 
 ### Features

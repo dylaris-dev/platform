@@ -1,6 +1,6 @@
-// Console line buffer for ConsoleView. Pure so the merge rules can be tested:
-// the view must stay still while the reader is scrolled up, which means no
-// trimming at the top unless the view is following the bottom.
+// Console line buffer for ConsoleView. Pure so the merge rules can be tested.
+// Live lines are only appended while the view follows the bottom; while the
+// reader is scrolled up they collect in a second buffer built the same way.
 
 import { computeLineLevels, type Level } from './consoleLog';
 
@@ -11,13 +11,22 @@ export interface ConsoleLine {
     key: string;
     text: string;
     level: Level;
+    // Set once repeats were folded into this row: how many lines it stands
+    // for, and the newest one's key. text is then the newest line's.
+    count?: number;
+    lastKey?: string;
 }
 
-// Lines kept while following. While scrolled up nothing is dropped, so the
-// buffer may grow past this until the reader returns to the bottom.
+// Rows kept, in the shown buffer and in the held one.
 export const CONSOLE_FOLLOW_CAP = 5000;
 
-export function levelled(entries: { key: string; text: string }[], previous?: Level): ConsoleLine[] {
+// What two repeats of one message differ in: the time, and the worker thread
+// (a spam from two threads alternates between them). The level stays.
+// Forge/vanilla: [20:51:01] [Server thread/WARN] ...; Paper: [20:51:01 WARN]: ...
+const PREFIX = /^(?:\x1b\[[0-9;]*m)*\[\d{2}:\d{2}:\d{2}(?: ([A-Z]+))?\]\s*(?:\[.*?\/([A-Z]+)\])?/;
+const message = (text: string) => text.replace(PREFIX, (_m, a = '', b = '') => `${a}${b}|`);
+
+export function levelled<E extends { key: string; text: string }>(entries: E[], previous?: Level): (E & { level: Level })[] {
     const levels = computeLineLevels(entries.map(e => e.text), previous);
     return entries.map((e, i) => ({ ...e, level: levels[i] }));
 }
@@ -47,24 +56,52 @@ export function oldestStreamId(lines: ConsoleLine[]): string {
 
 function newestStreamId(lines: ConsoleLine[]): string {
     for (let i = lines.length - 1; i >= 0; i--) {
-        if (isStreamId(lines[i].key)) return lines[i].key;
+        const k = lines[i].lastKey ?? lines[i].key;
+        if (isStreamId(k)) return k;
     }
     return '';
 }
 
-// appendLive adds one live line. Its level continues from the last line, so
-// only the new line is levelled. A line whose stream ID is not newer than the
-// buffer's newest is already there: history fetched after the stream opened
-// can hold it before its live event lands.
-export function appendLive(prev: ConsoleLine[], entry: { key: string; text: string }, follow: boolean): ConsoleLine[] {
-    if (isStreamId(entry.key)) {
-        const newest = newestStreamId(prev);
-        if (newest && compareStreamIds(entry.key, newest) <= 0) return prev;
-    } else if (prev.length > 0 && prev[prev.length - 1].key === entry.key) {
-        return prev;
+type Entry = { key: string; text: string; count?: number; lastKey?: string };
+
+// appendLive adds a batch of live lines, or of rows already folded in the
+// held buffer, with one copy of the buffer, and trims it to the cap. A line
+// continues the level of the row before it. A line whose stream ID is not
+// newer than the buffer's newest is already there: history fetched after the
+// stream opened can hold it before its live event lands. A line repeating
+// the last row, time and thread aside, is folded into it as a count, so a
+// spam is one row instead of the whole buffer. Only the last row: folding
+// further back would show lines out of the order they were printed in.
+export function appendLive(prev: ConsoleLine[], entries: Entry[]): ConsoleLine[] {
+    let next: ConsoleLine[] | null = null;
+    for (const entry of entries) {
+        const rows: ConsoleLine[] = next ?? prev;
+        const last = rows[rows.length - 1];
+        if (isStreamId(entry.key)) {
+            const newest = newestStreamId(rows);
+            if (newest && compareStreamIds(entry.key, newest) <= 0) continue;
+        } else if (last && (last.lastKey ?? last.key) === entry.key) {
+            continue;
+        }
+        next ??= prev.slice();
+        if (last && message(last.text) === message(entry.text)) {
+            next[next.length - 1] = {
+                ...last,
+                text: entry.text,
+                count: (last.count ?? 1) + (entry.count ?? 1),
+                lastKey: entry.lastKey ?? entry.key,
+            };
+        } else {
+            next.push(levelled([entry], last?.level)[0]);
+        }
     }
-    const next = [...prev, ...levelled([entry], prev[prev.length - 1]?.level)];
-    return follow && next.length > CONSOLE_FOLLOW_CAP ? next.slice(-CONSOLE_FOLLOW_CAP) : next;
+    if (!next) return prev;
+    return next.length > CONSOLE_FOLLOW_CAP ? next.slice(-CONSOLE_FOLLOW_CAP) : next;
+}
+
+// heldLines is how many lines a held buffer stands for.
+export function heldLines(rows: ConsoleLine[]): number {
+    return rows.reduce((n, r) => n + (r.count ?? 1), 0);
 }
 
 // mergeOrdered joins an older block in front of a newer one, dropping lines

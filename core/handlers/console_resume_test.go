@@ -160,3 +160,35 @@ func getConsoleHistoryRaw(t *testing.T, h *ConsoleHandler, query string) (int, s
 	h.GetHistory(rw, req)
 	return rw.Code, rw.Body.String()
 }
+
+type flushCounter struct {
+	*httptest.ResponseRecorder
+	flushes int
+}
+
+func (f *flushCounter) Flush() { f.flushes++ }
+
+// A burst read from Redis goes out in one flush: one per line turned a log
+// spam into one write per line all the way to the browser.
+func TestStreamConsoleFlushesOncePerRead(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	seedConsole(t, rdb, 10)
+	h := NewConsoleHandler(&AppState{Store: consoleHistoryFakeStore{}, Redis: rdb})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/servers/7/console/stream?after=1-0", nil).WithContext(ctx)
+	req = mux.SetURLVars(req, map[string]string{"id": "7"})
+	rw := &flushCounter{ResponseRecorder: httptest.NewRecorder()}
+	h.StreamConsole(rw, req)
+
+	if !strings.Contains(rw.Body.String(), "id: 10-0\n") {
+		t.Fatalf("burst not replayed: %q", rw.Body.String())
+	}
+	// The burst, plus at most one keepalive before the deadline.
+	if rw.flushes < 1 || rw.flushes > 2 {
+		t.Fatalf("%d flushes for a 9-line burst, want 1 (+1 keepalive)", rw.flushes)
+	}
+}

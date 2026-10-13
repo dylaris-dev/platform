@@ -248,14 +248,16 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// One flush per read: flushing per line turned a log spam into one
+		// write, and one packet, per line.
 		for _, stream := range results {
 			for _, msg := range stream.Messages {
 				line, _ := msg.Values["line"].(string)
 				fmt.Fprintf(w, "id: %s\ndata: %s\n\n", msg.ID, sseEscape(line))
-				flusher.Flush()
 				lastID = msg.ID
 			}
 		}
+		flusher.Flush()
 	}
 }
 

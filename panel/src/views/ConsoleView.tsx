@@ -5,7 +5,7 @@ import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { subscribeEventSource, type StreamStatus, type Subscription } from '@/lib/sse';
 import { levelClass, type Level } from '@/lib/consoleLog';
-import { appendLive, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
+import { appendLive, heldLines, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
 import { Power, Send, Cpu, MemoryStick, ArrowDown, RefreshCw } from 'lucide-react';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
@@ -52,13 +52,22 @@ function parseAnsiLine(line: string): React.ReactNode {
 }
 
 // Memoised so a new line renders one row, not every row in a 5000-line buffer.
-const ConsoleRow = memo(function ConsoleRow({ text, level }: { text: string; level: Level }) {
+const ConsoleRow = memo(function ConsoleRow({ text, level, count }: { text: string; level: Level; count?: number }) {
   return (
     <div className={`whitespace-pre-wrap break-all leading-5 ${levelClass(level)}`}>
       {parseAnsiLine(text)}
+      {count !== undefined && count > 1 && (
+        <span className="ml-2 px-1.5 rounded bg-(--base-03) text-xs text-(--base-08)" title={`Repeated ${count} times`}>
+          &times;{count.toLocaleString()}
+        </span>
+      )}
     </div>
   );
 });
+
+// Live lines are applied in batches: one render per line kept the browser
+// busy for as long as a server spammed its console.
+const LIVE_BATCH_MS = 100;
 
 interface HistoryPage { lines?: string[]; ids?: string[]; more?: boolean; trimmed?: boolean }
 
@@ -118,6 +127,11 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   // down on every line made scrolling up to read anything impossible.
   const followRef = useRef(true);
   const [following, setFollowing] = useState(true);
+  // Lines that arrived while the reader was scrolled up, folded and capped
+  // like the shown buffer. Held instead of appended, so the text under the
+  // reader stays still; released when they return to the bottom.
+  const heldRef = useRef<ConsoleLine[]>([]);
+  const [heldCount, setHeldCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
 
@@ -151,18 +165,33 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     anchorRef.current = null;
     followRef.current = true;
     setFollowing(true);
+    heldRef.current = [];
+    setHeldCount(0);
     const pendingLines: ConsoleLine[] = [];
     let historyLoaded = false;
+    let batch: { key: string; text: string }[] = [];
+    let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushBatch = () => {
+      batchTimer = null;
+      const entries = batch;
+      batch = [];
+      if (followRef.current) {
+        setLines(prev => appendLive(prev, entries));
+      } else {
+        heldRef.current = appendLive(heldRef.current, entries);
+        setHeldCount(heldLines(heldRef.current));
+      }
+    };
 
     const subParam = activeSubServer ? `?sub_server=${encodeURIComponent(activeSubServer)}` : '';
     const push = (entry: { key: string; text: string }) => {
       if (!historyLoaded) {
         pendingLines.push({ ...entry, level: 'info' }); // re-levelled on merge
-      } else {
-        // Trimmed only while following: dropping lines above a reader who is
-        // scrolled up slides the text under them.
-        setLines(prev => appendLive(prev, entry, followRef.current));
+        return;
       }
+      batch.push(entry);
+      batchTimer ??= setTimeout(flushBatch, LIVE_BATCH_MS);
     };
     // A reopened stream resumes after the last line received (?after=), and
     // appendLive drops anything replayed that is already shown.
@@ -192,6 +221,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
       .catch(() => settle([]));
 
     return () => {
+      if (batchTimer) clearTimeout(batchTimer);
       stopStream();
       if (streamRef.current === stopStream) streamRef.current = null;
     };
@@ -244,7 +274,16 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     followRef.current = atBottom;
     setFollowing(atBottom);
+    if (atBottom) releaseHeld();
     if (el.scrollTop < 50 && !atBottom) loadOlder();
+  };
+
+  const releaseHeld = () => {
+    const held = heldRef.current;
+    if (held.length === 0) return;
+    heldRef.current = [];
+    setHeldCount(0);
+    setLines(prev => appendLive(prev, held));
   };
 
   const jumpToBottom = () => {
@@ -252,6 +291,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     if (!el) return;
     followRef.current = true;
     setFollowing(true);
+    releaseHeld();
     // At once: a smooth scroll fires scroll events short of the bottom, which
     // switched following off again while new lines kept arriving.
     el.scrollTop = el.scrollHeight;
@@ -390,7 +430,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
                 {older === 'loading' ? 'Loading older lines...' : older === 'start' ? (startTrimmed ? 'Start of retained history (last 5000 lines)' : 'Start of log') : ''}
               </p>
             )}
-            {lines.map(line => <ConsoleRow key={line.key} text={line.text} level={line.level} />)}
+            {lines.map(line => <ConsoleRow key={line.key} text={line.text} level={line.level} count={line.count} />)}
           </>
         )}
       </div>
@@ -402,7 +442,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
           title="Jump to the newest output"
         >
           <ArrowDown size={13} />
-          Latest output
+          {heldCount > 0 ? `${heldCount.toLocaleString()} new ${heldCount === 1 ? 'line' : 'lines'}` : 'Latest output'}
         </button>
       )}
       </div>
