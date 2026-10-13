@@ -155,6 +155,17 @@ func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, server
 // hash to Redis. Distinct from migrate_storage above, which moves between local
 // storage paths on the same node.
 func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, serverUUID, attempt string) error {
+	return q.sendAttemptCommand(ctx, nodeToken, "migrate_out", serverUUID, attempt)
+}
+
+// SendMigrateDiscardCommand tells a move's target to drop the copy that one
+// attempt brought; the attempt is what keeps a late discard off a later
+// attempt's copy.
+func (q *QueueService) SendMigrateDiscardCommand(ctx context.Context, nodeToken, serverUUID, attempt string) error {
+	return q.sendAttemptCommand(ctx, nodeToken, "migrate_discard", serverUUID, attempt)
+}
+
+func (q *QueueService) sendAttemptCommand(ctx context.Context, nodeToken, action, serverUUID, attempt string) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateOutCmd struct {
@@ -163,14 +174,14 @@ func (q *QueueService) SendMigrateOutCommand(ctx context.Context, nodeToken, ser
 		Attempt string                 `json:"attempt,omitempty"`
 	}
 	cmd := migrateOutCmd{
-		Action:  "migrate_out",
+		Action:  action,
 		Config:  map[string]interface{}{"uuid": serverUUID},
 		Attempt: attempt,
 	}
 
 	jsonData, err := json.Marshal(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to marshal migrate_out command: %w", err)
+		return fmt.Errorf("failed to marshal %s command: %w", action, err)
 	}
 	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
 	return err

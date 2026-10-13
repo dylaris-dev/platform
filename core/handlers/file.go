@@ -164,7 +164,12 @@ func (h *FileHandler) refuseSuspendedWrite(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	srv, err := h.state.Store.GetServerByUUID(serverUUID)
-	return err == nil && refuseIfSuspended(w, r, h.state, srv)
+	if err != nil {
+		return false
+	}
+	// A move archives the directory and deletes it on the source after
+	// cutover: a file written meanwhile was lost without a word.
+	return refuseIfSuspended(w, r, h.state, srv) || refuseIfMoving(w, r, srv)
 }
 
 // getServerUUIDRead is getServerUUID for read-only operations (list + view file

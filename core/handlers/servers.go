@@ -45,7 +45,10 @@ type CreateServerRequest struct {
 	IsFixed    *bool    `json:"isFixed"`
 	ServerType string   `json:"serverType"`
 	AutoMove   bool     `json:"autoMove"` // opt-in to load-balancing migrations
-	Docker     struct {
+	// StoragePath picks one of the node's storage paths; empty lets the node
+	// choose. The node accepts only a path it has.
+	StoragePath string `json:"storagePath"`
+	Docker      struct {
 		RAM       int     `json:"ram"`
 		CPULimit  float64 `json:"cpuLimit"`
 		DiskLimit int64   `json:"diskLimit"`

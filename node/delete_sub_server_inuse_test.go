@@ -104,3 +104,24 @@ func TestDeleteSubServerReportsStoppedOnlyAfterATeardown(t *testing.T) {
 		t.Error("the teardown no longer records that it ran")
 	}
 }
+
+// Deleting the active sub-server removes its container, and Core records the
+// server as not set up. The node reported "stopped", which offered a Start with
+// nothing to start.
+func TestDeletingTheActiveSubServerReportsNothingSetUp(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	i := strings.Index(s, "\tcase \"delete_sub_server\":")
+	j := strings.Index(s[i:], "\tcase \"reinstall\":")
+	if i < 0 || j < 0 {
+		t.Fatal("the delete_sub_server case moved; move this assertion with it")
+	}
+	body := s[i : i+j]
+	if !strings.Contains(body, "deletedActive := delFinalActive == subName") ||
+		!strings.Contains(body, "if delFinalActive == \"\" || (deletedActive && toreDown) {\n\t\t\trdb.Set(ctx, statusKey, \"pending_setup\"") {
+		t.Error("deleting the active sub-server no longer reports pending_setup")
+	}
+}

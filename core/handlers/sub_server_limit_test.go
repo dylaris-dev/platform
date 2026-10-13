@@ -99,7 +99,7 @@ func TestSubServerLimitRefusesWhenTheNodeCannotBeAsked(t *testing.T) {
 	st := &AppState{Store: &subServerLimitStore{limit: "3"}}
 	rec := httptest.NewRecorder()
 	// No GRPCRegistry on the state, so the listing cannot be made.
-	if !refuseIfSubServerLimitReached(rec, st, 7, "srv-uuid") {
+	if !refuseIfSubServerLimitReached(rec, st, 7, "srv-uuid", "new") {
 		t.Fatal("an unanswerable count was treated as room to spare")
 	}
 	if rec.Code != http.StatusBadGateway {
@@ -112,7 +112,7 @@ func TestSubServerLimitRefusesWhenTheNodeCannotBeAsked(t *testing.T) {
 func TestSubServerLimitDoesNotAskTheNodeWhenThereIsNoCap(t *testing.T) {
 	st := &AppState{Store: &subServerLimitStore{limit: "unlimited"}}
 	rec := httptest.NewRecorder()
-	if refuseIfSubServerLimitReached(rec, st, 7, "srv-uuid") {
+	if refuseIfSubServerLimitReached(rec, st, 7, "srv-uuid", "new") {
 		t.Fatalf("refused although no cap is set: %s", rec.Body.String())
 	}
 }
@@ -128,4 +128,15 @@ func (f *subServerLimitStore) GetSetting(key string) (string, error) {
 		return f.limit, nil
 	}
 	return "", nil
+}
+
+// A setup into an existing sub-server adds none; a name that differs only in
+// case is a new directory on the node and counts.
+func TestSubServerDirExistsIsExact(t *testing.T) {
+	entries := []*pb.FileInfo{{Name: "server", IsDir: true}, {Name: "notes.txt"}, {Name: ".pending-delete-x", IsDir: true}}
+	for name, want := range map[string]bool{"server": true, "SERVER": false, "notes.txt": false, ".pending-delete-x": false, "new": false} {
+		if got := subServerDirExists(entries, name); got != want {
+			t.Errorf("%q: %v, want %v", name, got, want)
+		}
+	}
 }

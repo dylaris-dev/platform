@@ -1308,8 +1308,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Step 1: create a stopped container slot with no software installed.
 		log.Printf("Creating server slot for %s (pending setup)...", cmd.Config.UUID)
 
-		// Assign storage path (auto-balances by free space)
-		storagePath, err := storage.SelectStoragePath(cmd.Config.UUID, "")
+		// Assign storage path: the one the create asked for, else balanced by
+		// free space. A path this node does not have (removed since the panel
+		// listed it) falls back to the node's own choice rather than leaving a
+		// server row with no directory.
+		storagePath, err := storage.SelectStoragePath(cmd.Config.UUID, cmd.Config.StoragePath)
+		if err != nil && cmd.Config.StoragePath != "" {
+			log.Printf("create %s: storage path %q: %v; choosing one instead", cmd.Config.UUID, cmd.Config.StoragePath, err)
+			storagePath, err = storage.SelectStoragePath(cmd.Config.UUID, "")
+		}
 		if err != nil {
 			log.Printf("Failed to select storage path for %s: %v", cmd.Config.UUID, err)
 			return
@@ -1801,6 +1808,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		activeFile := filepath.Join(serverPath, ".active_server")
 		activeBytes, _ := os.ReadFile(activeFile)
 		delFinalActive := strings.TrimSpace(string(activeBytes))
+		deletedActive := delFinalActive == subName
 		if delFinalActive == subName {
 			// Find another sub-server to activate
 			entries, _ := os.ReadDir(serverPath)
@@ -1833,7 +1841,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// running by an inactive delete read stopped for up to a refresh,
 		// and the edge turned new logins away with "server stopped".
 		statusKey := fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID)
-		if delFinalActive == "" {
+		// Deleting the ACTIVE sub-server is "nothing set up" too, as Core
+		// records it: the container is gone, so "stopped" offered a Start
+		// that had nothing to start and failed without a word.
+		if delFinalActive == "" || (deletedActive && toreDown) {
 			rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
 		} else if toreDown {
 			rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
@@ -1987,6 +1998,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Source side, failed move: drop the staged archive only. The server
 		// stays here and keeps its data.
 		handleMigrateAbort(storage, cmd.Config.UUID)
+
+	case "migrate_discard":
+		// Target side, failed move: drop the copy it pulled. Core sends this
+		// only before cutover, so the server does not live here.
+		handleMigrateDiscard(storage, dm, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), migrateDiscardWait)
 
 	case "migrate_push_r2":
 		// Source side (cross-LAN BYON fallback): upload the staged archive to R2.

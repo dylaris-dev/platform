@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.3
+
+### Features
+- **The storage path chosen in the create wizard is used**; it was ignored and the node always
+  picked one itself. `core` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Deleting an account whose node still runs other people's servers is refused up front**; it
+  used to take that node off the network first and then report that nothing was deleted. `core`
+- **A failed install puts the server back on its previous sub-server and loader**, and a setup,
+  reinstall or create that never reached the node no longer leaves a half-made server. `core`
+- **A move that fails no longer leaves a full copy on the target node**, and file edits wait while
+  a server is being moved instead of being lost. `core` `node`
+- Re-installing a sub-server at the sub-server limit works again, and deleting the active
+  sub-server shows the server as not set up instead of offering a Start that cannot work. `core` `node`
+
 ## 2026.10.13.2
 
 ### Features

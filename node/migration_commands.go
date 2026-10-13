@@ -271,6 +271,8 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		return
 	}
 
+	markMovedIn(targetPath, serverUUID, progressID)
+
 	url := fmt.Sprintf("http://%s/migration", chosen)
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_in %s: pulling from %s", serverUUID, url)
@@ -517,6 +519,78 @@ func handleMigrateAbort(storage *StorageManager, serverUUID string) {
 	}
 }
 
+// movedInMarker sits beside a server directory a move brought here, and names
+// the attempt that brought it.
+func movedInMarker(storagePath, serverUUID string) string {
+	return filepath.Join(storagePath, serverUUID+".moved-in")
+}
+
+// markMovedIn records that this attempt is writing the directory, so a discard
+// of exactly this attempt removes it and a discard of any other - an earlier
+// attempt arriving late, or a move that never reached this node - does not.
+func markMovedIn(storagePath, serverUUID, progressID string) {
+	if err := os.WriteFile(movedInMarker(storagePath, serverUUID), []byte(progressID), 0o600); err != nil {
+		log.Printf("migrate %s: could not mark the copy: %v", serverUUID, err)
+	}
+}
+
+// migrateDiscardWait bounds how long a discard waits for a pull still running.
+var migrateDiscardWait = 2 * time.Hour
+
+// handleMigrateDiscard (target side) removes the copy a move that did not
+// happen left here: a pull Core gave up waiting for still finishes and
+// extracts a whole server outside any quota, and nothing else would ever
+// remove it - a later delete of the server goes to the source only.
+//
+// It waits for a pull still running, in the background so it holds no command
+// slot, and keeps the directory if a container exists for the server: that
+// would mean the server does live here, whatever Core believed.
+func handleMigrateDiscard(storage *StorageManager, dm *DockerManager, serverUUID, progressID string, wait time.Duration) {
+	if strings.TrimSpace(serverUUID) == "" || progressID == "" {
+		return
+	}
+	go func() {
+		deadline := time.Now().Add(wait)
+		for {
+			// Taken, not just looked at: no pull may start writing the
+			// directory while this decides about it and removes it.
+			if _, busy := migrateInFlight.LoadOrStore(serverUUID, struct{}{}); !busy {
+				break
+			}
+			if time.Now().After(deadline) {
+				log.Printf("migrate_discard %s: a pull is still running after %s, keeping its copy", serverUUID, wait)
+				return
+			}
+			time.Sleep(5 * time.Second)
+		}
+		defer migrateInFlight.Delete(serverUUID)
+		if dm != nil {
+			if _, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+serverUUID); err == nil {
+				log.Printf("migrate_discard %s: a container exists for it here, keeping the directory", serverUUID)
+				return
+			}
+		}
+		// Shared storage: this node's directory IS the source's live one.
+		if owner := sharedStorageOwner(storage, serverUUID); owner != "" {
+			log.Printf("migrate_discard %s: storage is shared with %s, keeping the directory", serverUUID, owner)
+			return
+		}
+		storagePath := storage.GetServerPath(serverUUID)
+		if storagePath == "" {
+			return
+		}
+		marker := movedInMarker(storagePath, serverUUID)
+		if got, err := os.ReadFile(marker); err != nil || string(got) != progressID {
+			return // not the copy this attempt brought
+		}
+		dir := filepath.Join(storagePath, serverUUID)
+		log.Printf("migrate_discard %s: removing the copy of a move that did not happen (%s)", serverUUID, dir)
+		os.RemoveAll(dir)
+		os.Remove(marker)
+		storage.RemoveServerPath(serverUUID)
+	}()
+}
+
 // handleMigrateCleanup (source side) removes the staged archive and the
 // original server directory after the target confirms transfer. The
 // orchestrator controls ordering and only sends this once migrate_in reported
@@ -639,6 +713,8 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("storage selection failed: %v", err))
 		return
 	}
+
+	markMovedIn(targetPath, serverUUID, progressID)
 
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_pull_r2 %s: downloading from R2", serverUUID)

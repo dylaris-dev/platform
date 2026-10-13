@@ -123,6 +123,9 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 	}
 
 	if rep.Error != "" {
+		if RestoreSetupBefore(context.Background(), s.redis, s.store, srv, rep.SubServer) {
+			log.Printf("setup result: server %q is back on its previous sub-server and loader", rep.ServerUUID)
+		}
 		s.notifyInstallFailed(srv, rep.SubServer, rep.Error)
 		return
 	}

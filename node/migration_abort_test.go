@@ -159,3 +159,74 @@ func TestACleanupLeavesAServerArrivingAgain(t *testing.T) {
 		t.Fatal("the cleanup deleted a server arriving again")
 	}
 }
+
+// The target of a move that did not happen drops the copy it pulled - only a
+// copy a move brought (the marker), only once no pull is still writing it, and
+// never one a container runs from.
+func TestMigrateDiscardDropsOnlyAMovedInCopy(t *testing.T) {
+	seed := func(t *testing.T, marked bool) (string, string) {
+		root := t.TempDir()
+		world := filepath.Join(root, discardUUID, "world", "level.dat")
+		if err := os.MkdirAll(filepath.Dir(world), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(world, []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if marked {
+			markMovedIn(root, discardUUID, "attempt-2")
+		}
+		return root, world
+	}
+	gone := func(p string) bool {
+		for i := 0; i < 100; i++ {
+			if _, err := os.Stat(p); os.IsNotExist(err) {
+				return true
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return false
+	}
+
+	t.Run("a copy a move brought is removed", func(t *testing.T) {
+		root, world := seed(t, true)
+		handleMigrateDiscard(&StorageManager{paths: []string{root}}, nil, discardUUID, "attempt-2", time.Second)
+		if !gone(world) || !gone(movedInMarker(root, discardUUID)) {
+			t.Fatal("the copy of a move that did not happen was kept")
+		}
+	})
+
+	t.Run("a directory no move brought is kept", func(t *testing.T) {
+		root, world := seed(t, false)
+		handleMigrateDiscard(&StorageManager{paths: []string{root}}, nil, discardUUID, "attempt-2", time.Second)
+		time.Sleep(200 * time.Millisecond)
+		if _, err := os.Stat(world); err != nil {
+			t.Fatal("a server directory without the move marker was removed")
+		}
+	})
+
+	// A discard for an earlier attempt that arrives late must not take the
+	// copy a later, successful attempt brought.
+	t.Run("another attempt's discard keeps the copy", func(t *testing.T) {
+		root, world := seed(t, true)
+		handleMigrateDiscard(&StorageManager{paths: []string{root}}, nil, discardUUID, "attempt-1", time.Second)
+		time.Sleep(200 * time.Millisecond)
+		if _, err := os.Stat(world); err != nil {
+			t.Fatal("a discard for another attempt removed this attempt's copy")
+		}
+	})
+
+	t.Run("a pull still running is waited for", func(t *testing.T) {
+		root, world := seed(t, true)
+		migrateInFlight.Store(discardUUID, struct{}{})
+		handleMigrateDiscard(&StorageManager{paths: []string{root}}, nil, discardUUID, "attempt-2", time.Minute)
+		time.Sleep(200 * time.Millisecond)
+		if _, err := os.Stat(world); err != nil {
+			migrateInFlight.Delete(discardUUID)
+			t.Fatal("removed while a pull was still writing it")
+		}
+		migrateInFlight.Delete(discardUUID)
+	})
+}
+
+const discardUUID = "7d0a1c2e-3b4f-4a5b-8c6d-9e0f1a2b3c4d"

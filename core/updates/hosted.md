@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A failed install puts your server back on the sub-server and loader it had before**, instead of
+  showing the ones that failed to install.
+- **File edits in the panel wait while your server is being moved**; one saved during a move could
+  be lost.
+- **Deleting the active sub-server shows the server as not set up**, once your node runs this
+  release. `node`
+
 ## 2026.10.13.2
 
 ### Features

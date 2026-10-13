@@ -101,3 +101,19 @@ func TestAStartClearsWhatHoldsTheServerDown(t *testing.T) {
 		t.Fatalf("%d markers survived the start", n)
 	}
 }
+
+// Failure paths that used to leave state behind, named per site.
+func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
+	for _, c := range []struct{ file, fn, want, why string }{
+		{"servers_lifecycle.go", "CreateServer", "h.state.Store.DeleteServer(int(serverID))", "a create the node never got left a row with no disk limit"},
+		{"servers_lifecycle.go", "SetupServer", "services.RestoreSetupBefore(r.Context(), h.state.Redis, h.state.Store, srv, subName)", "a setup that was never sent stayed 'installing'"},
+		{"servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.state.Redis, srv, subName)", "a failed install could not be put back"},
+		{"servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
+		{"servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
+		{"sub_server_limit.go", "refuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
+	} {
+		if !strings.Contains(funcBody(t, c.file, c.fn), c.want) {
+			t.Errorf("%s: %s", c.fn, c.why)
+		}
+	}
+}

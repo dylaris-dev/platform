@@ -25,12 +25,14 @@ type teardownFakeStore struct {
 
 	ownedServers  int
 	nodes         []models.Node
+	serversOnNode map[int]int
 	deletedNodes  []int
 	deleteNodeErr error
 }
 
 func (f *teardownFakeStore) CountServersByOwner(string) (int, error)        { return f.ownedServers, nil }
 func (f *teardownFakeStore) ListNodesByOwner(string) ([]models.Node, error) { return f.nodes, nil }
+func (f *teardownFakeStore) CountServersByNode(id int) (int, error)         { return f.serversOnNode[id], nil }
 func (f *teardownFakeStore) DeleteNode(id int) error {
 	if f.deleteNodeErr != nil {
 		return f.deleteNodeErr
@@ -412,5 +414,27 @@ func TestTeardownRefusalNamesWhatIsInTheWay(t *testing.T) {
 	other := errors.New("count servers: connection refused")
 	if errors.As(other, &owns) {
 		t.Error("an unrelated failure matched the precondition type")
+	}
+}
+
+// An admin-created External node belongs to that admin and runs customers'
+// servers. Deleting the admin's account revoked the node's overlay keys and
+// Redis access and only then had DeleteNode refuse it - the customers' servers
+// went offline under a "Nothing was deleted". It is now refused up front.
+func TestTeardownRefusesWhileTheAccountsNodeRunsOtherPeoplesServers(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+	fs := &teardownFakeStore{
+		keys:          []store.WarpAPIKey{{NodeID: "node-7", OwnerID: "admin-1"}},
+		nodes:         []models.Node{{ID: 7, Name: "ms01", Token: "node-token-7"}},
+		serversOnNode: map[int]int{7: 3},
+	}
+	err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), &peerRecorder{}, "admin-1")
+	var owns *TenantStillOwnsServersError
+	if !errors.As(err, &owns) || !strings.Contains(err.Error(), "ms01") {
+		t.Fatalf("err = %v, want a refusal naming the node", err)
+	}
+	if len(fs.revokeCalls) != 0 || len(fs.deletedNodes) != 0 {
+		t.Fatalf("revoked %v / deleted %v before refusing", fs.revokeCalls, fs.deletedNodes)
 	}
 }

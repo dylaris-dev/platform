@@ -21,9 +21,18 @@ import (
 // holds. Nothing was deleted." - a server error for something the caller can
 // fix in ten seconds - while the sentence that says WHAT it holds went to the
 // Core log, where the person clicking delete cannot read it.
-type TenantStillOwnsServersError struct{ Count int }
+// TenantStillOwnsServersError refuses a teardown that would strand servers:
+// the account's own, or - with OnNode set - other people's servers running on a
+// node this account brought.
+type TenantStillOwnsServersError struct {
+	Count  int
+	OnNode string
+}
 
 func (e *TenantStillOwnsServersError) Error() string {
+	if e.OnNode != "" {
+		return fmt.Sprintf("Node %s, which this account brought, still runs %d server(s) of other accounts. Move them off it first.", e.OnNode, e.Count)
+	}
 	return fmt.Sprintf("This account still owns %d server(s). Move or delete them first.", e.Count)
 }
 
@@ -75,6 +84,22 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 		return fmt.Errorf("count servers: %w", err)
 	} else if n > 0 {
 		return &TenantStillOwnsServersError{Count: n}
+	}
+	// The same question for the nodes it brought. An admin-created External
+	// node belongs to that admin and runs customers' servers; DeleteNode
+	// refuses it below, but only after its overlay keys were revoked and its
+	// Redis access removed - so the refusal took those servers offline and
+	// "Nothing was deleted" was false. Auto-delete retried it every day.
+	if owned, err := st.ListNodesByOwner(userID); err != nil {
+		return fmt.Errorf("list the nodes this account brought: %w", err)
+	} else {
+		for _, nd := range owned {
+			if c, cerr := st.CountServersByNode(nd.ID); cerr != nil {
+				return fmt.Errorf("count servers on node %d: %w", nd.ID, cerr)
+			} else if c > 0 {
+				return &TenantStillOwnsServersError{Count: c, OnNode: nd.Name}
+			}
+		}
 	}
 
 	// INCLUDING the revoked keys, which is the difference between this working

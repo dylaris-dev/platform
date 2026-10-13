@@ -50,6 +50,18 @@ func listServerDirFor(state *AppState, nodeID int, serverUUID, dir string) ([]*p
 // are not sub-servers and must not be counted as one.
 //
 // Pure, so the counting rule can be exercised without a node on the other end.
+// subServerDirExists reports whether target is already one of the sub-server
+// directories, exactly: the node's filesystem is case-sensitive, so "SERVER"
+// beside "server" is a new directory and must count against the cap.
+func subServerDirExists(entries []*pb.FileInfo, target string) bool {
+	for _, e := range entries {
+		if e != nil && e.IsDir && !strings.HasPrefix(e.Name, ".") && e.Name == target {
+			return true
+		}
+	}
+	return false
+}
+
 func countSubServerDirs(entries []*pb.FileInfo) int {
 	n := 0
 	for _, e := range entries {
@@ -92,7 +104,12 @@ func subServerLimit(state *AppState) *int64 {
 // A node that does not answer is a refusal, not an assumption. A cap nobody can
 // evaluate must not quietly pass - and if the node is unreachable the operation
 // behind this check was going to fail anyway.
-func refuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeID int, serverUUID string) bool {
+//
+// A setup into a sub-server that already exists adds none, so it passes: the
+// cap counted the target itself, which refused re-installing an existing
+// sub-server at the limit and gave an upload install - whose file is staged
+// into the new folder before setup asks - one fewer than the limit.
+func refuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeID int, serverUUID, target string) bool {
 	limit := subServerLimit(state)
 	if limit == nil {
 		return false
@@ -102,6 +119,9 @@ func refuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeI
 		sendJSONError(w, "The node did not answer, so the number of sub-servers is not known: "+err.Error(),
 			http.StatusBadGateway)
 		return true
+	}
+	if subServerDirExists(entries, target) {
+		return false
 	}
 	return refuseIfOverSubServerLimit(w, limit, countSubServerDirs(entries))
 }

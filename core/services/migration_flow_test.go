@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -423,5 +425,25 @@ func TestAMoveWaitsForTheNodesOwnWorkOnTheServer(t *testing.T) {
 				t.Fatalf("a busy server was moved: status %q", fs.status())
 			}
 		})
+	}
+}
+
+// Past the cutover the sends run on their own context: on the leader's, a
+// handover between the node flip and the config left the server on its target
+// with nothing to start from, and the retry refuses a server that moved.
+func TestPostCutoverSendsDoNotDieWithTheLeader(t *testing.T) {
+	b, err := os.ReadFile("migration_orchestrator.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		`o.queue.SendCommand(postCutover, targetNode.Token, "reconfigure"`,
+		"o.queue.SendMigrateCleanupCommand(postCutover, sourceNode.Token",
+		"o.queue.SendMigrateDiscardCommand(context.Background(), targetNode.Token, srv.UUID, attempt)",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing: %s", want)
+		}
 	}
 }

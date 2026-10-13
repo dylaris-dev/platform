@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
 // noServerStore knows no server: every caller is refused.
@@ -109,5 +110,38 @@ func TestFileOperationBodiesAreBounded(t *testing.T) {
 		if rw.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d for a body over the limit", name, rw.Code)
 		}
+	}
+}
+
+type movingServerStore struct{ quotaHTTPFakeStore }
+
+func (movingServerStore) GetUserBilling(id string) (*store.UserBilling, error) {
+	return &store.UserBilling{UserID: id, Status: "active"}, nil
+}
+
+func (s movingServerStore) GetServerByUUID(uuid string) (*models.Server, error) {
+	srv, err := s.quotaHTTPFakeStore.GetServerByUUID(uuid)
+	if err != nil || srv == nil {
+		return srv, err
+	}
+	c := *srv
+	c.Status = "migrating"
+	return &c, nil
+}
+
+// A move archives the directory and deletes it on the source after cutover; a
+// file written in between was lost without a word. Writes now wait.
+func TestFileWritesWaitForAMove(t *testing.T) {
+	rdb, _ := newQuotaHTTPRedis(t)
+	st := movingServerStore{quotaHTTPFakeStore{newCoreStorageHTTPFakeStore()}}
+	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
+	req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(`{"path":"a.txt","content":"x"}`))
+	ctx := context.WithValue(req.Context(), "username", "u")
+	ctx = context.WithValue(ctx, "isAdmin", true)
+	ctx = context.WithValue(ctx, apiKeyCtxKey{}, &apiKeyCtx{key: &models.APIKey{ID: 1}})
+	rw := httptest.NewRecorder()
+	h.SaveFileHandler(rw, req.WithContext(ctx))
+	if rw.Code != http.StatusConflict || !strings.Contains(rw.Body.String(), "being moved") {
+		t.Fatalf("status %d (%s), want the move refusal", rw.Code, rw.Body)
 	}
 }

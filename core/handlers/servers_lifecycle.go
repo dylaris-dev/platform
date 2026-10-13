@@ -229,9 +229,25 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 				"command":      "",
 			},
 		}
+		// The wizard offered the choice and the request carried it, but nothing
+		// passed it on, so every server landed wherever the node picked. Only
+		// for whoever runs the node: an operator, or the owner of their own.
+		if sp := strings.TrimSpace(req.StoragePath); sp != "" && (IsAdmin(r) || (node.OwnerID != nil && *node.OwnerID == callerID)) {
+			configPayload["storagePath"] = sp
+		}
 
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "create", configPayload, nil); err != nil {
+			// It answered success and left a row with no directory or container
+			// - and since only this command assigns the disk quota, a later
+			// setup built the server with no disk limit at all. Nothing was
+			// created on the node, so nothing is kept here either.
 			log.Printf("Redis Queue Failed: %v", err)
+			purgeBackupArchivesForServers(h.state, []int{int(serverID)})
+			if derr := h.state.Store.DeleteServer(int(serverID)); derr != nil {
+				log.Printf("create: removing server %d after the failed dispatch: %v", serverID, derr)
+			}
+			sendJSONError(w, "Could not reach the node to create the server. Nothing was created; try again.", http.StatusServiceUnavailable)
+			return
 		} else {
 			// node.ID, not node.Token: the token is the node's gRPC credential.
 			// node.Name is no safer - CreateNode seeds it FROM the token, so it
@@ -554,7 +570,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// sub-server gets added. Measured on production: a limit of three, seven
 	// sub-servers.
 	if srv.Status != "pending_setup" {
-		if refuseIfSubServerLimitReached(w, h.state, srv.NodeID, srv.UUID) {
+		if refuseIfSubServerLimitReached(w, h.state, srv.NodeID, srv.UUID, subName) {
 			return
 		}
 	}
@@ -720,11 +736,17 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		services.RememberSetupBefore(r.Context(), h.state.Redis, srv, subName)
 		if !recordSetup() {
 			return
 		}
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
+			// Nothing was sent, so nothing will report back: put the row back
+			// as it was rather than leave it "installing" a sub-server that
+			// exists nowhere.
+			services.RestoreSetupBefore(r.Context(), h.state.Redis, h.state.Store, srv, subName)
+			h.state.Store.UpdateServerStatus(serverID, srv.Status)
 			sendJSONError(w, "Failed to queue setup", 500)
 			return
 		}
@@ -883,10 +905,17 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.state.Store.UpdateServerStatus(serverID, "installing")
+	// Undone when the command cannot be sent: nothing would ever report back,
+	// and the server sat "installing" with resources and copies refused.
+	undo := func() {
+		h.state.Store.UpdateServerSetup(serverID, srv.GameImage, srv.StartCommand, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.InstallerType, srv.MinecraftVersion, srv.BuildNumber)
+		h.state.Store.UpdateServerStatus(serverID, srv.Status)
+	}
 
 	if h.state.Queue != nil {
 		node, err := h.state.Store.GetNodeByID(srv.NodeID)
 		if err != nil {
+			undo()
 			sendJSONError(w, "Node not found", 404)
 			return
 		}
@@ -911,6 +940,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "reinstall", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
+			undo()
 			sendJSONError(w, "Failed to queue reinstall", 500)
 			return
 		}

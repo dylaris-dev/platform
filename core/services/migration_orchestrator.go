@@ -586,12 +586,12 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		writeStatus("migrating", "")
 		if err := o.stopServer(ctx, srv, sourceNode); err != nil {
 			log.Printf("migration %s: stop failed: %v", srv.UUID, err)
-			o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "stop failed")
+			o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "stop failed")
 			return
 		}
 		if !o.waitForStopped(ctx, srv.ID, migrationStopTimeout) {
 			log.Printf("migration %s: stop timed out", srv.UUID)
-			o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "stop timed out")
+			o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "stop timed out")
 			return
 		}
 	}
@@ -601,12 +601,12 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	writeStatus("migrating", "")
 	if err := o.queue.SendMigrateOutCommand(ctx, sourceNode.Token, srv.UUID, attempt); err != nil {
 		log.Printf("migration %s: migrate_out queue failed: %v", srv.UUID, err)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_out queue failed")
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "migrate_out queue failed")
 		return
 	}
 	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, progress, "staged", migrationStageTimeout); phase != "staged" {
 		log.Printf("migration %s: staging failed (phase=%s, err=%s)", srv.UUID, phase, nerr)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "staging failed: "+nerr)
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "staging failed: "+nerr)
 		return
 	}
 
@@ -614,7 +614,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	meta, err := o.readMeta(ctx, sourceNode.Token, progress)
 	if err != nil {
 		log.Printf("migration %s: cannot read meta: %v", srv.UUID, err)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "meta read failed")
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "meta read failed")
 		return
 	}
 	// Key the pull token with the SOURCE node's per-node secret so a stolen token is
@@ -622,14 +622,14 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	secret, ok, serr := redisacl.LoadNodeSecret(o.store, o.clusterSecret, sourceNode.ID)
 	if serr != nil || !ok {
 		log.Printf("migration %s: source node secret unavailable: %v", srv.UUID, serr)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "source node secret unavailable")
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "source node secret unavailable")
 		return
 	}
 	migKey := string(secret)
 	token, err := migration.MintToken(migKey, srv.UUID, sourceNode.Token, migrationTokenTTL)
 	if err != nil {
 		log.Printf("migration %s: mint token failed: %v", srv.UUID, err)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "token mint failed")
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "token mint failed")
 		return
 	}
 	// The source is named by its TOKEN: that is the id the node publishes its
@@ -641,7 +641,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	sourcePrivateIPs := migrationSourceLANIPs(sourceNode, targetNode)
 	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, attempt, sourceNode.Token, token, meta.SHA256, meta.Size, sourcePrivateIPs, srv.DiskLimit); err != nil {
 		log.Printf("migration %s: migrate_in queue failed: %v", srv.UUID, err)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
 		return
 	}
 	// migrate_in reports "transferred" on success, or "need_remote" when this is
@@ -653,7 +653,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, attempt, meta.SHA256, meta.Size); err != nil {
 			// Still pre-cutover: node_id unchanged, source authoritative — roll back.
 			log.Printf("migration %s: R2 transfer failed: %v", srv.UUID, err)
-			o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "r2 transfer failed: "+err.Error())
+			o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "r2 transfer failed: "+err.Error())
 			return
 		}
 		// R2 transfer verified the archive on the target — fall through to cutover.
@@ -661,7 +661,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		// Target self-cleans its partial (Wave 2b). node_id is NOT yet changed,
 		// so the source remains authoritative — safe to roll back.
 		log.Printf("migration %s: transfer failed (phase=%s, err=%s)", srv.UUID, phase, nerr)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "transfer failed: "+nerr)
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "transfer failed: "+nerr)
 		return
 	}
 
@@ -670,7 +670,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// source is authoritative) instead of cutting over.
 	if o.cancelRequested(ctx, srv.UUID) {
 		log.Printf("migration %s: cancelled by admin before cutover", srv.UUID)
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "cancelled before cutover")
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "cancelled before cutover")
 		return
 	}
 
@@ -679,7 +679,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		log.Printf("migration %s: UpdateServerNode failed: %v", srv.UUID, err)
 		// Pre-cutover from the data POV (node_id flip failed, source still owns
 		// data), so roll back like the earlier steps.
-		o.rollbackPreCutover(ctx, srv, sourceNode, wasRunning, preStatus, writeStatus, "node reassign failed")
+		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "node reassign failed")
 		return
 	}
 	if err := o.gateway.MigrateServerRoutes(uint(srv.ID), uint(targetNode.ID)); err != nil {
@@ -709,7 +709,13 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// target's reconciler starts from, in either run state. Sent before the
 	// desired state turns online, and the reconciler cannot start the server
 	// without it anyway.
-	confErr := o.queue.SendCommand(ctx, targetNode.Token, "reconfigure", map[string]interface{}{
+	//
+	// Past the cutover the move has happened, so what follows is no longer this
+	// leader's to abandon: on the leader's context, a handover between the node
+	// flip and these sends left the server on the target with no config, and the
+	// retry refuses a server that is no longer on its source.
+	postCutover := context.Background()
+	confErr := o.queue.SendCommand(postCutover, targetNode.Token, "reconfigure", map[string]interface{}{
 		"uuid":            srv.UUID,
 		"ownerId":         srv.OwnerID,
 		"activeSubServer": srv.ActiveSubServer,
@@ -757,7 +763,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	}
 
 	// --- (j) Cleanup source copy ---
-	if err := o.queue.SendMigrateCleanupCommand(ctx, sourceNode.Token, srv.UUID); err != nil {
+	if err := o.queue.SendMigrateCleanupCommand(postCutover, sourceNode.Token, srv.UUID); err != nil {
 		// Non-fatal: the move succeeded, this just leaves a stale copy on the
 		// source that an operator / orphan sweep can reclaim.
 		log.Printf("migration %s: cleanup queue failed (stale copy left on source %d): %v", srv.UUID, sourceNode.ID, err)
@@ -859,13 +865,23 @@ func (o *MigrationOrchestrator) holdMigrationLock(ctx context.Context, uuid, req
 // and, if it was running and we stopped it, re-starts it on the SOURCE node.
 // Never deletes source data — by definition this is called before cutover, so
 // the source is still authoritative. Writes orchestration phase "failed".
-func (o *MigrationOrchestrator) rollbackPreCutover(ctx context.Context, srv *models.Server, sourceNode *models.Node, wasRunning bool, preStatus string, writeStatus func(string, string), reason string) {
+func (o *MigrationOrchestrator) rollbackPreCutover(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, attempt string, wasRunning bool, preStatus string, writeStatus func(string, string), reason string) {
 	// The staged archive is a full copy of the server outside its quota, and
 	// only a successful move's cleanup removed it: every failed attempt left
 	// one behind, past even the server's deletion. Best-effort; an older node
 	// ignores the command.
 	if err := o.queue.SendCommand(ctx, sourceNode.Token, "migrate_abort", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
 		log.Printf("migration %s: could not tell the source to drop its staged archive: %v", srv.UUID, err)
+	}
+	// The target may hold a whole copy by now - a pull that finished after Core
+	// gave up, or one cancelled midway - outside any quota, with nothing that
+	// would ever remove it; a later delete of the server goes to the source
+	// only. Sent only here, before cutover, so the target is never where the
+	// server lives. Best-effort; an older node ignores it.
+	if targetNode != nil && attempt != "" {
+		if err := o.queue.SendMigrateDiscardCommand(context.Background(), targetNode.Token, srv.UUID, attempt); err != nil {
+			log.Printf("migration %s: could not tell the target to drop its copy: %v", srv.UUID, err)
+		}
 	}
 	if wasRunning {
 		o.store.UpdateServerDesiredState(srv.ID, "online")

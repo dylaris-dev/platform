@@ -377,6 +377,9 @@ type ServerConfig struct {
 	UUID            string       `json:"uuid"`
 	Docker          DockerConfig `json:"docker"`
 	ActiveSubServer string       `json:"activeSubServer"`
+	// StoragePath is the storage path a create was asked to use; empty lets
+	// the node choose. Only create reads it.
+	StoragePath string `json:"storagePath,omitempty"`
 	// ExistingBinds, when non-empty, overrides the default bind-mount
 	// derivation in startMinecraftContainer. Used by RestartContainer to
 	// preserve the previous container's exact mount source, so world data
