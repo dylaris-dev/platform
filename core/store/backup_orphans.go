@@ -23,7 +23,7 @@ import (
 // ListBackupRunRefsForJob returns every run of one schedule.
 func (s *PostgresStore) ListBackupRunRefsForJob(jobID int) ([]BackupRunRef, error) {
 	rows, err := s.db.Query(`
-		SELECT br.id, br.storage_key, COALESCE(br.storage_id, bj.storage_id), COALESCE(sv.owner_id::text, '')
+		SELECT br.id, br.storage_key, COALESCE(br.storage_id, bj.storage_id), COALESCE(sv.owner_id::text, ''), COALESCE(br.upload_id, '')
 		FROM backup_runs br
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		LEFT JOIN servers sv ON sv.id = bj.server_id
@@ -48,7 +48,7 @@ func (s *PostgresStore) ListBackupRunRefsForServers(serverIDs []int) ([]BackupRu
 		ph[i] = "$" + strconv.Itoa(i+1)
 	}
 	rows, err := s.db.Query(`
-		SELECT br.id, br.storage_key, COALESCE(br.storage_id, bj.storage_id), COALESCE(sv.owner_id::text, '')
+		SELECT br.id, br.storage_key, COALESCE(br.storage_id, bj.storage_id), COALESCE(sv.owner_id::text, ''), COALESCE(br.upload_id, '')
 		FROM backup_runs br
 		JOIN backup_jobs bj ON bj.id = br.job_id
 		LEFT JOIN servers sv ON sv.id = bj.server_id
@@ -65,7 +65,7 @@ func scanBackupRunRefs(rows *sql.Rows) ([]BackupRunRef, error) {
 	for rows.Next() {
 		var ref BackupRunRef
 		var sid sql.NullInt64
-		if err := rows.Scan(&ref.RunID, &ref.StorageKey, &sid, &ref.OwnerID); err != nil {
+		if err := rows.Scan(&ref.RunID, &ref.StorageKey, &sid, &ref.OwnerID, &ref.UploadID); err != nil {
 			return nil, err
 		}
 		if sid.Valid {

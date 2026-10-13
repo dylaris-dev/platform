@@ -483,6 +483,10 @@ type BackupRunRef struct {
 	// did not ask for it. It decides which storage a run's storage id resolves
 	// in: a tenant's own connection is not reachable from the platform chain.
 	OwnerID string
+	// UploadID is a multipart upload still open on the run, "" when none (or
+	// when the caller did not ask). A purge aborts it: deleting the key alone
+	// left the parts already uploaded billed in the bucket.
+	UploadID string
 }
 
 // ListBackupRunsByOwner returns every backup run for the servers a tenant owns,

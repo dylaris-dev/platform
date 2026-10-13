@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A backup waits until your server confirms its world is saved** before archiving it; on a large
+  modpack world a backup could otherwise hold half-written regions. `node`
+- **A restore waits while your server is being installed or updated**, so the two can no longer
+  write the same files.
+
 ## 2026.10.13.4
 
 ### Features

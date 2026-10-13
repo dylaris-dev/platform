@@ -172,6 +172,20 @@ func (s *PostgresStore) SetPlatformBackupJobSchedule(id int, next *time.Time) er
 	return err
 }
 
+// FailStalePlatformBackupRuns closes runs a Core that died mid-run left
+// "running". Nothing else ever did, and one such row kept the job from being
+// deleted and its storage from being removed, for good.
+func (s *PostgresStore) FailStalePlatformBackupRuns(olderThan time.Duration) (int64, error) {
+	res, err := s.db.Exec(`UPDATE platform_backup_runs
+		SET status = 'failed', completed_at = NOW(),
+		    error_message = 'Core stopped before this run finished'
+		WHERE status = 'running' AND started_at < NOW() - make_interval(secs => $1)`, olderThan.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (s *PostgresStore) SetPlatformBackupJobRanByHand(id int, next *time.Time) error {
 	var v any
 	if next != nil {

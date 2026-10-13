@@ -65,3 +65,17 @@ func TestAMoveRepublishesSFTPAtOnce(t *testing.T) {
 		t.Fatalf("the move did not republish file access (%d)", called)
 	}
 }
+
+// Progress is activity: only an object-storage part request counted, so a
+// node-local run reporting every few seconds was reaped as abandoned at 6h.
+func TestBackupProgressCountsAsActivity(t *testing.T) {
+	b, err := os.ReadFile("backup_scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	// Forward progress only, so a hung run still ages out.
+	if !strings.Contains(s, "if status == \"running\" && size > run.SizeBytes {\n\t\t\t\tif err := b.store.TouchBackupRunTransfer(result.RunID); err != nil {") {
+		t.Error("a progress report no longer counts as activity")
+	}
+}

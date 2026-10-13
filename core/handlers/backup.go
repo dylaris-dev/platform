@@ -206,6 +206,23 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req = merged
+	// Where the archives live may not move under the runs that name it, the
+	// rule a delete already follows. A changed prefix or bucket made every
+	// recorded backup unfindable: downloads and restores failed, and retention
+	// "deleted" keys that were not there (a missing key deletes as success)
+	// while the real objects stayed under the old location, billed, with
+	// nothing left that names them.
+	if backupStorageLocation(req) != backupStorageLocation(*existing) {
+		inUse, ierr := h.state.Store.BackupStorageInUse(id)
+		if ierr != nil {
+			sendJSONError(w, "Could not check what uses this storage", 500)
+			return
+		}
+		if inUse {
+			sendJSONError(w, "Backups or schedules still use this storage, so where it stores them cannot change. Add a new storage for the new location and point the schedules at it.", http.StatusConflict)
+			return
+		}
+	}
 	// A platform row stays one: the body's ownerId would otherwise move it, and
 	// a nil one is what clearOtherDefaults reads as "the platform's default".
 	req.OwnerID = nil
@@ -221,6 +238,21 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// backupStorageLocation is what decides where a storage's archives are: the
+// provider and the location fields of its config. Credentials and display
+// fields may change freely.
+func backupStorageLocation(s models.BackupStorage) string {
+	var c struct {
+		Endpoint     string `json:"endpoint"`
+		Bucket       string `json:"bucket"`
+		Prefix       string `json:"prefix"`
+		BasePath     string `json:"basePath"`
+		ConnectionID int    `json:"connectionId"`
+	}
+	_ = json.Unmarshal(s.Config, &c)
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d", s.Provider, strings.TrimRight(c.Endpoint, "/"), c.Bucket, strings.Trim(c.Prefix, "/"), c.BasePath, c.ConnectionID)
 }
 
 // DeleteStorage DELETE /api/backup-storages/{id} - removes a backup target.
@@ -738,11 +770,18 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// None while it moves: a restore during a move restarted the server on the
-	// node it was leaving. Two restores at once are refused by the node itself,
-	// which knows what is running; a row here can outlive a result that a Core
-	// restart never received, and would lock the server's restores for hours.
+	// node it was leaving. Nor while the node installs, updates or copies it:
+	// the restore renamed the directory the installer was writing into. Two
+	// restores at once are refused by the node itself, which knows what is
+	// running; a row here can outlive a result that a Core restart never
+	// received, and would lock the server's restores for hours.
+	// Refused even for an operator while it moves, as before; the busy check
+	// below lets one through for a stuck move on every other path.
 	if srv.Status == "migrating" {
 		sendJSONError(w, "The server is being moved. Restore it once the move has finished.", http.StatusConflict)
+		return
+	}
+	if refuseIfServerBusy(w, r, h.state, srv) {
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
@@ -1146,7 +1185,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// No administrator exemption here, unlike the allowance: this bounds a real
 	// disk, and a full one takes down every server on the host including other
 	// people's.
-	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.state.Store, h.state.GRPCRegistry, srv); exceeded {
+	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.state.Store, h.state.GRPCRegistry, srv, storage); exceeded {
 		return 0, backupQuotaRefusal(used, quota, " on this server", "raise the per-server limit in Settings, Backups")
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)

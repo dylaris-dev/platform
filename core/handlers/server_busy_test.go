@@ -66,6 +66,7 @@ func TestEveryRewritingHandlerTakesTheBusyGuard(t *testing.T) {
 		{"servers_lifecycle.go", "queueMigration", "refuseIfServerBusy("},
 		{"servers_lifecycle.go", "DeleteServer", "refuseIfMoving("},
 		{"server_version_update.go", "CopySubServer", "refuseIfServerBusy("},
+		{"backup.go", "RestoreRun", "refuseIfServerBusy("},
 	} {
 		body := funcBody(t, c.file, c.header)
 		guard := strings.Index(body, c.guard)

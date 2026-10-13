@@ -18,6 +18,12 @@ type fakeBackupStorage struct {
 
 	deleted []string
 	failOn  string
+	aborted []string
+}
+
+func (f *fakeBackupStorage) AbortMultipart(_ context.Context, key, uploadID string) error {
+	f.aborted = append(f.aborted, key+"#"+uploadID)
+	return nil
 }
 
 func (f *fakeBackupStorage) Delete(_ context.Context, key string) error {
@@ -160,5 +166,22 @@ func TestPurgeKeepsAnArchiveItCannotPlace(t *testing.T) {
 	}
 	if len(f.deleted) != 0 {
 		t.Fatalf("something was deleted although the storage was unknown: %v", f.deleted)
+	}
+}
+
+// A run still uploading when its schedule or server is deleted has parts in the
+// bucket. Deleting the key alone left them billed; the purge aborts the upload.
+func TestPurgeAbortsAnUploadStillOpen(t *testing.T) {
+	f := &fakeBackupStorage{}
+	withFakeStorage(t, f)
+	platform := &models.BackupStorage{ID: 1, Name: "platform"}
+	st := &purgeStore{byID: map[int]*models.BackupStorage{1: platform}, platform: platform}
+	id := 1
+	PurgeBackupArchives(context.Background(), st, backupstorage.Deps{}, []store.BackupRunRef{
+		{RunID: 1, StorageKey: "a.tar.gz", StorageID: &id, UploadID: "up-1"},
+		{RunID: 2, StorageKey: "b.tar.gz", StorageID: &id},
+	})
+	if len(f.aborted) != 1 || f.aborted[0] != "a.tar.gz#up-1" {
+		t.Fatalf("aborted %v, want only the open upload of a.tar.gz", f.aborted)
 	}
 }

@@ -44,6 +44,7 @@ func TestNodeLocalBackupQuota(t *testing.T) {
 		used         int64
 		usageKnown   bool
 		wantExceeded bool
+		provider     string
 	}{
 		{
 			name:         "at the cap is refused, not just over it",
@@ -63,6 +64,16 @@ func TestNodeLocalBackupQuota(t *testing.T) {
 			name:         "over the cap is refused",
 			kv:           map[string]string{"backup.mode": "node-local", "backup.quota_per_server_gb": "1"},
 			used:         gb + gb/5,
+			usageKnown:   true,
+			wantExceeded: true,
+		},
+		{
+			// A node-local storage under another default mode had no cap at all:
+			// the gate followed backup.mode, not where the run is going.
+			name:         "a node-local storage is capped whatever the default mode",
+			kv:           map[string]string{"backup.mode": "s3", "backup.quota_per_server_gb": "1"},
+			provider:     "node-local",
+			used:         500 * gb,
 			usageKnown:   true,
 			wantExceeded: true,
 		},
@@ -155,7 +166,13 @@ func TestNodeLocalBackupQuota(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			st := &quotaFakeStore{kv: c.kv}
-			exceeded, _, _ := nodeLocalBackupQuotaExceeded(st, srv, func() (int64, bool) {
+			// The run's storage decides now; these cases name it by the mode
+			// they were written against, unless they say otherwise.
+			provider := c.kv["backup.mode"]
+			if c.provider != "" {
+				provider = c.provider
+			}
+			exceeded, _, _ := nodeLocalBackupQuotaExceeded(st, srv, &models.BackupStorage{Provider: provider}, func() (int64, bool) {
 				return c.used, c.usageKnown
 			})
 			if exceeded != c.wantExceeded {

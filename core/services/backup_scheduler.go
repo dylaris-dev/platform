@@ -289,6 +289,16 @@ func (b *BackupScheduler) consumeResults(ctx context.Context) {
 				}
 			}
 			b.store.UpdateBackupRunStatus(result.RunID, status, message, size, run.StorageKey, completed)
+			// Progress is activity too. Only an object-storage part request
+			// counted, so a node-local or shared run reporting every few seconds
+			// still read as abandoned after six hours and was closed failed.
+			// Forward progress only: the node reports every few seconds whether
+			// or not anything moved, and a hung run must still age out.
+			if status == "running" && size > run.SizeBytes {
+				if err := b.store.TouchBackupRunTransfer(result.RunID); err != nil {
+					logErrf("backup-scheduler", "backup result: run %d: recording its progress as activity: %v", result.RunID, err)
+				}
+			}
 			if status == "success" {
 				b.snapshotInstalls(result.RunID, job)
 				b.enforceRetention(ctx, run.JobID)
@@ -779,7 +789,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// No administrator exemption here, deliberately, unlike the allowance above:
 	// this one bounds a real disk on the MC host, and a full disk takes every
 	// server on that host down with it, including other people's.
-	if exceeded, used, quota := NodeLocalBackupQuotaExceeded(b.store, b.registry, srv); exceeded {
+	if exceeded, used, quota := NodeLocalBackupQuotaExceeded(b.store, b.registry, srv, storage); exceeded {
 		log.Printf("backup-scheduler: job %d skipped — per-server backup quota reached (%.1f/%.1f GB)",
 			job.ID, float64(used)/(1<<30), float64(quota)/(1<<30))
 		b.skipRun(job, fmt.Sprintf("Per-server backup quota reached (%.1f of %.1f GB used).", float64(used)/(1<<30), float64(quota)/(1<<30)))

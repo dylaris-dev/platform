@@ -50,8 +50,8 @@ const backupUsageRPCTimeout = 5 * time.Second
 // not measure would turn a brief node blip into a skipped backup, and a backup
 // is the safety net - while a node we cannot reach cannot run the backup
 // anyway, so nothing is actually let through.
-func NodeLocalBackupQuotaExceeded(st store.Store, reg *nodegrpc.Registry, srv *models.Server) (exceeded bool, usedBytes, quotaBytes int64) {
-	return nodeLocalBackupQuotaExceeded(st, srv, func() (int64, bool) {
+func NodeLocalBackupQuotaExceeded(st store.Store, reg *nodegrpc.Registry, srv *models.Server, storage *models.BackupStorage) (exceeded bool, usedBytes, quotaBytes int64) {
+	return nodeLocalBackupQuotaExceeded(st, srv, storage, func() (int64, bool) {
 		if reg == nil || srv == nil {
 			return 0, false
 		}
@@ -75,19 +75,17 @@ func NodeLocalBackupQuotaExceeded(st store.Store, reg *nodegrpc.Registry, srv *m
 // behind `usage` so the boundary case (used == quota refuses, one byte under
 // does not) is testable without a live gRPC mesh. usage returns ok=false when
 // the folder size could not be established.
-func nodeLocalBackupQuotaExceeded(st store.Store, srv *models.Server, usage func() (int64, bool)) (exceeded bool, usedBytes, quotaBytes int64) {
+func nodeLocalBackupQuotaExceeded(st store.Store, srv *models.Server, storage *models.BackupStorage, usage func() (int64, bool)) (exceeded bool, usedBytes, quotaBytes int64) {
 	if srv == nil {
 		return false, 0, 0
 	}
 
-	mode, _ := st.GetSetting("backup.mode")
-	if mode == "" {
-		mode = DefaultBackupMode
-	}
-	// The cap is documented as node-local only: it counts the hidden
-	// .dylaris-backups/ folder inside the server directory. s3/shared archives
-	// are bounded by the tenant's R2 quota instead (R2QuotaExceeded).
-	if mode != "node-local" {
+	// The cap counts the hidden .dylaris-backups/ folder inside the server
+	// directory, so it applies to a run headed THERE, whatever the platform's
+	// default mode says. It used to follow backup.mode, and a node-local storage
+	// an operator added under another mode had no cap at all. s3/shared
+	// archives are bounded by the tenant's R2 quota instead.
+	if storage == nil || storage.Provider != "node-local" {
 		return false, 0, 0
 	}
 	// "Folded into the server's main disk quota" - a different budget, not this

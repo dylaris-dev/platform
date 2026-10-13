@@ -70,6 +70,11 @@ func PurgeBackupArchives(ctx context.Context, s backupStorageLookup, deps backup
 			log.Printf("backup purge: run %d (%s): cannot open storage %q: %v — the archive is left behind", ref.RunID, ref.StorageKey, bs.Name, err)
 			continue
 		}
+		if ref.UploadID != "" {
+			if err := provider.AbortMultipart(ctx, ref.StorageKey, ref.UploadID); err != nil {
+				log.Printf("backup purge: run %d (%s): aborting its open upload failed: %v - its parts stay until the bucket's lifecycle rule removes them", ref.RunID, ref.StorageKey, err)
+			}
+		}
 		if err := provider.Delete(ctx, ref.StorageKey); err != nil {
 			kept++
 			log.Printf("backup purge: run %d (%s): delete failed: %v — the archive is left behind and nothing will name it again", ref.RunID, ref.StorageKey, err)

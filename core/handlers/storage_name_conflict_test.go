@@ -138,3 +138,5 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		})
 	}
 }
+
+func (f *nameConflictStore) BackupStorageInUse(int) (bool, error) { return false, nil }

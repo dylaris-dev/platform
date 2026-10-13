@@ -291,3 +291,5 @@ func TestCreateStorage_RefusesACredentialedEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
+
+func (f *backupSecretFakeStore) BackupStorageInUse(int) (bool, error) { return false, nil }

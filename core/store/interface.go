@@ -812,6 +812,10 @@ type Store interface {
 	SetPlatformBackupJobSchedule(id int, next *time.Time) error
 	// SetPlatformBackupJobRanByHand is SetBackupJobRanByHand for a platform job.
 	SetPlatformBackupJobRanByHand(id int, next *time.Time) error
+	// BackupStorageInUse reports whether runs or jobs still name the storage.
+	BackupStorageInUse(id int) (bool, error)
+	// FailStalePlatformBackupRuns closes runs still "running" after olderThan.
+	FailStalePlatformBackupRuns(olderThan time.Duration) (int64, error)
 	CreatePlatformBackupRun(jobID int, storageID *int) (int, error)
 	FinishPlatformBackupRun(id int, status string, sizeBytes int64,
 		storageKey, errMessage string, components []models.PlatformBackupComponent) error

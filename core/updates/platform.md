@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.13.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A backup waits until the server confirms its world is saved** instead of a fixed five seconds,
+  which a large modded world can take longer than; an archive could hold half-written regions. `node`
+- **Deleting a schedule or server cancels a backup upload still in progress**, a platform backup
+  left running by a Core restart is closed after six hours, and a storage in use can no longer be
+  moved to another bucket or prefix. `core`
+- **Restores wait while the node installs or updates the server**, share the disk with other
+  writes, and node-local backups no longer fill a node's disk. `core` `node`
+
 ## 2026.10.13.4
 
 ### Features

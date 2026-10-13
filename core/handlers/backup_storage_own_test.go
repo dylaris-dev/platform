@@ -318,3 +318,5 @@ func TestATenantTestDoesNotNameTheInternalAddress(t *testing.T) {
 		t.Fatalf("answer = %s", body)
 	}
 }
+
+func (f *ownStorageFakeStore) BackupStorageInUse(int) (bool, error) { return false, nil }

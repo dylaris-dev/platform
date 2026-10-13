@@ -212,8 +212,15 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// can come from a bucket the tenant writes to. Extraction stops before it
 	// would leave the disk below its reserve, which every other server here
 	// needs as much as this one.
-	budget := restoreDiskBudget(filepath.Dir(stageDir))
+	//
+	// Shared with every other write running on this node (copies, imports,
+	// unpacks, other restores): each used to reckon with the whole free space,
+	// and two at once filled the disk every server here runs on. The server's
+	// own disk limit is NOT applied: a restore holds the old world beside the
+	// new one until the swap, so it would refuse any server past half its limit.
+	budget := restoreDiskBudget(filepath.Dir(stageDir)) - inflightWrites.Load()
 	var written int64
+	defer func() { inflightWrites.Add(-written) }()
 	extracted, entries := 0, 0
 	// The directories creating an entry makes, its own and the parents
 	// MkdirAll adds: an archive of deep paths built thousands of directories
@@ -258,6 +265,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 		entries += cost
 		written += int64(cost) * restoreEntryCost
+		inflightWrites.Add(int64(cost) * restoreEntryCost)
 		if entries > maxRestoreEntries || written > budget {
 			stageCleanup()
 			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreDiskBudget.Error())
@@ -279,6 +287,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			}
 			n, err := io.Copy(f, io.LimitReader(tr, budget-written+1))
 			written += n
+			inflightWrites.Add(n)
 			if err == nil && written > budget {
 				err = errRestoreDiskBudget
 			}

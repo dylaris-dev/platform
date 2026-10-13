@@ -20,7 +20,11 @@ type backupValidationFakeStore struct {
 	store.Store
 	created int
 	updated int
+	inUse   bool
+	stored  *models.BackupStorage
 }
+
+func (f *backupValidationFakeStore) BackupStorageInUse(int) (bool, error) { return f.inUse, nil }
 
 func (f *backupValidationFakeStore) CreateBackupStorage(*models.BackupStorage) (int, error) {
 	f.created++
@@ -35,6 +39,10 @@ func (f *backupValidationFakeStore) UpdateBackupStorage(*models.BackupStorage) e
 // backfill. This test is about provider validation, so it is a platform row
 // holding no secret, which mergeBackupStorageSecret leaves untouched.
 func (f *backupValidationFakeStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
+	if f.stored != nil {
+		c := *f.stored
+		return &c, nil
+	}
 	return &models.BackupStorage{ID: id}, nil
 }
 
@@ -156,5 +164,28 @@ func TestCreateStorage_AcceptsConnection(t *testing.T) {
 	}
 	if fs.created != 1 {
 		t.Errorf("connection provider was not persisted (%d creates)", fs.created)
+	}
+}
+
+// Where a storage keeps its archives may not move while runs or schedules name
+// it - a changed prefix made every recorded backup unfindable and left the real
+// objects billed under the old one. Its name and credentials may still change.
+func TestUpdateStorageKeepsTheLocationOfArchivesInUse(t *testing.T) {
+	stored := &models.BackupStorage{ID: 1, Name: "r2", Provider: "connection", Config: json.RawMessage(`{"connectionId":3,"prefix":"server-backups"}`)}
+	patch := func(fs *backupValidationFakeStore, prefix, name string) int {
+		body, _ := json.Marshal(models.BackupStorage{Name: name, Provider: "connection", Config: json.RawMessage(`{"connectionId":3,"prefix":"` + prefix + `"}`)})
+		req := mux.SetURLVars(httptest.NewRequest(http.MethodPatch, "/api/backup-storages/1", bytes.NewReader(body)), map[string]string{"id": "1"})
+		rw := httptest.NewRecorder()
+		NewBackupHandler(&AppState{Store: fs}).UpdateStorage(rw, req)
+		return rw.Code
+	}
+	if code := patch(&backupValidationFakeStore{inUse: true, stored: stored}, "elsewhere", "r2"); code != http.StatusConflict {
+		t.Fatalf("moving the prefix of a storage in use: %d, want 409", code)
+	}
+	if code := patch(&backupValidationFakeStore{inUse: true, stored: stored}, "server-backups", "renamed"); code != http.StatusOK {
+		t.Fatalf("renaming a storage in use: %d, want 200", code)
+	}
+	if code := patch(&backupValidationFakeStore{inUse: false, stored: stored}, "elsewhere", "r2"); code != http.StatusOK {
+		t.Fatalf("moving an unused storage: %d, want 200", code)
 	}
 }

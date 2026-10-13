@@ -256,6 +256,7 @@ func clearOtherDefaults(tx *sql.Tx, ownerID *string, excludeID int) error {
 // FOR UPDATE conflicts with the KEY SHARE lock an inserting run takes on this
 // row, so a run being created right now is either committed and counted, or
 // waits and then fails its foreign key.
+
 func (s *PostgresStore) DeleteBackupStorage(id int) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -270,11 +271,7 @@ func (s *PostgresStore) DeleteBackupStorage(id int) error {
 		return err
 	}
 	var inUse bool
-	if err := tx.QueryRow(`SELECT
-		EXISTS (SELECT 1 FROM backup_runs WHERE storage_id = $1) OR
-		EXISTS (SELECT 1 FROM backup_jobs WHERE storage_id = $1) OR
-		EXISTS (SELECT 1 FROM platform_backup_runs WHERE storage_id = $1 AND status <> 'failed') OR
-		EXISTS (SELECT 1 FROM platform_backup_jobs WHERE storage_id = $1)`, id).Scan(&inUse); err != nil {
+	if err := tx.QueryRow(backupStorageInUseQuery, id).Scan(&inUse); err != nil {
 		return err
 	}
 	if inUse {
@@ -284,6 +281,25 @@ func (s *PostgresStore) DeleteBackupStorage(id int) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+const backupStorageInUseQuery = `SELECT
+		EXISTS (SELECT 1 FROM backup_runs WHERE storage_id = $1) OR
+		EXISTS (SELECT 1 FROM backup_jobs WHERE storage_id = $1) OR
+		EXISTS (SELECT 1 FROM platform_backup_runs WHERE storage_id = $1 AND status <> 'failed') OR
+		EXISTS (SELECT 1 FROM platform_backup_jobs WHERE storage_id = $1) OR
+		-- A default storage also holds what names no storage at all: jobs and
+		-- runs from before the column resolve to it.
+		(EXISTS (SELECT 1 FROM backup_storages WHERE id = $1 AND is_default) AND (
+			EXISTS (SELECT 1 FROM backup_runs WHERE storage_id IS NULL) OR
+			EXISTS (SELECT 1 FROM backup_jobs WHERE storage_id IS NULL)))`
+
+// BackupStorageInUse reports whether runs or jobs still name the storage, the
+// same question a delete asks.
+func (s *PostgresStore) BackupStorageInUse(id int) (bool, error) {
+	var inUse bool
+	err := s.db.QueryRow(backupStorageInUseQuery, id).Scan(&inUse)
+	return inUse, err
 }
 
 // ───────────── Jobs ─────────────

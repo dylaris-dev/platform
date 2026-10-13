@@ -237,6 +237,12 @@ func TestAFailedMoveDropsTheStagedArchive(t *testing.T) {
 	o, _, sim, _ := newFlow(t, "stopped")
 	sim.targetFails = true
 	o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"})
+	// The simulated node reads its stream on its own goroutine, so the command
+	// can land a moment after Migrate returns; under a loaded test run it did.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sim.commands(flowSourceToken, "migrate_abort")) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
 	if len(sim.commands(flowSourceToken, "migrate_abort")) != 1 {
 		t.Fatal("the source was not told to drop its staged archive")
 	}

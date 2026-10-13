@@ -26,7 +26,13 @@ type platformSchedulerStore interface {
 	SetPlatformBackupJobSchedule(id int, next *time.Time) error
 	ListPlatformBackupRunsOverRetention(jobID, keep int) ([]models.PlatformBackupRun, error)
 	DeletePlatformBackupRun(id int) error
+	FailStalePlatformBackupRuns(olderThan time.Duration) (int64, error)
 }
+
+// stalePlatformRunAge is how long a run may read "running" before it is taken
+// for one a dead Core left behind. Far past any real run (the database dump
+// takes seconds), short enough that the job is not stuck for a day.
+const stalePlatformRunAge = 6 * time.Hour
 
 // PlatformBackupScheduler runs due platform jobs and prunes old bundles.
 type PlatformBackupScheduler struct {
@@ -69,6 +75,11 @@ func (s *PlatformBackupScheduler) tick(ctx context.Context) {
 	// the same due list; without this each one would start the same backup.
 	if s.leader != nil && !s.leader.IsLeader() {
 		return
+	}
+	if n, err := s.store.FailStalePlatformBackupRuns(stalePlatformRunAge); err != nil {
+		logErrf("platform-backup", "closing runs left running: %v", err)
+	} else if n > 0 {
+		logErrf("platform-backup", "closed %d run(s) a stopped Core left running", n)
 	}
 	jobs, err := s.store.ListDuePlatformBackupJobs()
 	if err != nil {

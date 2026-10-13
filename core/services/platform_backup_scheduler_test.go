@@ -17,6 +17,12 @@ type fakeSchedulerStore struct {
 	rearmed   map[int]*time.Time
 	deleted   []int
 	deleteErr map[int]error
+	staleAge  time.Duration
+}
+
+func (f *fakeSchedulerStore) FailStalePlatformBackupRuns(age time.Duration) (int64, error) {
+	f.staleAge = age
+	return 0, nil
 }
 
 func newSchedulerStore(job *models.PlatformBackupJob) *fakeSchedulerStore {
@@ -322,5 +328,15 @@ func TestSchedulerRearmsFromThePlannedSlot(t *testing.T) {
 	next := st.rearmed[1]
 	if want := planned.Add(24 * time.Hour); next == nil || !next.Equal(want) {
 		t.Fatalf("re-armed to %v, want the planned slot plus a day, %v", next, want)
+	}
+}
+
+// A Core that died mid-run left the row "running" for good, which kept the
+// job and its storage from ever being deleted. The leader closes such runs.
+func TestTheSchedulerClosesRunsADeadCoreLeftRunning(t *testing.T) {
+	st := newSchedulerStore(scheduledJob())
+	NewPlatformBackupScheduler(st, nil, nil, nil).tick(context.Background())
+	if st.staleAge != stalePlatformRunAge {
+		t.Fatalf("stale runs closed after %v, want %v", st.staleAge, stalePlatformRunAge)
 	}
 }

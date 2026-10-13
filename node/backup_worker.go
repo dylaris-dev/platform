@@ -131,16 +131,86 @@ func isBackupStoreEntry(rel string) bool {
 // that pushes bytes into the pipe; the storage uploader reads from the
 // other end and pushes them out. For multi-GB worlds this keeps the
 // node's working set under a few megabytes regardless of archive size.
-// saveFlushWait is how long `save-all flush` is given before the files are
-// read.
+// copyAndCommit writes the archive and reports a failure that only shows on
+// sync or close: on a network filesystem a full disk or a quota is typically
+// reported there, and with the close error dropped a truncated archive was
+// recorded as a good backup - which retention then let push out older, intact
+// ones.
+func copyAndCommit(f *os.File, r io.Reader) error {
+	if _, err := io.Copy(f, r); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("flush the archive to disk: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close the archive: %w", err)
+	}
+	return nil
+}
+
+// saveFlushTimeout bounds the wait for the server to confirm `save-all flush`.
 //
-// It is a WAIT, not a confirmation. A server acknowledges a save on its
-// console, which this process does not read, so there is nothing to observe.
-// gracefulStop makes the same trade with the same command and three seconds;
-// this one is longer on purpose - a stop that reads a moment early loses that
-// moment, while a backup that reads a moment early produces a damaged archive
-// that nobody finds out about until a restore.
-const saveFlushWait = 5 * time.Second
+// It used to be a fixed five-second wait, on the grounds that the console was
+// not readable from here. It is: the log-shipper streams it into Redis. A large
+// modded world takes far longer than five seconds to flush, and a tar that
+// starts reading region files mid-write produces an archive that is damaged
+// without anyone noticing until a restore - by which time retention has
+// removed the older, good ones. So the archive waits for "Saved the game".
+// Past the bound it goes ahead as before and says so in the log.
+var saveFlushTimeout = 3 * time.Minute
+
+// saveConfirmed reports whether a console line confirms a finished save:
+// "Saved the game" from 1.13 on, "Saved the world" before it (Forge 1.12.2,
+// 1.7.10), and the dimension summary some loaders print last.
+func saveConfirmed(line string) bool {
+	return strings.Contains(line, "Saved the game") || strings.Contains(line, "Saved the world") ||
+		strings.Contains(line, "All dimensions are saved")
+}
+
+// saveUnsupported reports a console that answered the save commands with "I do
+// not know that command" (a proxy, or a custom server): no confirmation is
+// coming, so there is nothing to wait for.
+func saveUnsupported(line string) bool {
+	l := strings.ToLower(line)
+	return strings.Contains(l, "unknown command") || strings.Contains(l, "unknown or incomplete command")
+}
+
+// waitForSaveConfirmation reads the server's console stream from after
+// fromID until a save is confirmed, the timeout passes, or ctx ends.
+func waitForSaveConfirmation(ctx context.Context, rdb *redis.Client, key, fromID string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	last := fromID
+	for time.Now().Before(deadline) {
+		block := time.Until(deadline)
+		if block > 5*time.Second {
+			block = 5 * time.Second
+		}
+		res, err := rdb.XRead(ctx, &redis.XReadArgs{Streams: []string{key, last}, Count: 200, Block: block}).Result()
+		if ctx.Err() != nil {
+			return false
+		}
+		if err != nil && err != redis.Nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		for _, st := range res {
+			for _, m := range st.Messages {
+				last = m.ID
+				line, _ := m.Values["line"].(string)
+				if saveConfirmed(line) {
+					return true
+				}
+				if saveUnsupported(line) {
+					return false
+				}
+			}
+		}
+	}
+	return false
+}
 
 // worldSaveGuard pauses a running server's world saving for the duration of an
 // archive, and turns it back on afterwards.
@@ -182,10 +252,32 @@ func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
 	g.send = func(command string) { rdb.RPush(context.Background(), inputKey, command) }
 
+	sub := ""
+	if info.Config != nil {
+		if s := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); s != info.Config.WorkingDir {
+			sub = s
+		}
+	}
+	logKey := serverLogStreamKey(uuid, sub)
+	// From the newest line now, so an earlier save's confirmation is not read
+	// as this one's.
+	// An empty stream reads from its start; an unreadable one from "now" ($),
+	// so an old confirmation is never taken for this one.
+	from := "$"
+	if last, err := rdb.XRevRangeN(ctx, logKey, "+", "-", 1).Result(); err == nil {
+		from = "0"
+		if len(last) > 0 {
+			from = last[0].ID
+		}
+	}
+
 	g.send("save-off")
 	g.send("save-all flush")
-	log.Printf("backup: server %s: saving paused and flushed before the archive", uuid)
-	time.Sleep(saveFlushWait)
+	if waitForSaveConfirmation(ctx, rdb, logKey, from, saveFlushTimeout) {
+		log.Printf("backup: server %s: saving paused, the server confirmed the flush", uuid)
+	} else {
+		log.Printf("backup: server %s: saving paused, but the server did not confirm the flush within %s; archiving anyway", uuid, saveFlushTimeout)
+	}
 	return g
 }
 
@@ -532,9 +624,7 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		_, err = io.Copy(f, r)
-		return err
+		return copyAndCommit(f, r)
 
 	case "node-local":
 		// Resolve <server-dir>/.dylaris-backups/<archive>. The Core-side
@@ -562,9 +652,17 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		_, err = io.Copy(f, r)
-		return err
+		// Bounded by the disk, shared with every other write running here: an
+		// archive inside the server directory used to be written with no check
+		// at all, and a full disk stops every server on the node. Not by the
+		// server's own disk limit - a backup of a server near it would never fit.
+		budget := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+		defer budget.release()
+		if err := copyAndCommit(f, budget.reader(r)); err != nil {
+			os.Remove(full)
+			return err
+		}
+		return nil
 
 	default:
 		return fmt.Errorf("unknown provider %s", info.Provider)

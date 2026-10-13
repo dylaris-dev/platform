@@ -2064,8 +2064,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// directory the swap is about to replace. Caught live on the testbed
 		// with a 646MB archive - the window there is only ~2s and the
 		// reconciler still hit it; on remote storage it is minutes wide.
-		releaseRestoreBusy := holdBusyStatus(rdb, rcmd.ServerUUID, "restarting", busyStatusTTL)
-		defer releaseRestoreBusy()
+		// A second restore of a server already restoring is refused inside
+		// RunRestore, and must not touch the interlock on its way out: its
+		// release used to delete the running restore's node_busy, and the
+		// reconciler could then start the server mid-restore.
+		if !restoreServersInFlight.has(rcmd.ServerUUID) {
+			releaseRestoreBusy := holdBusyStatus(rdb, rcmd.ServerUUID, "restarting", busyStatusTTL)
+			defer releaseRestoreBusy()
+		}
 		RunRestore(ctx, rdb, storage, dm, rcmd)
 
 	case "install_mod":
