@@ -50,3 +50,60 @@ func TestStalePowerActionIsChecked(t *testing.T) {
 		t.Error("processCommand no longer checks queued power actions against the current intent")
 	}
 }
+
+func TestExpressCommands(t *testing.T) {
+	for payload, want := range map[string]bool{
+		`{"action":"kill","config":{"uuid":"s"}}`:  true,
+		`{"action":"stop"}`:                        true,
+		`{"action":"backup_run","serverUuid":"s"}`: false,
+		`{"action":"start"}`:                       false,
+		`not json`:                                 false,
+	} {
+		if got := isExpressCommand([]byte(payload)); got != want {
+			t.Errorf("%s: %v, want %v", payload, got, want)
+		}
+	}
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "consumer.Express = isExpressCommand") {
+		t.Error("the command consumer no longer gives stop and kill their own workers")
+	}
+}
+
+// A stop or kill that ran on its own workers before an earlier start reached a
+// worker keeps the server stopped: the start that was queued first is dropped.
+func TestStartOvertakenByAStop(t *testing.T) {
+	uuid := "srv-overtaken"
+	noteStop(uuid, 1000)
+	noteStop(uuid, 900) // an older stop does not move the mark back
+	tests := []struct {
+		action string
+		issued int64
+		want   bool
+	}{
+		{"start", 999, true},
+		{"restart", 500, true},
+		{"switch_server", 999, true},
+		{"start", 1000, false}, // the same second: order unknown
+		{"start", 1001, false}, // queued after the stop
+		{"start", 0, false},    // from a Core that does not stamp
+		{"update_resources", 1, false},
+	}
+	for _, tt := range tests {
+		if got := overtakenByStop(tt.action, uuid, tt.issued); got != tt.want {
+			t.Errorf("%s issued %d: %v, want %v", tt.action, tt.issued, got, tt.want)
+		}
+	}
+	if overtakenByStop("start", "another-server", 1) {
+		t.Error("one server's stop dropped another server's start")
+	}
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "} else if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {") {
+		t.Error("processCommand no longer drops a start a stop has overtaken")
+	}
+}

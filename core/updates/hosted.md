@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Stop and kill no longer wait behind long backups or installs** on your node, and a start sent
+  before a stop no longer brings the server back up afterwards. `node`
+
 ## 2026.10.14.5
 
 ### Features

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -37,4 +39,53 @@ func stalePowerAction(action string, issuedAt int64, now time.Time, desired stri
 		return desired == "online"
 	}
 	return false
+}
+
+// isExpressCommand picks the commands the queue runs on their own workers.
+func isExpressCommand(payload []byte) bool {
+	var c struct {
+		Action string `json:"action"`
+	}
+	if json.Unmarshal(payload, &c) != nil {
+		return false
+	}
+	return c.Action == "stop" || c.Action == "kill"
+}
+
+// lastStopIssued holds, per server, when the newest stop or kill the node has
+// begun was queued. Stop and kill run on workers of their own, so one can run
+// before a start that was queued earlier and is still waiting for a worker; the
+// start then brought the server back up against the user's last click.
+var lastStopIssued sync.Map // uuid -> int64
+
+// noteStop records a stop or kill that is being carried out.
+func noteStop(uuid string, issuedAt int64) {
+	if issuedAt == 0 {
+		return
+	}
+	for {
+		old, loaded := lastStopIssued.LoadOrStore(uuid, issuedAt)
+		if !loaded || old.(int64) >= issuedAt {
+			return
+		}
+		if lastStopIssued.CompareAndSwap(uuid, old, issuedAt) {
+			return
+		}
+	}
+}
+
+// overtakenByStop reports a start, restart or switch queued before a stop or
+// kill that has already run. The same second is left alone: which came first
+// cannot be told.
+func overtakenByStop(action, uuid string, issuedAt int64) bool {
+	switch action {
+	case "start", "restart", "switch_server":
+	default:
+		return false
+	}
+	if issuedAt == 0 {
+		return false
+	}
+	v, ok := lastStopIssued.Load(uuid)
+	return ok && v.(int64) > issuedAt
 }

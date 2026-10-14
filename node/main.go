@@ -1179,6 +1179,10 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 	// ACKs each only after its handler returns, so a crash redelivers in-flight
 	// work on restart instead of losing it (the old RPUSH/BLPOP list lost it).
 	consumer.Concurrency = 8
+	// Stop and kill have workers of their own: once eight backups, installs
+	// or restores held every slot, a kill waited behind them for hours.
+	consumer.Express = isExpressCommand
+	consumer.ExpressConcurrency = 4
 
 	handler := func(ctx context.Context, payloadBytes []byte) error {
 		var cmd NodeCommand
@@ -1291,6 +1295,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				heartbeatClock(rdb, id).now(ctx).Sub(time.Unix(cmd.IssuedAt, 0)).Round(time.Second), desired)
 			return
 		}
+	}
+
+	if cmd.Action == "stop" || cmd.Action == "kill" {
+		noteStop(cmd.Config.UUID, cmd.IssuedAt)
+	} else if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {
+		log.Printf("%s for %s dropped: a stop queued after it has already run", cmd.Action, cmd.Config.UUID)
+		return
 	}
 
 	if serialisedActions[cmd.Action] && cmd.Config.UUID != "" {

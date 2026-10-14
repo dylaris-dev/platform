@@ -77,6 +77,15 @@ type Consumer struct {
 	// migration orchestrator, which serializes via per-server locks).
 	Concurrency int
 
+	// Express, when set, picks messages that must not wait behind long-running
+	// ones: a node's stop or kill sat behind hours of backups once all
+	// Concurrency workers were taken. They get ExpressConcurrency workers of
+	// their own, and the reader keeps reading while the main pool is busy -
+	// holding at most expressBacklog main-pool messages in memory - so an
+	// express message behind them is still seen. nil keeps the plain pool.
+	Express            func(payload []byte) bool
+	ExpressConcurrency int
+
 	// inflight holds the ids this process is running RIGHT NOW. Recovery reads
 	// (ownPending, staleClaimed) list pending entries, and "pending" includes
 	// entries whose handler simply has not finished yet - so without this they
@@ -121,6 +130,10 @@ func (c *Consumer) endInflight(id string) {
 	defer c.mu.Unlock()
 	delete(c.inflight, id)
 }
+
+// expressBacklog bounds the main-pool messages read ahead while an Express
+// consumer's main pool is busy.
+const expressBacklog = 64
 
 // NewConsumer builds a Consumer with sane defaults. stream is the Redis key,
 // group is shared by all members, name identifies this member (stable across
@@ -184,24 +197,79 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 		workers = 1
 	}
 	work := make(chan redis.XMessage)
+	expressWork := make(chan redis.XMessage)
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
+	pool := func(ch chan redis.XMessage, n int) {
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for m := range ch {
+					c.process(ctx, m, handler)
+					c.endInflight(m.ID)
+				}
+			}()
+		}
+	}
+	pool(work, workers)
+	// With Express set, main-pool messages queue here in stream order and one
+	// forwarder hands them to the pool, so the reader never waits on it.
+	var backlog chan redis.XMessage
+	forwarded := make(chan struct{})
+	if c.Express != nil {
+		pool(expressWork, max(c.ExpressConcurrency, 1))
+		backlog = make(chan redis.XMessage, expressBacklog)
 		go func() {
-			defer wg.Done()
-			for m := range work {
-				c.process(ctx, m, handler)
-				c.endInflight(m.ID)
+			defer close(forwarded)
+			for m := range backlog {
+				select {
+				case work <- m:
+				case <-ctx.Done():
+					c.endInflight(m.ID)
+				}
 			}
 		}()
+	} else {
+		close(forwarded)
 	}
-	defer func() { close(work); wg.Wait() }()
+	// Run returns only once ctx is done, so the forwarder drains the backlog
+	// as released entries; the pools close after it, or a late send would hit
+	// a closed channel.
+	defer func() {
+		if backlog != nil {
+			close(backlog)
+		}
+		<-forwarded
+		close(work)
+		close(expressWork)
+		wg.Wait()
+	}()
 
 	// dispatch claims each entry BEFORE handing it over, so a recovery pass that
 	// lists it again while it waits for a worker skips it (beginInflight).
 	dispatch := func(msgs []redis.XMessage) bool {
 		for _, m := range msgs {
 			if !c.beginInflight(m.ID) {
+				continue
+			}
+			if c.Express != nil {
+				if data := msgData(m); data != nil && c.Express(data) {
+					select {
+					case expressWork <- m:
+					case <-ctx.Done():
+						c.endInflight(m.ID)
+						return false
+					}
+					continue
+				}
+				// The main pool, without holding up the reader. When the
+				// backlog is full this waits, as the plain pool always does.
+				select {
+				case backlog <- m:
+				case <-ctx.Done():
+					c.endInflight(m.ID)
+					return false
+				}
 				continue
 			}
 			select {
@@ -293,22 +361,38 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 
 // ownPending lists this consumer's already-delivered-but-unacked entries
 // (XREADGROUP id "0") for reprocessing. Dedup skips ones that actually completed.
+//
+// Every page, not only the oldest Count: entries already read but not yet run
+// sit behind the long jobs recovered at the front, and a stop among them waited
+// for one of those to finish - hours, for a backup.
 func (c *Consumer) ownPending(ctx context.Context) []redis.XMessage {
-	res, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group:    c.group,
-		Consumer: c.name,
-		Streams:  []string{c.stream, "0"},
-		Count:    c.Count,
-	}).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil
-	}
 	var out []redis.XMessage
-	for _, st := range res {
-		out = append(out, st.Messages...)
+	after := "0"
+	for page := 0; page < maxPendingPages; page++ {
+		res, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+			Group:    c.group,
+			Consumer: c.name,
+			Streams:  []string{c.stream, after},
+			Count:    c.Count,
+		}).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return out
+		}
+		n := 0
+		for _, st := range res {
+			out = append(out, st.Messages...)
+			n += len(st.Messages)
+		}
+		if n == 0 {
+			return out
+		}
+		after = out[len(out)-1].ID
 	}
 	return out
 }
+
+// maxPendingPages bounds one recovery pass over this consumer's own pending.
+const maxPendingPages = 64
 
 // staleClaimed takes over pending entries idle longer than ClaimMinIdle that are
 // owned by a dead or renamed consumer. Best-effort: a backend without
