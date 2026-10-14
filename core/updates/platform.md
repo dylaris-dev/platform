@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A node no longer stops taking commands for good** when Redis was briefly away while it started,
+  and no longer piles up connections to a Core that hangs while signing it in. `node`
+- **A node update no longer leaves half-finished work on disk**: interrupted installs, copies,
+  uploads, migrations and node-local backups are removed at the next start. `node`
+- Old server runtime images and leftover installer containers are removed, container logs are
+  size-capped, and disk measuring no longer stacks up on slow disks. `node`
+
 ## 2026.10.14.3
 
 ### Features

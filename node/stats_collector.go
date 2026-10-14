@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -318,6 +319,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	heapKey := fmt.Sprintf("dylaris:server:%s:java-heap", uuid)
 
 	var lastPing *SLPResponse
+	var measuring atomic.Bool
 	var pingMu sync.Mutex
 	// A server that stops answering pings (hung, crashed inside a running
 	// container, restarting) would otherwise keep reporting its last player
@@ -486,7 +488,14 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				pingMu.Unlock()
 			}()
 		case <-diskTicker.C:
+			// One measurement at a time. A walk that outlasted the tick (a big
+			// world, a slow disk) used to get a second one started next to it,
+			// and each slowed the other down.
+			if !measuring.CompareAndSwap(false, true) {
+				continue
+			}
 			go func() {
+				defer measuring.Store(false)
 				measuredFrom := time.Now()
 				usage := getDiskUsage(ctx, rdb, uuid, quota)
 				if usage != nil {
@@ -628,6 +637,38 @@ func duDiskUsage(ctx context.Context, rdb *redis.Client, uuid string) *DiskUsage
 // under quotas and another without them is worse than no breakdown.
 // Dot-directories are skipped - .dylaris-backups and friends are not
 // sub-servers, and counting them would inflate the limit Core enforces.
+// subServerSizesTTL is how long the breakdown is reused. Short: Core also reads
+// it to tell whether a directory a tenant made is a sub-server it may switch to.
+const subServerSizesTTL = time.Minute
+
+// subServerSizesFresh is scanSubServerSizes reused for subServerSizesTTL.
+// The quota path answers the total from the filesystem at once, but this
+// breakdown walks every sub-server with du, so on a quota filesystem it was a
+// full walk every ten seconds for a number only the panel's breakdown shows.
+func subServerSizesFresh(serverDir string) map[string]int64 {
+	subSizeCache.mu.Lock()
+	e, ok := subSizeCache.m[serverDir]
+	subSizeCache.mu.Unlock()
+	if ok && time.Since(e.at) < subServerSizesTTL {
+		return e.sizes
+	}
+	sizes := scanSubServerSizes(serverDir)
+	subSizeCache.mu.Lock()
+	subSizeCache.m[serverDir] = subSizeEntry{at: time.Now(), sizes: sizes}
+	subSizeCache.mu.Unlock()
+	return sizes
+}
+
+type subSizeEntry struct {
+	at    time.Time
+	sizes map[string]int64
+}
+
+var subSizeCache = struct {
+	mu sync.Mutex
+	m  map[string]subSizeEntry
+}{m: map[string]subSizeEntry{}}
+
 func scanSubServerSizes(serverDir string) map[string]int64 {
 	sizes := make(map[string]int64)
 	entries, err := os.ReadDir(serverDir)

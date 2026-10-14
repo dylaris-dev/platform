@@ -654,7 +654,15 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		if rerr := os.Remove(full); rerr != nil && !os.IsNotExist(rerr) {
 			return fmt.Errorf("clear previous archive: %w", rerr)
 		}
-		f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		// Written under a temporary name and renamed when complete. Written
+		// in place, a run killed by a node update left a truncated archive
+		// under the real name, which counted against the backup quota and no
+		// list ever showed. The boot sweep removes an old .partial.
+		partial := full + partialBackupSuffix
+		if rerr := os.Remove(partial); rerr != nil && !os.IsNotExist(rerr) {
+			return fmt.Errorf("clear previous partial archive: %w", rerr)
+		}
+		f, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			return err
 		}
@@ -665,8 +673,14 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		budget := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
 		defer budget.release()
 		if err := copyAndCommit(f, budget.reader(r)); err != nil {
-			os.Remove(full)
+			os.Remove(partial)
 			return err
+		}
+		// Rename replaces the directory entry; it does not follow a link
+		// planted under the final name meanwhile.
+		if err := os.Rename(partial, full); err != nil {
+			os.Remove(partial)
+			return fmt.Errorf("finish archive: %w", err)
 		}
 		return nil
 

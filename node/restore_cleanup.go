@@ -78,6 +78,8 @@ func StartRestoreCleanup(ctx context.Context, sm *StorageManager) {
 		// up leftover stashes from the previous process.
 		time.Sleep(30 * time.Second)
 		runRestoreCleanup(sm)
+		// Boot only: what it removes can only be left by the previous process.
+		sweepInterruptedWork(storageRoots(sm))
 
 		ticker := time.NewTicker(restoreCleanupInterval)
 		defer ticker.Stop()

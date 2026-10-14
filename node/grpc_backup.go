@@ -109,6 +109,11 @@ func (h *StreamHandler) handleBackupList(reqID, serverUUID string) *pb.NodeMessa
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
+		// An archive still being written is no backup yet. Listed, Core's
+		// orphan scan would see a key no run names and delete it mid-write.
+		if strings.HasSuffix(e.Name(), partialBackupSuffix) {
+			continue
+		}
 		objs = append(objs, &pb.BackupObject{
 			Key:          e.Name(),
 			Size:         info.Size(),

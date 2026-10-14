@@ -180,17 +180,28 @@ func (s *SFTPServer) Start(ctx context.Context, port string) {
 		listener.Close()
 	}()
 
+	var pause time.Duration
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			// Paced, as net/http does: a lasting failure (out of file
+			// descriptors, which the public port can provoke) made this loop
+			// spin at full CPU writing a log line per turn.
+			pause = nextAcceptPause(pause)
+			if pause == acceptPauseMin { // once per run of failures
+				log.Printf("SFTP: accept failing, retrying with a pause of up to %s: %v", acceptPauseMax, err)
+			}
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				log.Printf("SFTP: accept error: %v", err)
-				continue
+			case <-time.After(pause):
 			}
+			continue
 		}
+		pause = 0
 		addr := remoteAddr(conn.RemoteAddr())
 		if !s.admit(addr) {
 			conn.Close()
@@ -1334,4 +1345,18 @@ func publishSFTPAudit(rdb *redis.Client, a *sftpAudit) {
 			log.Printf("SFTP: audit record for %s could not be sent: %v", rec.ServerUUID, err)
 		}
 	}
+}
+
+const (
+	acceptPauseMin = 5 * time.Millisecond
+	acceptPauseMax = time.Second
+)
+
+// nextAcceptPause doubles the pause after a failed accept, from
+// acceptPauseMin up to acceptPauseMax.
+func nextAcceptPause(d time.Duration) time.Duration {
+	if d == 0 {
+		return acceptPauseMin
+	}
+	return min(2*d, acceptPauseMax)
 }

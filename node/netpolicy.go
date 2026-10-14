@@ -314,6 +314,9 @@ func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName strin
 		return fmt.Errorf("create policy helper: %w", err)
 	}
 	if err := dm.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		// AutoRemove applies only once a container ran; one that never
+		// started stayed behind as Created, one per failure every 15s.
+		_ = dm.cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
 		return fmt.Errorf("start policy helper: %w", err)
 	}
 	statusCh, errCh := dm.cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)

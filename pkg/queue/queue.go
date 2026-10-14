@@ -226,6 +226,7 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 		return ctx.Err()
 	}
 
+	readFailing := false
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -241,6 +242,11 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 			if errors.Is(err, redis.Nil) || ctx.Err() != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
+				}
+				// An empty read is a working read.
+				if readFailing {
+					readFailing = false
+					log.Printf("queue %s: reading again", c.stream)
 				}
 				// Idle tick: sweep for stragglers (orphaned / retryable), then wait.
 				if !recoverAll() {
@@ -259,8 +265,11 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 				} else {
 					log.Printf("queue %s: consumer group vanished, recreated at 0", c.stream)
 				}
-			} else {
-				log.Printf("queue %s: read error: %v", c.stream, err)
+			} else if !readFailing {
+				// Once per outage: retried every second, it was most of a
+				// node's log while Redis was away - a line a second.
+				readFailing = true
+				log.Printf("queue %s: read error (retrying every second, logged once): %v", c.stream, err)
 			}
 			// Back off briefly so a persistent error doesn't hot-loop.
 			select {
@@ -269,6 +278,10 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 			case <-time.After(time.Second):
 			}
 			continue
+		}
+		if readFailing {
+			readFailing = false
+			log.Printf("queue %s: reading again", c.stream)
 		}
 		for _, st := range res {
 			if !dispatch(st.Messages) {

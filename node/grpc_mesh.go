@@ -107,6 +107,7 @@ type MeshManager struct {
 	handler   *StreamHandler
 
 	connections   map[string]*coreConnection // coreID → connection
+	connecting    map[string]bool            // coreID → a connect attempt is running
 	mu            sync.Mutex
 	pendingWrites map[string]*pendingWrite // requestID → write buffer
 	writeMu       sync.Mutex
@@ -120,6 +121,7 @@ func NewMeshManager(nodeToken string, rdb *redis.Client, handler *StreamHandler)
 		rdb:           rdb,
 		handler:       handler,
 		connections:   make(map[string]*coreConnection),
+		connecting:    make(map[string]bool),
 		pendingWrites: make(map[string]*pendingWrite),
 		wsBridges:     make(map[string]*wsBridge),
 	}
@@ -235,11 +237,7 @@ func (m *MeshManager) scanCores(ctx context.Context) {
 
 		activeCores[info.ID] = true
 
-		m.mu.Lock()
-		_, exists := m.connections[info.ID]
-		m.mu.Unlock()
-
-		if !exists {
+		if m.claimConnect(info.ID) {
 			go m.connectToCore(ctx, info)
 		}
 	}
@@ -257,7 +255,40 @@ func (m *MeshManager) scanCores(ctx context.Context) {
 	m.mu.Unlock()
 }
 
+// coreAuthTimeout bounds the handshake. A Core that answers on the transport
+// but hangs in auth (its database stalled) kept each attempt waiting forever,
+// and the scan started another one every ten seconds.
+const coreAuthTimeout = 30 * time.Second
+
+// claimConnect reports whether a connect to coreID should start now, and if so
+// marks it running. Only one at a time: the connection is registered only after
+// auth, and without the mark every scan during a slow auth started another.
+func (m *MeshManager) claimConnect(coreID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.connections[coreID]; ok || m.connecting[coreID] {
+		return false
+	}
+	m.connecting[coreID] = true
+	return true
+}
+
+// dropConnection removes cc if it is still the registered connection for
+// coreID. A connection that ended must not remove its successor's entry.
+func (m *MeshManager) dropConnection(coreID string, cc *coreConnection) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.connections[coreID] == cc {
+		delete(m.connections, coreID)
+	}
+}
+
 func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
+	defer func() {
+		m.mu.Lock()
+		delete(m.connecting, info.ID)
+		m.mu.Unlock()
+	}()
 	// IP Pairing: try private IPs first (500ms timeout), fallback to advertised gRPC addr
 	targetAddr := m.resolveAddr(info)
 
@@ -277,6 +308,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	}
 
 	ctx, cancel := context.WithCancel(parentCtx)
+	authDeadline := time.AfterFunc(coreAuthTimeout, cancel)
 
 	client := pb.NewNodeServiceClient(conn)
 	// grpc.NewClient above is lazy, so this is the first call that actually
@@ -363,6 +395,13 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		return
 	}
 
+	if !authDeadline.Stop() {
+		// The deadline fired as auth completed: the stream is already cancelled.
+		log.Printf("gRPC Mesh: auth with Core %s took longer than %s", info.ID, coreAuthTimeout)
+		cancel()
+		conn.Close()
+		return
+	}
 	noteUpdateRequirement(authResult)
 
 	log.Printf("gRPC Mesh: Connected to Core %s ✓", info.ID)
@@ -431,9 +470,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	}
 
 	// Cleanup
-	m.mu.Lock()
-	delete(m.connections, info.ID)
-	m.mu.Unlock()
+	m.dropConnection(info.ID, cc)
 	// After the map delete, so a new Request cannot pick this connection; one
 	// that already did finds pending nil and moves on to another Core.
 	cc.closePending()

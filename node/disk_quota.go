@@ -214,7 +214,7 @@ func (qp *QuotaProvider) GetDiskUsage(uuid string) *DiskUsagePayload {
 	return &DiskUsagePayload{
 		Total:      totalBytes,
 		Limit:      limitBytes,
-		SubServers: scanSubServerSizes(filepath.Join(qp.basePath, uuid)),
+		SubServers: subServerSizesFresh(filepath.Join(qp.basePath, uuid)),
 	}
 }
 

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Your node no longer stops taking commands for good** after a short outage while it started,
+  and leftovers of work interrupted by a node update no longer fill your server's disk. `node`
+- Old server runtime images are removed, so a node's disk no longer fills a little with every
+  update. `node`
+
 ## 2026.10.14.3
 
 ### Features

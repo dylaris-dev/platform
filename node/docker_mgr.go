@@ -567,6 +567,9 @@ func (dm *DockerManager) RemoveOwnLinkContainer() {
 // Observed live: a container recreated this way sat "Up" for nine minutes with
 // no networks, its log-shipper retrying "Redis not reachable ... network is
 // unreachable" every 32 seconds, never starting Java at all.
+// loggedGlobalNet is the network id last reported by ensureGlobalNetwork.
+var loggedGlobalNet atomic.Value
+
 func (dm *DockerManager) ensureGlobalNetwork() (id string, name string, err error) {
 	netName := globalNetOverride()
 	if netName == "" {
@@ -578,7 +581,11 @@ func (dm *DockerManager) ensureGlobalNetwork() (id string, name string, err erro
 	}
 	for _, n := range nets {
 		if isOwnGlobalNet(n.Name) {
-			log.Printf("Found overlay network %q (ID: %s)", n.Name, n.ID[:12])
+			// Said when it changes: the network-policy reconcile asks every 15s,
+			// and this line was most of the node's log.
+			if prev := loggedGlobalNet.Swap(n.ID); prev != n.ID {
+				log.Printf("Found overlay network %q (ID: %s)", n.Name, n.ID[:12])
+			}
 			return n.ID, n.Name, nil
 		}
 	}
@@ -815,6 +822,7 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          false,
+		Labels:       map[string]string{roleLabel: roleInstaller, ownerLabel: nodeIdentity(nodeSecretDir)},
 	}
 	// The installer runs the tenant's chosen Java image on the tenant's
 	// directory, and had nothing set at all: root by default, no memory or
@@ -2044,6 +2052,9 @@ const tenantTmpfsSize = "512m"
 // "Operation not permitted" on every server created since this hardening.
 // noexec bought nothing: /data is the tenant's, writable and executable.
 func hardenTenantContainer(hc *container.HostConfig) {
+	// Every tenant container is created through here, so its own log is
+	// capped here too; see boundedLogConfig.
+	hc.LogConfig = currentLogConfig()
 	hc.SecurityOpt = append(hc.SecurityOpt, "no-new-privileges:true")
 	hc.CapDrop = []string{"ALL"}
 	opts := "rw,exec,nosuid,nodev,size=" + tenantTmpfsSize

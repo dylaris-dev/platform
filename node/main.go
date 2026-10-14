@@ -346,6 +346,8 @@ func main() {
 	// Make the docker manager available to installers that need a JVM
 	// container (Forge / NeoForge).
 	SetDockerManager(dockerMgr)
+	// Before any container is created: it learns the log driver they are capped by.
+	dockerMgr.startDockerHygiene(ctx)
 
 	// Wire the control-plane (RCON / tab-proxy) address resolver to the Docker
 	// daemon. Daemon-authoritative resolution works from a host-net node and has
@@ -1175,7 +1177,7 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 	// work on restart instead of losing it (the old RPUSH/BLPOP list lost it).
 	consumer.Concurrency = 8
 
-	err := consumer.Run(ctx, func(ctx context.Context, payloadBytes []byte) error {
+	handler := func(ctx context.Context, payloadBytes []byte) error {
 		var cmd NodeCommand
 		if err := json.Unmarshal(payloadBytes, &cmd); err != nil {
 			log.Printf("Invalid command payload, dropping: %v", err)
@@ -1183,9 +1185,37 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 		}
 		processCommand(ctx, cmd, string(payloadBytes), rdb, dm, id, quota, storage)
 		return nil
-	})
-	if err != nil && ctx.Err() == nil {
-		log.Printf("listenForCommands: consumer stopped: %v", err)
+	}
+	runCommandConsumer(ctx, func(ctx context.Context) error { return consumer.Run(ctx, handler) })
+}
+
+// consumerRestartWait is the pause before the consumer is started again;
+// a variable so a test need not sit through the real schedule.
+var consumerRestartWait = func(bo *retry.Backoff) time.Duration { return bo.Next() }
+
+// runCommandConsumer keeps the command consumer running until ctx ends. Run
+// returns when it cannot set up its group - Redis unreachable for a moment
+// while the node boots - and this used to end the listener for good: the node
+// kept heartbeating and looked healthy, and never ran another start, stop,
+// backup or delete until it was restarted.
+func runCommandConsumer(ctx context.Context, run func(context.Context) error) {
+	var bo retry.Backoff
+	for {
+		started := time.Now()
+		err := run(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if time.Since(started) > time.Minute {
+			bo.Reset() // it ran; this is a new outage, not the same one
+		}
+		wait := consumerRestartWait(&bo)
+		log.Printf("listenForCommands: consumer stopped (%v), starting it again in %s", err, wait)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
 	}
 }
 
