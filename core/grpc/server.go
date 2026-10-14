@@ -451,6 +451,9 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	}
 
 	var node *Node
+	// The node key this stream proved, when it logged in by one; the registry
+	// hands a live stream its entry back only for the same key.
+	var provedKey ed25519.PublicKey
 	{
 		address := ""
 		if ips := auth.GetIps(); ips != nil {
@@ -868,6 +871,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail("the node's pairing changed during login; connect again")
 				return fmt.Errorf("acl: node %d: its pairing changed during the login; nothing handed out, not registered", node.ID)
 			}
+			provedKey = authKey
 			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, RedisAddr: s.redisAddrFor(node.Owned),
 				ModpackMirrorHost: s.modpackMirrorHost()}
 			applyUpdateWarning(res, verdict)
@@ -902,7 +906,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	}
 
 	// Step 4: Register connection
-	conn := s.registry.Register(node.ID, node.Token, stream)
+	conn := s.registry.RegisterProved(node.ID, node.Token, stream, provedKey)
 	log.Printf("gRPC: Node %d connected (token=%s...)", node.ID, tokenPrefix(node.Token))
 
 	defer func() {

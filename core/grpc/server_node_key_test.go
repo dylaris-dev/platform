@@ -931,3 +931,24 @@ func TestAnAdmissionBoundToAKeyAdmitsOnlyThatKey(t *testing.T) {
 		}
 	})
 }
+
+// A one-shot login beside the node's live stream hands the entry back when it
+// ends, but only because the login proved the same key: NodeConnect must tell
+// the registry which key that was.
+func TestAOneShotKeyLoginLeavesTheLiveStreamRegistered(t *testing.T) {
+	k := newKey(t)
+	reg := NewRegistry()
+	live := reg.RegisterProved(42, "node-abc", nil, pubOf(k))
+
+	n := nodeWith(pubOf(k), rowSecret, k)
+	n.ctx = peer.NewContext(context.Background(), &peer.Peer{
+		Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 51234},
+	})
+	acl := &keyedACL{secret: rowSecret, key: pubOf(k)}
+	if err := NewServer(reg, known, "core-test", acl, nil, &recordingJoins{}).NodeConnect(n); err != nil {
+		t.Fatalf("the one-shot login was refused: %v", err)
+	}
+	if got, ok := reg.GetConnection(42); !ok || got != live {
+		t.Fatal("the node's live stream lost its registry entry to a one-shot login that has ended")
+	}
+}

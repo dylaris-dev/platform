@@ -1,6 +1,8 @@
 package nodegrpc
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"fmt"
 	"sync"
 	"time"
@@ -19,6 +21,14 @@ type NodeConnection struct {
 	pending map[string]chan *pb.NodeMessage
 	mu      sync.Mutex
 	sendMu  sync.Mutex // serializes Stream.Send across concurrent handlers + WS pumps
+
+	// replaced is the connection this one took the map entry from, ended marks
+	// a stream whose handler has returned, and authKey is the node key the
+	// stream logged in with (nil for any other login). All three are guarded by
+	// the registry's mu, not this one's.
+	replaced *NodeConnection
+	ended    bool
+	authKey  ed25519.PublicKey
 }
 
 // Registry is thread-safe for concurrent access from HTTP handlers.
@@ -51,11 +61,17 @@ func NewRegistry() *Registry {
 
 // Register adds a new Node connection to the registry.
 func (r *Registry) Register(nodeID int, token string, stream pb.NodeService_NodeConnectServer) *NodeConnection {
+	return r.RegisterProved(nodeID, token, stream, nil)
+}
+
+// RegisterProved is Register for a stream that logged in by proving authKey.
+func (r *Registry) RegisterProved(nodeID int, token string, stream pb.NodeService_NodeConnectServer, authKey ed25519.PublicKey) *NodeConnection {
 	conn := &NodeConnection{
 		NodeID:    nodeID,
 		NodeToken: token,
 		Stream:    stream,
 		pending:   make(map[string]chan *pb.NodeMessage),
+		authKey:   authKey,
 	}
 
 	r.mu.Lock()
@@ -66,6 +82,10 @@ func (r *Registry) Register(nodeID int, token string, stream pb.NodeService_Node
 		}
 		old.pending = nil
 		old.mu.Unlock()
+		// One level only, so a node that reconnects all day does not chain
+		// every stream it ever had.
+		conn.replaced = old
+		old.replaced = nil
 	}
 	r.connections[nodeID] = conn
 	r.mu.Unlock()
@@ -96,8 +116,21 @@ func (r *Registry) Register(nodeID int, token string, stream pb.NodeService_Node
 // pending channels and nil'd the map, so returning early is complete, not a
 // shortcut. This is the same reconnect overlap TestRouteResponseSurvivesAReconnectRace
 // covers for pending channels, applied to the registry entry itself.
+//
+// The other half: a stream that ends while the one it replaced is still being
+// read hands the entry BACK to that one. A node opens a short-lived second
+// NodeConnect beside its live stream when it re-bootstraps its Redis ACL
+// (Valkey lost its aclfile); that connect took the entry, and its teardown
+// left the node with no entry at all while the live stream kept running, so
+// every command and file request failed until the node happened to reconnect.
+// A replaced stream whose own handler already returned is not restored, and
+// neither is one that did not log in with the very key the ending stream just
+// proved: after Reset pairing or Roll key, the stream that re-paired proves a
+// new key (or none), so a revoked stream still being read never gets the entry
+// back. A login by the secret alone is never restored either.
 func (r *Registry) Unregister(nodeID int, conn *NodeConnection) {
 	r.mu.Lock()
+	conn.ended = true
 	if cur, ok := r.connections[nodeID]; ok && cur == conn {
 		cur.mu.Lock()
 		for _, ch := range cur.pending {
@@ -106,7 +139,14 @@ func (r *Registry) Unregister(nodeID int, conn *NodeConnection) {
 		cur.pending = nil
 		cur.mu.Unlock()
 		delete(r.connections, nodeID)
+		if prev := conn.replaced; prev != nil && !prev.ended && prev.authKey != nil && bytes.Equal(prev.authKey, conn.authKey) {
+			prev.mu.Lock()
+			prev.pending = make(map[string]chan *pb.NodeMessage)
+			prev.mu.Unlock()
+			r.connections[nodeID] = prev
+		}
 	}
+	conn.replaced = nil
 	r.mu.Unlock()
 }
 

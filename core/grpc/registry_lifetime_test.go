@@ -1,6 +1,8 @@
 package nodegrpc
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"errors"
 	"sync"
 	"testing"
@@ -214,5 +216,81 @@ func TestUnregisterDoesNotEvictAReconnectedNode(t *testing.T) {
 	r.Unregister(1, second)
 	if _, ok := r.GetConnection(1); ok {
 		t.Error("Unregister no longer removes the connection it was given")
+	}
+}
+
+// TestAShortSecondConnectHandsTheEntryBack pins the restore in Unregister. A
+// node re-bootstrapping its Redis ACL opens a one-shot NodeConnect beside its
+// live stream; that connect took the entry and its teardown removed it, so the
+// node was connected and unreachable until it happened to reconnect.
+func TestAShortSecondConnectHandsTheEntryBack(t *testing.T) {
+	key := ed25519.PublicKey(bytes.Repeat([]byte{1}, ed25519.PublicKeySize))
+	r := NewRegistry()
+	live := r.RegisterProved(1, "token", nil, key)
+	oneShot := r.RegisterProved(1, "token", nil, key)
+	r.Unregister(1, oneShot)
+
+	got, ok := r.GetConnection(1)
+	if !ok || got != live {
+		t.Fatal("the live stream did not get the entry back after the one-shot connect ended")
+	}
+	ch := addPending(live, "req-1")
+	if !live.RouteResponse(&pb.NodeMessage{RequestId: "req-1"}) {
+		t.Fatal("the restored connection cannot route a reply")
+	}
+	if _, open := <-ch; !open {
+		t.Fatal("the reply did not arrive")
+	}
+
+	r.Unregister(1, live)
+	if _, ok := r.GetConnection(1); ok {
+		t.Error("the restored connection's own teardown left it registered")
+	}
+}
+
+// TestRestoreOnlyForTheSameLiveKey: what must never come back. A stream still
+// being read after Reset pairing or Roll key logged in with the key those
+// revoked; the stream that re-paired proves another one, or none.
+func TestRestoreOnlyForTheSameLiveKey(t *testing.T) {
+	k1 := ed25519.PublicKey(bytes.Repeat([]byte{1}, ed25519.PublicKeySize))
+	k2 := ed25519.PublicKey(bytes.Repeat([]byte{2}, ed25519.PublicKeySize))
+	tests := []struct {
+		name string
+		run  func(r *Registry)
+	}{
+		{"re-paired with another key", func(r *Registry) {
+			r.RegisterProved(1, "token", nil, k1)
+			r.Unregister(1, r.RegisterProved(1, "token", nil, k2))
+		}},
+		{"re-paired without a key", func(r *Registry) {
+			r.RegisterProved(1, "token", nil, k1)
+			r.Unregister(1, r.Register(1, "token", nil))
+		}},
+		{"both logged in by the secret", func(r *Registry) {
+			r.Register(1, "token", nil)
+			r.Unregister(1, r.Register(1, "token", nil))
+		}},
+		{"the replaced stream already ended", func(r *Registry) {
+			dead := r.RegisterProved(1, "token", nil, k1)
+			next := r.RegisterProved(1, "token", nil, k1)
+			r.Unregister(1, dead)
+			r.Unregister(1, next)
+		}},
+		{"only the stream directly replaced", func(r *Registry) {
+			r.RegisterProved(1, "token", nil, k1)
+			mid := r.RegisterProved(1, "token", nil, k1)
+			last := r.RegisterProved(1, "token", nil, k1)
+			r.Unregister(1, mid)
+			r.Unregister(1, last)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewRegistry()
+			tt.run(r)
+			if _, ok := r.GetConnection(1); ok {
+				t.Fatal("a stream that must stay out got the entry back")
+			}
+		})
 	}
 }

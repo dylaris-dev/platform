@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.15
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Your node no longer becomes unreachable from the panel for commands and file access after a
+  short re-login on its side; it used to stay that way until it reconnected. Nothing to do on your side.
+
 ## 2026.10.14.7
 
 ### Features
