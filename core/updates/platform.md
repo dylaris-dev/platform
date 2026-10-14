@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The deploy files for customer nodes and route-only links now cap each container's own log at
+  30 MB; before, Docker kept every line. `panel`
+
 ## 2026.10.14.6
 
 ### Features

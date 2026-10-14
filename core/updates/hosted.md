@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The deploy file in the panel now caps each container's log at 30 MB instead of keeping every
+  line. Nothing changes on your machine until you deploy the new file.
+
 ## 2026.10.14.6
 
 ### Features

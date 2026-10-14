@@ -272,6 +272,18 @@ describe('compose annotations', () => {
     });
 });
 
+describe('container logs', () => {
+    // Every service in a kit, or the one left out grows its log without end.
+    it('caps the log of every service', () => {
+        for (const body of [routeOnlyCompose(base), nodeCompose(base), nodeCompose({ ...base, linkBesideNode: true })]) {
+            const services = body.match(/^ {4}image:/gm) ?? [];
+            const capped = body.match(/^ {4}logging:\n {6}driver: json-file\n {6}options: \{ max-size: "10m", max-file: "3" \}$/gm) ?? [];
+            expect(services.length).toBeGreaterThan(1);
+            expect(capped.length).toBe(services.length);
+        }
+    });
+});
+
 describe('EXTERNAL_NODE_PORTS', () => {
     // NODE_EXTERNAL is an advertised mode, not enforcement: SFTP binds anyway.
     // Users need to be told, so this list must keep saying so.

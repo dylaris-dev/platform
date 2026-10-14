@@ -132,6 +132,15 @@ function kitTimeZone(explicit: string | undefined): string {
     }
 }
 
+// Docker's default json-file log keeps every line forever, and a kit runs for
+// months on a machine we do not watch. The driver is named because a host whose
+// default is journald or syslog refuses max-size and the container never starts.
+const LOGS = `    # keep - caps this container's own log at 30 MB.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+`;
+
 /**
  * The watchtower service. Label-enable mode, so it only ever touches containers
  * labelled com.centurylinklabs.watchtower.enable=true. Minecraft containers the
@@ -146,7 +155,7 @@ function watchtowerService(what: string, when: string, tz: string): string {
   watchtower:
     image: ${WATCHTOWER_IMAGE}
     restart: unless-stopped
-    environment:
+${LOGS}    environment:
       # keep - only containers labelled for it, and old images are removed.
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_CLEANUP: "true"
@@ -293,7 +302,7 @@ services:
   link:
     image: ${REG}/gateway-link:latest
     restart: unless-stopped
-    environment:
+${LOGS}    environment:
       # keep - this link's key. Shown once; we store only a hash of it. It is
       # the only credential on this machine, and revoking it in the panel is
       # the whole revocation.
@@ -404,7 +413,7 @@ ${i.legacyAdminKey
   link:
     image: ${REG}/gateway-link:latest
     restart: unless-stopped
-    depends_on: [warp]
+${LOGS}    depends_on: [warp]
     environment:
       # keep - the same address as ENROLL_URL above.
       CORE_URL: "${or(i.enrollUrl, '<core-url>')}"
@@ -478,7 +487,7 @@ services:
   warp:
     image: ${REG}/gateway-warp:latest
     restart: unless-stopped
-    environment:
+${LOGS}    environment:
       # keep - this node's key. Shown once; we store only a hash of it.
       API_KEY: "${i.apiKey}"
 
@@ -500,7 +509,7 @@ services:
   node:
     image: ${REG}/platform-node:latest
     restart: unless-stopped
-    depends_on: [warp]
+${LOGS}    depends_on: [warp]
     environment:
       # keep - ${i.externalNode
           ? 'this machine runs outside our datacenter, reached through warp.'
