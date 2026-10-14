@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"dylaris-core/services/redisacl"
 
@@ -379,5 +380,21 @@ func TestSendMigrateCleanupCommand(t *testing.T) {
 	cfg, _ := got["config"].(map[string]interface{})
 	if cfg["uuid"] != "server-uuid" {
 		t.Errorf("config.uuid = %v, want server-uuid", cfg["uuid"])
+	}
+}
+
+// Every command carries when it was queued, so a node returning after an
+// outage can tell a stale power action from a fresh one.
+func TestSendCommand_StampsIssuedAt(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	svc := NewQueueService(rdb)
+	before := time.Now().Unix()
+	if err := svc.SendCommand(context.Background(), "tok-1", "start", map[string]interface{}{"uuid": "srv-1"}, nil); err != nil {
+		t.Fatalf("SendCommand: %v", err)
+	}
+	payload := readStreamPayload(t, rdb, "dylaris:node:tok-1:cmds")
+	at, ok := payload["issuedAt"].(float64)
+	if !ok || int64(at) < before || int64(at) > time.Now().Unix() {
+		t.Fatalf("issuedAt = %v, want the time it was queued", payload["issuedAt"])
 	}
 }

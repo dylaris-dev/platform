@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"dylaris-core/services/redisacl"
 
@@ -42,6 +43,10 @@ type NodeCommand struct {
 	Action    string      `json:"action"`
 	Config    interface{} `json:"config"`
 	Installer interface{} `json:"installer,omitempty"`
+	// IssuedAt (unix seconds) lets the node tell a command queued while it
+	// was away from a fresh one; see stalePowerAction in the node. An older
+	// node ignores it.
+	IssuedAt int64 `json:"issuedAt,omitempty"`
 }
 
 // SendCommand pushes a command into the Node's queue (mailbox).
@@ -68,6 +73,7 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 		Action:    action,
 		Config:    config,
 		Installer: installer,
+		IssuedAt:  time.Now().Unix(),
 	}
 
 	jsonData, err := json.Marshal(cmd)

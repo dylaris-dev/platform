@@ -198,7 +198,10 @@ func sftpEnabled() bool {
 }
 
 type NodeCommand struct {
-	Action     string          `json:"action"`
+	Action string `json:"action"`
+	// IssuedAt is when Core queued the command (unix seconds, Core's clock);
+	// 0 from a Core that predates it. See stalePowerAction.
+	IssuedAt   int64           `json:"issuedAt,omitempty"`
 	Config     ServerConfig    `json:"config"`
 	Installer  InstallerConfig `json:"installer"`
 	TargetPath string          `json:"targetPath,omitempty"`
@@ -959,7 +962,7 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		publicIP = getOutboundIP()
 	}
 
-	ts := time.Now().Unix()
+	ts := heartbeatClock(rdb, id).now(ctx).Unix()
 	ips := map[string]interface{}{
 		"public":  publicIP,
 		"private": getPrivateIPs(),
@@ -1280,6 +1283,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	// Core published before queueing it; the modes stay node-derived, so
 	// applyExternalOverride still forces BYON nodes to gateway.
 	loadModesFromRedis(ctx, rdb)
+
+	if powerActions[cmd.Action] && cmd.IssuedAt != 0 && cmd.Config.UUID != "" {
+		desired, derr := rdb.Get(ctx, desiredStateKey(cmd.Config.UUID)).Result()
+		if stalePowerAction(cmd.Action, cmd.IssuedAt, heartbeatClock(rdb, id).now(ctx), desired, derr) {
+			log.Printf("%s for %s dropped: queued %s ago and the server should now be %q", cmd.Action, cmd.Config.UUID,
+				heartbeatClock(rdb, id).now(ctx).Sub(time.Unix(cmd.IssuedAt, 0)).Round(time.Second), desired)
+			return
+		}
+	}
 
 	if serialisedActions[cmd.Action] && cmd.Config.UUID != "" {
 		release, ok := lockServerPower(cmd.Config.UUID)

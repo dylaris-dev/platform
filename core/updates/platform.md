@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A node whose clock is off no longer shows as offline**: heartbeats follow Redis's time once the
+  machine's clock is more than ten seconds off, and the node log says to set up NTP. `node`
+- **Power actions queued while a node was away no longer replay against what you want now**: a start
+  or stop that contradicts the server's current state is dropped when the node returns. `core` `node`
+
 ## 2026.10.14.4
 
 ### Features
