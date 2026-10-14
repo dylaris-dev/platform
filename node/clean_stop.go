@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,21 +65,61 @@ func serverLogStreamKey(uuid, sub string) string {
 	return fmt.Sprintf("dylaris:server:%s:logs", uuid)
 }
 
-// logTailAsksRestart reports whether the server's last console lines ask for a
-// restart: "/restart", an auto-restart plugin's announcement, or Paper's
+// restartWindow is how much console output before the last line is read for
+// a restart. A shutdown takes seconds, a modded one under load a minute or so.
+// By time and not by line count: a log spam during the shutdown pushed the
+// restart line out of the last 50 lines, and a server that asked to come back
+// stayed down. Anchored on the newest line, whose id is Redis's clock - the
+// node's clock can be minutes off it on a customer's machine.
+const restartWindow = 2 * time.Minute
+
+// logTailAsksRestart reports whether the console lines printed at the end ask
+// for a restart: "/restart", an auto-restart plugin's announcement, or Paper's
 // "Startup script ... does not exist! Stopping server." that /restart prints
-// when no script is set. Unreadable reads as "no", which keeps the stop.
+// when no script is set. Player chat does not count - "<Steve> restart pls"
+// must not bring back a server its owner stopped. Unreadable reads as "no",
+// which keeps the stop.
 func logTailAsksRestart(ctx context.Context, rdb *redis.Client, key string) bool {
-	msgs, err := rdb.XRevRangeN(ctx, key, "+", "-", 50).Result()
+	newest, err := rdb.XRevRangeN(ctx, key, "+", "-", 1).Result()
+	if err != nil || len(newest) == 0 {
+		return false
+	}
+	ms, err := strconv.ParseInt(strings.SplitN(newest[0].ID, "-", 2)[0], 10, 64)
+	if err != nil {
+		return false
+	}
+	from := strconv.FormatInt(ms-restartWindow.Milliseconds(), 10)
+	msgs, err := rdb.XRevRangeN(ctx, key, "+", from, 5000).Result()
 	if err != nil {
 		return false
 	}
 	for _, m := range msgs {
 		line, _ := m.Values["line"].(string)
+		if chatLine(line) || shipperLine(line) {
+			continue
+		}
 		l := strings.ToLower(line)
 		if strings.Contains(l, "restart") || strings.Contains(l, "startup script") {
 			return true
 		}
 	}
 	return false
+}
+
+// shipperLine reports a line the log-shipper wrote itself, not the server. Its
+// "[Server crashed (exit code N) - restarting automatically ...]" says restart,
+// and a stop typed within minutes of such a crash brought the server back.
+func shipperLine(line string) bool {
+	return strings.HasPrefix(line, "[Server crashed") || strings.HasPrefix(line, "[dylaris]") || strings.HasPrefix(line, "[log-shipper]")
+}
+
+// chatLine reports a player's chat message: "[12:00:00] [Server thread/INFO]:
+// <Steve> hi", with 1.19+'s "[Not Secure] " in front of unsigned messages.
+func chatLine(line string) bool {
+	i := strings.Index(line, "]: ")
+	if i < 0 {
+		return false
+	}
+	msg := strings.TrimPrefix(line[i+3:], "[Not Secure] ")
+	return strings.HasPrefix(msg, "<")
 }

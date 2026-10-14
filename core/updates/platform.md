@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A Minecraft server now starts while the console service is unreachable**; its console output
+  arrives once the service is back. A server gets this when its container is next recreated. `log-shipper`
+- A server stopped in game no longer comes back because a player wrote "restart" in chat or it had
+  crashed shortly before, and a /restart during a log spam is no longer missed. `node`
+
 ## 2026.10.14.2
 
 ### Features

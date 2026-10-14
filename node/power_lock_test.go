@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -158,15 +159,30 @@ func TestACleanExitAfterACrashOrARestartIsNotAStop(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	ctx := context.Background()
 	key := serverLogStreamKey("u1", "survival")
+	// Ids are milliseconds on Redis's clock; the test sets them.
+	ms := int64(1_000_000_000)
 	add := func(line string) {
-		rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, Values: map[string]interface{}{"line": line}})
+		ms++
+		rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, ID: fmt.Sprintf("%d-0", ms), Values: map[string]interface{}{"line": line}})
 	}
+	add("[12:00:00] [Server thread/INFO]: Restarting in 5 minutes (an earlier session)")
+	ms += (3 * time.Minute).Milliseconds() // the window ends before this
+	add("[Server crashed (exit code 1) - restarting automatically (1/3)...]")
+	add("[12:00:00] [Server thread/INFO]: <Steve> restart pls")
+	add("[12:00:00] [Server thread/INFO]: [Not Secure] <Alex> restart?")
 	add("[Server thread/INFO]: Stopping server")
 	if logTailAsksRestart(ctx, rdb, key) {
-		t.Fatal("a plain stop read as a restart")
+		t.Fatal("a plain stop, player chat, the shipper's own crash line, or a line from before the window read as a restart")
 	}
 	add("[Server thread/INFO]: Startup script './start.sh' does not exist! Stopping server.")
 	if !logTailAsksRestart(ctx, rdb, key) {
 		t.Fatal("Paper's /restart without a script did not read as a restart")
+	}
+	// A spam after the restart line does not push it out of reach.
+	for i := range 300 {
+		add(fmt.Sprintf("[DH-World Gen Thread[0]/WARN]: spam %d", i))
+	}
+	if !logTailAsksRestart(ctx, rdb, key) {
+		t.Fatal("a log spam hid the restart line")
 	}
 }

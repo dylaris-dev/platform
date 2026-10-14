@@ -288,6 +288,11 @@ var (
 	subServerRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 )
 
+// connectRedis returns the client without waiting for Redis. The Minecraft
+// server must not wait for the console service: it used to, and a Redis that
+// was down while a container started kept the server from starting at all.
+// Console output meanwhile goes to shipLogs' replay buffer and is written out
+// once Redis answers; a background check only logs when that is.
 func connectRedis() *redis.Client {
 	addr := getEnv("REDIS_ADDR", "localhost:6379")
 	user := getEnv("REDIS_USER", "")
@@ -302,23 +307,22 @@ func connectRedis() *redis.Client {
 		DB:       db,
 	})
 
-	// Reconnect on the platform's shared schedule (12x5s, then every 30s). Never
-	// gives up: the Minecraft server is already running by the time this returns
-	// on a restart, so a Redis that is merely slow to come back must not take
-	// the container down with it.
-	var bo retry.Backoff
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := rdb.Ping(ctx).Err()
-		cancel()
-		if err == nil {
-			log.Printf("log-shipper: connected to Redis at %s", addr)
-			return rdb
+	go func() {
+		var bo retry.Backoff
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := rdb.Ping(ctx).Err()
+			cancel()
+			if err == nil {
+				log.Printf("log-shipper: connected to Redis at %s", addr)
+				return
+			}
+			wait := bo.Next()
+			log.Printf("log-shipper: Redis not reachable (%v), retrying in %s; the server runs and its console is buffered", err, wait)
+			time.Sleep(wait)
 		}
-		wait := bo.Next()
-		log.Printf("log-shipper: Redis not reachable (%v), retrying in %s...", err, wait)
-		time.Sleep(wait)
-	}
+	}()
+	return rdb
 }
 
 // applyCarriageReturns simulates terminal CR behavior.
@@ -741,20 +745,28 @@ func writeLogs(ctx context.Context, rdb *redis.Client, streamKey, heapKey string
 
 // forwardInput reads commands from the Redis input queue and writes them to Java stdin.
 func forwardInput(ctx context.Context, rdb *redis.Client, inputKey string, stdin io.WriteCloser) {
+	failing := false
 	for {
 		result, err := rdb.BLPop(ctx, 2*time.Second, inputKey).Result()
 		if err == redis.Nil {
 			// Timeout — try again
+			failing = false
 			continue
 		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("log-shipper: BLPop error: %v, retrying in 1s...", err)
+			// Once per outage: the server now starts while Redis is down, and a
+			// line a second would bury this container's log.
+			if !failing {
+				failing = true
+				log.Printf("log-shipper: console input unavailable (%v), retrying every second", err)
+			}
 			time.Sleep(1 * time.Second)
 			continue
 		}
+		failing = false
 		if len(result) >= 2 {
 			// Strip embedded CR/LF so one queue entry can't smuggle extra
 			// console commands into the server stdin (newline injection).
@@ -833,7 +845,10 @@ func main() {
 	// -Xmx, and the value only becomes right again at the first GC - which on a
 	// large heap is not immediate. Clearing it here is what makes the long
 	// heapKeyTTL safe: nothing inherits a value across a restart.
-	rdb.Del(context.Background(), heapKey)
+	// Bounded: Redis may be down, and the server is not kept waiting for it.
+	delCtx, delCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	rdb.Del(delCtx, heapKey)
+	delCancel()
 
 	rconFilter := &rconFilterFlag{}
 

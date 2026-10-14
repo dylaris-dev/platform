@@ -231,3 +231,16 @@ func TestDrainAfterExit(t *testing.T) {
 		t.Fatal("drain waited on a pipe that never closes")
 	}
 }
+
+// The server does not wait for the console service: a Redis that was down
+// while a container started kept the Minecraft server from starting at all.
+func TestConnectRedisDoesNotWaitForRedis(t *testing.T) {
+	f := newFakeRedis(t, true)
+	t.Setenv("REDIS_ADDR", f.ln.Addr().String())
+	start := time.Now()
+	rdb := connectRedis()
+	defer rdb.Close()
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("connectRedis waited %s on a Redis that does not answer", d)
+	}
+}
