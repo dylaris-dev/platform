@@ -102,13 +102,8 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	// reconnects: streams end on a timer now, and replaying the buffer every
 	// time would draw it into the live graph again.
 	if r.Header.Get("Last-Event-ID") == "" && state.Live {
-		entries, err := h.state.Redis.XRange(ctx, bufferKey, "-", "+").Result()
-		if err == nil {
-			for _, msg := range entries {
-				if data, ok := msg.Values["data"].(string); ok {
-					fmt.Fprintf(w, "data: %s\n\n", data)
-				}
-			}
+		for _, data := range statsReplay(ctx, h.state.Redis, bufferKey) {
+			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
 	}
 	fmt.Fprintf(w, "id: live\n\n")
@@ -286,4 +281,24 @@ func clearStatsWatch(rdb *redis.Client, watchKey string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	rdb.Del(ctx, watchKey)
+}
+
+// statsReplayMax is how many buffered samples a new stream starts with: what
+// the live chart holds. The node keeps an hour (1800), and sending all of it
+// made the panel take every sample as its own update only to keep the last 60.
+const statsReplayMax = 60
+
+// statsReplay returns the newest buffered samples, oldest first.
+func statsReplay(ctx context.Context, rdb *redis.Client, bufferKey string) []string {
+	entries, err := rdb.XRevRangeN(ctx, bufferKey, "+", "-", statsReplayMax).Result()
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for i := len(entries) - 1; i >= 0; i-- {
+		if data, ok := entries[i].Values["data"].(string); ok {
+			out = append(out, data)
+		}
+	}
+	return out
 }

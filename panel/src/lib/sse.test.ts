@@ -154,3 +154,54 @@ describe('replayed lines', () => {
         expect(lines.map(l => l.key)).toEqual(['7-0', '8-0', '9-0']);
     });
 });
+
+describe('subscribeEventSource pauseWhenHidden', () => {
+    let listeners: (() => void)[] = [];
+    const doc = { hidden: false, addEventListener: (_: string, f: () => void) => { listeners.push(f); }, removeEventListener: (_: string, f: () => void) => { listeners = listeners.filter(l => l !== f); } };
+    const setHidden = (h: boolean) => { doc.hidden = h; listeners.forEach(l => l()); };
+    beforeEach(() => {
+        FakeEventSource.all = [];
+        listeners = [];
+        doc.hidden = false;
+        vi.stubGlobal('EventSource', FakeEventSource);
+        vi.stubGlobal('document', doc);
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ticket: 't' }) })));
+    });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    // A background tab held its stats streams open and took every update it
+    // could not show; it now closes them and opens them again when shown.
+    it('closes while the tab is hidden and reopens when it is shown', async () => {
+        const sub = subscribeEventSource('/servers/1/stats/stream', () => {}, undefined, { pauseWhenHidden: true });
+        await flush();
+        expect(FakeEventSource.all).toHaveLength(1);
+        setHidden(true);
+        expect(FakeEventSource.all[0].readyState).toBe(FakeEventSource.CLOSED);
+        await flush();
+        expect(FakeEventSource.all).toHaveLength(1);
+        setHidden(false);
+        await flush();
+        expect(FakeEventSource.all).toHaveLength(2);
+        expect(FakeEventSource.all[1].readyState).not.toBe(FakeEventSource.CLOSED);
+        sub();
+        expect(listeners).toHaveLength(0);
+    });
+
+    it('drops a ticket that arrives after the tab was hidden', async () => {
+        const sub = subscribeEventSource('/servers/1/stats/stream', () => {}, undefined, { pauseWhenHidden: true });
+        setHidden(true); // before the mint resolved
+        await flush();
+        expect(FakeEventSource.all.every(e => e.readyState === FakeEventSource.CLOSED)).toBe(true);
+        sub();
+    });
+
+    it('leaves streams without the option alone', async () => {
+        const sub = subscribeEventSource('/servers/1/console/stream', () => {});
+        await flush();
+        setHidden(true);
+        expect(FakeEventSource.all[0].readyState).not.toBe(FakeEventSource.CLOSED);
+        sub();
+    });
+});

@@ -54,6 +54,10 @@ export interface SubscribeOptions {
     // Last-Event-ID, so without it everything sent while it was down is lost.
     resumeParam?: string;
     onStatus?: (status: StreamStatus) => void;
+    // Close the stream while the tab is hidden and open it again when it is
+    // shown. For streams that only feed a live display: a background tab held
+    // the connection and took every update it could not show.
+    pauseWhenHidden?: boolean;
 }
 
 // The stop function, which also offers reconnecting at once.
@@ -156,10 +160,31 @@ export function subscribeEventSource(
         });
     };
 
+    let paused = false;
+    const onVisibility = () => {
+        if (stopped) return;
+        if (document.hidden) {
+            paused = true;
+            attempt++; // a ticket being minted now is dropped when it arrives
+            if (timer) { clearTimeout(timer); timer = null; }
+            if (grace) { clearTimeout(grace); grace = null; }
+            es?.close();
+            es = null;
+        } else if (paused) {
+            paused = false;
+            delay = RETRY_START_MS;
+            open();
+        }
+    };
+    const pausing = !!opts.pauseWhenHidden && typeof document !== 'undefined';
+    if (pausing) document.addEventListener('visibilitychange', onVisibility);
+
     setStatus('connecting');
-    open();
+    if (pausing && document.hidden) paused = true;
+    else open();
     const stop = () => {
         stopped = true;
+        if (pausing) document.removeEventListener('visibilitychange', onVisibility);
         if (timer) clearTimeout(timer);
         if (grace) clearTimeout(grace);
         es?.close();
@@ -167,7 +192,7 @@ export function subscribeEventSource(
     };
     return Object.assign(stop, {
         reconnect: () => {
-            if (stopped) return;
+            if (stopped || paused) return;
             if (timer) clearTimeout(timer);
             timer = null;
             delay = RETRY_START_MS;

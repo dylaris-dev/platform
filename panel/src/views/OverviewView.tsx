@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import {
   Server, ServerStats, DiskUsage, BackupConfig, BackupUsage,
   getStatsHistory, getDiskUsage, getBackupConfig, getBackupUsage,
 } from '@/lib/api';
 import { subscribeEventSource } from '@/lib/sse';
-import { latestValue, chartSeries } from '@/lib/statsSeries';
+import { latestValue, chartSeries, appendSamples } from '@/lib/statsSeries';
 import { jvmHeapMB } from '@/lib/jvmHeap';
 import { formatBytes, formatMB } from '@/lib/format';
 import { timeAgo } from '@/lib/time';
@@ -29,6 +29,8 @@ const RANGE_SEC: Record<string, number> = { '1h': 3600, '6h': 6 * 3600, '12h': 1
 // rows every 2 min. Anything longer is time the server was not reporting.
 const LIVE_GAP_SEC = 10;
 const HISTORY_GAP_SEC = 300;
+// How long live samples collect before they are drawn.
+const STATS_BATCH_MS = 250;
 
 // The `state` event Core sends first on the stats stream.
 interface StreamState {
@@ -99,16 +101,40 @@ export default function OverviewView({ server }: OverviewViewProps) {
 
   const isOffline = server.status === 'stopped' || server.status === 'offline' || server.status === 'pending_setup';
 
+  // Live samples keep arriving while the history is shown, but only reach
+  // state (and re-render the charts) while the live view is the one shown.
+  const liveRef = useRef<ServerStats[]>([]);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const showLive = (next: ServerStats[]) => {
+    liveRef.current = next;
+    if (modeRef.current === 'live') setLiveData(next);
+  };
   useEffect(() => {
-    setLiveData([]);
-    setStreamState(null);
+    if (mode === 'live') setLiveData(liveRef.current);
+  }, [mode]);
 
-    return subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
+  useEffect(() => {
+    showLive([]);
+    setStreamState(null);
+    // Samples are applied in batches: a stream opening replays the buffer,
+    // and taking each sample as its own render redrew both charts per sample.
+    let batch: ServerStats[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flushBatch = () => {
+      timer = null;
+      const samples = batch;
+      batch = [];
+      if (samples.length === 0) return;
+      showLive(appendSamples(liveRef.current, samples));
+      // A sample arriving is the server reporting again.
+      setStreamState(s => (s && !s.live ? { live: true, lastSampleAt: Date.now() } : s));
+    };
+
+    const stop = subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
       try {
-        const data = JSON.parse(e.data) as ServerStats;
-        setLiveData(prev => [...prev.slice(-59), data]);
-        // A sample arriving is the server reporting again.
-        setStreamState(s => (s && !s.live ? { live: true, lastSampleAt: Date.now() } : s));
+        batch.push(JSON.parse(e.data) as ServerStats);
+        timer ??= setTimeout(flushBatch, STATS_BATCH_MS);
       } catch { /* ignore */ }
     }, {
       // Sent first on every (re)connect. Not live means the buffer is old: what
@@ -118,16 +144,23 @@ export default function OverviewView({ server }: OverviewViewProps) {
           const s = JSON.parse(e.data) as { live?: boolean; lastSampleAt?: number | null };
           const live = s.live === true;
           setStreamState({ live, lastSampleAt: typeof s.lastSampleAt === 'number' ? s.lastSampleAt : null });
-          if (!live) setLiveData([]);
+          if (!live) {
+            batch = [];
+            showLive([]);
+          }
         } catch { /* ignore */ }
       },
-    });
+    }, { pauseWhenHidden: true });
+    return () => {
+      if (timer) clearTimeout(timer);
+      stop();
+    };
   }, [server.id]);
 
   // A stop while watching: drop the live points so a restart does not draw a
   // line from the old ones to the new.
   useEffect(() => {
-    if (isOffline) setLiveData([]);
+    if (isOffline) showLive([]);
   }, [isOffline]);
 
   useEffect(() => {

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { singleFlight } from './singleFlight';
 import {
     getProfile, getModules, getServers, getFeatureSettings, getRoutingMode, getBeamSettings,
     AppModule, Server, User, RoutingMode, FileAccessMode, BeamSettings, isGatewayRouting, isByonUsable,
@@ -117,10 +118,23 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         if (res.success && res.modules) setModules(res.modules);
     }, []);
 
-    const refreshServers = useCallback(async () => {
-        const res = await getServers();
-        if (res.success && res.servers) setServers(res.servers);
-    }, []);
+    // servers.changed reaches every open tab whenever any server's status
+    // flips, and each one re-fetched the list and re-rendered everything under
+    // this provider even when nothing it shows had changed. Now one fetch runs
+    // at a time, and an unchanged list is not set again.
+    const [refreshServers] = useState(() => {
+        let lastJSON = '';
+        return singleFlight(async () => {
+            const res = await getServers();
+            if (res.success && res.servers) {
+                const json = JSON.stringify(res.servers);
+                if (json !== lastJSON) {
+                    lastJSON = json;
+                    setServers(res.servers);
+                }
+            }
+        });
+    });
 
     const refreshFeatureFlags = useCallback(async () => {
         const res = await getSystemFeatures();

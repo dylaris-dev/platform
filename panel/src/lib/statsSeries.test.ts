@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { latestValue, chartSeries } from './statsSeries';
+import { latestValue, chartSeries, appendSamples, LIVE_SAMPLES } from './statsSeries';
 
 describe('latestValue', () => {
     it('reads the last sample when it has the value', () => {
@@ -55,5 +55,28 @@ describe('chartSeries', () => {
             { ts: 5 },
             { ts: 100 },
         ]);
+    });
+});
+
+describe('appendSamples', () => {
+    const s = (ts: number) => ({ ts });
+
+    it('keeps the newest LIVE_SAMPLES in order', () => {
+        const all = Array.from({ length: 100 }, (_, i) => s(i + 1));
+        const out = appendSamples([], all);
+        expect(out).toHaveLength(LIVE_SAMPLES);
+        expect(out[0].ts).toBe(41);
+        expect(out[out.length - 1].ts).toBe(100);
+    });
+
+    it('starts again when the clock jumps back past what a replay covers', () => {
+        const prev = [s(10_000), s(10_002)];
+        expect(appendSamples(prev, [s(4_000), s(4_002)]).map(p => p.ts)).toEqual([4_000, 4_002]);
+    });
+
+    it('drops a replayed sample the chart already holds', () => {
+        const prev = [s(1), s(2), s(3)];
+        expect(appendSamples(prev, [s(2), s(3)])).toBe(prev);
+        expect(appendSamples(prev, [s(3), s(4)]).map(p => p.ts)).toEqual([1, 2, 3, 4]);
     });
 });

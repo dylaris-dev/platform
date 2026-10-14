@@ -143,9 +143,18 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   // Stats stream (was passed as prop from Dashboard previously)
   useEffect(() => {
     setLiveStats(null);
-    return subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
-      try { setLiveStats(JSON.parse(e.data) as ServerStats); } catch { /* ignore */ }
-    });
+    // Only the newest sample is shown, so a replayed buffer is one render,
+    // not one per sample over the whole console.
+    let latest: ServerStats | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const stop = subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
+      try { latest = JSON.parse(e.data) as ServerStats; } catch { return; }
+      timer ??= setTimeout(() => { timer = null; setLiveStats(latest); }, LIVE_BATCH_MS);
+    }, undefined, { pauseWhenHidden: true });
+    return () => {
+      if (timer) clearTimeout(timer);
+      stop();
+    };
   }, [server.id]);
 
   const nextKey = () => `local-${++seqRef.current}`;

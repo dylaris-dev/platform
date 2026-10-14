@@ -56,3 +56,35 @@ export function chartSeries<T extends { ts: number; javaHeapUsed?: number | null
     }
     return out;
 }
+
+/** Samples the live chart keeps: two minutes at the node's 2 s interval. */
+export const LIVE_SAMPLES = 60;
+
+// How far back a replayed buffer reaches: LIVE_SAMPLES at 2 s, with slack.
+const REPLAY_SPAN_SEC = LIVE_SAMPLES * 2 + 10;
+
+/**
+ * Appends a batch of live samples, keeping the newest LIVE_SAMPLES. A sample
+ * not newer than the last one kept, but within what a replay covers, is
+ * dropped: a reopened stream replays the buffer, and those samples are
+ * already on the chart. One further back starts the series again - the
+ * node's clock is behind the one before (a server moved to another node), and
+ * dropping everything older than the last old sample froze the chart.
+ */
+export function appendSamples<T extends { ts: number }>(prev: T[], batch: T[]): T[] {
+    let kept = prev;
+    let last = prev.length > 0 ? prev[prev.length - 1].ts : -Infinity;
+    const fresh: T[] = [];
+    for (const s of batch) {
+        if (s.ts < last - REPLAY_SPAN_SEC) {
+            kept = [];
+            fresh.length = 0;
+        } else if (s.ts <= last) {
+            continue;
+        }
+        fresh.push(s);
+        last = s.ts;
+    }
+    if (kept === prev && fresh.length === 0) return prev;
+    return [...kept, ...fresh].slice(-LIVE_SAMPLES);
+}

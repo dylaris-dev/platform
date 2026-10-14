@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.14.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Opening a server's overview or console no longer stutters** while its recent statistics load,
+  and live charts pause in background tabs. `core` `panel`
+- A server changing state no longer makes every open panel tab reload the server list when
+  nothing in it changed. `panel`
+
 ## 2026.10.14
 
 ### Features
