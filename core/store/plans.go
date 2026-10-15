@@ -174,15 +174,47 @@ func (s *PostgresStore) SetUserPlan(userID string, planID *int) error {
 // SetUserLimitOverrides upserts the per-user LIMIT overrides in user_billing
 // (nil clears one -> use the plan value). It does NOT touch r2_quota_gb (owned by
 // SetUserBillingOverrides) or the lifecycle/retention columns.
-func (s *PostgresStore) SetUserLimitOverrides(userID string, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined *int64) error {
+func (s *PostgresStore) SetUserLimitOverrides(userID string, adminNodes, adminLinks string, trafficEdge, trafficRelay, trafficCombined *int64) error {
 	_, err := s.db.Exec(`
-		INSERT INTO user_billing (user_id, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at)
+		INSERT INTO user_billing (user_id, admin_max_nodes, admin_max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
-			max_nodes = $2, max_links = $3, traffic_edge_gb = $4, traffic_relay_gb = $5,
+			admin_max_nodes = $2, admin_max_links = $3, traffic_edge_gb = $4, traffic_relay_gb = $5,
 			traffic_combined_gb = $6, updated_at = NOW()`,
-		userID, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined)
+		userID, adminNodes, adminLinks, trafficEdge, trafficRelay, trafficCombined)
 	return err
+}
+
+// MoveOperatorLimitsToAdminLayer is for an install with no store, where every
+// per-user node, link and address limit was set by an operator: they move to
+// the operator's layer, where the panel shows and clears them. Left as a
+// "purchase" they would still be enforced and no screen could reset them.
+// Idempotent; a value already in the operator's layer wins.
+func (s *PostgresStore) MoveOperatorLimitsToAdminLayer() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+		UPDATE user_billing SET
+			admin_max_nodes = CASE WHEN COALESCE(admin_max_nodes, '') = '' AND max_nodes IS NOT NULL THEN max_nodes::text ELSE admin_max_nodes END,
+			admin_max_links = CASE WHEN COALESCE(admin_max_links, '') = '' AND max_links IS NOT NULL THEN max_links::text ELSE admin_max_links END,
+			max_nodes = NULL, max_links = NULL
+		WHERE max_nodes IS NOT NULL OR max_links IS NOT NULL`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO gateway_route_limits (scope, max_routes)
+		SELECT 'admin:' || substr(scope, 6), max_routes FROM gateway_route_limits
+		WHERE scope LIKE 'user:%'
+		ON CONFLICT (scope) DO NOTHING`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM gateway_route_limits WHERE scope LIKE 'user:%'`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetUserPurchasedEntitlement upserts ONLY the node/link overrides, and only for

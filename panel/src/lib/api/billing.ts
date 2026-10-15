@@ -51,8 +51,12 @@ export interface UserBillingOverrides {
     r2Retention: string;
     nodeRetention: string;
     r2QuotaGb: number | null;
+    /** What the store says was bought. Read-only here. */
     maxNodes: number | null;
     maxLinks: number | null;
+    /** An operator's ceiling over the purchase: null follows it. */
+    adminMaxNodes: string | null;
+    adminMaxLinks: string | null;
     trafficEdgeGb: number | null;
     trafficRelayGb: number | null;
     trafficCombinedGb: number | null;

@@ -1,14 +1,15 @@
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 
-// Per-user limit overrides: a tenant's caps, full stop. null on a field leaves
-// it unset, which means unlimited.
-//
-// Admin-defined plan tiers used to sit under these as a baseline. They are gone:
-// the hosted store never sold one (it pushes a node COUNT through this same
-// call) and handing self-hosters a tariff editor was a product nobody wanted.
+// An operator's node or link ceiling over the purchase: null follows what was
+// bought, 'unlimited' lifts it, a number replaces it. It never gives access -
+// that is a grant - and the store never writes it, so a renewal leaves it alone.
+export type AdminCeiling = null | 'unlimited' | number;
+
+// Per-user limit overrides. The traffic fields are warn-only thresholds on the
+// platform convention: null leaves them unset (no limit), 0 is none.
 export interface LimitOverrides {
-    maxNodes: number | null;
-    maxLinks: number | null;
+    maxNodes: AdminCeiling;
+    maxLinks: AdminCeiling;
     trafficEdgeGb: number | null;
     trafficRelayGb: number | null;
     trafficCombinedGb: number | null;

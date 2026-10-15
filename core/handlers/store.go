@@ -306,6 +306,11 @@ func backupBytesOnOwnStorage(st store.Store, uuid string) int64 {
 // platform default and hands out the wrong number of addresses.
 func userRouteScope(userID string) string { return "user:" + userID }
 
+// adminRouteScope is an operator's address ceiling over the purchase. Asked
+// before userRouteScope and never written by the store, so a renewal no longer
+// replaces what an operator set - an abuse block of 0 included.
+func adminRouteScope(userID string) string { return "admin:" + userID }
+
 // parseEntitlement decodes one purchased-entitlement field into the (value, set)
 // pair SetUserPurchasedEntitlement wants. It has to distinguish three inbound
 // states that Go's usual *int64 collapses into two: the field being absent (do

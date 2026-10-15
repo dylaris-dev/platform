@@ -474,12 +474,15 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 		"graceUntil":  b.GraceUntil,
 		"suspendedAt": b.SuspendedAt,
 		"overrides": map[string]interface{}{
-			"gracePeriod":       b.GracePeriod,
-			"r2Retention":       b.R2Retention,
-			"nodeRetention":     b.NodeRetention,
-			"r2QuotaGb":         b.R2QuotaGB,
+			"gracePeriod":   b.GracePeriod,
+			"r2Retention":   b.R2Retention,
+			"nodeRetention": b.NodeRetention,
+			"r2QuotaGb":     b.R2QuotaGB,
+			// What was bought, and the operator's ceiling over it.
 			"maxNodes":          b.MaxNodes,
 			"maxLinks":          b.MaxLinks,
+			"adminMaxNodes":     nullIfEmpty(b.AdminMaxNodes),
+			"adminMaxLinks":     nullIfEmpty(b.AdminMaxLinks),
 			"trafficEdgeGb":     b.TrafficEdgeGB,
 			"trafficRelayGb":    b.TrafficRelayGB,
 			"trafficCombinedGb": b.TrafficCombinedGB,
@@ -581,4 +584,12 @@ func withIdleAllowances(cells []trafficCell) []trafficCell {
 		}
 	}
 	return cells
+}
+
+// nullIfEmpty renders an unset sentinel as JSON null.
+func nullIfEmpty(v string) interface{} {
+	if v == "" {
+		return nil
+	}
+	return v
 }

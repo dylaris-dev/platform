@@ -50,6 +50,13 @@ func applyPlansSchema(db *sql.DB) error {
 	for _, col := range []string{
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS max_nodes INTEGER`,
 		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS max_links INTEGER`,
+		// An operator's ceiling over the purchase, which the store never
+		// writes: '' or NULL follows the purchase, 'unlimited' or a number
+		// replaces it (services.ParseLimitSetting). max_nodes/max_links stay
+		// what was BOUGHT; they used to be both, so every renewal overwrote the
+		// operator, and an operator clearing the field took a payer's access.
+		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS admin_max_nodes TEXT`,
+		`ALTER TABLE user_billing ADD COLUMN IF NOT EXISTS admin_max_links TEXT`,
 		// Separate consent from the traffic one on purpose: agreeing to pay for
 		// player traffic is not agreeing to pay for stored backups, and one
 		// switch for both would enrol somebody in a charge they never saw.

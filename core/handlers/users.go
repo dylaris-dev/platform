@@ -438,7 +438,9 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
-	scope := fmt.Sprintf("user:%s", id)
+	// The operator's own layer. "default" here means the purchase (user:<id>)
+	// and the platform scopes below it answer.
+	scope := adminRouteScope(id)
 
 	limit, err := h.state.Store.GetGatewayRouteLimit(scope)
 	if err != nil || limit == nil {
@@ -474,7 +476,7 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
-	scope := fmt.Sprintf("user:%s", id)
+	scope := adminRouteScope(id)
 	// A route limit is a quota. Nobody but an admin sets their own, and staff
 	// set it only on accounts they may manage.
 	if !IsAdmin(r) {

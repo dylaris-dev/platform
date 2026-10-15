@@ -258,6 +258,32 @@ func TestEffectiveRouteLimit(t *testing.T) {
 			want: "0",
 		},
 		{
+			// An operator's ceiling sits over what the store sold, and a renewal
+			// rewriting user:<id> no longer reaches it.
+			name: "an operator's row beats the purchase",
+			limits: map[string]*models.GatewayRouteLimit{
+				"admin:" + uid: {MaxRoutes: n(2)},
+				"user:" + uid:  {MaxRoutes: n(7)},
+			},
+			want: "2",
+		},
+		{
+			name: "an operator's no-cap beats a purchase of none",
+			limits: map[string]*models.GatewayRouteLimit{
+				"admin:" + uid: {MaxRoutes: nil},
+				"user:" + uid:  {MaxRoutes: n(0)},
+			},
+			want: "no cap",
+		},
+		{
+			name: "an operator's block of zero holds over a purchase",
+			limits: map[string]*models.GatewayRouteLimit{
+				"admin:" + uid: {MaxRoutes: n(0)},
+				"user:" + uid:  {MaxRoutes: n(7)},
+			},
+			want: "0",
+		},
+		{
 			name: "a user row with a number wins",
 			limits: map[string]*models.GatewayRouteLimit{
 				"user:" + uid: {MaxRoutes: n(7)},

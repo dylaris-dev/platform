@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.15.4
+
+### Features
+- **Per-user node, link and address limits are now your ceiling over what the tenant bought.** A
+  renewal no longer overwrites them, and clearing one no longer takes a paying tenant's access. `core` `panel`
+- A ceiling never gives access to a tenant who bought nothing; that is what a grant is for. Without a
+  store, existing per-user limits move into this layer when Core starts. `core`
+
+### Breaking
+- `PATCH /api/admin/users/{id}/limit-overrides`: `maxNodes` and `maxLinks` set to null now follow the
+  purchase; send `"unlimited"` for no ceiling. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.15.3
 
 ### Features

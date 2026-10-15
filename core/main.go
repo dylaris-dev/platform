@@ -483,6 +483,13 @@ func main() {
 	// later, keeps data). Payment-provider-agnostic; handlers/webhooks call
 	// EnterPastDue/Reactivate/Suspend.
 	appState.Billing = services.NewBillingLifecycleService(pgStore, appState.Queue, grpcRegistry, cfg.FrontendURL, cfg.SuspendGrace, cfg.StoreEnabled)
+	// Without a store nothing is ever bought, so every per-user limit on record
+	// is an operator's and belongs in the operator's layer.
+	if !cfg.StoreEnabled {
+		if err := pgStore.MoveOperatorLimitsToAdminLayer(); err != nil {
+			log.Printf("limits: could not move operator limits to the operator layer: %v", err)
+		}
+	}
 	appState.Billing.SetLeader(coreLeader)
 	// Start() is deferred until after SetLinkACL below, so the ticker can never run
 	// a suspend before the link teardown dependencies are wired.

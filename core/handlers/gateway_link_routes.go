@@ -51,7 +51,8 @@ func validateLocalTarget(host string) error {
 // effectiveRouteLimit resolves the cap on addresses ON OUR DOMAINS for one
 // tenant. Returns nil for "no cap".
 //
-// Three scopes, most specific first: "user:<id>", then "user_default", then
+// Four scopes, most specific first: "admin:<id>" (an operator's ceiling over
+// the purchase), "user:<id>" (what the store sold), then "user_default", then
 // "global". A scope with NO ROW says nothing and the next one is asked. A scope
 // WITH a row answers, and its answer may be NULL - "I am set, and I set no cap" -
 // which is a decision and therefore stops the walk.
@@ -63,7 +64,7 @@ func validateLocalTarget(host string) error {
 // fell through to a scope nobody had set - which is unlimited. Now zero means
 // none wherever it is, and absence is spelled by the row not existing.
 func (h *GatewayHandler) effectiveRouteLimit(userID string) *int64 {
-	for _, scope := range []string{"user:" + userID, "user_default", "global"} {
+	for _, scope := range []string{adminRouteScope(userID), userRouteScope(userID), "user_default", "global"} {
 		l, err := h.state.Store.GetGatewayRouteLimit(scope)
 		if err != nil || l == nil {
 			continue // no row here: ask the next scope

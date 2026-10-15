@@ -16,7 +16,8 @@ import {
     type BillingStatus,
     type UserBillingAdmin,
 } from '@/lib/api/billing';
-import { setUserLimitOverrides } from '@/lib/api/plans';
+import { setUserLimitOverrides, type AdminCeiling } from '@/lib/api/plans';
+import { LimitField as SharedLimitField } from '@/components/settings/LimitField';
 import {
     listTrafficLimits,
     setTrafficLimit,
@@ -873,7 +874,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                 <div className="space-y-4">
                                     <div>
                                         <h4 className="mono-label mb-3">Route Limit Override</h4>
-                                        <p className="text-xs text-(--base-06) mb-3">Override the global default route limit for this user.</p>
+                                        <p className="text-xs text-(--base-06) mb-3">Your own address ceiling for this user, over what they bought. A renewal never changes it.</p>
 
                                         <div className="space-y-2">
                                             {/* Default */}
@@ -886,8 +887,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     className="accent-(--accent)"
                                                 />
                                                 <div>
-                                                    <p className="text-sm text-(--base-09)">Use global default</p>
-                                                    <p className="text-xs text-(--base-06)">Uses the per-user default limit from gateway settings</p>
+                                                    <p className="text-sm text-(--base-09)">Follow purchase</p>
+                                                    <p className="text-xs text-(--base-06)">What they bought, or the per-user default from gateway settings when they bought none</p>
                                                 </div>
                                             </label>
 
@@ -1072,10 +1073,10 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [savingOverrides, setSavingOverrides] = useState(false);
     const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-    // Per-user limit overrides ('' = leave unset, which means unlimited).
-    // There is no plan to fall back to any more; these ARE the caps.
-    const [maxNodes, setMaxNodes] = useState('');
-    const [maxLinks, setMaxLinks] = useState('');
+    // An operator's node and link ceilings over the purchase (null follows it).
+    // The traffic fields below are warn-only ('' = leave unset, no limit).
+    const [maxNodes, setMaxNodes] = useState<AdminCeiling>(null);
+    const [maxLinks, setMaxLinks] = useState<AdminCeiling>(null);
     const [tEdge, setTEdge] = useState('');
     const [tRelay, setTRelay] = useState('');
     const [tCombined, setTCombined] = useState('');
@@ -1123,8 +1124,8 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                 setR2(d.overrides.r2Retention || '');
                 setNr(d.overrides.nodeRetention || '');
                 setQuota(d.overrides.r2QuotaGb == null ? '' : String(d.overrides.r2QuotaGb));
-                setMaxNodes(d.overrides.maxNodes == null ? '' : String(d.overrides.maxNodes));
-                setMaxLinks(d.overrides.maxLinks == null ? '' : String(d.overrides.maxLinks));
+                setMaxNodes(ceilingOf(d.overrides.adminMaxNodes));
+                setMaxLinks(ceilingOf(d.overrides.adminMaxLinks));
                 setTEdge(d.overrides.trafficEdgeGb == null ? '' : String(d.overrides.trafficEdgeGb));
                 setTRelay(d.overrides.trafficRelayGb == null ? '' : String(d.overrides.trafficRelayGb));
                 setTCombined(d.overrides.trafficCombinedGb == null ? '' : String(d.overrides.trafficCombinedGb));
@@ -1264,15 +1265,15 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     };
 
     const numOk = (v: string) => v === '' || /^\d+$/.test(v);
-    const limitsValid = numOk(maxNodes) && numOk(maxLinks) && numOk(tEdge) && numOk(tRelay) && numOk(tCombined);
+    const limitsValid = numOk(tEdge) && numOk(tRelay) && numOk(tCombined);
     const toNum = (v: string) => (v === '' ? null : parseInt(v, 10));
 
     const saveLimits = async () => {
         if (!limitsValid) { show('Limits are whole numbers (empty = no limit, 0 = none).', false); return; }
         setSavingLimits(true);
         const res = await setUserLimitOverrides(user.id, {
-            maxNodes: toNum(maxNodes),
-            maxLinks: toNum(maxLinks),
+            maxNodes,
+            maxLinks,
             trafficEdgeGb: toNum(tEdge),
             trafficRelayGb: toNum(tRelay),
             trafficCombinedGb: toNum(tCombined),
@@ -1462,13 +1463,14 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                         </HelpTip>
                                     </label>
                                     <p className="text-xs text-(--base-06) mt-0.5">
-                                        What this tenant may hold. A purchase writes these too, so an edit here
-                                        is overwritten the next time their subscription changes. Leave a field
-                                        empty for no limit; 0 means they may hold none.
+                                        Nodes and links follow what the tenant bought unless you set your own
+                                        ceiling; a renewal never changes yours. A ceiling only moves the number,
+                                        it never gives access - use a grant for that. The traffic fields are
+                                        warn-only: empty for no limit, 0 for none.
                                     </p>
                                 </div>
-                                <LimitField label="Max nodes" value={maxNodes} onChange={setMaxNodes} />
-                                <LimitField label="Max links" value={maxLinks} onChange={setMaxLinks} />
+                                <CeilingField label="Max nodes" purchased={data.overrides.maxNodes} value={maxNodes} onChange={setMaxNodes} />
+                                <CeilingField label="Max links" purchased={data.overrides.maxLinks} value={maxLinks} onChange={setMaxLinks} />
                                 <LimitField label="Traffic combined (GB/mo, warn only)" value={tCombined} onChange={setTCombined} />
                                 <LimitField label="Traffic edge (GB/mo, warn only)" value={tEdge} onChange={setTEdge} />
                                 <LimitField label="Traffic relay (GB/mo, warn only)" value={tRelay} onChange={setTRelay} />
@@ -1662,6 +1664,41 @@ function GrantRow({
                 >
                     Remove
                 </button>
+            )}
+        </div>
+    );
+}
+
+// ceilingOf reads the stored sentinel: '' or null follows the purchase.
+function ceilingOf(raw: string | null | undefined): AdminCeiling {
+    if (!raw) return null;
+    if (raw === 'unlimited') return 'unlimited';
+    const n = parseInt(raw, 10);
+    return Number.isNaN(n) ? null : n;
+}
+
+// CeilingField is an operator's node or link ceiling: follow the purchase, or
+// set a cap of their own on the shared LimitField (no limit, 0, or a number).
+function CeilingField({ label, purchased, value, onChange }: { label: string; purchased: number | null; value: AdminCeiling; onChange: (v: AdminCeiling) => void }) {
+    const own = value !== null;
+    const bought = purchased == null ? 'nothing bought' : `bought: ${purchased}`;
+    return (
+        <div className="flex flex-wrap items-center gap-3">
+            <label className="input-label w-48 shrink-0">{label}</label>
+            <select
+                value={own ? 'own' : 'purchase'}
+                onChange={e => onChange(e.target.value === 'own' ? (purchased ?? 1) : null)}
+                className="input-field w-48"
+                aria-label={`${label} source`}
+            >
+                <option value="purchase">Follow purchase ({bought})</option>
+                <option value="own">Own ceiling</option>
+            </select>
+            {own && (
+                <SharedLimitField
+                    value={value === 'unlimited' ? null : value}
+                    onChange={v => onChange(v === null ? 'unlimited' : v)}
+                />
             )}
         </div>
     );

@@ -30,8 +30,18 @@ type UserBilling struct {
 	// are now wrong - plans are gone, and a stored 0 is a real cap of none. The
 	// comment outlived the code it described, which is how a reader ends up
 	// writing the old semantics back in.
-	MaxNodes          *int64 `json:"maxNodes,omitempty"`
-	MaxLinks          *int64 `json:"maxLinks,omitempty"`
+	//
+	// MaxNodes and MaxLinks are what the store says was BOUGHT, and nothing
+	// else writes them. A positive one is the record of the purchase, which is
+	// what services.EffectiveEntitlement reads as access.
+	MaxNodes *int64 `json:"maxNodes,omitempty"`
+	MaxLinks *int64 `json:"maxLinks,omitempty"`
+	// AdminMaxNodes and AdminMaxLinks are an operator's ceiling over the
+	// purchase, in the settings sentinel (services.ParseLimitSetting): ""
+	// follows the purchase, "unlimited" or a number replaces it. A ceiling,
+	// never access: giving access is what a grant is for.
+	AdminMaxNodes     string `json:"adminMaxNodes,omitempty"`
+	AdminMaxLinks     string `json:"adminMaxLinks,omitempty"`
 	TrafficEdgeGB     *int64 `json:"trafficEdgeGb,omitempty"`
 	TrafficRelayGB    *int64 `json:"trafficRelayGb,omitempty"`
 	TrafficCombinedGB *int64 `json:"trafficCombinedGb,omitempty"`
@@ -104,7 +114,7 @@ func (b *UserBilling) PaymentStatus() string {
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), COALESCE(admin_hold, FALSE), COALESCE(held_status, ''), node_links_off_at IS NOT NULL, updated_at`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), COALESCE(admin_hold, FALSE), COALESCE(held_status, ''), node_links_off_at IS NOT NULL, updated_at, COALESCE(admin_max_nodes, ''), COALESCE(admin_max_links, '')`
 
 // SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
 // over a purchased cap. Touches ONLY that column: the row also carries the
@@ -149,7 +159,7 @@ func scanUserBilling(row interface {
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
 		&meKind, &meExp, &meByon, &meRoute, &meAt, &meBy, &overLimit,
-		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.AdminHold, &b.HeldStatus, &b.NodeLinksOff, &b.UpdatedAt); err != nil {
+		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.AdminHold, &b.HeldStatus, &b.NodeLinksOff, &b.UpdatedAt, &b.AdminMaxNodes, &b.AdminMaxLinks); err != nil {
 		return nil, err
 	}
 	if overLimit.Valid {

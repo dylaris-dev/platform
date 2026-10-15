@@ -181,12 +181,20 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 	u.links = int64(kits)
 
 	// The address pool lives in gateway_route_limits under the per-user scope,
-	// which is what a purchase writes. Only that scope is read here: the
-	// user_default and global fallbacks are the PLATFORM's baseline, and cutting
-	// a tenant off for exceeding a number nobody sold them would be wrong.
-	if l, lerr := s.store.GetGatewayRouteLimit("user:" + userID); lerr == nil && l != nil && l.MaxRoutes != nil {
-		n := int64(*l.MaxRoutes)
-		u.routeLimit = &n
+	// which is what a purchase writes, with an operator's ceiling over it under
+	// admin:<id>. Only those are read here: the user_default and global
+	// fallbacks are the PLATFORM's baseline, and cutting a tenant off for
+	// exceeding a number nobody sold them would be wrong.
+	for _, scope := range []string{"admin:" + userID, "user:" + userID} {
+		l, lerr := s.store.GetGatewayRouteLimit(scope)
+		if lerr != nil || l == nil {
+			continue
+		}
+		if l.MaxRoutes != nil {
+			n := int64(*l.MaxRoutes)
+			u.routeLimit = &n
+		}
+		break
 	}
 	// Routes live in Redis, not the database - they are gateway data plane state.
 	// With no Redis there is no route plane, so there is nothing to be over.

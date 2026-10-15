@@ -147,7 +147,8 @@ type Store interface {
 	DeletePlan(id int) error
 	GetUserPlanID(userID string) (*int, error)
 	SetUserPlan(userID string, planID *int) error
-	SetUserLimitOverrides(userID string, maxNodes, maxLinks, trafficEdge, trafficRelay, trafficCombined *int64) error
+	SetUserLimitOverrides(userID string, adminNodes, adminLinks string, trafficEdge, trafficRelay, trafficCombined *int64) error
+	MoveOperatorLimitsToAdminLayer() error
 	SetUserPurchasedEntitlement(userID string, maxNodes *int64, setNodes bool, maxLinks *int64, setLinks bool) error
 	SetUserTrafficBilling(userID string, ceilingGB int64, enabled bool) error
 	CountNodesByOwner(ownerID string) (int, error)

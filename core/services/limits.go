@@ -86,8 +86,10 @@ func EffectiveLimits(st limitStore, userID string) (Limits, error) {
 	}
 	now := time.Now()
 	return Limits{
-		MaxNodes:          grantedCap(b.MaxNodes, b.ManualByonExpiresAt, now),
-		MaxLinks:          grantedCap(b.MaxLinks, b.ManualRouteExpiresAt, now),
+		// An operator's ceiling replaces the purchase's when one is set. It
+		// moves the number only: access is EffectiveEntitlement's question.
+		MaxNodes:          ParseLimitSetting(b.AdminMaxNodes, grantedCap(b.MaxNodes, b.ManualByonExpiresAt, now)),
+		MaxLinks:          ParseLimitSetting(b.AdminMaxLinks, grantedCap(b.MaxLinks, b.ManualRouteExpiresAt, now)),
 		R2QuotaGB:         b.R2QuotaGB,
 		TrafficEdgeGB:     b.TrafficEdgeGB,
 		TrafficRelayGB:    b.TrafficRelayGB,
