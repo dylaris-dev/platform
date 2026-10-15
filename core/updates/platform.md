@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.15.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The store's calls to Core are no longer rate-limited with the login routes.** They all come
+  from one address, so anyone with a store account could starve activations and suspensions. `core`
+
+### Fixes
+- An operator hold no longer deletes the tenant's backups after the retention window; nothing is
+  deleted while a hold lasts. `core`
+- Payment links in the panel banner and billing emails pointed at a page that does not exist; they
+  now open the store page, unless `billing.payment_url` is set. `core`
+- SFTP access is removed for a tenant cut off for holding more than they bought, as every other
+  write path already was; the billing emails now say how long backups are kept. `core`
+
 ## 2026.10.15.2
 
 ### Features

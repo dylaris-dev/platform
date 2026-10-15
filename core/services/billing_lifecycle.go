@@ -557,7 +557,13 @@ func (s *BillingLifecycleService) cleanupExpiredR2(ctx context.Context) {
 	}
 	now := time.Now()
 	for _, b := range suspended {
-		if b.SuspendedAt == nil {
+		// Nothing is deleted while an operator's hold lasts. The hold writes
+		// "suspended" and its own suspended_at over whatever the payments say,
+		// and a status change underneath it leaves that date alone, so the
+		// clock would run from the hold: a paying customer held for a week of
+		// investigation lost every backup while the panel and the hold email
+		// promised they are kept.
+		if b.SuspendedAt == nil || b.AdminHold {
 			continue
 		}
 		spec := s.effectiveSpec(b.R2Retention, BillingR2RetentionKey, DefaultR2Retention)
@@ -762,7 +768,7 @@ func (s *BillingLifecycleService) suspend(userID string, from []string) error {
 	// fault (or a buggy manual suspend) cannot instantly kick a paying customer, and
 	// enforcement is single-sourced in the leader-gated ticker. ctx is retained for
 	// the unchanged caller signature.
-	s.sendSuspendedEmail(userID)
+	s.sendSuspendedEmail(userID, false)
 	return nil
 }
 
@@ -783,7 +789,7 @@ func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string)
 	if err := s.store.PlaceAdminHold(userID, time.Now()); err != nil {
 		return err
 	}
-	s.sendSuspendedEmail(userID)
+	s.sendSuspendedEmail(userID, true)
 	s.stopTenantServers(ctx, userID)
 	s.revokeTenantNodeKeys(ctx, userID)
 	// At once, unlike the graced cutoff: the Hub link carries only players, the
@@ -887,7 +893,22 @@ func (s *BillingLifecycleService) paymentURL() string {
 	if v != "" {
 		return v
 	}
-	return strings.TrimRight(s.frontendURL, "/") + "/account/billing"
+	return strings.TrimRight(s.frontendURL, "/") + "/account/store"
+}
+
+// backupRetentionText is how long a suspended tenant's backups on our storage
+// are kept, in words for an email: "1 week", "3 days".
+func (s *BillingLifecycleService) backupRetentionText(userID string) string {
+	override := ""
+	if b, err := s.store.GetUserBilling(userID); err == nil && b != nil {
+		override = b.R2Retention
+	}
+	n, unit, _ := parseRetentionSpec(s.effectiveSpec(override, BillingR2RetentionKey, DefaultR2Retention))
+	word := map[byte]string{'d': "day", 'w': "week", 'm': "month"}[unit]
+	if n != 1 {
+		word += "s"
+	}
+	return fmt.Sprintf("%d %s", n, word)
 }
 
 func (s *BillingLifecycleService) sendDunningEmail(userID string, graceUntil time.Time) {
@@ -909,16 +930,17 @@ Pay here to keep your services active:
 
 %s
 
-Your data is safe either way — nothing is deleted when you miss a payment.
+Nothing is deleted while you settle it. Files on your own machines are never touched; if the account is suspended, the backups we store for you are deleted %s after the suspension.
 
 — Dylaris
-`, u.Username, graceUntil.UTC().Format("2006-01-02 15:04 UTC"), s.paymentURL())
+`, u.Username, graceUntil.UTC().Format("2006-01-02 15:04 UTC"), s.paymentURL(), s.backupRetentionText(userID))
 	if err := transport.Send(mailer.Message{To: u.Email, Subject: "Payment required — your Dylaris services", Body: body}); err != nil {
 		logErrf("billing-lifecycle", "dunning mail to %s failed: %v", u.Email, err)
 	}
 }
 
-func (s *BillingLifecycleService) sendSuspendedEmail(userID string) {
+// held is an operator's hold, which keeps the backups (see cleanupExpiredR2).
+func (s *BillingLifecycleService) sendSuspendedEmail(userID string, held bool) {
 	u, err := s.store.GetUserByID(userID)
 	if err != nil || u == nil || u.Email == "" {
 		return
@@ -927,16 +949,20 @@ func (s *BillingLifecycleService) sendSuspendedEmail(userID string) {
 	if err != nil {
 		return
 	}
+	backups := "The backups we store for you are kept."
+	if !held {
+		backups = fmt.Sprintf("The backups we store for you stay viewable for %s and are then deleted.", s.backupRetentionText(userID))
+	}
 	body := fmt.Sprintf(`Hi %s,
 
-Your Dylaris account has been suspended: a payment did not go through, your subscription ended, or the account ran past its traffic allowance. Your servers and services will stop after a grace period if nothing changes. Your data and backups are kept and remain viewable.
+Your Dylaris account has been suspended: a payment did not go through, your subscription ended, or the account ran past its traffic allowance. Your servers and services will stop after a grace period if nothing changes. Files on your own machines are never touched. %s
 
 Your account page says which it is and how to resume:
 
 %s
 
 — Dylaris
-`, u.Username, s.paymentURL())
+`, u.Username, backups, s.paymentURL())
 	if err := transport.Send(mailer.Message{To: u.Email, Subject: "Your Dylaris services are suspended", Body: body}); err != nil {
 		logErrf("billing-lifecycle", "suspended mail to %s failed: %v", u.Email, err)
 	}

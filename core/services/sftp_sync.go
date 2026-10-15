@@ -516,7 +516,9 @@ func (o *ownerSuspension) of(serverID int) bool {
 		owner, seen := o.byOwner[srv.OwnerID]
 		if !seen {
 			b, berr := o.st.GetUserBilling(srv.OwnerID)
-			owner = berr == nil && b != nil && b.Status == "suspended"
+			// Over-limit is the other cutoff, and every HTTP write already
+			// refused it while SFTP kept full read-write access.
+			owner = berr == nil && b != nil && (b.Status == "suspended" || store.OwnerCutOff(b, 0, OverLimitGrace, time.Now()))
 			o.byOwner[srv.OwnerID] = owner
 		}
 		v = owner

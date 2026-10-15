@@ -114,3 +114,33 @@ func TestRequireStoreKey(t *testing.T) {
 		})
 	}
 }
+
+// The store's own calls are not rate-limited: they all come from one address,
+// and a shared per-IP count let anyone with a store account starve them.
+// Everyone without the key still is.
+func TestTheStoreKeySkipsTheRateLimit(t *testing.T) {
+	h := &StoreHandler{state: &AppState{StoreEnabled: true, StoreSharedKey: "secret"}}
+	limited := h.LimitUnlessStoreKey(NewIPRateLimiter(), 2, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	call := func(key string) int {
+		r := httptest.NewRequest(http.MethodGet, "/api/store/usage", nil)
+		r.RemoteAddr = "203.0.113.9:4000"
+		if key != "" {
+			r.Header.Set("X-Store-Key", key)
+		}
+		w := httptest.NewRecorder()
+		limited(w, r)
+		return w.Code
+	}
+	for i := 0; i < 10; i++ {
+		if code := call("secret"); code != http.StatusOK {
+			t.Fatalf("store call %d = %d, want 200", i+1, code)
+		}
+	}
+	for i, want := range []int{http.StatusOK, http.StatusOK, http.StatusTooManyRequests} {
+		if code := call("wrong"); code != want {
+			t.Fatalf("keyless call %d = %d, want %d", i+1, code, want)
+		}
+	}
+}

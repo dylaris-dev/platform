@@ -131,7 +131,8 @@ var credentialWrappers = []string{
 }
 
 func appliesCredentialOrLimit(args string) bool {
-	if strings.Contains(args, ".Limit(") {
+	// LimitUnlessStoreKey limits everyone who does not hold the store key.
+	if strings.Contains(args, ".Limit(") || strings.Contains(args, ".LimitUnlessStoreKey(") {
 		return true
 	}
 	for _, w := range credentialWrappers {

@@ -54,13 +54,34 @@ func (h *StoreHandler) requireStoreKey(w http.ResponseWriter, r *http.Request) b
 		sendJSONError(w, "Store integration not enabled", http.StatusNotFound)
 		return false
 	}
-	got := r.Header.Get("X-Store-Key")
-	want := h.state.StoreSharedKey
-	if want == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+	if !h.validStoreKey(r) {
 		sendJSONError(w, "Invalid store key", http.StatusUnauthorized)
 		return false
 	}
 	return true
+}
+
+func (h *StoreHandler) validStoreKey(r *http.Request) bool {
+	want := h.state.StoreSharedKey
+	return want != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Store-Key")), []byte(want)) == 1
+}
+
+// LimitUnlessStoreKey rate-limits a service-to-service route for every caller
+// that does not present the store key, which is who the limit is for: someone
+// guessing it. The store itself is not limited. Every call it makes comes from
+// its one address, so it shared a single per-IP count with each other and with
+// the login routes, and anyone with a free store account could spend that count
+// through the store's own connect page - activations, suspensions and usage
+// reads for every customer then got 429 for as long as they kept it up.
+func (h *StoreHandler) LimitUnlessStoreKey(l *IPRateLimiter, perMin int, next http.HandlerFunc) http.HandlerFunc {
+	limited := l.Limit(perMin, next)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.state.StoreEnabled && h.validStoreKey(r) {
+			next(w, r)
+			return
+		}
+		limited(w, r)
+	}
 }
 
 // LinkStart POST /api/store/link/start — authed panel user. Mints a single-use,

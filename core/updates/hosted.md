@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.15.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Payment links in the panel and in billing emails now work;** they led to a missing page. The
+  emails now also say how long backups are kept after a suspension. Nothing to do on your side.
+- Purchases and cancellations now reach your account reliably; heavy traffic on the store could
+  delay them. Nothing to do on your side.
+
 ## 2026.10.15.2
 
 ### Features

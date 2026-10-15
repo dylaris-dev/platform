@@ -826,14 +826,14 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/store/account-summary` | session | _no capability_ | - | `StoreHandler.AccountSummary` | session-authed. |
-| GET | `/api/store/backup-defaults` | **none** | _public_ | Limit | `StoreHandler.BackupDefaults` | store-key. |
+| GET | `/api/store/backup-defaults` | **none** | _public_ | LimitUnlessStoreKey | `StoreHandler.BackupDefaults` | store-key. |
 | POST | `/api/store/billing-consent` | session | _no capability_ | - | `StoreHandler.SetBillingConsent` | session-authed. |
 | POST | `/api/store/link/start` | session | _no capability_ | - | `StoreHandler.LinkStart` | authed panel user. |
-| POST | `/api/store/link/verify` | **none** | _public_ | Limit, LimitBody | `StoreHandler.LinkVerify` | store-key. |
-| POST | `/api/store/provision` | **none** | _public_ | Limit, LimitBody | `StoreHandler.Provision` | store-key. |
+| POST | `/api/store/link/verify` | **none** | _public_ | LimitUnlessStoreKey, LimitBody | `StoreHandler.LinkVerify` | store-key. |
+| POST | `/api/store/provision` | **none** | _public_ | LimitUnlessStoreKey, LimitBody | `StoreHandler.Provision` | store-key. |
 | GET | `/api/store/status` | session | _no capability_ | - | `StoreHandler.Status` | authed panel user. |
-| GET | `/api/store/usage` | **none** | _public_ | Limit | `StoreHandler.GetUsage` | store-key. |
-| GET | `/api/store/verify-user` | **none** | _public_ | Limit | `StoreHandler.VerifyUser` | store-key. |
+| GET | `/api/store/usage` | **none** | _public_ | LimitUnlessStoreKey | `StoreHandler.GetUsage` | store-key. |
+| GET | `/api/store/verify-user` | **none** | _public_ | LimitUnlessStoreKey | `StoreHandler.VerifyUser` | store-key. |
 
 ## /api/system
 

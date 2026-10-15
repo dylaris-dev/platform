@@ -1612,13 +1612,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// becoming a way to read and change anyone's billing.
 	api.HandleFunc("/store/account-summary", authHandler.AuthMiddleware(storeHandler.AccountSummary)).Methods("GET")
 	api.HandleFunc("/store/billing-consent", authHandler.AuthMiddleware(storeHandler.SetBillingConsent)).Methods("POST")
-	api.HandleFunc("/store/link/verify", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.LinkVerify))).Methods("POST")
-	api.HandleFunc("/store/verify-user", authLimiter.Limit(60, storeHandler.VerifyUser)).Methods("GET")
-	api.HandleFunc("/store/usage", authLimiter.Limit(60, storeHandler.GetUsage)).Methods("GET")
+	api.HandleFunc("/store/link/verify", storeHandler.LimitUnlessStoreKey(authLimiter, 20, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.LinkVerify))).Methods("POST")
+	api.HandleFunc("/store/verify-user", storeHandler.LimitUnlessStoreKey(authLimiter, 60, storeHandler.VerifyUser)).Methods("GET")
+	api.HandleFunc("/store/usage", storeHandler.LimitUnlessStoreKey(authLimiter, 60, storeHandler.GetUsage)).Methods("GET")
 	// What one unit includes, so the store can print it on the pricing page
 	// without keeping a second copy of a number edited here.
-	api.HandleFunc("/store/backup-defaults", authLimiter.Limit(60, storeHandler.BackupDefaults)).Methods("GET")
-	api.HandleFunc("/store/provision", authLimiter.Limit(60, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.Provision))).Methods("POST")
+	api.HandleFunc("/store/backup-defaults", storeHandler.LimitUnlessStoreKey(authLimiter, 60, storeHandler.BackupDefaults)).Methods("GET")
+	api.HandleFunc("/store/provision", storeHandler.LimitUnlessStoreKey(authLimiter, 60, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.Provision))).Methods("POST")
 	// Migration progress poll - owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetMigrationStatus))).Methods("GET")
 	// /gateway/route-options stays EXEMPT-authed: the user-facing route form needs

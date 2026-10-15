@@ -649,7 +649,7 @@ func TestCleanupExpiredR2_RetentionBoundary(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &billingFakeStore{
-				suspended: []store.UserBilling{{UserID: "u1", SuspendedAt: tc.suspendedAt, R2Retention: "1d"}},
+				suspended: []store.UserBilling{{UserID: "u1", Status: "suspended", SuspendedAt: tc.suspendedAt, R2Retention: "1d"}},
 			}
 			svc := &BillingLifecycleService{store: fs}
 
