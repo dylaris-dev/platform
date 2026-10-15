@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.15.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Reset pairing, Roll key and deleting a node now cut its live connection** within 15 seconds.
+  Before, Core kept sending that node commands until it reconnected on its own. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.15
 
 ### Features

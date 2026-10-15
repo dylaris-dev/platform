@@ -9,7 +9,9 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"dylaris-core/services/redisacl"
 	"dylaris-pkg/nodeauth"
@@ -131,6 +133,10 @@ type fakeNode struct {
 	// registered node reaches.
 	reg        *Registry
 	registered bool
+	// holdOpen, when set, keeps the stream open after the handshake until it
+	// is closed, as a live node does; opened is closed once it is.
+	holdOpen chan struct{}
+	opened   chan struct{}
 }
 
 func (n *fakeNode) Context() context.Context { return n.ctx }
@@ -166,6 +172,10 @@ func (n *fakeNode) Recv() (*pb.NodeMessage, error) {
 		// enrolment fakes create.
 		if n.reg != nil {
 			n.registered = n.registered || n.reg.IsConnected(42) || n.reg.IsConnected(7) || n.reg.IsConnected(9)
+		}
+		if n.holdOpen != nil {
+			close(n.opened)
+			<-n.holdOpen
 		}
 		return nil, io.EOF
 	}
@@ -950,5 +960,124 @@ func TestAOneShotKeyLoginLeavesTheLiveStreamRegistered(t *testing.T) {
 	}
 	if got, ok := reg.GetConnection(42); !ok || got != live {
 		t.Fatal("the node's live stream lost its registry entry to a one-shot login that has ended")
+	}
+}
+
+// lockedACL lets a test revoke the row while a stream re-checks it from the
+// handler's goroutine.
+type lockedACL struct {
+	*keyedACL
+	mu sync.Mutex
+}
+
+func (a *lockedACL) NodeKeys(ctx context.Context, id int) (ed25519.PublicKey, ed25519.PublicKey, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.keyedACL.NodeKeys(ctx, id)
+}
+
+func (a *lockedACL) VerifyChallenge(ctx context.Context, id int, nonce, resp string) (bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.keyedACL.VerifyChallenge(ctx, id, nonce, resp)
+}
+
+// deletableLookup knows node-abc as node 42 and, after an enrolment, the id
+// the enrolment fakes hand out, until the test deletes the row.
+type deletableLookup struct {
+	mu   sync.Mutex
+	gone bool
+}
+
+func (l *deletableLookup) GetNodeByToken(t string) (*Node, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.gone || (t != "node-abc" && t != "owned-uuid") {
+		return nil, ErrNodeNotFound
+	}
+	return &Node{ID: 42, Token: t}, nil
+}
+
+// A revoked login ends the live stream it opened. Reset pairing and Roll key
+// change only the row, on whichever replica took the request; the stream sees
+// it at its next re-check.
+func TestARevokedLoginEndsItsLiveStream(t *testing.T) {
+	prev := pairingRecheck
+	pairingRecheck = 5 * time.Millisecond
+	t.Cleanup(func() { pairingRecheck = prev })
+
+	k := newKey(t)
+	keyNode := func() *fakeNode { return nodeWith(pubOf(k), rowSecret, k) }
+	deleteRow := func(_ *keyedACL, l *deletableLookup) { l.gone = true }
+	onRow := func(f func(*keyedACL)) func(*keyedACL, *deletableLookup) {
+		return func(a *keyedACL, _ *deletableLookup) { f(a) }
+	}
+	tests := []struct {
+		name   string
+		acl    *keyedACL
+		node   func() *fakeNode
+		revoke func(*keyedACL, *deletableLookup)
+	}{
+		{"key login, Roll key", &keyedACL{secret: rowSecret, key: pubOf(k)}, keyNode, onRow(rollKey)},
+		{"key login, Reset pairing", &keyedACL{secret: rowSecret, key: pubOf(k)}, keyNode, onRow(resetPairing)},
+		{"secret login, Reset pairing", &keyedACL{secret: rowSecret},
+			func() *fakeNode { return nodeWith(nil, rowSecret, nil) }, onRow(resetPairing)},
+		{"enrolment, Reset pairing", &keyedACL{}, func() *fakeNode {
+			a := authFor("eu-node-00")
+			a.EnrollToken, a.NodePublicKey = "a-valid-enroll-token", pubOf(k)
+			return asNode(a, nil, k)
+		}, onRow(resetPairing)},
+		{"node deleted", &keyedACL{secret: rowSecret, key: pubOf(k)}, keyNode, deleteRow},
+		{"untouched row", &keyedACL{secret: rowSecret, key: pubOf(k)}, keyNode, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acl := &lockedACL{keyedACL: tt.acl}
+			lookup := &deletableLookup{}
+			n := tt.node()
+			n.holdOpen, n.opened = make(chan struct{}), make(chan struct{})
+			n.ctx = peer.NewContext(context.Background(), &peer.Peer{
+				Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 51234},
+			})
+			n.reg = NewRegistry()
+			done := make(chan error, 1)
+			go func() {
+				done <- NewServer(n.reg, lookup, "core-test", acl, nil, &recordingJoins{}).NodeConnect(n)
+			}()
+			closed := false
+			defer func() {
+				close(n.holdOpen)
+				if !closed {
+					<-done
+				}
+			}()
+			select {
+			case <-n.opened:
+			case err := <-done:
+				closed = true
+				t.Fatalf("the login was refused: %v", err)
+			}
+			if tt.revoke != nil {
+				acl.mu.Lock()
+				lookup.mu.Lock()
+				tt.revoke(tt.acl, lookup)
+				lookup.mu.Unlock()
+				acl.mu.Unlock()
+			}
+			select {
+			case err := <-done:
+				closed = true
+				if tt.revoke == nil {
+					t.Fatalf("a stream whose login still stands was closed: %v", err)
+				}
+				if n.reg.IsConnected(42) || n.reg.IsConnected(9) {
+					t.Error("the closed stream is still registered")
+				}
+			case <-time.After(200 * time.Millisecond):
+				if tt.revoke != nil {
+					t.Fatal("the stream stayed open after its login was revoked")
+				}
+			}
+		})
 	}
 }

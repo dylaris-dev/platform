@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.15.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Reset pairing or deleting your node now disconnects it within 15 seconds.** Before, it could
+  keep receiving commands until it reconnected on its own. Nothing to do on your side.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.15
 
 ### Features

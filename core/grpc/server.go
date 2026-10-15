@@ -295,6 +295,13 @@ func newChallengeNonce() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// pairingRecheck is how often a live stream asks again whether the login it
+// was let in by still stands. Reset pairing and Roll key revoke the login in
+// the database and cut the node's Redis ACL, but they run on whichever replica
+// took the request and cannot reach a stream on another; each stream noticing
+// for itself covers every replica with no signal between them.
+var pairingRecheck = 15 * time.Second
+
 // Flow: Node connects → sends NodeAuth → Core validates → stream stays open.
 func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	// Step 1: Wait for auth message (first message must be NodeAuth)
@@ -454,6 +461,9 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 	// The node key this stream proved, when it logged in by one; the registry
 	// hands a live stream its entry back only for the same key.
 	var provedKey ed25519.PublicKey
+	// And the nonce and answer its secret proved, when it logged in by that.
+	// Together they are what stillPaired re-checks while the stream lives.
+	var provedNonce, provedResp string
 	{
 		address := ""
 		if ips := auth.GetIps(); ips != nil {
@@ -597,6 +607,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 					sendFail("the node's pairing changed during login; connect again")
 					return fmt.Errorf("acl: node %d: its pairing changed during its enrolment (re-read error: %v)", id, cerr)
 				}
+				provedKey = presented
 			}
 			// Owned as the enrolment created the row, not as the door was knocked
 			// on: an enroll token produces an owned node only when it is a
@@ -871,7 +882,7 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 				sendFail("the node's pairing changed during login; connect again")
 				return fmt.Errorf("acl: node %d: its pairing changed during the login; nothing handed out, not registered", node.ID)
 			}
-			provedKey = authKey
+			provedKey, provedNonce, provedResp = authKey, hmacNonce, hmacResp
 			res := &pb.AuthResult{Ok: true, CoreId: s.coreID, AclEnabled: true, RedisAddr: s.redisAddrFor(node.Owned),
 				ModpackMirrorHost: s.modpackMirrorHost()}
 			applyUpdateWarning(res, verdict)
@@ -917,7 +928,38 @@ func (s *Server) NodeConnect(stream pb.NodeService_NodeConnectServer) error {
 		log.Printf("gRPC: Node %d disconnected", node.ID)
 	}()
 
-	// Step 5: Read loop — route incoming messages to waiting handlers
+	// Step 5: Read loop — route incoming messages to waiting handlers. It runs
+	// beside this handler so the handler can end the stream: returning is the
+	// only way a server ends a gRPC stream, and Recv returns once it has.
+	readDone := make(chan error, 1)
+	go func() { readDone <- s.readNodeStream(ctx, stream, node, conn) }()
+	recheck := time.NewTicker(pairingRecheck)
+	defer recheck.Stop()
+	for {
+		select {
+		case err := <-readDone:
+			return err
+		case <-recheck.C:
+			// A deleted node goes first: it is the strongest revocation there is,
+			// and the only one a login without a key or a secret answer reveals.
+			if _, err := s.nodeLookup.GetNodeByToken(node.Token); errors.Is(err, ErrNodeNotFound) {
+				log.Printf("gRPC: node %d was deleted; closing its stream", node.ID)
+				return fmt.Errorf("node %d: deleted while connected", node.ID)
+			}
+			paired, err := stillPaired(node.ID, provedKey, provedNonce, provedResp)
+			if err != nil {
+				// A database blip is not a revocation; ask again next tick.
+				continue
+			}
+			if !paired {
+				log.Printf("gRPC: node %d: its pairing was revoked (Reset pairing or Roll key); closing its stream", node.ID)
+				return fmt.Errorf("node %d: pairing revoked while connected", node.ID)
+			}
+		}
+	}
+}
+
+func (s *Server) readNodeStream(ctx context.Context, stream pb.NodeService_NodeConnectServer, node *Node, conn *NodeConnection) error {
 	nodeRequestSlots := make(chan struct{}, maxConcurrentNodeRequests)
 	for {
 		msg, err := stream.Recv()
