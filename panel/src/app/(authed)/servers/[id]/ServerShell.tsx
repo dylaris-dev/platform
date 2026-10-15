@@ -28,6 +28,9 @@ import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import ResourceSlider from '@/components/ResourceSlider';
+import { DISK_SCALE_GB, cpuScale, ramScale } from '@/lib/resourceSlider';
+import { formatMB } from '@/lib/format';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { planResourceChange, diskGBToMB, joinFields, type ResourceValues } from '@/lib/resourceChanges';
 import { advancedStartsOpen, portsEditable } from '@/lib/resourceDialog';
@@ -1256,15 +1259,18 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     <div className="flex flex-col gap-[5px]">
                                         <label className="input-label">RAM (MB)</label>
                                         <input type="number" min={256} step={256} value={editRam} onChange={e => setEditRam(Number(e.target.value))} className="input-field w-full" />
+                                        <ResourceSlider label="RAM" value={editRam} onChange={setEditRam} scale={ramScale()} format={formatMB} />
                                     </div>
                                     <div className="flex flex-col gap-[5px]">
                                         <label className="input-label">CPU Limit (Cores)</label>
                                         <input type="number" min={0} step={0.5} value={editCpuLimit} onChange={e => setEditCpuLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
+                                        <ResourceSlider label="CPU limit" value={editCpuLimit} onChange={setEditCpuLimit} scale={cpuScale()} format={v => `${v} cores`} />
                                         <p className="text-xs text-(--base-06)">0 = no limit. Example: 2.0 = 2 cores</p>
                                     </div>
                                     <div className="flex flex-col gap-[5px]">
                                         <label className="input-label">Storage Limit (GB)</label>
                                         <input type="number" min={0} step={1} value={editDiskLimit} onChange={e => setEditDiskLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
+                                        <ResourceSlider label="Storage limit" value={editDiskLimit} onChange={setEditDiskLimit} scale={DISK_SCALE_GB} format={v => `${v} GB`} />
                                         <p className="text-xs text-(--base-06)">0 = unlimited</p>
                                     </div>
 

@@ -13,6 +13,9 @@ import { useAppData } from '@/lib/AppDataContext';
 import { sortUsersForPicker } from '@/lib/userOrder';
 import { nodeLabel } from '@/lib/nodeLabel';
 import ModalPanel from '@/components/ui/ModalPanel';
+import ResourceSlider from '@/components/ResourceSlider';
+import { DISK_SCALE_GB, cpuScale, ramScale } from '@/lib/resourceSlider';
+import { formatMB } from '@/lib/format';
 import { MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput } from '@/lib/ramPadding';
 
 interface StoragePathInfo {
@@ -159,7 +162,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
         // Same override the create sends, so preview and create agree.
         const parsed = parseRamPaddingInput(paddingText);
         const previewPadding = parsed !== null && !Number.isNaN(parsed) ? parsed : null;
-        pickNode({
+        // A slider drag is a burst of changes; preview the value it settles on.
+        const timer = setTimeout(() => pickNode({
             tags: selectedTags.length > 0 ? selectedTags : undefined,
             ramMb: ram,
             cpuCores: cpuLimit,
@@ -176,8 +180,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             }
         }).catch(() => {
             if (!cancelled) { setTagPreview(null); setTagPreviewReason('Preview failed'); }
-        });
-        return () => { cancelled = true; };
+        }), 300);
+        return () => { cancelled = true; clearTimeout(timer); };
     }, [targetMode, selectedTags, ram, cpuLimit, diskLimit, paddingText]);
 
     // Load storage paths when node changes
@@ -206,6 +210,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     const targetNode = targetMode === 'node'
         ? nodes.find(n => String(n.id) === nodeId)
         : nodes.find(n => n.id === tagPreview?.nodeId);
+    // Only a node the user picked bounds the sliders: in tag mode the preview
+    // node follows the RAM being dragged, and would move the scale mid-drag.
+    const pickedNode = targetMode === 'node' ? targetNode : undefined;
     const defaultPadding = targetNode?.ramPaddingMb != null || globalPaddingMb !== undefined
         ? inheritedRamPadding(targetNode?.ramPaddingMb, globalPaddingMb)
         : null;
@@ -587,6 +594,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 />
                                                 <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">MB</span>
                                             </div>
+                                            <ResourceSlider label="RAM" value={ram} onChange={setRam} scale={ramScale(pickedNode?.totalRamMb)} format={formatMB} />
                                             <p className="text-xs text-(--base-06)">
                                                 {paddingOverride !== null && !Number.isNaN(paddingOverride)
                                                     ? `+${paddingOverride} MB RAM headroom (set below)`
@@ -607,6 +615,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 />
                                                 <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">Cores</span>
                                             </div>
+                                            <ResourceSlider label="CPU limit" value={cpuLimit} onChange={setCpuLimit} scale={cpuScale(pickedNode?.totalCpu)} format={v => `${v} cores`} />
                                             <p className="text-xs text-(--base-06)">0 = no limit</p>
                                         </div>
                                         <div className="flex flex-col gap-[5px]">
@@ -622,6 +631,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 />
                                                 <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
                                             </div>
+                                            <ResourceSlider label="Storage limit" value={diskLimit} onChange={setDiskLimit} scale={DISK_SCALE_GB} format={v => `${v} GB`} />
                                             <p className="text-xs text-(--base-06)">0 = unlimited</p>
                                         </div>
                                     </div>

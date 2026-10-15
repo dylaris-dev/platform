@@ -7,6 +7,9 @@ import { subscribeEventSource, type StreamStatus, type Subscription } from '@/li
 import { levelClass, type Level } from '@/lib/consoleLog';
 import { appendLive, heldLines, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
 import { Power, Send, Cpu, MemoryStick, ArrowDown, RefreshCw } from 'lucide-react';
+import { parseStatsSample } from '@/lib/statsSample';
+import { jvmHeapMB } from '@/lib/jvmHeap';
+import MemoryHelp from '@/components/MemoryHelp';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
 // ANSI spec for terminal color rendering and are intentionally NOT mapped to
@@ -91,6 +94,9 @@ const COMMANDS = [
   'worldborder', 'xp',
 ];
 
+const shortMB = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)}G` : `${mb}M`);
+const share = (used: number, limit: number) => (limit > 0 ? Math.min(100, (used / limit) * 100) : 0);
+
 interface ConsoleViewProps {
   server: Server;
 }
@@ -148,7 +154,9 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
     let latest: ServerStats | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const stop = subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
-      try { latest = JSON.parse(e.data) as ServerStats; } catch { return; }
+      const s = parseStatsSample(e.data);
+      if (!s) return;
+      latest = s;
       timer ??= setTimeout(() => { timer = null; setLiveStats(latest); }, LIVE_BATCH_MS);
     }, undefined, { pauseWhenHidden: true });
     return () => {
@@ -158,6 +166,11 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   }, [server.id]);
 
   const nextKey = () => `local-${++seqRef.current}`;
+
+  // Heap against -Xmx is what the server actually uses; the process figure
+  // sits near its limit regardless, because the heap is committed up front.
+  const heapMaxMb = server.memory > 0 ? jvmHeapMB(server.memory) : 0;
+  const heapMb = liveStats?.javaHeapUsed && heapMaxMb > 0 ? liveStats.javaHeapUsed : 0;
   const historyUrl = (extra: string) => {
     const params = new URLSearchParams(extra);
     if (activeSubServer) params.set('sub_server', activeSubServer);
@@ -393,13 +406,17 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
           </div>
           <div className="flex items-center gap-2">
             <MemoryStick size={16} className="text-(--base-06)" />
-            <span className="mono-label">RAM</span>
+            <span className="mono-label">{heapMb > 0 ? 'Heap' : 'RAM'}</span>
             <span className="text-sm font-semibold font-mono text-(--base-09)">
-              {liveStats.memUsed >= 1024 ? `${(liveStats.memUsed / 1024).toFixed(1)}G` : `${liveStats.memUsed}M`}/{liveStats.memLimit >= 1024 ? `${(liveStats.memLimit / 1024).toFixed(1)}G` : `${liveStats.memLimit}M`}
+              {heapMb > 0 ? `${shortMB(heapMb)}/${shortMB(heapMaxMb)}` : `${shortMB(liveStats.memUsed)}/${shortMB(liveStats.memLimit)}`}
             </span>
             <div className="hidden sm:block w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
-              <div className="h-full bg-(--success) rounded-full transition-all duration-500" style={{ width: `${liveStats.memLimit > 0 ? (liveStats.memUsed / liveStats.memLimit) * 100 : 0}%` }} />
+              <div className="h-full bg-(--success) rounded-full transition-all duration-500" style={{ width: `${heapMb > 0 ? share(heapMb, heapMaxMb) : share(liveStats.memUsed, liveStats.memLimit)}%` }} />
             </div>
+            {heapMb > 0 && (
+              <span className="hidden md:inline text-xs font-mono text-(--base-06)">Process {shortMB(liveStats.memUsed)}/{shortMB(liveStats.memLimit)}</span>
+            )}
+            <MemoryHelp bookedMb={server.memory} limitMb={Math.max(liveStats.memLimit, server.memory || 0)} />
           </div>
         </>)}
         <div className="ml-auto flex items-center gap-2" role="status" aria-live="polite">

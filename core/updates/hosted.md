@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.16
+
+### Features
+- **RAM, CPU and storage can now be set with a slider** when creating a server and in Edit Resources,
+  next to the exact field.
+- **Server memory now shows what Minecraft actually uses** (the Java heap) next to the whole process,
+  with an explanation of both. Before, it read close to full on almost every server.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The console's stats bar no longer breaks when a server's disk is nearly full.
+
 ## 2026.10.15.3
 
 ### Features

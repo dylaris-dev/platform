@@ -9,6 +9,8 @@ import {
 import { subscribeEventSource } from '@/lib/sse';
 import { latestValue, chartSeries, appendSamples } from '@/lib/statsSeries';
 import { jvmHeapMB } from '@/lib/jvmHeap';
+import { parseStatsSample } from '@/lib/statsSample';
+import MemoryHelp from '@/components/MemoryHelp';
 import { formatBytes, formatMB } from '@/lib/format';
 import { timeAgo } from '@/lib/time';
 
@@ -133,7 +135,9 @@ export default function OverviewView({ server }: OverviewViewProps) {
 
     const stop = subscribeEventSource(`/servers/${server.id}/stats/stream`, (e) => {
       try {
-        batch.push(JSON.parse(e.data) as ServerStats);
+        const s = parseStatsSample(e.data);
+        if (!s) return;
+        batch.push(s);
         timer ??= setTimeout(flushBatch, STATS_BATCH_MS);
       } catch { /* ignore */ }
     }, {
@@ -377,8 +381,12 @@ export default function OverviewView({ server }: OverviewViewProps) {
           label="Memory"
           currentValue={!liveOffline && rawData.length > 0 ? (
             <>
-              {formatMB(latestMemMb)}
-              {hasHeap && <span className="text-sm font-semibold text-(--base-07)"> / heap {formatMB(latestHeapMb)}</span>}
+              {hasHeap ? (
+                <>Heap {formatMB(latestHeapMb)}<span className="text-sm font-semibold text-(--base-07)"> / {formatMB(heapMaxMb)}<span className="hidden sm:inline">, process {formatMB(latestMemMb)} / {formatMB(memLimitMb)}</span></span></>
+              ) : (
+                <>{formatMB(latestMemMb)}<span className="text-sm font-semibold text-(--base-07)"> / {formatMB(memLimitMb)}</span></>
+              )}
+              <MemoryHelp bookedMb={server.memory} limitMb={memLimitMb} />
             </>
           ) : '—'}
           accentColor="var(--accent-light)"

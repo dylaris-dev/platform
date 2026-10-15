@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.16
+
+### Features
+- **RAM, CPU and storage now have a slider under the field** when creating a server and in Edit
+  Resources: 512 MB, one core and 10 GB steps, ending in unlimited. The field still takes any value. `panel`
+- **Server memory now shows the JVM heap against its maximum,** with the whole process against the
+  container limit beside it and an explanation of both. Before, it showed only the process figure. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The console's stats bar no longer breaks when a server's disk passes 80 % of its limit. `panel`
+
 ## 2026.10.15.4
 
 ### Features
