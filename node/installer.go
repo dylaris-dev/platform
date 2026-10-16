@@ -3,6 +3,8 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -11,6 +13,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +65,10 @@ type InstallerConfig struct {
 	// Software ("upload", "upload-zip" only) is installed over the uploaded
 	// files - see installUploadSoftware. Empty keeps the upload's own jar.
 	Software string `json:"software,omitempty"`
+	// ContainerPort is the port the server's container publishes, filled in by
+	// the node (never sent by Core). A BungeeCord or Waterfall proxy is told to
+	// listen on it, because their own default is 25577.
+	ContainerPort int `json:"-"`
 }
 
 // CleanServerJars removes server JARs and cached/generated directories while preserving
@@ -129,6 +136,19 @@ func installServer(serverDataPath, subServerName string, config InstallerConfig)
 	switch config.Type {
 	case "paper":
 		return nil, installPaper(destDir, config.Version)
+	case "velocity", "waterfall":
+		if err := installPaperMC(destDir, config.Type, config.Version); err != nil {
+			return nil, err
+		}
+		if config.Type == "waterfall" {
+			return nil, writeBungeeListener(destDir, config.ContainerPort)
+		}
+		return nil, nil
+	case "bungeecord":
+		if err := installBungeeCord(destDir, config.Version); err != nil {
+			return nil, err
+		}
+		return nil, writeBungeeListener(destDir, config.ContainerPort)
 	case "vanilla":
 		return nil, installVanilla(destDir, config.Version)
 	case "fabric":
@@ -397,7 +417,21 @@ func fetchJSON(url string, target interface{}) error {
 // was retired (now returns 410 "sunset"). The v3 builds/latest response carries
 // the direct download URL, so there is no longer a URL to reconstruct.
 func installPaper(dir, version string) error {
-	apiURL := fmt.Sprintf("https://fill.papermc.io/v3/projects/paper/versions/%s/builds/latest", version)
+	return installPaperMC(dir, "paper", version)
+}
+
+// paperMCLabels names a Fill project in the log and in errors. Paper keeps the
+// exact wording it had before Velocity and Waterfall shared this path.
+var paperMCLabels = map[string]string{"paper": "Paper", "velocity": "Velocity", "waterfall": "Waterfall"}
+
+// installPaperMC is installPaper for any project on the Fill API: paper,
+// velocity and waterfall answer in the same shape.
+func installPaperMC(dir, project, version string) error {
+	label := paperMCLabels[project]
+	if label == "" {
+		return fmt.Errorf("unknown PaperMC project %q", project)
+	}
+	apiURL := fmt.Sprintf("https://fill.papermc.io/v3/projects/%s/versions/%s/builds/latest", project, url.PathEscape(version))
 	resp, err := installerMetaClient.Get(apiURL)
 	if err != nil {
 		return fmt.Errorf("failed to query PaperMC API: %v", err)
@@ -410,8 +444,11 @@ func installPaper(dir, version string) error {
 	var result struct {
 		ID        int `json:"id"`
 		Downloads map[string]struct {
-			Name string `json:"name"`
-			URL  string `json:"url"`
+			Name      string `json:"name"`
+			URL       string `json:"url"`
+			Checksums struct {
+				SHA256 string `json:"sha256"`
+			} `json:"checksums"`
 		} `json:"downloads"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -419,11 +456,60 @@ func installPaper(dir, version string) error {
 	}
 	dl, ok := result.Downloads["server:default"]
 	if !ok || dl.URL == "" {
-		return fmt.Errorf("no server download available for Paper %s", version)
+		return fmt.Errorf("no server download available for %s %s", label, version)
 	}
 
-	log.Printf("Downloading PaperMC %s build %d ...", version, result.ID)
-	return downloadFile(dl.URL, filepath.Join(dir, "server.jar"))
+	log.Printf("Downloading %s %s build %d ...", label, version, result.ID)
+	return installServerJar(dir, dl.URL, dl.Checksums.SHA256)
+}
+
+// installServerJar downloads a server jar to server.jar.part and only then
+// moves it over server.jar, so a broken download - or one that does not match
+// the checksum its publisher states - never becomes the jar the next start
+// runs. wantSHA256 is optional: not every source publishes one (BungeeCord's
+// Jenkins does not), and its absence is no reason to refuse an install that
+// worked before the check existed.
+func installServerJar(dir, url, wantSHA256 string) error {
+	const part = "server.jar.part"
+	if err := downloadFile(url, filepath.Join(dir, part)); err != nil {
+		os.Remove(filepath.Join(dir, part))
+		return err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if wantSHA256 != "" {
+		got, err := sha256InRoot(root, part)
+		if err != nil {
+			root.Remove(part)
+			return err
+		}
+		if !strings.EqualFold(got, wantSHA256) {
+			root.Remove(part)
+			return fmt.Errorf("server jar checksum mismatch: the download does not match the sha256 its publisher states")
+		}
+	}
+	if err := root.Rename(part, "server.jar"); err != nil {
+		root.Remove(part)
+		return err
+	}
+	return nil
+}
+
+// sha256InRoot returns the sha256 hex of name inside root.
+func sha256InRoot(root *os.Root, name string) (string, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // installVanilla downloads the official Minecraft server jar via Mojang's launcher manifest.

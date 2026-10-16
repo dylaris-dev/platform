@@ -58,6 +58,8 @@ const PROJECT_TYPE_FOR_LOADER: Record<string, 'mod' | 'plugin'> = {
     fabric: 'mod', forge: 'mod', quilt: 'mod', neoforge: 'mod',
 };
 
+const PROXY_LOADERS = new Set(['velocity', 'waterfall', 'bungeecord']);
+
 const updateCheckApi: UpdateCheckApi = {
     versionsByIds: getModrinthVersionsByIds,
     latestFromHashes: getLatestVersionsFromHashes,
@@ -76,7 +78,9 @@ export default function ServerContentPage() {
     const serverName = server?.name || `Server ${serverId}`;
 
     const defaultLoader = (server?.installerType || '').toLowerCase();
-    const defaultMcVersion = server?.minecraftVersion || '';
+    // A proxy's recorded version is its own release ("3.5"), which no plugin on
+    // Modrinth lists as a game version: filtering by it found nothing at all.
+    const defaultMcVersion = PROXY_LOADERS.has(defaultLoader) ? '' : server?.minecraftVersion || '';
 
     const [section, setSection] = useState<Section>('browse');
     const [query, setQuery] = useState('');

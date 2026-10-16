@@ -6,7 +6,7 @@ import { Info, AlertTriangle } from 'lucide-react';
 // The pure part lives in src/lib/javaVersion so the vitest suite can cover it.
 // Re-exported here because SetupNewWizard/SetupEditMode import
 // them from this module.
-export { JAVA_IMAGES, recommendJavaForVersion, effectiveMcVersion } from '@/lib/javaVersion';
+export { JAVA_IMAGES, recommendJavaForVersion, recommendJavaForSetup, effectiveMcVersion } from '@/lib/javaVersion';
 import { JAVA_IMAGES } from '@/lib/javaVersion';
 
 interface JavaVersionPickerProps {

@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.16.3
+
+### Features
+- **Velocity, Waterfall and BungeeCord can now be installed directly from Setup** on a proxy server.
+  On your own node, update the node first. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Paper, Velocity and Waterfall downloads are now checked against the checksum PaperMC publishes, so a
+  broken download fails the install instead of starting. `node`
+- BungeeCord and Waterfall proxies now stop cleanly, and backing up a running proxy no longer takes
+  three extra minutes. `node`
+- Proving a custom domain now allows five missed verification windows instead of two before the
+  domain is blocked. Nothing to do on your side.
+
 ## 2026.10.16.2
 
 ### Features

@@ -16,13 +16,22 @@ func TestValidateInstallerRequest(t *testing.T) {
 		{name: "unknown type", typ: "ftp"},
 		{name: "empty type", typ: ""},
 
-		// Core ADVERTISES these three via /api/versions/software (their version
-		// listing shares the PaperMC provider) but they are not an install
-		// source and the node's switch has no case for them, so
-		// validate.IsInstallerType excludes them and this must too.
-		{name: "velocity is not an install source", typ: "velocity", version: "3.4.0"},
-		{name: "waterfall is not an install source", typ: "waterfall", version: "1.20"},
-		{name: "bungeecord is not an install source", typ: "bungeecord", version: "1.21"},
+		// The proxies: the version goes into a download URL on the node.
+		{name: "velocity release", typ: "velocity", version: "3.5.1", ok: true},
+		{name: "velocity 4", typ: "velocity", version: "4.2.0", ok: true},
+		{name: "velocity needs a version", typ: "velocity"},
+		{name: "velocity snapshot", typ: "velocity", version: "3.4.0-SNAPSHOT"},
+		{name: "velocity path", typ: "velocity", version: "3.5.1/../../x"},
+		{name: "velocity padded", typ: "velocity", version: " 3.5.1"},
+		{name: "waterfall release", typ: "waterfall", version: "1.21", ok: true},
+		{name: "waterfall needs a version", typ: "waterfall", version: "  "},
+		{name: "waterfall word", typ: "waterfall", version: "latest"},
+		{name: "bungeecord build", typ: "bungeecord", version: "#2104", ok: true},
+		{name: "bungeecord bare build", typ: "bungeecord", version: "2104", ok: true},
+		{name: "bungeecord needs a version", typ: "bungeecord"},
+		{name: "bungeecord mc version", typ: "bungeecord", version: "1.21"},
+		{name: "bungeecord word", typ: "bungeecord", version: "latest"},
+		{name: "bungeecord path", typ: "bungeecord", version: "#2104/x"},
 		// Node-side only; nothing in Core ever produces it, and the canonical
 		// allowlist leaves it out.
 		{name: "import is not accepted", typ: "import", url: "https://example.com/s.zip"},

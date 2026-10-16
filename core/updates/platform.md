@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.16.3
+
+### Features
+- **Velocity, Waterfall and BungeeCord now install directly from Setup** on a server created as a
+  proxy. Before, the proxy jar had to be brought in by hand. A node older than this release refuses it. `core` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Paper, Velocity and Waterfall downloads are checked against the sha256 PaperMC publishes. A mismatch
+  fails the install and keeps the previous jar instead of starting a broken one. `node`
+- BungeeCord and Waterfall now stop cleanly instead of running until Docker kills them, and a backup
+  of a running proxy no longer waits three minutes for a world save that never comes. `node`
+- A custom domain is now blocked after five missed 4-hour verification windows instead of two. `core`
+
 ## 2026.10.16.2
 
 ### Features

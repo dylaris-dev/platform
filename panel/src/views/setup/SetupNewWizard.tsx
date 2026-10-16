@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { X, Rocket, RefreshCw, Globe } from 'lucide-react';
 import { CreateRouteRequest, GatewayRoute } from '@/lib/api';
 import { useAppData } from '@/lib/AppDataContext';
-import JavaVersionPicker, { recommendJavaForVersion } from './JavaVersionPicker';
+import JavaVersionPicker, { recommendJavaForSetup } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
 import LibraryPicker from './LibraryPicker';
@@ -109,7 +109,11 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
         () => props.targetMcVersion,
         [props.targetMcVersion],
     );
-    const recommendedJava = useMemo(() => recommendJavaForVersion(effectiveVersion), [effectiveVersion]);
+    const isProxy = props.serverType === 'proxy';
+    const recommendedJava = useMemo(
+        () => recommendJavaForSetup({ isProxy, tab: props.installTab, software: props.software, build: props.selectedBuild, mcVersion: effectiveVersion }),
+        [isProxy, props.installTab, props.software, props.selectedBuild, effectiveVersion],
+    );
 
     // Domain row only matters when the gateway actually handles traffic.
     // In ip_port mode players connect via Node IP + port, so showing a
@@ -215,7 +219,7 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     onChange={props.onJavaChange}
                     serverType={props.serverType}
                     recommended={recommendedJava ?? undefined}
-                    mcVersion={effectiveVersion || undefined}
+                    mcVersion={isProxy ? undefined : effectiveVersion || undefined}
                     versionUnknown={props.javaVersionUnknown}
                 />
 

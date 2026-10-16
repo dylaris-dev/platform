@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { recommendJavaForVersion, effectiveMcVersion, JAVA_25, JAVA_21, JAVA_17, JAVA_8, JAVA_IMAGES } from './javaVersion';
+import { recommendJavaForVersion, recommendJavaForProxy, recommendJavaForSetup, effectiveMcVersion, JAVA_25, JAVA_21, JAVA_17, JAVA_8, JAVA_IMAGES } from './javaVersion';
 
 describe('recommendJavaForVersion', () => {
     // The bug this exists for: the old parser read parts[1] unconditionally, so
@@ -65,5 +65,43 @@ describe('effectiveMcVersion', () => {
     it('falls back to the major for loader versions', () => {
         expect(effectiveMcVersion('1.20', '47.2.0')).toBe('1.20');
         expect(effectiveMcVersion('1.20', '')).toBe('1.20');
+    });
+});
+
+describe('recommendJavaForProxy', () => {
+    // Velocity 4 needs Java 25 (Fill API java.version.minimum); the form used to
+    // keep Java 21 for it because "4.2.0" is not a Minecraft version.
+    it.each([
+        ['velocity', '4.2.0', JAVA_25],
+        ['velocity', '5.0.0', JAVA_25],
+        ['velocity', '3.5.1', JAVA_21],
+        ['velocity', '3.4.0', JAVA_21],
+        ['waterfall', '1.21', JAVA_21],
+        ['bungeecord', '#2104', JAVA_21],
+        ['bungeecord', '', JAVA_21],
+    ])('%s %s -> %s', (software, build, want) => {
+        expect(recommendJavaForProxy(software, build)).toBe(want);
+    });
+
+    it.each([
+        ['velocity', ''],
+        ['velocity', 'latest'],
+        ['paper', '1.21.4'],
+        ['', '4.2.0'],
+    ])('no recommendation for %s %s', (software, build) => {
+        expect(recommendJavaForProxy(software, build)).toBeNull();
+    });
+});
+
+describe('recommendJavaForSetup', () => {
+    it('a game server follows its Minecraft version', () => {
+        expect(recommendJavaForSetup({ isProxy: false, tab: 'online', software: 'paper', build: '26.2', mcVersion: '26.2' })).toBe(JAVA_25);
+    });
+    it('a proxy follows its release on the online and library tabs', () => {
+        expect(recommendJavaForSetup({ isProxy: true, tab: 'online', software: 'velocity', build: '4.2.0', mcVersion: '4.2.0' })).toBe(JAVA_25);
+        expect(recommendJavaForSetup({ isProxy: true, tab: 'library', software: 'velocity', build: '3.5.1', mcVersion: '3.5.1' })).toBe(JAVA_21);
+    });
+    it('an upload says nothing about the proxy inside it', () => {
+        expect(recommendJavaForSetup({ isProxy: true, tab: 'upload', software: 'velocity', build: '4.2.0', mcVersion: '' })).toBeNull();
     });
 });

@@ -5,7 +5,7 @@ import { Server, setupServer, updateServerRuntime, switchSubServer, getFiles, ge
 import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
-import { recommendJavaForVersion } from './setup/JavaVersionPicker';
+import { recommendJavaForSetup } from './setup/JavaVersionPicker';
 import { JAVA_21 } from '@/lib/javaVersion';
 import VersionPicker, { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
 import UploadSoftwareChoice from './setup/UploadSoftwareChoice';
@@ -173,11 +173,16 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         uploadVersionChosen,
     });
 
+    // A proxy's release is its own build, not a Minecraft version, so it is
+    // keyed on the pickers instead. A game server keeps the one key it had: more
+    // would reset a Java the operator picked by hand on every software switch.
+    const proxyJavaKey = isProxy ? `${installTab}|${software}|${selectedBuild}` : '';
     useEffect(() => {
-        if (formMode === 'view' || !targetMcVersion) return;
-        const rec = recommendJavaForVersion(targetMcVersion);
+        if (formMode === 'view' || (!isProxy && !targetMcVersion)) return;
+        const rec = recommendJavaForSetup({ isProxy, tab: installTab, software, build: selectedBuild, mcVersion: targetMcVersion });
         if (rec) setJavaImage(rec);
-    }, [formMode, targetMcVersion]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [formMode, targetMcVersion, proxyJavaKey]);
 
     // Pre-populate version when entering edit mode (handles case where software didn't change)
     useEffect(() => {

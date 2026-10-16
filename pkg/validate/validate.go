@@ -167,6 +167,10 @@ var installerTypes = map[string]bool{
 	// installed by node/installer_technic.go, shipped in release 2026.09.19.4.
 	// Core also refuses it for a node reporting an older release.
 	"technic": true,
+	// The Minecraft proxies, installed by node/installer_proxy.go from release
+	// 2026.10.16.3. Core accepts them only on a proxy server and refuses them
+	// for a node reporting an older release.
+	"velocity": true, "waterfall": true, "bungeecord": true,
 }
 
 // IsInstallerType reports whether t is a known server source/installer type.
@@ -178,8 +182,8 @@ func IsInstallerType(t string) bool { return installerTypes[t] }
 // LOADER_OPTIONS - kept in sync here). Deliberately broader than
 // installerTypes above: that set is an install SOURCE (paper/vanilla/fabric/
 // ...), this is every server platform mods/plugins can target, including
-// bukkit/spigot/purpur/quilt and the proxy platforms (velocity/waterfall/
-// bungeecord) which are never an install source but are valid loader tags.
+// bukkit/spigot/purpur/quilt, which are never an install source but are valid
+// loader tags.
 var modrinthLoaders = map[string]bool{
 	"paper": true, "spigot": true, "bukkit": true, "purpur": true,
 	"fabric": true, "forge": true, "quilt": true, "neoforge": true,

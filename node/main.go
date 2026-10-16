@@ -1438,6 +1438,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		installerCfg := cmd.Installer
 		installerCfg.JavaImage = cmd.Config.Docker.Image
 		installerCfg.ServerUUID = cmd.Config.UUID
+		// The port a BungeeCord/Waterfall proxy is told to listen on: the one
+		// Core sent, else the server's saved one, else the node default (see
+		// writeBungeeListener).
+		installerCfg.ContainerPort = cmd.Config.Docker.ContainerPort
+		if installerCfg.ContainerPort == 0 && dm != nil {
+			installerCfg.ContainerPort = dm.savedContainerPort(cmd.Config.UUID)
+		}
 
 		// The server is stopped BEFORE the install, not only when it is
 		// recreated at the end. Its container mounts the whole server
@@ -1964,6 +1971,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		installerCfg := cmd.Installer
 		installerCfg.JavaImage = cmd.Config.Docker.Image
 		installerCfg.ServerUUID = cmd.Config.UUID
+		// The port a BungeeCord/Waterfall proxy is told to listen on: the one
+		// Core sent, else the server's saved one, else the node default (see
+		// writeBungeeListener).
+		installerCfg.ContainerPort = cmd.Config.Docker.ContainerPort
+		if installerCfg.ContainerPort == 0 && dm != nil {
+			installerCfg.ContainerPort = dm.savedContainerPort(cmd.Config.UUID)
+		}
 
 		_, err := InstallServer(serverPath, subName, installerCfg)
 		if discardIfDeleted(cmd.Config.UUID, serverPath) {
@@ -2274,9 +2288,16 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 	rdb.RPush(ctx, inputKey, "save-all")
 	time.Sleep(3 * time.Second)
 
-	// Send stop
-	log.Printf("Server %s: sending stop...", uuid)
-	rdb.RPush(ctx, inputKey, "stop")
+	// Send stop - or "end" to a BungeeCord/Waterfall proxy, which does not know
+	// "stop" and would otherwise wait out the 30s below and the Docker kill.
+	stopCmd := "stop"
+	if info.Config != nil {
+		if sub := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); sub != info.Config.WorkingDir {
+			stopCmd = consoleStopCommand(dm.resolveLocalServerPath(uuid), sub)
+		}
+	}
+	log.Printf("Server %s: sending %s...", uuid, stopCmd)
+	rdb.RPush(ctx, inputKey, stopCmd)
 
 	// Wait for container to exit (max 30s)
 	deadline := time.Now().Add(30 * time.Second)

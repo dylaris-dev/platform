@@ -56,8 +56,8 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 // "Route limit reached" still left a live claim on the customer's own domain,
 // with a deadline they were not told about and no route to justify it. The
 // verifier fails a pending claim on its deadline whether or not any route
-// exists, and two failures block the domain for that account permanently - so
-// two refused attempts could permanently block a domain the customer had never
+// exists, and MaxClaimAttempts failures block the domain for that account - so
+// refused attempts could permanently block a domain the customer had never
 // managed to route at all.
 //
 // Idempotent for a domain already proven (returns no notice), and

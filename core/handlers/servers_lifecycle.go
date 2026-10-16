@@ -341,10 +341,9 @@ func resolveJavaImage(requested, stored string) string {
 //
 // The type allowlist is validate.IsInstallerType, which already existed and
 // had no caller at all. Reusing it rather than restating the set here is the
-// point: it is also what excludes velocity/waterfall/bungeecord, which Core
-// ADVERTISES via /api/versions/software (their version listing shares the
-// PaperMC provider) but which are not an install source and have no case in
-// the node's switch.
+// point: the node's switch and this list must agree. The proxies (velocity,
+// waterfall, bungeecord) put their version into a download URL on the node,
+// so theirs is checked for shape, not only for presence.
 //
 // Without this the node was the first and only thing to notice, long after the
 // caller was told 200 "Server setup queued". Observed end to end on the
@@ -359,11 +358,19 @@ func validateInstallerRequest(typ, version, loader, url, path string) string {
 	if !validate.IsInstallerType(typ) {
 		return "Unsupported installer type"
 	}
-	needsVersion := map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true}
+	needsVersion := map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true, "velocity": true, "waterfall": true, "bungeecord": true}
 	if needsVersion[typ] && strings.TrimSpace(version) == "" {
 		return "installer.version is required for " + typ
 	}
 	switch typ {
+	case "velocity", "waterfall":
+		if !paperMCReleasePattern.MatchString(version) {
+			return "installer.version must be a " + typ + " release such as 3.5.1"
+		}
+	case "bungeecord":
+		if !bungeeCordBuildPattern.MatchString(version) {
+			return "installer.version must be a BungeeCord build number such as #2104"
+		}
 	case "neoforge":
 		if strings.TrimSpace(loader) == "" {
 			return "installer.loader is required for neoforge"
@@ -517,6 +524,17 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if req.Installer.Software != "" {
 		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && nodeReleaseOlderThan(r.Context(), h.state, node.Token, uploadSoftwareSince) {
 			sendJSONError(w, "This node runs an older release that cannot install server software over an upload. Update the node, then try again.", http.StatusConflict)
+			return
+		}
+	}
+
+	if proxyInstallers[req.Installer.Type] {
+		token := ""
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil {
+			token = node.Token
+		}
+		if code, msg := proxyInstallRefusal(r.Context(), h.state, srv.ServerType, token, req.Installer.Type); code != 0 {
+			sendJSONError(w, msg, code)
 			return
 		}
 	}

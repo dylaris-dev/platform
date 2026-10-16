@@ -166,7 +166,7 @@ func TestIsSafeRelPath(t *testing.T) {
 }
 
 func TestIsInstallerType(t *testing.T) {
-	for _, ok := range []string{"paper", "vanilla", "upload-zip", "modpack"} {
+	for _, ok := range []string{"paper", "vanilla", "upload-zip", "modpack", "velocity", "waterfall", "bungeecord"} {
 		if !IsInstallerType(ok) {
 			t.Errorf("IsInstallerType(%q) = false, want true", ok)
 		}

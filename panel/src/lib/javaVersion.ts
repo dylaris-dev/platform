@@ -13,10 +13,10 @@ export interface JavaImage {
 }
 
 export const JAVA_IMAGES: JavaImage[] = [
-    { id: 'ghcr.io/dylaris-dev/platform-mc-java25:latest', label: 'Java 25', note: '26.1+', proxyNote: 'Newest' },
-    { id: 'ghcr.io/dylaris-dev/platform-mc-java21:latest', label: 'Java 21', note: '1.20.5 - 26.0', proxyNote: 'Recommended' },
-    { id: 'ghcr.io/dylaris-dev/platform-mc-java17:latest', label: 'Java 17', note: '1.18+', proxyNote: 'Minimum for Velocity' },
-    { id: 'ghcr.io/dylaris-dev/platform-mc-java8:latest', label: 'Java 8', note: '1.7 - 1.16', proxyNote: 'BungeeCord only' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java25:latest', label: 'Java 25', note: '26.1+', proxyNote: 'Velocity 4+' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java21:latest', label: 'Java 21', note: '1.20.5 - 26.0', proxyNote: 'Velocity 3, BungeeCord, Waterfall' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java17:latest', label: 'Java 17', note: '1.18+', proxyNote: 'Minimum for BungeeCord' },
+    { id: 'ghcr.io/dylaris-dev/platform-mc-java8:latest', label: 'Java 8', note: '1.7 - 1.16', proxyNote: 'Too old for current proxies' },
 ];
 
 export const JAVA_25 = JAVA_IMAGES[0].id;
@@ -61,6 +61,43 @@ export function recommendJavaForVersion(version: string): string | null {
     // recommendation - the same gap as the 26.x one, at the other end.
     if (minor >= 7) return JAVA_8;
     return null;
+}
+
+/**
+ * Returns the Java image a proxy release needs, or null for software that is
+ * not a proxy or a release we cannot read.
+ *
+ * A proxy's version is its own, not a Minecraft version, so
+ * recommendJavaForVersion read "4.2.0" as nothing and the form kept Java 21,
+ * on which Velocity 4 does not start. The minimums are PaperMC's own
+ * (java.version.minimum in the Fill API: Velocity 4 needs 25, 3.5 needs 21)
+ * and BungeeCord's build (Java 17). Java 21 covers every 3.x Velocity, every
+ * BungeeCord build and Waterfall.
+ */
+export function recommendJavaForProxy(software: string, build: string): string | null {
+    switch (software) {
+        case 'velocity': {
+            const major = Number(build.split('.')[0]);
+            if (!build || !Number.isInteger(major)) return null;
+            return major >= 4 ? JAVA_25 : JAVA_21;
+        }
+        case 'waterfall':
+        case 'bungeecord':
+            return JAVA_21;
+        default:
+            return null;
+    }
+}
+
+/**
+ * The Java recommendation for the setup form. A proxy reads its release from
+ * the version pickers, which only describe the install on the tabs that use
+ * them; an upload says nothing about the proxy inside it.
+ */
+export function recommendJavaForSetup(i: { isProxy: boolean; tab: string; software: string; build: string; mcVersion: string }): string | null {
+    if (!i.isProxy) return recommendJavaForVersion(i.mcVersion);
+    if (i.tab !== 'online' && i.tab !== 'library') return null;
+    return recommendJavaForProxy(i.software, i.build);
 }
 
 /**

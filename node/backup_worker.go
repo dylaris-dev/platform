@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -175,8 +176,31 @@ func saveConfirmed(line string) bool {
 // coming, so there is nothing to wait for.
 func saveUnsupported(line string) bool {
 	l := strings.ToLower(line)
-	return strings.Contains(l, "unknown command") || strings.Contains(l, "unknown or incomplete command")
+	if strings.Contains(l, "unknown command") || strings.Contains(l, "unknown or incomplete command") {
+		return true
+	}
+	// The proxies answer in words of their own, matched as the whole message
+	// after the log prefix: a backup that stops waiting early on a game server
+	// archives a world mid-save, so nothing looser than their exact reply.
+	msg := strings.TrimSpace(ansiEscape.ReplaceAllString(line, ""))
+	for _, reply := range proxyUnknownCommandReplies {
+		if msg == reply || strings.HasSuffix(msg, "]: "+reply) || strings.HasSuffix(msg, "] "+reply) {
+			return true
+		}
+	}
+	return false
 }
+
+// proxyUnknownCommandReplies are the proxies' answers to a command they do not
+// have: Velocity's "This command does not exist." (its messages.properties),
+// BungeeCord's and Waterfall's "Command not found" (BungeeCordLauncher). Their
+// log prefixes differ ("[12:00:00 INFO]: " and "12:00:00 [INFO] "), so the
+// reply is matched after either.
+var proxyUnknownCommandReplies = []string{"This command does not exist.", "Command not found"}
+
+// ansiEscape is a terminal colour sequence. BungeeCord sends its reply in red,
+// and the console stream carries whatever the process wrote.
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 // waitForSaveConfirmation reads the server's console stream from after
 // fromID until a save is confirmed, the timeout passes, or ctx ends.

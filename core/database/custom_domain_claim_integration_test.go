@@ -164,6 +164,32 @@ func TestIntegrationAVerifiedClaimIsRecheckedAndLapses(t *testing.T) {
 		}
 	})
 
+	// A miss is a whole window run out. Every one short of the limit leaves the
+	// domain retryable; only the last makes the block permanent.
+	t.Run("blocks for good only at the limit", func(t *testing.T) {
+		const domain = "limit.example.test"
+		for i := 1; i <= store.MaxClaimAttempts; i++ {
+			c, err := st.StartCustomDomainClaim(user, domain, time.Now().Add(-time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := st.FailCustomDomainClaim(c.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := store.ClaimBlocked
+			if i == store.MaxClaimAttempts {
+				want = store.ClaimPermablocked
+			}
+			if state != want {
+				t.Fatalf("miss %d: state %s, want %s", i, state, want)
+			}
+		}
+		if store.MaxClaimAttempts != 5 {
+			t.Fatalf("MaxClaimAttempts = %d; the docs promise five", store.MaxClaimAttempts)
+		}
+	})
+
 	// Only verified claims are re-checked or lapsed: a pending one has its own
 	// deadline, and lapsing it would replace a strike with a free block.
 	t.Run("a claim that is not verified is neither due nor lapsed", func(t *testing.T) {

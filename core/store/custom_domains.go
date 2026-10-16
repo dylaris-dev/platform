@@ -15,9 +15,10 @@ const (
 )
 
 // MaxClaimAttempts is how many times a user may fail to prove ONE domain before
-// the block becomes permanent. Two: the first miss is a mistake, the second is
-// a pattern.
-const MaxClaimAttempts = 2
+// the block becomes permanent. A miss is a whole four-hour window run out with
+// no TXT record, never a click on "check", and five leaves room for DNS that
+// is slow to propagate or a record typed wrong more than once.
+const MaxClaimAttempts = 5
 
 // CustomDomainClaim is one user's standing claim on one domain.
 type CustomDomainClaim struct {
@@ -163,7 +164,7 @@ func (s *PostgresStore) LapseCustomDomainClaim(id int, grace time.Duration) erro
 }
 
 // FailCustomDomainClaim counts one missed deadline and returns the resulting
-// state. The second failure is permanent.
+// state. The MaxClaimAttempts-th failure is permanent.
 //
 // Only a claim that is STILL pending and past its deadline: the verifier
 // decides on a list read at the start of a pass, and in between the customer
