@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.16.2
+
+### Features
+- **Turning on metered traffic or backup billing now shows its price and asks to confirm** the exact
+  sentence the store records. Without a readable price it cannot be turned on. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A per-user backup quota set by an administrator is no longer billed as bookable storage. `core`
+- `GET /api/store/usage` takes `period=YYYY-MM`, so the store can bill the end of a month. Update Core
+  before the store. `core`
+
 ## 2026.10.16
 
 ### Features

@@ -42,6 +42,11 @@ import (
 // rather than hold the whole view.
 const storeAccountTimeout = 8 * time.Second
 
+// storeConsentTimeout is longer: a consent change reports the usage up to now
+// to Stripe and reads it from this Core before it answers. Cut off at 8s, the
+// panel said "nothing was changed" about a change the store went on to apply.
+const storeConsentTimeout = 45 * time.Second
+
 // AccountSummary GET /api/store/account-summary - session-authed.
 //
 // Best-effort by design: a store outage returns the reachable=false shape with a
@@ -231,7 +236,7 @@ func (s *AppState) storeSetBillingConsent(ctx context.Context, uuid string, traf
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Store-Key", s.StoreSharedKey)
 
-	resp, err := (&http.Client{Timeout: storeAccountTimeout}).Do(req)
+	resp, err := (&http.Client{Timeout: storeConsentTimeout}).Do(req)
 	if err != nil {
 		return 0, "", fmt.Errorf("cannot reach the storefront at %s: %w", s.StoreURL, err)
 	}

@@ -195,9 +195,11 @@ func (h *StoreHandler) VerifyUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetUsage GET /api/store/usage?uuid= — store-key. Returns the linked tenant's
-// metered traffic for the current billing month so the store can compute overage
-// and bill it. edge_bytes is the billable player traffic; the rest are for
+// GetUsage GET /api/store/usage?uuid=[&period=YYYY-MM] — store-key. Returns the
+// linked tenant's metered traffic for the current billing month, or for the
+// month in period, so the store can compute overage and bill it. The store asks
+// for a past month only to close it out: without that, whatever moved between
+// its last daily run of a month and midnight was never billed. edge_bytes is the billable player traffic; the rest are for
 // observability. A tenant with no traffic yet returns zeros (never an error).
 func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	if !h.requireStoreKey(w, r) {
@@ -208,8 +210,11 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Missing uuid", http.StatusBadRequest)
 		return
 	}
-	now := time.Now().UTC()
-	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	period, ok := storeUsagePeriod(r.URL.Query().Get("period"), time.Now())
+	if !ok {
+		sendJSONError(w, "Invalid period", http.StatusBadRequest)
+		return
+	}
 	usage, err := h.state.Store.GetTrafficUsage(uuid, period)
 	if err != nil {
 		sendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
@@ -271,11 +276,12 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	// number an operator edits on a Core screen. That second copy is exactly how
 	// the pricing page came to promise a traffic allowance nothing enforced.
 	billing, _ := h.state.Store.GetUserBilling(uuid)
+	includedGB, bookableGB := billedBackupAllowance(h.state.Store, billing)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":          true,
 		"period":           period.Format("2006-01-02"),
-		"backupIncludedGb": services.R2IncludedGB(h.state.Store, billing),
-		"backupBookableGb": services.R2BookableGB(h.state.Store, billing),
+		"backupIncludedGb": includedGB,
+		"backupBookableGb": bookableGB,
 		"edgeBytes":        usage.EdgeBytes,
 		"relayBytes":       usage.RelayBytes,
 		"backupBytes":      usage.BackupBytes,
@@ -286,6 +292,33 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		"backupBytesOwnStorage": backupBytesOnOwnStorage(h.state.Store, uuid),
 		"regions":               regions,
 	})
+}
+
+// storeUsagePeriod is the first day of the month the store asked about: the current
+// one when raw is empty, else raw as YYYY-MM. A future month is refused.
+func storeUsagePeriod(raw string, now time.Time) (time.Time, bool) {
+	now = now.UTC()
+	current := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if raw == "" {
+		return current, true
+	}
+	t, err := time.Parse("2006-01", raw)
+	if err != nil || t.After(current) {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// billedBackupAllowance is the allowance the store bills against. An
+// administrator's per-user quota replaces the purchase on both sides: Core stops
+// the tenant at it, so all of it is free and nothing more can be booked. Before,
+// the store still billed past the purchase's allowance, charging for space an
+// administrator had given.
+func billedBackupAllowance(st store.Store, b *store.UserBilling) (includedGB, bookableGB int64) {
+	if b != nil && b.R2QuotaGB != nil {
+		return *b.R2QuotaGB, 0
+	}
+	return services.R2IncludedGB(st, b), services.R2BookableGB(st, b)
 }
 
 // backupBytesOnOwnStorage is a read that must never fail the usage response: it

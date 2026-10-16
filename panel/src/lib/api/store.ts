@@ -80,6 +80,12 @@ export interface StoreAccountSummary {
     trafficBillingEnabled?: boolean;
     backupBillingEnabled?: boolean;
     trafficCutoffAt?: string | null;
+    // Per-unit prices read from Stripe, and the sentence each switch agrees
+    // to. Absent when the store could not read the price.
+    trafficPrice?: string;
+    trafficConsentText?: string;
+    backupPrice?: string;
+    backupConsentText?: string;
     traffic?: StoreUsageBlock & { warn?: number; cutOff?: boolean };
     backup?: StoreBackupBlock;
 }

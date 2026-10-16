@@ -15,9 +15,12 @@ export function usagePct(used: number, ceiling: number): number {
     return Math.max(0, Math.min(100, Math.round((used / ceiling) * 100)));
 }
 
+// price is the per-unit rate the switch charges; consentText the exact sentence
+// the store records when it is turned on. Both come from the store, which reads
+// the price from Stripe, so the screen shows what the invoice will use.
 export type SwitchState =
-    | { kind: 'on' }
-    | { kind: 'off' }
+    | { kind: 'on'; price?: string }
+    | { kind: 'off'; price: string; consentText: string }
     | { kind: 'unavailable'; reason: string };
 
 // trafficSwitch and backupSwitch decide whether the tenant may move the control
@@ -32,6 +35,8 @@ function billingSwitch(
     enabled: boolean | undefined,
     meterConfigured: boolean | undefined,
     what: string,
+    price: string | undefined,
+    consentText: string | undefined,
 ): SwitchState {
     if (!s.subscribed) {
         // A grant is not a missing subscription, and saying so was actively
@@ -60,15 +65,24 @@ function billingSwitch(
             reason: `Metered ${what} is not set up on the store yet. Nothing you can do from here.`,
         };
     }
-    return enabled ? { kind: 'on' } : { kind: 'off' };
+    if (enabled) return { kind: 'on', price };
+    // A charge is only agreed to with its price in front of the tenant. The
+    // store refuses the switch without one, so the screen says why up front.
+    if (!price || !consentText) {
+        return {
+            kind: 'unavailable',
+            reason: `The price for metered ${what} could not be read from the store right now, so it cannot be switched on. Try again later.`,
+        };
+    }
+    return { kind: 'off', price, consentText };
 }
 
 export function trafficSwitch(s: StoreAccountSummary): SwitchState {
-    return billingSwitch(s, s.trafficBillingEnabled, s.trafficMeterConfigured, 'traffic');
+    return billingSwitch(s, s.trafficBillingEnabled, s.trafficMeterConfigured, 'traffic', s.trafficPrice, s.trafficConsentText);
 }
 
 export function backupSwitch(s: StoreAccountSummary): SwitchState {
-    return billingSwitch(s, s.backupBillingEnabled, s.backupMeterConfigured, 'backup storage');
+    return billingSwitch(s, s.backupBillingEnabled, s.backupMeterConfigured, 'backup storage', s.backupPrice, s.backupConsentText);
 }
 
 // consequenceOf is the sentence under each switch: what happens when the

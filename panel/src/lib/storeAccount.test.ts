@@ -11,6 +11,10 @@ const base: StoreAccountSummary = {
     stripe: true,
     trafficMeterConfigured: true,
     backupMeterConfigured: true,
+    trafficPrice: '€4.50',
+    trafficConsentText: 'I agree to be charged €4.50 for every started terabyte...',
+    backupPrice: '€2.00',
+    backupConsentText: 'I agree to be charged €2.00 per started 50 GB block...',
 };
 
 describe('usagePct', () => {
@@ -41,8 +45,20 @@ describe('usagePct', () => {
 // is how a tenant spends an afternoon on the wrong problem.
 describe('the billing switches say why they cannot be moved', () => {
     it('is on when consent was given', () => {
-        expect(trafficSwitch({ ...base, trafficBillingEnabled: true })).toEqual({ kind: 'on' });
-        expect(backupSwitch({ ...base, backupBillingEnabled: true })).toEqual({ kind: 'on' });
+        expect(trafficSwitch({ ...base, trafficBillingEnabled: true })).toEqual({ kind: 'on', price: '€4.50' });
+        expect(backupSwitch({ ...base, backupBillingEnabled: true })).toEqual({ kind: 'on', price: '€2.00' });
+    });
+
+    it('carries the sentence the store records when it is turned on', () => {
+        expect(trafficSwitch(base)).toEqual({ kind: 'off', price: '€4.50', consentText: base.trafficConsentText });
+    });
+
+    it('cannot be turned on without a price', () => {
+        const s = trafficSwitch({ ...base, trafficPrice: undefined });
+        expect(s.kind).toBe('unavailable');
+        expect(s.kind === 'unavailable' && s.reason).toMatch(/price/);
+        // Already on stays on: withdrawing never needs a price.
+        expect(backupSwitch({ ...base, backupPrice: undefined, backupBillingEnabled: true }).kind).toBe('on');
     });
 
     it('is off when it was not', () => {

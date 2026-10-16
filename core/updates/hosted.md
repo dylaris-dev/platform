@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.16.2
+
+### Features
+- **Extra traffic and backup storage now show their price before you turn them on,** and ask you to
+  confirm what you agree to.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Metered billing now bills exactly what you agreed to.** Usage from before you turned it on is not
+  charged, and backup storage is billed once per billing period. Nothing to do on your side.
+- Backup storage is now counted the same way the panel shows it, so you are not billed while the
+  panel shows you inside your allowance.
+
 ## 2026.10.16
 
 ### Features
