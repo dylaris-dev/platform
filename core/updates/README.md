@@ -13,9 +13,50 @@ running install sees releases published after it was built, and falls back to th
 embedded copy when that fetch fails - which is what an air-gapped install wants,
 and which reads as "you are current" rather than as an error.
 
-The full format, the rules and the release process live in the repository's
-CLAUDE.md under "Release notes". Do not learn the format from here; that section
-is the one CI validates against.
+## The format
+
+CI validates both files with the same parser Core uses (`pkg/release`), so a
+malformed file fails the build before any image is built.
+
+```markdown
+## 2026.08.28
+
+**Update required by 2026-09-05 14:00 UTC** - older nodes stop connecting.
+
+### Features
+- What changed, in one or two sentences, for the reader. `core` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+```
+
+- Newest block first, versions strictly descending (see "The version" below).
+- All four sections, always, in this order: Features, Breaking, Security,
+  Fixes. An empty one is `- Nothing.`, so "no security fixes" reads differently
+  from "nobody filled this in".
+- At most three entries per section reach the Discord announcement, which
+  points to the full notes for the rest, so put the three that matter first.
+- The services a reader must update to get the change go last, as inline code:
+  `core`, `node`, `log-shipper` (the panel ships inside `core`). A push that
+  newly names a service without rebuilding it fails CI.
+- A wrapped line must be indented; an unindented line inside a release is an
+  error.
+- The optional required-update line goes directly under the version heading:
+  `**Update required now**` or `**Update required by <when>**`, where `<when>`
+  is `YYYY-MM-DD`, optionally followed by `HH:MM UTC`. A bare date means the end
+  of that day. A reason may follow after ` - `.
+
+Validate before pushing:
+
+```
+cd pkg && go run ./cmd/relnotes validate ../core/updates/platform.md ../core/updates/hosted.md
+```
 
 ## The version
 
@@ -36,7 +77,7 @@ Stamped at BUILD time, never derived from these files:
 |---|---|
 | `core` | `RELEASE_VERSION` ldflags → `main.releaseVersion` |
 | `node` | the same, sent in the heartbeat and at gRPC auth |
-| `panel` | `NEXT_PUBLIC_RELEASE_VERSION`, sent as a query parameter - it is a static bundle in a browser and Core cannot see it otherwise |
+| `panel` | none of its own: it is compiled into Core, so its version is Core's |
 
 Core must NOT read its version off the `platform.md` it embeds. After a
 customers-only release that block is older than the image, so Core would report

@@ -12,9 +12,9 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 
 > ### Beta, and under active development
 >
-> DYLARIS is self-hostable and usable today, but it has not reached a stable release. Expect breaking changes between images, schema migrations that run on deploy, and features that are still moving. If you need a fixed target, pin an image tag instead of `latest`.
+> DYLARIS is self-hostable and usable today, but it has not reached a stable release. Expect breaking changes between images, schema migrations that run on deploy, and features that are still moving. If you need a fixed target, pin `:sha-<commit>` instead of `latest`: CI publishes every build from `main` as both `latest` and `sha-<first 7 characters of the commit>`.
 >
-> **[dylaris.com](https://dylaris.com) is the project home and the documentation site**, and it is where the long-form guides are going as they are written. This README deliberately stays at what you need to get running and understand the shape of the system: the [quick start](#quick-start-single-host), both [deployment topologies](#deployment), and a [complete environment variable reference](#configuration-reference) covering every variable the code actually reads. Deploying from this file alone works today.
+> **[dylaris.com](https://dylaris.com) is the project home and the documentation site**, and it is where the long-form guides are going as they are written. This README deliberately stays at what you need to get running and understand the shape of the system: the [quick start](#quick-start-single-host), both [deployment topologies](#deployment), and an [environment variable reference](#configuration-reference) covering the variables an operator sets. Deploying from this file alone works today.
 >
 > Bug reports and questions are welcome. If anything here is wrong, unclear or incomplete, that counts as a bug worth reporting.
 
@@ -41,6 +41,10 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 - [Development](#development)
 - [Tech stack](#tech-stack)
 - [No telemetry](#no-telemetry)
+- [Release notes and updates](#release-notes-and-updates)
+- [Contributing](#contributing)
+- [Security](#security)
+- [License](#license)
 
 ---
 
@@ -84,7 +88,7 @@ what any serious panel needs.
 - **Live events** — Server-Sent Events over Redis Pub/Sub for real-time status (no polling).
 - **Multi-tenant user management** — UUID users, roles and per-server grants, username history + cooldowns, admin controls, API keys.
 - **First-run setup wizard** — browser-driven first-admin creation, plus lost-admin recovery.
-- **Warp** - pull external/home nodes behind NAT into the swarm over an encrypted WireGuard tunnel, and run servers on them as if they were in your DC. See `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
+- **Warp** - pull external/home nodes behind NAT into the overlay network over an encrypted WireGuard tunnel (the machine joins the overlay, not the Swarm), and run servers on them as if they were in your DC. The panel generates the deploy kit for such a machine; see `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
 - **Optional Gateway stack** — public ingress/proxy (edge), hub and link services for routing player traffic without exposing node IPs. Lives in a separate repo (`dylaris-gateway`).
 
 ## Architecture
@@ -122,7 +126,7 @@ DYLARIS is a small set of independently deployable services that coordinate thro
                            one container per server, log-shipper as PID 1
 ```
 
-Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp leader). It talks to this repo only through shared Redis keys, never directly.
+Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp leader). It talks to this repo through shared Redis keys, Core's warp HTTP API (`/api/warp/*`), the Hub's internal HTTP API (`/internal/*`, which Core calls for DNS) and frozen wire contracts such as the Beam stream header - never through Go imports.
 
 ### Services
 
@@ -130,7 +134,7 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
 |---|---|---|
 | **Core** | `core/` | REST API (`:25500`) + gRPC mesh endpoint (`:25501`). Auth/JWT, scheduler, RCON, SSE, library, Beam-ticket signing, DB migrations, Redis-based leader election. |
 | **Node** | `node/` | Per-host agent. Mounts `/var/run/docker.sock` to create/manage MC server containers; reads commands from its Redis queue and dials Core over gRPC; persists data to the `dylaris_data` volume. Hosts SFTP (`:25520`) and the Beam gRPC server (`:25521`). |
-| **Panel** | `panel/` | Next.js (App Router) web UI. Built as a static export and compiled INTO Core, so it has no image, no port and no version of its own. |
+| **Panel** | `panel/` | Next.js (App Router) web UI. Built as a static export and compiled INTO Core, so it has no image and no port of its own, and it is versioned with Core: the bundle inside a Core image carries that image's release version. |
 | **Log Shipper** | `log-shipper/` | Tiny wrapper binary that runs as **PID 1 inside each MC container**, wrapping the Java process and shipping stdout/stderr to a Redis stream. Built into the MC container image, not deployed as a standalone service. |
 | **Agent** | `agent/` | A Go **library** (not a service) imported by Node for host CPU/RAM/network stats collection. No `main.go`. |
 | TimescaleDB | (image) | `timescale/timescaledb:latest-pg16` — PostgreSQL 16 + TimescaleDB for relational data and time-series stats. The **source of truth**: users, servers, settings, audit. This is the thing to back up. |
@@ -138,7 +142,7 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
 
 ### How the services talk
 
-- **Core ↔ Node — Redis queues + gRPC mesh.** Core pushes commands onto `dylaris:node:{token}:cmds` — a Redis **Stream** read through a consumer group (`dylaris-pkg/queue`), so a node that crashes mid-command gets the work redelivered instead of losing it. `{token}` is the node's `node.Token`, i.e. its `NODE_ID`: `docker-stack.yml` templates that to the Swarm hostname, while the panel-generated BYON env block sets a Core-assigned id. (`dylaris:node:{token}:queue` is the **retired** RPUSH/BLPOP list — nothing reads it any more, so do not go looking there with `redis-cli` when a node looks stuck.) The Node dials *out* to Core over gRPC (`NodeService.NodeConnect`, a bidi stream) for auth and file operations — it never needs inbound reachability, which is what makes NAT'd / home nodes (Warp) possible.
+- **Core ↔ Node — Redis queues + gRPC mesh.** Core pushes commands onto `dylaris:node:{token}:cmds` — a Redis **Stream** read through a consumer group (`dylaris-pkg/queue`), so a node that crashes mid-command gets the work redelivered instead of losing it. `{token}` is the node's `node.Token`: the unguessable id Core assigns when the node first pairs. The node caches it in `.node_id` in its first storage path, and that file wins over `NODE_ID` on every later boot; `NODE_ID` (templated to the Swarm hostname in `docker-stack.yml`) is only the display name a node presents when it first pairs. (`dylaris:node:{token}:queue` is the **retired** RPUSH/BLPOP list — nothing reads it any more, so do not go looking there with `redis-cli` when a node looks stuck.) The Node dials *out* to Core over gRPC (`NodeService.NodeConnect`, a bidi stream) for auth and file operations — it never needs inbound reachability, which is what makes NAT'd / home nodes (Warp) possible.
 - **Node ↔ Docker.** The Node mounts the host Docker socket and manages real containers (RAM limits, port allocation, persistent volumes).
 - **File access.** `beam` uses an overlay gRPC transport (`:25521`, JWT-ticket gated, signed by Core, validated by Node) that never exposes the node IP. `sftp` exposes a classic SFTP server (`:25520`). External/Warp nodes force `beam`.
 - **Live data.** MC console logs, stats, and player data stream back through Redis streams; the browser receives them as Server-Sent Events.
@@ -174,8 +178,11 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
   Core will redistribute the scoped users. Redis is in-memory by design
   (`--save "" --appendonly no`): losing it loses transient queue/discovery state,
   not your servers.
-- **`BEAM_JWT_SECRET` must equal Core's `JWT_SECRET`.** Otherwise every beam
-  transfer (including the LAN fast-path) is rejected. The compose files wire it to
+- **`BEAM_JWT_SECRET` is an optional fallback.** A node verifies a Beam ticket
+  first by a proof derived from its own per-node secret, which is the only key a
+  BYON node has, so BYON nodes leave it unset. When it is set it must equal Core's
+  `JWT_SECRET`, and it is only tried when the per-node proof fails (a ticket
+  minted before Core could load that node's secret). The compose files wire it to
   `${JWT_SECRET}` so the two cannot silently diverge.
 - **`FRONTEND_URL` must be externally reachable.** An internal Docker-only hostname
   makes every emailed verify/reset link unreachable outside the Docker network.
@@ -192,19 +199,19 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
 Everything on one machine (Docker + Docker Compose v2 required).
 
 ```bash
-git clone https://github.com/Bartis-Dev/dylaris-platform.git
-cd dylaris-platform
+git clone https://github.com/dylaris-dev/platform.git
+cd platform
 
-# 1. Configure secrets — at minimum set JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD.
-#    Core refuses to boot if JWT_SECRET or CLUSTER_SECRET is empty or left at
-#    its placeholder default — set strong random values, e.g.:
+# 1. Configure secrets - at minimum set JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD.
+#    For every option with its explanation, run `cp .env.example .env` and edit
+#    that instead. Core refuses to boot if JWT_SECRET or CLUSTER_SECRET is empty
+#    or left at its placeholder default - set strong random values, e.g.:
 cat > .env <<EOF
 JWT_SECRET=$(openssl rand -hex 32)
 CLUSTER_SECRET=$(openssl rand -hex 32)
 DB_USER=dylaris
 DB_PASSWORD=$(openssl rand -hex 24)
 DB_NAME=dylaris
-PANEL_API_URL=http://localhost:25500/api
 EOF
 
 # 2. Seed the Valkey ACL file (mandatory: the --aclfile Valkey refuses to start
@@ -218,7 +225,7 @@ docker compose up -d
 #    http://localhost:25500   →   /setup  (creates the first admin)
 ```
 
-That's it — Core, a Node, the Panel, TimescaleDB and Valkey are now running. Create your first server from the Panel.
+That's it: Core (which also serves the panel), a Node, TimescaleDB and Valkey are now running. Create your first server from the Panel.
 
 > **Production note:** put Core behind a reverse proxy with TLS and point it at `core:25500`. Core serves the panel and the API on that one host, so there is nothing else to configure - leave `PANEL_API_URL` empty. Set `DB_SSLMODE=require` if the database is remote.
 
@@ -230,7 +237,7 @@ Two compose files are provided. They run the **same images** and differ only in 
 
 All services on one host, a local **bridge** network, one Node. Best for a single VPS / homelab box.
 
-The full file is [`docker-compose.yml`](docker-compose.yml) at the repo root, see it directly rather than a copy here, so this README can't drift out of sync with the real services (env vars, the Valkey ACL `command:` + aclfile setup, healthchecks, etc.). Five services on one bridge network: `core`, `node`, `panel`, `timescaledb`, `redis` (Valkey).
+The full file is [`docker-compose.yml`](docker-compose.yml) at the repo root, see it directly rather than a copy here, so this README can't drift out of sync with the real services (env vars, the Valkey ACL `command:` + aclfile setup, healthchecks, etc.). Four services on one bridge network: `core` (which serves the panel), `node`, `timescaledb`, `redis` (Valkey).
 
 ```bash
 docker compose up -d          # start
@@ -243,9 +250,9 @@ docker compose down           # stop (keeps volumes)
 
 Multi-host fleet on an **overlay** network with `deploy:` blocks (replicas, placement, restart policy, resource limits). Best for scaling Core/Panel and running Nodes across many machines.
 
-> **Portainer:** paste `docker-stack.yml` into a new Stack and set the variables in the stack's **environment** editor (and secrets via the `*_FILE` pattern above) — the CLI `set -a; . ./.env` step below is only for `docker stack deploy` from a shell.
+> **Portainer:** paste `docker-stack.yml` into a new Stack and set the variables in the stack's **environment** editor (and secrets via the `*_FILE` pattern below) — the CLI `set -a; . ./.env` step below is only for `docker stack deploy` from a shell.
 
-The full file is [`docker-stack.yml`](docker-stack.yml) at the repo root, see it directly rather than a copy here. It ships **three active services** (`core`, `node`, `panel`) and points at an external managed Postgres/Redis by default (`DB_HOST` / `REDIS_ADDR`); the bundled `timescaledb`/`redis` are opt-in commented blocks. On top of the single-host layout it adds `deploy:` blocks (replicas, placement constraints, `start-first` rolling updates, resource limits) and an `overlay` network.
+The full file is [`docker-stack.yml`](docker-stack.yml) at the repo root, see it directly rather than a copy here. It ships **two active services** (`core`, `node`; Core serves the panel) and points at an external managed Postgres/Redis by default (`DB_HOST` / `REDIS_ADDR`); the bundled `timescaledb`/`redis` are opt-in commented blocks. On top of the single-host layout it adds `deploy:` blocks (replicas, placement constraints, `start-first` rolling updates, resource limits) and an `overlay` network.
 
 ```bash
 # On a manager node:
@@ -269,16 +276,15 @@ docker swarm join-token worker                     # on the manager, get the tok
 
 # Scale:
 docker service scale dylaris_core=3                # more API replicas (leader election handles singletons)
-docker service scale dylaris_core=2                # panel and API scale together now
 ```
 
-In the stack, the `node` service is **global** — exactly one Node task runs on every swarm host, and its `NODE_ID` is templated from the hostname (`{{.Node.Hostname}}`), so every host becomes a distinct Node automatically.
+In the stack, the `node` service is **global**: exactly one Node task runs on every swarm host. Each one pairs on first boot and Core assigns it its own id, which the node caches in `.node_id`; `NODE_ID` and `NODE_HOSTNAME` are templated from the Swarm hostname (`{{.Node.Hostname}}`) and only name it, so every host becomes a distinct, recognisable Node automatically.
 
-**External / home nodes (Warp):** to add a NAT'd home machine as a Node, deploy it separately (not via the global `node` service above) with a `node.labels.dylaris_role == external` placement constraint and `NODE_EXTERNAL=true` (see `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference)); it joins over an encrypted WireGuard tunnel and forces gateway+beam locally (no exposed ports/SFTP).
+**External / home nodes (Warp):** a NAT'd home machine is not deployed through this stack and never joins the Swarm. Add it in the panel, which generates a compose kit for that machine: a `warp` WireGuard client, the `node` (with `NODE_EXTERNAL=true` and a single-use enroll token), a `link` beside it and `watchtower` for updates. Run it with `docker compose up -d` on the machine; warp joins the overlay over an encrypted WireGuard tunnel, and the node forces gateway+beam locally (no exposed ports/SFTP). See `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
 
 ### The compose files explained
 
-The single-host `docker-compose.yml` declares all five services below. The Swarm `docker-stack.yml` ships only the first three (`core`, `node`, `panel`) active and points at an external managed Postgres/Redis by default; its `timescaledb` and `redis` are opt-in commented blocks (uncomment for a small single-region deploy):
+The single-host `docker-compose.yml` declares the four services below (the struck-out `panel` row only records where it went). The Swarm `docker-stack.yml` ships only the first two (`core`, `node`) active and points at an external managed Postgres/Redis by default; its `timescaledb` and `redis` are opt-in commented blocks (uncomment for a small single-region deploy):
 
 | Service | Image | Role |
 |---|---|---|
@@ -292,6 +298,7 @@ Notable details:
 
 - **`node` needs the Docker socket** (`/var/run/docker.sock`) — that is how it launches Minecraft containers on its host. Treat any host running a Node as trusted.
 - **`redis`/Valkey runs in-memory** (`--save "" --appendonly no`) — it is used as a coordination bus, not the source of truth (Postgres is). Losing it loses transient queue state, not your servers.
+- **`redis` is capped** at `--maxmemory 512mb --maxmemory-policy volatile-lru` in `docker-compose.yml`. Only keys with a TTL (the metadata caches, the one thing that grows with use) can be evicted, so the node command streams, consumer groups and ACL users never are, and a full instance drops a stale cache entry instead of refusing writes such as queueing a node command.
 - **`timescaledb` has a healthcheck** (single-host) so Core waits for the DB to accept connections on first boot.
 - **The panel is served by Core**, compiled into the binary, so the pages and `/api` share an origin and there is nothing to point at anything. `PANEL_API_URL` is only for the split-hostname layout; Core renders it into the page at request time, so it takes effect on restart without a rebuild.
 - **Swarm defaults to an external/managed Postgres** (set `DB_HOST`/`DB_PORT`/`DB_SSLMODE` on `core`). The bundled single-replica DB is an opt-in commented block: uncomment it (and the `timescaledb_data` volume), label the DB host so its node-local volume stays put (`dylaris.db=true`), and leave `DB_HOST` unset so it falls back to `timescaledb`. For real HA, use a managed/replicated PostgreSQL.
@@ -321,13 +328,17 @@ listed in the shipped files, because listing them with any shell default would
 take that away.
 
 Both shipped files now forward everything an operator normally needs, including
-the owner/SaaS integrations (`DNS_*`, `STORE_URL`, `STORE_SHARED_KEY`,
-`CLAMAV_ADDR`) and the identity/tuning knobs
-(`DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`, `REDIS_DB`). Earlier versions did not,
-and this section used to tell you to add them by hand.
+the owner/SaaS integrations (`STORE_URL`, `STORE_SHARED_KEY`, `CLAMAV_ADDR`)
+and the identity/tuning knobs (`DYLARIS_CORE_ID`, `DYLARIS_GRPC_PORT`,
+`REDIS_DB`). Earlier versions did not, and this section used to tell you to add
+them by hand. They also still list the retired `DNS_*` variables, which Core
+ignores (see [DNS records](#dns-records-are-written-by-the-gateway-hub)).
 
 Still not forwarded, and why:
 
+- `SETUP` (Core) and `MC_RUN_AS` (Node) - switches you set for a specific
+  reason (an admin recovery, data owned by another uid). Add them to that
+  service's `environment:` block when you need them.
 - `UPDATES_URL_PLATFORM` / `UPDATES_URL_HOSTED` - see the disable-by-empty note above.
 - `BEAM_MANIFEST_URL` - a **Core** variable (see the Core table below), not a Node
   one. It is simply not forwarded in either `environment:` block, so Core falls back
@@ -351,7 +362,7 @@ Every secret can be supplied from a **file** instead of a plain env value by set
 
 Supported:
 
-- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `ADMIN_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`, `DNS_API_TOKEN_FILE`, `STORE_SHARED_KEY_FILE`
+- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `ADMIN_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`, `STORE_SHARED_KEY_FILE`
 - **Node:** `CLUSTER_SECRET_FILE`, `BEAM_JWT_SECRET_FILE`
 - **Log shipper:** `REDIS_PASS_FILE`. You will not normally set it: the Node injects a scoped per-node Redis credential when it launches the container. It exists for running the shipper standalone.
 
@@ -400,12 +411,8 @@ secrets:
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `EXTERNAL_TICKET_DB_URL` | *(empty)* | No | Optional external ticket DB URL; surfaces as a target in the migration/backup/restore UI. Live queries always hit the main DB. |
 | `BILLING_SUSPEND_GRACE` | `48h` | No | Grace before a `suspended` (BYON) tenant is cut off, so a transient billing/DB fault cannot instantly kick a paying customer. At the cutoff their servers stop, their route-only links' tunnels are taken down, **and their warp peers are removed, so the overlay tunnel itself goes down** — until then everything keeps running. Go duration; `0` enforces on the next hourly tick. |
-| `ADMIN_SECRET` | *(empty)* | No | RAM-only break-glass. When set (>=16 chars), creating an admin via `/setup` requires this exact value in every mode - closes the fresh-install race and re-opens `/setup` to recover or add an admin. Never written to the DB or logs; unset + restart to disable. Supports `ADMIN_SECRET_FILE`. |
-| `DNS_UPDATER_ENABLED` | `false` | No (owner) | Leader-gated reconciler that points each region's edge wildcard A record at the live edge IPs. Only for multi-region Gateway deploys; most self-hosters leave it off and set their records by hand. Also settable in Settings -> Infrastructure -> DNS; either switch turns it on. |
-| `DNS_PROVIDER` | `cloudflare` | No (owner) | DNS provider for the reconciler above. Backed by [libdns](https://github.com/libdns/libdns), so more providers are a constructor entry rather than a new HTTP client. |
-| `DNS_API_TOKEN` | *(empty)* | No (owner) | Provider API token. Lives ONLY in Core, never on the edges - an edge is the most exposed host in the fleet and a token that can rewrite the zone does not belong there. `CF_API_TOKEN` is still read as a fallback. **Setting it here makes the panel field read-only**, so a token saved on screen can never silently retire one supplied as a secret. |
-| `DNS_ZONE` | *(empty)* | No (owner) | The zone **name** the edge wildcards live in, e.g. `example.com`. **Replaces `CF_ZONE_ID`**: libdns addresses a zone by name, not by a Cloudflare-assigned id, so the old value cannot be carried over. Required when the updater is on. |
-| `DNS_ZONES` | *(empty)* | No (owner) | Comma-separated multi-zone form, for offering several domains from the same edges. Folded together with `DNS_ZONE`, so a single-zone deployment needs no change. |
+| `ADMIN_SECRET` | *(empty)* | No | RAM-only break-glass. When set (>=16 chars), creating an admin via `/setup` requires this exact value, which closes the fresh-install race; without it only a pristine install (no users at all) can create one. Once an admin exists, `/setup` is closed unless `SETUP=true`, and then still requires this value: that pair is how you recover or add an admin. Never written to the DB or logs; unset + restart to disable. Supports `ADMIN_SECRET_FILE`. |
+| `SETUP` | `false` | No | Keeps `/setup` reachable on an instance that already has an admin; creating one there still requires `ADMIN_SECRET`. Ignored while no admin exists (a fresh install, or every admin lost), because `/setup` is always open then. An unparseable value counts as `false`. Set it for a recovery, restart Core, and remove it afterwards. |
 | `STORE_URL` | *(empty)* | No (SaaS) | Hosted dylaris.com storefront base URL. Set together with `STORE_SHARED_KEY` to enable store-linking + demo showcase; both empty gives a clean open-core build with no store surface. |
 | `STORE_SHARED_KEY` | *(empty)* | No (SaaS) | Service-to-service trust key between Core and dylaris.com (must match the key configured on the storefront). |
 | `UPDATES_URL_PLATFORM` | *(this repo's raw platform.md)* | No | Raw URL of the operator-facing release notes the Updates view reads. Setting it to `""` pins Core to the copy embedded in its image, which is what an air-gapped install wants. Fails open to that same copy when the fetch fails. |
@@ -414,29 +421,15 @@ secrets:
 | `BEAM_MANIFEST_URL` | *(GitHub Releases feed)* | No | **Is** the compiled-in fallback for the Beam desktop-client update manifest, read once at startup — the `beam.release_manifest` admin setting takes precedence when it is non-empty. Set this so a fork points at its OWN releases repo without a rebuild. |
 | `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit before it is ever stored. Empty means uploads are accepted unscanned. |
 
-The DNS updater variables above can also be configured in **Settings -> Infrastructure -> DNS**,
-where the token is stored encrypted at rest. The environment wins per field, so a
-token kept in a Docker secret still leaves the zones selectable on screen.
-Enabling the updater from the panel probes the provider against every configured
-zone before the setting is accepted - a credential scoped to only one of them is
-rejected on save rather than failing silently in a log every 30 seconds.
+#### DNS records are written by the gateway Hub
 
-Each region can serve several names, picked in the panel per region, with each
-edge's own `EDGE_WILDCARD` as the fallback when a region has no selection. Beam
-relays get their records from the same loop, using each relay's own
-`BEAM_PUBLIC_HOST` - relays are not part of the panel picker, since several
-relays in one region deliberately share one name to round-robin. The panel lists
-every name in effect labelled by origin (panel, edge env, or relay), because a
-leftover `EDGE_WILDCARD` quietly outliving a panel selection is otherwise
-invisible.
-
-**Deletion is scoped and never zone-wide.** The reconciler records the names it
-creates in a Redis ownership registry and only ever removes names from that
-registry - a zone you release can safely carry your website and mail records. A
-name is removed only after it has gone unadvertised for the grace period (default
-15 minutes), so a rolling edge restart cannot take a live region out of DNS. The
-two original rails still hold: nothing is deleted when a listing fails, and a
-region whose edges are all offline is left untouched.
+Core writes no DNS records. The edge wildcards and the Beam relay names are
+gateway names, so the gateway Hub owns the provider credential and is the only
+writer of records. Set `GATEWAY_HUB_URL` on Core so the panel's DNS form reaches
+the Hub. `DNS_UPDATER_ENABLED`, `DNS_PROVIDER`, `DNS_API_TOKEN`, `DNS_ZONE` and
+`DNS_ZONES` are ignored on Core; if any of them is still set, Core logs at boot
+which ones and that they belong on the hub service instead (see the
+`dylaris-gateway` repo).
 
 ### Node
 
@@ -444,7 +437,8 @@ region whose edges are all offline is left untouched.
 |---|---|---|---|
 | `CLUSTER_SECRET` | *(empty)* | For in-cluster | Cluster proof + gRPC TLS pin for in-cluster nodes; must match Core when set. Optional now: a node authenticates to Redis via its gRPC-bootstrapped per-node secret. BYON nodes omit it. |
 | `REDIS_ADDR` | *(Core's answer on a node holding `CLUSTER_SECRET`; `127.0.0.1:25571` on an external node)* | Without `CLUSTER_SECRET`, unless external | A node holding `CLUSTER_SECRET` needs it only as an override: it is told Core's own `REDIS_ADDR` on every auth, caches it in `.redis_addr` in its first storage path and boots from that file when Core is unreachable. A different answer from Core is validated with the node's own credentials before it replaces the current address. Order at boot: the cached file, then this variable, then Core; an unreachable Core is retried, a missing `CORE_GRPC_ADDR` is fatal, and so is Core answering without an address. A node **without** `CLUSTER_SECRET` (BYON) never caches or follows Core: it uses this variable when set - the escape hatch for a port collision - and otherwise, on an **external** node, warp's local proxy, which holds the real overlay address and refreshes it from Core; with neither it exits. MC containers and the Link are given the node's address (or the per-network bridge gateway on the warp proxy). |
-| `NODE_ID` | *(hostname)* | No | Unique id for this Node. In Swarm, templated from the hostname. Falls back to OS hostname. |
+| `NODE_ID` | *(hostname)* | No | The name a node presents when it FIRST pairs. Core assigns the real, unguessable id, which the node caches in `.node_id` in its first storage path; from then on that file wins and this variable is only a display name. In Swarm, templated from the hostname. Falls back to OS hostname. |
+| `NODE_HOSTNAME` | *(kernel hostname)* | No | The machine hostname the node reports for display. Inside a Swarm task the kernel hostname is the task's container id, so `docker-stack.yml` sets it to `{{.Node.Hostname}}`. |
 | `NODE_TAGS` | *(empty)* | No | Comma-separated placement tags (e.g. `eu,fast`). The tag `external` flags a home/external node. |
 | `NODE_REGION` | *(empty)* | No | Region this Node belongs to. |
 | `NODE_EXTERNAL` | `false` | No | If `true` (or `NODE_TAGS` contains `external`), the Node forces `gateway` routing + `beam` file access locally (no host ports, no SFTP). |
@@ -465,7 +459,8 @@ region whose edges are all offline is left untouched.
 | `BEAM_LAN_FASTPATH` | `true` (on unless `false`) | No | Toggles the Beam LAN fast-path TLS listener on `:25523` (pinned-TLS, direct client ↔ node). Set `false` to disable; any other value leaves it on. |
 | `BEAM_LAN_PORT` | `25523` | No | Port for that LAN fast-path listener. Change it together with the `ports:` publication in the compose file, and never publish the plain overlay port `25521` instead. |
 | `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
-| `BEAM_JWT_SECRET` | *(empty — Beam rejects all tickets)* | No (required for Beam) | Must match the gateway beam-relay's JWT secret so relay-validated tickets pass the node-side gate. |
+| `BEAM_JWT_SECRET` | *(empty: tickets are verified by the per-node proof only)* | No | Optional fallback key. A Beam ticket is verified first by a proof derived from this node's own secret; this fleet key is only tried when that fails, for a ticket minted before Core could load the node's secret. When set it must equal Core's `JWT_SECRET` and the gateway beam-relay's `BEAM_JWT_SECRET`. BYON nodes leave it unset. |
+| `MC_RUN_AS` | `1000` | No | uid/gid the Minecraft containers run as (the `dylaris` user in the images). Set it to keep server data that is already owned by another uid; `0` restores the old root behaviour. A non-numeric value is logged and ignored. |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
 | `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). **Each path must belong to exactly one node** - see below. |
 | `MODPACK_MIRROR_HOSTS` | *(empty)* | No | Comma-separated extra hosts the Node may download Core-minted pack-build `.mrpack` files from (e.g. the Core public domain / S3 mirror). Merged into the built-in `.mrpack` allowlist (cdn.modrinth.com, github.com, ...). |
@@ -488,8 +483,9 @@ A `STORAGE_PATHS` entry must be backed by a filesystem that belongs to exactly
 one node. Pointing several nodes at one NAS share or one host directory is an
 unsupported topology, and the reason is not that migrations are fragile:
 
-- **Node identity lives in the first storage path.** `.node_secret` and
-  `.node_id` both sit there, so two nodes overwrite each other's identity.
+- **Node identity lives in the first storage path.** `.node_id`,
+  `.node_secret` and `.node_key` all sit there, so two nodes overwrite each
+  other's identity.
 - **A migration between two such nodes destroys the server.** The target extracts
   the archive over the live directory, and the source's cleanup then deletes the
   running server's data. Open file descriptors keep it alive until the next
@@ -519,7 +515,15 @@ exactly two doors, and which one a node uses is decided by what it holds:
 
 Admission control (IP allowlist, join toggle) runs before both. When a node
 presents both, the enroll token wins: setting it is an explicit request for an
-owned node. Already-paired nodes keep reconnecting with their per-node secret.
+owned node.
+
+Already-paired nodes log in by signing a fresh nonce from Core with their own
+Ed25519 key, `.node_key`, which the node generates on first boot and Core
+registers on first connect; only the public half leaves the machine. The
+per-node secret is then a service credential (Redis ACL and derived keys), not
+the login. A node whose row has never held a key is still admitted by proving
+its per-node secret. To pair a machine as a NEW node, delete `.node_id`,
+`.node_secret` and `.node_key` together and restart it.
 
 ### Panel
 
@@ -570,20 +574,20 @@ These are set by the Node when it launches a container; they are listed for comp
 Everything behind one IP, with a reverse proxy terminating TLS for the web surfaces:
 
 ```
-dylaris.com.        A    <ip>     ; landing + web
-panel.dylaris.com.  A    <ip>     ; panel + REST, both on core (25500)
-play.dylaris.com.   A    <ip>     ; MC players
+example.com.        A    <ip>     ; landing + web
+panel.example.com.  A    <ip>     ; panel + REST, both on core (25500)
+play.example.com.   A    <ip>     ; MC players
 
 ; lets players omit ":25565"
-_minecraft._tcp.play.dylaris.com.  SRV  0 5 25565 play.dylaris.com.
+_minecraft._tcp.play.example.com.  SRV  0 5 25565 play.example.com.
 ```
 
 Optional, per used features:
 
 ```
-sftp.dylaris.com.   A    <ip>     ; node SFTP (25520), when file access = sftp/both
-beam.dylaris.com.   A    <ip>     ; Beam desktop sync (via the Gateway relay)
-warp.dylaris.com.   A    <ip>     ; Warp leader (UDP 25599), external/home nodes
+sftp.example.com.   A    <ip>     ; node SFTP (25520), when file access = sftp/both
+beam.example.com.   A    <ip>     ; Beam desktop sync (via the Gateway relay)
+warp.example.com.   A    <ip>     ; Warp leader (UDP 25599), external/home nodes
 ```
 
 > The `_minecraft._tcp` SRV and `play` record assume the Gateway edge fronts
@@ -602,7 +606,7 @@ TLS is terminated at the proxy (Let's Encrypt). Core and the Panel speak plain H
 
 ### Nginx Proxy Manager (the reference production setup)
 
-Add a **Proxy Host** for `panel.example.com` → `core:25500`, request a Let's Encrypt cert, and that is the whole configuration: Core serves the pages and the API on that one host, so there is no second upstream and no `/api` custom location. Enable **Websockets support** on the host: the Panel uses Server-Sent Events (system events, live console) which must not be buffered or short-timed out. In NPM's *Advanced* tab:
+Add a **Proxy Host** for `panel.example.com` → `core:25500`, request a Let's Encrypt cert, and that is the whole configuration: Core serves the pages and the API on that one host, so there is no second upstream and no `/api` custom location. Enable **Websockets support** on the host: the Panel uses Server-Sent Events (system events, live console) which must not be buffered or short-timed out. Add these to the host's *Advanced* tab (applies to the SSE endpoints under `/api`):
 
 ```nginx
 location /api/ {
@@ -647,7 +651,7 @@ DYLARIS scales on three axes:
 
 - **More API throughput → scale Core.** Run N Core replicas behind a load balancer. Redis leader election keeps singleton jobs (discovery, Warp resync) on one replica while all replicas serve traffic. `docker service scale dylaris_core=N`.
 - **More server capacity → add Nodes.** Every Docker host you join to the swarm becomes a Node (global service) and a scheduling target. Use **regions** + **tags** to steer placement; the scheduler picks a node by region/tag/capacity.
-- **Reach beyond the DC → Warp.** Pull NAT'd home/off-site machines into the overlay over WireGuard and run servers on them; player traffic is routed back through the DC edge.
+- **Reach beyond the DC → Warp.** Pull NAT'd home/off-site machines into the overlay over WireGuard (with a panel-generated compose kit; they never join the Swarm) and run servers on them; player traffic is routed back through the DC edge.
 
 **State & HA notes**
 
@@ -672,15 +676,17 @@ Every online Core must be able to write to and read from the SAME shared Core fi
 ```bash
 # Update to the latest images
 docker compose pull && docker compose up -d                                              # single host
-docker service update --image ghcr.io/dylaris-dev/platform-core:latest dylaris_core   # swarm (per service)
+docker service update --with-registry-auth --force --image ghcr.io/dylaris-dev/platform-core:latest dylaris_core   # swarm (per service; without --force the same tag is a no-op)
 
 # Logs
 docker compose logs -f core                            # single host
 docker service logs -f dylaris_core                    # swarm
 
 # Backups (most important: the database)
-docker compose exec timescaledb pg_dump -U "$DB_USER" "$DB_NAME" > dylaris-backup.sql
+docker compose exec timescaledb sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > dylaris-backup.sql
 ```
+
+The single quotes matter: the variables are expanded inside the container, where they are set, not on the host. Restoring the dump needs a superuser on the target database, because it contains TimescaleDB extension objects.
 
 Server files live on the Node host under the `dylaris_data` volume; back that up alongside the database.
 
@@ -730,7 +736,7 @@ wildcard DNS record and a certificate; direct tabs need nothing.
   absolute asset paths resolve - BlueMap asks for `/js/app.*.js` and Dynmap for
   `config.js` from the origin root, and neither can run under a path prefix. The
   separate hostname is also a separate ORIGIN, so a container's scripts cannot
-  read the panel session token out of the panel origin's storage.
+  make same-origin, cookie-authenticated calls to the panel's `/api`.
 - Reached in the panel under Custom Tabs (a module, off by default) or per
   server; shared standalone as `/c/<token>`, where a `public` link serves anyone
   holding the unguessable token and a `private` link needs a signed-in session
@@ -759,7 +765,8 @@ wildcard DNS record and a certificate; direct tabs need nothing.
 > **Security:** a proxied page is software you or your customer chose, not
 > software this project wrote, and it runs with `allow-same-origin` inside its
 > frame. That is why it is served from its own hostname rather than the panel's:
-> a separate origin cannot reach the panel's storage. With no
+> a separate origin cannot make same-origin calls to the panel's `/api` with
+> the panel's HttpOnly session cookie. With no
 > `TAB_PROXY_HOST_SUFFIX` there is nowhere safe to serve it, so proxied tabs stay
 > switched off rather than falling back to the panel's origin.
 
@@ -816,7 +823,8 @@ go work sync
 # Build, vet and test PER MODULE. The workspace root is not a runnable package
 # set (`go test ./...` from the root fails with "directory prefix . does not
 # contain modules listed in go.work"), so run these inside each module.
-# Repeat for core, node, pkg, log-shipper:
+# Repeat for core, node, pkg, log-shipper and beam/app (beam/app first needs a
+# stub frontend/dist/index.html, see TESTING.md):
 (cd core && go build ./... && go vet ./... && go test -count=1 ./...)
 
 # Build the log-shipper binary baked into the MC container image (from the repo root):
@@ -846,13 +854,16 @@ Set `DEV_CORE_ORIGIN` if Core is not on `http://localhost:25500`. Testing the
 SHIPPED panel (the bundle inside Core) is the other mode: leave `FRONTEND_URL`
 at Core's own URL and use that, not the dev server.
 
-CI (`ci.yml`) gates every build job on: the Go test matrix, **staticcheck**, a
-`-race` gate over every Go module, a `db-tests` job against a real Postgres, and
-panel `npx vitest run` - all must pass before an image is built.
+CI (`ci.yml`) gates every build job on: the Go matrix over `core`, `node`,
+`pkg`, `log-shipper` and `beam/app` (build, vet, **gofmt**, **staticcheck**,
+test and **govulncheck**), a `-race` gate over every Go module, a `db-tests` job
+against a real Postgres, panel `npx vitest run`, and `relnotes validate` on the
+release notes - all must pass before an image is built. Details in
+[TESTING.md](TESTING.md).
 
 **Code conventions**
 
-- **Go:** keep the **Handlers / Services / Store** separation strict. Always handle errors (`if err != nil`, wrap with `fmt.Errorf("...: %w", err)`); no runtime panics. After changing any module, run `go work sync`. Platform and Gateway are separate workspaces — never import across the repo boundary; cross-repo communication is only via shared Redis keys/queues.
+- **Go:** keep the **Handlers / Services / Store** separation strict. Always handle errors (`if err != nil`, wrap with `fmt.Errorf("...: %w", err)`); no runtime panics. After changing any module, run `go work sync`. Platform and Gateway are separate workspaces — never import across the repo boundary; cross-repo communication goes through shared Redis keys/queues, Core's warp HTTP API, the Hub's internal HTTP API and frozen wire contracts (such as the Beam stream header), never Go imports.
 - **Panel (Next.js, App Router):** use the App Router (`/app`) — no Pages Router. Server Components are the default; add `'use client'` only when you need state/effects/browser APIs. TypeScript strict, with interfaces for props and API responses.
 - **Tailwind v4:** there is **no** `tailwind.config.{js,ts}`. Theme lives in the `@theme` directive in `panel/src/app/globals.css` (the single source of truth for design tokens — colors, spacing, radius, fonts). Don't scatter hardcoded values.
 - **Secrets** are env-only; never hardcode them.
@@ -871,8 +882,38 @@ opt-out to configure, and no endpoint to block. Your instance talks to your
 database, your Redis, your nodes, and whatever mod/plugin sources you ask it to
 fetch from. Nothing else.
 
+## Release notes and updates
+
+Release notes live in [`core/updates/`](core/updates/README.md): `platform.md`
+for operators and `hosted.md` for hosted customers, with one CalVer version per
+repo. Core shows them in the panel's Updates view and compares each component's
+stamped version against them, so the panel can show which node is behind.
+
+A release can carry an `**Update required by <when>**` line. When that release
+names `node`, Core warns affected nodes at connect and refuses them once the
+deadline passes. `RELEASE_ENFORCE_MIN_VERSION=false` on Core keeps the warnings
+and drops the refusal.
+
+## Contributing
+
+Bug reports, questions and pull requests are welcome. Build with Go 1.26.x (CI
+and the images use 1.26.9) and Node 22, follow the code conventions under
+[Development](#development), and read [TESTING.md](TESTING.md): new code ships
+with tests, and CI must be green. A change a user would notice also needs a
+release-notes entry (see [Release notes and updates](#release-notes-and-updates)).
+
+## Security
+
+Please do not report a vulnerability in a public issue. Report it privately to
+the maintainers via
+[GitHub security advisories](https://github.com/dylaris-dev/platform/security/advisories/new).
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE).
+
 ---
 
 <div align="center">
-Maintained by <a href="https://github.com/Bartis-Dev">Bartis-Dev</a>. Self-host it, own it.
+Maintained at <a href="https://github.com/dylaris-dev/platform">dylaris-dev/platform</a>. Self-host it, own it.
 </div>

@@ -193,7 +193,8 @@ tabs.example.com {
 TAB_PROXY_HOST_SUFFIX: "tabs.example.com"
 ```
 
-Add it to the `environment:` block of the compose file you actually deploy. The
+Set it in `.env` (or your stack's environment): both shipped compose files
+already pass `TAB_PROXY_HOST_SUFFIX` through to Core. The
 value is cleaned up for you: a scheme, a trailing slash, a port or a leading dot
 are all stripped. A single label with no dot is refused, with a line in the log.
 
