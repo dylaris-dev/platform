@@ -109,6 +109,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up a buildx builder
+        # Its own BuildKit container, not the host daemon's image store. With the
+        # default docker driver a build re-tagged :latest in the runner host's
+        # store, and on a host that also runs a BYON node that image vanished from
+        # under the running node (containerd store): watchtower then skipped the
+        # node on every pass and it never updated again.
+        # One named builder per host, kept between jobs, so the BuildKit cache
+        # survives the way the daemon's cache did; the action reuses a builder
+        # that already exists under this name.
+        uses: docker/setup-buildx-action@v4
+        with:
+          name: dylaris-ci
+          cleanup: false
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
