@@ -112,8 +112,24 @@ var statsWriteProtectedStatuses = map[string]bool{
 // One function so the next hold added here reaches both callers. isNodeBusy is
 // deliberately NOT part of it: only the stop-tracking branch makes a promise
 // ("restarting") that a busy node would break.
+//
+// A deliberate stop holds it too, for the same reason as disk_full: gracefulStop
+// posts "stopping" into the mailbox, Core drains it within seconds, and the
+// still-running container was then reported "online" again until it exited -
+// the panel flickered stopping -> online -> stopped. stop-requested is the
+// durable marker of that stop: set by gracefulStop, removed by the log-shipper
+// when Java exits and by a restart, and it expires on its own.
 func statusWriteHeld(ctx context.Context, rdb *redis.Client, uuid, currentStatus string) bool {
-	return statsWriteProtectedStatuses[currentStatus] || isDiskFull(ctx, rdb, uuid)
+	return statsWriteProtectedStatuses[currentStatus] || isDiskFull(ctx, rdb, uuid) || stopRequested(ctx, rdb, uuid)
+}
+
+func stopRequestedKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:stop-requested", uuid)
+}
+
+func stopRequested(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	n, err := rdb.Exists(ctx, stopRequestedKey(uuid)).Result()
+	return err == nil && n == 1
 }
 
 // containerSnapshot holds the latest stats for a container (used for batching).

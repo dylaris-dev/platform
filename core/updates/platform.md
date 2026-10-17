@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Stopping a server no longer shows it as online again for a few seconds before it is stopped. A
+  restart right after the server started no longer logs a failed save-all. `node`
+- The NeoForge version list no longer puts betas and alphas first, and names Minecraft 26.x builds
+  26.x instead of "1.26". Release candidates sort below their release everywhere. `core` `panel`
+- A node started without NODE_ID inside Swarm is named after its machine, not its container id. `node`
+
 ## 2026.10.17.3
 
 ### Features

@@ -38,13 +38,46 @@ interface VersionPickerProps {
  * Returns a negative number if `a` should sort before `b` (i.e. a > b for descending order).
  * Non-numeric or missing segments are treated as 0, sorting them last / lowest.
  */
+// Newest first. The part before the first "-" or "+" compares numerically per
+// dot component; a release sorts above its own pre-releases ("1.21.11" over
+// "1.21.11-rc3"), and pre-releases compare naturally among themselves
+// (alpha < beta < pre < rc, "alpha.10" over "alpha.2"). Before, parseInt read
+// "11-rc3" as 11, so a release and its candidates tied and landed in whatever
+// order Core's map produced.
 export function compareVersionsDesc(a: string, b: string): number {
-    const aParts = a.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
-    const bParts = b.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
+    const [aBase, aSuffix] = splitVersion(a);
+    const [bBase, bSuffix] = splitVersion(b);
+    const aParts = aBase.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
+    const bParts = bBase.split('.').map(s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; });
     const len = Math.max(aParts.length, bParts.length);
     for (let i = 0; i < len; i++) {
         const diff = (bParts[i] ?? 0) - (aParts[i] ?? 0);
         if (diff !== 0) return diff;
+    }
+    if (!aSuffix !== !bSuffix) return aSuffix ? 1 : -1;
+    return compareNatural(bSuffix, aSuffix);
+}
+
+function splitVersion(v: string): [string, string] {
+    const i = v.search(/[-+]/);
+    return i < 0 ? [v, ''] : [v.slice(0, i), v.slice(i + 1)];
+}
+
+// Ascending; runs of digits compare as numbers, everything else as text.
+function compareNatural(a: string, b: string): number {
+    const at = a.match(/\d+|\D+/g) ?? [];
+    const bt = b.match(/\d+|\D+/g) ?? [];
+    for (let i = 0; i < Math.max(at.length, bt.length); i++) {
+        const x = at[i], y = bt[i];
+        if (x === undefined) return -1;
+        if (y === undefined) return 1;
+        const nx = /^\d/.test(x), ny = /^\d/.test(y);
+        if (nx && ny) {
+            const d = Number(x) - Number(y);
+            if (d !== 0) return d;
+        } else if (x !== y) {
+            return x < y ? -1 : 1;
+        }
     }
     return 0;
 }

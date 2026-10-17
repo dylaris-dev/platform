@@ -24,6 +24,7 @@ func TestStatusWriteHeld(t *testing.T) {
 		name          string
 		currentStatus string
 		markerSet     bool
+		stopSet       bool
 		want          bool
 		why           string
 	}{
@@ -58,6 +59,12 @@ func TestStatusWriteHeld(t *testing.T) {
 			why:           "a deliberate shutdown must not be reported as online again",
 		},
 		{
+			name:    "a stop in progress, mailbox already drained",
+			stopSet: true,
+			want:    true,
+			why:     "the container still runs while it stops; reporting it online again made the panel flicker",
+		},
+		{
 			name:          "a status nobody protects",
 			currentStatus: "online",
 			want:          false,
@@ -75,6 +82,9 @@ func TestStatusWriteHeld(t *testing.T) {
 			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			if tt.markerSet {
 				mr.Set(diskFullKey(uuid), "1")
+			}
+			if tt.stopSet {
+				mr.Set(stopRequestedKey(uuid), "1")
 			}
 			if got := statusWriteHeld(context.Background(), rdb, uuid, tt.currentStatus); got != tt.want {
 				t.Errorf("statusWriteHeld = %v, want %v: %s", got, tt.want, tt.why)

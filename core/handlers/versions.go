@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -273,15 +274,13 @@ func (n *NeoForgeProvider) FetchVersions() ([]VersionEntry, error) {
 	if err := xml.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return nil, err
 	}
-	// NeoForge versions look like "21.1.106" — first number maps to MC 1.{N}.x.
 	var entries []VersionEntry
 	all := meta.Versioning.Versions.Version
 	for i := len(all) - 1; i >= 0; i-- {
 		v := all[i]
-		parts := splitDot(v)
-		major := v
-		if len(parts) > 0 {
-			major = "1." + parts[0]
+		major, ok := neoForgeMajor(v)
+		if !ok {
+			continue
 		}
 		entries = append(entries, VersionEntry{
 			Major: major,
@@ -289,6 +288,32 @@ func (n *NeoForgeProvider) FetchVersions() ([]VersionEntry, error) {
 		})
 	}
 	return entries, nil
+}
+
+// neoForgeMajor maps a NeoForge build to the Minecraft version it targets, and
+// says no to builds the picker must not offer.
+//
+// "21.1.106" targets MC 1.21.x, so the first number maps to "1.{N}". Since MC
+// 26.x the scheme follows Minecraft itself: "26.3.0.89" targets 26.3, which the
+// old "1."+first rule called "1.26". Pre-releases (-beta, -alpha..., +snapshot)
+// are left out like PaperMC's, and so are the 0.x April-fools builds
+// ("0.25w14craftmine.3-beta"), which made a Minecraft "1.0" appear.
+func neoForgeMajor(v string) (string, bool) {
+	if strings.ContainsAny(v, "-+") {
+		return "", false
+	}
+	parts := splitDot(v)
+	if len(parts) < 2 {
+		return "", false
+	}
+	first, err := strconv.Atoi(parts[0])
+	if err != nil || first == 0 {
+		return "", false
+	}
+	if first >= 26 {
+		return parts[0] + "." + parts[1], true
+	}
+	return "1." + parts[0], true
 }
 
 // ==========================================

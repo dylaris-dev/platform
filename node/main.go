@@ -573,8 +573,12 @@ func parseConfig() {
 	// gRPC-bootstrapped per-node secret, not the cluster secret. In-cluster nodes
 	// still use CLUSTER_SECRET for the cluster proof + gRPC TLS pin when present.
 	if nodeID == "" {
-		hostname, err := os.Hostname()
-		if err != nil || hostname == "" {
+		// machineHostname, not os.Hostname: inside a Swarm task the kernel
+		// answers with the container id, and this value becomes the name Core
+		// shows for a node it has never seen (2026-10-17: "7e85474cec0f"). Only
+		// the first enrol uses it - an enrolled node runs on its cached uuid.
+		hostname := machineHostname()
+		if hostname == "" {
 			log.Fatal("FATAL: NODE_ID is missing and hostname could not be determined!")
 		}
 		nodeID = hostname
@@ -2254,6 +2258,24 @@ func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) f
 	}
 }
 
+// saveAllMinUptime is how long a container must have run before a stop sends
+// save-all ahead of "stop"; see gracefulStop.
+const saveAllMinUptime = time.Minute
+
+// justStarted reports whether the container started less than saveAllMinUptime
+// ago. An unreadable start time counts as not just started, which keeps the
+// save.
+func justStarted(st *container.State, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	started, err := time.Parse(time.RFC3339Nano, st.StartedAt)
+	if err != nil {
+		return false
+	}
+	return now.Sub(started) < saveAllMinUptime
+}
+
 // gracefulStop sends save-all and stop commands via the Redis stdin queue,
 // waits for the container to exit, and falls back to docker stop if needed.
 func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
@@ -2271,6 +2293,16 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 
 	// Set stop flag so log-shipper knows not to restart Java
 	rdb.Set(ctx, stopKey, "1", 120*time.Second)
+	// And drop it once the container is down. The log-shipper deletes it when
+	// Java exits, but not when it is killed with the container (a stop that
+	// had to be forced), and the flag also holds the stats collector's status
+	// writes (statusWriteHeld): left behind, the next start would sit on
+	// "starting" until the TTL ran out.
+	defer func() {
+		if cInfo, cErr := dm.cli.ContainerInspect(ctx, mcName); cErr != nil || cInfo.State == nil || !cInfo.State.Running {
+			rdb.Del(ctx, stopKey)
+		}
+	}()
 
 	// Announce "stopping" BEFORE the wait, not after it. Every caller used to
 	// publish only the final status, and this function takes 5-15s on a real
@@ -2283,10 +2315,16 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 	// Callers overwrite this with the outcome (stopped / starting) as before.
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopping", 30*time.Second)
 
-	// Send save-all
-	log.Printf("Server %s: sending save-all...", uuid)
-	rdb.RPush(ctx, inputKey, "save-all")
-	time.Sleep(3 * time.Second)
+	// save-all first, so a stop that has to be forced below still left a save
+	// behind. Not for a container that only just started: its world may not be
+	// loaded yet, the command then fails ("getLevel() is null", seen when a
+	// resource change landed in the same second as "Done"), and there is
+	// nothing unsaved anyway. "stop" saves every world itself.
+	if !justStarted(info.State, time.Now()) {
+		log.Printf("Server %s: sending save-all...", uuid)
+		rdb.RPush(ctx, inputKey, "save-all")
+		time.Sleep(3 * time.Second)
+	}
 
 	// Send stop - or "end" to a BungeeCord/Waterfall proxy, which does not know
 	// "stop" and would otherwise wait out the 30s below and the Docker kill.

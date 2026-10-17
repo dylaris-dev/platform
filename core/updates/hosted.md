@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Stopping a server no longer shows it as online again for a few seconds before it is stopped. `node`
+- The NeoForge version list no longer puts betas and alphas first, and names Minecraft 26.x builds
+  26.x instead of "1.26". This is a server-side fix, nothing to update on your side.
+
 ## 2026.10.17.2
 
 ### Features

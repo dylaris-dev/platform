@@ -430,8 +430,10 @@ ${LOGS}    depends_on: [warp]
 
       # EDIT if you want a shorter window. When you stop or update link, it keeps
       # the players already on your servers until the last one leaves, and only
-      # then shuts down - nobody is kicked. It takes no new players while it
-      # waits. This is how long it waits before giving up on whoever is left.
+      # then shuts down - nobody is kicked. New players go to the new link
+      # meanwhile; if there is none (a plain stop), it gives up after about a
+      # minute of turning them away. This is the longest it waits for whoever
+      # is left.
       LINK_DRAIN_TIMEOUT: "6h"
     # keep - a little longer than LINK_DRAIN_TIMEOUT, so link finishes on its own
     # terms instead of being killed with players still on it.
@@ -447,8 +449,8 @@ ${LOGS}    depends_on: [warp]
     # keep - the network the node starts your servers on; link reaches them there.
     networks: [${serverNet}]
     # Redeploy with "up -d --no-deps warp node", never a plain "up -d": compose
-    # stops a link before it starts the new one, so nobody new could join until
-    # the old one has drained. The node moves the link onto a new image or a new
+    # stops a link before it starts the new one, so new players are turned away
+    # for about a minute and the players still on it are dropped. The node moves the link onto a new image or a new
     # key itself, start-first. Do not redeploy while it does (the node logs
     # "link update: STARTED"); compose would stop one of the two links.
     labels:
@@ -739,8 +741,9 @@ docker compose -f ${file} logs -f node`;
 /**
  * Commands for a machine that is already running, after its key was rolled or
  * its file changed. Only warp and the node are recreated: compose stops a
- * container before starting its replacement, which for the link means no new
- * player can join until the old one has drained. The node moves the link onto
+ * container before starting its replacement, which for the link means new
+ * players are turned away for about a minute and everyone still on it drops
+ * (link ends a drain nobody takes new players for). The node moves the link onto
  * warp's new key itself, starting the new link first.
  */
 export function redeployCli(): string {
