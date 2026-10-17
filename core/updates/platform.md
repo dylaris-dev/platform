@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A region with two warp leaders no longer makes External and BYON nodes reconnect every few seconds.
+  Each node now sits on one leader and moves to another within about two minutes if it dies. `core`
+
 ## 2026.10.17.2
 
 ### Features

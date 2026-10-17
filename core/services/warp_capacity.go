@@ -167,16 +167,20 @@ func sortLeaderCands(cands []leaderCandidate) {
 	})
 }
 
-// moveHomeToFront stably moves the peer's pinned home leader to the front, but
-// only when that leader is present AND alive - a dead or unknown home falls back
-// to the capacity order so a peer is never pinned to a leader that cannot serve.
+// moveHomeToFront stably moves the peer's pinned home leader to the front
+// whenever it is one of the region's enabled leaders, ALIVE OR NOT. A peer is
+// installed on its home only (see WarpService.Enroll), so sending the client
+// anywhere else sends it to a leader that does not know it. A home that really
+// died is replaced by reconcileHomes, and the client follows that; a home whose
+// alive key merely blinked (one failed EXISTS, a Redis restart) keeps working.
+// An unknown home (no such enabled row) falls back to the capacity order.
 func moveHomeToFront(cands []leaderCandidate, homeLeaderID string) {
 	if homeLeaderID == "" {
 		return
 	}
 	idx := -1
 	for i := range cands {
-		if cands[i].id == homeLeaderID && cands[i].alive {
+		if cands[i].id == homeLeaderID {
 			idx = i
 			break
 		}

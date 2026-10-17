@@ -10,8 +10,17 @@ import (
 
 func TestProcessResync_PushesRegionPeerSetAndClearsPerLeaderKey(t *testing.T) {
 	svc, fs, mr := enrollTestService(t)
-	fs.InsertWarpPeer(storePeer(1, "pub1", "10.0.99.2"))
-	fs.InsertWarpPeer(storePeer(1, "pub2", "10.0.99.3"))
+	for _, p := range []struct{ pub, ip, home string }{
+		{"pub1", "10.0.99.2", "leader-01"},
+		{"pub2", "10.0.99.3", "leader-01"},
+		// Homed on another leader: it must not be handed to this one, or the
+		// client ping-pongs between the two (see Enroll).
+		{"pub3", "10.0.99.4", "leader-02"},
+	} {
+		sp := storePeer(1, p.pub, p.ip)
+		sp.AssignedLeader = p.home
+		fs.InsertWarpPeer(sp)
+	}
 	ctx := context.Background()
 	// Per-leader resync key: leader "leader-01" serves region "leader-01".
 	svc.redis.Set(ctx, "dylaris:warp:leader-01:resync-request", "leader-01", 0)

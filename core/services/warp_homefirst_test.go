@@ -3,7 +3,7 @@ package services
 import "testing"
 
 // homeFirst reproduces orderedRegionLeaderCands's reorder step on an already
-// capacity-sorted slice: if homeLeaderID is present AND alive, move it to front.
+// capacity-sorted slice: if homeLeaderID is present, move it to front.
 // (The worker/service call is integration-tested separately; this locks the rule.)
 func homeFirstIDs(cands []leaderCandidate, homeLeaderID string) []string {
 	sortLeaderCands(cands)
@@ -31,7 +31,9 @@ func TestHomeFirstOrdering(t *testing.T) {
 	}{
 		{"no home = freest first", "", []string{"L-a", "L-b", "L-c"}},
 		{"alive home wins even if not freest", "L-b", []string{"L-b", "L-a", "L-c"}},
-		{"dead home ignored, freest first", "L-c", []string{"L-a", "L-b", "L-c"}},
+		// The peer lives on its home only; steering the client off a home
+		// whose alive key blinked strands it on a leader that does not know it.
+		{"dead home still first", "L-c", []string{"L-c", "L-a", "L-b"}},
 		{"unknown home ignored", "L-z", []string{"L-a", "L-b", "L-c"}},
 	}
 	for _, tt := range tests {

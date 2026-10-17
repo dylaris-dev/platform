@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -21,6 +22,10 @@ type fakeRebalancerStore struct {
 
 func newFakeRebalancerStore() *fakeRebalancerStore {
 	return &fakeRebalancerStore{}
+}
+
+func (f *fakeRebalancerStore) GetWarpPeerByPubkey(pubkey string) (*store.WarpPeer, error) {
+	return &store.WarpPeer{Pubkey: pubkey, WGIP: "10.0.99.7"}, nil
 }
 
 func (f *fakeRebalancerStore) SetWarpPeerAssignedLeader(pubkey, leaderID string) error {
@@ -67,6 +72,13 @@ func TestWarpRebalancerApply(t *testing.T) {
 		}
 		if n, _ := rc.LLen(ctx, "dylaris:warp:rebalance:decisions").Result(); n == 0 {
 			t.Fatalf("armed must record a decision")
+		}
+		// The handover: the peer must not stay on both leaders.
+		if got := queued(t, mr, "L-b"); !slices.Equal(got, []string{"add_peer:p1"}) {
+			t.Fatalf("new home queue = %v", got)
+		}
+		if got := queued(t, mr, "L-a"); !slices.Equal(got, []string{"remove_peer:p1"}) {
+			t.Fatalf("old home queue = %v", got)
 		}
 	})
 }

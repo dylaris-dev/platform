@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -61,6 +62,10 @@ type WarpService struct {
 	warp          warpStore
 	redis         *redis.Client
 	clusterSecret string // for deriving region public keys (no heartbeat needed)
+
+	// deadSince is when reconcileHomes first saw each leader not announcing.
+	// Only the resync watcher goroutine touches it.
+	deadSince map[string]time.Time
 }
 
 func NewWarpService(s warpStore, r *redis.Client, clusterSecret string) *WarpService {
@@ -209,6 +214,10 @@ type EnrollResult struct {
 // --- Redis keys (all per-leader; queue/events already existed) ---
 
 func (s *WarpService) leaderQueueKey(leaderID string) string {
+	return warpLeaderQueueKey(leaderID)
+}
+
+func warpLeaderQueueKey(leaderID string) string {
 	return "dylaris:warp:" + leaderID + ":queue"
 }
 func (s *WarpService) resyncKey(leaderID string) string {
@@ -273,6 +282,26 @@ func (s *WarpService) pushToRegion(ctx context.Context, region string, cmd map[s
 			log.Printf("[warp] pushToRegion %s -> %s: %v", region, l.LeaderID, err)
 		}
 	}
+}
+
+// pushToLeader queues one command for one leader. Best-effort like pushToRegion.
+func (s *WarpService) pushToLeader(ctx context.Context, leaderID string, cmd map[string]interface{}) {
+	b, err := json.Marshal(cmd)
+	if err != nil {
+		log.Printf("[warp] pushToLeader %s: marshal: %v", leaderID, err)
+		return
+	}
+	if err := s.redis.RPush(ctx, s.leaderQueueKey(leaderID), b).Err(); err != nil {
+		log.Printf("[warp] pushToLeader %s: %v", leaderID, err)
+	}
+}
+
+func removePeerCmd(pubkey string) map[string]interface{} {
+	return map[string]interface{}{"type": "remove_peer", "pubkey": pubkey}
+}
+
+func addPeerCmd(pubkey, wgIP string) map[string]interface{} {
+	return map[string]interface{}{"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"}}
 }
 
 // regionEndpoints returns the enabled leaders' endpoints for a region, freest
@@ -502,6 +531,14 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 		if existing.APIKeyID != key.ID {
 			return EnrollResult{}, fmt.Errorf("public key already enrolled under another key")
 		}
+		// Re-push the peer to its home. The first add_peer is best-effort and
+		// nothing else re-sends it until that leader restarts, so a lost push
+		// would strand this client for good. The client re-enrolls every few
+		// minutes and whenever its tunnel fails, and an add without replace is
+		// harmless to repeat.
+		if existing.AssignedLeader != "" {
+			s.pushToLeader(ctx, existing.AssignedLeader, addPeerCmd(existing.Pubkey, existing.WGIP))
+		}
 		return s.buildResult(ctx, existing.Region, existing.WGIP, existing.AssignedLeader)
 	}
 
@@ -543,11 +580,18 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 	if evicted != "" {
 		s.pushToRegion(ctx, region, map[string]interface{}{"type": "remove_peer", "pubkey": evicted})
 	}
-	s.pushToRegion(ctx, region, map[string]interface{}{"type": "add_peer", "pubkey": pubkey, "allowed_ips": []string{wgIP + "/32"}})
 
 	// F3: pin a fresh peer's home to the region's freest leader so it does not
-	// drift on later re-enrolls; best-effort (an unpinned peer just falls back to
-	// freest-first, which is the pre-F3 behavior).
+	// drift on later re-enrolls.
+	//
+	// The peer goes to its home leader ONLY. All leaders of a region share one
+	// key, so to the client they are one WireGuard peer, and WireGuard roams its
+	// endpoint to whichever of them last sent it an authenticated packet. A
+	// second leader holding the peer keeps return traffic for the flows that
+	// entered through it, and the client ping-pongs between the two: measured on
+	// 2026-10-17, gRPC to Core dropping every 15-30 s until one leader was left.
+	// A failed pin leaves the peer unhomed, and reconcileHomes homes it and
+	// pushes it within one watcher tick.
 	home := ""
 	if cands := s.orderedRegionLeaderCands(ctx, region, ""); len(cands) > 0 {
 		home = cands[0].id
@@ -555,6 +599,9 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 			log.Printf("[warp] pin home for %s failed: %v", pubkey, err)
 			home = "" // fall back to freest-first for the response too
 		}
+	}
+	if home != "" {
+		s.pushToLeader(ctx, home, addPeerCmd(pubkey, wgIP))
 	}
 	return s.buildResult(ctx, region, wgIP, home)
 }
@@ -616,6 +663,8 @@ func (s *WarpService) DisconnectKeyPeers(ctx context.Context, keyID int) int {
 // per-leader resync-request, pushes that leader's full region peer set as a
 // `resync` command then clears the request. Per-leader keys mean mirror leaders
 // no longer clobber each other (the single-key bug of the single-hub version).
+// The set is the peers HOMED on that leader only; see Enroll for why a peer
+// lives on one leader.
 func (s *WarpService) processResync(ctx context.Context) error {
 	leaders, err := s.warp.ListWarpLeaders()
 	if err != nil {
@@ -638,6 +687,9 @@ func (s *WarpService) processResync(ctx context.Context) error {
 		}
 		specs := make([]map[string]interface{}, 0, len(peers))
 		for _, p := range peers {
+			if p.AssignedLeader != l.LeaderID {
+				continue
+			}
 			specs = append(specs, map[string]interface{}{
 				"pubkey": p.Pubkey, "wg_ip": p.WGIP, "allowed_ips": []string{p.WGIP + "/32"},
 			})
@@ -656,6 +708,83 @@ func (s *WarpService) processResync(ctx context.Context) error {
 	return nil
 }
 
+// warpHomeDeadAfter is how long a home leader must be seen not announcing
+// before its peers move. On top of the alive key's own TTL, so one slow
+// heartbeat or a Redis hiccup does not move every peer off a live leader -
+// each move costs that peer up to one client assignment poll (30 s).
+const warpHomeDeadAfter = 30 * time.Second
+
+// reconcileHomes gives every peer exactly one usable home leader and puts it
+// there: a peer with no home, a home that is gone or disabled, or a home dead
+// for warpHomeDeadAfter is moved to the region's freest live leader, added
+// there and removed from every other leader of the region. The client follows
+// within one assignment poll, because its assignment now names the new home.
+//
+// Removing from EVERY other leader, not just the old home, is what clears the
+// state from before peers were homed, when every leader held every peer.
+//
+// ponytail: all peers of a dead leader go to the same freest leader; the
+// rebalancer spreads them later if that leader saturates.
+func (s *WarpService) reconcileHomes(ctx context.Context, now time.Time) error {
+	leaders, err := s.warp.ListWarpLeaders()
+	if err != nil {
+		return err
+	}
+	if s.deadSince == nil {
+		s.deadSince = map[string]time.Time{}
+	}
+	byRegion := map[string][]string{}
+	usable := map[string]bool{} // enabled and not dead past the grace
+	for _, l := range leaders {
+		if !l.Enabled {
+			continue
+		}
+		byRegion[l.Region] = append(byRegion[l.Region], l.LeaderID)
+		if s.leaderAlive(ctx, l.LeaderID) {
+			delete(s.deadSince, l.LeaderID)
+			usable[l.LeaderID] = true
+			continue
+		}
+		since, ok := s.deadSince[l.LeaderID]
+		if !ok {
+			since = now
+			s.deadSince[l.LeaderID] = now
+		}
+		usable[l.LeaderID] = now.Sub(since) < warpHomeDeadAfter
+	}
+	for region, ids := range byRegion {
+		peers, err := s.warp.ListWarpPeersByRegion(region)
+		if err != nil {
+			return err
+		}
+		target := ""
+		for _, p := range peers {
+			if usable[p.AssignedLeader] && slices.Contains(ids, p.AssignedLeader) {
+				continue
+			}
+			if target == "" {
+				cands := s.orderedRegionLeaderCands(ctx, region, "")
+				if len(cands) == 0 || !cands[0].alive {
+					break // nowhere to move them; keep what they have
+				}
+				target = cands[0].id
+			}
+			if err := s.warp.SetWarpPeerAssignedLeader(p.Pubkey, target); err != nil {
+				log.Printf("[warp] rehome %s: %v", p.Pubkey, err)
+				continue
+			}
+			s.pushToLeader(ctx, target, addPeerCmd(p.Pubkey, p.WGIP))
+			for _, id := range ids {
+				if id != target {
+					s.pushToLeader(ctx, id, removePeerCmd(p.Pubkey))
+				}
+			}
+			log.Printf("[warp] peer %s (%s) rehomed from %q to %s", p.Pubkey, p.WGIP, p.AssignedLeader, target)
+		}
+	}
+	return nil
+}
+
 // StartResyncWatcher runs processResync on a ticker. isLeader gates it so only the
 // elected Core acts.
 func (s *WarpService) StartResyncWatcher(isLeader func() bool) {
@@ -663,7 +792,15 @@ func (s *WarpService) StartResyncWatcher(isLeader func() bool) {
 	go func() {
 		for range ticker.C {
 			if isLeader != nil && !isLeader() {
+				// What this Core saw while it led is stale by the time it
+				// leads again; a leftover entry would skip the grace.
+				s.deadSince = nil
 				continue
+			}
+			// Homes first, so a leader asking for its resync in the same tick
+			// already gets the peers that were just moved to it.
+			if err := s.reconcileHomes(context.Background(), time.Now()); err != nil {
+				log.Printf("[warp] home reconcile: %v", err)
 			}
 			if err := s.processResync(context.Background()); err != nil {
 				log.Printf("[warp] resync watcher: %v", err)

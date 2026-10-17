@@ -303,6 +303,15 @@ func (w *WarpRebalancer) apply(ctx context.Context, mode string, sustainMin int,
 				logErrf("warp-rebalancer", "pin %s -> %s: %v", m.Pubkey, m.To, err)
 				continue
 			}
+			// A peer lives on its home leader only (see WarpService.Enroll), so
+			// the move is also a handover: the new home gets it, the old one
+			// drops it. The client follows on its next assignment poll.
+			if p, err := w.store.GetWarpPeerByPubkey(m.Pubkey); err == nil && p != nil {
+				w.push(ctx, m.To, addPeerCmd(p.Pubkey, p.WGIP))
+				w.push(ctx, m.From, removePeerCmd(p.Pubkey))
+			} else {
+				logErrf("warp-rebalancer", "handover %s: %v", m.Pubkey, err)
+			}
 			w.redis.Set(ctx, warpRebalanceLastMovePfx+m.Pubkey, "1", time.Duration(sustainMin)*time.Minute)
 			log.Printf("warp-rebalance: moved %s from %s to %s (%d bps)", m.Pubkey, m.From, m.To, m.TxBps)
 		}
@@ -313,6 +322,16 @@ func (w *WarpRebalancer) apply(ctx context.Context, mode string, sustainMin int,
 	if b, err := json.Marshal(dec); err == nil {
 		w.redis.LPush(ctx, warpRebalanceDecisionsKey, b)
 		w.redis.LTrim(ctx, warpRebalanceDecisionsKey, 0, warpRebalanceDecisionsMax-1)
+	}
+}
+
+func (w *WarpRebalancer) push(ctx context.Context, leaderID string, cmd map[string]interface{}) {
+	b, err := json.Marshal(cmd)
+	if err != nil {
+		return
+	}
+	if err := w.redis.RPush(ctx, warpLeaderQueueKey(leaderID), b).Err(); err != nil {
+		logErrf("warp-rebalancer", "push to %s: %v", leaderID, err)
 	}
 }
 
