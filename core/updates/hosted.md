@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Transferring a server to another of your nodes now asks for confirmation first, and the node list
+  shows node names instead of ids. The dialog also shows where the server is right now.
+
 ## 2026.10.17
 
 ### Features

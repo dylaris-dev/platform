@@ -97,6 +97,8 @@ export interface Node {
     // Optional, non-unique human label, set from the name the node called
     // itself with when it enrolled. Read-only: the node supplies it.
     displayName?: string;
+    // Set only for a BYON machine; see lib/nodeKind.
+    ownerId?: string | null;
 }
 
 // P0b-5 node admission + enroll/recovery tokens.

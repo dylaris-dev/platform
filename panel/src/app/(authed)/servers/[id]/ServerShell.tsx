@@ -32,6 +32,7 @@ import ResourceSlider from '@/components/ResourceSlider';
 import { DISK_SCALE_GB, cpuScale, ramScale } from '@/lib/resourceSlider';
 import { formatMB } from '@/lib/format';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { nodeLabelById, nodePickerLabel } from '@/lib/nodeLabel';
 import { planResourceChange, diskGBToMB, joinFields, type ResourceValues } from '@/lib/resourceChanges';
 import { advancedStartsOpen, portsEditable } from '@/lib/resourceDialog';
 import {
@@ -90,6 +91,9 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // Edit Resources modal opens. migrationStatus is polled while a move is
     // in flight (server status === 'migrating' or right after a manual move).
     const [moveNodes, setMoveNodes] = useState<Node[]>([]);
+    // Every node the placement scope returned, the current one included, so the
+    // move source and a running migration's endpoints can be named.
+    const [placementNodes, setPlacementNodes] = useState<Node[]>([]);
     const [moveTargetNodeId, setMoveTargetNodeId] = useState<number>(0);
     const [moveBusy, setMoveBusy] = useState(false);
     const [moveMsg, setMoveMsg] = useState('');
@@ -418,6 +422,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                     const targets: Node[] = res.nodes.filter(
                         (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,
                     );
+                    setPlacementNodes(res.nodes);
                     setMoveNodes(targets);
                     if (targets.length > 0) setMoveTargetNodeId(targets[0].id);
                 }
@@ -431,6 +436,12 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // status line shows progress without waiting a full tick.
     const handleMoveServer = async () => {
         if (!moveTargetNodeId || moveBusy) return;
+        if (!(await confirmDialog({
+            title: 'Move server',
+            message: `Move ${selectedServer.name} from ${nodeLabelById(placementNodes, selectedServer.nodeId)} to ${nodeLabelById(placementNodes, moveTargetNodeId)}? It is stopped, its files are copied, and it starts on the target. Players on it are disconnected.`,
+            confirmLabel: 'Move',
+            destructive: false,
+        }))) return;
         setMoveBusy(true);
         setMoveMsg('');
         try {
@@ -447,6 +458,11 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             setMoveMsg('Move request failed.');
         }
         setMoveBusy(false);
+    };
+    const migrationLine = (m: MigrationStatus) => {
+        const phase = m.phase.replace(/_/g, ' ');
+        if (!m.sourceNodeID || !m.targetNodeID) return `Migration: ${phase}`;
+        return `Migration ${nodeLabelById(placementNodes, m.sourceNodeID)} -> ${nodeLabelById(placementNodes, m.targetNodeID)}: ${phase}`;
     };
     // Admin: flag this server as a public read-only demo (or unflag it).
     //
@@ -578,6 +594,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                 const targets: Node[] = res.nodes.filter(
                     (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,
                 );
+                setPlacementNodes(res.nodes);
                 setMoveNodes(targets);
                 if (targets.length > 0) setMoveTargetNodeId(targets[0].id);
             }
@@ -1199,6 +1216,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                             </h3>
                         </div>
                         <div className="modal-body space-y-4">
+                            <p className="text-sm text-(--base-07)">Currently on <span className="text-(--base-09)">{nodeLabelById(placementNodes, selectedServer.nodeId)}</span></p>
                             {moveNodes.length === 0 ? (
                                 <p className="text-sm text-(--base-06)">No other online nodes of yours are available to transfer to.</p>
                             ) : (
@@ -1207,7 +1225,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                         <label className="mono-label">Target Node</label>
                                         <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
                                             {moveNodes.map(n => (
-                                                <option key={n.id} value={n.id}>{n.name}{n.region ? ` — ${n.region}` : ''}</option>
+                                                <option key={n.id} value={n.id}>{nodePickerLabel(n)}</option>
                                             ))}
                                         </select>
                                     </div>
@@ -1227,7 +1245,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                             ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
                                             : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
                                     <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
-                                        Migration: {migrationStatus.phase.replace(/_/g, ' ')}
+                                        {migrationLine(migrationStatus)}
                                         {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
                                     </span>
                                 </div>
@@ -1437,6 +1455,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                                 <Move size={14} className="text-(--accent-light)" />
                                                 <span className="input-label mb-0">Transfer to Node</span>
                                             </div>
+                                            <p className="text-xs text-(--base-07)">Currently on <span className="text-(--base-09)">{nodeLabelById(placementNodes, selectedServer.nodeId)}</span></p>
                                             {moveNodes.length === 0 ? (
                                                 <p className="text-xs text-(--base-05) italic">No other online nodes available to transfer to.</p>
                                             ) : (
@@ -1446,7 +1465,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                                             <label className="mono-label">Target Node</label>
                                                             <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
                                                                 {moveNodes.map(n => (
-                                                                    <option key={n.id} value={n.id}>{n.name}{n.region ? ` — ${n.region}` : ''}</option>
+                                                                    <option key={n.id} value={n.id}>{nodePickerLabel(n)}</option>
                                                                 ))}
                                                             </select>
                                                         </div>
@@ -1468,7 +1487,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                                             ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
                                                             : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
                                                     <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
-                                                        Migration: {migrationStatus.phase.replace(/_/g, ' ')}
+                                                        {migrationLine(migrationStatus)}
                                                         {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
                                                     </span>
                                                 </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nodeLabel } from './nodeLabel';
+import { nodeLabel, nodePickerLabel, nodeLabelById } from './nodeLabel';
 
 describe('nodeLabel', () => {
     it('prefers the admin-editable display name', () => {
@@ -25,5 +25,39 @@ describe('nodeLabel', () => {
     it('never uses the token as a label', () => {
         const node = { displayName: 'eu-node-00', name: 'x', token: '183940c8-f75c-4511-bb2f-b416539bfbc9' };
         expect(nodeLabel(node)).not.toContain('183940c8');
+    });
+});
+
+describe('nodePickerLabel', () => {
+    // The misclick this exists for: the move picker showed the node's UUID row
+    // name, so an operator could not tell which machine they were sending a
+    // customer's server to.
+    it('names the node, its kind and region instead of the row name', () => {
+        expect(nodePickerLabel({ id: 2, name: '183940c8-uuid', displayName: 'eu-node-00', tags: 'external', region: 'eu-central' }))
+            .toBe('eu-node-00 (External, eu-central)');
+    });
+
+    it('calls an owned node BYON even when it carries the external tag', () => {
+        expect(nodePickerLabel({ name: 'ms01', ownerId: 'u1', tags: 'external' })).toBe('ms01 (BYON)');
+    });
+
+    it('omits a missing region', () => {
+        expect(nodePickerLabel({ name: 'eu-node-01' })).toBe('eu-node-01 (Platform)');
+    });
+});
+
+describe('nodeLabelById', () => {
+    const nodes = [{ id: 329, name: 'ms01', tags: 'external' }];
+
+    it('labels a node in the list', () => {
+        expect(nodeLabelById(nodes, 329)).toBe('ms01 (External)');
+    });
+
+    it('falls back to the id for a node outside the list', () => {
+        expect(nodeLabelById(nodes, 5)).toBe('Node 5');
+    });
+
+    it('does not invent a node for a missing id', () => {
+        expect(nodeLabelById(nodes, undefined)).toBe('an unknown node');
     });
 });

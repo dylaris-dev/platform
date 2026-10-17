@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Moving a server to another node now asks for confirmation first, naming the source and target node.
+  The picker lists nodes by name, kind and region instead of their id. `panel`
+- The move dialog shows which node the server is on and, during a move, from where to where. `panel`
+
 ## 2026.10.17
 
 ### Features
