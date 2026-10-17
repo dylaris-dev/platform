@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Moving a server between your own node and one of ours works again; it failed partway and the
+  server stayed where it was. Nothing to do on your side.
+
 ## 2026.10.16.3
 
 ### Features

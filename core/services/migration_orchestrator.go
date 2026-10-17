@@ -51,6 +51,37 @@ type MigrationOrchestrator struct {
 	// cpuPinning re-resolves a server's CPU pinning for the TARGET node at
 	// cutover (auto recomputed, manual reset when the hardware differs). nil-safe.
 	cpuPinning *CPUPinningService
+	// connection opens a saved storage connection, for a default backup
+	// storage of provider "connection". Same builder the backup scheduler
+	// gets; without it such a storage cannot carry a cross-LAN transfer.
+	connection func(connectionID int, prefix string) (backupstorage.Storage, error)
+}
+
+// SetConnection wires the storage-connection builder. Call once at boot.
+func (o *MigrationOrchestrator) SetConnection(fn func(connectionID int, prefix string) (backupstorage.Storage, error)) {
+	o.connection = fn
+}
+
+// openTransferStorage opens the platform's default backup storage as the
+// carrier of a cross-LAN transfer. Any provider that can presign is fit, which
+// is s3 and a storage connection (an S3 credential set the panel manages).
+// Accepting only "s3" refused every move of a BYON server across LANs once the
+// default storage was set up as a connection - although it is the same R2
+// bucket the backups of that very server were going to.
+func openTransferStorage(ctx context.Context, bs *models.BackupStorage, connection func(int, string) (backupstorage.Storage, error)) (backupstorage.Storage, error) {
+	if bs == nil {
+		return nil, fmt.Errorf("cross-LAN BYON transfer requires an S3/R2 backup storage (none configured)")
+	}
+	switch bs.Provider {
+	case "s3", "connection":
+	default:
+		return nil, fmt.Errorf("cross-LAN BYON transfer requires an S3/R2 backup storage (the default storage is %q)", bs.Provider)
+	}
+	prov, err := backupstorage.Open(ctx, bs, backupstorage.Deps{Connection: connection})
+	if err != nil {
+		return nil, fmt.Errorf("open backup storage: %w", err)
+	}
+	return prov, nil
 }
 
 // SetCPUPinning wires the CPU-pinning service. Call once at boot (optional).
@@ -200,12 +231,12 @@ func (o *MigrationOrchestrator) sweepR2Transfers(ctx context.Context, now time.T
 
 func (o *MigrationOrchestrator) deleteTransferObject(ctx context.Context, key string) error {
 	bs, err := o.store.GetDefaultBackupStorage()
-	if err != nil || bs == nil || bs.Provider != "s3" {
-		return fmt.Errorf("no S3/R2 backup storage to sweep: %v", err)
-	}
-	prov, err := backupstorage.Open(ctx, bs, backupstorage.Deps{})
 	if err != nil {
-		return fmt.Errorf("open backup storage: %w", err)
+		return fmt.Errorf("no S3/R2 backup storage to sweep: %w", err)
+	}
+	prov, err := openTransferStorage(ctx, bs, o.connection)
+	if err != nil {
+		return err
 	}
 	return prov.Delete(ctx, key)
 }
@@ -1127,12 +1158,9 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	if err != nil {
 		return fmt.Errorf("resolve backup storage: %w", err)
 	}
-	if bs == nil || bs.Provider != "s3" {
-		return fmt.Errorf("cross-LAN BYON transfer requires an S3/R2 backup storage (none configured)")
-	}
-	prov, err := backupstorage.Open(ctx, bs, backupstorage.Deps{})
+	prov, err := openTransferStorage(ctx, bs, o.connection)
 	if err != nil {
-		return fmt.Errorf("open backup storage: %w", err)
+		return err
 	}
 
 	// One key per attempt: the sweep below deletes it again after its URLs

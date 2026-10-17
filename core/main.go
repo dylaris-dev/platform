@@ -609,6 +609,7 @@ func main() {
 	migrationOrchestrator := services.NewMigrationOrchestrator(pgStore, redisClient, appState.Queue, appState.Gateway, cfg.ClusterSecret)
 	migrationOrchestrator.SetLeader(coreLeader)
 	migrationOrchestrator.SetOnMoving(sftpSync.SyncSoon)
+	migrationOrchestrator.SetConnection(appState.ConnectionBackupBuilder())
 	migrationOrchestrator.Start(bgCtx)
 	appState.Migration = migrationOrchestrator
 	migrationOrchestrator.SetCPUPinning(appState.CPUPinning)

@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Moving a server between nodes on different networks works with a default backup storage set up as
+  a storage connection. Before, it failed with "requires an S3/R2 backup storage". `core`
+
 ## 2026.10.16.3
 
 ### Features
