@@ -11,21 +11,6 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
-## 2026.10.19
-
-### Features
-- Your server can receive each player's real IP address, opt-in per server and per route-only route, once we
-  enable it. The switch shows the setting your server needs; BYON and route-only also need an updated link. `node`
-
-### Breaking
-- Nothing.
-
-### Security
-- Nothing.
-
-### Fixes
-- Nothing.
-
 ## 2026.10.17.5
 
 ### Features

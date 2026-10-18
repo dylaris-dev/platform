@@ -415,6 +415,9 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 	if h.proxyProtocolOff(w, r, enabled) {
 		return
 	}
+	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return rt.Domain == domain }) {
+		return
+	}
 	if err := h.state.Gateway.SetCoreOwnedRouteProxyProtocol(domain, enabled); err != nil {
 		if errors.Is(err, services.ErrRouteNotStored) {
 			sendJSONError(w, "Route not found", http.StatusNotFound)

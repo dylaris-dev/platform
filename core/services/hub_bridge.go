@@ -729,14 +729,26 @@ func GetLinksFromRedis(ctx context.Context, rdb *redis.Client) []GatewayLinkStat
 
 // GetRoutesFromRedis reads all routes from Redis (sys:index:routes + route:{domain}).
 func GetRoutesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayRoute {
+	routes, _ := ReadRoutesFromRedis(ctx, rdb)
+	return routes
+}
+
+// ReadRoutesFromRedis is GetRoutesFromRedis that also reports a Redis failure
+// (an index entry whose key is gone is not one), for callers that must fail
+// closed rather than read a partial list as the whole one.
+func ReadRoutesFromRedis(ctx context.Context, rdb *redis.Client) ([]GatewayRoute, error) {
 	domains, err := rdb.SMembers(ctx, "sys:index:routes").Result()
 	if err != nil {
-		return nil
+		return nil, err
 	}
+	var firstErr error
 	routes := make([]GatewayRoute, 0, len(domains))
 	for _, domain := range domains {
 		val, err := rdb.Get(ctx, "route:"+domain).Result()
 		if err != nil {
+			if !errors.Is(err, redis.Nil) && firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		var r GatewayRoute
@@ -745,7 +757,7 @@ func GetRoutesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayRoute {
 			routes = append(routes, r)
 		}
 	}
-	return routes
+	return routes, firstErr
 }
 
 // CountRoutesFromRedis returns the total number of routes in Redis.

@@ -3,9 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -136,7 +138,30 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 // knownLinkCaps is every capability a link may announce. The edge reads
 // online_link:<token> to decide whether a link understands a stream type, so
 // only these names may ever reach that key.
-var knownLinkCaps = []string{"client-addr"}
+var knownLinkCaps = []string{linkCapClientAddr}
+
+// linkCapClientAddr is the capability of a link that writes a PROXY v2 header
+// for stream type 0x05.
+const linkCapClientAddr = "client-addr"
+
+// linkAnnouncesCap reports whether online_link:<token> carries cap. A missing
+// key (link offline) or an old link's "1" is false; only a Redis failure is an error.
+func linkAnnouncesCap(ctx context.Context, rdb *redis.Client, token, cap string) (bool, error) {
+	v, err := rdb.Get(ctx, "online_link:"+token).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var p struct {
+		Caps []string `json:"caps"`
+	}
+	if json.Unmarshal([]byte(v), &p) != nil {
+		return false, nil
+	}
+	return slices.Contains(p.Caps, cap), nil
+}
 
 // linkPresenceValue is what a heartbeat writes into online_link:<token>: the
 // capabilities the link announced as {"caps":[...]}, or "1" when it announced

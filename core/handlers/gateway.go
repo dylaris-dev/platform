@@ -773,6 +773,45 @@ func (h *GatewayHandler) proxyProtocolOff(w http.ResponseWriter, r *http.Request
 	return true
 }
 
+// proxyProtocolNoLink answers 409 for a request to switch forwarding ON unless
+// every matching route's link (its tunnel_id) has announced client-addr, and
+// reports whether it answered. A server set to expect PROXY cannot be joined
+// through a link that does not write the header, and the edge falls back to
+// the header-less stream for exactly that link, so enabling it there locks the
+// players out. It fails closed: a Redis error refuses too.
+func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Request, belongs func(services.GatewayRoute) bool) bool {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	routes, err := services.ReadRoutesFromRedis(ctx, h.state.Redis)
+	if err != nil {
+		log.Printf("proxy-protocol: link check: %v", err)
+		sendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
+		return true
+	}
+	found := false
+	for _, rt := range routes {
+		if !belongs(rt) {
+			continue
+		}
+		found = true
+		ok, err := linkAnnouncesCap(ctx, h.state.Redis, rt.TunnelID, linkCapClientAddr)
+		if err != nil {
+			log.Printf("proxy-protocol: link check: route %s: %v", rt.Domain, err)
+			sendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
+			return true
+		}
+		if !ok {
+			sendJSONErrorCode(w, fmt.Sprintf("The link of route %s has not reported that it can pass the player IP. Update the link, then try again.", rt.Domain), "link_without_client_addr", http.StatusConflict)
+			return true
+		}
+	}
+	if !found {
+		sendJSONErrorCode(w, "This server has no gateway route yet. Add a route first.", "no_routes", http.StatusConflict)
+		return true
+	}
+	return false
+}
+
 // decodeProxyProtocolBody reads {"enabled": bool}. The field is required: a
 // body without it must not read as "switch it off".
 func decodeProxyProtocolBody(r *http.Request) (bool, bool) {
@@ -808,6 +847,9 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 		return
 	}
 	if h.proxyProtocolOff(w, r, enabled) {
+		return
+	}
+	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return services.RouteBelongsToServer(rt, srv.UUID) }) {
 		return
 	}
 	if err := h.state.Store.SetServerProxyProtocol(srv.ID, enabled); err != nil {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -77,6 +78,27 @@ func newProxyProtoHandler(t *testing.T, flagOn bool) (*GatewayHandler, *proxyPro
 	}}, fs, rdb
 }
 
+// seedRoute publishes route:<domain> for server srv-7 through tunnel tok, and
+// online_link:<tok> with value presence ("" leaves the link offline).
+func seedRoute(t *testing.T, rdb *redis.Client, domain, tok, presence string) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := json.Marshal(services.GatewayRoute{TargetIP: "mc_srv-7", TargetPort: 25565, TunnelID: tok, ServerUUID: "srv-7"})
+	if err := rdb.Set(ctx, "route:"+domain, b, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.SAdd(ctx, "sys:index:routes", domain).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if presence != "" {
+		if err := rdb.Set(ctx, "online_link:"+tok, presence, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+const capsClientAddr = `{"caps":["client-addr"]}`
+
 func patchServerProxyProtocol(h *GatewayHandler, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPatch, "/api/servers/7/proxy-protocol", strings.NewReader(body))
 	r = mux.SetURLVars(r, map[string]string{"id": "7"})
@@ -116,6 +138,7 @@ func TestSetServerProxyProtocol_RefusedWhileTheFeatureIsOff(t *testing.T) {
 
 func TestSetServerProxyProtocol_OnAndOff(t *testing.T) {
 	h, fs, rdb := newProxyProtoHandler(t, true)
+	seedRoute(t, rdb, "a.example.com", "tok-a", capsClientAddr)
 	ctx := context.Background()
 	key := "dylaris:server:srv-7:proxy_protocol"
 
@@ -195,6 +218,9 @@ func patchLinkRouteProxyProtocol(h *GatewayHandler, userID string, admin bool, d
 func TestSetLinkRouteProxyProtocol(t *testing.T) {
 	h, fs, rdb := newProxyProtoHandler(t, true)
 	if err := h.state.Gateway.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.Set(context.Background(), "online_link:tunnel-1", capsClientAddr, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
 	live := func() services.GatewayRoute {
@@ -313,5 +339,90 @@ func TestSetLinkRouteProxyProtocol_OffAlwaysAllowed(t *testing.T) {
 	}
 	if liveOn() || fs.routes["play.example.com"].ProxyProtocol {
 		t.Fatal("switch-off did not clear the row and the live route")
+	}
+}
+
+// Enabling needs every route's link to have announced client-addr: the edge
+// sends the header-less stream through any other link, and a server expecting
+// PROXY cannot be joined that way. Every refusal changes nothing.
+func TestSetServerProxyProtocol_RefusedWithoutLinkCap(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(*testing.T, *redis.Client)
+		code string
+	}{
+		{"no routes", func(*testing.T, *redis.Client) {}, "no_routes"},
+		{"one route without the cap", func(t *testing.T, rdb *redis.Client) {
+			seedRoute(t, rdb, "a.example.com", "tok-a", capsClientAddr)
+			seedRoute(t, rdb, "b.example.com", "tok-b", `{"caps":["other"]}`)
+		}, "link_without_client_addr"},
+		{"old link value 1", func(t *testing.T, rdb *redis.Client) {
+			seedRoute(t, rdb, "a.example.com", "tok-a", "1")
+		}, "link_without_client_addr"},
+		{"link offline", func(t *testing.T, rdb *redis.Client) {
+			seedRoute(t, rdb, "a.example.com", "tok-a", "")
+		}, "link_without_client_addr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fs, rdb := newProxyProtoHandler(t, true)
+			tc.seed(t, rdb)
+			rec := patchServerProxyProtocol(h, `{"enabled":true}`)
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), tc.code) {
+				t.Fatalf("status %d body %s, want 409 %s", rec.Code, rec.Body.String(), tc.code)
+			}
+			if fs.setCalls != 0 || len(hubQueue(t, rdb)) != 0 {
+				t.Fatal("a refused enable changed something")
+			}
+		})
+	}
+	t.Run("message names the route", func(t *testing.T) {
+		h, _, rdb := newProxyProtoHandler(t, true)
+		seedRoute(t, rdb, "b.example.com", "tok-b", "1")
+		rec := patchServerProxyProtocol(h, `{"enabled":true}`)
+		if !strings.Contains(rec.Body.String(), "The link of route b.example.com has not reported that it can pass the player IP. Update the link, then try again.") {
+			t.Fatalf("body %s", rec.Body.String())
+		}
+	})
+	t.Run("all routes capable", func(t *testing.T) {
+		h, fs, rdb := newProxyProtoHandler(t, true)
+		seedRoute(t, rdb, "a.example.com", "tok-a", capsClientAddr)
+		seedRoute(t, rdb, "b.example.com", "tok-b", `{"caps":["x","client-addr"]}`)
+		if rec := patchServerProxyProtocol(h, `{"enabled":true}`); rec.Code != http.StatusOK || !fs.servers[7].ProxyProtocol {
+			t.Fatalf("status %d body %s, want 200", rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("redis error fails closed", func(t *testing.T) {
+		h, fs, _ := newProxyProtoHandler(t, true)
+		h.state.Redis = redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+		rec := patchServerProxyProtocol(h, `{"enabled":true}`)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "link_check_failed") {
+			t.Fatalf("status %d body %s, want 409 link_check_failed", rec.Code, rec.Body.String())
+		}
+		if fs.setCalls != 0 {
+			t.Fatal("a refused enable stored something")
+		}
+	})
+}
+
+func TestSetLinkRouteProxyProtocol_RefusedWithoutLinkCap(t *testing.T) {
+	h, fs, rdb := newProxyProtoHandler(t, true)
+	if err := h.state.Gateway.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.Set(context.Background(), "online_link:tunnel-1", "1", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	rec := patchLinkRouteProxyProtocol(h, "owner-1", false, "play.example.com", `{"enabled":true}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "link_without_client_addr") {
+		t.Fatalf("status %d body %s, want 409 link_without_client_addr", rec.Code, rec.Body.String())
+	}
+	if fs.routes["play.example.com"].ProxyProtocol {
+		t.Fatal("a refused enable switched the route")
+	}
+	if err := rdb.Set(context.Background(), "online_link:tunnel-1", capsClientAddr, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if rec := patchLinkRouteProxyProtocol(h, "owner-1", false, "play.example.com", `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("with the cap: status %d body %s", rec.Code, rec.Body.String())
 	}
 }

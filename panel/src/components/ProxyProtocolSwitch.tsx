@@ -46,7 +46,8 @@ export default function ProxyProtocolSwitch({ enabled, software, viaLink, save, 
                 title: 'Stop passing the player IP?',
                 message: PROXY_PROTOCOL_DISABLE,
                 confirmLabel: 'Turn off',
-                destructive: false,
+                // Locks every player out while the server still expects the header.
+                destructive: true,
             });
         if (!ok) return;
         setBusy(true);
