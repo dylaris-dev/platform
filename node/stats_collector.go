@@ -371,7 +371,11 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		if err != nil {
 			return nil, err
 		}
-		return PingMinecraftServer(addr, pingTimeout)
+		// Core sets this key while the server expects PROXY protocol; without a
+		// header such a server drops the ping. A Redis error or an old Core (no key)
+		// means no header, which is the behaviour before the switch existed.
+		n, err := rdb.Exists(ctx, fmt.Sprintf("dylaris:server:%s:proxy_protocol", uuid)).Result()
+		return PingMinecraftServer(addr, pingTimeout, err == nil && n > 0)
 	}
 
 	// Initial ping.

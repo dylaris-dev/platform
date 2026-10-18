@@ -18,15 +18,28 @@ type SLPResponse struct {
 	Version    string `json:"version"`
 }
 
+// proxyV2Local is the HAProxy PROXY protocol v2 header with command LOCAL, AF_UNSPEC and
+// no address block: 12-byte signature, version 2 + LOCAL (0x20), UNSPEC (0x00), length 0.
+// A backend with proxy-protocol on rejects a connection that does not start with a PROXY
+// header, and LOCAL tells it "health check, no client address" (spec section 2.2).
+var proxyV2Local = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A, 0x20, 0x00, 0x00, 0x00}
+
 // PingMinecraftServer performs an SLP (Server List Ping) on the given address.
-// address should be host:port (e.g. "mc_<uuid>:25565").
-func PingMinecraftServer(address string, timeout time.Duration) (*SLPResponse, error) {
+// address should be host:port (e.g. "mc_<uuid>:25565"). proxyLocal prefixes a PROXY v2
+// LOCAL header, needed when the server expects PROXY protocol from the gateway.
+func PingMinecraftServer(address string, timeout time.Duration, proxyLocal bool) (*SLPResponse, error) {
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %v", err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(timeout))
+
+	if proxyLocal {
+		if _, err := conn.Write(proxyV2Local); err != nil {
+			return nil, fmt.Errorf("send proxy header: %v", err)
+		}
+	}
 
 	host, port, _ := net.SplitHostPort(address)
 

@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"net"
 	"testing"
+	"time"
 )
 
 func TestExtractMOTD(t *testing.T) {
@@ -73,5 +76,42 @@ func TestWriteReadMCString(t *testing.T) {
 		if got != s {
 			t.Errorf("MCString roundtrip(%q) = %q", s, got)
 		}
+	}
+}
+
+// firstBytes accepts one connection on a loopback listener, returns the first n bytes
+// the client sends, and closes (the ping then fails, which the test ignores).
+func firstBytes(t *testing.T, n int, proxyLocal bool) []byte {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan []byte, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			got <- nil
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, n)
+		io.ReadFull(c, buf)
+		got <- buf
+	}()
+	PingMinecraftServer(ln.Addr().String(), time.Second, proxyLocal)
+	return <-got
+}
+
+func TestPingProxyLocalHeader(t *testing.T) {
+	want := []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A, 0x20, 0x00, 0x00, 0x00}
+	if got := firstBytes(t, 16, true); !bytes.Equal(got, want) {
+		t.Errorf("with proxyLocal first 16 bytes = % x, want % x", got, want)
+	}
+	// Without it the first byte is the handshake packet length (VarInt), not 0x0D.
+	got := firstBytes(t, 1, false)
+	if len(got) != 1 || got[0] == 0x0D || got[0] == 0 {
+		t.Errorf("without proxyLocal first byte = % x, want a handshake length", got)
 	}
 }
