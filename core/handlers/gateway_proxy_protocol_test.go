@@ -232,9 +232,86 @@ func TestSetLinkRouteProxyProtocol(t *testing.T) {
 	if rec := patchLinkRouteProxyProtocol(h, "owner-1", false, "missing.example.com", `{"enabled":true}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing route: status %d, want 404", rec.Code)
 	}
+}
 
-	off, _, _ := newProxyProtoHandler(t, false)
-	if rec := patchLinkRouteProxyProtocol(off, "owner-1", false, "play.example.com", `{"enabled":true}`); rec.Code != http.StatusConflict {
-		t.Fatalf("feature off: status %d, want 409", rec.Code)
+// The platform setting gates switching forwarding ON only. With it off, an
+// owner can still switch their own forwarding off, and everything it wrote is
+// cleared; switching on stays refused and changes nothing.
+func TestSetServerProxyProtocol_OffAlwaysAllowed(t *testing.T) {
+	h, fs, rdb := newProxyProtoHandler(t, false)
+	ctx := context.Background()
+	key := "dylaris:server:srv-7:proxy_protocol"
+	fs.servers[7].ProxyProtocol = true
+	if err := rdb.Set(ctx, key, "1", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := patchServerProxyProtocol(h, `{"enabled":true}`); rec.Code != http.StatusConflict {
+		t.Fatalf("on while the setting is off: status %d, want 409", rec.Code)
+	}
+	if fs.setCalls != 0 || len(hubQueue(t, rdb)) != 0 {
+		t.Fatal("a refused enable changed something")
+	}
+
+	rec := patchServerProxyProtocol(h, `{"enabled":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("off while the setting is off: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if fs.servers[7].ProxyProtocol {
+		t.Error("column not cleared")
+	}
+	if n, _ := rdb.Exists(ctx, key).Result(); n != 0 {
+		t.Error("node key not cleared")
+	}
+	q := hubQueue(t, rdb)
+	if len(q) != 1 || q[0]["action"] != "set_server_proxy_protocol" || q[0]["server_uuid"] != "srv-7" || q[0]["proxy_protocol"] != nil {
+		t.Fatalf("hub queue = %+v, want one switch-off message", q)
+	}
+
+	// Same authorization as before: a cut-off owner is still refused.
+	fs.billing["owner-1"] = &store.UserBilling{UserID: "owner-1", Status: "suspended"}
+	if rec := patchServerProxyProtocol(h, `{"enabled":false}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("suspended owner switching off: status %d, want 403", rec.Code)
+	}
+}
+
+func TestSetLinkRouteProxyProtocol_OffAlwaysAllowed(t *testing.T) {
+	h, fs, rdb := newProxyProtoHandler(t, false)
+	gw := h.state.Gateway
+	if err := gw.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
+		t.Fatal(err)
+	}
+	// Switched on while the setting was still on.
+	if err := gw.SetCoreOwnedRouteProxyProtocol("play.example.com", true); err != nil {
+		t.Fatal(err)
+	}
+	liveOn := func() bool {
+		t.Helper()
+		v, err := rdb.Get(context.Background(), "route:play.example.com").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r services.GatewayRoute
+		if err := json.Unmarshal([]byte(v), &r); err != nil {
+			t.Fatal(err)
+		}
+		return r.ProxyProtocol
+	}
+
+	if rec := patchLinkRouteProxyProtocol(h, "owner-1", false, "play.example.com", `{"enabled":true}`); rec.Code != http.StatusConflict {
+		t.Fatalf("on while the setting is off: status %d, want 409", rec.Code)
+	}
+	if rec := patchLinkRouteProxyProtocol(h, "stranger", false, "play.example.com", `{"enabled":false}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("stranger switching off: status %d, want 404", rec.Code)
+	}
+	if !liveOn() || !fs.routes["play.example.com"].ProxyProtocol {
+		t.Fatal("a refused request changed the route")
+	}
+
+	if rec := patchLinkRouteProxyProtocol(h, "owner-1", false, "play.example.com", `{"enabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("owner switching off: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if liveOn() || fs.routes["play.example.com"].ProxyProtocol {
+		t.Fatal("switch-off did not clear the row and the live route")
 	}
 }

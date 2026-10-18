@@ -392,9 +392,6 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 // {"enabled": bool}. Owner-scoped like the delete beside it; the server behind
 // the customer's link must be configured to expect the header.
 func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *http.Request) {
-	if h.proxyProtocolOff(w, r) {
-		return
-	}
 	userID := r.Context().Value("userID").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	domain := mux.Vars(r)["domain"]
@@ -413,6 +410,9 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 	enabled, ok := decodeProxyProtocolBody(r)
 	if !ok {
 		sendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
+		return
+	}
+	if h.proxyProtocolOff(w, r, enabled) {
 		return
 	}
 	if err := h.state.Gateway.SetCoreOwnedRouteProxyProtocol(domain, enabled); err != nil {

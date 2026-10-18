@@ -758,12 +758,15 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]string{"message": "Route deletion queued"})
 }
 
-// proxyProtocolOff answers 409 while the operator has not switched real player
-// IP forwarding on, and reports whether it answered. The per-server and
-// per-route switches only do anything once every gateway piece that carries the
-// address is deployed, so until then they are refused rather than stored.
-func (h *GatewayHandler) proxyProtocolOff(w http.ResponseWriter, r *http.Request) bool {
-	if h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context()) {
+// proxyProtocolOff answers 409 for a request to switch forwarding ON while the
+// operator has not enabled real player IP forwarding, and reports whether it
+// answered. The switches only do anything once every gateway piece that carries
+// the address is deployed, so until then turning one on is refused.
+//
+// Turning one OFF is never refused: an operator who disables the platform
+// setting must not leave an owner stuck with forwarding they cannot remove.
+func (h *GatewayHandler) proxyProtocolOff(w http.ResponseWriter, r *http.Request, enabled bool) bool {
+	if !enabled || (h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context())) {
 		return false
 	}
 	sendJSONErrorCode(w, "Real player IP forwarding is not enabled on this platform.", "proxy_protocol_disabled", http.StatusConflict)
@@ -791,9 +794,6 @@ func decodeProxyProtocolBody(r *http.Request) (bool, bool) {
 // message follow it. A failure after the column answers 502 so the caller saves
 // again, which rewrites all three.
 func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
-	if h.proxyProtocolOff(w, r) {
-		return
-	}
 	srv, err := h.state.Store.GetServerByID(mustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
@@ -805,6 +805,9 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	enabled, ok := decodeProxyProtocolBody(r)
 	if !ok {
 		sendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
+		return
+	}
+	if h.proxyProtocolOff(w, r, enabled) {
 		return
 	}
 	if err := h.state.Store.SetServerProxyProtocol(srv.ID, enabled); err != nil {
