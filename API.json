@@ -1991,6 +1991,16 @@
       "external": false
     },
     {
+      "method": "PATCH",
+      "path": "/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "switches real player IP forwarding on one route-only entry.",
+      "handler": "GatewayHandler.SetLinkRouteProxyProtocol",
+      "group": "gateway",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/gateway/links",
       "auth": "session",
@@ -3769,6 +3779,16 @@
       "external": false
     },
     {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/proxy-protocol",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "switches real player IP forwarding (a PROXY v2 header from the gateway) for one server.",
+      "handler": "GatewayHandler.SetServerProxyProtocol",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "POST",
       "path": "/api/servers/{id:[0-9]+}/rcon",
       "auth": "session",
@@ -5179,10 +5199,10 @@
     }
   ],
   "counts": {
-    "total": 520,
+    "total": 522,
     "byAuth": {
       "none": 31,
-      "session": 473,
+      "session": 475,
       "user API key": 10,
       "warp key": 6
     },
@@ -5198,7 +5218,7 @@
       "disk": 4,
       "external": 10,
       "files": 10,
-      "gateway": 19,
+      "gateway": 20,
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,
@@ -5217,7 +5237,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 76,
+      "servers": 77,
       "settings": 28,
       "setup": 2,
       "share": 1,

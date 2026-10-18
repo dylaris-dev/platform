@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -106,11 +107,12 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
+	presence := linkPresenceValue(r.Body)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	_, err := h.state.Redis.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, "link:"+token, "valid", linkTokenTTL)
-		p.Set(ctx, "online_link:"+token, "1", linkOnlineTTL)
+		p.Set(ctx, "online_link:"+token, presence, linkOnlineTTL)
 		return nil
 	})
 	if err != nil {
@@ -129,6 +131,44 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// knownLinkCaps is every capability a link may announce. The edge reads
+// online_link:<token> to decide whether a link understands a stream type, so
+// only these names may ever reach that key.
+var knownLinkCaps = []string{"client-addr"}
+
+// linkPresenceValue is what a heartbeat writes into online_link:<token>: the
+// capabilities the link announced as {"caps":[...]}, or "1" when it announced
+// none. An old link sends {} and keeps getting "1", which every existing reader
+// (EXISTS) and the edge read as "no capabilities".
+//
+// The value is built here from the whitelist rather than copied from the body:
+// the key is read by every edge, and the body is whatever the client sent.
+func linkPresenceValue(body io.Reader) string {
+	var req struct {
+		Caps []string `json:"caps"`
+	}
+	if body == nil || json.NewDecoder(io.LimitReader(body, 4096)).Decode(&req) != nil {
+		return "1"
+	}
+	var caps []string
+	for _, known := range knownLinkCaps {
+		for _, c := range req.Caps {
+			if c == known {
+				caps = append(caps, known)
+				break
+			}
+		}
+	}
+	if len(caps) == 0 {
+		return "1"
+	}
+	b, err := json.Marshal(map[string][]string{"caps": caps})
+	if err != nil {
+		return "1"
+	}
+	return string(b)
 }
 
 // linkEdge is one edge as a route-only link needs it: where to dial and which

@@ -204,6 +204,8 @@ type Store interface {
 	UpdateServerProxyID(id int, proxyID *int) error
 	UpdateServerOwner(id int, ownerID *string) error
 	SetServerAutoMove(id int, enabled bool) error
+	// SetServerProxyProtocol flips the per-server real-IP (PROXY v2) switch.
+	SetServerProxyProtocol(id int, enabled bool) error
 	// UpdateServerNode reassigns a server to a different node. Used by the
 	// auto-move migration flow (later wave) to flip the FK after transport.
 	UpdateServerNode(serverID int, newNodeID int) error

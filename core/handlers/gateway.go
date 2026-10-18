@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"dylaris-core/services"
 
@@ -755,6 +756,82 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Route deletion queued"})
+}
+
+// proxyProtocolOff answers 409 while the operator has not switched real player
+// IP forwarding on, and reports whether it answered. The per-server and
+// per-route switches only do anything once every gateway piece that carries the
+// address is deployed, so until then they are refused rather than stored.
+func (h *GatewayHandler) proxyProtocolOff(w http.ResponseWriter, r *http.Request) bool {
+	if h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context()) {
+		return false
+	}
+	sendJSONErrorCode(w, "Real player IP forwarding is not enabled on this platform.", "proxy_protocol_disabled", http.StatusConflict)
+	return true
+}
+
+// decodeProxyProtocolBody reads {"enabled": bool}. The field is required: a
+// body without it must not read as "switch it off".
+func decodeProxyProtocolBody(r *http.Request) (bool, bool) {
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Enabled == nil {
+		return false, false
+	}
+	return *req.Enabled, true
+}
+
+// SetServerProxyProtocol PATCH /api/servers/{id}/proxy-protocol - switches
+// real player IP forwarding (a PROXY v2 header from the gateway) for one
+// server. Body {"enabled": bool}. The server software must be configured to
+// expect the header, or every player is refused.
+//
+// The column is the truth and is written first; the node key and the hub
+// message follow it. A failure after the column answers 502 so the caller saves
+// again, which rewrites all three.
+func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
+	if h.proxyProtocolOff(w, r) {
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(mustAtoi(mux.Vars(r)["id"]))
+	if err != nil || srv == nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if refuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	enabled, ok := decodeProxyProtocolBody(r)
+	if !ok {
+		sendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetServerProxyProtocol(srv.ID, enabled); err != nil {
+		log.Printf("proxy-protocol: server %d: store: %v", srv.ID, err)
+		sendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	key := services.ServerProxyProtocolKey(srv.UUID)
+	var rerr error
+	if enabled {
+		rerr = h.state.Redis.Set(ctx, key, "1", 0).Err()
+	} else {
+		rerr = h.state.Redis.Del(ctx, key).Err()
+	}
+	if rerr != nil {
+		log.Printf("proxy-protocol: server %d: node key: %v", srv.ID, rerr)
+		sendJSONError(w, "The setting was saved, but the node could not be told. Save again to apply it.", http.StatusBadGateway)
+		return
+	}
+	if err := h.state.Gateway.SetServerProxyProtocol(srv.UUID, enabled); err != nil {
+		log.Printf("proxy-protocol: server %d: hub queue: %v", srv.ID, err)
+		sendJSONError(w, "The setting was saved, but the gateway could not be told. Save again to apply it.", http.StatusBadGateway)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "proxyProtocol": enabled})
 }
 
 func mustAtoi(s string) int {

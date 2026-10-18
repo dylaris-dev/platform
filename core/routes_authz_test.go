@@ -760,6 +760,39 @@ func TestCap_ServerRoutesNetworkVerbs(t *testing.T) {
 	}
 }
 
+// The real-IP switch is a network setting: network.write on THAT server, which
+// the owner holds and a network.read-only member and a stranger do not.
+func TestCap_ServerProxyProtocolNeedsNetworkWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("net-id", "net", false)
+	fs.addUser("writer-id", "writer", false)
+	fs.addUser("stranger-id", "stranger", false)
+	fs.servers = map[int]*models.Server{16: {ID: 16, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{
+		70: {ID: 70, Capabilities: []string{"network.read"}},
+		71: {ID: 71, Capabilities: []string{"network.write"}},
+	}
+	fs.serverGrants = map[string]*store.ServerGrant{
+		skey(16, "net-id"):    {UserID: "net-id", ServerRoleID: intPtr(70)},
+		skey(16, "writer-id"): {UserID: "writer-id", ServerRoleID: intPtr(71)},
+	}
+	srv := newAuthzTestServer(t, fs)
+	path := "/api/servers/16/proxy-protocol"
+	if deniedAtChokepoint(t, srv, "PATCH", path, testIdentity{UserID: "owner-id", Username: "owner"}) {
+		t.Error("owner must pass the network.write chokepoint")
+	}
+	if deniedAtChokepoint(t, srv, "PATCH", path, testIdentity{UserID: "writer-id", Username: "writer"}) {
+		t.Error("network.write member must pass the chokepoint")
+	}
+	if !deniedAtChokepoint(t, srv, "PATCH", path, testIdentity{UserID: "net-id", Username: "net"}) {
+		t.Error("network.read-only member must be refused at the chokepoint")
+	}
+	if !deniedAtChokepoint(t, srv, "PATCH", path, testIdentity{UserID: "stranger-id", Username: "stranger"}) {
+		t.Error("stranger must be refused at the chokepoint")
+	}
+}
+
 // TestCap_LinkRoutesExemptAuthed proves /gateway/link-routes is EXEMPT-authed:
 // any authed user passes the chokepoint (no RequireCap); the in-handler owner
 // filter is the boundary, not tested here.

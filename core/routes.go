@@ -209,6 +209,9 @@ var requiredCaps = map[string]string{
 	// decision #2) - deliberately NOT listed here.
 	"/api/servers/{id:[0-9]+}/routes":             "network.read",
 	"/api/servers/{id:[0-9]+}/routes/{domain:.+}": "network.write",
+	// Real player IP forwarding for one server: a network setting, so the same
+	// capability that may change its routes.
+	"/api/servers/{id:[0-9]+}/proxy-protocol": "network.write",
 
 	// Phase 4 Task 12: users + roles + panel-roles + admin 2FA reset (PANEL
 	// users.*/panelroles.*). GET+POST /users share one template -> users.read
@@ -1444,6 +1447,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerRoutes))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.CreateServerRoute)))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.DeleteServerRoute))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.SetServerProxyProtocol)))).Methods("PATCH")
 
 	// Route-only (external origin): a protected address pointed at a server the
 	// user already runs, no managed node. Owner-scoped; create is gateway-gated.
@@ -1465,6 +1469,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gatewayHandler.ListLinkRoutes)).Methods("GET")
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/proxy-protocol", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.SetLinkRouteProxyProtocol))).Methods("PATCH")
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
 
 	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)

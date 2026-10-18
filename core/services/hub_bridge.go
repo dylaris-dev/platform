@@ -94,6 +94,9 @@ type GatewayRoute struct {
 	// OwnerID (user UUID) is published for Core-owned routes so the panel can list
 	// and authorize them per owner. Empty for server-bound (managed) routes.
 	OwnerID string `json:"owner_id,omitempty"`
+	// ProxyProtocol makes the edge forward the real player address so the link
+	// writes a PROXY v2 header to the backend. Absent reads as false.
+	ProxyProtocol bool `json:"proxy_protocol,omitempty"`
 }
 
 // LinkFingerprint names a link without handing over its token.
@@ -128,6 +131,9 @@ type PublicRoute struct {
 	ServerUUID string `json:"server_uuid"`
 	CoreOwned  bool   `json:"core_owned,omitempty"`
 	OwnerID    string `json:"owner_id,omitempty"`
+	// Always present, so the panel can show the switch without guessing what
+	// a missing field means.
+	ProxyProtocol bool `json:"proxy_protocol"`
 }
 
 // Public strips the tunnel token off one route.
@@ -139,6 +145,8 @@ func (r GatewayRoute) Public() PublicRoute {
 		ServerUUID: r.ServerUUID,
 		CoreOwned:  r.CoreOwned,
 		OwnerID:    r.OwnerID,
+
+		ProxyProtocol: r.ProxyProtocol,
 	}
 }
 
@@ -164,6 +172,9 @@ type hubQueueMessage struct {
 	OwnerID      *string `json:"owner_id,omitempty"`
 	NewLinkToken string  `json:"new_link_token,omitempty"`
 	Enabled      *bool   `json:"enabled,omitempty"`
+	// ProxyProtocol rides create_route and set_server_proxy_protocol. Omitted
+	// when false, which an old or new hub reads the same way.
+	ProxyProtocol bool `json:"proxy_protocol,omitempty"`
 }
 
 // coreOwnedRouteTTL is 0 (persistent). Core-owned (route-only) routes are
@@ -204,6 +215,12 @@ func (g *RedisGateway) coreOwnedRouteHolder(ctx context.Context, domain string) 
 // Reads are done directly from Redis using the helper functions below.
 type GatewayProvider interface {
 	CreateServerRoute(serverID uint, ownerID string, domain string, port int) error
+	// SetServerProxyProtocol tells the hub to flip the real-IP switch on every
+	// route of one server.
+	SetServerProxyProtocol(serverUUID string, enabled bool) error
+	// SetCoreOwnedRouteProxyProtocol flips the real-IP switch on a route-only
+	// entry: the stored row first, then the live Redis value.
+	SetCoreOwnedRouteProxyProtocol(domain string, enabled bool) error
 	// CreateRouteViaLink publishes a route-only entry that rides the tenant's own
 	// Link tunnel: the edge opens a stream on linkToken and the customer's Link
 	// dials targetHost:port on its LOCAL network. No managed node, no exposed
@@ -285,9 +302,61 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 		ServerUUID: server.UUID,
 		ServerID:   &sID,
 		OwnerID:    &oID,
+
+		ProxyProtocol: server.ProxyProtocol,
 	}
 
 	return g.pushToQueue(msg)
+}
+
+// SetServerProxyProtocol queues the switch for every route the hub holds for
+// this server. An old hub logs the action as unknown and drops it, which
+// leaves the routes as they were: no header.
+func (g *RedisGateway) SetServerProxyProtocol(serverUUID string, enabled bool) error {
+	return g.pushToQueue(hubQueueMessage{
+		Action:        "set_server_proxy_protocol",
+		ServerUUID:    serverUUID,
+		ProxyProtocol: enabled,
+	})
+}
+
+// ServerProxyProtocolKey is the node's copy of a server's real-IP switch. The
+// node only asks whether it EXISTS, and prefixes its status ping with a PROXY
+// v2 LOCAL header when it does: a backend that requires the header refuses a
+// bare ping. Core writes "1" with no TTL when the switch is on and deletes the
+// key when it is off. It sits under dylaris:server:<uuid>:*, which the node's
+// Redis ACL already grants for each server it hosts.
+func ServerProxyProtocolKey(serverUUID string) string {
+	return "dylaris:server:" + serverUUID + ":proxy_protocol"
+}
+
+// ErrRouteNotStored is returned for a route-only domain with no durable row.
+// Every change to such a route is made on the row, so without one there is
+// nothing to change.
+var ErrRouteNotStored = errors.New("route has no stored record")
+
+// SetCoreOwnedRouteProxyProtocol rewrites the stored row with the new switch
+// and then publishes it the way the republisher does, so the next tick finds
+// nothing to correct and cannot flip it back.
+func (g *RedisGateway) SetCoreOwnedRouteProxyProtocol(domain string, enabled bool) error {
+	row, err := g.storedRoute(domain)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return ErrRouteNotStored
+	}
+	row.ProxyProtocol = enabled
+	if err := g.store.UpsertCoreLinkRoute(*row); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rp := &RouteRepublisher{store: g.store, redis: g.redis}
+	if rp.republish(ctx, *row) == republishSkipped {
+		return fmt.Errorf("route %s saved but not published", domain)
+	}
+	return nil
 }
 
 // CreateRouteViaLink registers a route-only entry by publishing it DIRECTLY to
@@ -315,20 +384,23 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 	// claim a domain the first one still owns on paper, and the republisher
 	// would then fight the live entry every tick. The row answers even when the
 	// cache is gone, which is precisely when the question gets asked.
-	if stored, err := g.storedRoute(domain); err != nil {
+	stored, err := g.storedRoute(domain)
+	if err != nil {
 		return err
-	} else if stored != nil && stored.OwnerID != ownerID {
+	}
+	if stored != nil && stored.OwnerID != ownerID {
 		return ErrRouteDomainTaken
 	}
-	data, err := json.Marshal(map[string]interface{}{
-		"domain":      domain,
-		"target_ip":   targetHost,
-		"target_port": port,
-		"tunnel_id":   linkToken,
-		"server_uuid": "",
-		"core_owned":  true,
-		"owner_id":    ownerID,
-	})
+	row := store.CoreLinkRoute{
+		Domain: domain, OwnerID: ownerID, LinkToken: linkToken,
+		TargetHost: targetHost, TargetPort: port,
+	}
+	// An edit of the target keeps the real-IP switch; only its own endpoint
+	// moves it.
+	if stored != nil {
+		row.ProxyProtocol = stored.ProxyProtocol
+	}
+	data, err := coreOwnedRouteValue(row)
 	if err != nil {
 		return err
 	}
@@ -355,10 +427,7 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 			return err
 		}
 	}
-	if err := g.store.UpsertCoreLinkRoute(store.CoreLinkRoute{
-		Domain: domain, OwnerID: ownerID, LinkToken: linkToken,
-		TargetHost: targetHost, TargetPort: port,
-	}); err != nil {
+	if err := g.store.UpsertCoreLinkRoute(row); err != nil {
 		// Give the claim back. A live Redis entry with no row behind it is
 		// worse than no route at all: the panel would list it, the tenant was
 		// told the create failed, and every path that removes a route now works

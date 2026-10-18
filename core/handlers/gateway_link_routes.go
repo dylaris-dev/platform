@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -384,4 +385,44 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Route deleted"})
+}
+
+// SetLinkRouteProxyProtocol PATCH /api/gateway/link-routes/{domain}/proxy-protocol
+// - switches real player IP forwarding on one route-only entry. Body
+// {"enabled": bool}. Owner-scoped like the delete beside it; the server behind
+// the customer's link must be configured to expect the header.
+func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *http.Request) {
+	if h.proxyProtocolOff(w, r) {
+		return
+	}
+	userID := r.Context().Value("userID").(string)
+	isAdmin := r.Context().Value("isAdmin").(bool)
+	domain := mux.Vars(r)["domain"]
+	if domain == "" {
+		sendJSONError(w, "domain required", http.StatusBadRequest)
+		return
+	}
+	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
+		sendJSONError(w, "Route not found", http.StatusNotFound)
+		return
+	}
+	if msg := ownerRefusal(h.state, r, userID); msg != "" {
+		sendJSONError(w, msg, http.StatusForbidden)
+		return
+	}
+	enabled, ok := decodeProxyProtocolBody(r)
+	if !ok {
+		sendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Gateway.SetCoreOwnedRouteProxyProtocol(domain, enabled); err != nil {
+		if errors.Is(err, services.ErrRouteNotStored) {
+			sendJSONError(w, "Route not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("proxy-protocol: link route %s: %v", domain, err)
+		sendJSONError(w, "Failed to update the route", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "proxyProtocol": enabled})
 }

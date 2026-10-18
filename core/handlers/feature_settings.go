@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/services"
 )
 
 // FeatureSettingsHandler is the admin GET/PUT bundle for platform-wide
@@ -56,6 +57,9 @@ type featureSettingsPayload struct {
 	// RouteOnly is written only when sent. Unset it follows Byon, so a save that
 	// wrote it along with the other switches would pin it for good.
 	RouteOnly *bool `json:"routeOnly"`
+	// ProxyProtocol opens the real player IP switches. Off until the gateway
+	// pieces that carry the address are deployed.
+	ProxyProtocol *bool `json:"proxyProtocol"`
 	// NO metrics flag here, deliberately. Long-term statistics are switched on
 	// by MetricsDBHandler, together with the database they record into, because
 	// those two are one decision: the resolution is fixed at the moment
@@ -102,6 +106,7 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		AutoMove:              boolPtr(h.state.FeatureFlags.IsAutoMoveEnabled(r.Context())),
 		Byon:                  boolPtr(h.state.FeatureFlags.IsBYONEnabled(r.Context())),
 		RouteOnly:             boolPtr(h.state.FeatureFlags.IsRouteOnlyEnabled(r.Context())),
+		ProxyProtocol:         boolPtr(h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context())),
 		UserAPIKeys:           boolPtr(h.state.FeatureFlags.UserAPIKeysEnabled(r.Context())),
 		UserAPIKeyAllowedCaps: &caps,
 	}
@@ -212,6 +217,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"feature_byon_enabled", pick(req.Byon, false), req.Byon != nil, "feature_byon_enabled", "byon"},
 		{"feature_route_only_enabled", pick(req.RouteOnly, false), req.RouteOnly != nil, "feature_route_only_enabled", "routeOnly"},
 		{"apikeys_user_enabled", pick(req.UserAPIKeys, false), req.UserAPIKeys != nil, "apikeys_user_enabled", "userApiKeys"},
+		{services.ProxyProtocolSettingKey, pick(req.ProxyProtocol, false), req.ProxyProtocol != nil, services.ProxyProtocolSettingKey, "proxyProtocol"},
 	}
 	for _, kv := range writes {
 		if !kv.send {

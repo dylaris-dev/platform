@@ -137,16 +137,24 @@ const (
 	republishSkipped
 )
 
-func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute) republishOutcome {
-	data, err := json.Marshal(map[string]interface{}{
-		"domain":      r.Domain,
-		"target_ip":   r.TargetHost,
-		"target_port": r.TargetPort,
-		"tunnel_id":   r.LinkToken,
-		"server_uuid": "",
-		"core_owned":  true,
-		"owner_id":    r.OwnerID,
+// coreOwnedRouteValue is the route:<domain> value for a route-only entry. The
+// create path and the republisher both write it, and the drift check compares
+// bytes, so there is exactly one place that builds it.
+func coreOwnedRouteValue(r store.CoreLinkRoute) ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"domain":         r.Domain,
+		"target_ip":      r.TargetHost,
+		"target_port":    r.TargetPort,
+		"tunnel_id":      r.LinkToken,
+		"server_uuid":    "",
+		"core_owned":     true,
+		"owner_id":       r.OwnerID,
+		"proxy_protocol": r.ProxyProtocol,
 	})
+}
+
+func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute) republishOutcome {
+	data, err := coreOwnedRouteValue(r)
 	if err != nil {
 		return republishSkipped
 	}
@@ -245,6 +253,8 @@ func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
 			TunnelID   string `json:"tunnel_id"`
 			CoreOwned  bool   `json:"core_owned"`
 			OwnerID    string `json:"owner_id"`
+			// Carried over so adopting a route never switches it off.
+			ProxyProtocol bool `json:"proxy_protocol"`
 		}
 		// Only OUR kind. A hub-managed route already has a durable row of its
 		// own in the hub's database, and copying it here would give one route
@@ -255,6 +265,7 @@ func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
 		if err := s.store.UpsertCoreLinkRoute(store.CoreLinkRoute{
 			Domain: domain, OwnerID: live.OwnerID, LinkToken: live.TunnelID,
 			TargetHost: live.TargetIP, TargetPort: live.TargetPort,
+			ProxyProtocol: live.ProxyProtocol,
 		}); err != nil {
 			logErrf("route-republisher", "adopt %s: %v", domain, err)
 			continue

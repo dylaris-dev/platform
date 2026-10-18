@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **519 routes** in 52 sections: 231 GET, 162 POST, 38 PUT, 35 PATCH, 54 DELETE.
+- **521 routes** in 52 sections: 231 GET, 162 POST, 38 PUT, 37 PATCH, 54 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **335** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **114** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **336** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -151,7 +151,7 @@ can still show what exists.
 - [/api/disk](#apidisk) (4)
 - [/api/external](#apiexternal) (10)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (19)
+- [/api/gateway](#apigateway) (20)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (76)
+- [/api/servers](#apiservers) (77)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -451,6 +451,7 @@ can still show what exists.
 | GET | `/api/gateway/link-routes` | session | _no capability_ | - | `GatewayHandler.ListLinkRoutes` | the caller's route-only entries. |
 | POST | `/api/gateway/link-routes` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
 | DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _no capability_ | - | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
+| PATCH | `/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.SetLinkRouteProxyProtocol` | switches real player IP forwarding on one route-only entry. |
 | GET | `/api/gateway/links` | session | `topology.read` | - | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
 | GET | `/api/gateway/logs` | session | `topology.read` | - | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
 | GET | `/api/gateway/route-options` | session | _no capability_ | - | `SettingsHandler.GetGatewayRouteOptions` | Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself. |
@@ -712,6 +713,7 @@ can still show what exists.
 | PUT | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.LinkServerToProxy` | Link a game server to a proxy server |
 | DELETE | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.UnlinkServerFromProxy` | Remove a server's proxy link |
 | GET | `/api/servers/{id:[0-9]+}/proxy-endpoint` | session | `network.read` | - | `ServerHandler.GetProxyEndpoint` | returns the private IP a server holds inside its proxy's overlay network. |
+| PATCH | `/api/servers/{id:[0-9]+}/proxy-protocol` | session | `network.write` | RequireGatewayEnabled | `GatewayHandler.SetServerProxyProtocol` | switches real player IP forwarding (a PROXY v2 header from the gateway) for one server. |
 | POST | `/api/servers/{id:[0-9]+}/rcon` | session | `rcon.exec` | - | `RconHandler.ExecForUser` | panel-side entry. |
 | GET | `/api/servers/{id:[0-9]+}/rcon/config` | session | `config.read` | - | `RconHandler.GetConfig` | returns enabled/port + whether a password is set. |
 | PUT | `/api/servers/{id:[0-9]+}/rcon/config` | session | `config.write` | - | `RconHandler.SetConfig` | enable/disable, set port + password. |

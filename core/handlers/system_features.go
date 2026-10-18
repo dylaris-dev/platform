@@ -41,6 +41,9 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			"byon": h.state.FeatureFlags.IsBYONEnabled(r.Context()),
 			// Resolved: unset follows byon. The panel ANDs it with gateway routing.
 			"routeOnly": h.state.FeatureFlags.IsRouteOnlyEnabled(r.Context()),
+			// Real player IP forwarding: whether the per-server and per-route
+			// switches may be shown and used.
+			"proxyProtocol": h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context()),
 			// Gates the builder's share-link create UI. Existing links keep
 			// serving while modpacks is on; this only reflects the create toggle.
 			"shareLinks": h.state.FeatureFlags.IsShareLinksEnabled(r.Context()),

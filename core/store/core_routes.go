@@ -16,7 +16,10 @@ type CoreLinkRoute struct {
 	LinkToken  string
 	TargetHost string
 	TargetPort int
-	CreatedAt  time.Time
+	// ProxyProtocol is the real-IP switch, published as "proxy_protocol" in
+	// the route:<domain> value the edge reads.
+	ProxyProtocol bool
+	CreatedAt     time.Time
 }
 
 // UpsertCoreLinkRoute records a route-only entry, or rewrites the one already
@@ -24,20 +27,21 @@ type CoreLinkRoute struct {
 // key in Redis: one address routes to one place.
 func (s *PostgresStore) UpsertCoreLinkRoute(r CoreLinkRoute) error {
 	_, err := s.db.Exec(`
-		INSERT INTO core_link_routes (domain, owner_id, link_token, target_host, target_port)
-		VALUES ($1,$2,$3,$4,$5)
+		INSERT INTO core_link_routes (domain, owner_id, link_token, target_host, target_port, proxy_protocol)
+		VALUES ($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (domain) DO UPDATE SET
 			owner_id = EXCLUDED.owner_id,
 			link_token = EXCLUDED.link_token,
 			target_host = EXCLUDED.target_host,
-			target_port = EXCLUDED.target_port`,
-		r.Domain, r.OwnerID, r.LinkToken, r.TargetHost, r.TargetPort)
+			target_port = EXCLUDED.target_port,
+			proxy_protocol = EXCLUDED.proxy_protocol`,
+		r.Domain, r.OwnerID, r.LinkToken, r.TargetHost, r.TargetPort, r.ProxyProtocol)
 	return err
 }
 
 func (s *PostgresStore) ListCoreLinkRoutes() ([]CoreLinkRoute, error) {
 	rows, err := s.db.Query(`
-		SELECT domain, owner_id, link_token, target_host, target_port, created_at
+		SELECT domain, owner_id, link_token, target_host, target_port, proxy_protocol, created_at
 		FROM core_link_routes ORDER BY domain`)
 	if err != nil {
 		return nil, err
@@ -46,7 +50,7 @@ func (s *PostgresStore) ListCoreLinkRoutes() ([]CoreLinkRoute, error) {
 	var out []CoreLinkRoute
 	for rows.Next() {
 		var r CoreLinkRoute
-		if err := rows.Scan(&r.Domain, &r.OwnerID, &r.LinkToken, &r.TargetHost, &r.TargetPort, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.Domain, &r.OwnerID, &r.LinkToken, &r.TargetHost, &r.TargetPort, &r.ProxyProtocol, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -171,6 +171,17 @@ func (f *FeatureFlags) IsAutoMoveEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_auto_move_enabled", false)
 }
 
+// ProxyProtocolSettingKey is the operator switch for real player IP
+// forwarding (PROXY v2 through the gateway).
+const ProxyProtocolSettingKey = "gateway.proxy_protocol_enabled"
+
+// IsProxyProtocolEnabled gates the per-server and per-route real-IP switches.
+// Default = false: the switches stay hidden and refused until every gateway
+// piece that carries the address has been deployed.
+func (f *FeatureFlags) IsProxyProtocolEnabled(ctx context.Context) bool {
+	return f.Get(ctx, ProxyProtocolSettingKey, false)
+}
+
 // IsBYONEnabled gates the bring-your-own-node multi-tenancy (per-user node
 // enrollment, node ownership scoping, plans/billing). Default = false: the
 // platform ships as today's single-operator panel and the operator opts in.

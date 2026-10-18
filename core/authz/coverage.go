@@ -205,10 +205,11 @@ var ExemptRoutes = map[string]bool{
 	"/api/library/download": true, // authed; platform-shared catalog read
 
 	// Gateway tenant self-service helpers: in-handler owner filter is the boundary.
-	"/api/gateway/check-domain":            true, // authed; owner-facing availability hint
-	"/api/gateway/route-options":           true, // authed; user-facing route form config
-	"/api/gateway/link-routes":             true, // authed; in-handler owner filter
-	"/api/gateway/link-routes/{domain:.+}": true, // authed; in-handler owner filter
+	"/api/gateway/check-domain":                              true, // authed; owner-facing availability hint
+	"/api/gateway/route-options":                             true, // authed; user-facing route form config
+	"/api/gateway/link-routes":                               true, // authed; in-handler owner filter
+	"/api/gateway/link-routes/{domain:.+}":                   true, // authed; in-handler owner filter
+	"/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol": true, // authed; in-handler owner filter, same as the delete
 
 	// Warp route-only link kits: tenant self-service, BYON-gated + owner-filtered in-handler.
 	"/api/warp/link-kits":               true, // authed; in-handler owner filter

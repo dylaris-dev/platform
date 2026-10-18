@@ -53,7 +53,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 

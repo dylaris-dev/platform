@@ -135,6 +135,12 @@ func (g *linkRouteFakeGateway) LinkToken(nodeID string) string {
 }
 func (g *linkRouteFakeGateway) DiscoveryProof(nodeID string) string   { return "proof-" + nodeID }
 func (g *linkRouteFakeGateway) SetNodeLinkEnabled(string, bool) error { return nil }
+func (g *linkRouteFakeGateway) SetServerProxyProtocol(string, bool) error {
+	return nil
+}
+func (g *linkRouteFakeGateway) SetCoreOwnedRouteProxyProtocol(string, bool) error {
+	return nil
+}
 
 func newLinkRouteRedis(t *testing.T) *redis.Client {
 	t.Helper()

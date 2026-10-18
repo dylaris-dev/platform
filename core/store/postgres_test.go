@@ -31,7 +31,7 @@ func TestGetServerByUUID_ScansNodeStatusAndLastSeen(t *testing.T) {
 		"build_number", "disk_limit", "server_type", "proxy_id", "node_address", "host_port",
 		"container_port", "cpu_pinning_mode", "cpuset", "node_status", "node_last_seen_at",
 		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb",
-		"memory_guard_action", "last_crash_reason", "last_crash_at",
+		"memory_guard_action", "last_crash_reason", "last_crash_at", "proxy_protocol",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		1, "uuid-a", "alpha", 7, "node-1", "owner-1", "owner-name", "itzg/minecraft-server",
@@ -40,7 +40,7 @@ func TestGetServerByUUID_ScansNodeStatusAndLastSeen(t *testing.T) {
 		"", int64(0), "game", nil, "10.0.0.5", 25565,
 		25565, "shared", "", "offline", now,
 		nil, nil, nil,
-		"off", nil, nil,
+		"off", nil, nil, false,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.uuid = $1")).
 		WithArgs("uuid-a").
@@ -82,7 +82,7 @@ func TestGetServerByUUID_NilLastSeenWhenNodeNeverReported(t *testing.T) {
 		"build_number", "disk_limit", "server_type", "proxy_id", "node_address", "host_port",
 		"container_port", "cpu_pinning_mode", "cpuset", "node_status", "node_last_seen_at",
 		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb",
-		"memory_guard_action", "last_crash_reason", "last_crash_at",
+		"memory_guard_action", "last_crash_reason", "last_crash_at", "proxy_protocol",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		1, "uuid-b", "bravo", 7, "node-1", "owner-1", "owner-name", "itzg/minecraft-server",
@@ -91,7 +91,7 @@ func TestGetServerByUUID_NilLastSeenWhenNodeNeverReported(t *testing.T) {
 		"", int64(0), "game", nil, "10.0.0.5", 25565,
 		25565, "shared", "", "offline", nil,
 		nil, nil, nil,
-		"off", nil, nil,
+		"off", nil, nil, false,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.uuid = $1")).
 		WithArgs("uuid-b").
@@ -131,7 +131,7 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		"node_last_seen_at", "node_owner_id", "node_tags",
 		"cpu_pinning_mode", "cpuset", "auto_move",
 		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb",
-		"memory_guard_action", "last_crash_reason", "last_crash_at", "role", "permissions",
+		"memory_guard_action", "last_crash_reason", "last_crash_at", "proxy_protocol", "role", "permissions",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		5, "uuid-c", "charlie", "node-1", "owner-name", 25565, "online", "running",
@@ -142,7 +142,7 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 		now, nil, "external,eu",
 		"manual", "2-3", true,
 		nil, nil, nil,
-		"restart", "oom_killed", now, "owner", nil,
+		"restart", "oom_killed", now, true, "owner", nil,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.owner_id = $1")).
 		WithArgs(owner).
@@ -164,6 +164,9 @@ func TestListServersForUser_NonAdminScansNodeStatusBeforeRoleAndPermissions(t *t
 	// Proves the insertion did not shift role/permissions out of position:
 	// if NodeStatus/NodeLastSeenAt were appended at the end instead of right
 	// after Region, this would scan "owner" or NULL into the wrong field.
+	if !got[0].ProxyProtocol {
+		t.Fatal("ProxyProtocol must scan from its column, right before role/permissions")
+	}
 	if got[0].Role != "owner" {
 		t.Fatalf("Role = %q, want owner (role/permissions must still scan correctly after the NodeStatus/NodeLastSeenAt insertion)", got[0].Role)
 	}

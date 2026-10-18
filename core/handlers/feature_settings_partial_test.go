@@ -123,10 +123,24 @@ func TestFeaturesGetStatesEveryFlag(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"tickets", "modpacks", "library", "modpackAuthoring", "autoMove", "byon", "userApiKeys", "userApiKeyAllowedCaps"} {
+	for _, field := range []string{"tickets", "modpacks", "library", "modpackAuthoring", "autoMove", "byon", "userApiKeys", "userApiKeyAllowedCaps", "proxyProtocol"} {
 		raw, ok := resp.Features[field]
 		if !ok || string(raw) == "null" {
 			t.Errorf("GET omitted %q; the panel would render it as off and save it as off", field)
 		}
+	}
+}
+
+// The real-IP switch is saved through the same bundle, under the key the
+// per-server endpoints read, and is left alone by a save that does not name it.
+func TestProxyProtocolFeatureIsSavedUnderItsKey(t *testing.T) {
+	h, st := newFeatureSettingsFixture(t, map[string]string{})
+	putFeatures(t, h, `{"tickets":false}`)
+	if _, ok := st.kv["gateway.proxy_protocol_enabled"]; ok {
+		t.Fatal("a save that never mentioned proxyProtocol wrote it")
+	}
+	putFeatures(t, h, `{"proxyProtocol":true}`)
+	if st.kv["gateway.proxy_protocol_enabled"] != "true" {
+		t.Fatalf("gateway.proxy_protocol_enabled = %q, want true", st.kv["gateway.proxy_protocol_enabled"])
 	}
 }

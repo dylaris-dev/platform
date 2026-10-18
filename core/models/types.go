@@ -499,6 +499,10 @@ type Server struct {
 	ProxyID          *int   `json:"proxyId"`
 	AutoMove         bool   `json:"autoMove"`
 	Region           string `json:"region"`
+	// ProxyProtocol asks the gateway to send this server a PROXY v2 header
+	// carrying the real player address. Off by default: a backend not
+	// configured to expect the header refuses every connection that has one.
+	ProxyProtocol bool `json:"proxyProtocol"`
 	// MemoryGuardAction is what Core does when the node reports the container
 	// held near its memory limit (see memory_guard.go). LastCrash* is the last
 	// OOM kill the node reported; nil when there was none.
