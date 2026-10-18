@@ -196,9 +196,9 @@ export function getModrinthVersionsByIds(ids: string[]): Promise<ModrinthVersion
     return ids.length ? bulkGet<ModrinthVersion>('/modrinth/versions', ids) : Promise.resolve([]);
 }
 
-export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title'>;
+export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title' | 'client_side'>;
 
-/** Project names by id (Core slims these to id, slug, title, icon, type). */
+/** Project names by id (Core slims these to id, slug, title, icon, type, client_side). */
 export function getModrinthProjectsByIds(ids: string[]): Promise<ModrinthProjectName[]> {
     return ids.length ? bulkGet<ModrinthProjectName>('/modrinth/projects', ids) : Promise.resolve([]);
 }
@@ -349,13 +349,25 @@ export interface ServerModpackContent {
 // Fail-open: returns [] on any error. The cross-check is advisory, so the tab
 // must keep working when the snapshot is unavailable.
 export async function getServerModpackContents(serverId: number): Promise<ServerModpackContent[]> {
+    return (await getServerModpackInfo(serverId)).contents;
+}
+
+/**
+ * The snapshot plus whether the server runs a modpack at all. A Technic or
+ * uploaded pack can be a modpack with no Modrinth-known members. A Core that
+ * predates isModpack answers without it, and then the contents decide.
+ * Fail-open, like the snapshot itself.
+ */
+export async function getServerModpackInfo(serverId: number): Promise<{ contents: ServerModpackContent[]; isModpack: boolean }> {
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/modpack-contents`, { headers: getAuthHeader() });
         const data = await handleResponse(res);
-        return (data as any).contents || [];
+        const contents: ServerModpackContent[] = (data as any).contents || [];
+        const isModpack = typeof (data as any).isModpack === 'boolean' ? (data as any).isModpack : contents.length > 0;
+        return { contents, isModpack };
     } catch (err) {
         handleError(err);
-        return [];
+        return { contents: [], isModpack: false };
     }
 }
 

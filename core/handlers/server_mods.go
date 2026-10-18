@@ -25,6 +25,9 @@ import (
 
 type ServerModsHandler struct {
 	state *AppState
+	// scanDeps replaces the node and Modrinth round trips of the modpack scan
+	// in tests; nil means the real ones.
+	scanDeps func(srv *models.Server) modpackScanDeps
 }
 
 func NewServerModsHandler(state *AppState) *ServerModsHandler {
@@ -130,6 +133,10 @@ func (h *ServerModsHandler) fillProjectMeta(ctx context.Context, mods []models.S
 // Modrinth-identified members of the pack this server was installed from. Empty
 // when the server is not a modpack server. Same mods.read gate as the mods
 // endpoints. Backs the panel's advisory cross-check + modpack banner.
+//
+// isModpack is separate from the contents because a pack can have members
+// Modrinth does not know (a Technic pack of private builds), and the panel
+// should still warn before one of them is removed.
 func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
@@ -137,14 +144,27 @@ func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Reque
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	// The scan is advisory: a failure to read its state just means no scan.
+	scan, jars, _, scanErr := h.state.Store.GetModpackScan(serverID, srv.ActiveSubServer)
+	if scanErr == nil && scan == modpackScanPending && h.maybeScanModpack(srv) {
+		_, jars, _, scanErr = h.state.Store.GetModpackScan(serverID, srv.ActiveSubServer)
+	}
+	if scanErr != nil {
+		jars = 0
+	}
 	contents, err := h.state.Store.ListServerModpackContents(serverID, srv.ActiveSubServer)
 	if err != nil {
 		sendJSONError(w, "Failed to list modpack contents", http.StatusInternalServerError)
 		return
 	}
+	installerType := ""
+	if rec, err := h.state.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil {
+		installerType = rec.InstallerType
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"contents": contents,
+		"success":   true,
+		"contents":  contents,
+		"isModpack": isModpackServer(len(contents), installerType, jars),
 	})
 }
 

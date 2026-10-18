@@ -785,7 +785,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// failure. Run in the background so the external-modpack case (which
 		// fetches the .mrpack over the network) cannot delay this response; the
 		// install command was already dispatched above.
-		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL)
+		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL, false)
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
@@ -987,7 +987,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		// correct for a same-pack reinstall); this call therefore refreshes the
 		// external-modpack URL case and clears when switching to a non-modpack
 		// installer. The panel reinstalls a pack via /setup, not this route.
-		go h.snapshotModpackContents(serverID, subName, installerType, nil, "")
+		go h.snapshotModpackContents(serverID, subName, installerType, nil, "", true)
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)

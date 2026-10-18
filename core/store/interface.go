@@ -851,6 +851,15 @@ type Store interface {
 	// cross-check (client-side). Cleared + rewritten on each (re)install.
 	ReplaceServerModpackContents(serverID int, subServer string, rows []models.ServerModpackContent) error
 	ListServerModpackContents(serverID int, subServer string) ([]models.ServerModpackContent, error)
+	// Scan state for packs that carry no manifest (Technic, uploads): their
+	// members are found by hashing the jars on disk. scan is empty (none owed),
+	// 'pending' or 'done'; jars is how many unmanaged jars the scan found.
+	// Get answers ("", 0) when the sub-server has no install record. Set is a
+	// no-op without one. Complete writes the rows and 'done' only while the
+	// scan is still 'pending', so a reinstall racing the scan wins.
+	GetModpackScan(serverID int, subServer string) (scan string, jars, gen int, err error)
+	SetModpackScan(serverID int, subServer, scan string, jars int) error
+	CompleteModpackScan(serverID int, subServer string, gen int, rows []models.ServerModpackContent, jars int) (bool, error)
 
 	// Modrinth PATs. One row per user; SetModrinthPAT upserts and
 	// stamps last_validated_at on success. ClearModrinthPAT removes the

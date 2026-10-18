@@ -732,6 +732,12 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 				serverID, req.TargetName, err)
 		}
 	}
+	if scan, jars, _, err := h.state.Store.GetModpackScan(serverID, srv.ActiveSubServer); err == nil && scan != "" {
+		if err := h.state.Store.SetModpackScan(serverID, req.TargetName, scan, jars); err != nil {
+			log.Printf("CopySubServer: could not copy the modpack scan state for server %d/%s: %v",
+				serverID, req.TargetName, err)
+		}
+	}
 
 	// And the modpack snapshot, for the same reason again: it backs the Content
 	// tab's cross-check, so a copy without it shows "no modpack members" next to

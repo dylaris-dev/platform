@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17.5
+
+### Features
+- The Content tab now treats Technic and uploaded server packs as modpacks too: it shows the modpack
+  banner and the same warnings as for Modrinth packs. `core` `panel`
+- Removing a mod that ships with the modpack now asks first. `panel`
+- Updating or rolling back a mod that players need on their own client now says so before it runs. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.17.4
 
 ### Features

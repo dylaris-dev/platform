@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { listInstalledMods, getServerModpackContents } from './modrinth';
+import { listInstalledMods, getServerModpackContents, getServerModpackInfo } from './modrinth';
 import { getUnmanagedMods } from './modcompat';
 
 afterEach(() => {
@@ -60,5 +60,22 @@ describe('getUnmanagedMods', () => {
     it('a server with nothing unmanaged is an empty list', async () => {
         respond(200, { success: true, files: [] });
         await expect(getUnmanagedMods(1)).resolves.toEqual([]);
+    });
+});
+
+describe('getServerModpackInfo', () => {
+    it('reads isModpack from Core', async () => {
+        respond(200, { success: true, contents: [], isModpack: true });
+        await expect(getServerModpackInfo(1)).resolves.toEqual({ contents: [], isModpack: true });
+    });
+
+    it('falls back to the contents for a Core that does not send isModpack', async () => {
+        respond(200, { success: true, contents: [{ modrinthProjectId: 'P1', fileName: 'a.jar' }] });
+        await expect(getServerModpackInfo(1)).resolves.toMatchObject({ isModpack: true });
+    });
+
+    it('fails open to not a modpack', async () => {
+        respond(500, { success: false, message: 'no snapshot' });
+        await expect(getServerModpackInfo(1)).resolves.toEqual({ contents: [], isModpack: false });
     });
 });

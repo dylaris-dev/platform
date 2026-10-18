@@ -41,7 +41,11 @@ func (f *installFakeStore) UpsertSubServerInstall(r models.SubServerInstall) err
 func (f *installFakeStore) ReplaceServerModpackContents(int, string, []models.ServerModpackContent) error {
 	return nil
 }
-func (f *installFakeStore) ListDisabledLibraryPaths() ([]string, error) { return f.disabled, nil }
+func (f *installFakeStore) GetModpackScan(int, string) (string, int, int, error) {
+	return "", 0, 0, nil
+}
+func (f *installFakeStore) SetModpackScan(int, string, string, int) error { return nil }
+func (f *installFakeStore) ListDisabledLibraryPaths() ([]string, error)   { return f.disabled, nil }
 
 const testCoreURL = "https://panel.example.com"
 

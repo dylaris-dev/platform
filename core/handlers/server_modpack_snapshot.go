@@ -26,9 +26,13 @@ const mrpackSnapshotMaxBytes = 200 << 20
 //   - "modpack": fetch mrpackURL, ParseMrpackContents.
 //   - anything else (vanilla/loader/upload): clear any stale snapshot.
 //
+// It also schedules the on-disk scan that stands in for a manifest on Technic
+// and upload installs (server_modpack_derive.go).
+//
 // Always non-fatal: any failure is logged and swallowed so a snapshot problem
 // can never block a server install/reinstall (spec 5.3, 7).
-func (h *ServerHandler) snapshotModpackContents(serverID int, subServer, originalInstallerType string, packBuild *models.PackBuild, mrpackURL string) {
+func (h *ServerHandler) snapshotModpackContents(serverID int, subServer, originalInstallerType string, packBuild *models.PackBuild, mrpackURL string, reinstall bool) {
+	h.scheduleModpackScan(serverID, subServer, originalInstallerType, reinstall)
 	switch originalInstallerType {
 	case "pack":
 		if packBuild == nil {

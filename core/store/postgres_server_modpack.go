@@ -1,6 +1,10 @@
 package store
 
-import "dylaris-core/models"
+import (
+	"database/sql"
+
+	"dylaris-core/models"
+)
 
 // server_modpack_contents queries. The per-(server, sub-server) snapshot of a
 // modpack's Modrinth-identified members, backing the advisory Content-tab
@@ -16,7 +20,13 @@ func (s *PostgresStore) ReplaceServerModpackContents(serverID int, subServer str
 		return err
 	}
 	defer tx.Rollback()
+	if err := replaceModpackContentsTx(tx, serverID, subServer, rows); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
+func replaceModpackContentsTx(tx *sql.Tx, serverID int, subServer string, rows []models.ServerModpackContent) error {
 	if _, err := tx.Exec(`DELETE FROM server_modpack_contents
 		WHERE server_id=$1 AND sub_server_name=$2`, serverID, subServer); err != nil {
 		return err
@@ -37,7 +47,52 @@ func (s *PostgresStore) ReplaceServerModpackContents(serverID int, subServer str
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+func (s *PostgresStore) GetModpackScan(serverID int, subServer string) (string, int, int, error) {
+	var scan string
+	var jars, gen int
+	err := s.db.QueryRow(`SELECT modpack_scan, modpack_jars, modpack_scan_gen FROM sub_server_installs
+		WHERE server_id=$1 AND sub_server_name=$2`, serverID, subServer).Scan(&scan, &jars, &gen)
+	if err == sql.ErrNoRows {
+		return "", 0, 0, nil
+	}
+	return scan, jars, gen, err
+}
+
+func (s *PostgresStore) SetModpackScan(serverID int, subServer, scan string, jars int) error {
+	// Owing a scan starts a new generation, so a scan of the previous one
+	// cannot complete over it.
+	bump := 0
+	if scan == "pending" {
+		bump = 1
+	}
+	_, err := s.db.Exec(`UPDATE sub_server_installs SET modpack_scan=$3, modpack_jars=$4,
+		modpack_scan_gen = modpack_scan_gen + $5
+		WHERE server_id=$1 AND sub_server_name=$2`, serverID, subServer, scan, jars, bump)
+	return err
+}
+
+func (s *PostgresStore) CompleteModpackScan(serverID int, subServer string, gen int, rows []models.ServerModpackContent, jars int) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE sub_server_installs SET modpack_scan='done', modpack_jars=$3
+		WHERE server_id=$1 AND sub_server_name=$2 AND modpack_scan='pending' AND modpack_scan_gen=$4`,
+		serverID, subServer, jars, gen)
+	if err != nil {
+		return false, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return false, err
+	}
+	if err := replaceModpackContentsTx(tx, serverID, subServer, rows); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func (s *PostgresStore) ListServerModpackContents(serverID int, subServer string) ([]models.ServerModpackContent, error) {

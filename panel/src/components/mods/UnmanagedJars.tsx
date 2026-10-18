@@ -35,12 +35,15 @@ export function UnmanagedJars({
     serverId,
     serverUuid,
     activeSubServer,
+    isModpack = false,
     onChanged,
     showToast,
 }: {
     serverId: number;
     serverUuid?: string;
     activeSubServer?: string;
+    /** Warn that a jar in mods/ is probably the pack's own. */
+    isModpack?: boolean;
     onChanged: () => void;
     showToast: (msg: string, ok?: boolean) => void;
 }) {
@@ -105,7 +108,9 @@ export function UnmanagedJars({
         const key = `${f.directory}/${f.name}`;
         const ok = await confirmDialog({
             title: 'Delete this file?',
-            message: `${key} will be removed from the server. It takes effect when the server next starts - a running server keeps the copy it already loaded.`,
+            message: isModpack && f.directory === 'mods'
+                ? `This jar most likely ships with the modpack. Removing it can stop the server from starting, and players on the pack may not be able to connect. ${key} is removed when the server next starts.`
+                : `${key} will be removed from the server. It takes effect when the server next starts - a running server keeps the copy it already loaded.`,
             confirmLabel: 'Delete',
             destructive: true,
         });

@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.17.5
+
+### Features
+- The Content tab now treats Technic and uploaded server packs as modpacks too, and asks before you
+  remove a mod that ships with the pack.
+- Updating or rolling back a mod that players need on their own client now says so before it runs.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.17.4
 
 ### Features

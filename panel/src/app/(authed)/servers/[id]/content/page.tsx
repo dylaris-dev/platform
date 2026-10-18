@@ -11,12 +11,14 @@ import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
     listInstalledMods, uninstallMod, pickPrimaryFile,
-    getServerModpackContents, getModHistory, getModrinthVersion,
+    getServerModpackInfo, getModHistory, getModrinthVersion,
     getModrinthVersionsByIds, getModrinthProjectsByIds, getLatestVersionsFromHashes,
     type ModHistoryEntry,
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
-    type ModrinthVersion, type ModrinthCategory, type InstalledMod,
+    type ModrinthVersion, type ModrinthCategory, type InstalledMod, type ServerModpackContent,
 } from '@/lib/api/modrinth';
+import { isPackMember } from '@/lib/modpackMembership';
+import { clientSideNotice } from '@/lib/modpackWarnings';
 import {
     pickNewestMatchingVersion, compareInstalledVsLatest, dependencyProblems, unresolvedDependencyVersionIds,
     type ModStatus,
@@ -116,6 +118,10 @@ export default function ServerContentPage() {
     // Modpack cross-check: projectId -> the pack's version of that mod. Non-empty
     // only for a server installed from a modpack; drives the banner + warnings.
     const [packByProject, setPackByProject] = useState<Map<string, { versionId: string; versionNumber: string }>>(new Map());
+    const [packContents, setPackContents] = useState<ServerModpackContent[]>([]);
+    // Wider than packByProject: a Technic or uploaded pack is a modpack even
+    // when Modrinth knows none of its jars.
+    const [isModpack, setIsModpack] = useState(false);
 
     const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
     const [projectDetail, setProjectDetail] = useState<ModrinthProject | null>(null);
@@ -316,13 +322,15 @@ export default function ServerContentPage() {
         if (!serverId) return;
         let cancelled = false;
         (async () => {
-            const contents = await getServerModpackContents(serverId);
+            const { contents, isModpack: modpack } = await getServerModpackInfo(serverId);
             if (cancelled) return;
             const next = new Map<string, { versionId: string; versionNumber: string }>();
             for (const c of contents) {
                 next.set(c.modrinthProjectId, { versionId: c.modrinthVersionId, versionNumber: c.modrinthVersionNumber });
             }
             setPackByProject(next);
+            setPackContents(contents);
+            setIsModpack(modpack);
         })();
         return () => { cancelled = true; };
     }, [serverId]);
@@ -441,14 +449,25 @@ export default function ServerContentPage() {
                 confirmLabel: 'Install anyway',
             });
         }
-        if (packByProject.size > 0 && project.client_side === 'required') {
+        if (isModpack && project.client_side === 'required') {
             return confirmDialog({
                 title: `"${project.title}" is client-side too`,
-                message: `It must run on each player's client as well, or they will not be able to connect, and it is not part of the distributed modpack.`,
+                message: `Players need ${version.version_number} on their own client as well, or they cannot connect. The distributed modpack does not give it to them.`,
                 confirmLabel: 'Install anyway',
             });
         }
         return true;
+    };
+
+    // The client-side line for an update or rollback on a modpack. Advisory, so
+    // a failed lookup shows no line rather than blocking the action.
+    const clientSideWarning = async (projectIds: string[]): Promise<string | null> => {
+        if (!isModpack || projectIds.length === 0) return null;
+        try {
+            return clientSideNotice(await getModrinthProjectsByIds(projectIds), true);
+        } catch {
+            return null;
+        }
     };
 
     // A single update is the reader's explicit choice, so a dependency problem
@@ -515,6 +534,12 @@ export default function ServerContentPage() {
     // version, and the build being returned to need not match today's filter.
     const handleRollback = async (m: InstalledMod, entry: ModHistoryEntry) => {
         setRollbackFor(null);
+        const notice = await clientSideWarning([m.modrinthProjectId]);
+        if (notice && !await confirmDialog({
+            title: `Roll back ${m.title || m.fileName}?`,
+            message: notice,
+            confirmLabel: 'Roll back',
+        })) return;
         await withBusy(m.modrinthProjectId, async () => {
             let version;
             try {
@@ -585,13 +610,15 @@ export default function ServerContentPage() {
         }
         const shown = skipped.slice(0, 8).map(s => `${s.title} (${s.reason})`).join('; ');
         const more = skipped.length > 8 ? `; and ${skipped.length - 8} more, listed on this tab` : '';
+        const notice = await clientSideWarning(planned.map(p => p.mod.modrinthProjectId));
         const ok = await confirmDialog({
             title: `Update ${planned.length} ${planned.length === 1 ? 'mod' : 'mods'}?`,
             message: `${planned.length} ${planned.length === 1 ? 'mod moves' : 'mods move'} to a newer build for ${pinnedLoader} ${pinnedMcVersion}, never to a less stable channel.`
                 + (skipped.length ? ` ${skipped.length} skipped: ${shown}${more}.` : ' Nothing skipped.')
-                + (tally.unknown ? ` ${tally.unknown} could not be checked.` : ''),
+                + (tally.unknown ? ` ${tally.unknown} could not be checked.` : '')
+                + (notice ? ` ${notice}` : ''),
             confirmLabel: `Update ${planned.length}`,
-            destructive: false,
+            destructive: !!notice,
         });
         if (!ok) return;
 
@@ -626,6 +653,12 @@ export default function ServerContentPage() {
     const handleRollbackAll = async () => {
         const targets = updatableMods(installed).filter(m => historyFor(m.modrinthProjectId).length > 0);
         if (targets.length === 0) { showToast('No earlier builds to go back to', false); return; }
+        const notice = await clientSideWarning(targets.map(m => m.modrinthProjectId));
+        if (notice && !await confirmDialog({
+            title: `Roll back ${targets.length} ${targets.length === 1 ? 'mod' : 'mods'}?`,
+            message: `Each goes back to the build it had before its last update. ${notice}`,
+            confirmLabel: 'Roll back',
+        })) return;
         bulkCancelled.current = false;
         const tally = emptyTally();
 
@@ -657,6 +690,12 @@ export default function ServerContentPage() {
     };
 
     const handleUninstall = async (m: InstalledMod) => {
+        if (isPackMember(m, packContents) && !await confirmDialog({
+            title: `Remove ${m.title || m.fileName}?`,
+            message: 'This mod ships with the modpack. Removing it can stop the server from starting, and players on the pack may not be able to connect.',
+            confirmLabel: 'Remove',
+            destructive: true,
+        })) return;
         const res = await uninstallMod(serverId, m.id);
         if (res.success) {
             showToast(`Removed ${m.title || m.fileName}`, true);
@@ -856,7 +895,7 @@ export default function ServerContentPage() {
                 </div>
             )}
 
-            {packByProject.size > 0 && (
+            {isModpack && (
                 <div className="shrink-0 flex items-start gap-2 px-3 py-2 rounded-md border border-(--base-04) bg-(--base-03) text-xs text-(--base-07)">
                     <Package size={13} className="mt-0.5 shrink-0 text-(--accent-light)" />
                     <span>
@@ -1197,6 +1236,7 @@ export default function ServerContentPage() {
                             serverId={serverId}
                             serverUuid={server.uuid}
                             activeSubServer={server.activeSubServer}
+                            isModpack={isModpack}
                             onChanged={refreshInstalled}
                             showToast={showToast}
                         />

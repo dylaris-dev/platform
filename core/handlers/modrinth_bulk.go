@@ -172,7 +172,9 @@ func stripVersionMapChangelogs(body []byte) []byte {
 	return out
 }
 
-// slimProjects keeps the naming fields of each project in a list.
+// slimProjects keeps the naming fields of each project in a list, plus
+// client_side: the Content tab warns before an update of a mod players need on
+// their own client too.
 func slimProjects(body []byte) []byte {
 	var list []map[string]json.RawMessage
 	if err := json.Unmarshal(bytes.TrimSpace(body), &list); err != nil {
@@ -181,7 +183,7 @@ func slimProjects(body []byte) []byte {
 	out := make([]map[string]json.RawMessage, 0, len(list))
 	for _, p := range list {
 		slim := map[string]json.RawMessage{}
-		for _, k := range []string{"id", "slug", "title", "icon_url", "project_type"} {
+		for _, k := range []string{"id", "slug", "title", "icon_url", "project_type", "client_side"} {
 			if v, ok := p[k]; ok {
 				slim[k] = v
 			}
