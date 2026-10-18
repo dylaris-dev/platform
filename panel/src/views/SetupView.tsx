@@ -1205,6 +1205,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
                 <RoutesModal
                     serverId={server.id}
                     serverName={server.name}
+                    server={server}
                     onClose={() => { setShowRoutesModal(false); loadRoutes(); }}
                     onRoutesChanged={(rs) => {
                         setExistingRoutes(rs);

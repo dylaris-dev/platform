@@ -26,6 +26,8 @@ const MUTATING = [
     'updateServerResources',
     'setServerAutoMove',
     'sendConsoleCommand',
+    'setServerProxyProtocol',
+    'setLinkRouteProxyProtocol',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

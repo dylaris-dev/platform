@@ -3,16 +3,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CopyText from '@/components/ui/CopyText';
 import {
-    getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability,
-    GatewayRoute, CreateRouteRequest,
+    getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability, setServerProxyProtocol,
+    GatewayRoute, CreateRouteRequest, Server,
 } from '@/lib/api';
 import { Globe, Plus, Trash2, X, Check, AlertTriangle } from 'lucide-react';
 import RouteDomainPicker from '@/components/RouteDomainPicker';
 import ModalPanel from '@/components/ui/ModalPanel';
+import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
+import { useAppData } from '@/lib/AppDataContext';
 
 interface RoutesModalProps {
     serverId: number;
     serverName: string;
+    /** For the real-player-IP switch: its current value, software and node class. */
+    server?: Pick<Server, 'installerType' | 'nodeKind' | 'proxyProtocol'>;
     onClose: () => void;
     onRoutesChanged?: (routes: GatewayRoute[]) => void;
 }
@@ -24,7 +28,12 @@ type AvailabilityState =
     | { status: 'taken'; domain: string }
     | { status: 'invalid'; reason: string };
 
-export default function RoutesModal({ serverId, serverName, onClose, onRoutesChanged }: RoutesModalProps) {
+export default function RoutesModal({ serverId, serverName, server, onClose, onRoutesChanged }: RoutesModalProps) {
+    const { featureFlags, refreshServers } = useAppData();
+    const [proxyOn, setProxyOn] = useState(!!server?.proxyProtocol);
+    // Hidden until the operator opens the feature, except while it is on: an
+    // owner must always be able to turn their own forwarding off.
+    const showProxySwitch = !!featureFlags.proxyProtocol || proxyOn;
     const [routes, setRoutes] = useState<GatewayRoute[]>([]);
     const [routesLoading, setRoutesLoading] = useState(false);
     const [newRoute, setNewRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
@@ -180,6 +189,18 @@ export default function RoutesModal({ serverId, serverName, onClose, onRoutesCha
 
                 <div className="modal-body flex-1 overflow-y-auto space-y-4">
                     <p className="text-sm text-(--base-07)">The addresses players use to join this server. Each one reaches it through the gateway.</p>
+
+                    {showProxySwitch && (
+                        <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5">
+                            <ProxyProtocolSwitch
+                                enabled={proxyOn}
+                                software={server?.installerType}
+                                viaLink={server?.nodeKind === 'byon' || server?.nodeKind === 'external'}
+                                save={next => setServerProxyProtocol(serverId, next)}
+                                onSaved={next => { setProxyOn(next); void refreshServers(); }}
+                            />
+                        </div>
+                    )}
 
                     {routesLoading ? (
                         <p className="text-sm text-(--base-07)">Loading routes…</p>

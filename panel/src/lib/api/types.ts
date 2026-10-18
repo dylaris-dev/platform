@@ -185,6 +185,8 @@ export interface Server {
     nodeKind?: 'platform' | 'external' | 'byon';
     serverType?: 'game' | 'proxy';
     proxyId?: number | null;
+    // Real player IP forwarding (PROXY v2 through the gateway) for this server.
+    proxyProtocol?: boolean;
     createdAt?: string;
     role?: 'owner' | 'invited' | 'admin' | 'inherited' | 'demo';
     permissions?: TabPermissions;
@@ -860,6 +862,7 @@ export interface GatewayRoute {
     owner_name?: string;
     server_name?: string;
     link_name?: string;
+    proxy_protocol?: boolean;
 }
 
 export interface GatewayLog {
@@ -1250,6 +1253,10 @@ export const createServerRoute = (serverId: number, data: CreateRouteRequest) =>
 export const deleteServerRoute = (serverId: number, domain: string) =>
     fetchAPI(`/servers/${serverId}/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 export const getGatewayRouteOptions = (): Promise<GatewayRouteOptions> => fetchAPI('/gateway/route-options');
+// Real player IP forwarding for every route of one server. 409 while the
+// platform setting is off (turning it off is always accepted).
+export const setServerProxyProtocol = (serverId: number, enabled: boolean): Promise<{ success?: boolean; proxyProtocol?: boolean; message?: string; error?: string; code?: string }> =>
+    fetchAPI(`/servers/${serverId}/proxy-protocol`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
 // Route-only ("via Link") routes: a protected address pointed at a server the
 // user runs on their OWN machine, reached through their own outbound Link tunnel
@@ -1267,6 +1274,7 @@ export interface LinkRoute {
     link_id?: string;
     core_owned?: boolean;
     owner_id?: string;
+    proxy_protocol?: boolean;
 }
 export interface CreateLinkRouteRequest extends CreateRouteRequest {
     linkId: string;    // the Link kit's id (warp key node_id)
@@ -1277,6 +1285,8 @@ export const createLinkRoute = (data: CreateLinkRouteRequest) =>
     fetchAPI('/gateway/link-routes', { method: 'POST', body: JSON.stringify(data) });
 export const deleteLinkRoute = (domain: string) =>
     fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+export const setLinkRouteProxyProtocol = (domain: string, enabled: boolean): Promise<{ success?: boolean; proxyProtocol?: boolean; message?: string; error?: string; code?: string }> =>
+    fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/proxy-protocol`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
 // Link kits: a key + auto link identity bound to the account. The customer runs
 // one container, the link, with the key to expose a LOCAL server through the

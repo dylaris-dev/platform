@@ -20,7 +20,7 @@ import { AlertTriangle } from 'lucide-react';
  */
 export interface ConfirmOptions {
     title: string;
-    /** Body text. A plain string: every call site is one sentence. */
+    /** Body text. A plain string; a blank line in it starts a new paragraph. */
     message: string;
     /** Defaults to "Delete", which most callers are. Set it when they are not. */
     confirmLabel?: string;
@@ -110,7 +110,8 @@ export function ConfirmDialogRoot() {
                     </h3>
                 </div>
                 <div className="modal-body">
-                    <p className="text-sm text-(--base-07)">{pending.message}</p>
+                    {/* pre-line: a message may carry its steps as separate paragraphs. */}
+                    <p className="text-sm text-(--base-07) whitespace-pre-line">{pending.message}</p>
                 </div>
                 <div className="modal-footer">
                     <button onClick={() => close(false)} className="btn btn-secondary">

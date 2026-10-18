@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.19
+
+### Features
+- Servers behind the gateway can receive the real player IP (PROXY protocol), opt-in per server and per
+  route-only route. Off until you enable it under Features and the gateway's splice is updated. `core` `panel` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.17.5
 
 ### Features

@@ -5,7 +5,7 @@ import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, Pencil, X, RefreshCw
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 import {
     CreateRouteRequest, LinkRoute, LinkKit, MintedLinkKit,
-    getLinkRoutes, createLinkRoute, deleteLinkRoute,
+    getLinkRoutes, createLinkRoute, deleteLinkRoute, setLinkRouteProxyProtocol,
     listLinkKits, mintLinkKit, revokeLinkKit, rollLinkKit,
 } from '@/lib/api';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -16,6 +16,8 @@ import { allowedTargets } from '@/lib/warpDeploy';
 import { linkState } from '@/lib/linkState';
 import LinkBadge from '@/components/infra/LinkBadge';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
+import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
+import { useAppData } from '@/lib/AppDataContext';
 
 // Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
 // the ADMIN one (fleet routes across edges) and the two are easy to import by
@@ -55,6 +57,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     const [limit, setLimit] = useState<number | null | undefined>(undefined);
     const [routes, setRoutes] = useState<LinkRoute[]>([]);
     const [loading, setLoading] = useState(true);
+    const { featureFlags } = useAppData();
 
     // Mint-link flow
     const [linkName, setLinkName] = useState('');
@@ -492,6 +495,16 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                             <div className="min-w-0">
                                 <div className="font-mono text-sm text-(--base-09) truncate">{rt.domain}</div>
                                 <div className="text-xs text-(--base-06) font-mono">→ {rt.target_ip}:{rt.target_port}</div>
+                                {/* Shown while on even with the feature closed, so it can always be turned off. */}
+                                {(featureFlags.proxyProtocol || rt.proxy_protocol) && (
+                                    <ProxyProtocolSwitch
+                                        compact
+                                        enabled={!!rt.proxy_protocol}
+                                        viaLink
+                                        save={next => setLinkRouteProxyProtocol(rt.domain, next)}
+                                        onSaved={next => setRoutes(prev => prev.map(r => r.domain === rt.domain ? { ...r, proxy_protocol: next } : r))}
+                                    />
+                                )}
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
                                 {editing === rt.domain ? (

@@ -227,7 +227,7 @@ export default function FeaturesTab() {
     // inline so a new flag has exactly one place to be added and cannot end up
     // in no tab at all - which would make it unsavable while looking fine.
     const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library'] as const;
-    const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly'] as const;
+    const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
 
     // One registration covering all three: the unsaved-changes guard asks "is
@@ -470,11 +470,18 @@ export default function FeaturesTab() {
                         disabled={gatewayOff}
                         onChange={v => editPlatformFlag('routeOnly', v)}
                     />
+                    <SwitchRow
+                        label="Real player IP"
+                        description="Lets server owners pass the real player IP to their server. Needs the updated splice; see the rollout runbook."
+                        checked={!!platformFlags.proxyProtocol}
+                        disabled={gatewayOff}
+                        onChange={v => editPlatformFlag('proxyProtocol', v)}
+                    />
                     {gatewayOff && (
                         <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
                             <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                             <span>
-                                Both require gateway routing. Switch game traffic to Gateway or Both
+                                These require gateway routing. Switch game traffic to Gateway or Both
                                 first: a tenant node forces gateway routing on its own side, so it has
                                 nothing to join while game traffic is on IP:Port.
                             </span>

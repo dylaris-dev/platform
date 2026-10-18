@@ -1555,6 +1555,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                 <RoutesModal
                     serverId={selectedServer.id}
                     serverName={selectedServer.name}
+                    server={selectedServer}
                     onClose={() => setShowRoutesModal(false)}
                     onRoutesChanged={setServerRoutes}
                 />
