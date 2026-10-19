@@ -251,3 +251,41 @@ func TestBuildStartCommand(t *testing.T) {
 		}
 	})
 }
+
+// A NeoForge install over a Forge one: before the clear, resolveLaunch found
+// the Forge args file first and the server kept starting Forge.
+func TestClearLoaderLaunchDirsLeavesOnlyTheNewLoader(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("libraries/net/minecraftforge/forge/1.20.1-47.2.0/unix_args.txt")
+	write("libraries/net/neoforged/neoforge/21.1.200/unix_args.txt")
+	write("libraries/org/other/lib.jar")
+	write("mods/keep.jar")
+
+	if err := clearLoaderLaunchDirs(dir); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	// What the NeoForge installer then writes.
+	write("libraries/net/neoforged/neoforge/21.1.264/unix_args.txt")
+
+	lf := resolveLaunch(dir)
+	if lf.ArgsFile != "libraries/net/neoforged/neoforge/21.1.264/unix_args.txt" {
+		t.Fatalf("launches %q, want the new NeoForge args file", lf.ArgsFile)
+	}
+	for _, kept := range []string{"libraries/org/other/lib.jar", "mods/keep.jar"} {
+		if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
+			t.Errorf("%s was removed: %v", kept, err)
+		}
+	}
+	if err := clearLoaderLaunchDirs(t.TempDir()); err != nil {
+		t.Errorf("clear on an empty dir: %v", err)
+	}
+}

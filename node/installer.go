@@ -311,6 +311,9 @@ func installForge(dir, mcVersion, build, javaImage, serverUUID string) error {
 		return fmt.Errorf("forge installer download failed: %v", err)
 	}
 	defer os.Remove(installerPath)
+	if err := clearLoaderLaunchDirs(dir); err != nil {
+		return err
+	}
 
 	log.Printf("Running Forge --installServer inside %s ...", javaImage)
 	return runJavaInstaller(serverUUID, filepath.Base(dir), javaImage, "_forge-installer.jar", "--installServer")
@@ -358,6 +361,9 @@ func installNeoForge(dir, version, javaImage, serverUUID string) error {
 		return fmt.Errorf("neoforge installer download failed: %v", err)
 	}
 	defer os.Remove(installerPath)
+	if err := clearLoaderLaunchDirs(dir); err != nil {
+		return err
+	}
 
 	log.Printf("Running NeoForge --install-server inside %s ...", javaImage)
 	return runJavaInstaller(serverUUID, filepath.Base(dir), javaImage, "_neoforge-installer.jar", "--install-server")

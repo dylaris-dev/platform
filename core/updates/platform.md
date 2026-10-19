@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.19.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Switching a server to NeoForge no longer keeps starting Forge.** A Forge or NeoForge install now
+  clears the old loader's start files first, so the newly installed loader is the one that runs. `node`
+
 ## 2026.10.19.2
 
 ### Features

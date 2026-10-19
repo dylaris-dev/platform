@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.19.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Switching a server to NeoForge no longer keeps starting Forge.** Players joining with NeoForge
+  were told the server had none. Update your node, then reinstall the loader once. `node`
+
 ## 2026.10.19.2
 
 ### Features

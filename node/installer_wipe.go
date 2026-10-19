@@ -139,3 +139,28 @@ func removeIfPresent(path string) error {
 	log.Printf("install: clearing %s", path)
 	return os.RemoveAll(path)
 }
+
+// loaderLaunchDirs hold the per-version unix_args.txt that resolveLaunch
+// starts. A Forge or NeoForge install clears BOTH before its installer runs:
+// resolveLaunch takes the first args file it finds, Forge before NeoForge, so
+// a NeoForge install on top of a Forge one kept starting Forge (the client then
+// says the server has no NeoForge), and two NeoForge versions started the
+// alphabetically first. The installer rewrites its own dir; mods, config and
+// the world are not in these.
+var loaderLaunchDirs = []string{
+	"libraries/net/minecraftforge/forge",
+	"libraries/net/neoforged/neoforge",
+}
+
+func clearLoaderLaunchDirs(destDir string) error {
+	for _, dir := range loaderLaunchDirs {
+		target, err := resolveWithinDir(destDir, dir)
+		if err != nil {
+			return fmt.Errorf("clear %s: %w", dir, err)
+		}
+		if err := removeIfPresent(target); err != nil {
+			return fmt.Errorf("clear %s: %w", dir, err)
+		}
+	}
+	return nil
+}
