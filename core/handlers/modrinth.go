@@ -199,6 +199,7 @@ func (h *ModrinthHandler) Search(w http.ResponseWriter, r *http.Request) {
 	addFacet("versions", q.Get("versions"))
 	addFacet("categories", q.Get("categories"))
 	addFacet("project_type", q.Get("project_type"))
+	facets = append(facets, sideFacets(q.Get("side"))...)
 
 	if len(facets) > 0 {
 		raw, _ := json.Marshal(facets)
@@ -210,6 +211,24 @@ func (h *ModrinthHandler) Search(w http.ResponseWriter, r *http.Request) {
 		upstream += "?" + encoded
 	}
 	h.proxyJSON(r.Context(), modrinthSearchTTL, upstream, w)
+}
+
+// sideFacets narrows a search to where a mod runs. "server": players do not
+// need it on their client. "client": players need it (client required) or it
+// does nothing on a server (server unsupported). Modrinth matches these
+// against its version-level environments, so a hit can still disagree with its
+// own project-level client_side/server_side; the panel filters hits again.
+func sideFacets(side string) [][]string {
+	switch side {
+	case "server":
+		return [][]string{
+			{"client_side:optional", "client_side:unsupported"},
+			{"server_side:required", "server_side:optional"},
+		}
+	case "client":
+		return [][]string{{"client_side:required", "server_side:unsupported"}}
+	}
+	return nil
 }
 
 // Project GET /api/modrinth/project/{slug} — full project metadata.

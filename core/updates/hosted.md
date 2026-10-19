@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.19.2
+
+### Features
+- The Content tab can filter mods by where they run: Server shows mods players do not need, Client
+  shows mods players must install too.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.17.5
 
 ### Features

@@ -17,6 +17,8 @@ export interface ModrinthSearchHit {
     categories: string[];
     versions: string[];
     latest_version?: string;
+    client_side?: string;
+    server_side?: string;
 }
 
 export interface ModrinthSearchResult {
@@ -38,6 +40,7 @@ export interface ModrinthProject {
     // | "unknown". Passed through verbatim by the Core proxy; drives the
     // client-side-required install warning.
     client_side?: 'required' | 'optional' | 'unsupported' | 'unknown';
+    server_side?: 'required' | 'optional' | 'unsupported' | 'unknown';
     categories: string[];
     additional_categories: string[];
     loaders: string[];
@@ -82,6 +85,7 @@ interface SearchParams {
     versions?: string[];
     categories?: string[];
     projectType?: 'mod' | 'plugin' | 'modpack' | 'shader' | 'resourcepack' | 'datapack';
+    side?: 'server' | 'client';
     limit?: number;
     offset?: number;
     index?: 'relevance' | 'downloads' | 'follows' | 'newest' | 'updated';
@@ -94,6 +98,7 @@ function buildSearchURL(params: SearchParams): string {
     if (params.versions?.length) u.set('versions', params.versions.join(','));
     if (params.categories?.length) u.set('categories', params.categories.join(','));
     if (params.projectType) u.set('project_type', params.projectType);
+    if (params.side) u.set('side', params.side);
     if (params.limit) u.set('limit', String(params.limit));
     if (params.offset) u.set('offset', String(params.offset));
     if (params.index) u.set('index', params.index);
@@ -196,9 +201,9 @@ export function getModrinthVersionsByIds(ids: string[]): Promise<ModrinthVersion
     return ids.length ? bulkGet<ModrinthVersion>('/modrinth/versions', ids) : Promise.resolve([]);
 }
 
-export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title' | 'client_side'>;
+export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title' | 'client_side' | 'server_side'>;
 
-/** Project names by id (Core slims these to id, slug, title, icon, type, client_side). */
+/** Project names by id (Core slims these to id, slug, title, icon, type, client_side, server_side). */
 export function getModrinthProjectsByIds(ids: string[]): Promise<ModrinthProjectName[]> {
     return ids.length ? bulkGet<ModrinthProjectName>('/modrinth/projects', ids) : Promise.resolve([]);
 }

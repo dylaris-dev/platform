@@ -19,6 +19,8 @@ import {
 } from '@/lib/api/modrinth';
 import { isPackMember } from '@/lib/modpackMembership';
 import { clientSideNotice } from '@/lib/modpackWarnings';
+import { matchesSide, type ModSide, type ModSides } from '@/lib/modSide';
+import Segmented from '@/components/ui/Segmented';
 import {
     pickNewestMatchingVersion, compareInstalledVsLatest, dependencyProblems, unresolvedDependencyVersionIds,
     type ModStatus,
@@ -69,6 +71,12 @@ const updateCheckApi: UpdateCheckApi = {
     projectsByIds: getModrinthProjectsByIds,
 };
 
+const SIDE_OPTIONS: { id: ModSide; label: string; hint: string }[] = [
+    { id: 'all', label: 'All', hint: 'Every mod' },
+    { id: 'server', label: 'Server', hint: 'Mods players do not need on their own client' },
+    { id: 'client', label: 'Client', hint: 'Mods players must install too, and client-only mods' },
+];
+
 export default function ServerContentPage() {
     const paramId = useRouteId('servers');
     const { servers, refreshServers } = useAppData();
@@ -90,6 +98,9 @@ export default function ServerContentPage() {
     const [filterLoaders, setFilterLoaders] = useState<string[]>(defaultLoader ? [defaultLoader] : []);
     const [filterVersions, setFilterVersions] = useState<string[]>(defaultMcVersion ? [defaultMcVersion] : []);
     const [searchResult, setSearchResult] = useState<ModrinthSearchResult | null>(null);
+    // Server / Client filter, shared by Browse and Installed. Mods only: a
+    // plugin or datapack has no client side to speak of.
+    const [modSide, setModSide] = useState<ModSide>('all');
     const [searchLoading, setSearchLoading] = useState(false);
 
     // Category sidebar (single-select). Categories are proxied from Modrinth.
@@ -203,6 +214,12 @@ export default function ServerContentPage() {
     // full-list fallback it replaces is what put resourcepack resolutions
     // (8x/16x/32x...) in front of plugin servers.
     const browseProjectType = PROJECT_TYPE_FOR_LOADER[defaultLoader] || 'mod';
+    // Not browseProjectType: that falls back to 'mod' for vanilla and unknown
+    // loaders. Browse also drops it in Advanced, where results mix plugins,
+    // shaders and packs.
+    const isModServer = PROJECT_TYPE_FOR_LOADER[defaultLoader] === 'mod';
+    const sideFilter: ModSide = isModServer ? modSide : 'all';
+    const browseSide: ModSide = isModServer && !advanced ? modSide : 'all';
     const visibleCategories = useMemo(
         () => visibleCategoriesFor(categories, browseProjectType),
         [categories, browseProjectType],
@@ -218,12 +235,18 @@ export default function ServerContentPage() {
             versions: filterVersions.length ? filterVersions : undefined,
             categories: selectedCategory ? [selectedCategory] : undefined,
             projectType,
+            side: browseSide === 'all' ? undefined : browseSide,
             limit: 20,
             index: 'relevance',
         });
         setSearchResult(res);
         setSearchLoading(false);
-    }, [query, filterLoaders, filterVersions, selectedCategory, projectType]);
+    }, [query, filterLoaders, filterVersions, selectedCategory, projectType, browseSide]);
+
+    const visibleHits = useMemo(
+        () => (searchResult?.hits ?? []).filter(h => matchesSide(browseSide, h)),
+        [searchResult, browseSide],
+    );
 
     // Debounce typed search input (and category/filter changes).
     useEffect(() => {
@@ -263,6 +286,32 @@ export default function ServerContentPage() {
     // Leaving the page in-app stops the loop rather than letting it run against
     // an unmounted component.
     useEffect(() => () => { bulkCancelled.current = true; }, []);
+
+    // Sides of installed mods, fetched only once the filter is in use. null =
+    // asked, Modrinth did not answer for it. A mod without sides (not fetched
+    // yet, null, or the lookup failed) stays visible: hiding it would read as
+    // "not installed".
+    const [installedSides, setInstalledSides] = useState<Map<string, ModSides | null>>(new Map());
+    useEffect(() => {
+        if (sideFilter === 'all') return;
+        const missing = [...new Set(installed.map(m => m.modrinthProjectId))].filter(id => id && !installedSides.has(id));
+        if (missing.length === 0) return;
+        let cancelled = false;
+        getModrinthProjectsByIds(missing).then(projects => {
+            if (cancelled) return;
+            setInstalledSides(prev => {
+                const next = new Map(prev);
+                for (const id of missing) next.set(id, null);
+                for (const p of projects) next.set(p.id, p);
+                return next;
+            });
+        }).catch(() => { /* fail-open: unfiltered rows stay visible */ });
+        return () => { cancelled = true; };
+    }, [sideFilter, installed, installedSides]);
+    const visibleInstalled = useMemo(() => installed.filter(m => {
+        const sides = installedSides.get(m.modrinthProjectId);
+        return !sides || matchesSide(sideFilter, sides);
+    }), [installed, installedSides, sideFilter]);
 
     const historyFor = useCallback(
         (projectId: string) => history.filter(h => h.modrinthProjectId === projectId),
@@ -909,6 +958,12 @@ export default function ServerContentPage() {
                 <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
                     {/* Category sidebar (always visible) + Advanced-gated filters */}
                     <aside className="w-60 shrink-0 overflow-y-auto card p-3 space-y-4">
+                        {isModServer && !advanced && (
+                            <div>
+                                <label className="input-label">Runs on</label>
+                                <Segmented options={SIDE_OPTIONS} value={modSide} onChange={setModSide} ariaLabel="Runs on" className="mt-2 w-full" />
+                            </div>
+                        )}
                         <div>
                             <label className="input-label">Categories</label>
                             {/* One bordered button per category. The old flush 0.5-gap
@@ -1037,10 +1092,14 @@ export default function ServerContentPage() {
                         <div className="flex-1 overflow-y-auto space-y-2">
                             {searchLoading ? (
                                 <div className="text-center py-12 text-sm text-(--base-06)">Searching…</div>
-                            ) : !searchResult || searchResult.hits.length === 0 ? (
-                                <div className="text-center py-12 text-sm text-(--base-06)">No projects match.</div>
+                            ) : visibleHits.length === 0 ? (
+                                <div className="text-center py-12 text-sm text-(--base-06)">
+                                    {searchResult && searchResult.hits.length > 0
+                                        ? `None of the top results match the ${browseSide === 'server' ? 'Server' : 'Client'} filter. Try a more specific search.`
+                                        : 'No projects match.'}
+                                </div>
                             ) : (
-                                searchResult.hits.map(hit => {
+                                visibleHits.map(hit => {
                                     // isOnServer, not "a row exists": a queued install has not
                                     // happened yet and a failed one never will, so neither is a
                                     // thing to compare a newer build against - and neither should
@@ -1270,6 +1329,9 @@ export default function ServerContentPage() {
                                             ?? `Updates are limited to ${pinnedLoader} · MC ${pinnedMcVersion}, and never move a mod to a less stable channel.`}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
+                                    {isModServer && (
+                                        <Segmented options={SIDE_OPTIONS} value={modSide} onChange={setModSide} ariaLabel="Runs on" />
+                                    )}
                                     <button
                                         onClick={handleUpdateAll}
                                         disabled={bulk !== null || updateAllBlocked !== null}
@@ -1315,7 +1377,12 @@ export default function ServerContentPage() {
                                     </ul>
                                 </div>
                             )}
-                            {installed.map(m => (
+                            {visibleInstalled.length < installed.length && (
+                                <p className="text-[11px] text-(--base-06) pb-1">
+                                    {installed.length - visibleInstalled.length} hidden by the {sideFilter === 'server' ? 'Server' : 'Client'} filter. Update all still covers every mod.
+                                </p>
+                            )}
+                            {visibleInstalled.map(m => (
                                 <article key={m.id} className="card p-3 flex items-start gap-3">
                                     <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
                                         <Box size={16} className="text-(--accent-light)" />

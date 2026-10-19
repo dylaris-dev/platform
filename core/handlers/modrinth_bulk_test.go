@@ -181,15 +181,33 @@ func TestBulkIDRoutes(t *testing.T) {
 }
 
 func TestSlimProjectsKeepsClientSide(t *testing.T) {
-	in := []byte(`[{"id":"P1","slug":"sodium","title":"Sodium","client_side":"required","body":"long text","gallery":[]}]`)
+	in := []byte(`[{"id":"P1","slug":"sodium","title":"Sodium","client_side":"required","server_side":"unsupported","body":"long text","gallery":[]}]`)
 	var out []map[string]interface{}
 	if err := json.Unmarshal(slimProjects(in), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(out) != 1 || out[0]["client_side"] != "required" || out[0]["slug"] != "sodium" {
-		t.Errorf("slim = %v, want slug and client_side kept", out)
+	if len(out) != 1 || out[0]["client_side"] != "required" || out[0]["server_side"] != "unsupported" || out[0]["slug"] != "sodium" {
+		t.Errorf("slim = %v, want slug, client_side and server_side kept", out)
 	}
 	if _, ok := out[0]["body"]; ok {
 		t.Errorf("slim kept body: %v", out)
+	}
+}
+
+func TestSideFacets(t *testing.T) {
+	cases := []struct {
+		side string
+		want string
+	}{
+		{"server", `[["client_side:optional","client_side:unsupported"],["server_side:required","server_side:optional"]]`},
+		{"client", `[["client_side:required","server_side:unsupported"]]`},
+		{"", `null`},
+		{"both", `null`},
+	}
+	for _, tc := range cases {
+		got, _ := json.Marshal(sideFacets(tc.side))
+		if string(got) != tc.want {
+			t.Errorf("sideFacets(%q) = %s, want %s", tc.side, got, tc.want)
+		}
 	}
 }
