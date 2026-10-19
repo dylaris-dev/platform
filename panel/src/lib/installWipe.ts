@@ -129,7 +129,11 @@ export function classifyInstallChange(prev: SubServerInstall | undefined, next: 
         return 'runtime';
     }
 
-    const mcChanged = !!next.mcVersion && next.mcVersion !== prev.mcVersion;
+    // A record from before Core stored exact versions holds the line ("1.21");
+    // the exact version within it ("1.21.1") is not a change by itself. A real
+    // one moves the build too.
+    const mcChanged = !!next.mcVersion && next.mcVersion !== prev.mcVersion
+        && !(prev.mcVersion && next.mcVersion.startsWith(prev.mcVersion + '.'));
     const buildChanged = !!next.buildVersion && next.buildVersion !== prev.buildVersion;
     return mcChanged || buildChanged ? 'version' : 'runtime';
 }
@@ -145,7 +149,7 @@ export function classifyInstallChange(prev: SubServerInstall | undefined, next: 
  * settings did not, and clearing hand-tuned config nobody asked about is the
  * kind of help that loses an evening's work.
  */
-export function recommendedWipe(change: InstallChange): WipeToken[] {
+export function recommendedWipe(change: InstallChange, loaderChanged = false): WipeToken[] {
     switch (change) {
         case 'modpack':
             // A pack update replaces the mod list wholesale, and its config is
@@ -153,10 +157,26 @@ export function recommendedWipe(change: InstallChange): WipeToken[] {
             return ['mods', 'config', 'libraries', 'jars'];
         case 'version':
         case 'installer':
-            return ['libraries', 'versions', 'jars'];
+            // Mods built for the old loader stay in mods/ otherwise and either
+            // stop the new one booting or load as the wrong build.
+            return loaderChanged
+                ? ['mods', 'libraries', 'versions', 'jars']
+                : ['libraries', 'versions', 'jars'];
         default:
             return [];
     }
+}
+
+const MOD_LOADERS = new Set(['forge', 'neoforge', 'fabric', 'quilt']);
+
+/**
+ * A switch between two mod loaders (forge, neoforge, fabric, quilt). Each one
+ * needs its own build of every mod, so the old mods/ is wrong for the new one.
+ */
+export function loaderFamilyChanged(prevInstaller?: string, nextInstaller?: string): boolean {
+    const a = prevInstaller?.toLowerCase() ?? '';
+    const b = nextInstaller?.toLowerCase() ?? '';
+    return MOD_LOADERS.has(a) && MOD_LOADERS.has(b) && a !== b;
 }
 
 /** One line saying what is about to happen, for the dialog's heading. */

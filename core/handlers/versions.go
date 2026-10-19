@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/services"
 )
 
 // VersionEntry represents a single version with its major group and build string.
@@ -314,6 +316,14 @@ func neoForgeMajor(v string) (string, bool) {
 		return parts[0] + "." + parts[1], true
 	}
 	return "1." + parts[0], true
+}
+
+// neoForgeMinecraft and exactMinecraftVersion live in services so a backup
+// import there records the same exact version a setup here does.
+func neoForgeMinecraft(loader string) string { return services.NeoForgeMinecraft(loader) }
+
+func exactMinecraftVersion(software, mcVersion, version, loader string) string {
+	return services.ExactMinecraftVersion(software, mcVersion, version, loader)
 }
 
 // ==========================================

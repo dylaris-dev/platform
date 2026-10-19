@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     pickNewestMatchingVersion, compareInstalledVsLatest, dependencyProblems, planModUpdate, unresolvedDependencyVersionIds,
+    pickPreferredVersion, rowUpdateTarget,
 } from './modVersionCompare';
 import type { ModrinthVersion } from './api/modrinth';
 
@@ -281,5 +282,52 @@ describe('dependencyProblems with version-only dependencies', () => {
             { version_id: 'c', dependency_type: 'optional' },
             { version_id: 'd', dependency_type: 'incompatible' },
         ]))).toEqual(['a', 'd']);
+    });
+});
+
+describe('pickPreferredVersion', () => {
+    const rel = version({ id: 'rel', version_type: 'release', date_published: '2026-01-01T00:00:00Z' });
+    const beta = version({ id: 'beta', version_type: 'beta', date_published: '2026-02-01T00:00:00Z' });
+    const alpha = version({ id: 'alpha', version_type: 'alpha', date_published: '2026-03-01T00:00:00Z' });
+    const f = { loaders: ['fabric'], mcVersions: ['1.20.1'] };
+
+    it('takes a release over a newer beta and alpha', () => {
+        expect(pickPreferredVersion([alpha, beta, rel], f)?.id).toBe('rel');
+    });
+
+    it('falls back to beta, then alpha', () => {
+        expect(pickPreferredVersion([alpha, beta], f)?.id).toBe('beta');
+        expect(pickPreferredVersion([alpha], f)?.id).toBe('alpha');
+    });
+
+    it('still honours the loader and MC filter', () => {
+        const forgeRel = version({ id: 'forge', loaders: ['forge'], version_type: 'release' });
+        expect(pickPreferredVersion([forgeRel, beta], f)?.id).toBe('beta');
+        expect(pickPreferredVersion([], f)).toBeNull();
+    });
+});
+
+describe('rowUpdateTarget', () => {
+    const rel1 = version({ id: 'rel1', version_type: 'release', date_published: '2026-01-01T00:00:00Z' });
+    const beta2 = version({ id: 'beta2', version_type: 'beta', date_published: '2026-02-01T00:00:00Z' });
+    const rel3 = version({ id: 'rel3', version_type: 'release', date_published: '2026-03-01T00:00:00Z' });
+    const beta4 = version({ id: 'beta4', version_type: 'beta', date_published: '2026-04-01T00:00:00Z' });
+
+    it('offers the newest release, not a newer beta', () => {
+        expect(rowUpdateTarget('rel1', [rel1, beta2, rel3, beta4])?.id).toBe('rel3');
+    });
+
+    it('past the newest release, offers a newer pre-release or nothing', () => {
+        expect(rowUpdateTarget('rel3', [rel1, beta2, rel3, beta4])?.id).toBe('beta4');
+        expect(rowUpdateTarget('rel1', [rel1, beta2])?.id).toBe('beta2');
+        expect(rowUpdateTarget('rel3', [rel1, rel3])).toBeNull();
+    });
+
+    it('never moves a newer installed beta back to an older release', () => {
+        expect(rowUpdateTarget('beta2', [rel1, beta2])).toBeNull();
+    });
+
+    it('uses the whole list when the installed build is not in it', () => {
+        expect(rowUpdateTarget('gone', [rel1, beta2])?.id).toBe('rel1');
     });
 });

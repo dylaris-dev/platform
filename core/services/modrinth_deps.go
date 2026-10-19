@@ -2,12 +2,15 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,6 +34,7 @@ type modrinthVersion struct {
 	ProjectID    string         `json:"project_id"`
 	Name         string         `json:"name"`
 	VersionNum   string         `json:"version_number"`
+	VersionType  string         `json:"version_type"`
 	GameVersions []string       `json:"game_versions"`
 	Loaders      []string       `json:"loaders"`
 	DatePub      string         `json:"date_published"`
@@ -73,7 +77,14 @@ func ModrinthNotFound(err error) bool {
 }
 
 func modrinthGet(path string, out interface{}) error {
-	req, _ := http.NewRequest("GET", modrinthAPI+path, nil)
+	return modrinthGetCtx(context.Background(), path, out)
+}
+
+func modrinthGetCtx(ctx context.Context, path string, out interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", modrinthAPI+path, nil)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("User-Agent", DylarisUserAgent())
 	res, err := modrinthHTTP.Do(req)
 	if err != nil {
@@ -91,6 +102,16 @@ func modrinthGet(path string, out interface{}) error {
 func FetchModrinthVersion(versionID string) (*modrinthVersion, error) {
 	var v modrinthVersion
 	if err := modrinthGet("/version/"+url.PathEscape(versionID), &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// FetchModrinthVersionPaced is FetchModrinthVersion behind the shared
+// Modrinth pacing, for calls a user can repeat at will.
+func FetchModrinthVersionPaced(ctx context.Context, versionID string) (*modrinthVersion, error) {
+	var v modrinthVersion
+	if err := modrinthGetPaced(ctx, "/version/"+url.PathEscape(versionID), &v); err != nil {
 		return nil, err
 	}
 	return &v, nil
@@ -214,29 +235,294 @@ func (v *modrinthVersion) PrimaryFile() ModrinthFile {
 	return ModrinthFile{Hashes: map[string]string{}}
 }
 
-// LatestProjectVersionFor picks the newest version of a project compatible with
-// mc+loader. Exported for the migration path, which needs a fallback for
-// content whose stored hash Modrinth cannot place.
+// LatestProjectVersionFor picks the version of a project that fits mc+loader:
+// a release over a beta over an alpha, the newest within that channel. Exported
+// for the migration paths, which need a fallback for content whose stored hash
+// Modrinth cannot place. nil, nil means nothing fits.
+//
+// Without a loader and Minecraft version it refuses. It used to drop the filter
+// instead, which handed back whatever was newest for any game version.
 func LatestProjectVersionFor(projectID, mc, loader string) (*modrinthVersion, error) {
-	q := url.Values{}
-	if loader != "" {
-		q.Set("loaders", fmt.Sprintf("[%q]", loader))
+	return latestFitting(context.Background(), projectID, mc, loader)
+}
+
+var errFitUnknown = errors.New("modrinth: a loader and a Minecraft version are needed to pick a version")
+
+func latestFitting(ctx context.Context, projectID, mc, loader string) (*modrinthVersion, error) {
+	loader = strings.ToLower(strings.TrimSpace(loader))
+	mc = strings.TrimSpace(mc)
+	if !ModFitKnown(loader, mc) {
+		return nil, errFitUnknown
 	}
-	if mc != "" {
-		q.Set("game_versions", fmt.Sprintf("[%q]", mc))
+	// A plugin fits any patch of its line, which an exact game_versions filter
+	// would hide, so plugins are filtered by pickPreferred alone.
+	var games []string
+	if !isProxyLoader(loader) && !isPluginLoader(loader) {
+		games = []string{mc}
 	}
-	var list []modrinthVersion
-	if err := modrinthGet("/project/"+url.PathEscape(projectID)+"/version?"+q.Encode(), &list); err != nil {
+	list, err := fetchProjectVersions(ctx, projectID, modLoadersFor[loader], games)
+	if err != nil {
 		return nil, err
 	}
-	// The list order is not contractual; pick the newest by date_published.
+	return pickPreferred(list, loader, mc), nil
+}
+
+func channelRank(versionType string) int {
+	switch versionType {
+	case "release":
+		return 0
+	case "beta":
+		return 1
+	case "alpha":
+		return 2
+	}
+	return 3
+}
+
+// pickPreferred re-checks the fit rather than trusting the query filter, and
+// prefers the channel before the date: a beta published after the last release
+// is not what "the build for this server" means. The list order is not
+// contractual, so newest is by date_published.
+func pickPreferred(list []modrinthVersion, loader, mc string) *modrinthVersion {
 	var best *modrinthVersion
 	for i := range list {
-		if best == nil || list[i].DatePub > best.DatePub {
-			best = &list[i]
+		v := &list[i]
+		if ok, _ := ModVersionFits(loader, mc, v.Loaders, v.GameVersions); !ok {
+			continue
+		}
+		if best == nil {
+			best = v
+			continue
+		}
+		vr, br := channelRank(v.VersionType), channelRank(best.VersionType)
+		if vr < br || vr == br && v.DatePub > best.DatePub {
+			best = v
 		}
 	}
-	return best, nil
+	return best
+}
+
+// The Modrinth calls the resolver makes. Variables so tests can stand in for
+// Modrinth.
+var (
+	fetchVersionsByID    = modrinthVersionsByID
+	fetchProjectVersions = modrinthProjectVersions
+	fetchPlanProjects    = FetchProjects
+)
+
+// modrinthVersionsByID is the bulk /versions lookup: one call per chunk, not
+// one per id. An id Modrinth does not know is missing from the map.
+func modrinthVersionsByID(ctx context.Context, ids []string) (map[string]*modrinthVersion, error) {
+	out := map[string]*modrinthVersion{}
+	for start := 0; start < len(ids); start += compatSearchChunkSize {
+		end := min(start+compatSearchChunkSize, len(ids))
+		raw, err := json.Marshal(ids[start:end])
+		if err != nil {
+			return nil, err
+		}
+		var batch []modrinthVersion
+		if err := modrinthGetPaced(ctx, "/versions?ids="+url.QueryEscape(string(raw)), &batch); err != nil {
+			return nil, err
+		}
+		for i := range batch {
+			out[batch[i].ID] = &batch[i]
+		}
+	}
+	return out, nil
+}
+
+func modrinthProjectVersions(ctx context.Context, projectID string, loaders, games []string) ([]modrinthVersion, error) {
+	q := url.Values{}
+	l, err := json.Marshal(loaders)
+	if err != nil {
+		return nil, err
+	}
+	q.Set("loaders", string(l))
+	if len(games) > 0 {
+		g, err := json.Marshal(games)
+		if err != nil {
+			return nil, err
+		}
+		q.Set("game_versions", string(g))
+	}
+	var list []modrinthVersion
+	if err := modrinthGetPaced(ctx, "/project/"+url.PathEscape(projectID)+"/version?"+q.Encode(), &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// modrinthGetPaced shares compatLimiter: Modrinth limits per IP and Core is
+// that IP for every tenant, so a dependency walk must queue behind the same
+// budget as the compat checks rather than burst past it.
+func modrinthGetPaced(ctx context.Context, path string, out interface{}) error {
+	if err := compatLimiter.wait(ctx); err != nil {
+		return err
+	}
+	return modrinthGetCtx(ctx, path, out)
+}
+
+// DepProblem is a dependency the walk could not satisfy, or an installed
+// project a planned version says it is incompatible with.
+type DepProblem struct {
+	ProjectID string `json:"projectId"`
+	Title     string `json:"title"`
+	Reason    string `json:"reason"`
+	// by is the project whose version declared the incompatibility.
+	by string
+}
+
+type depResolution struct {
+	versions     []*modrinthVersion // dependency-first, the root last
+	unresolved   []DepProblem
+	incompatible []DepProblem
+}
+
+// maxDepNodes bounds one walk, and with it the Modrinth calls it can make: at
+// most one project lookup per node plus one bulk lookup per level. Real mods
+// need a handful; fifty is a broken or hostile graph.
+const maxDepNodes = 50
+
+// resolveDeps walks the required dependencies of root breadth-first. A
+// dependency in have (already installed) or already seen (cycles, diamonds) is
+// not resolved again. A pinned version is used only when it fits the server;
+// otherwise, and for an unpinned dependency, the preferred fitting version of
+// the project is taken. A version_id-only dependency learns its project from
+// that version.
+func resolveDeps(ctx context.Context, root *modrinthVersion, loader, mc string, have map[string]bool) (*depResolution, error) {
+	loader = strings.ToLower(strings.TrimSpace(loader))
+	mc = strings.TrimSpace(mc)
+	if !ModFitKnown(loader, mc) {
+		return nil, errFitUnknown
+	}
+	res := &depResolution{}
+	picked := map[string]*modrinthVersion{root.ProjectID: root}
+	children := map[string][]string{}
+	seen := map[string]bool{root.ProjectID: true}
+	reportedIncompat := map[string]bool{}
+	nodes := 0
+	frontier := []*modrinthVersion{root}
+	for len(frontier) > 0 {
+		var ids []string
+		asked := map[string]bool{}
+		for _, v := range frontier {
+			for _, d := range v.Dependencies {
+				if d.DependencyType != "required" || d.VersionID == "" || asked[d.VersionID] {
+					continue
+				}
+				if d.ProjectID != "" && (seen[d.ProjectID] || have[d.ProjectID]) {
+					continue
+				}
+				asked[d.VersionID] = true
+				ids = append(ids, d.VersionID)
+			}
+		}
+		// A failed lookup costs the dependencies it was for, not the walk: an
+		// unpinned or project-known one still gets its project lookup below, and
+		// the rest land in unresolved. Only a cancelled request stops the walk.
+		pinned := map[string]*modrinthVersion{}
+		var pinErr error
+		if len(ids) > 0 {
+			got, err := fetchVersionsByID(ctx, ids)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err != nil {
+				pinErr = err
+			} else {
+				pinned = got
+			}
+		}
+		var next []*modrinthVersion
+		for _, v := range frontier {
+			for _, d := range v.Dependencies {
+				if d.DependencyType == "incompatible" {
+					if have[d.ProjectID] && !reportedIncompat[d.ProjectID] {
+						reportedIncompat[d.ProjectID] = true
+						res.incompatible = append(res.incompatible, DepProblem{ProjectID: d.ProjectID, by: v.ProjectID})
+					}
+					continue
+				}
+				if d.DependencyType != "required" {
+					continue
+				}
+				pv := pinned[d.VersionID]
+				pid := d.ProjectID
+				if pid == "" && pv != nil {
+					pid = pv.ProjectID
+				}
+				if pid == "" {
+					reason := "Modrinth has no version " + d.VersionID + "."
+					if pinErr != nil {
+						reason = modrinthNoAnswer
+					}
+					res.unresolved = append(res.unresolved, DepProblem{Reason: reason})
+					continue
+				}
+				children[v.ProjectID] = append(children[v.ProjectID], pid)
+				if seen[pid] || have[pid] {
+					continue
+				}
+				seen[pid] = true
+				if nodes >= maxDepNodes {
+					res.unresolved = append(res.unresolved, DepProblem{ProjectID: pid, Reason: "Too many dependencies; stopped after " + strconv.Itoa(maxDepNodes) + "."})
+					continue
+				}
+				nodes++
+				pick := pv
+				if pick != nil {
+					if ok, _ := ModVersionFits(loader, mc, pick.Loaders, pick.GameVersions); !ok {
+						pick = nil
+					}
+				}
+				if pick == nil {
+					p, err := latestFitting(ctx, pid, mc, loader)
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+					if err != nil && !ModrinthNotFound(err) {
+						res.unresolved = append(res.unresolved, DepProblem{ProjectID: pid, Reason: modrinthNoAnswer})
+						continue
+					}
+					pick = p
+				}
+				if pick == nil {
+					res.unresolved = append(res.unresolved, DepProblem{ProjectID: pid, Reason: noFitReason(loader, mc)})
+					continue
+				}
+				picked[pid] = pick
+				next = append(next, pick)
+			}
+		}
+		frontier = next
+	}
+	// Post-order over what was picked puts every dependency before the first
+	// project that needs it; done stops a cycle.
+	done := map[string]bool{}
+	var visit func(pid string)
+	visit = func(pid string) {
+		if done[pid] {
+			return
+		}
+		done[pid] = true
+		for _, c := range children[pid] {
+			if picked[c] != nil {
+				visit(c)
+			}
+		}
+		res.versions = append(res.versions, picked[pid])
+	}
+	visit(root.ProjectID)
+	return res, nil
+}
+
+const modrinthNoAnswer = "Modrinth did not answer for this dependency. Try again in a moment."
+
+func noFitReason(loader, mc string) string {
+	if isProxyLoader(loader) {
+		return "No " + loader + " build on Modrinth."
+	}
+	return "No " + loader + " build for Minecraft " + mc + " on Modrinth."
 }
 
 // ResolvedDep is a required dependency the caller should add to the build.
@@ -244,41 +530,118 @@ type ResolvedDep struct {
 	Version *modrinthVersion
 }
 
-// ResolveModrinthDependencies walks required dependencies of the given version
-// (recursively), deduping by project id, and returns the versions to add. The
-// caller passes the build's mc + loader to resolve version_id-less deps.
-func ResolveModrinthDependencies(root *modrinthVersion, mc, loader string, alreadyHave map[string]bool) ([]ResolvedDep, error) {
-	out := []ResolvedDep{}
-	seen := map[string]bool{}
-	var walk func(v *modrinthVersion) error
-	walk = func(v *modrinthVersion) error {
-		for _, d := range v.Dependencies {
-			if d.DependencyType != "required" || d.ProjectID == "" {
-				continue
-			}
-			if alreadyHave[d.ProjectID] || seen[d.ProjectID] {
-				continue
-			}
-			seen[d.ProjectID] = true
-			var dv *modrinthVersion
-			var err error
-			if d.VersionID != "" {
-				dv, err = FetchModrinthVersion(d.VersionID)
-			} else {
-				dv, err = LatestProjectVersionFor(d.ProjectID, mc, loader)
-			}
-			if err != nil || dv == nil {
-				continue // skip unresolvable deps rather than fail the whole add
-			}
-			out = append(out, ResolvedDep{Version: dv})
-			if err := walk(dv); err != nil {
-				return err
-			}
-		}
-		return nil
+// ResolveModrinthDependencies returns the versions the required dependencies
+// of root resolve to, dependency-first, without root itself. alreadyHave holds
+// project ids that are already there. Dependencies that could not be resolved
+// are left out of the list and returned as unresolved, for the caller to report.
+func ResolveModrinthDependencies(root *modrinthVersion, mc, loader string, alreadyHave map[string]bool) ([]ResolvedDep, []DepProblem, error) {
+	res, err := resolveDeps(context.Background(), root, loader, mc, alreadyHave)
+	if err != nil {
+		return nil, nil, err
 	}
-	if err := walk(root); err != nil {
+	out := []ResolvedDep{}
+	for _, v := range res.versions {
+		if v != root {
+			out = append(out, ResolvedDep{Version: v})
+		}
+	}
+	return out, res.unresolved, nil
+}
+
+// PlanEntry is one version the plan would install.
+type PlanEntry struct {
+	ProjectID     string `json:"projectId"`
+	Slug          string `json:"slug"`
+	Title         string `json:"title"`
+	VersionID     string `json:"versionId"`
+	VersionNumber string `json:"versionNumber"`
+	FileName      string `json:"fileName"`
+	DownloadURL   string `json:"downloadUrl"`
+}
+
+// ModInstallPlan is what installing one version takes. Install is
+// dependency-first and ends with the requested version.
+type ModInstallPlan struct {
+	Install      []PlanEntry  `json:"install"`
+	Unresolved   []DepProblem `json:"unresolved"`
+	Incompatible []DepProblem `json:"incompatible"`
+}
+
+// ModFitError is the requested version itself not fitting the server.
+type ModFitError struct{ Reason string }
+
+func (e *ModFitError) Error() string { return e.Reason }
+
+// PlanModInstall works out what installing versionID onto a server with this
+// loader and Minecraft version takes. installed holds the project ids already
+// on the server. It reads Modrinth only.
+func PlanModInstall(ctx context.Context, versionID, loader, mc string, installed map[string]bool) (*ModInstallPlan, error) {
+	got, err := fetchVersionsByID(ctx, []string{versionID})
+	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	root := got[versionID]
+	if root == nil {
+		return nil, &ModrinthHTTPError{Path: "/versions", Status: http.StatusNotFound}
+	}
+	if ok, reason := ModVersionFits(loader, mc, root.Loaders, root.GameVersions); !ok {
+		return nil, &ModFitError{Reason: reason}
+	}
+	res, err := resolveDeps(ctx, root, loader, mc, installed)
+	if err != nil {
+		return nil, err
+	}
+
+	var ids []string
+	listed := map[string]bool{}
+	add := func(id string) {
+		if id != "" && !listed[id] {
+			listed[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, v := range res.versions {
+		add(v.ProjectID)
+	}
+	for _, p := range res.unresolved {
+		add(p.ProjectID)
+	}
+	for _, p := range res.incompatible {
+		add(p.ProjectID)
+		add(p.by)
+	}
+	// Titles are for the confirmation dialog; without them the plan still
+	// holds, so a failed lookup falls back to names the versions carry.
+	meta, err := fetchPlanProjects(ctx, ids)
+	if err != nil {
+		meta = nil
+	}
+	title := func(id, fallback string) string {
+		if m, ok := meta[id]; ok && m.Title != "" {
+			return m.Title
+		}
+		if fallback != "" {
+			return fallback
+		}
+		return id
+	}
+
+	plan := &ModInstallPlan{Install: []PlanEntry{}, Unresolved: []DepProblem{}, Incompatible: []DepProblem{}}
+	for _, v := range res.versions {
+		f := v.PrimaryFile()
+		plan.Install = append(plan.Install, PlanEntry{
+			ProjectID: v.ProjectID, Slug: meta[v.ProjectID].Slug, Title: title(v.ProjectID, v.Name),
+			VersionID: v.ID, VersionNumber: v.VersionNum, FileName: f.Filename, DownloadURL: f.URL,
+		})
+	}
+	for _, p := range res.unresolved {
+		p.Title = title(p.ProjectID, "")
+		plan.Unresolved = append(plan.Unresolved, p)
+	}
+	for _, p := range res.incompatible {
+		p.Title = title(p.ProjectID, "")
+		p.Reason = title(p.by, "") + " is marked incompatible with it."
+		plan.Incompatible = append(plan.Incompatible, p)
+	}
+	return plan, nil
 }

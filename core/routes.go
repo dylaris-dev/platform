@@ -98,6 +98,7 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/mods/unmanaged":                   "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/history":                     "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/identify":                    "mods.write",
+	"/api/servers/{id:[0-9]+}/mods/plan":                        "mods.write",
 	"/api/servers/{id:[0-9]+}/modpack-contents":                 "mods.read",
 	"/api/servers/{id:[0-9]+}/installs":                         "server.settings.write",
 	"/api/servers/{id:[0-9]+}/tabs":                             "tabs.read",
@@ -844,6 +845,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/unmanaged", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.UnmanagedMods))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.ModHistory))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/identify", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.IdentifyMods))).Methods("POST")
+	// A plan walks up to fifty dependencies on Modrinth, so it shares the bulk
+	// lookups' bucket.
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/plan", modrinthBulkLimiter.Limit(30, authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.Plan)))).Methods("POST")
 	// A version move and a sub-server copy both rewrite what the server IS, so
 	// they take the same capability as reinstall rather than a mods one.
 	api.HandleFunc("/servers/{id:[0-9]+}/version-update", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverModsHandler.VersionUpdate))).Methods("POST")

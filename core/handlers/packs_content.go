@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path"
 	"strconv"
@@ -115,17 +116,27 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	added := 1
+	resp := map[string]interface{}{"success": true}
 	if req.ResolveDeps {
 		have := map[string]bool{v.ProjectID: true}
-		deps, _ := services.ResolveModrinthDependencies(v, b.Minecraft, b.Loader, have)
+		deps, unresolved, err := services.ResolveModrinthDependencies(v, b.Minecraft, b.Loader, have)
+		if err != nil {
+			log.Printf("packs: dependencies of %s for build %d not resolved: %v", v.ID, b.ID, err)
+			resp["warning"] = "Dependencies were not added: the build needs a loader and a Minecraft version."
+		}
+		if len(unresolved) > 0 {
+			log.Printf("packs: %d dependencies of %s for build %d unresolved", len(unresolved), v.ID, b.ID)
+			resp["unresolved"] = unresolved
+		}
 		for _, d := range deps {
 			if err := h.addModrinthVersion(userID, b, d.Version, models.SideBoth, models.ContentTypeMod); err == nil {
 				added++
 			}
 		}
 	}
+	resp["added"] = added
 	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "added": added})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // addModrinthVersion upserts the mod catalog row + a linked modversion and

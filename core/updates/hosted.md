@@ -11,6 +11,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.19.4
+
+### Features
+- **Mods install their required dependencies.** The Content tab shows what else gets installed and
+  installs it first, matching your server's loader and Minecraft version.
+- **Environment filter like modrinth.com.** Client and Server toggles, and every result shows where
+  it runs.
+- **Wrong builds are marked.** The installed list flags a mod built for another loader or Minecraft
+  version and offers to swap it to the matching build.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Mods install the build for your server's exact Minecraft version.** NeoForge servers showed
+  "Declare now" and got builds for other versions; existing servers are corrected automatically.
+- **Switching a server to another loader now offers to clear the old mods,** and a failed search
+  shows an error instead of "No projects match".
+
 ## 2026.10.19.3
 
 ### Features

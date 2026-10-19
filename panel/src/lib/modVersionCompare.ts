@@ -50,6 +50,37 @@ export function pickNewestMatchingVersion(
     );
 }
 
+// What a one-click install takes: the newest release, else the newest beta,
+// else the newest alpha. Newest-by-date alone handed out a pre-release
+// whenever one was published after the last release.
+export function pickPreferredVersion(
+    candidates: ModrinthVersion[],
+    filter: VersionFilter = {},
+): ModrinthVersion | null {
+    for (const leastStable of ['release', 'beta', 'alpha'] as const) {
+        const v = pickNewestMatchingVersion(candidates, { ...filter, leastStable });
+        if (v) return v;
+    }
+    return null;
+}
+
+// The build a browse row's Update button moves to, or null when there is
+// none. Channel preference as above, but only among builds NEWER than the
+// installed one when it is in the list: preferring a release must not turn a
+// newer installed beta into an "update" back to an older release.
+export function rowUpdateTarget(
+    installedVersionId: string,
+    candidates: ModrinthVersion[],
+    filter: VersionFilter = {},
+): ModrinthVersion | null {
+    const current = candidates.find(v => v.id === installedVersionId);
+    const newer = current
+        ? candidates.filter(v => v.date_published.localeCompare(current.date_published) > 0)
+        : candidates;
+    const next = pickPreferredVersion(newer, filter);
+    return next && next.id !== installedVersionId ? next : null;
+}
+
 // Compares an installed version against the newest candidate matching the
 // current filter:
 // - no installedVersionId -> 'not-installed'

@@ -85,7 +85,7 @@ interface SearchParams {
     versions?: string[];
     categories?: string[];
     projectType?: 'mod' | 'plugin' | 'modpack' | 'shader' | 'resourcepack' | 'datapack';
-    side?: 'server' | 'client';
+    side?: 'server' | 'client' | 'both';
     limit?: number;
     offset?: number;
     index?: 'relevance' | 'downloads' | 'follows' | 'newest' | 'updated';
@@ -105,13 +105,16 @@ function buildSearchURL(params: SearchParams): string {
     return u.toString();
 }
 
+// null means the search FAILED (rate limit outlasted the retries, Core or
+// Modrinth down); an empty `hits` means it ran and found nothing. Callers must
+// not show the second message for the first.
 export async function searchModrinth(params: SearchParams): Promise<ModrinthSearchResult | null> {
     try {
-        const res = await fetch(`${API_URL}/modrinth/search?${buildSearchURL(params)}`, {
+        const res = await fetchRetryingRateLimit(`${API_URL}/modrinth/search?${buildSearchURL(params)}`, {
             headers: getAuthHeader(),
         });
         if (!res.ok) return null;
-        return res.json();
+        return await res.json();
     } catch { return null; }
 }
 
@@ -319,6 +322,55 @@ export async function installMod(serverId: number, payload: InstallModPayload): 
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }
+}
+
+export interface ModPlanEntry {
+    projectId: string;
+    slug: string;
+    title: string;
+    versionId: string;
+    versionNumber: string;
+    fileName: string;
+    downloadUrl: string;
+}
+
+export interface ModPlanProblem {
+    projectId: string;
+    title: string;
+    reason: string;
+}
+
+/** Core's dependency plan: `install` is dependency-first and ends with the requested build. */
+export interface ModInstallPlan {
+    install: ModPlanEntry[];
+    unresolved: ModPlanProblem[];
+    incompatible: ModPlanProblem[];
+}
+
+// Read-only on Core's side. A 4xx means Core refused the build or the caller
+// (the install would be refused the same way); anything else means the plan
+// could not be worked out, which is not the same as "no dependencies".
+export async function planModInstall(
+    serverId: number,
+    versionId: string,
+): Promise<{ ok: true; plan: ModInstallPlan } | { ok: false; status?: number; message: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/mods/plan`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ versionId }),
+        });
+        const data = await handleResponse(res);
+        // A 401 that ends the session comes back without a status; the caller
+        // needs it to stop rather than offer an install without dependencies.
+        if (!data.success) return { ok: false, status: data.status ?? res.status, message: data.message || 'Could not work out the dependencies.' };
+        return {
+            ok: true,
+            plan: { install: data.install ?? [], unresolved: data.unresolved ?? [], incompatible: data.incompatible ?? [] },
+        };
+    } catch {
+        return { ok: false, message: 'Could not reach the panel server to work out the dependencies.' };
+    }
 }
 
 export async function uninstallMod(serverId: number, modId: number): Promise<{ success: boolean; message?: string }> {

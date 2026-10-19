@@ -199,10 +199,11 @@ func TestSideFacets(t *testing.T) {
 		side string
 		want string
 	}{
-		{"server", `[["client_side:optional","client_side:unsupported"],["server_side:required","server_side:optional"]]`},
-		{"client", `[["client_side:required","server_side:unsupported"]]`},
+		{"client", `[["client_side:required","client_side:optional"],["server_side:optional","server_side:unsupported"]]`},
+		{"server", `[["server_side:required","server_side:optional"],["client_side:optional","client_side:unsupported"]]`},
+		{"both", `[["client_side:required","client_side:optional"],["server_side:required","server_side:optional"]]`},
 		{"", `null`},
-		{"both", `null`},
+		{"all", `null`},
 	}
 	for _, tc := range cases {
 		got, _ := json.Marshal(sideFacets(tc.side))

@@ -314,3 +314,44 @@ func TestNotifyInstallFailedSkipsAnOwnerlessServer(t *testing.T) {
 		t.Errorf("wrote %d notification(s) for a server with no owner", len(fs.notes))
 	}
 }
+
+// An archive written before exact versions carries the line, or nothing for
+// NeoForge. The import records what a setup would, and guesses nothing else.
+func TestApplyImportedManifestRecordsTheExactMinecraftVersion(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   models.SubServerInstall
+		want string
+	}{
+		{"paper line extended by its build", models.SubServerInstall{InstallerType: "paper", McVersion: "1.21", BuildVersion: "1.21.4"}, "1.21.4"},
+		{"neoforge from its loader", models.SubServerInstall{InstallerType: "neoforge", McVersion: "", Loader: "21.1.264"}, "1.21.1"},
+		{"neoforge line from its loader", models.SubServerInstall{InstallerType: "neoforge", McVersion: "1.21", Loader: "21.1.264"}, "1.21.1"},
+		{"exact stays", models.SubServerInstall{InstallerType: "fabric", McVersion: "1.21.1", BuildVersion: "0.16.5"}, "1.21.1"},
+		{"empty with a build is not guessed", models.SubServerInstall{InstallerType: "paper", McVersion: "", BuildVersion: "196"}, ""},
+		{"conflict keeps the record", models.SubServerInstall{InstallerType: "paper", McVersion: "1.20.1", BuildVersion: "1.21.4"}, "1.20.1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			in := tt.in
+			in.SubServerName = "survival"
+			m := &BackupManifest{Schema: BackupManifestSchema, Scope: "survival", Installs: []models.SubServerInstall{in}}
+			st := &fakeImportStore{}
+			ApplyImportedManifest(st, targetServer(), "main", m)
+			if len(st.installs) != 1 || st.installs[0].McVersion != tt.want {
+				t.Fatalf("installs = %+v, want mc %q", st.installs, tt.want)
+			}
+			if len(st.loader) != 1 || st.loader[0].mcVersion != tt.want {
+				t.Fatalf("server row = %+v, want mc %q", st.loader, tt.want)
+			}
+		})
+	}
+}
+
+// A recorded Forge build extends the old line but is not a Minecraft version.
+func TestRecordedMinecraftVersionIgnoresALoaderBuild(t *testing.T) {
+	if got := RecordedMinecraftVersion("forge", "1.20", "1.20.1-47.3.0", ""); got != "1.20" {
+		t.Errorf("got %q, want the recorded line kept", got)
+	}
+	if got := RecordedMinecraftVersion("forge", "1.20", "1.20.1", ""); got != "1.20.1" {
+		t.Errorf("got %q, want 1.20.1", got)
+	}
+}

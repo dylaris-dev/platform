@@ -27,6 +27,8 @@ export interface ConfirmOptions {
     cancelLabel?: string;
     /** false renders the primary button instead of the danger one. */
     destructive?: boolean;
+    /** Start keyboard focus on Cancel, for a confirm that is the riskier way on. */
+    focusCancel?: boolean;
 }
 
 interface PendingConfirm extends ConfirmOptions {
@@ -55,6 +57,7 @@ export function confirmDialog(o: ConfirmOptions): Promise<boolean> {
 export function ConfirmDialogRoot() {
     const [pending, setPending] = useState<PendingConfirm | null>(null);
     const confirmRef = useRef<HTMLButtonElement>(null);
+    const cancelRef = useRef<HTMLButtonElement>(null);
 
     useEffect(() => {
         publish = setPending;
@@ -77,7 +80,7 @@ export function ConfirmDialogRoot() {
         // Back to the button that asked, so a confirm opened over a modal
         // leaves the keyboard in that modal rather than on the page body.
         const opener = document.activeElement as HTMLElement | null;
-        confirmRef.current?.focus();
+        (pending.focusCancel ? cancelRef : confirmRef).current?.focus();
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') close(false);
         };
@@ -114,7 +117,7 @@ export function ConfirmDialogRoot() {
                     <p className="text-sm text-(--base-07) whitespace-pre-line">{pending.message}</p>
                 </div>
                 <div className="modal-footer">
-                    <button onClick={() => close(false)} className="btn btn-secondary">
+                    <button ref={cancelRef} onClick={() => close(false)} className="btn btn-secondary">
                         {pending.cancelLabel ?? 'Cancel'}
                     </button>
                     <button

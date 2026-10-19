@@ -22,8 +22,9 @@ func TestUploadSetupForwardsSoftware(t *testing.T) {
 	if len(inst) != 1 || inst[0]["software"] != "paper" || inst[0]["type"] != "upload-zip" || inst[0]["version"] != "1.21.11" {
 		t.Fatalf("queued %v", inst)
 	}
-	if fs.setupType != "paper" || fs.installRow.InstallerType != "paper" || fs.installRow.McVersion != "1.21" {
-		t.Fatalf("recorded %q / sub-server row %+v, want paper on both", fs.setupType, fs.installRow)
+	// The exact version, not the line the panel sent: mods are matched against it.
+	if fs.setupType != "paper" || fs.installRow.InstallerType != "paper" || fs.installRow.McVersion != "1.21.11" || fs.setupMC != "1.21.11" {
+		t.Fatalf("recorded %q %q / sub-server row %+v, want paper 1.21.11 on both", fs.setupType, fs.setupMC, fs.installRow)
 	}
 }
 

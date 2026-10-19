@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
 
-import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw } from 'lucide-react';
+import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw, Monitor, Server as ServerIcon } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
@@ -13,18 +13,21 @@ import {
     listInstalledMods, uninstallMod, pickPrimaryFile,
     getServerModpackInfo, getModHistory, getModrinthVersion,
     getModrinthVersionsByIds, getModrinthProjectsByIds, getLatestVersionsFromHashes,
-    type ModHistoryEntry,
+    planModInstall,
+    type ModHistoryEntry, type InstallModPayload,
     type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
     type ModrinthVersion, type ModrinthCategory, type InstalledMod, type ServerModpackContent,
 } from '@/lib/api/modrinth';
 import { isPackMember } from '@/lib/modpackMembership';
 import { clientSideNotice } from '@/lib/modpackWarnings';
-import { matchesSide, type ModSide, type ModSides } from '@/lib/modSide';
-import Segmented from '@/components/ui/Segmented';
+import { envLabel, envParam, matchesEnv, type EnvFilter, type ModSides } from '@/lib/modSide';
+import { browseNotice, envFilterName } from '@/lib/browseNotice';
 import {
-    pickNewestMatchingVersion, compareInstalledVsLatest, dependencyProblems, unresolvedDependencyVersionIds,
+    pickPreferredVersion, rowUpdateTarget, dependencyProblems, unresolvedDependencyVersionIds,
     type ModStatus,
 } from '@/lib/modVersionCompare';
+import { installQueue, planConfirm, planRefused } from '@/lib/modInstallPlan';
+import { MOD_LOADERS_FOR, PLUGIN_LOADERS, buildMismatch, loaderName, modFitKnown } from '@/lib/modFit';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
 import { UnmanagedJars } from '@/components/mods/UnmanagedJars';
@@ -64,6 +67,7 @@ const PROJECT_TYPE_FOR_LOADER: Record<string, 'mod' | 'plugin'> = {
 
 const PROXY_LOADERS = new Set(['velocity', 'waterfall', 'bungeecord']);
 
+
 const updateCheckApi: UpdateCheckApi = {
     versionsByIds: getModrinthVersionsByIds,
     latestFromHashes: getLatestVersionsFromHashes,
@@ -71,11 +75,8 @@ const updateCheckApi: UpdateCheckApi = {
     projectsByIds: getModrinthProjectsByIds,
 };
 
-const SIDE_OPTIONS: { id: ModSide; label: string; hint: string }[] = [
-    { id: 'all', label: 'All', hint: 'Every mod' },
-    { id: 'server', label: 'Server', hint: 'Mods players do not need on their own client' },
-    { id: 'client', label: 'Client', hint: 'Mods players must install too, and client-only mods' },
-];
+// Module-level so "no filter" is one stable object: runSearch depends on it.
+const NO_ENV: EnvFilter = { client: false, server: false };
 
 export default function ServerContentPage() {
     const paramId = useRouteId('servers');
@@ -98,10 +99,13 @@ export default function ServerContentPage() {
     const [filterLoaders, setFilterLoaders] = useState<string[]>(defaultLoader ? [defaultLoader] : []);
     const [filterVersions, setFilterVersions] = useState<string[]>(defaultMcVersion ? [defaultMcVersion] : []);
     const [searchResult, setSearchResult] = useState<ModrinthSearchResult | null>(null);
-    // Server / Client filter, shared by Browse and Installed. Mods only: a
-    // plugin or datapack has no client side to speak of.
-    const [modSide, setModSide] = useState<ModSide>('all');
+    // modrinth.com's Environment filter, shared by Browse and Installed: two
+    // independent toggles, neither on = everything. Mods only: a plugin or
+    // datapack has no client side to speak of.
+    const [env, setEnv] = useState<EnvFilter>(NO_ENV);
     const [searchLoading, setSearchLoading] = useState(false);
+    // The last search FAILED, as opposed to finding nothing.
+    const [searchFailed, setSearchFailed] = useState(false);
 
     // Category sidebar (single-select). Categories are proxied from Modrinth.
     const [categories, setCategories] = useState<ModrinthCategory[]>([]);
@@ -218,8 +222,8 @@ export default function ServerContentPage() {
     // loaders. Browse also drops it in Advanced, where results mix plugins,
     // shaders and packs.
     const isModServer = PROJECT_TYPE_FOR_LOADER[defaultLoader] === 'mod';
-    const sideFilter: ModSide = isModServer ? modSide : 'all';
-    const browseSide: ModSide = isModServer && !advanced ? modSide : 'all';
+    const sideFilter: EnvFilter = isModServer ? env : NO_ENV;
+    const browseEnv: EnvFilter = isModServer && !advanced ? env : NO_ENV;
     const visibleCategories = useMemo(
         () => visibleCategoriesFor(categories, browseProjectType),
         [categories, browseProjectType],
@@ -235,18 +239,25 @@ export default function ServerContentPage() {
             versions: filterVersions.length ? filterVersions : undefined,
             categories: selectedCategory ? [selectedCategory] : undefined,
             projectType,
-            side: browseSide === 'all' ? undefined : browseSide,
+            side: envParam(browseEnv),
             limit: 20,
             index: 'relevance',
         });
         setSearchResult(res);
+        setSearchFailed(res === null);
         setSearchLoading(false);
-    }, [query, filterLoaders, filterVersions, selectedCategory, projectType, browseSide]);
+    }, [query, filterLoaders, filterVersions, selectedCategory, projectType, browseEnv]);
 
     const visibleHits = useMemo(
-        () => (searchResult?.hits ?? []).filter(h => matchesSide(browseSide, h)),
-        [searchResult, browseSide],
+        () => (searchResult?.hits ?? []).filter(h => matchesEnv(browseEnv, h)),
+        [searchResult, browseEnv],
     );
+    const notice = browseNotice({
+        failed: searchFailed,
+        hits: searchResult?.hits.length ?? 0,
+        visible: visibleHits.length,
+        env: browseEnv,
+    });
 
     // Debounce typed search input (and category/filter changes).
     useEffect(() => {
@@ -287,13 +298,14 @@ export default function ServerContentPage() {
     // an unmounted component.
     useEffect(() => () => { bulkCancelled.current = true; }, []);
 
-    // Sides of installed mods, fetched only once the filter is in use. null =
-    // asked, Modrinth did not answer for it. A mod without sides (not fetched
-    // yet, null, or the lookup failed) stays visible: hiding it would read as
-    // "not installed".
+    // Sides of installed mods, for the Environment label on every row and the
+    // filter. null = asked, Modrinth did not answer for it: the marker is what
+    // stops this effect asking again on every render. A mod without sides (not
+    // fetched yet, null, or the lookup failed) stays visible: hiding it would
+    // read as "not installed".
     const [installedSides, setInstalledSides] = useState<Map<string, ModSides | null>>(new Map());
     useEffect(() => {
-        if (sideFilter === 'all') return;
+        if (!isModServer) return;
         const missing = [...new Set(installed.map(m => m.modrinthProjectId))].filter(id => id && !installedSides.has(id));
         if (missing.length === 0) return;
         let cancelled = false;
@@ -307,10 +319,38 @@ export default function ServerContentPage() {
             });
         }).catch(() => { /* fail-open: unfiltered rows stay visible */ });
         return () => { cancelled = true; };
-    }, [sideFilter, installed, installedSides]);
+    }, [isModServer, installed, installedSides]);
+    // The installed builds themselves, by version id, to mark the ones that do
+    // not fit this server (a Forge jar left over on NeoForge, a 26.3 beta on
+    // 1.21.1). Same null-marker guard as the sides above. Keyed by version, so
+    // a swap fetches the new build on its own.
+    const fitCheck = isModServer && modFitKnown(defaultLoader, defaultMcVersion);
+    const [installedBuilds, setInstalledBuilds] = useState<Map<string, ModrinthVersion | null>>(new Map());
+    useEffect(() => {
+        if (!fitCheck) return;
+        const missing = [...new Set(installed.filter(m => isOnServer(m)).map(m => m.modrinthVersionId))]
+            .filter(id => id && !installedBuilds.has(id));
+        if (missing.length === 0) return;
+        let cancelled = false;
+        getModrinthVersionsByIds(missing).then(builds => {
+            if (cancelled) return;
+            setInstalledBuilds(prev => {
+                const next = new Map(prev);
+                for (const id of missing) next.set(id, null);
+                for (const b of builds) next.set(b.id, b);
+                return next;
+            });
+        }).catch(() => { /* fail-open: an unchecked row is not marked */ });
+        return () => { cancelled = true; };
+    }, [fitCheck, installed, installedBuilds]);
+    const mismatchFor = (m: InstalledMod): string | null => {
+        const b = fitCheck && isOnServer(m) ? installedBuilds.get(m.modrinthVersionId) : null;
+        return b ? buildMismatch(defaultLoader, defaultMcVersion, b) : null;
+    };
+
     const visibleInstalled = useMemo(() => installed.filter(m => {
         const sides = installedSides.get(m.modrinthProjectId);
-        return !sides || matchesSide(sideFilter, sides);
+        return !sides || matchesEnv(sideFilter, sides);
     }), [installed, installedSides, sideFilter]);
 
     const historyFor = useCallback(
@@ -565,10 +605,97 @@ export default function ServerContentPage() {
         if (job.state !== 'failed') refreshInstalledSoon();
     };
 
-    const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
-        if (!await confirmModpackCrossCheck(project, version)) return;
-        await doInstall(project, version);
+    // Without the server's Minecraft version nothing can tell a build for it
+    // from one for another version, which is how a 26.3 beta landed on a
+    // 1.21.1 server. Advanced is the explicit "I pick the build" way round.
+    const installNeedsMc = !advanced && !PROXY_LOADERS.has(defaultLoader) && !isMcVersion(defaultMcVersion);
+    const refuseUnknownMc = (): boolean => {
+        if (!installNeedsMc) return false;
+        setDeclareDismissed(false);
+        showToast("This server's Minecraft version is unknown. Declare it with Declare now at the top, or turn on Advanced to pick a build by hand.", false);
+        return true;
     };
+
+    // The build whose dependency plan is being worked out, for its button.
+    const [planningVersion, setPlanningVersion] = useState<string | null>(null);
+
+    // Every new install brings its dependencies along, the way the Modrinth app
+    // does: Core works out the plan, one confirm lists what else comes and what
+    // cannot, then each install starts dependency-first as its own job. Nothing
+    // extra and nothing to warn about installs straight away. A plan that could
+    // not be worked out never quietly turns into an install without them.
+    const handleInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
+        if (refuseUnknownMc()) return;
+        if (!await confirmModpackCrossCheck(project, version)) return;
+        const file = pickPrimaryFile(version);
+        if (!file) { showToast('Version has no downloadable file', false); return; }
+        const root: InstallModPayload = {
+            projectId: project.id,
+            projectSlug: project.slug,
+            versionId: version.id,
+            title: project.title,
+            fileName: file.filename,
+            downloadUrl: file.url,
+            sha512: file.hashes.sha512,
+        };
+        let queue = [root];
+        const withoutDeps = (title: string, message: string) => confirmDialog({
+            title,
+            message: `${message}\n\nInstalling without them may stop the server from starting.`,
+            confirmLabel: 'Install without dependencies',
+            destructive: true,
+            focusCancel: true,
+        });
+        if (!modFitKnown(defaultLoader, defaultMcVersion)) {
+            // Core cannot plan for a server that does not say what it runs.
+            if (!await withoutDeps(
+                `Install "${project.title}" without its dependencies?`,
+                "Dependencies are installed automatically only once this server's loader and Minecraft version are declared. Declare them with Declare now at the top.",
+            )) return;
+        } else {
+            setPlanningVersion(version.id);
+            const res = await planModInstall(serverId, version.id);
+            setPlanningVersion(null);
+            if (!res.ok) {
+                if (planRefused(res.status)) { showToast(res.message, false); return; }
+                if (!await withoutDeps(`Dependencies of "${project.title}" could not be checked`, res.message)) return;
+            } else {
+                const ask = planConfirm(res.plan, root);
+                if (ask && !await confirmDialog(ask)) return;
+                queue = installQueue(res.plan, root);
+            }
+        }
+        for (const p of queue) {
+            const job = await installs.start(serverId, serverName, p);
+            if (job.state === 'failed') {
+                // The manager toasts the failure itself; this says what it cost.
+                if (p !== root) showToast(`"${root.title}" was not installed, because ${p.title} did not install.`, false);
+                break;
+            }
+        }
+        refreshInstalledSoon();
+    };
+
+    // An installed build that does not fit the server, swapped for the newest
+    // one that does (release first). It is an ordinary install: Core replaces
+    // the old jar, files it in the history, and the plan brings what the new
+    // build needs.
+    const handleSwap = (m: InstalledMod) => withBusy(m.modrinthProjectId, async () => {
+        const ref = m.modrinthProjectSlug || m.modrinthProjectId;
+        // A plugin fits any patch of its line, so plugins are not filtered by the exact version.
+        const versions = PROXY_LOADERS.has(defaultLoader) || PLUGIN_LOADERS.has(defaultLoader) ? undefined : [defaultMcVersion];
+        const [project, candidates] = await Promise.all([
+            getModrinthProject(ref),
+            getModrinthVersions(ref, { loaders: MOD_LOADERS_FOR[defaultLoader], versions }),
+        ]);
+        if (!project) { showToast('Failed to load project details', false); return; }
+        const target = pickPreferredVersion(candidates.filter(v => !buildMismatch(defaultLoader, defaultMcVersion, v)));
+        if (!target) {
+            showToast(`Modrinth has no ${loaderName(defaultLoader)} build of "${m.title || m.fileName}" for Minecraft ${defaultMcVersion}.`, false);
+            return;
+        }
+        await handleInstall(project, target);
+    });
 
     // Rolling back is an install of an older build, not a separate mechanism.
     //
@@ -771,8 +898,9 @@ export default function ServerContentPage() {
 
     // Row "Install": resolve the newest version matching the current filter
     // for this project (fetched lazily, on click - not eagerly for every
-    // browse row) and install it.
+    // browse row), release first, and install it.
     const handleRowInstall = (hit: ModrinthSearchHit) => withBusy(hit.project_id, async () => {
+        if (refuseUnknownMc()) return;
         const loaders = filterLoaders.length ? filterLoaders : undefined;
         const versions = filterVersions.length ? filterVersions : undefined;
         const [project, candidates] = await Promise.all([
@@ -780,7 +908,7 @@ export default function ServerContentPage() {
             getModrinthVersions(hit.slug, { loaders, versions }),
         ]);
         if (!project) { showToast('Failed to load project details', false); return; }
-        const latest = pickNewestMatchingVersion(candidates, { loaders: filterLoaders, mcVersions: filterVersions });
+        const latest = pickPreferredVersion(candidates, { loaders: filterLoaders, mcVersions: filterVersions });
         if (!latest) { showToast(`No version of "${hit.title}" matches the current loader / MC-version filter`, false); return; }
         await handleInstall(project, latest);
     });
@@ -789,21 +917,18 @@ export default function ServerContentPage() {
         await handleUninstall(installedMod);
     });
 
-    // Row "Update": remove the old file THEN install the newer one, so the
-    // mods/plugins folder never ends up holding both jars for the same
-    // project. The modpack cross-check confirm runs BEFORE the removal so a
-    // cancelled confirm never leaves the server with the mod uninstalled.
-    const handleRowUpdate = (hit: ModrinthSearchHit, installedMod: InstalledMod, latest: ModrinthVersion) =>
+    // Row "Update" is an install of the newer build, nothing more. Core passes
+    // the current jar to the node as the file to replace, and the node swaps
+    // only after the new one downloaded and verified. Removing first used to
+    // drop the mod's history and rollback, and lost the mod outright whenever
+    // the install then failed.
+    const handleRowUpdate = (hit: ModrinthSearchHit, latest: ModrinthVersion) =>
         withBusy(hit.project_id, async () => {
+            if (refuseUnknownMc()) return;
             const project = await getModrinthProject(hit.slug);
             if (!project) { showToast('Failed to load project details', false); return; }
             if (!await confirmModpackCrossCheck(project, latest)) return;
             if (!await confirmDependencies(project, latest)) return;
-            const removeRes = await uninstallMod(serverId, installedMod.id);
-            if (!removeRes.success) {
-                showToast(removeRes.message || 'Update failed: could not remove the old version', false);
-                return;
-            }
             await doInstall(project, latest);
         });
 
@@ -959,10 +1084,7 @@ export default function ServerContentPage() {
                     {/* Category sidebar (always visible) + Advanced-gated filters */}
                     <aside className="w-60 shrink-0 overflow-y-auto card p-3 space-y-4">
                         {isModServer && !advanced && (
-                            <div>
-                                <label className="input-label">Runs on</label>
-                                <Segmented options={SIDE_OPTIONS} value={modSide} onChange={setModSide} ariaLabel="Runs on" className="mt-2 w-full" />
-                            </div>
+                            <EnvironmentFilter value={env} onChange={setEnv} />
                         )}
                         <div>
                             <label className="input-label">Categories</label>
@@ -1092,12 +1214,19 @@ export default function ServerContentPage() {
                         <div className="flex-1 overflow-y-auto space-y-2">
                             {searchLoading ? (
                                 <div className="text-center py-12 text-sm text-(--base-06)">Searching…</div>
-                            ) : visibleHits.length === 0 ? (
-                                <div className="text-center py-12 text-sm text-(--base-06)">
-                                    {searchResult && searchResult.hits.length > 0
-                                        ? `None of the top results match the ${browseSide === 'server' ? 'Server' : 'Client'} filter. Try a more specific search.`
-                                        : 'No projects match.'}
+                            ) : notice?.kind === 'failed' ? (
+                                <div role="alert" className="text-center py-12 text-sm text-(--warning-light)">
+                                    <AlertTriangle size={20} className="mx-auto mb-2" />
+                                    {notice.message}
+                                    <div>
+                                        <button type="button" onClick={runSearch} className="btn btn-secondary btn-sm mt-3">
+                                            <RefreshCw size={12} />
+                                            Try again
+                                        </button>
+                                    </div>
                                 </div>
+                            ) : notice ? (
+                                <div className="text-center py-12 text-sm text-(--base-06)">{notice.message}</div>
                             ) : (
                                 visibleHits.map(hit => {
                                     // isOnServer, not "a row exists": a queued install has not
@@ -1107,19 +1236,23 @@ export default function ServerContentPage() {
                                     const row = installedByProject.get(hit.project_id);
                                     const installedMod = isOnServer(row) ? row : undefined;
                                     const candidates = installedMod ? installedRowVersions.get(hit.project_id) : undefined;
+                                    // Release first; a pre-release only when nothing newer is
+                                    // released (Update all never offers one), so the button says
+                                    // which channel it moves to.
+                                    const rowLatest = installedMod && candidates
+                                        ? rowUpdateTarget(installedMod.modrinthVersionId, candidates, { loaders: filterLoaders, mcVersions: filterVersions })
+                                        : null;
                                     const status: RowStatus = !installedMod
                                         ? 'not-installed'
                                         : candidates === undefined
                                             ? 'checking'
-                                            : compareInstalledVsLatest(installedMod.modrinthVersionId, candidates, { loaders: filterLoaders, mcVersions: filterVersions });
-                                    // The row may still offer a pre-release (Update all never does),
-                                    // so it says which channel the button moves to.
-                                    const rowLatest = candidates ? pickNewestMatchingVersion(candidates, { loaders: filterLoaders, mcVersions: filterVersions }) : null;
+                                            : rowLatest ? 'update-available' : 'up-to-date';
                                     return (
                                         <ModListRow
                                             key={hit.project_id}
                                             hit={hit}
                                             status={status}
+                                            envTag={isModServer ? envLabel(hit) : null}
                                             updateChannel={rowLatest?.version_type}
                                             installed={!!installedMod}
                                             busy={busyProjects.has(hit.project_id)}
@@ -1129,7 +1262,7 @@ export default function ServerContentPage() {
                                             onInstall={() => handleRowInstall(hit)}
                                             onRemove={() => installedMod && handleRowRemove(installedMod)}
                                             onUpdate={() => {
-                                                if (installedMod && rowLatest) handleRowUpdate(hit, installedMod, rowLatest);
+                                                if (rowLatest) handleRowUpdate(hit, rowLatest);
                                             }}
                                         />
                                     );
@@ -1226,7 +1359,8 @@ export default function ServerContentPage() {
                                                         const state = installedState(installedByProject.get(projectDetail.id), v.id);
                                                         const vJob = installs.jobFor(serverId, projectDetail.id);
                                                         const job = vJob && vJob.versionId === v.id ? vJob : undefined;
-                                                        const jobBusy = !!job && isPending(job);
+                                                        const planning = planningVersion === v.id;
+                                                        const jobBusy = (!!job && isPending(job)) || planning;
                                                         return (
                                                             <div
                                                                 key={v.id}
@@ -1248,7 +1382,7 @@ export default function ServerContentPage() {
                                                                     <div className="text-[10px] font-mono text-(--base-06) truncate">
                                                                         {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
                                                                     </div>
-                                                                    {job && jobBusy && <InstallBar job={job} />}
+                                                                    {job && isPending(job) && <InstallBar job={job} />}
                                                                     {job && (job.state === 'failed' || job.state === 'unknown') && job.message && (
                                                                         <p className="mt-1 text-[11px] text-(--warning-light)">{job.message}</p>
                                                                     )}
@@ -1260,7 +1394,7 @@ export default function ServerContentPage() {
                                                                     className="btn btn-secondary btn-sm shrink-0"
                                                                 >
                                                                     {jobBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
-                                                                    {job && jobBusy ? jobLabel(job) : state === 'installed' ? 'Reinstall' : state === 'failed' ? 'Try again' : 'Install'}
+                                                                    {planning ? 'Checking…' : job && jobBusy ? jobLabel(job) : state === 'installed' ? 'Reinstall' : state === 'failed' ? 'Try again' : 'Install'}
                                                                 </button>
                                                             </div>
                                                         );
@@ -1330,7 +1464,7 @@ export default function ServerContentPage() {
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     {isModServer && (
-                                        <Segmented options={SIDE_OPTIONS} value={modSide} onChange={setModSide} ariaLabel="Runs on" />
+                                        <EnvironmentFilter value={env} onChange={setEnv} inline />
                                     )}
                                     <button
                                         onClick={handleUpdateAll}
@@ -1379,7 +1513,7 @@ export default function ServerContentPage() {
                             )}
                             {visibleInstalled.length < installed.length && (
                                 <p className="text-[11px] text-(--base-06) pb-1">
-                                    {installed.length - visibleInstalled.length} hidden by the {sideFilter === 'server' ? 'Server' : 'Client'} filter. Update all still covers every mod.
+                                    {installed.length - visibleInstalled.length} hidden by the {envFilterName(sideFilter)} filter under Environment. Update all still covers every mod.
                                 </p>
                             )}
                             {visibleInstalled.map(m => (
@@ -1388,7 +1522,20 @@ export default function ServerContentPage() {
                                         <Box size={16} className="text-(--accent-light)" />
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                        <div className="text-sm font-medium text-(--base-09)">{m.title || m.fileName}</div>
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="text-sm font-medium text-(--base-09) truncate">{m.title || m.fileName}</span>
+                                            {(() => {
+                                                const sides = isModServer ? installedSides.get(m.modrinthProjectId) : null;
+                                                const tag = sides ? envLabel(sides) : null;
+                                                return tag ? <EnvTag label={tag} /> : null;
+                                            })()}
+                                            {mismatchFor(m) && (
+                                                <span className="badge badge-warning text-[10px] font-sans shrink-0">
+                                                    <AlertTriangle size={10} aria-hidden="true" />
+                                                    {mismatchFor(m)}
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="text-xs text-(--base-06) font-mono">{m.fileName}</div>
                                         <div className="text-xs text-(--base-06) mt-0.5">
                                             {m.status === 'installing'
@@ -1420,6 +1567,17 @@ export default function ServerContentPage() {
                                         )}
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
+                                        {mismatchFor(m) && (
+                                            <button
+                                                onClick={() => handleSwap(m)}
+                                                disabled={busyProjects.has(m.modrinthProjectId)}
+                                                aria-busy={busyProjects.has(m.modrinthProjectId)}
+                                                className="btn btn-primary btn-sm"
+                                            >
+                                                <RefreshCw size={12} className={busyProjects.has(m.modrinthProjectId) ? 'animate-spin motion-reduce:animate-none' : ''} />
+                                                Swap to the matching build
+                                            </button>
+                                        )}
                                         {/* Only the builds this server actually ran. Modrinth's own
                                             version list is one click away and offers everything; what it
                                             cannot tell you is which build you had before the update that
@@ -1482,6 +1640,7 @@ export default function ServerContentPage() {
 function ModListRow({
     hit,
     status,
+    envTag,
     updateChannel,
     installed,
     busy,
@@ -1494,6 +1653,7 @@ function ModListRow({
 }: {
     hit: ModrinthSearchHit;
     status: RowStatus;
+    envTag: string | null;
     updateChannel?: string;
     installed: boolean;
     busy: boolean;
@@ -1550,6 +1710,7 @@ function ModListRow({
                 <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-1.5 mt-1">
                     <Download size={10} />
                     {hit.downloads.toLocaleString()}
+                    {envTag && <EnvTag label={envTag} />}
                 </div>
                 {job && jobBusy && <InstallBar job={job} />}
                 {job && (job.state === 'failed' || job.state === 'unknown') && job.message && (
@@ -1592,6 +1753,53 @@ function ModListRow({
             </div>
         </div>
     );
+}
+
+// Modrinth's Environment filter: Client and Server, each on or off, neither on
+// = no filter. The buttons are the category buttons' style so the sidebar
+// reads as one list of controls.
+function EnvironmentFilter({ value, onChange, inline = false }: {
+    value: EnvFilter;
+    onChange: (next: EnvFilter) => void;
+    inline?: boolean;
+}) {
+    const options = [
+        { key: 'client' as const, label: 'Client', Icon: Monitor },
+        { key: 'server' as const, label: 'Server', Icon: ServerIcon },
+    ];
+    return (
+        <div role="group" aria-label="Environment" className={inline ? 'flex items-center gap-1.5' : ''}>
+            <span className={inline ? 'text-xs text-(--base-06)' : 'input-label'}>Environment</span>
+            <div className={inline ? 'flex gap-1.5' : 'mt-2 flex flex-col gap-1.5'}>
+                {options.map(({ key, label, Icon }) => {
+                    const on = value[key];
+                    return (
+                        <button
+                            key={key}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() => onChange({ ...value, [key]: !on })}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent-border) active:bg-(--base-04) disabled:opacity-50 disabled:pointer-events-none ${
+                                inline ? '' : 'w-full'
+                            } ${
+                                on
+                                    ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
+                                    : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:bg-(--base-03) hover:border-(--base-04) hover:text-(--base-09)'
+                            }`}
+                        >
+                            <Icon size={14} aria-hidden="true" className="shrink-0" />
+                            {label}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+// modrinth.com's environment label for a project ("Client and server", ...).
+function EnvTag({ label }: { label: string }) {
+    return <span className="badge badge-neutral text-[10px] font-sans shrink-0">{label}</span>;
 }
 
 // categoryIconMask turns an SVG string into a CSS mask: an image the browser

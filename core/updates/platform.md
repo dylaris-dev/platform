@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.19.4
+
+### Features
+- **Mods install their required dependencies.** The Content tab lists what else gets installed, for the
+  server's loader and exact Minecraft version, and installs it first. `core` `panel`
+- **Environment filter like modrinth.com.** Client and Server toggles replace All/Server/Client, and
+  every result shows where it runs. `core` `panel`
+- **Wrong builds are marked.** The installed list flags a Forge build on a NeoForge server or a build for
+  another Minecraft version, with a button to swap it to the matching one. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Mods install the build for the server's exact Minecraft version.** Servers stored only the line
+  (1.21 for 1.21.1) or, for NeoForge, nothing, so installs picked other versions; existing rows are corrected. `core` `panel`
+- **Core refuses a mod build that does not fit the server's loader or Minecraft version** instead of
+  installing it. Plugins accept builds of the same Minecraft line. `core`
+- **Switching loaders recommends clearing mods, and a cleared mods folder clears the list too;** a
+  failed Modrinth search shows an error instead of "No projects match". `core` `panel`
+
 ## 2026.10.19.3
 
 ### Features

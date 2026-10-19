@@ -3679,6 +3679,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/mods/plan",
+      "auth": "session",
+      "authorization": "mods.write",
+      "description": "what installing one Modrinth version takes on this server: the required dependencies, dependency-first, that are not installed yet, the ones nothing fits, and installed projects it is incompatible with.",
+      "handler": "ServerModsHandler.Plan",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/servers/{id:[0-9]+}/mods/unmanaged",
       "auth": "session",
@@ -5199,10 +5209,10 @@
     }
   ],
   "counts": {
-    "total": 522,
+    "total": 523,
     "byAuth": {
       "none": 31,
-      "session": 475,
+      "session": 476,
       "user API key": 10,
       "warp key": 6
     },
@@ -5237,7 +5247,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 77,
+      "servers": 78,
       "settings": 28,
       "setup": 2,
       "share": 1,

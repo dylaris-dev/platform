@@ -211,6 +211,9 @@ func ApplyImportedManifest(st importManifestStore, srv *models.Server, subServer
 		// id read out of it would address a row on a different platform.
 		rec.ServerID = srv.ID
 		rec.SubServerName = subServer
+		// An archive from before exact versions carries the line ("1.21") or,
+		// for NeoForge, nothing; mods are matched against what is written here.
+		rec.McVersion = RecordedMinecraftVersion(rec.InstallerType, rec.McVersion, rec.BuildVersion, rec.Loader)
 		// PackID and PackBuildID are primary keys in the source instance's
 		// database. On the platform that wrote the archive they mean a specific
 		// pack; here they mean whatever happens to hold that id, which is

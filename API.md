@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **521 routes** in 52 sections: 231 GET, 162 POST, 38 PUT, 37 PATCH, 54 DELETE.
+- **522 routes** in 52 sections: 231 GET, 163 POST, 38 PUT, 37 PATCH, 54 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **336** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **337** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (77)
+- [/api/servers](#apiservers) (78)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -703,6 +703,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/mods/compat` | session | `mods.read` | - | `ServerModsHandler.ServerCompat` | - |
 | GET | `/api/servers/{id:[0-9]+}/mods/history` | session | `mods.read` | - | `ServerModsHandler.ModHistory` | the superseded versions of this sub-server's mods, newest first, so a bad update can be undone. |
 | POST | `/api/servers/{id:[0-9]+}/mods/identify` | session | `mods.write` | - | `ServerModsHandler.IdentifyMods` | Asks the node to hash the named files and looks each hash up on Modrinth. |
+| POST | `/api/servers/{id:[0-9]+}/mods/plan` | session | `mods.write` | Limit | `ServerModsHandler.Plan` | what installing one Modrinth version takes on this server: the required dependencies, dependency-first, that are not installed yet, the ones nothing fits, and installed projects it is incompatible with. |
 | GET | `/api/servers/{id:[0-9]+}/mods/unmanaged` | session | `mods.read` | - | `ServerModsHandler.UnmanagedMods` | A jar placed by hand (SFTP, beam, the file manager) has no row saying which Modrinth project it is, so a version move cannot carry it and cannot even tell whether it would survive. |
 | DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | queues removal of one mod from the active sub-server. |
 | PATCH | `/api/servers/{id:[0-9]+}/name` | session | `server.settings.write` | - | `ServerHandler.UpdateServerName` | renames a server and records the old and new name in its audit trail. |

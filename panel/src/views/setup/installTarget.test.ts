@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { installTargetMcVersion, type InstallTargetInput } from './installTarget';
+import { installMcVersion, installTargetMcVersion, neoForgeMinecraft, prefillSelection, type InstallTargetInput } from './installTarget';
 
 // The Online tab's pickers hold Paper 26.3 in every row: what the owner had
 // selected before switching tabs.
@@ -47,4 +47,55 @@ describe('installTargetMcVersion', () => {
             expect(installTargetMcVersion({ ...base, ...over })).toEqual({ version, unknown });
         });
     }
+});
+
+// Same cases as Core's TestNeoForgeMinecraft; Core is the authority.
+describe('neoForgeMinecraft', () => {
+    const rows: [string, string][] = [
+        ['21.1.264', '1.21.1'], ['21.0.5', '1.21'], ['21.10.3', '1.21.10'],
+        ['20.4.237', '1.20.4'], ['20.2.86', '1.20.2'], ['26.1.2.5', '26.1.2'],
+        ['26.2.0.7', '26.2'], ['26.3.0.89', '26.3'], [' 21.1.264 ', '1.21.1'],
+        ['21.1.0-beta', ''], ['26.1.0.0-alpha.4+snapshot-1', ''], ['0.25w14craftmine.3', ''],
+        ['0.1.2', ''], ['21.1', ''], ['', ''], ['garbage', ''], ['99999999999.1.2', ''],
+    ];
+    it.each(rows)('%s -> %s', (loader, want) => {
+        expect(neoForgeMinecraft(loader)).toBe(want);
+    });
+});
+
+describe('installMcVersion', () => {
+    it('records the exact version, never the line', () => {
+        expect(installMcVersion('forge', '1.21', '1.21.1')).toBe('1.21.1');
+        expect(installMcVersion('paper', '1.21', '1.21.4')).toBe('1.21.4');
+        expect(installMcVersion('neoforge', '1.21', '21.1.264')).toBe('1.21.1');
+    });
+    it('keeps a proxy on its line', () => {
+        expect(installMcVersion('velocity', '3.4', '3.4.0')).toBe('3.4');
+    });
+});
+
+describe('prefillSelection', () => {
+    const versions = [
+        { major: '1.21', build: '1.21.4' },
+        { major: '1.21', build: '1.21.1' },
+        { major: '1.20', build: '1.20.1' },
+    ];
+    const neo = [
+        { major: '1.21', build: '21.1.264' },
+        { major: '1.21', build: '21.0.5' },
+    ];
+    it('finds an exact recorded version', () => {
+        expect(prefillSelection(versions, '1.21.1', '1.21.1')).toEqual({ major: '1.21', build: '1.21.1' });
+        expect(prefillSelection(versions, '1.21.1', '')).toEqual({ major: '1.21', build: '1.21.1' });
+    });
+    it('finds a NeoForge loader recorded as the build', () => {
+        expect(prefillSelection(neo, '1.21.1', '21.1.264')).toEqual({ major: '1.21', build: '21.1.264' });
+    });
+    it('still reads a legacy line', () => {
+        expect(prefillSelection(versions, '1.20', '')).toEqual({ major: '1.20', build: '1.20.1' });
+    });
+    it('offers nothing it cannot place', () => {
+        expect(prefillSelection(versions, '', '')).toBeNull();
+        expect(prefillSelection(versions, '1.19', '0.16.9')).toBeNull();
+    });
 });

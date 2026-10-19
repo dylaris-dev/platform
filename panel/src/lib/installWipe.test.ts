@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyInstallChange, recommendedWipe, WIPE_TOKENS, type NextInstall } from './installWipe';
+import { classifyInstallChange, loaderFamilyChanged, recommendedWipe, WIPE_TOKENS, type NextInstall } from './installWipe';
 import type { SubServerInstall } from './api/subServerInstalls';
 
 const installed = (over: Partial<SubServerInstall> = {}): SubServerInstall => ({
@@ -29,6 +29,13 @@ describe('classifyInstallChange', () => {
     it('spots a version change on the online tab', () => {
         expect(classifyInstallChange(installed(), next({ mcVersion: '1.21.1' }))).toBe('version');
         expect(classifyInstallChange(installed(), next({ buildVersion: '512' }))).toBe('version');
+    });
+
+    it('reads the exact version within a recorded line as no change', () => {
+        const legacy = installed({ installerType: 'forge', mcVersion: '1.21', buildVersion: '1.21.1' });
+        expect(classifyInstallChange(legacy, next({ software: 'forge', mcVersion: '1.21.1', buildVersion: '1.21.1' }))).toBe('runtime');
+        expect(classifyInstallChange(legacy, next({ software: 'forge', mcVersion: '1.21.4', buildVersion: '1.21.4' }))).toBe('version');
+        expect(classifyInstallChange(installed({ mcVersion: '1.2' }), next({ mcVersion: '1.21.1' }))).toBe('version');
     });
 
     it('spots a software change as an installer change', () => {
@@ -135,6 +142,15 @@ describe('recommendedWipe', () => {
         expect(recommendedWipe('version')).toEqual(['libraries', 'versions', 'jars']);
     });
 
+    it('clears mods when the mod loader changes', () => {
+        // Forge-era jars left in mods/ on a NeoForge server is how the server
+        // ends up loading builds for the wrong loader.
+        expect(recommendedWipe('installer', true)).toEqual(['mods', 'libraries', 'versions', 'jars']);
+        expect(recommendedWipe('version', true)).toContain('mods');
+        expect(recommendedWipe('installer')).not.toContain('mods');
+        expect(recommendedWipe('runtime', true)).toEqual([]);
+    });
+
     it('only ever recommends tokens the backend accepts', () => {
         // The vocabulary is shared with platform/core and platform/node. A
         // recommendation they do not know is a 400 at save time.
@@ -149,5 +165,24 @@ describe('recommendedWipe', () => {
         // Not "unchecked by default" - absent. A destructive default has to be
         // impossible to reach by mis-clicking.
         expect(WIPE_TOKENS as readonly string[]).not.toContain('world');
+    });
+});
+
+describe('loaderFamilyChanged', () => {
+    it.each([
+        ['forge', 'neoforge', true],
+        ['neoforge', 'forge', true],
+        ['fabric', 'quilt', true],
+        ['quilt', 'fabric', true],
+        ['forge', 'fabric', true],
+        ['NeoForge', 'neoforge', false],
+        ['forge', 'forge', false],
+        ['paper', 'forge', false],
+        ['forge', 'paper', false],
+        ['modpack', 'neoforge', false],
+        [undefined, 'neoforge', false],
+        ['forge', undefined, false],
+    ] as const)('%s -> %s is %s', (a, b, want) => {
+        expect(loaderFamilyChanged(a, b)).toBe(want);
     });
 });

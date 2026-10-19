@@ -5,6 +5,7 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/store"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -398,6 +399,17 @@ func recordedInstallerType(typ, software string) string {
 	return typ
 }
 
+// applyExactMinecraftVersion rewrites the setup's mcVersion to the exact
+// Minecraft version (exactMinecraftVersion), and for NeoForge records the
+// loader as the build, as a version update does. The node installs NeoForge
+// from the loader alone, so the version it is sent changes nothing there.
+func applyExactMinecraftVersion(mcVersion, version *string, software, loader string) {
+	*mcVersion = exactMinecraftVersion(software, *mcVersion, *version, loader)
+	if software == "neoforge" && strings.TrimSpace(loader) != "" {
+		*version = loader
+	}
+}
+
 // uploadSoftwareSince is the node release that installs installer.software
 // over an upload.
 const uploadSoftwareSince = "2026.10.04.9"
@@ -572,6 +584,11 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		req.Installer.URL = u
 		req.Installer.Path = ""
 	}
+
+	// The recorded Minecraft version is Core's to decide, not the client's: it
+	// is what every later mod install is matched against.
+	applyExactMinecraftVersion(&req.Installer.McVersion, &req.Installer.Version,
+		recordedInstallerType(req.Installer.Type, req.Installer.Software), req.Installer.Loader)
 
 	// Enforce sub-server limit. Skipped during first setup only - the comment
 	// here used to claim admins were exempt too, and they never have been:
@@ -780,6 +797,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// Set install cooldown
 		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
 
+		if forgetWipedMods(h.state.Store, serverID, subName, srv.InstallerType, req.Installer.WipePaths) {
+			h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+		}
+
 		// Snapshot the modpack's Modrinth members for the Content-tab
 		// cross-check. Advisory only: the helper logs and swallows every
 		// failure. Run in the background so the external-modpack case (which
@@ -801,6 +822,41 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "Server setup queued",
 	})
+}
+
+// forgetWipedMods drops the mod rows of a sub-server whose mods/ directory the
+// install was told to wipe, so the Installed list stops naming jars that are
+// gone. Rows in plugins/ stay: the "mods" token does not touch that directory.
+// installerType is the one the rows were placed under, for rows written before
+// target_dir existed. Reports whether any row was dropped; failures are logged,
+// since the install itself is already on its way.
+func forgetWipedMods(st store.Store, serverID int, subName, installerType string, wipePaths []string) bool {
+	wiped := false
+	for _, t := range wipePaths {
+		if strings.TrimSpace(t) == "mods" {
+			wiped = true
+		}
+	}
+	if !wiped {
+		return false
+	}
+	mods, err := st.ListServerMods(serverID, subName)
+	if err != nil {
+		log.Printf("forgetting wiped mods of server %d/%s: %v", serverID, subName, err)
+		return false
+	}
+	dropped := false
+	for i := range mods {
+		if uninstallTargetDir(&mods[i], installerType) != "mods" {
+			continue
+		}
+		if err := st.DeleteServerMod(mods[i].ID, serverID); err != nil {
+			log.Printf("forgetting wiped mod %d of server %d/%s: %v", mods[i].ID, serverID, subName, err)
+			continue
+		}
+		dropped = true
+	}
+	return dropped
 }
 
 // reinstallableInstallers are the sources a reinstall may name: the ones the
@@ -867,11 +923,27 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	if installerType == "" {
 		installerType = srv.InstallerType
 	}
+	// A NeoForge reinstall naming no loader reinstalls the recorded one; it
+	// used to be refused, which left a server with an empty Minecraft version
+	// no way to get one recorded.
+	loader := req.Installer.Loader
+	if installerType == "neoforge" && strings.TrimSpace(loader) == "" {
+		if rec, err := h.state.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil && rec.InstallerType == "neoforge" {
+			loader = rec.Loader
+		}
+		if loader == "" && srv.InstallerType == "neoforge" && neoForgeMinecraft(srv.BuildNumber) != "" {
+			loader = srv.BuildNumber
+		}
+	}
+	// Derived from the request alone: srv.BuildNumber can be a loader build
+	// (a version update records one), which is no Minecraft version.
 	mcVersion := req.Installer.McVersion
+	reqVersion := req.Installer.Version
+	applyExactMinecraftVersion(&mcVersion, &reqVersion, installerType, loader)
 	if mcVersion == "" {
 		mcVersion = srv.MinecraftVersion
 	}
-	buildNumber := req.Installer.Version
+	buildNumber := reqVersion
 	if buildNumber == "" {
 		buildNumber = srv.BuildNumber
 	}
@@ -882,7 +954,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Reinstall updates the server software (paper, vanilla, fabric, forge or neoforge). Use setup for any other install source.", 400)
 		return
 	}
-	if msg := validateInstallerRequest(installerType, buildNumber, req.Installer.Loader, "", ""); msg != "" {
+	if msg := validateInstallerRequest(installerType, buildNumber, loader, "", ""); msg != "" {
 		sendJSONError(w, msg, 400)
 		return
 	}
@@ -958,7 +1030,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		installerPayload := map[string]interface{}{
 			"type":    installerType,
 			"version": buildNumber,
-			"loader":  req.Installer.Loader,
+			"loader":  loader,
 		}
 
 		// A reinstall starts the server when it is done, as setup does. Published
@@ -978,6 +1050,22 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 
 		// Set install cooldown
 		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
+
+		// The install record follows the reinstall, as setup's does: the edit
+		// form and the mod checks prefer it over the servers row, and it used to
+		// keep naming the version this reinstall replaced. Written wholesale, so
+		// a reinstall away from a modpack clears the pack reference like setup.
+		// Best-effort for the same reason as there.
+		if err := h.state.Store.UpsertSubServerInstall(models.SubServerInstall{
+			ServerID:      serverID,
+			SubServerName: subName,
+			InstallerType: installerType,
+			McVersion:     mcVersion,
+			BuildVersion:  buildNumber,
+			Loader:        loader,
+		}); err != nil {
+			log.Printf("sub-server install record failed for server %d/%s: %v", serverID, subName, err)
+		}
 
 		// Refresh the modpack cross-check snapshot for the reinstalled
 		// sub-server. Advisory only, never blocks; run in the background so an
@@ -1208,6 +1296,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		if resp, ierr := inspectOrphanOnNode(h.state, srv.NodeID, srv.UUID); ierr != nil {
 			log.Printf("SwitchSubServer: loader-metadata refresh for %s/%s skipped: %v", srv.UUID, subName, ierr)
 		} else if it, mv, build, ok := subServerLoaderFromInspect(resp, subName); ok {
+			mv, build = versionFromInstallRecord(h.state.Store, serverID, subName, it, mv, build)
 			if err := h.state.Store.UpdateServerLoaderMetadata(serverID, it, mv, build); err != nil {
 				log.Printf("SwitchSubServer: persist loader metadata for server %d failed: %v", serverID, err)
 			}
@@ -1226,6 +1315,26 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		"success": true,
 		"message": "Sub-server switch queued",
 	})
+}
+
+// versionFromInstallRecord fills a switched-to sub-server's empty Minecraft
+// version from what it was installed as. The node's directory scan names the
+// type only, and the switch used to write that empty version onto the server.
+// A record of another type is stale and is not used.
+func versionFromInstallRecord(st interface {
+	GetSubServerInstall(serverID int, subServer string) (*models.SubServerInstall, error)
+}, serverID int, subName, installerType, mv, build string) (string, string) {
+	if mv != "" {
+		return mv, build
+	}
+	rec, err := st.GetSubServerInstall(serverID, subName)
+	if err != nil || rec == nil || !strings.EqualFold(rec.InstallerType, installerType) {
+		return mv, build
+	}
+	if build == "" {
+		build = rec.BuildVersion
+	}
+	return services.RecordedMinecraftVersion(rec.InstallerType, rec.McVersion, rec.BuildVersion, rec.Loader), build
 }
 
 // GetInstallCooldown returns how many seconds remain on the post-install

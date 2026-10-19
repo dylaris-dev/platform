@@ -16,13 +16,13 @@ import SetupEditMode from './setup/SetupEditMode';
 import RoutesModal from '@/components/RoutesModal';
 import { getSubServerInstalls, type SubServerInstall } from '@/lib/api/subServerInstalls';
 import WipeChoiceDialog from '@/views/setup/WipeChoiceDialog';
-import { classifyInstallChange, type InstallChange, type WipeToken } from '@/lib/installWipe';
+import { classifyInstallChange, loaderFamilyChanged, type InstallChange, type WipeToken } from '@/lib/installWipe';
 import { API_URL } from '@/lib/api/core';
 import { isSubServerName } from '@/lib/validation';
 import { ROUTES_CHANGED_EVENT } from '@/lib/systemEvents';
 import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
 import ModalPanel from '@/components/ui/ModalPanel';
-import { installTargetMcVersion } from '@/views/setup/installTarget';
+import { installMcVersion, installTargetMcVersion, prefillSelection } from '@/views/setup/installTarget';
 import { createUploadStager, uploadStartStep, UPLOAD_ZIP_NAME } from '@/views/setup/uploadStaging';
 import { setupPreviewModel } from '@/views/setup/setupPreview';
 
@@ -188,15 +188,10 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     useEffect(() => {
         if (formMode !== 'edit' || allVersions.length === 0) return;
         const { mcVersion: mcVer, buildVersion: buildNum } = recordedVersions();
-        if (!mcVer) return;
-        if (allVersions.some(v => v.major === mcVer)) {
-            setSelectedMajor(mcVer);
-            const buildsForMajor = allVersions.filter(v => v.major === mcVer).map(v => v.build);
-            if (buildNum && buildsForMajor.includes(buildNum)) {
-                setSelectedBuild(buildNum);
-            } else {
-                setSelectedBuild(buildsForMajor[0] || '');
-            }
+        const pick = prefillSelection(allVersions, mcVer, buildNum);
+        if (pick) {
+            setSelectedMajor(pick.major);
+            setSelectedBuild(pick.build);
         }
     }, [formMode]);
 
@@ -228,7 +223,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     // Set while the cleanup dialog is open. handleSubmit runs again with the
     // chosen tokens once it is answered, so the whole submit path stays one
     // function rather than two that have to agree.
-    const [pendingWipe, setPendingWipe] = useState<InstallChange | null>(null);
+    const [pendingWipe, setPendingWipe] = useState<{ change: InstallChange; loaderChanged: boolean } | null>(null);
     // True when edit mode opened before the install records had arrived. The
     // records are fetched on mount and the Edit button is a click away, so a fast
     // operator got the servers-row fallback and a form that had quietly not
@@ -511,14 +506,10 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     const prefillVersionFromServer = (versions: VersionEntry[]) => {
         if (formMode !== 'edit') return;
         const { mcVersion: mcVer, buildVersion: buildNum } = recordedVersions();
-        if (mcVer && versions.some(v => v.major === mcVer)) {
-            setSelectedMajor(mcVer);
-            if (buildNum && versions.some(v => v.major === mcVer && v.build === buildNum)) {
-                setSelectedBuild(buildNum);
-            } else {
-                const first = versions.find(v => v.major === mcVer);
-                setSelectedBuild(first?.build || '');
-            }
+        const pick = prefillSelection(versions, mcVer, buildNum);
+        if (pick) {
+            setSelectedMajor(pick.major);
+            setSelectedBuild(pick.build);
         }
     };
 
@@ -622,14 +613,18 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
                 backupFileSelected: !!backupFile,
                 uploadFileSelected: !!uploadFile,
                 software,
-                mcVersion: selectedMajor,
+                mcVersion: installMcVersion(software, selectedMajor, selectedBuild),
                 buildVersion: selectedBuild,
                 modrinthVersionId: modpackSelection?.versionId,
                 packBuildId: packSelection?.buildId,
                 technicPicked: !!technicSelection,
             });
             if (change !== 'runtime' && change !== 'none') {
-                setPendingWipe(change);
+                setPendingWipe({
+                    change,
+                    loaderChanged: installTab === 'online'
+                        && loaderFamilyChanged(installFor(sanitized)?.installerType, software),
+                });
                 return;
             }
             // Nothing about the install changed, so the installer must not run.
@@ -664,12 +659,14 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
             installer.type = software;
             if (software === 'neoforge') {
                 // NeoForge versions are self-contained — the version IS the loader,
-                // the matching MC version is implicit.
+                // the matching MC version is implicit. Core derives it as well and
+                // is the authority.
                 installer.loader = selectedBuild;
             } else {
                 installer.version = selectedBuild;
-                installer.mcVersion = selectedMajor;
             }
+            const mc = installMcVersion(software, selectedMajor, selectedBuild);
+            if (mc) installer.mcVersion = mc;
         } else if (installTab === 'library') {
             installer.type = 'library';
             installer.path = selectedLibraryFile;
@@ -728,7 +725,9 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         if (uploadNeedsSoftware && !uploadKeepJar) {
             installer.software = software;
             if (software === 'neoforge') installer.loader = selectedBuild;
-            else { installer.version = selectedBuild; installer.mcVersion = selectedMajor; }
+            else installer.version = selectedBuild;
+            const mc = installMcVersion(software, selectedMajor, selectedBuild);
+            if (mc) installer.mcVersion = mc;
         }
 
         // Only what the operator ticked. Absent means "install on top", which is
@@ -1195,7 +1194,8 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
                 check stays in sync. */}
             {pendingWipe && (
                 <WipeChoiceDialog
-                    change={pendingWipe}
+                    change={pendingWipe.change}
+                    loaderChanged={pendingWipe.loaderChanged}
                     onCancel={() => setPendingWipe(null)}
                     onConfirm={(tokens) => { setPendingWipe(null); void handleSubmit(tokens); }}
                 />

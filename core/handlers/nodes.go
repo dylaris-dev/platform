@@ -1278,7 +1278,8 @@ func subServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (ins
 		if err := json.Unmarshal([]byte(resp.MetadataJson), &meta); err == nil {
 			for _, ss := range meta.SubServers {
 				if ss.Name == subName {
-					return ss.Type, ss.MinecraftVersion, ss.Build, true
+					// A NeoForge build is recorded as its loader, as a setup does.
+					return ss.Type, services.RecordedMinecraftVersion(ss.Type, ss.MinecraftVersion, ss.Build, ss.Build), ss.Build, true
 				}
 			}
 		}

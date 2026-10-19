@@ -213,20 +213,21 @@ func (h *ModrinthHandler) Search(w http.ResponseWriter, r *http.Request) {
 	h.proxyJSON(r.Context(), modrinthSearchTTL, upstream, w)
 }
 
-// sideFacets narrows a search to where a mod runs. "server": players do not
-// need it on their client. "client": players need it (client required) or it
-// does nothing on a server (server unsupported). Modrinth matches these
-// against its version-level environments, so a hit can still disagree with its
-// own project-level client_side/server_side; the panel filters hits again.
+// sideFacets mirrors modrinth.com's Environment filter, mapped from its v3
+// environments onto the v2 client_side/server_side facets. "client": runs on
+// the client and the server does not need it; "server": the reverse; "both":
+// runs on either side. Modrinth matches these per version, so a hit can still
+// disagree with its own project-level sides; the panel filters hits again.
 func sideFacets(side string) [][]string {
+	runsClient := []string{"client_side:required", "client_side:optional"}
+	runsServer := []string{"server_side:required", "server_side:optional"}
 	switch side {
-	case "server":
-		return [][]string{
-			{"client_side:optional", "client_side:unsupported"},
-			{"server_side:required", "server_side:optional"},
-		}
 	case "client":
-		return [][]string{{"client_side:required", "server_side:unsupported"}}
+		return [][]string{runsClient, {"server_side:optional", "server_side:unsupported"}}
+	case "server":
+		return [][]string{runsServer, {"client_side:optional", "client_side:unsupported"}}
+	case "both":
+		return [][]string{runsClient, runsServer}
 	}
 	return nil
 }

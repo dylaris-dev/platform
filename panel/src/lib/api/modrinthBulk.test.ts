@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    fetchRetryingRateLimit, getModrinthVersions, getModrinthVersionsByIds, getModrinthProjectsByIds,
-    getLatestVersionsFromHashes, type ModrinthVersion, type InstalledMod,
+    fetchRetryingRateLimit, getModrinthVersions, searchModrinth, getModrinthVersionsByIds, getModrinthProjectsByIds,
+    getLatestVersionsFromHashes, planModInstall, type ModrinthVersion, type InstalledMod,
 } from './modrinth';
 import { checkModUpdates, type UpdateCheckApi } from '@/lib/bulkModUpdate';
 
@@ -61,6 +61,33 @@ describe('fetchRetryingRateLimit', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+// Search used to answer null on a 429 with no retry, and the tab read that as
+// "No projects match."
+describe('searchModrinth', () => {
+    it('waits out a rate limit', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal('fetch', vi.fn()
+                .mockResolvedValueOnce(json({}, 429, { 'Retry-After': '1' }))
+                .mockResolvedValueOnce(json({ hits: [], offset: 0, limit: 20, total_hits: 0 })));
+            const p = searchModrinth({ query: 'x' });
+            await vi.advanceTimersByTimeAsync(1000);
+            await expect(p).resolves.toMatchObject({ hits: [] });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('a failure is null, an empty result is not', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({}, 502)));
+        await expect(searchModrinth({ query: 'x' })).resolves.toBeNull();
+        vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
+        await expect(searchModrinth({ query: 'x' })).resolves.toBeNull();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ hits: [], offset: 0, limit: 20, total_hits: 0 })));
+        await expect(searchModrinth({ query: 'x' })).resolves.not.toBeNull();
     });
 });
 
@@ -190,5 +217,13 @@ describe('checkModUpdates on a 343-mod server', () => {
         const got = await checkModUpdates(mods, { loader: 'forge', mcVersion: '1.20.1' }, realApi);
         expect(got).toEqual({ planned: [], skipped: [], current: 0, unknown: 3 });
         expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('planModInstall', () => {
+    it('keeps the status of a 401', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('unauthorized', { status: 401 })));
+        const res = await planModInstall(7, 'v1');
+        expect(res).toMatchObject({ ok: false, status: 401 });
     });
 });

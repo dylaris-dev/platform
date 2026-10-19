@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"path"
@@ -87,6 +88,9 @@ func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // fetchModProjects is a variable so tests can stand in for Modrinth.
 var fetchModProjects = services.FetchProjects
+
+// fetchInstallVersion is a variable so tests can stand in for Modrinth.
+var fetchInstallVersion = services.FetchModrinthVersionPaced
 
 // modMetaWait bounds the lookup: it sits on the mod list, which used to be a
 // database read, and a slow Modrinth must not hold the Content tab open.
@@ -193,6 +197,40 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if req.ProjectID == "" || req.VersionID == "" || req.DownloadURL == "" || req.FileName == "" {
 		sendJSONError(w, "projectId, versionId, downloadUrl, fileName required", http.StatusBadRequest)
 		return
+	}
+	// A server that knows its loader and Minecraft version only takes a build
+	// made for both, and the file comes from Modrinth, not the request: a Forge
+	// jar on a NeoForge server, or a 26.3 build on 1.21.1, installs fine and
+	// then fails at boot. An imported server that has declared neither keeps
+	// the unchecked install.
+	if modFitKnown(srv.InstallerType, srv.MinecraftVersion) {
+		ctx, cancel := context.WithTimeout(r.Context(), modPlanWait)
+		v, err := fetchInstallVersion(ctx, req.VersionID)
+		cancel()
+		if err != nil {
+			if services.ModrinthNotFound(err) {
+				sendJSONError(w, "Modrinth has no version "+req.VersionID, http.StatusBadRequest)
+				return
+			}
+			var upstream *services.ModrinthHTTPError
+			if errors.As(err, &upstream) && upstream.Status == http.StatusTooManyRequests {
+				sendCooldown(w, "Modrinth", upstreamCooldownDefault)
+				return
+			}
+			log.Printf("install mod: fetching version %s from Modrinth: %v", req.VersionID, err)
+			sendJSONError(w, "Could not reach Modrinth to check this build against the server. Try again in a moment.", http.StatusBadGateway)
+			return
+		}
+		if v.ProjectID != req.ProjectID {
+			sendJSONError(w, "versionId does not belong to projectId", http.StatusBadRequest)
+			return
+		}
+		if ok, reason := modVersionFits(srv.InstallerType, srv.MinecraftVersion, v.Loaders, v.GameVersions); !ok {
+			sendJSONError(w, reason, http.StatusConflict)
+			return
+		}
+		f := v.PrimaryFile()
+		req.FileName, req.DownloadURL, req.SHA512 = f.Filename, f.URL, f.Hashes["sha512"]
 	}
 	// The node reduces this to its basename and refuses what is left over, which
 	// is why nothing ever escaped the mods directory. What it could not do is

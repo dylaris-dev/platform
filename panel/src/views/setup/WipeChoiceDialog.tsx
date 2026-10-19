@@ -20,15 +20,17 @@ import {
  */
 export default function WipeChoiceDialog({
     change,
+    loaderChanged = false,
     onCancel,
     onConfirm,
 }: {
     change: InstallChange;
+    loaderChanged?: boolean;
     onCancel: () => void;
     onConfirm: (tokens: WipeToken[]) => void;
 }) {
-    const [picked, setPicked] = useState<Set<WipeToken>>(() => new Set(recommendedWipe(change)));
-    const recommended = new Set(recommendedWipe(change));
+    const [picked, setPicked] = useState<Set<WipeToken>>(() => new Set(recommendedWipe(change, loaderChanged)));
+    const recommended = new Set(recommendedWipe(change, loaderChanged));
 
     const toggle = (t: WipeToken) =>
         setPicked(prev => {

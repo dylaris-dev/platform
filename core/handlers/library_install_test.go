@@ -26,13 +26,22 @@ type installFakeStore struct {
 	disabled    []string
 	setupWrites int
 	setupType   string
+	setupMC     string
+	setupBuild  string
 	installRow  models.SubServerInstall
+	// What GetSubServerInstall answers; nil is "no record".
+	storedInstall *models.SubServerInstall
 }
 
-func (f *installFakeStore) UpdateServerSetup(_ int, _, _, _, _, installerType, _, _ string) error {
+func (f *installFakeStore) UpdateServerSetup(_ int, _, _, _, _, installerType, mcVersion, build string) error {
 	f.setupWrites++
 	f.setupType = installerType
+	f.setupMC = mcVersion
+	f.setupBuild = build
 	return nil
+}
+func (f *installFakeStore) GetSubServerInstall(int, string) (*models.SubServerInstall, error) {
+	return f.storedInstall, nil
 }
 func (f *installFakeStore) UpsertSubServerInstall(r models.SubServerInstall) error {
 	f.installRow = r
