@@ -202,6 +202,9 @@ func TestSideFacets(t *testing.T) {
 		{"client", `[["client_side:required","client_side:optional"],["server_side:optional","server_side:unsupported"]]`},
 		{"server", `[["server_side:required","server_side:optional"],["client_side:optional","client_side:unsupported"]]`},
 		{"both", `[["client_side:required","client_side:optional"],["server_side:required","server_side:optional"]]`},
+		{"server_only", `[["server_side:required","server_side:optional"],["client_side:optional","client_side:unsupported"]]`},
+		{"client_server", `[["server_side:required","server_side:optional"],["client_side:required"]]`},
+		{"server_runs", `[["server_side:required","server_side:optional","server_side:unknown"]]`},
 		{"", `null`},
 		{"all", `null`},
 	}

@@ -6,6 +6,8 @@ import {
     searchModrinth, getModrinthVersions,
     type ModrinthSearchHit, type ModrinthVersion,
 } from '@/lib/api/modrinth';
+import { envLabel, envParam, matchesEnv, type EnvFilter } from '@/lib/modSide';
+import { EnvironmentFilter, EnvTag } from '@/components/mods/EnvironmentFilter';
 
 interface ModrinthVersionBrowserProps {
     /** Loader filter passed to Modrinth search (e.g. "fabric", "forge"). */
@@ -51,6 +53,11 @@ export default function ModrinthVersionBrowser({
         return new Set(installedProjectIds);
     }, [installedProjectIds]);
     const [query, setQuery] = useState('');
+    // modrinth.com's Environment filter: a pack is built for players, so
+    // "where does it run" is the right question here. Mods only.
+    const [env, setEnv] = useState<EnvFilter>({ client: false, server: false });
+    const isMod = projectType === 'mod';
+    const side = isMod ? envParam(env) : undefined;
     const [searchHits, setSearchHits] = useState<ModrinthSearchHit[]>([]);
     const [searching, setSearching] = useState(false);
     const [searchError, setSearchError] = useState(false);
@@ -69,6 +76,7 @@ export default function ModrinthVersionBrowser({
                 loaders: loader ? [loader] : undefined,
                 versions: mcVersion ? [mcVersion] : undefined,
                 projectType: projectType as Parameters<typeof searchModrinth>[0]['projectType'],
+                side,
                 limit: 20,
                 index: 'relevance',
             });
@@ -76,12 +84,13 @@ export default function ModrinthVersionBrowser({
                 setSearchError(true);
                 setSearchHits([]);
             } else {
-                setSearchHits(res.hits);
+                // Modrinth matches the facets per version; the project's own sides decide.
+                setSearchHits(isMod ? res.hits.filter(h => matchesEnv(env, h)) : res.hits);
             }
             setSearching(false);
         }, 350);
         return () => clearTimeout(t);
-    }, [query, loader, mcVersion, projectType]);
+    }, [query, loader, mcVersion, projectType, isMod, side, env]);
 
     const handleExpand = async (hit: ModrinthSearchHit) => {
         if (expandedSlug === hit.slug) {
@@ -113,6 +122,12 @@ export default function ModrinthVersionBrowser({
                 />
             </div>
 
+            {isMod && (
+                <div className="mb-3 shrink-0">
+                    <EnvironmentFilter value={env} onChange={setEnv} inline />
+                </div>
+            )}
+
             {/* Results */}
             <div className="flex-1 overflow-y-auto space-y-1.5">
                 {searching ? (
@@ -126,7 +141,9 @@ export default function ModrinthVersionBrowser({
                         Search failed. Check your connection.
                     </p>
                 ) : searchHits.length === 0 ? (
-                    <p className="text-xs text-(--base-06) text-center py-6">No matches.</p>
+                    <p className="text-xs text-(--base-06) text-center py-6">
+                        {side ? 'No matches with this Environment filter. Turn it off to see more.' : 'No matches.'}
+                    </p>
                 ) : (
                     searchHits.map(hit => (
                         <div key={hit.project_id}>
@@ -144,8 +161,9 @@ export default function ModrinthVersionBrowser({
                                 )}
                                 <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-(--base-09) truncate">{hit.title}</div>
-                                    <div className="text-[10px] font-mono text-(--base-06) truncate">
-                                        by {hit.author} · {hit.downloads.toLocaleString()}
+                                    <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-1.5 min-w-0">
+                                        <span className="truncate">by {hit.author} · {hit.downloads.toLocaleString()}</span>
+                                        {isMod && envLabel(hit) && <EnvTag label={envLabel(hit)!} />}
                                     </div>
                                 </div>
                                 {installedSet.has(hit.project_id) && (

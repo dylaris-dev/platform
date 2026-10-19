@@ -1,17 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { browseNotice, envFilterName } from './browseNotice';
 
-const none = { client: false, server: false };
-const client = { client: true, server: false };
-const server = { client: false, server: true };
-const both = { client: true, server: true };
+const none = null;
+const serverOnly = 'server_only' as const;
+const clientServer = 'client_server' as const;
 
 describe('envFilterName', () => {
     it('names the toggles that are on', () => {
         expect(envFilterName(none)).toBeNull();
-        expect(envFilterName(client)).toBe('Client');
-        expect(envFilterName(server)).toBe('Server');
-        expect(envFilterName(both)).toBe('Client and Server');
+        expect(envFilterName(serverOnly)).toBe('Server only');
+        expect(envFilterName(clientServer)).toBe('Client + Server');
     });
 });
 
@@ -29,18 +27,25 @@ describe('browseNotice', () => {
     });
 
     it('names the filter that hid every hit', () => {
-        const n = browseNotice({ failed: false, hits: 20, visible: 0, env: server });
+        const n = browseNotice({ failed: false, hits: 20, visible: 0, env: serverOnly });
         expect(n?.kind).toBe('empty');
-        expect(n?.message).toContain('Server filter');
+        expect(n?.message).toContain('Server only filter');
         expect(n?.message).toContain('20 results');
     });
 
     it('names the filter when the search itself came back empty with it on', () => {
-        expect(browseNotice({ failed: false, hits: 0, visible: 0, env: both })?.message)
-            .toContain('Client and Server filter on');
+        expect(browseNotice({ failed: false, hits: 0, visible: 0, env: clientServer })?.message)
+            .toContain('Client + Server filter on');
+    });
+
+    it('with no button on, says the hidden rows were client-only', () => {
+        const n = browseNotice({ failed: false, hits: 5, visible: 0, env: none });
+        expect(n?.kind).toBe('empty');
+        expect(n?.message).toContain('client-only');
+        expect(n?.message).not.toBe('No projects match.');
     });
 
     it('says nothing when there are rows', () => {
-        expect(browseNotice({ failed: false, hits: 20, visible: 3, env: client })).toBeNull();
+        expect(browseNotice({ failed: false, hits: 20, visible: 3, env: clientServer })).toBeNull();
     });
 });

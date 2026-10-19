@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
 
-import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw, Monitor, Server as ServerIcon } from 'lucide-react';
+import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
@@ -20,7 +20,8 @@ import {
 } from '@/lib/api/modrinth';
 import { isPackMember } from '@/lib/modpackMembership';
 import { clientSideNotice } from '@/lib/modpackWarnings';
-import { envLabel, envParam, matchesEnv, type EnvFilter, type ModSides } from '@/lib/modSide';
+import { matchesServerBucket, serverBucket, serverBucketLabel, serverBucketTitle, serverSideParam, type ModSides, type ServerBucketFilter } from '@/lib/modSide';
+import { EnvTag, ServerSideFilter } from '@/components/mods/EnvironmentFilter';
 import { browseNotice, envFilterName } from '@/lib/browseNotice';
 import {
     pickPreferredVersion, rowUpdateTarget, dependencyProblems, unresolvedDependencyVersionIds,
@@ -75,9 +76,6 @@ const updateCheckApi: UpdateCheckApi = {
     projectsByIds: getModrinthProjectsByIds,
 };
 
-// Module-level so "no filter" is one stable object: runSearch depends on it.
-const NO_ENV: EnvFilter = { client: false, server: false };
-
 export default function ServerContentPage() {
     const paramId = useRouteId('servers');
     const { servers, refreshServers } = useAppData();
@@ -99,10 +97,10 @@ export default function ServerContentPage() {
     const [filterLoaders, setFilterLoaders] = useState<string[]>(defaultLoader ? [defaultLoader] : []);
     const [filterVersions, setFilterVersions] = useState<string[]>(defaultMcVersion ? [defaultMcVersion] : []);
     const [searchResult, setSearchResult] = useState<ModrinthSearchResult | null>(null);
-    // modrinth.com's Environment filter, shared by Browse and Installed: two
-    // independent toggles, neither on = everything. Mods only: a plugin or
-    // datapack has no client side to speak of.
-    const [env, setEnv] = useState<EnvFilter>(NO_ENV);
+    // The server-side filter, shared by Browse and Installed: "Server only" or
+    // "Client + Server", null = everything a server can run. Mods only: a
+    // plugin or datapack has no client side to speak of.
+    const [env, setEnv] = useState<ServerBucketFilter>(null);
     const [searchLoading, setSearchLoading] = useState(false);
     // The last search FAILED, as opposed to finding nothing.
     const [searchFailed, setSearchFailed] = useState(false);
@@ -222,8 +220,10 @@ export default function ServerContentPage() {
     // loaders. Browse also drops it in Advanced, where results mix plugins,
     // shaders and packs.
     const isModServer = PROJECT_TYPE_FOR_LOADER[defaultLoader] === 'mod';
-    const sideFilter: EnvFilter = isModServer ? env : NO_ENV;
-    const browseEnv: EnvFilter = isModServer && !advanced ? env : NO_ENV;
+    const sideFilter: ServerBucketFilter = isModServer ? env : null;
+    // Browse filters by side at all only on a mod server outside Advanced.
+    const browseSides = isModServer && !advanced;
+    const browseEnv: ServerBucketFilter = browseSides ? env : null;
     const visibleCategories = useMemo(
         () => visibleCategoriesFor(categories, browseProjectType),
         [categories, browseProjectType],
@@ -239,18 +239,18 @@ export default function ServerContentPage() {
             versions: filterVersions.length ? filterVersions : undefined,
             categories: selectedCategory ? [selectedCategory] : undefined,
             projectType,
-            side: envParam(browseEnv),
+            side: browseSides ? serverSideParam(browseEnv) : undefined,
             limit: 20,
             index: 'relevance',
         });
         setSearchResult(res);
         setSearchFailed(res === null);
         setSearchLoading(false);
-    }, [query, filterLoaders, filterVersions, selectedCategory, projectType, browseEnv]);
+    }, [query, filterLoaders, filterVersions, selectedCategory, projectType, browseSides, browseEnv]);
 
     const visibleHits = useMemo(
-        () => (searchResult?.hits ?? []).filter(h => matchesEnv(browseEnv, h)),
-        [searchResult, browseEnv],
+        () => (searchResult?.hits ?? []).filter(h => !browseSides || matchesServerBucket(browseEnv, h, { browse: true })),
+        [searchResult, browseSides, browseEnv],
     );
     const notice = browseNotice({
         failed: searchFailed,
@@ -298,7 +298,7 @@ export default function ServerContentPage() {
     // an unmounted component.
     useEffect(() => () => { bulkCancelled.current = true; }, []);
 
-    // Sides of installed mods, for the Environment label on every row and the
+    // Sides of installed mods, for the server-side tag on every row and the
     // filter. null = asked, Modrinth did not answer for it: the marker is what
     // stops this effect asking again on every render. A mod without sides (not
     // fetched yet, null, or the lookup failed) stays visible: hiding it would
@@ -350,8 +350,8 @@ export default function ServerContentPage() {
 
     const visibleInstalled = useMemo(() => installed.filter(m => {
         const sides = installedSides.get(m.modrinthProjectId);
-        return !sides || matchesEnv(sideFilter, sides);
-    }), [installed, installedSides, sideFilter]);
+        return !isModServer || !sides || matchesServerBucket(sideFilter, sides, { browse: false });
+    }), [isModServer, installed, installedSides, sideFilter]);
 
     const historyFor = useCallback(
         (projectId: string) => history.filter(h => h.modrinthProjectId === projectId),
@@ -1084,7 +1084,7 @@ export default function ServerContentPage() {
                     {/* Category sidebar (always visible) + Advanced-gated filters */}
                     <aside className="w-60 shrink-0 overflow-y-auto card p-3 space-y-4">
                         {isModServer && !advanced && (
-                            <EnvironmentFilter value={env} onChange={setEnv} />
+                            <ServerSideFilter value={env} onChange={setEnv} />
                         )}
                         <div>
                             <label className="input-label">Categories</label>
@@ -1252,7 +1252,7 @@ export default function ServerContentPage() {
                                             key={hit.project_id}
                                             hit={hit}
                                             status={status}
-                                            envTag={isModServer ? envLabel(hit) : null}
+                                            sides={isModServer ? hit : null}
                                             updateChannel={rowLatest?.version_type}
                                             installed={!!installedMod}
                                             busy={busyProjects.has(hit.project_id)}
@@ -1464,7 +1464,7 @@ export default function ServerContentPage() {
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     {isModServer && (
-                                        <EnvironmentFilter value={env} onChange={setEnv} inline />
+                                        <ServerSideFilter value={env} onChange={setEnv} inline />
                                     )}
                                     <button
                                         onClick={handleUpdateAll}
@@ -1524,11 +1524,7 @@ export default function ServerContentPage() {
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span className="text-sm font-medium text-(--base-09) truncate">{m.title || m.fileName}</span>
-                                            {(() => {
-                                                const sides = isModServer ? installedSides.get(m.modrinthProjectId) : null;
-                                                const tag = sides ? envLabel(sides) : null;
-                                                return tag ? <EnvTag label={tag} /> : null;
-                                            })()}
+                                            {isModServer && <BucketTag sides={installedSides.get(m.modrinthProjectId)} />}
                                             {mismatchFor(m) && (
                                                 <span className="badge badge-warning text-[10px] font-sans shrink-0">
                                                     <AlertTriangle size={10} aria-hidden="true" />
@@ -1640,7 +1636,7 @@ export default function ServerContentPage() {
 function ModListRow({
     hit,
     status,
-    envTag,
+    sides,
     updateChannel,
     installed,
     busy,
@@ -1653,7 +1649,7 @@ function ModListRow({
 }: {
     hit: ModrinthSearchHit;
     status: RowStatus;
-    envTag: string | null;
+    sides: ModSides | null;
     updateChannel?: string;
     installed: boolean;
     busy: boolean;
@@ -1710,7 +1706,7 @@ function ModListRow({
                 <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-1.5 mt-1">
                     <Download size={10} />
                     {hit.downloads.toLocaleString()}
-                    {envTag && <EnvTag label={envTag} />}
+                    <BucketTag sides={sides} />
                 </div>
                 {job && jobBusy && <InstallBar job={job} />}
                 {job && (job.state === 'failed' || job.state === 'unknown') && job.message && (
@@ -1755,51 +1751,12 @@ function ModListRow({
     );
 }
 
-// Modrinth's Environment filter: Client and Server, each on or off, neither on
-// = no filter. The buttons are the category buttons' style so the sidebar
-// reads as one list of controls.
-function EnvironmentFilter({ value, onChange, inline = false }: {
-    value: EnvFilter;
-    onChange: (next: EnvFilter) => void;
-    inline?: boolean;
-}) {
-    const options = [
-        { key: 'client' as const, label: 'Client', Icon: Monitor },
-        { key: 'server' as const, label: 'Server', Icon: ServerIcon },
-    ];
-    return (
-        <div role="group" aria-label="Environment" className={inline ? 'flex items-center gap-1.5' : ''}>
-            <span className={inline ? 'text-xs text-(--base-06)' : 'input-label'}>Environment</span>
-            <div className={inline ? 'flex gap-1.5' : 'mt-2 flex flex-col gap-1.5'}>
-                {options.map(({ key, label, Icon }) => {
-                    const on = value[key];
-                    return (
-                        <button
-                            key={key}
-                            type="button"
-                            aria-pressed={on}
-                            onClick={() => onChange({ ...value, [key]: !on })}
-                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent-border) active:bg-(--base-04) disabled:opacity-50 disabled:pointer-events-none ${
-                                inline ? '' : 'w-full'
-                            } ${
-                                on
-                                    ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
-                                    : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:bg-(--base-03) hover:border-(--base-04) hover:text-(--base-09)'
-                            }`}
-                        >
-                            <Icon size={14} aria-hidden="true" className="shrink-0" />
-                            {label}
-                        </button>
-                    );
-                })}
-            </div>
-        </div>
-    );
-}
-
-// modrinth.com's environment label for a project ("Client and server", ...).
-function EnvTag({ label }: { label: string }) {
-    return <span className="badge badge-neutral text-[10px] font-sans shrink-0">{label}</span>;
+// The server-side bucket tag ("Server only", ...); none where Modrinth does
+// not say enough. Client only is a warning: it only appears on Installed.
+function BucketTag({ sides }: { sides?: ModSides | null }) {
+    const b = sides ? serverBucket(sides) : null;
+    if (!sides || !b) return null;
+    return <EnvTag label={serverBucketLabel(b)} title={serverBucketTitle(sides) ?? undefined} warning={b === 'client_only'} />;
 }
 
 // categoryIconMask turns an SVG string into a CSS mask: an image the browser

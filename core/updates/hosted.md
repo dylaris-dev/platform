@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.19.5
+
+### Features
+- **Content tab filters by what players need.** "Server only" shows mods your players do not need,
+  "Client + Server" mods they must install too; every mod carries that tag.
+- **Modpack builder gets modrinth.com's Client / Server filter** and environment tags on results.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.19.4
 
 ### Features

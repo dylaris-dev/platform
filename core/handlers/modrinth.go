@@ -216,16 +216,24 @@ func (h *ModrinthHandler) Search(w http.ResponseWriter, r *http.Request) {
 // sideFacets mirrors modrinth.com's Environment filter, mapped from its v3
 // environments onto the v2 client_side/server_side facets. "client": runs on
 // the client and the server does not need it; "server": the reverse; "both":
-// runs on either side. Modrinth matches these per version, so a hit can still
-// disagree with its own project-level sides; the panel filters hits again.
+// runs on either side. Those three serve the pack builder. The server Content
+// tab asks by what a server owner needs instead: "server_only" (players do not
+// need it, same facets as "server"), "client_server" (players must install it
+// too) and "server_runs" (anything that may run on a server, its default).
+// Modrinth matches these per version, so a hit can still disagree with its own
+// project-level sides; the panel filters hits again.
 func sideFacets(side string) [][]string {
 	runsClient := []string{"client_side:required", "client_side:optional"}
 	runsServer := []string{"server_side:required", "server_side:optional"}
 	switch side {
 	case "client":
 		return [][]string{runsClient, {"server_side:optional", "server_side:unsupported"}}
-	case "server":
+	case "server", "server_only":
 		return [][]string{runsServer, {"client_side:optional", "client_side:unsupported"}}
+	case "client_server":
+		return [][]string{runsServer, {"client_side:required"}}
+	case "server_runs":
+		return [][]string{{"server_side:required", "server_side:optional", "server_side:unknown"}}
 	case "both":
 		return [][]string{runsClient, runsServer}
 	}

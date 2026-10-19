@@ -85,7 +85,9 @@ interface SearchParams {
     versions?: string[];
     categories?: string[];
     projectType?: 'mod' | 'plugin' | 'modpack' | 'shader' | 'resourcepack' | 'datapack';
-    side?: 'server' | 'client' | 'both';
+    // client|server|both: Modrinth's Environment filter (pack builder);
+    // server_only|client_server|server_runs: the server Content tab's buckets.
+    side?: 'server' | 'client' | 'both' | 'server_only' | 'client_server' | 'server_runs';
     limit?: number;
     offset?: number;
     index?: 'relevance' | 'downloads' | 'follows' | 'newest' | 'updated';
