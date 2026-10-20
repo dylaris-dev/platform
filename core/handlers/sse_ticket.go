@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -34,10 +35,26 @@ var sseTicketPaths = regexp.MustCompile(`^/api/(system/events|servers/[0-9]+/(co
 // check again. A stream was checked once, when it opened, and then ran until
 // the client left - through a revoked permission, a removal from the server,
 // a password change, for days.
-var sseMaxStreamAge = 5 * time.Minute
+//
+// Shorter than sseTicketTTL on purpose. The ticket slides forward when a
+// stream opens, not while it runs, so a stream that lived exactly as long as
+// the ticket reconnected with a ticket that had just expired: the reconnect
+// was refused, and the console sat dead until the page minted a new one.
+var sseMaxStreamAge = 4 * time.Minute
 
-// streamContext bounds one stream's lifetime.
-func streamContext(r *http.Request) (context.Context, context.CancelFunc) {
+// sseRetryLine tells the browser to reconnect after one second instead of its
+// default of about three, so the rotation above is a blink, not a gap.
+const sseRetryLine = "retry: 1000\n\n"
+
+// streamContext bounds one stream's lifetime and opens it with the retry
+// line. Every stream handler calls it once, after its last refusal (a refusal
+// is a JSON error, which a line written before it would turn into a 200) and
+// at the start of what it streams. Not flushed here: it rides out with the
+// stream's first flush, or with the end of the response, which is the only
+// moment the browser needs it - and a flush of its own would add a write per
+// stream.
+func streamContext(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc) {
+	io.WriteString(w, sseRetryLine)
 	return context.WithTimeout(r.Context(), sseMaxStreamAge)
 }
 

@@ -48,7 +48,16 @@ export interface PowerGates {
     cooldownSeconds: number;
     // Non-admin 60 s lock after a kill.
     killCooldown: boolean;
+    // Epoch ms until which start/stop/restart stay locked after a power action
+    // ended, so a double click cannot queue a second action behind the first.
+    // Kill is not covered: it is the way out of exactly that situation.
+    cooldownUntil?: number;
+    // Admin-only Delete entry in the overflow menu.
+    canDelete?: boolean;
 }
+
+export const POWER_COOLDOWN_MS = 5_000;
+export const COOLDOWN_TITLE = 'Wait a moment before the next power action';
 
 export type PrimaryIcon = 'start' | 'stop' | 'busy' | 'stale';
 
@@ -61,11 +70,15 @@ export interface PowerModel {
         disabled: boolean;
         title: string;
     };
-    // Restart and the overflow menu exist only while something is running.
+    // Restart exists only while something is running.
     showSecondary: boolean;
+    // The overflow menu: while something is running, and always when it holds
+    // Delete, so a stopped server can still be deleted.
+    showMenu: boolean;
     restartDisabled: boolean;
     menuDisabled: boolean;
     killDisabled: boolean;
+    deleteDisabled: boolean;
     busy: boolean;
     // What the live region announces as the state changes.
     announcement: string;
@@ -73,6 +86,7 @@ export interface PowerModel {
 
 const STOP_TITLE = 'Saving the world, then waiting for Java to exit (up to about 35 s)';
 const STALE_TITLE = 'The node has not reported the outcome yet. Reload the page to check, or force kill the server.';
+const BOOTING_TITLE = 'The server is still starting up. Large modpacks can take several minutes. Force kill is available if it hangs.';
 
 const BUSY: Record<PowerAction, string> = {
     start: 'Starting...',
@@ -99,8 +113,25 @@ function blockedReason(status: string, g: PowerGates): string {
     return '';
 }
 
+type BaseModel = Omit<PowerModel, 'showMenu' | 'deleteDisabled'>;
+
 export function powerModel(status: string, pending: PendingPower | null, now: number, g: PowerGates): PowerModel {
+    const m = baseModel(status, pending, now, g);
+    const deleteDisabled = !g.canDelete || g.uploadLocked;
+    return {
+        ...m,
+        showMenu: m.showSecondary || !!g.canDelete,
+        menuDisabled: m.menuDisabled && deleteDisabled,
+        deleteDisabled,
+    };
+}
+
+function baseModel(status: string, pending: PendingPower | null, now: number, g: PowerGates): BaseModel {
     const blocked = blockedReason(status, g);
+    // The post-action pause locks only start/stop/restart, so it is not part of
+    // `blocked`, which also gates kill.
+    const cooling = !blocked && !!g.cooldownUntil && now < g.cooldownUntil;
+    const lock = blocked || (cooling ? COOLDOWN_TITLE : '');
     const offline = OFFLINE_STATUSES.includes(status);
     const local = pending?.action ?? null;
     const action = local ?? statusAction(status);
@@ -115,17 +146,17 @@ export function powerModel(status: string, pending: PendingPower | null, now: nu
             return {
                 primary: {
                     action: 'start', label: 'Start', icon: 'start', variant: 'start',
-                    disabled: !!blocked || diskFull,
-                    title: blocked || (diskFull ? 'Storage full. Delete files or raise the limit.' : 'Start server'),
+                    disabled: !!lock || diskFull,
+                    title: lock || (diskFull ? 'Storage full. Delete files or raise the limit.' : 'Start server'),
                 },
                 showSecondary: false, restartDisabled: true, menuDisabled: true, killDisabled: true,
                 busy: false, announcement: 'Server stopped',
             };
         }
         return {
-            primary: { action: 'stop', label: 'Stop', icon: 'stop', variant: 'stop', disabled: !!blocked, title: blocked || 'Stop server' },
+            primary: { action: 'stop', label: 'Stop', icon: 'stop', variant: 'stop', disabled: !!lock, title: lock || 'Stop server' },
             showSecondary: true,
-            restartDisabled: !!blocked,
+            restartDisabled: !!lock,
             menuDisabled: !!blocked,
             killDisabled: !killGate,
             busy: false, announcement: status === 'online' ? 'Server running' : '',
@@ -141,19 +172,24 @@ export function powerModel(status: string, pending: PendingPower | null, now: nu
     // from, so a server stuck "starting" since before the page loaded would
     // otherwise have no escape at all. Nothing is clickable during a kill.
     let killOpen = action === 'stop' || (action !== 'kill' && !local);
+    // A start whose server reads "starting" is booting: the node reports
+    // "online" only once the server answers a status ping, and a large
+    // modpack takes minutes to get there. That is not the node going silent.
+    const booting = status === 'starting' && (action === 'start' || action === 'restart');
+    const silent = stale && !booting;
     if (stale) {
-        label = 'Still waiting for the node';
-        title = STALE_TITLE;
+        title = booting ? BOOTING_TITLE : STALE_TITLE;
         killOpen = true;
     }
+    if (silent) label = 'Still waiting for the node';
     const killDisabled = !(killOpen && killGate);
     return {
-        primary: { action: null, label, icon: stale ? 'stale' : 'busy', variant: 'busy', disabled: true, title },
+        primary: { action: null, label, icon: silent ? 'stale' : 'busy', variant: 'busy', disabled: true, title },
         showSecondary: true,
         restartDisabled: true,
         menuDisabled: killDisabled,
         killDisabled,
         busy: true,
-        announcement: stale ? label : BUSY[action],
+        announcement: silent ? label : BUSY[action],
     };
 }

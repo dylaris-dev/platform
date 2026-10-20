@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-    Pencil, SlidersHorizontal, Trash2, AlertTriangle, Zap,
+    Pencil, SlidersHorizontal, AlertTriangle, Zap, Plus,
     HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2, X,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
@@ -41,7 +41,7 @@ import {
 import { MEMORY_GUARD_HELP, MEMORY_GUARD_OPTIONS, memoryGuardPatch, oomDismissKey, showOomBanner } from '@/lib/memoryGuard';
 import type { MemoryGuardAction } from '@/lib/api/types';
 import PowerControls from '@/components/server/PowerControls';
-import { advancePending, startPending, type PendingPower, type PowerAction } from '@/lib/powerControls';
+import { advancePending, startPending, POWER_COOLDOWN_MS, type PendingPower, type PowerAction } from '@/lib/powerControls';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -114,6 +114,10 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // Power action this browser sent and is waiting on, per server id. It ends
     // only on an outcome or a refusal; see lib/powerControls.
     const [pendingPower, setPendingPower] = useState<Record<number, PendingPower>>({});
+    const pendingPowerRef = useRef(pendingPower);
+    pendingPowerRef.current = pendingPower;
+    // When start/stop/restart unlock again after a wait ended, per server id.
+    const [powerCooldownUntil, setPowerCooldownUntil] = useState<Record<number, number>>({});
     const [killCooldown, setKillCooldown] = useState(false);
     const [showKillConfirm, setShowKillConfirm] = useState(false);
     const [powerError, setPowerError] = useState<string>('');
@@ -185,6 +189,22 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // Every pending action follows its own server's status, so one sent before
     // switching to another server still ends when that server gets there.
     useEffect(() => {
+        // A wait that ends here starts the short pause before the next power
+        // action, so a click landing as the buttons come back cannot queue a
+        // second command behind the first.
+        const ended: number[] = [];
+        for (const [id, p] of Object.entries(pendingPowerRef.current)) {
+            const srv = servers.find(s => s.id === Number(id));
+            if (srv && advancePending(p, srv.status) === null) ended.push(Number(id));
+        }
+        if (ended.length > 0) {
+            const until = Date.now() + POWER_COOLDOWN_MS;
+            setPowerCooldownUntil(prev => {
+                const next = { ...prev };
+                for (const id of ended) next[id] = until;
+                return next;
+            });
+        }
         setPendingPower(prev => {
             let next = prev;
             for (const [id, p] of Object.entries(prev)) {
@@ -860,12 +880,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     uploadLocked,
                                     cooldownSeconds: powerCooldownActive ? cooldownSecondsLeft : 0,
                                     killCooldown,
+                                    cooldownUntil: powerCooldownUntil[selectedServer.id],
                                 }}
                                 onAction={action => {
                                     if (action !== 'kill') handlePower(action);
                                     else if (cooldownSecondsLeft > 0 && user?.isAdmin) setPendingCooldownAction('kill');
                                     else setShowKillConfirm(true);
                                 }}
+                                onDelete={user?.isAdmin ? handleOpenDeletePopup : undefined}
                             />
                             {isMigrating && user?.isAdmin && (
                                 <button
@@ -890,15 +912,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 >
                                     <SlidersHorizontal size={14} />
                                     Resources
-                                </button>
-                                <button
-                                    onClick={handleOpenDeletePopup}
-                                    disabled={uploadLocked}
-                                    className="btn btn-danger btn-sm disabled:opacity-30 disabled:cursor-not-allowed"
-                                    title={uploadLocked ? 'Upload in progress — wait or cancel it first' : undefined}
-                                >
-                                    <Trash2 size={14} />
-                                    Delete
                                 </button>
                             </div>
                         )}
@@ -928,9 +941,38 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                 ) && (
                     <div className={`flex items-center gap-4 py-2 border-t flex-wrap ${
                         routingMode === 'gateway' && gatewayEnabled && serverRoutes.length === 0
-                            ? 'border-(--warning)/40 animate-pulse'
+                            ? 'border-(--warning)/40'
                             : 'border-(--base-03)/60'
                     }`}>
+                        {/* First in the row, where the eye starts: routes are the
+                            one thing here a user acts on rather than copies. */}
+                        {gatewayEnabled && (serverRoutes.length > 0 ? (
+                            <button
+                                type="button"
+                                onClick={() => setShowRoutesModal(true)}
+                                aria-label="Manage routes"
+                                title="Manage routes"
+                                className="focus-ring relative inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) hover:bg-(--accent)/15 active:bg-(--accent)/25 transition-colors"
+                            >
+                                <Globe size={14} />
+                                <span
+                                    aria-hidden="true"
+                                    className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 rounded-full bg-(--accent) text-(--base-09) text-[10px] font-semibold leading-4 text-center tabular-nums"
+                                >
+                                    {serverRoutes.length}
+                                </span>
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setShowRoutesModal(true)}
+                                title="Add a gateway route so players can join"
+                                className="btn btn-primary btn-sm focus-ring shrink-0"
+                            >
+                                <Plus size={14} />
+                                Add route
+                            </button>
+                        ))}
                         {routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0 && (
                             <div className="flex items-center gap-2">
                                 <span className="mono-label text-(--base-05)">Direct</span>
@@ -970,17 +1012,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 <AlertTriangle size={12} className="text-(--warning)" />
                                 <span className="text-xs text-(--warning) font-medium">No gateway route configured</span>
                             </div>
-                        )}
-                        {gatewayEnabled && (
-                            <button
-                                onClick={() => setShowRoutesModal(true)}
-                                className={`ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs font-medium hover:bg-(--accent)/15 transition-colors ${serverRoutes.length === 0 ? 'shine-border' : ''}`}
-                                title="Manage gateway routes &amp; domains"
-                            >
-                                <Globe size={12} />
-                                Routes
-                                <span className="mono-label text-(--accent-light)">{serverRoutes.length}</span>
-                            </button>
                         )}
                     </div>
                 )}

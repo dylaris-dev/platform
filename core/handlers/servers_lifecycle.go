@@ -1365,6 +1365,54 @@ func (h *ServerHandler) GetInstallCooldown(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// powerTransitionRefusal is the message a start, stop or restart is refused
+// with while the server is between states, or "" when it may go out. A second
+// command queued behind the first ran on the node right after it, so a stop
+// clicked during a boot stopped the server the moment it came up.
+//
+// Kill is never refused here: it is the way out of a transition that hangs.
+// Operators pass too, because a status can be left behind by a node that died
+// mid-transition, and nothing else could then put the server back in order.
+func powerTransitionRefusal(action, status string, override bool) string {
+	if action == "kill" || override || !inPowerTransition(status) {
+		return ""
+	}
+	return "The server is " + status + ". Wait until it has finished, or use Force kill."
+}
+
+// inPowerTransition reports a server between power states: a JVM is booting,
+// restarting or shutting down. Since the node reports "starting" until the
+// server answers a status ping, this lasts the whole boot, not a moment.
+func inPowerTransition(status string) bool {
+	switch status {
+	case "starting", "stopping", "restarting":
+		return true
+	}
+	return false
+}
+
+// powerLockTTL is how long one power action locks out the next for its server.
+const powerLockTTL = 3 * time.Second
+
+func powerLockKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:power_lock", uuid)
+}
+
+// takePowerLock claims the per-server power lock. A Redis that cannot answer
+// lets the action through: the lock only stops a double click, and failing
+// closed would take power control away whenever Redis has a bad moment.
+func takePowerLock(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	if rdb == nil {
+		return true
+	}
+	ok, err := rdb.SetNX(ctx, powerLockKey(uuid), "1", powerLockTTL).Result()
+	if err != nil {
+		log.Printf("power lock for %s: %v (letting the action through)", uuid, err)
+		return true
+	}
+	return ok
+}
+
 // ServerPowerHandler: Controls Start, Stop, Kill and Restart
 func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -1511,6 +1559,10 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	if msg := powerTransitionRefusal(req.Action, srv.Status, operatorOverride(r)); msg != "" {
+		sendJSONError(w, msg, http.StatusConflict)
+		return
+	}
 
 	// The node is in the middle of an install, a restore or a move of this
 	// server. It runs power commands in parallel with that work and nothing
@@ -1536,6 +1588,14 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		sendJSONError(w, "Node not found", 404)
+		return
+	}
+
+	// Last gate before anything is written: two clicks a moment apart (or two
+	// tabs) both pass the status check above, because the status they read is
+	// the same one, and queue two commands the node runs back to back.
+	if req.Action != "kill" && !takePowerLock(r.Context(), h.state.Redis, srv.UUID) {
+		sendJSONError(w, "A power action was just sent; wait a moment", http.StatusTooManyRequests)
 		return
 	}
 
@@ -2133,6 +2193,14 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 	// then deletes the source: the target keeps a half-written world.
 	if srv.Status == "installing" {
 		sendJSONError(w, "The server is being installed. Move it when the install has finished.", http.StatusConflict)
+		return
+	}
+	// Between states the node is already acting on the server: a restart
+	// recreates its container, a stop is still saving the world. A move queued
+	// behind that archives a directory that is being written. Online is fine -
+	// the move stops it first - and stopped is what a move wants.
+	if inPowerTransition(srv.Status) {
+		sendJSONError(w, "The server is "+srv.Status+". Move it when it has finished.", http.StatusConflict)
 		return
 	}
 	if refuseIfServerBusy(w, r, h.state, srv) {

@@ -182,6 +182,16 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 // RAM is the heuristic because the allocation model (SumAllocatedByNode) sums
 // memory across ALL servers regardless of running state, so moving the largest-
 // RAM server drops the measured load the most per move.
+// unsettledForMove reports whether a server is between states, so an automatic
+// move must leave it alone this tick.
+func unsettledForMove(status string) bool {
+	switch status {
+	case "starting", "restarting", "stopping", "installing", "migrating":
+		return true
+	}
+	return false
+}
+
 func (w *RebalanceWorker) pickCandidate(ctx context.Context, src *models.Node) *models.Server {
 	rows, err := w.store.ListServersByNode(src.ID)
 	if err != nil {
@@ -198,6 +208,12 @@ func (w *RebalanceWorker) pickCandidate(ctx context.Context, src *models.Node) *
 			continue
 		}
 		if !srv.AutoMove {
+			continue
+		}
+		// Only a server at rest: one between states is about to be something
+		// else, and the move would act on the state it read, not the one it
+		// meets. installing and migrating are other work on the same server.
+		if unsettledForMove(srv.Status) {
 			continue
 		}
 		if w.migrationLocked(ctx, srv.UUID) {

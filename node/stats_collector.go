@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -75,7 +77,139 @@ const (
 	historyBatchInterval = 2 * time.Minute
 	pingTimeout          = 3 * time.Second
 	watchCacheDuration   = 2 * time.Second
+	// readinessBound is how long a freshly started container may report
+	// "starting" without answering a status ping before it is reported
+	// "online" anyway. enable-status=false is read from server.properties and
+	// skips the wait entirely (statusPingDisabled); this bound is for what the
+	// node cannot see - a plugin that drops pings, a PROXY-protocol setting it
+	// does not know about. It is short because "starting" is not harmless: the
+	// edge turns players away with "Server Starting" and Core refuses stop and
+	// restart for as long as it lasts.
+	readinessBound = 5 * time.Minute
 )
+
+// startReadiness decides what a running container reports: "starting" from
+// the moment it (re)started until its first successful status ping, then
+// "online". A container that was running reported "online" at once, so the
+// panel and the players' server list said a server was up while it was still
+// loading its world, and a join in that window was refused by a server that
+// was not listening yet.
+//
+// Only the status VALUE changes, and "starting" is one every Core already
+// knows: an old Core shows it and refuses nothing it did not refuse before.
+type startReadiness struct {
+	mu      sync.Mutex
+	started time.Time // the container's StartedAt, or when tracking began
+	ready   bool
+}
+
+// observeStart records the container's start time. A different one than
+// before means the container restarted under the same name without the scan
+// noticing the gap, so readiness begins again; the first observation replaces
+// the tracking time and counts as a new start. pingDisabled is asked once per
+// start (it reads a file): a server that turned the status ping off is ready
+// at once, as every running container was before readiness existed.
+func (r *startReadiness) observeStart(started time.Time, pingDisabled func() bool) {
+	if started.IsZero() {
+		return
+	}
+	r.mu.Lock()
+	if started.Equal(r.started) {
+		r.mu.Unlock()
+		return
+	}
+	r.started = started
+	r.ready = false
+	r.mu.Unlock()
+	if pingDisabled != nil && pingDisabled() {
+		r.pinged(true)
+	}
+}
+
+// pinged records a ping answer. Any success makes the container ready until
+// its next start; later failures do not take it back, they only drop the
+// player count (nextPingState).
+func (r *startReadiness) pinged(ok bool) {
+	if !ok {
+		return
+	}
+	r.mu.Lock()
+	r.ready = true
+	r.mu.Unlock()
+}
+
+// status is "online" once ready or past readinessBound, "starting" before.
+func (r *startReadiness) status(now time.Time) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ready || now.Sub(r.started) >= readinessBound {
+		return "online"
+	}
+	return "starting"
+}
+
+// maxPropertiesBytes caps the server.properties read. The file is the
+// tenant's; a real one is a few KB.
+const maxPropertiesBytes = 1 << 20
+
+// statusPingDisabled reports whether the active sub-server turned the status
+// ping off (enable-status=false). Such a server never answers one, so waiting
+// for it would hold it on "starting" until readinessBound - and turn every
+// player away for that long. workingDir is the container's, /data/<sub>.
+//
+// Read through an os.Root on the server directory: the file is written by the
+// tenant, and a symlink there must not make the node read outside it. Any
+// failure answers false, which only means the ping is waited for.
+func statusPingDisabled(uuid, workingDir string) bool {
+	if globalStorageMgr == nil {
+		return false
+	}
+	sub, ok := strings.CutPrefix(workingDir, "/data/")
+	if !ok || !validate.IsSubServerName(sub) {
+		return false
+	}
+	dir := globalStorageMgr.GetServerDir(uuid)
+	if dir == "" {
+		return false
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	f, err := root.Open(sub + "/server.properties")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	return propertiesDisableStatus(io.LimitReader(f, maxPropertiesBytes))
+}
+
+// propertiesDisableStatus reads a server.properties stream for
+// enable-status=false, the way Minecraft's Java properties loader would:
+// comments start with # or !, the separator is = or :, and key and value are
+// trimmed. The value is compared case-insensitively, as the server parses
+// booleans.
+func propertiesDisableStatus(r io.Reader) bool {
+	disabled := false
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), maxPropertiesBytes)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || line[0] == '#' || line[0] == '!' {
+			continue
+		}
+		i := strings.IndexAny(line, "=:")
+		if i < 0 {
+			continue
+		}
+		if strings.TrimSpace(line[:i]) == "enable-status" {
+			// The last occurrence wins, as it does for the server.
+			disabled = strings.EqualFold(strings.TrimSpace(line[i+1:]), "false")
+		}
+	}
+	return disabled
+}
 
 // statsWriteProtectedStatuses are statuses the stats collector must NOT
 // overwrite when it writes "stopped"/"restarting" for a vanished container.
@@ -337,6 +471,13 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	var lastPing *SLPResponse
 	var measuring atomic.Bool
 	var pingMu sync.Mutex
+	// Tracking began when the scan first saw the container running; the
+	// inspect below replaces that with the container's real start time, so a
+	// node restart does not send a long-running server back to "starting".
+	readiness := &startReadiness{started: time.Now()}
+	// One ping at a time: until the container is ready the 2 s tick pings too,
+	// and a ping can take up to pingTimeout.
+	var pinging atomic.Bool
 	// A server that stops answering pings (hung, crashed inside a running
 	// container, restarting) would otherwise keep reporting its last player
 	// count forever, and Core sums those into the platform's players online.
@@ -378,15 +519,20 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		return PingMinecraftServer(addr, pingTimeout, err == nil && n > 0)
 	}
 
-	// Initial ping.
-	go func() {
-		resp, err := pingOnce()
-		if err == nil {
-			pingMu.Lock()
-			lastPing = resp
-			pingMu.Unlock()
+	// pingNow runs one ping in the background unless one is already out.
+	pingNow := func() {
+		if !pinging.CompareAndSwap(false, true) {
+			return
 		}
-	}()
+		go func() {
+			defer pinging.Store(false)
+			resp, err := pingOnce()
+			readiness.pinged(err == nil)
+			pingMu.Lock()
+			lastPing, pingFails = nextPingState(lastPing, pingFails, resp, err)
+			pingMu.Unlock()
+		}()
+	}
 
 	// Initial disk scan
 	go func() {
@@ -413,17 +559,39 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		snap.mu.Lock()
 		snap.cpuLimit = cpuLimit
 		snap.mu.Unlock()
+		if info.State != nil {
+			if started, err := time.Parse(time.RFC3339Nano, info.State.StartedAt); err == nil {
+				// The file is read when the server boots, so a change to it
+				// matters only from the next start on.
+				workingDir := ""
+				if info.Config != nil {
+					workingDir = info.Config.WorkingDir
+				}
+				readiness.observeStart(started, func() bool { return statusPingDisabled(uuid, workingDir) })
+			}
+		}
 	}
 	refreshCPULimit()
+	// Initial ping, after the start time is known so its answer counts for it.
+	pingNow()
 
 	var prevCPU *PrevCPUStats
 	var memGuardState memGuard
+	var lastContainerID string
 	collectAndPublish := func() {
 		stats, newPrev, err := dm.GetContainerStats(containerName, prevCPU)
 		prevCPU = newPrev
 		if err != nil || stats == nil {
 			return
 		}
+		// A restart recreates the container under the same name, often faster
+		// than the 10 s scan notices it was gone, so this collector carries on
+		// across it. The new id is the sign; the inspect reads the new start
+		// time, which sends readiness back to "starting".
+		if stats.ID != "" && lastContainerID != "" && stats.ID != lastContainerID {
+			refreshCPULimit()
+		}
+		lastContainerID = stats.ID
 
 		pingMu.Lock()
 		ping := lastPing
@@ -479,8 +647,12 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			rdb.Publish(ctx, liveKey, string(data))
 		}
 
-		// Container is running and collecting stats → online
-		newStatus := "online"
+		// Container is running and collecting stats: online once it answered a
+		// status ping, starting until then.
+		newStatus := readiness.status(time.Now())
+		if newStatus != "online" {
+			pingNow()
+		}
 		if newStatus != lastWrittenStatus || time.Since(statusCacheTime) > 15*time.Second {
 			// The status key alone cannot answer this - see statusWriteHeld.
 			currentStatus, _ := rdb.Get(ctx, statusKey).Result()
@@ -501,12 +673,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			collectAndPublish()
 		case <-pingTicker.C:
 			refreshCPULimit()
-			go func() {
-				resp, err := pingOnce()
-				pingMu.Lock()
-				lastPing, pingFails = nextPingState(lastPing, pingFails, resp, err)
-				pingMu.Unlock()
-			}()
+			pingNow()
 		case <-diskTicker.C:
 			// One measurement at a time. A walk that outlasted the tick (a big
 			// world, a slow disk) used to get a second one started next to it,

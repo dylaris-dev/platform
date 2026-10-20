@@ -8,6 +8,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.20
+
+### Features
+- **Servers read Starting until they answer.** A started server stays Starting until it answers a status
+  ping; with `enable-status=false`, or after 5 minutes without an answer, it counts as online. `node`
+- **Delete moved into the power menu.** The red header button is now the last entry under "...", also on
+  a stopped server; the confirmation and its 5 s countdown are unchanged. `panel`
+- **Routes come first in the connection row:** a globe button with the route count, or "Add route" when
+  there is none. The row no longer pulses. `panel`
+
+### Breaking
+- **Power requests during a transition are refused.** Start, stop and restart answer 409 while a server is
+  starting, stopping or restarting, and 429 within 3 s of the last one. Force kill is never refused. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- **A move no longer copies a server that is starting.** Moves and rebalancing stop a starting or
+  restarting server first, and a manual move or a sub-server copy waits while one is between states. `core`
+- **The console shows every line.** Repeated lines are no longer folded into one row with a count. `panel`
+- **Live streams no longer die after five minutes.** They now rotate before their ticket expires and
+  reconnect within a second. `core`
+- **No more doubled power actions.** Start, Stop and Restart stay locked for 5 s after an action
+  finishes. `panel`
+
 ## 2026.10.19.5
 
 ### Features

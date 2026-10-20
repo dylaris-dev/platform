@@ -11,20 +11,10 @@ export interface ConsoleLine {
     key: string;
     text: string;
     level: Level;
-    // Set once repeats were folded into this row: how many lines it stands
-    // for, and the newest one's key. text is then the newest line's.
-    count?: number;
-    lastKey?: string;
 }
 
 // Rows kept, in the shown buffer and in the held one.
 export const CONSOLE_FOLLOW_CAP = 5000;
-
-// What two repeats of one message differ in: the time, and the worker thread
-// (a spam from two threads alternates between them). The level stays.
-// Forge/vanilla: [20:51:01] [Server thread/WARN] ...; Paper: [20:51:01 WARN]: ...
-const PREFIX = /^(?:\x1b\[[0-9;]*m)*\[\d{2}:\d{2}:\d{2}(?: ([A-Z]+))?\]\s*(?:\[.*?\/([A-Z]+)\])?/;
-const message = (text: string) => text.replace(PREFIX, (_m, a = '', b = '') => `${a}${b}|`);
 
 export function levelled<E extends { key: string; text: string }>(entries: E[], previous?: Level): (E & { level: Level })[] {
     const levels = computeLineLevels(entries.map(e => e.text), previous);
@@ -56,22 +46,24 @@ export function oldestStreamId(lines: ConsoleLine[]): string {
 
 function newestStreamId(lines: ConsoleLine[]): string {
     for (let i = lines.length - 1; i >= 0; i--) {
-        const k = lines[i].lastKey ?? lines[i].key;
+        const k = lines[i].key;
         if (isStreamId(k)) return k;
     }
     return '';
 }
 
-type Entry = { key: string; text: string; count?: number; lastKey?: string };
+type Entry = { key: string; text: string };
 
-// appendLive adds a batch of live lines, or of rows already folded in the
-// held buffer, with one copy of the buffer, and trims it to the cap. A line
-// continues the level of the row before it. A line whose stream ID is not
-// newer than the buffer's newest is already there: history fetched after the
-// stream opened can hold it before its live event lands. A line repeating
-// the last row, time and thread aside, is folded into it as a count, so a
-// spam is one row instead of the whole buffer. Only the last row: folding
-// further back would show lines out of the order they were printed in.
+// appendLive adds a batch of live lines, or the held buffer, with one copy of
+// the buffer, and trims it to the cap. A line continues the level of the row
+// before it. A line whose stream ID is not newer than the buffer's newest is
+// already there: history fetched after the stream opened can hold it before
+// its live event lands.
+//
+// Every line is its own row. Repeats used to be folded into the row above
+// with a count, so the console no longer showed what the server printed line
+// for line: a reader matching timestamps saw one row where there were forty.
+// The batching and the row cap are what keep a spam cheap.
 export function appendLive(prev: ConsoleLine[], entries: Entry[]): ConsoleLine[] {
     let next: ConsoleLine[] | null = null;
     for (const entry of entries) {
@@ -80,28 +72,14 @@ export function appendLive(prev: ConsoleLine[], entries: Entry[]): ConsoleLine[]
         if (isStreamId(entry.key)) {
             const newest = newestStreamId(rows);
             if (newest && compareStreamIds(entry.key, newest) <= 0) continue;
-        } else if (last && (last.lastKey ?? last.key) === entry.key) {
+        } else if (last && last.key === entry.key) {
             continue;
         }
         next ??= prev.slice();
-        if (last && message(last.text) === message(entry.text)) {
-            next[next.length - 1] = {
-                ...last,
-                text: entry.text,
-                count: (last.count ?? 1) + (entry.count ?? 1),
-                lastKey: entry.lastKey ?? entry.key,
-            };
-        } else {
-            next.push(levelled([entry], last?.level)[0]);
-        }
+        next.push(levelled([{ key: entry.key, text: entry.text }], last?.level)[0]);
     }
     if (!next) return prev;
     return next.length > CONSOLE_FOLLOW_CAP ? next.slice(-CONSOLE_FOLLOW_CAP) : next;
-}
-
-// heldLines is how many lines a held buffer stands for.
-export function heldLines(rows: ConsoleLine[]): number {
-    return rows.reduce((n, r) => n + (r.count ?? 1), 0);
 }
 
 // mergeOrdered joins an older block in front of a newer one, dropping lines

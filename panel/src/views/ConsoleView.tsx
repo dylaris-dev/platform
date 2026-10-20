@@ -5,7 +5,7 @@ import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { subscribeEventSource, type StreamStatus, type Subscription } from '@/lib/sse';
 import { levelClass, type Level } from '@/lib/consoleLog';
-import { appendLive, heldLines, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
+import { appendLive, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
 import { Power, Send, Cpu, MemoryStick, ArrowDown, RefreshCw } from 'lucide-react';
 import { parseStatsSample } from '@/lib/statsSample';
 import { jvmHeapMB } from '@/lib/jvmHeap';
@@ -55,15 +55,10 @@ function parseAnsiLine(line: string): React.ReactNode {
 }
 
 // Memoised so a new line renders one row, not every row in a 5000-line buffer.
-const ConsoleRow = memo(function ConsoleRow({ text, level, count }: { text: string; level: Level; count?: number }) {
+const ConsoleRow = memo(function ConsoleRow({ text, level }: { text: string; level: Level }) {
   return (
     <div className={`whitespace-pre-wrap break-all leading-5 ${levelClass(level)}`}>
       {parseAnsiLine(text)}
-      {count !== undefined && count > 1 && (
-        <span className="ml-2 px-1.5 rounded bg-(--base-03) text-xs text-(--base-08)" title={`Repeated ${count} times`}>
-          &times;{count.toLocaleString()}
-        </span>
-      )}
     </div>
   );
 });
@@ -133,8 +128,8 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   // down on every line made scrolling up to read anything impossible.
   const followRef = useRef(true);
   const [following, setFollowing] = useState(true);
-  // Lines that arrived while the reader was scrolled up, folded and capped
-  // like the shown buffer. Held instead of appended, so the text under the
+  // Lines that arrived while the reader was scrolled up, capped like the
+  // shown buffer. Held instead of appended, so the text under the
   // reader stays still; released when they return to the bottom.
   const heldRef = useRef<ConsoleLine[]>([]);
   const [heldCount, setHeldCount] = useState(0);
@@ -202,7 +197,9 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
         setLines(prev => appendLive(prev, entries));
       } else {
         heldRef.current = appendLive(heldRef.current, entries);
-        setHeldCount(heldLines(heldRef.current));
+        // Counted as they arrive: the held buffer is capped by rows, and a
+        // long spam while scrolled up holds only the newest of them.
+        setHeldCount(n => n + entries.length);
       }
     };
 
@@ -456,7 +453,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
                 {older === 'loading' ? 'Loading older lines...' : older === 'start' ? (startTrimmed ? 'Start of retained history (last 5000 lines)' : 'Start of log') : ''}
               </p>
             )}
-            {lines.map(line => <ConsoleRow key={line.key} text={line.text} level={line.level} count={line.count} />)}
+            {lines.map(line => <ConsoleRow key={line.key} text={line.text} level={line.level} />)}
           </>
         )}
       </div>

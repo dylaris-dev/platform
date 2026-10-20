@@ -11,6 +11,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.20
+
+### Features
+- **Servers read Starting until players can join.** A started server stays Starting until it answers,
+  not just until it launches. On your own node it arrives with the node update. `node`
+- **Routes come first in the connection row:** a globe button with the route count, or "Add route" when
+  there is none. The row no longer pulses.
+
+### Breaking
+- **Power requests during a transition are refused.** Start, stop and restart answer 409 while a server is
+  starting, stopping or restarting, and 429 within 3 s of the last one. Force kill always works.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A transfer no longer copies a server that is starting.** It stops the server first, and a transfer or a
+  sub-server copy waits while the server is starting, restarting or stopping.
+- **The console shows every line.** Repeated lines are no longer folded into one row with a count.
+- **The console no longer drops after five minutes.** It reconnects on its own within a second.
+- **No more doubled power actions.** Start, Stop and Restart stay locked for 5 s after an action finishes.
+
 ## 2026.10.19.5
 
 ### Features

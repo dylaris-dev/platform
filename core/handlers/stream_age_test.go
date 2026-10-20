@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -85,5 +86,57 @@ func TestStatsStreamReplaysTheBufferOnlyOnTheFirstConnect(t *testing.T) {
 	}
 	if body := run("live"); strings.Contains(body, `{"cpu":1}`) {
 		t.Fatalf("reconnect = %q, replayed the buffer", body)
+	}
+}
+
+// The ticket slides forward when a stream opens, not while it runs. A stream
+// that lived as long as the ticket reconnected with one that had just expired,
+// and the console went dead until a reload.
+func TestStreamsEndBeforeTheirTicket(t *testing.T) {
+	if sseMaxStreamAge >= sseTicketTTL {
+		t.Fatalf("sseMaxStreamAge %v must be shorter than sseTicketTTL %v, or the reconnect carries an expired ticket", sseMaxStreamAge, sseTicketTTL)
+	}
+	// Room for the reconnect itself: the browser waits the retry interval,
+	// then the request has to arrive.
+	if sseTicketTTL-sseMaxStreamAge < 30*time.Second {
+		t.Fatalf("only %v between stream end and ticket expiry", sseTicketTTL-sseMaxStreamAge)
+	}
+	if sseRetryLine != "retry: 1000\n\n" {
+		t.Fatalf("sseRetryLine = %q", sseRetryLine)
+	}
+}
+
+// Every stream opens with the retry line, so the rotation reconnects after a
+// second instead of the browser's default.
+func TestStreamsOpenWithTheRetryLine(t *testing.T) {
+	shortStreams(t)
+	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", ActiveSubServer: "main"}}
+	rdb := newServerPowerRedis(t)
+	run := func(name string, serve func(*httptest.ResponseRecorder)) string {
+		rec := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() { serve(rec); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s stream did not end on its own", name)
+		}
+		return rec.Body.String()
+	}
+	req := func(path string) *http.Request {
+		r := httptest.NewRequest("GET", path, nil)
+		return mux.SetURLVars(r, map[string]string{"id": "1"})
+	}
+	console := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
+	if body := run("console", func(rec *httptest.ResponseRecorder) { console.StreamConsole(rec, req("/api/servers/1/console/stream")) }); !strings.HasPrefix(body, sseRetryLine) {
+		t.Errorf("console stream = %q, want it to open with %q", body, sseRetryLine)
+	}
+	stats := &StatsHandler{state: &AppState{Store: fs, Redis: rdb}}
+	if body := run("stats", func(rec *httptest.ResponseRecorder) { stats.StreamStats(rec, req("/api/servers/1/stats/stream")) }); !strings.HasPrefix(body, sseRetryLine) {
+		t.Errorf("stats stream = %q, want it to open with %q", body, sseRetryLine)
+	}
+	events := NewSystemEventsHandler(&AppState{Store: fs, Redis: rdb})
+	if body := run("events", func(rec *httptest.ResponseRecorder) { events.StreamEvents(rec, req("/api/system/events")) }); !strings.Contains(body, sseRetryLine) {
+		t.Errorf("system events stream = %q, want %q", body, sseRetryLine)
 	}
 }

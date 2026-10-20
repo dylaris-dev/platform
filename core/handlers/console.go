@@ -214,7 +214,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 	if consoleRedis == nil {
 		consoleRedis = h.state.Redis
 	}
-	ctx, cancel := streamContext(r)
+	ctx, cancel := streamContext(w, r)
 	defer cancel()
 	if lastID != "$" && consoleResumeLostLines(ctx, h.state.Redis, streamKey, lastID) {
 		// No id: field, so the browser's Last-Event-ID stays on the last line.

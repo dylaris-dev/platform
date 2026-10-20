@@ -1651,6 +1651,9 @@ type ContainerStats struct {
 	// GuardMemMB is the non-reclaimable part (guardMemoryBytes) the memory
 	// guard judges by; MemUsedMB stays what the panel has always shown.
 	GuardMemMB int64
+	// ID is the container the numbers came from. The name stays when a
+	// container is recreated; the id does not.
+	ID string
 }
 
 // PrevCPUStats stores previous CPU counters for accurate delta calculation.
@@ -1731,6 +1734,7 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 		MemUsedMB:  int64(memUsage) / (1024 * 1024),
 		MemLimitMB: int64(stats.MemoryStats.Limit) / (1024 * 1024),
 		GuardMemMB: int64(guardMemoryBytes(stats.MemoryStats.Stats, memUsage)) / (1024 * 1024),
+		ID:         stats.ID,
 	}, newPrev, nil
 }
 

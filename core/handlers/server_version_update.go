@@ -661,6 +661,12 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Stop the server before copying it: a running server's world files are copied mid-write", http.StatusConflict)
 		return
 	}
+	// Booting, restarting or still saving on the way down: the world files are
+	// being written just the same, and a boot now reads "starting" for minutes.
+	if inPowerTransition(srv.Status) {
+		sendJSONError(w, "The server is "+srv.Status+". Copy it once it has stopped: its world files are being written", http.StatusConflict)
+		return
+	}
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {

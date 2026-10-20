@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    advancePending, powerModel, startPending, PENDING_TIMEOUT_MS,
+    advancePending, powerModel, startPending, PENDING_TIMEOUT_MS, POWER_COOLDOWN_MS, COOLDOWN_TITLE,
     type PendingPower, type PowerAction, type PowerGates,
 } from './powerControls';
 
@@ -100,13 +100,26 @@ describe('powerModel', () => {
     });
 
     it('timeout: says it is still waiting instead of re-enabling, kill becomes the escape', () => {
-        const p = startPending('start', 'stopped', T0);
-        const m = powerModel('starting', p, T0 + PENDING_TIMEOUT_MS, open);
+        const p = startPending('stop', 'online', T0);
+        const m = powerModel('online', p, T0 + PENDING_TIMEOUT_MS, open);
         expect(m.primary).toMatchObject({ label: 'Still waiting for the node', icon: 'stale', disabled: true });
         expect(m.restartDisabled).toBe(true);
         expect(m.killDisabled).toBe(false);
-        const before = powerModel('starting', p, T0 + PENDING_TIMEOUT_MS - 1, open);
-        expect(before.primary.label).toBe('Starting...');
+        const before = powerModel('online', p, T0 + PENDING_TIMEOUT_MS - 1, open);
+        expect(before.primary.label).toMatch(/^Stopping\.\.\./);
+    });
+
+    it('a start past the timeout on a server that reads starting is booting, not a silent node', () => {
+        // The node says online only once the server answers a ping; a modpack takes minutes.
+        for (const action of ['start', 'restart'] as PowerAction[]) {
+            const m = powerModel('starting', startPending(action, 'x', T0), T0 + PENDING_TIMEOUT_MS + 60_000, open);
+            expect(m.primary).toMatchObject({ label: action === 'start' ? 'Starting...' : 'Restarting...', icon: 'busy', disabled: true });
+            expect(m.primary.title).toMatch(/still starting up/);
+            expect(m.killDisabled).toBe(false);
+        }
+        // Still on the old status after the timeout: the node never acted.
+        expect(powerModel('stopped', startPending('start', 'stopped', T0), T0 + PENDING_TIMEOUT_MS, open).primary.label)
+            .toBe('Still waiting for the node');
     });
 
     it('gates disable everything with a reason', () => {
@@ -125,6 +138,34 @@ describe('powerModel', () => {
             expect(m.killDisabled).toBe(true);
         }
         expect(powerModel('disk_full', null, T0, open).primary).toMatchObject({ action: 'start', disabled: true });
+    });
+
+    it('after an action ends, start/stop/restart pause for a moment; kill does not', () => {
+        const until = T0 + POWER_COOLDOWN_MS;
+        const on = powerModel('online', null, T0 + 1000, { ...open, cooldownUntil: until });
+        expect(on.primary).toMatchObject({ action: 'stop', disabled: true, title: COOLDOWN_TITLE });
+        expect(on).toMatchObject({ restartDisabled: true, killDisabled: false, menuDisabled: false });
+        const off = powerModel('stopped', null, T0 + 1000, { ...open, cooldownUntil: until });
+        expect(off.primary).toMatchObject({ action: 'start', disabled: true, title: COOLDOWN_TITLE });
+        // Over at the deadline.
+        const after = powerModel('online', null, until, { ...open, cooldownUntil: until });
+        expect(after.primary).toMatchObject({ disabled: false, title: 'Stop server' });
+        expect(after.restartDisabled).toBe(false);
+        // A real gate keeps its own reason.
+        expect(powerModel('online', null, T0, { ...open, cooldownUntil: until, canPower: false }).primary.title).toBe('No permission');
+    });
+
+    it('the menu holds Delete for admins, also on a stopped server', () => {
+        const stopped = powerModel('stopped', null, T0, { ...open, canDelete: true });
+        expect(stopped).toMatchObject({ showSecondary: false, showMenu: true, menuDisabled: false, killDisabled: true, deleteDisabled: false });
+        // Without Delete a stopped server has no menu: it would only hold a disabled kill.
+        expect(powerModel('stopped', null, T0, open)).toMatchObject({ showMenu: false, menuDisabled: true, deleteDisabled: true });
+        // An upload locks Delete as the header button did.
+        expect(powerModel('stopped', null, T0, { ...open, canDelete: true, uploadLocked: true })).toMatchObject({ menuDisabled: true, deleteDisabled: true });
+        // During a kill nothing power-related is clickable, but Delete still is.
+        const killing = powerModel('online', startPending('kill', 'online', T0), T0 + 1000, { ...open, canDelete: true });
+        expect(killing).toMatchObject({ killDisabled: true, menuDisabled: false, deleteDisabled: false });
+        expect(powerModel('online', null, T0, open)).toMatchObject({ showMenu: true, deleteDisabled: true });
     });
 
     it('kill cooldown locks only Force kill', () => {

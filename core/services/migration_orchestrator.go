@@ -605,7 +605,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	if preStatus == "migrating" && req.PreStatus != "" {
 		preStatus = req.PreStatus
 	}
-	wasRunning := preStatus == "online"
+	wasRunning := movesAsRunning(preStatus)
 
 	// --- (d) Rebalance player gate (manual moves skip — admin chose to move) ---
 	if req.Reason == "rebalance" && wasRunning {
@@ -987,6 +987,19 @@ func (o *MigrationOrchestrator) cancelRequested(ctx context.Context, serverUUID 
 
 // stopServer sends a stop and sets desired_state=stopped so the node reconciler
 // doesn't fight the stop by restarting the container.
+// movesAsRunning reports whether a move must stop the server first and start
+// it again after. A server that is starting or restarting has a JVM up, or on
+// its way up: only "online" counted, so a move during a boot archived the
+// directory of a live JVM and then deleted the running source container. Since
+// the node reports "starting" for the whole boot, that window is minutes.
+func movesAsRunning(status string) bool {
+	switch status {
+	case "online", "starting", "restarting":
+		return true
+	}
+	return false
+}
+
 func (o *MigrationOrchestrator) stopServer(ctx context.Context, srv *models.Server, node *models.Node) error {
 	o.store.UpdateServerDesiredState(srv.ID, "stopped")
 	o.store.UpdateServerStatus(srv.ID, "stopping")

@@ -183,7 +183,7 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 	userID, _ := r.Context().Value("userID").(string)
 	defer presenceTrack(r.Context(), h.state.Redis, h.state.CoreID, userID)()
 
-	ctx, cancel := streamContext(r)
+	ctx, cancel := streamContext(w, r)
 	defer cancel()
 	pubsub := h.state.Redis.Subscribe(ctx, services.SystemEventsChannel)
 	defer pubsub.Close()

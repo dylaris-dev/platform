@@ -84,7 +84,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	}()
 	defer close(watchDone)
 
-	ctx, cancel := streamContext(r)
+	ctx, cancel := streamContext(w, r)
 	defer cancel()
 
 	// Say first whether the buffer describes a RUNNING server. The node stops
