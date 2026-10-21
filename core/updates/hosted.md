@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.21
+
+### Features
+- **Your server can see each player's real IP.** Set it up for the PROXY protocol, then turn on
+  "Pass the real player IP" for the server or route; the docs list the setting per software.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.20
 
 ### Features
