@@ -24,7 +24,8 @@ Newest release first. The format is fixed and checked in CI - see the
   starting, stopping or restarting, and 429 within 3 s of the last one. Force kill always works.
 
 ### Security
-- Nothing.
+- **Built with Go 1.26.10,** which fixes a certificate-verification flaw in Go's TLS stack
+  (GO-2026-6809). Your node picks it up with its normal update. `node`
 
 ### Fixes
 - **A transfer no longer copies a server that is starting.** It stops the server first, and a transfer or a

@@ -897,7 +897,7 @@ and drops the refusal.
 ## Contributing
 
 Bug reports, questions and pull requests are welcome. Build with Go 1.26.x (CI
-and the images use 1.26.9) and Node 22, follow the code conventions under
+and the images use 1.26.10) and Node 22, follow the code conventions under
 [Development](#development), and read [TESTING.md](TESTING.md): new code ships
 with tests, and CI must be green. A change a user would notice also needs a
 release-notes entry (see [Release notes and updates](#release-notes-and-updates)).

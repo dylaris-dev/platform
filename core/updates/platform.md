@@ -23,7 +23,8 @@ Newest release first. The format is fixed and checked in CI - see the
   starting, stopping or restarting, and 429 within 3 s of the last one. Force kill is never refused. `core`
 
 ### Security
-- Nothing.
+- **Built with Go 1.26.10.** It fixes GO-2026-6809 (crypto/x509 trusted compromised intermediate
+  certificates), which Core reaches when it downloads over HTTPS. `core` `node`
 
 ### Fixes
 - **A move no longer copies a server that is starting.** Moves and rebalancing stop a starting or
