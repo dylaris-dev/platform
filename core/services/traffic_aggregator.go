@@ -473,11 +473,11 @@ func (a *TrafficAggregator) collectRegions(
 	initKey := trafficRegionInitPrefix + kind + ":" + subject
 	initialised, err := a.redis.Get(ctx, initKey).Result()
 	subjectKnown := err == nil && initialised != ""
-	if !subjectKnown {
-		// Deferred like every other marker, so a failed DB write leaves it
-		// unset and the whole initialisation is retried next tick.
-		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: initKey, val: 1})
-	}
+	// Deferred like every other marker, so a failed DB write leaves it unset and
+	// the whole initialisation is retried next tick. Written on every read, not
+	// only the first: the write renews its TTL, and an init marker that expired
+	// would seed (drop) the next new region's bytes.
+	tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: initKey, val: 1})
 
 	// What each region billed this tick, for the voice subset to stay under. A
 	// region absent here was not read and is retried next tick, voice with it.
@@ -501,6 +501,11 @@ func (a *TrafficAggregator) collectRegions(
 		if delta < 0 {
 			delta = current
 		}
+		// Rewritten on every read, moved or not: the write is what renews its
+		// TTL. A quiet region whose hash another region keeps alive would
+		// otherwise lose its marker after trafficSeenTTL and bill its whole
+		// lifetime again, per region, which is what overage is charged on.
+		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 		if delta <= 0 {
 			continue
 		}
@@ -509,7 +514,6 @@ func (a *TrafficAggregator) collectRegions(
 			acc.byRegion = map[breakdownCell]int64{}
 		}
 		acc.byRegion[breakdownCell{region: region, kind: kind, product: product}] += delta
-		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 	}
 
 	if kind == store.TrafficKindEdge {

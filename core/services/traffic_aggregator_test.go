@@ -750,6 +750,42 @@ func TestTrafficAggregator_ARegionAppearingLaterIsBilled(t *testing.T) {
 	}
 }
 
+// A region that goes quiet while another keeps the counter hash alive must not
+// lose its marker: the hash outlives the 30-day marker TTL only because the
+// other region keeps writing, and an expired marker read as zero bills the
+// quiet region's whole lifetime again - per region, which is what overage is
+// charged on. The fix renews every marker the tick reads; this ages them and
+// checks that one tick of traffic elsewhere puts them back to the full TTL.
+func TestTrafficAggregator_QuietRegionKeepsItsMarkers(t *testing.T) {
+	ctx := context.Background()
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 1000, "rx:us-east": 100})
+	agg.runOnce(ctx)
+
+	quiet := "dylaris:traffic:agg:seen:edge:srv-1#eu-central"
+	initKey := trafficRegionInitPrefix + store.TrafficKindEdge + ":srv-1"
+	for _, k := range []string{quiet, initKey} {
+		if err := rdb.Expire(ctx, k, time.Hour).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:us-east": 200}) // only us-east moves
+	fs.addUsageCalls, fs.addRegionCalls = nil, nil
+	agg.runOnce(ctx)
+
+	for _, k := range []string{quiet, initKey} {
+		if ttl := rdb.TTL(ctx, k).Val(); ttl < trafficSeenTTL-time.Minute {
+			t.Errorf("%s TTL = %v after a tick that read it, want renewed to %v", k, ttl, trafficSeenTTL)
+		}
+	}
+	for _, c := range fs.addRegionCalls {
+		if c.region == "eu-central" {
+			t.Errorf("the quiet region was billed: %+v", c)
+		}
+	}
+}
+
 // The seeding it replaces still has to happen exactly once, for a subject the
 // aggregator was already counting before it knew about regions.
 func TestTrafficAggregator_SeedsOnlyOnce(t *testing.T) {

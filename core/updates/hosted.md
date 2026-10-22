@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Traffic per region is no longer counted twice after a quiet month.** A region unused for 30 days
+  while another stayed busy could have its earlier traffic added again. Fixed on our side, nothing to update.
+
 ## 2026.10.22
 
 ### Features

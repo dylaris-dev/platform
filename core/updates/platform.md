@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A region that stayed quiet for 30 days while another kept moving no longer counts its traffic
+  twice.** Its per-region marker expired and the next tick re-added its lifetime bytes. `core`
+
 ## 2026.10.22.2
 
 ### Features
