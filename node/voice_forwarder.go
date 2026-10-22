@@ -218,10 +218,7 @@ func (f *voiceForwarder) scan(ctx context.Context) {
 	next := map[[16]byte]*voiceServer{}
 	hosts := map[string]voiceLookup{}
 	for _, c := range running {
-		id, err := voicewire.ParseServerUUID(c.UUID)
-		if err != nil {
-			continue
-		}
+		id := voicewire.ServerID(c.UUID)
 		cfg, err := f.getConfig(ctx, c.UUID)
 		if err != nil {
 			// A Redis blip is not a disable: keep what the last scan found.
@@ -348,7 +345,7 @@ func (f *voiceForwarder) register(ctx context.Context) {
 	ms := uint64(f.now().UnixMilli())
 	var buf []byte
 	for _, s := range servers {
-		id, _ := voicewire.ParseServerUUID(s.uuid)
+		id := voicewire.ServerID(s.uuid)
 		for _, e := range s.edges {
 			var nonce [8]byte
 			_, _ = rand.Read(nonce[:])

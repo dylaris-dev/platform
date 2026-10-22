@@ -19,7 +19,9 @@ import (
 var voiceConfigFiles = []struct{ Mod, Path string }{
 	{"svc", "config/voicechat/voicechat-server.properties"},
 	{"svc", "plugins/voicechat/voicechat-server.properties"},
-	{"plasmo", "config/plasmovoice/config.toml"},
+	// The mod build keeps its server config one level down (ModVoiceServer:
+	// "config/" + modId + "/server"); the plugin build uses its data folder.
+	{"plasmo", "config/plasmovoice/server/config.toml"},
 	{"plasmo", "plugins/PlasmoVoice/config.toml"},
 }
 

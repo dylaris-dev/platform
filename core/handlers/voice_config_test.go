@@ -44,6 +44,8 @@ func TestDetectVoiceMod(t *testing.T) {
 		{"no config at all is a missing mod", nil, "", "", errVoiceModMissing},
 		{"one svc config is svc", []string{svcPlugin}, "svc", svcPlugin, nil},
 		{"one plasmo config is plasmo", []string{plasmoPlugin}, "plasmo", plasmoPlugin, nil},
+		{"the plasmo mod config is one level down", []string{"config/plasmovoice/server/config.toml"}, "plasmo", "config/plasmovoice/server/config.toml", nil},
+		{"the plasmo mod folder root is not its server config", []string{"config/plasmovoice/config.toml"}, "", "", errVoiceModMissing},
 		{"svc next to plasmo is ambiguous", []string{svcMod, plasmoPlugin}, "", "", errVoiceModAmbiguous},
 		{"both svc paths are ambiguous", []string{svcMod, svcPlugin}, "", "", errVoiceModAmbiguous},
 	}
@@ -308,7 +310,7 @@ func TestSyncVoiceWritesTheDetectedModsMerge(t *testing.T) {
 		name, path, before, after, mod string
 	}{
 		{"svc gets the properties merge", "plugins/voicechat/voicechat-server.properties", "svc_before.properties", "svc_after.properties", "svc"},
-		{"plasmo gets the toml merge", "config/plasmovoice/config.toml", "plasmo_default.toml", "plasmo_after.toml", "plasmo"},
+		{"plasmo gets the toml merge", "config/plasmovoice/server/config.toml", "plasmo_default.toml", "plasmo_after.toml", "plasmo"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

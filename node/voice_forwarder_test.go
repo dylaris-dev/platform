@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	voiceTestUUID  = "00112233-4455-6677-8899-aabbccddeeff"
-	voiceTestUUID2 = "11111111-2222-3333-4444-555555555555"
+	voiceTestUUID  = "befa5934-e5f8-4bb0-b35d-df8da14fc003_lfkc3ac14m3f" // the real "<owner>_<random>" form
+	voiceTestUUID2 = "befa5934-e5f8-4bb0-b35d-df8da14fc003_0p88xrums9v1"
 	voiceTestKey   = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 )
 
@@ -148,7 +148,7 @@ func (h *voiceHarness) start(t *testing.T) *net.UDPAddr {
 
 func dataUp(t *testing.T, from *net.UDPConn, to *net.UDPAddr, uuid string, session uint32, payload string) {
 	t.Helper()
-	id, _ := voicewire.ParseServerUUID(uuid)
+	id := voicewire.ServerID(uuid)
 	if _, err := from.WriteToUDP(voicewire.AppendData(nil, voicewire.TypeDataUp, id, session, []byte(payload)), to); err != nil {
 		t.Fatal(err)
 	}
@@ -194,8 +194,8 @@ func TestForwarderSignsRegsTheRelayAccepts(t *testing.T) {
 	if err != nil || f.Type != voicewire.TypeReg {
 		t.Fatalf("not a REG: %x (%v)", b, err)
 	}
-	if voicewire.FormatServerUUID(f.Server) != voiceTestUUID {
-		t.Errorf("REG names %s", voicewire.FormatServerUUID(f.Server))
+	if f.Server != voicewire.ServerID(voiceTestUUID) {
+		t.Errorf("REG names %x, want ServerID(%s)", f.Server, voiceTestUUID)
 	}
 	if f.UnixMs != 1700000000000 {
 		t.Errorf("unix_ms %d is not the injected clock", f.UnixMs)
@@ -214,16 +214,16 @@ func TestForwarderRegistersOnlyRunningServers(t *testing.T) {
 	h.setRunning(voiceTestUUID)
 	h.f.scan(context.Background())
 	h.f.register(context.Background())
-	seen := map[string]int{}
+	seen := map[[16]byte]int{}
 	for {
 		b, _, ok := read(h.edge, 300*time.Millisecond)
 		if !ok {
 			break
 		}
 		f, _ := voicewire.Parse(b)
-		seen[voicewire.FormatServerUUID(f.Server)]++
+		seen[f.Server]++
 	}
-	if seen[voiceTestUUID] != 1 || seen[voiceTestUUID2] != 0 {
+	if seen[voicewire.ServerID(voiceTestUUID)] != 1 || seen[voicewire.ServerID(voiceTestUUID2)] != 0 {
 		t.Fatalf("REGs per server = %v, want only the running %s", seen, voiceTestUUID)
 	}
 }
@@ -267,7 +267,7 @@ func TestTwoPlayersGetTwoBackendSourcePorts(t *testing.T) {
 func TestSessionClosesAfterIdleAndOnClose(t *testing.T) {
 	h := newVoiceHarness(t, []string{voiceTestUUID}, map[string]*voiceConfig{voiceTestUUID: voiceCfg(1)})
 	fwd := h.start(t)
-	id, _ := voicewire.ParseServerUUID(voiceTestUUID)
+	id := voicewire.ServerID(voiceTestUUID)
 
 	dataUp(t, h.edge, fwd, voiceTestUUID, 1, "x")
 	waitFor(t, "session 1", func() bool { return h.sessionCount() == 1 })
@@ -316,16 +316,16 @@ func TestForwarderIgnoresUnknownVersion(t *testing.T) {
 			t.Fatal("a v2 config sent a packet")
 		}
 	})
-	t.Run("a ver=2 frame is dropped", func(t *testing.T) {
+	t.Run("a ver=1 frame is dropped", func(t *testing.T) {
 		h := newVoiceHarness(t, []string{voiceTestUUID}, map[string]*voiceConfig{voiceTestUUID: voiceCfg(1)})
 		fwd := h.start(t)
-		id, _ := voicewire.ParseServerUUID(voiceTestUUID)
-		v2 := voicewire.AppendData(nil, voicewire.TypeDataUp, id, 1, []byte("v2"))
-		v2[2] = 2
-		h.edge.WriteToUDP(v2, fwd)
-		dataUp(t, h.edge, fwd, voiceTestUUID, 1, "v1")
-		if b, _, ok := read(h.backend, 2*time.Second); !ok || string(b) != "v1" {
-			t.Fatalf("first packet at the backend = %q, want v1", b)
+		id := voicewire.ServerID(voiceTestUUID)
+		v1 := voicewire.AppendData(nil, voicewire.TypeDataUp, id, 1, []byte("v1"))
+		v1[2] = 1
+		h.edge.WriteToUDP(v1, fwd)
+		dataUp(t, h.edge, fwd, voiceTestUUID, 1, "v2")
+		if b, _, ok := read(h.backend, 2*time.Second); !ok || string(b) != "v2" {
+			t.Fatalf("first packet at the backend = %q, want v2", b)
 		}
 	})
 }
@@ -360,7 +360,7 @@ func TestSessionCapPerServer(t *testing.T) {
 func TestForwarderAgainstAReplayedRelay(t *testing.T) {
 	h := newVoiceHarness(t, []string{voiceTestUUID}, map[string]*voiceConfig{voiceTestUUID: voiceCfg(1)})
 	fwd := h.start(t)
-	up, _ := hex.DecodeString("d756010300112233445566778899aabbccddeeff0a0b0c0d6869")
+	up, _ := hex.DecodeString("d75602038ba94eb88f65b9c441bf2775a93740230a0b0c0d6869")
 	h.edge.WriteToUDP(up, fwd)
 	b, from, ok := read(h.backend, 2*time.Second)
 	if !ok || string(b) != "hi" {
@@ -368,7 +368,7 @@ func TestForwarderAgainstAReplayedRelay(t *testing.T) {
 	}
 	h.backend.WriteToUDP([]byte("hi"), from)
 	down, _, ok := read(h.edge, 2*time.Second)
-	want, _ := hex.DecodeString("d756010400112233445566778899aabbccddeeff0a0b0c0d6869")
+	want, _ := hex.DecodeString("d75602048ba94eb88f65b9c441bf2775a93740230a0b0c0d6869")
 	if !ok || !bytes.Equal(down, want) {
 		t.Fatalf("reply = %x, want %x", down, want)
 	}

@@ -9,7 +9,7 @@
 //
 // Every frame starts with a 20-byte header, integers big-endian:
 //
-//	[0xD7 'V'][ver=1][type][server_uuid:16]
+//	[0xD7 'V'][ver=2][type][server_id:16]
 //
 // followed by, per type:
 //
@@ -20,18 +20,21 @@
 //	CLOSE     (either)       [session:4]                   24 bytes
 //
 // mac is the first 16 bytes of HMAC-SHA256(key, the first 36 bytes of the REG).
+//
+// server_id is ServerID(server uuid). Version 1 carried the uuid itself and
+// assumed the RFC 8-4-4-4-12 form, which no Dylaris server uuid has
+// ("<owner>_<random>"); it never carried a packet and is refused.
 package voicewire
 
 import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 )
 
 const (
-	Version byte = 1
+	Version byte = 2
 
 	TypeReg      byte = 1
 	TypeRegAck   byte = 2
@@ -170,21 +173,12 @@ func VerifyReg(raw []byte, key []byte) bool {
 	return hmac.Equal(f.MAC[:], regMAC(key, raw[:regMACOffset]))
 }
 
-// ParseServerUUID parses the canonical 8-4-4-4-12 hex form.
-func ParseServerUUID(s string) ([16]byte, error) {
+// ServerID is the 16-byte server field of a frame: the first 16 bytes of
+// SHA-256 over the server uuid. It is one-way on purpose; whoever needs the uuid
+// back (the relay's metering) keeps it beside the id.
+func ServerID(serverUUID string) [16]byte {
+	sum := sha256.Sum256([]byte(serverUUID))
 	var b [16]byte
-	if len(s) != 36 || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-		return b, errors.New("voicewire: malformed server uuid")
-	}
-	h := s[0:8] + s[9:13] + s[14:18] + s[19:23] + s[24:36]
-	if _, err := hex.Decode(b[:], []byte(h)); err != nil {
-		return b, errors.New("voicewire: malformed server uuid")
-	}
-	return b, nil
-}
-
-// FormatServerUUID renders b in the lowercase 8-4-4-4-12 form.
-func FormatServerUUID(b [16]byte) string {
-	h := hex.EncodeToString(b[:])
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+	copy(b[:], sum[:16])
+	return b
 }

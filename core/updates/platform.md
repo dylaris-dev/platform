@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.22.2
+
+### Features
+- Nothing.
+
+### Breaking
+- **Voice relay protocol v2.** Nodes and the voice relay now name a server by a hash of its id; a
+  2026.10.22 node cannot carry voice, so Core asks for 2026.10.22.2 before it turns voice on. `core` `node`
+
+### Security
+- Nothing.
+
+### Fixes
+- **Voice chat finds Plasmo Voice on Fabric, Forge and NeoForge.** Core looked for its config in the
+  wrong folder and answered "install the mod"; the Paper plugin was not affected. `core`
+
 ## 2026.10.22
 
 ### Features

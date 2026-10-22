@@ -17,9 +17,10 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// voiceNodeSince is the node release that runs the voice forwarder. An older
-// node would take the port and the config and pass no packet.
-const voiceNodeSince = "2026.10.22"
+// voiceNodeSince is the node release that speaks voicewire v2. 2026.10.22 ran
+// v1, which could not name a Dylaris server (it assumed RFC uuids), so it is
+// too old even though it has a forwarder.
+const voiceNodeSince = "2026.10.22.2"
 
 type voiceView struct {
 	Enabled bool   `json:"enabled"`

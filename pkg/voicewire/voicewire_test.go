@@ -37,15 +37,15 @@ func TestTheWireFormatIsFrozen(t *testing.T) {
 		len  int
 	}{
 		{"REG", AppendReg(nil, testServer, testUnixMs, testNonce, testKey),
-			"d756010100112233445566778899aabbccddeeff0000018bcfe56800010203040506070869fef3a9c3e1b0dfbd9fe7671b749385", RegLen},
+			"d756020100112233445566778899aabbccddeeff0000018bcfe568000102030405060708937b91dfabb998d0f13e3f84274b2c7c", RegLen},
 		{"REG_ACK", AppendRegAck(nil, testServer, testUnixMs),
-			"d756010200112233445566778899aabbccddeeff0000018bcfe56800", RegAckLen},
+			"d756020200112233445566778899aabbccddeeff0000018bcfe56800", RegAckLen},
 		{"DATA_UP", AppendData(nil, TypeDataUp, testServer, testSession, []byte("hi")),
-			"d756010300112233445566778899aabbccddeeff0a0b0c0d6869", DataOverhead + 2},
+			"d756020300112233445566778899aabbccddeeff0a0b0c0d6869", DataOverhead + 2},
 		{"DATA_DOWN", AppendData(nil, TypeDataDown, testServer, testSession, []byte("hi")),
-			"d756010400112233445566778899aabbccddeeff0a0b0c0d6869", DataOverhead + 2},
+			"d756020400112233445566778899aabbccddeeff0a0b0c0d6869", DataOverhead + 2},
 		{"CLOSE", AppendClose(nil, testServer, testSession),
-			"d756010500112233445566778899aabbccddeeff0a0b0c0d", CloseLen},
+			"d756020500112233445566778899aabbccddeeff0a0b0c0d", CloseLen},
 	}
 	for _, c := range cases {
 		if got := hex.EncodeToString(c.got); got != c.want {
@@ -97,7 +97,8 @@ func TestParseRefusesUnknownVersionAndType(t *testing.T) {
 		raw  []byte
 		want error
 	}{
-		{"version 2", mutate(2, 2), ErrVersion},
+		{"version 1", mutate(2, 1), ErrVersion},
+		{"version 3", mutate(2, 3), ErrVersion},
 		{"type 6", mutate(3, 6), ErrType},
 		{"type 0", mutate(3, 0), ErrType},
 		{"magic d7 57", mutate(1, 0x57), ErrMagic},
@@ -162,18 +163,13 @@ func TestRegAckIsSmallerThanReg(t *testing.T) {
 	}
 }
 
-func TestServerUUIDRoundTrips(t *testing.T) {
-	const s = "00112233-4455-6677-8899-aabbccddeeff"
-	b, err := ParseServerUUID(s)
-	if err != nil || b != testServer {
-		t.Fatalf("ParseServerUUID(%q) = %x, %v", s, b, err)
+func TestServerIDIsTheHashOfTheUUID(t *testing.T) {
+	// A real Dylaris server uuid: not the RFC form v1 assumed.
+	const u = "befa5934-e5f8-4bb0-b35d-df8da14fc003_lfkc3ac14m3f"
+	if got := hex.EncodeToString(func() []byte { b := ServerID(u); return b[:] }()); got != "8ba94eb88f65b9c441bf2775a9374023" {
+		t.Fatalf("ServerID(%q) = %s", u, got)
 	}
-	if got := FormatServerUUID(b); got != s {
-		t.Errorf("FormatServerUUID = %q, want %q", got, s)
-	}
-	for _, bad := range []string{"", "00112233445566778899aabbccddeeff", "00112233-4455-6677-8899-aabbccddeefg", "00112233-4455-6677-8899_aabbccddeeff"} {
-		if _, err := ParseServerUUID(bad); err == nil {
-			t.Errorf("ParseServerUUID(%q) accepted", bad)
-		}
+	if ServerID(u) == ServerID(u+"x") {
+		t.Fatal("two uuids share an id")
 	}
 }

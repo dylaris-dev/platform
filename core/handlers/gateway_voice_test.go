@@ -151,13 +151,16 @@ var voiceRefusals = []struct {
 	{"node_too_old", func(e *voiceSwitchEnv) {
 		e.mr.Set("dylaris:discovery:tok", `{"id":"tok","releaseVersion":"2026.10.21.9"}`)
 	}},
+	{"node_too_old", func(e *voiceSwitchEnv) { // voicewire v1: cannot name our servers
+		e.mr.Set("dylaris:discovery:tok", `{"id":"tok","releaseVersion":"2026.10.22"}`)
+	}},
 	{"no_routes", func(e *voiceSwitchEnv) { e.mr.Del("route:a.eu.dylaris.com") }},
 	{"no_relay", func(e *voiceSwitchEnv) {
 		e.mr.Set("voice:registry:r1", `{"voice_id":"r1","region":"us","ip":"203.0.113.9"}`)
 	}},
 	{"no_sub_server", func(e *voiceSwitchEnv) { e.fs.server.ActiveSubServer = "" }},
 	{"voice_mod_missing", func(e *voiceSwitchEnv) { e.node.path = "nothing/here" }},
-	{"voice_mod_ambiguous", func(e *voiceSwitchEnv) { e.node.also = "config/plasmovoice/config.toml" }},
+	{"voice_mod_ambiguous", func(e *voiceSwitchEnv) { e.node.also = "config/plasmovoice/server/config.toml" }},
 	{"voice_pool_full", func(e *voiceSwitchEnv) { e.fs.poolFull = true }},
 }
 
