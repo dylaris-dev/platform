@@ -916,7 +916,7 @@ func main() {
 	services.NewModInstallResultService(pgStore, redisClient, coreLeader).Start(bgCtx)
 	// What an installer FOUND, as opposed to what Core told it to do. Only a
 	// backup import reports anything; see services.SetupResultService.
-	services.NewSetupResultService(pgStore, redisClient, coreLeader).Start(bgCtx)
+	services.NewSetupResultService(pgStore, redisClient, coreLeader, redisGateway).Start(bgCtx)
 	// What SFTP sessions changed, into the server audit trail.
 	services.NewSFTPAuditService(pgStore, redisClient, coreLeader).Start(bgCtx)
 

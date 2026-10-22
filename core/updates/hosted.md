@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.21.2
+
+### Features
+- **New servers pass the real player IP by default.** A new Paper 1.19+, Velocity, Waterfall or BungeeCord
+  server with a domain on our gateway is set up for it and switched on; existing servers are unchanged. `node`
+
+### Breaking
+- **While a server passes the real player IP,** installing software that cannot take it, switching to a
+  sub-server not set up for it, or linking it to a proxy is refused. Turn the switch off first.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.21
 
 ### Features

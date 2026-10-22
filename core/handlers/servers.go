@@ -61,7 +61,10 @@ type SetupServerRequest struct {
 	SubServerName string `json:"subServerName"`
 	JavaImage     string `json:"javaImage"`
 	ExtraJvmFlags string `json:"extraJvmFlags"`
-	Installer     struct {
+	// CreatesRoute: the panel adds a gateway route right after this setup
+	// answers. Only then may a new server default to real player IP.
+	CreatesRoute bool `json:"createsRoute,omitempty"`
+	Installer    struct {
 		Type      string `json:"type"`      // "paper","vanilla","fabric","forge","neoforge","library","upload","upload-zip","modpack","pack"
 		Version   string `json:"version"`   // build/version identifier (Paper build, Forge build, etc.)
 		McVersion string `json:"mcVersion"` // major MC version (e.g. "1.21.4")

@@ -550,6 +550,11 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// While real player IP is on, what gets installed must expect it too.
+	proxyKeep, proxyRefused := proxyProtocolInstallGate(w, srv, req.Installer.Type, req.Installer.Version)
+	if proxyRefused {
+		return
+	}
 
 	// A Technic pack is resolved here, before anything is written: the browser
 	// names a slug and a build, and every URL the node receives comes from
@@ -649,6 +654,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, "Node not found", 404)
 			return
 		}
+
+		// Decided here, before the install record below is written: that record
+		// is one of the things that tells a new server from an existing one.
+		proxyDefault := !srv.ProxyProtocol && h.proxyProtocolDefault(r.Context(), srv, node, req.Installer.Type, req.Installer.Version, req.CreatesRoute)
 
 		// Cross-check snapshot inputs: capture the ORIGINAL installer type and
 		// the external .mrpack URL BEFORE the pack branch rewrites them below.
@@ -771,9 +780,34 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Recorded before anything is written: unrecorded, the node's answer
+		// could not be acted on, so an install on a server that is already on
+		// is refused rather than sent without it.
+		if proxyKeep && !h.trackProxyProtocolInstall(r.Context(), srv, subName, false) {
+			sendJSONError(w, "Could not prepare the install; try again in a moment", http.StatusServiceUnavailable)
+			return
+		}
 		services.RememberSetupBefore(r.Context(), h.state.Redis, srv, subName)
 		if !recordSetup() {
 			return
+		}
+		// A new server defaults to real player IP forwarding. The switch goes on
+		// BEFORE the command, through the owner's own write path, and the node
+		// only writes the matching config when told it is on; a node that cannot
+		// write it answers so and Core switches it back off. A server that is
+		// already on gets the same request, so the sub-server it installs into
+		// expects the header too.
+		proxyFlag := proxyKeep
+		if proxyDefault {
+			if h.trackProxyProtocolInstall(r.Context(), srv, subName, true) && h.switchProxyProtocolOn(r.Context(), srv) {
+				proxyFlag = true
+			} else {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.state.Redis, srv.UUID)
+				proxyDefault = false
+			}
+		}
+		if proxyFlag {
+			installerPayload["proxyProtocol"] = true
 		}
 		// Setup installs and starts the server. The intent is published BEFORE
 		// the command: the node asks it when the install is done, and a short
@@ -790,6 +824,12 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			// exists nowhere.
 			services.RestoreSetupBefore(r.Context(), h.state.Redis, h.state.Store, srv, subName)
 			h.state.Store.UpdateServerStatus(serverID, srv.Status)
+			if proxyFlag {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.state.Redis, srv.UUID)
+			}
+			if proxyDefault {
+				h.switchProxyProtocolOff(r.Context(), srv)
+			}
 			sendJSONError(w, "Failed to queue setup", 500)
 			return
 		}
@@ -958,6 +998,11 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, msg, 400)
 		return
 	}
+	// While real player IP is on, the reinstalled software must expect it too.
+	proxyKeep, proxyRefused := proxyProtocolInstallGate(w, srv, installerType, buildNumber)
+	if proxyRefused {
+		return
+	}
 
 	// Atomically claim the install cooldown (30s, admins bypass) — SetNX closes
 	// the concurrent-request race.
@@ -993,6 +1038,12 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		extraFlags = srv.ExtraJvmFlags
 	}
 	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
+
+	// Recorded before anything is written, as in setup.
+	if proxyKeep && h.state.Queue != nil && !h.trackProxyProtocolInstall(r.Context(), srv, subName, false) {
+		sendJSONError(w, "Could not prepare the reinstall; try again in a moment", http.StatusServiceUnavailable)
+		return
+	}
 
 	// Update DB (start_command is display-only; node builds the real command)
 	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, installerType, mcVersion, buildNumber); err != nil {
@@ -1032,6 +1083,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			"version": buildNumber,
 			"loader":  loader,
 		}
+		if proxyKeep {
+			installerPayload["proxyProtocol"] = true
+		}
 
 		// A reinstall starts the server when it is done, as setup does. Published
 		// before the command for the same reason as there; the node now asks
@@ -1044,6 +1098,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			h.state.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
 			services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, srv.DesiredState)
 			undo()
+			if proxyKeep {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.state.Redis, srv.UUID)
+			}
 			sendJSONError(w, "Failed to queue reinstall", 500)
 			return
 		}
@@ -1230,6 +1287,16 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		}
 		sendJSONError(w, "No sub-server named "+subName+" on this server", 400)
 		return
+	}
+	// While real player IP is on, only a sub-server known to expect the
+	// header may become the running one; any other would lock everyone out.
+	if srv.ProxyProtocol && subName != srv.ActiveSubServer {
+		ok, err := services.ProxyProtocolSubConfigured(r.Context(), h.state.Redis, srv.UUID, subName)
+		if err != nil || !ok {
+			sendJSONErrorCode(w, "Real player IP is on for this server, and "+subName+" is not known to be set up for it. Turn off Real player IP (Routes) first, then switch.",
+				"proxy_protocol_on", http.StatusConflict)
+			return
+		}
 	}
 
 	if err := h.state.Store.UpdateServerActiveSubServer(serverID, subName); err != nil {

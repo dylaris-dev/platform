@@ -48,6 +48,13 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "Cannot link a proxy to another proxy", 400)
 		return
 	}
+	// A proxy on this platform dials its backends without a PROXY header, so a
+	// backend that expects one would refuse every player the proxy sends.
+	if srv.ProxyProtocol {
+		sendJSONErrorCode(w, "Real player IP is on for this server, and a proxy cannot reach a server that expects it. Turn off Real player IP (Routes) and the PROXY setting in the server's own config first, then link it.",
+			"proxy_protocol_on", http.StatusConflict)
+		return
+	}
 
 	proxy, err := h.state.Store.GetServerByID(req.ProxyID)
 	if err != nil {

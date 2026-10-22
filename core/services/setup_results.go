@@ -30,10 +30,13 @@ type SetupResultService struct {
 	store  store.Store
 	redis  *redis.Client
 	leader LeaderChecker
+	// hub carries the switch-off when a node reports it could not configure a
+	// new server for the real-IP default (see ProxyProtocol below).
+	hub proxyProtocolHub
 }
 
-func NewSetupResultService(st store.Store, rdb *redis.Client, leader LeaderChecker) *SetupResultService {
-	return &SetupResultService{store: st, redis: rdb, leader: leader}
+func NewSetupResultService(st store.Store, rdb *redis.Client, leader LeaderChecker, hub proxyProtocolHub) *SetupResultService {
+	return &SetupResultService{store: st, redis: rdb, leader: leader, hub: hub}
 }
 
 // Start consumes setup reports until ctx is cancelled.
@@ -42,6 +45,7 @@ func (s *SetupResultService) Start(ctx context.Context) {
 		return
 	}
 	go s.consume(ctx)
+	go s.runProxyProtocolSweep(ctx)
 }
 
 type setupReport struct {
@@ -54,6 +58,12 @@ type setupReport struct {
 	// server which installed cleanly and is not running says too.
 	Error     string `json:"error"`
 	Timestamp int64  `json:"timestamp"`
+	// ProxyProtocol answers an install that carried the real-IP request: true
+	// when the sub-server's config expects the header (written or already
+	// there), false when it does not or the install failed. Absent for every
+	// other install. The switch was on before the install went out, so false
+	// is the one answer that needs acting on.
+	ProxyProtocol *bool `json:"proxyProtocol,omitempty"`
 }
 
 func (s *SetupResultService) consume(ctx context.Context) {
@@ -101,7 +111,7 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 	// A failure report carries no manifest, so the emptiness check cannot come
 	// before the branch or the one report a customer most needs would be the
 	// one dropped.
-	if rep.ServerUUID == "" || (len(rep.Manifest) == 0 && rep.Error == "") {
+	if rep.ServerUUID == "" || (len(rep.Manifest) == 0 && rep.Error == "" && rep.ProxyProtocol == nil) {
 		return
 	}
 	srv, err := s.store.GetServerByUUID(rep.ServerUUID)
@@ -120,6 +130,13 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 		log.Printf("setup result: DROPPED a report from node %q about server %q, which another node hosts",
 			token, rep.ServerUUID)
 		return
+	}
+
+	if rep.ProxyProtocol != nil {
+		s.applyProxyProtocolReport(srv, rep.SubServer, *rep.ProxyProtocol)
+		if len(rep.Manifest) == 0 && rep.Error == "" {
+			return
+		}
 	}
 
 	if rep.Error != "" {
@@ -286,4 +303,50 @@ func manifestModsForImport(m *BackupManifest) ([]BackupManifestMod, bool) {
 		return m.Mods[0].Mods, true
 	}
 	return nil, false
+}
+
+// applyProxyProtocolReport acts on a node's answer to a real-IP request. A
+// "no" switches the server off ONLY when this install's own setup switched it
+// on (the new-server default): then the switch never matched a config. For a
+// server that was already on, a "no" - a failed install, say - is logged and
+// nothing else: its config was set up for the header before. The node can only
+// ever turn its OWN server's switch OFF this way (apply checked the
+// attribution), which is the safe direction: it never enables anything.
+//
+// Only an answer to a request Core still has pending is acted on: the owner's
+// own switch forgets the request, and an answer nobody asked for - a stray or
+// late message - must not override that.
+func (s *SetupResultService) applyProxyProtocolReport(srv *models.Server, subServer string, written bool) {
+	if s.redis == nil {
+		return
+	}
+	ctx := context.Background()
+	raw, err := s.redis.HGet(ctx, proxyProtocolPendingKey, srv.UUID).Result()
+	if err != nil {
+		log.Printf("setup result: server %q: real-IP answer with no pending request, ignored (err %v)", srv.UUID, err)
+		return
+	}
+	var pending pendingProxyInstall
+	_ = json.Unmarshal([]byte(raw), &pending)
+	ForgetProxyProtocolInstall(ctx, s.redis, srv.UUID)
+	if written {
+		if err := MarkProxyProtocolSubConfigured(ctx, s.redis, srv.UUID, subServer); err != nil {
+			log.Printf("setup result: server %q: recording %s as configured: %v", srv.UUID, subServer, err)
+		}
+		log.Printf("setup result: server %q (%s) is configured for the real player IP", srv.UUID, subServer)
+		return
+	}
+	if !pending.Default {
+		log.Printf("setup result: server %q (%s): the install did not confirm the real player IP setting; the switch stays on", srv.UUID, subServer)
+		return
+	}
+	if s.hub == nil {
+		log.Printf("setup result: server %q could not be configured for the real player IP and nothing can switch it off", srv.UUID)
+		return
+	}
+	if err := ApplyServerProxyProtocol(context.Background(), s.store, s.redis, s.hub, srv.ID, srv.UUID, false); err != nil {
+		log.Printf("setup result: server %q could not be configured for the real player IP, and switching it off failed: %v", srv.UUID, err)
+		return
+	}
+	log.Printf("setup result: server %q could not be configured for the real player IP; switched it back off", srv.UUID)
 }

@@ -7,6 +7,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
 import { recommendJavaForSetup } from './setup/JavaVersionPicker';
 import { JAVA_21 } from '@/lib/javaVersion';
+import { plannedSetupRoute } from '@/lib/setupRoute';
 import VersionPicker, { VersionEntry, compareVersionsDesc } from './setup/VersionPicker';
 import UploadSoftwareChoice from './setup/UploadSoftwareChoice';
 import { readZipEntryNames, detectUploadSoftware, singleTopFolder, readPackMcVersion, type UploadDetection } from '@/lib/uploadDetect';
@@ -741,6 +742,8 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         // ponytail: installed from another tab, a staged archive stays in the
         // sub-server as a dotfile; the next upload install replaces it.
         const holdsUpload = uploadTarget === sanitized;
+        // Read before the request: Core decides the real-IP default from it.
+        const plannedRoute = plannedSetupRoute(gatewayRoute, existingRoutes);
         if (holdsUpload) stager.beginInstall();
         let res: Awaited<ReturnType<typeof setupServer>>;
         try {
@@ -749,6 +752,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
                 javaImage,
                 extraJvmFlags: extraFlags,
                 installer,
+                createsRoute: plannedRoute.createsRoute,
             });
         } catch (e) {
             if (holdsUpload) stager.endInstall(false);
@@ -764,14 +768,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
             // already installed at this point, but the user needs to know
             // the routing piece didn't go through so they can retry from
             // the Setup tab.
-            const hasDomain = !!(gatewayRoute.subdomain || gatewayRoute.customDomain || gatewayRoute.domain);
-            // Effective domain for own-route detection. Mirrors the
-            // picker's preview computation so the comparison sees the
-            // same string that ends up in createServerRoute.
-            const effectiveDomain = (gatewayRoute.subdomain && gatewayRoute.hosterDomain)
-                ? `${gatewayRoute.subdomain}.${gatewayRoute.hosterDomain}`.toLowerCase()
-                : (gatewayRoute.customDomain || gatewayRoute.domain || '').toLowerCase();
-            const alreadyOurs = !!effectiveDomain && existingRoutes.some(r => r.domain.toLowerCase() === effectiveDomain);
+            const { hasDomain, alreadyOurs } = plannedRoute;
             let routeError = '';
             if (hasDomain && alreadyOurs) {
                 // Domain is already routed to this server; nothing to do

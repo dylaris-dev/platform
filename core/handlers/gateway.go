@@ -852,29 +852,25 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return services.RouteBelongsToServer(rt, srv.UUID) }) {
 		return
 	}
-	if err := h.state.Store.SetServerProxyProtocol(srv.ID, enabled); err != nil {
-		log.Printf("proxy-protocol: server %d: store: %v", srv.ID, err)
-		sendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+	if err := services.ApplyServerProxyProtocol(r.Context(), h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, enabled); err != nil {
+		log.Printf("proxy-protocol: server %d: %v", srv.ID, err)
+		switch {
+		case errors.Is(err, services.ErrProxyProtocolNodeKey):
+			sendJSONError(w, "The setting was saved, but the node could not be told. Save again to apply it.", http.StatusBadGateway)
+		case errors.Is(err, services.ErrProxyProtocolHub):
+			sendJSONError(w, "The setting was saved, but the gateway could not be told. Save again to apply it.", http.StatusBadGateway)
+		default:
+			sendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+		}
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	key := services.ServerProxyProtocolKey(srv.UUID)
-	var rerr error
+	// The owner's own choice supersedes a pending request from an install, and
+	// turning it on vouches for the sub-server that is running.
+	services.ForgetProxyProtocolInstall(r.Context(), h.state.Redis, srv.UUID)
 	if enabled {
-		rerr = h.state.Redis.Set(ctx, key, "1", 0).Err()
-	} else {
-		rerr = h.state.Redis.Del(ctx, key).Err()
-	}
-	if rerr != nil {
-		log.Printf("proxy-protocol: server %d: node key: %v", srv.ID, rerr)
-		sendJSONError(w, "The setting was saved, but the node could not be told. Save again to apply it.", http.StatusBadGateway)
-		return
-	}
-	if err := h.state.Gateway.SetServerProxyProtocol(srv.UUID, enabled); err != nil {
-		log.Printf("proxy-protocol: server %d: hub queue: %v", srv.ID, err)
-		sendJSONError(w, "The setting was saved, but the gateway could not be told. Save again to apply it.", http.StatusBadGateway)
-		return
+		if err := services.MarkProxyProtocolSubConfigured(r.Context(), h.state.Redis, srv.UUID, srv.ActiveSubServer); err != nil {
+			log.Printf("proxy-protocol: server %d: recording %s: %v", srv.ID, srv.ActiveSubServer, err)
+		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "proxyProtocol": enabled})
 }

@@ -69,6 +69,10 @@ type InstallerConfig struct {
 	// the node (never sent by Core). A BungeeCord or Waterfall proxy is told to
 	// listen on it, because their own default is 25577.
 	ContainerPort int `json:"-"`
+	// ProxyProtocol: Core switched this NEW server's real player IP forwarding
+	// on and asks for the matching config (proxy_protocol_default.go). Only
+	// ever sent with a first setup of Paper, Velocity, Waterfall or BungeeCord.
+	ProxyProtocol bool `json:"proxyProtocol,omitempty"`
 }
 
 // CleanServerJars removes server JARs and cached/generated directories while preserving

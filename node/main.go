@@ -1450,6 +1450,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			installerCfg.ContainerPort = dm.savedContainerPort(cmd.Config.UUID)
 		}
 
+		// Real player IP is on for this server (proxy_protocol_default.go):
+		// Core hears back exactly once, no on every early return.
+		reportProxy := proxyProtocolReporter(ctx, rdb, installerCfg, cmd.Config.UUID, subName)
+		defer reportProxy(false)
+
 		// The server is stopped BEFORE the install, not only when it is
 		// recreated at the end. Its container mounts the whole server
 		// directory, and the code in it - the tenant's plugins - could swap a
@@ -1517,6 +1522,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		cmd.Config.Docker.Command = startCmd
+
+		// Last, so no failure above can leave the config written behind a
+		// switch Core turns back off, and before the server first starts.
+		if installerCfg.ProxyProtocol {
+			reportProxy(writeProxyProtocolConfig(serverPath, subName, installerCfg))
+		}
 
 		// Track the active sub-server on disk
 		activeFile := filepath.Join(serverPath, ".active_server")
@@ -1982,6 +1993,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if installerCfg.ContainerPort == 0 && dm != nil {
 			installerCfg.ContainerPort = dm.savedContainerPort(cmd.Config.UUID)
 		}
+		// Same answer to a real-IP request as setup gives.
+		reportProxy := proxyProtocolReporter(ctx, rdb, installerCfg, cmd.Config.UUID, subName)
+		defer reportProxy(false)
 
 		_, err := InstallServer(serverPath, subName, installerCfg)
 		if discardIfDeleted(cmd.Config.UUID, serverPath) {
@@ -2003,6 +2017,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		cmd.Config.Docker.Command = startCmd
+		if installerCfg.ProxyProtocol {
+			reportProxy(writeProxyProtocolConfig(serverPath, subName, installerCfg))
+		}
 
 		// Recreate container with start command - started only while the
 		// platform still means to run it (see setup).
