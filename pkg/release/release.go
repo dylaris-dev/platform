@@ -41,7 +41,7 @@ import (
 // no version of its own to be behind - naming it in a release would produce a
 // component the panel shows as outdated forever, because nothing builds a panel
 // image any more. Say `core` instead; that is what the reader updates.
-var Services = []string{"core", "node", "log-shipper", "edge", "link", "hub", "warp", "beam-relay", "spine"}
+var Services = []string{"core", "node", "log-shipper", "edge", "link", "hub", "warp", "beam-relay", "spine", "voice"}
 
 // Retired names a service that USED to be its own component. Releases in the
 // history legitimately name these - they were true when written - so the parser
