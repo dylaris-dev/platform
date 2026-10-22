@@ -1258,6 +1258,39 @@ export const getGatewayRouteOptions = (): Promise<GatewayRouteOptions> => fetchA
 export const setServerProxyProtocol = (serverId: number, enabled: boolean): Promise<{ success?: boolean; proxyProtocol?: boolean; message?: string; error?: string; code?: string }> =>
     fetchAPI(`/servers/${serverId}/proxy-protocol`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
+// Voice chat for one server. `allowed` is whether it may be turned ON here;
+// turning it off is never refused (except for a suspended owner).
+export interface ServerVoice {
+    enabled: boolean;
+    host: string;
+    port: number;
+    mod: string; // "svc" | "plasmo"
+    allowed: boolean;
+}
+type VoiceResult = { success?: boolean; voice?: ServerVoice; restartRequired?: boolean; message?: string; error?: string; code?: string };
+export const getServerVoice = (serverId: number): Promise<VoiceResult> =>
+    fetchAPI(`/servers/${serverId}/voice`);
+export const setServerVoice = (serverId: number, enabled: boolean): Promise<VoiceResult> =>
+    fetchAPI(`/servers/${serverId}/voice/switch`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+
+// Admin voice overview (Infrastructure > Voice). Bytes are for the period.
+export interface VoiceRelay { voice_id: string; region: string; ip: string }
+export interface VoiceRegionStat { region: string; relays: number; portsUsed: number; portsTotal: number; rxBytes: number; txBytes: number }
+export interface VoiceServerStat { serverId: number; serverName: string; region: string; mod: string; port: number; rxBytes: number; txBytes: number }
+export interface VoiceOverview { period: string; relays: VoiceRelay[]; regions: VoiceRegionStat[]; servers: VoiceServerStat[] }
+export const getVoiceOverview = (period?: string): Promise<VoiceOverview & { success?: boolean; message?: string }> =>
+    fetchAPI(`/voice/overview${period ? `?period=${encodeURIComponent(period)}` : ''}`);
+
+// Who may turn voice on, per scope: server:<id> over user:<id> over
+// role:<panel role id> over the global feature switch (featureFlags.voiceChat).
+export interface VoicePermission { scope: string; allowed: boolean; updatedAt: string }
+export const getVoicePermissions = (): Promise<{ success?: boolean; permissions?: VoicePermission[]; global?: boolean; message?: string; error?: string }> =>
+    fetchAPI('/admin/voice-permissions');
+export const setVoicePermission = (scope: string, allowed: boolean): Promise<{ success?: boolean; message?: string; error?: string }> =>
+    fetchAPI('/admin/voice-permissions', { method: 'PUT', body: JSON.stringify({ scope, allowed }) });
+export const deleteVoicePermission = (scope: string): Promise<{ success?: boolean; message?: string; error?: string }> =>
+    fetchAPI(`/admin/voice-permissions?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' });
+
 // Route-only ("via Link") routes: a protected address pointed at a server the
 // user runs on their OWN machine, reached through their own outbound Link tunnel
 // (no managed node, no exposed origin). Owner-scoped.

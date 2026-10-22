@@ -44,6 +44,9 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// Real player IP forwarding: whether the per-server and per-route
 			// switches may be shown and used.
 			"proxyProtocol": h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context()),
+			// Voice chat, GLOBAL scope only. Whether one server may turn voice on
+			// is the resolved "allowed" of GET /api/servers/{id}/voice.
+			"voiceChat": h.state.FeatureFlags.IsVoiceChatEnabled(r.Context()),
 			// Gates the builder's share-link create UI. Existing links keep
 			// serving while modpacks is on; this only reflects the create toggle.
 			"shareLinks": h.state.FeatureFlags.IsShareLinksEnabled(r.Context()),

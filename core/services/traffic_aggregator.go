@@ -44,6 +44,11 @@ const (
 	// see meterRegion on the edge, which strips everything outside [a-z0-9-].
 	trafficRegionSeenSep = "#"
 
+	// The voice subset's markers: dylaris:traffic:agg:seen:voice:<subject>#<region>.
+	// Its own kind segment, so they never collide with the edge region markers
+	// they sit beside.
+	trafficVoiceSeenKind = "voice"
+
 	// Marks that a subject has been through region initialisation once.
 	//
 	// Without it "this region has no marker" cannot be told apart from "this
@@ -112,6 +117,10 @@ type trafficAcc struct {
 	// producer that did not tag contributes to regionUnknown rather than
 	// vanishing from the split.
 	byRegion map[breakdownCell]int64
+	// voiceByRegion is the part of byRegion that was voice chat (kind edge
+	// only). A SUBSET: the same bytes are already in byRegion and in edge, and
+	// per subject and region it never exceeds what byRegion billed there.
+	voiceByRegion map[breakdownCell]int64
 }
 
 // breakdownCell is one cell of the breakdown: where the bytes moved, which
@@ -185,12 +194,28 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 		// region row that cannot be written must never hold that back. The
 		// markers still advance, so a lost region delta is lost rather than
 		// re-billed - under-counting the split, never the bill.
+		var regionFailed map[breakdownCell]bool
 		for rk, bytes := range acc.byRegion {
 			if bytes <= 0 {
 				continue
 			}
 			if err := a.store.AddTrafficUsageRegion(tenant, period, rk.region, rk.kind, rk.product, bytes); err != nil {
 				logErrf("traffic-aggregator", "add region usage for %s/%s/%s/%s: %v", tenant, rk.region, rk.kind, rk.product, err)
+				if regionFailed == nil {
+					regionFailed = map[breakdownCell]bool{}
+				}
+				regionFailed[rk] = true
+			}
+		}
+		// The voice subset follows the same rule, one step further down: it is
+		// written after its region cell and only if that cell was written, so
+		// voice_bytes can never run ahead of the bytes it is a part of.
+		for rk, bytes := range acc.voiceByRegion {
+			if bytes <= 0 || regionFailed[rk] {
+				continue
+			}
+			if err := a.store.AddTrafficUsageRegionVoice(tenant, period, rk.region, rk.kind, rk.product, bytes); err != nil {
+				logErrf("traffic-aggregator", "add voice usage for %s/%s/%s/%s: %v", tenant, rk.region, rk.kind, rk.product, err)
 			}
 		}
 		for _, su := range tenantSeen[tenant] {
@@ -375,6 +400,46 @@ func regionBytes(fields map[string]string) map[string]int64 {
 	return out
 }
 
+// voiceRegionBytes sums the voice fields of an edge counter per region:
+// "vrx:<region>" (player to server) and "vtx:<region>" (server to player). The
+// same fields are also summed by regionBytes, which is what keeps voice inside
+// the player bytes; this only reads them out again as a subset. An empty
+// region lands in regionUnknown, as it does in regionBytes, so both name the
+// same cell.
+func voiceRegionBytes(fields map[string]string) map[string]int64 {
+	out := map[string]int64{}
+	for region, d := range voiceDirBytes(fields) {
+		out[region] += d[0] + d[1]
+	}
+	return out
+}
+
+// voiceDirBytes is voiceRegionBytes kept apart by direction: region to {rx, tx}.
+func voiceDirBytes(fields map[string]string) map[string][2]int64 {
+	out := map[string][2]int64{}
+	for name, v := range fields {
+		dir, region, ok := strings.Cut(name, ":")
+		if !ok || (dir != "vrx" && dir != "vtx") {
+			continue
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			continue
+		}
+		if region == "" {
+			region = regionUnknown
+		}
+		d := out[region]
+		if dir == "vrx" {
+			d[0] += n
+		} else {
+			d[1] += n
+		}
+		out[region] = d
+	}
+	return out
+}
+
 // collectRegions computes the per-region deltas for one counter.
 //
 // Two different absences look identical from a single region marker, and they
@@ -414,12 +479,17 @@ func (a *TrafficAggregator) collectRegions(
 		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: initKey, val: 1})
 	}
 
+	// What each region billed this tick, for the voice subset to stay under. A
+	// region absent here was not read and is retried next tick, voice with it.
+	billed := map[string]int64{}
+
 	for region, current := range regionBytes(fields) {
 		seenKey := trafficSeenPrefix + kind + ":" + subject + trafficRegionSeenSep + region
 		last, err := a.redis.Get(ctx, seenKey).Int64()
 		if err != nil && !errors.Is(err, redis.Nil) {
 			continue
 		}
+		billed[region] = 0
 		missing := err != nil
 		if missing && !subjectKnown && hadTotalSeen {
 			// Seeding this subject's history away, once. Only reachable while
@@ -434,10 +504,62 @@ func (a *TrafficAggregator) collectRegions(
 		if delta <= 0 {
 			continue
 		}
+		billed[region] = delta
 		if acc.byRegion == nil {
 			acc.byRegion = map[breakdownCell]int64{}
 		}
 		acc.byRegion[breakdownCell{region: region, kind: kind, product: product}] += delta
+		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
+	}
+
+	if kind == store.TrafficKindEdge {
+		a.collectVoice(ctx, subject, product, fields, billed, acc, tenantSeen, tenant)
+	}
+}
+
+// collectVoice computes the voice part of one edge counter's region deltas.
+//
+// A missing voice marker bills in full: Core ships before any relay writes
+// vrx:/vtx:, so there is no history to seed. The delta is capped at what the
+// region itself billed this tick, which is what keeps a seeded region (billed 0)
+// or any other skew from making the subset larger than the whole. The marker
+// advances either way, so a capped remainder is dropped, never carried into a
+// later tick.
+func (a *TrafficAggregator) collectVoice(
+	ctx context.Context,
+	subject, product string,
+	fields map[string]string,
+	billed map[string]int64,
+	acc *trafficAcc,
+	tenantSeen map[string][]seenUpdate,
+	tenant string,
+) {
+	for region, current := range voiceRegionBytes(fields) {
+		regionDelta, read := billed[region]
+		if !read {
+			continue // the region was not read this tick; neither is its voice
+		}
+		seenKey := trafficSeenPrefix + trafficVoiceSeenKind + ":" + subject + trafficRegionSeenSep + region
+		last, err := a.redis.Get(ctx, seenKey).Int64()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			continue
+		}
+		delta := current - last
+		if delta < 0 {
+			delta = current // counter reset
+		}
+		if delta > regionDelta {
+			delta = regionDelta
+		}
+		if delta > 0 {
+			if acc.voiceByRegion == nil {
+				acc.voiceByRegion = map[breakdownCell]int64{}
+			}
+			acc.voiceByRegion[breakdownCell{region: region, kind: store.TrafficKindEdge, product: product}] += delta
+		}
+		// Rewritten on every read, unchanged or not: the write is what renews
+		// its TTL. A marker left to expire while player bytes keep moving and
+		// voice stays flat would bill the voice counter's lifetime again.
 		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 	}
 }

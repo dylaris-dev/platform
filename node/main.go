@@ -458,6 +458,7 @@ func main() {
 	go startDiscoveryLoop(ctx, rdb, nodeID, nodeTags, nodeRegion, mon, dockerMgr)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
+	go startVoiceForwarder(ctx, rdb, dockerMgr, nodeID)
 	go StartNodeSystemStats(ctx, rdb, nodeID, statsStreamMaxLen, mon)
 	go StartReconciler(ctx, rdb, dockerMgr, storageMgr)
 	// Purge .pre-restore-* dirs left over from crashed restores.

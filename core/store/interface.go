@@ -111,6 +111,11 @@ type Store interface {
 	// source of truth - see AddTrafficUsageRegion.
 	AddTrafficUsageRegion(userID string, period time.Time, region, kind, product string, bytes int64) error
 	GetTrafficUsageRegions(userID string, period time.Time) ([]RegionUsage, error)
+	// The voice SUBSET of the same row; the bytes also go through
+	// AddTrafficUsageRegion.
+	AddTrafficUsageRegionVoice(userID string, period time.Time, region, kind, product string, bytes int64) error
+	AddVoiceUsage(serverID int, period time.Time, region string, rx, tx int64) error
+	ListVoiceUsage(period time.Time) ([]VoiceUsageRow, error)
 	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error
 	GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error)
 	ListTrafficUsage(period time.Time) ([]TrafficUsage, error)
@@ -206,6 +211,17 @@ type Store interface {
 	SetServerAutoMove(id int, enabled bool) error
 	// SetServerProxyProtocol flips the per-server real-IP (PROXY v2) switch.
 	SetServerProxyProtocol(id int, enabled bool) error
+	// Voice chat port per server and region. See AllocateVoicePort.
+	AllocateVoicePort(p VoicePort, min, max int) (VoicePort, error)
+	GetVoicePort(serverID int) (*VoicePort, error)
+	UpdateVoicePortMod(serverID int, region string, port int, mod string, internalPort int, host string) (bool, error)
+	DeleteVoicePort(serverID int) error
+	ListVoicePorts() ([]VoicePort, error)
+	// Voice chat permission per scope (server:, user:, role:). nil = no row.
+	GetVoicePermission(scope string) (*bool, error)
+	SetVoicePermission(scope string, allowed bool) error
+	DeleteVoicePermission(scope string) error
+	ListVoicePermissions() ([]VoicePermission, error)
 	// UpdateServerNode reassigns a server to a different node. Used by the
 	// auto-move migration flow (later wave) to flip the FK after transport.
 	UpdateServerNode(serverID int, newNodeID int) error

@@ -10,6 +10,7 @@ import { Globe, Plus, Trash2, X, Check, AlertTriangle } from 'lucide-react';
 import RouteDomainPicker from '@/components/RouteDomainPicker';
 import ModalPanel from '@/components/ui/ModalPanel';
 import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
+import VoiceChatSwitch from '@/components/VoiceChatSwitch';
 import { useAppData } from '@/lib/AppDataContext';
 
 interface RoutesModalProps {
@@ -201,6 +202,9 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                             />
                         </div>
                     )}
+
+                    {/* Shows itself only when Core allows voice here or it is on. */}
+                    <VoiceChatSwitch serverId={serverId} />
 
                     {routesLoading ? (
                         <p className="text-sm text-(--base-07)">Loading routes…</p>

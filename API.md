@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **522 routes** in 52 sections: 231 GET, 163 POST, 38 PUT, 37 PATCH, 54 DELETE.
+- **528 routes** in 53 sections: 234 GET, 163 POST, 40 PUT, 37 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **337** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **343** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (123)
+- [/api/admin](#apiadmin) (126)
 - [/api/auth](#apiauth) (22)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (78)
+- [/api/servers](#apiservers) (80)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -188,6 +188,7 @@ can still show what exists.
 - [/api/updates](#apiupdates) (1)
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (2)
+- [/api/voice](#apivoice) (1)
 - [/api/warp](#apiwarp) (21)
 - [/healthz](#healthz) (1)
 - [/mirror/library](#mirrorlibrary) (1)
@@ -314,6 +315,9 @@ can still show what exists.
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/role` | session | `users.write` | - | `UserHandler.SetUserRoleHandler` | SetUserRole PUT /api/admin/users/{id}/role Valid roles: "user", "support", "admin". |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/username` | session | `users.write` | - | `UsernameHistoryHandler.AdminRename` | Body: {"username": "newname"} — bypasses cooldown + platform toggle. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/username-history` | session | `users.read` | - | `UsernameHistoryHandler.Admin` | Gated at the route with RequireCap("users.read"); admin short-circuits. |
+| GET | `/api/admin/voice-permissions` | session | `settings.read` | - | `GatewayHandler.ListVoicePermissions` | every scope row, plus the global setting they override. |
+| PUT | `/api/admin/voice-permissions` | session | `settings.write` | - | `GatewayHandler.SetVoicePermission` | body {scope, allowed}. |
+| DELETE | `/api/admin/voice-permissions` | session | `settings.write` | - | `GatewayHandler.DeleteVoicePermission` | removes the row, so the scope defers to the next one down again. |
 | POST | `/api/admin/warp/external-nodes` | session | `topology.write` | - | `WarpHandler.MintExternalNodeKey` | everything an External node needs, in one call: an owner-less node- warp key and the platform enroll token bound to it. |
 | GET | `/api/admin/warp/keys` | session | `topology.read` | - | `WarpHandler.ListAPIKeys` | the external-node inventory. |
 | POST | `/api/admin/warp/keys` | session | `topology.write` | - | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
@@ -748,6 +752,8 @@ can still show what exists.
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RevokeShareLink` | null the slug so the standalone page 404s. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
 | POST | `/api/servers/{id:[0-9]+}/version-update` | session | `server.settings.write` | - | `ServerModsHandler.VersionUpdate` | - |
+| GET | `/api/servers/{id:[0-9]+}/voice` | session | `network.read` | RequireGatewayEnabled | `GatewayHandler.GetServerVoice` | the server's voice port, if any, and whether it may turn voice on. |
+| PUT | `/api/servers/{id:[0-9]+}/voice/switch` | session | `network.write` | - | `GatewayHandler.SetServerVoice` | turns proximity voice chat on or off for one server. |
 
 ## /api/settings
 
@@ -930,6 +936,12 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/versions` | session | _no capability_ | - | `VersionHandler.GetVersions` | the available versions for one server software, chosen with ?software=. |
 | GET | `/api/versions/software` | **none** | _public_ | - | `VersionHandler.GetSoftwareList` | (public) |
+
+## /api/voice
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/voice/overview` | session | `settings.read` | RequireGatewayEnabled | `VoiceStatsHandler.GetOverview` | Live relays, port use per region, and voice bytes per region and server for the period (default: the current month). |
 
 ## /api/warp
 

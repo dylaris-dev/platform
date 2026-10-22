@@ -60,6 +60,9 @@ type featureSettingsPayload struct {
 	// ProxyProtocol opens the real player IP switches. Off until the gateway
 	// pieces that carry the address are deployed.
 	ProxyProtocol *bool `json:"proxyProtocol"`
+	// VoiceChat is the global scope of the voice chat permission; role, user
+	// and server rows in voice_permissions override it.
+	VoiceChat *bool `json:"voiceChat"`
 	// NO metrics flag here, deliberately. Long-term statistics are switched on
 	// by MetricsDBHandler, together with the database they record into, because
 	// those two are one decision: the resolution is fixed at the moment
@@ -107,6 +110,7 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Byon:                  boolPtr(h.state.FeatureFlags.IsBYONEnabled(r.Context())),
 		RouteOnly:             boolPtr(h.state.FeatureFlags.IsRouteOnlyEnabled(r.Context())),
 		ProxyProtocol:         boolPtr(h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context())),
+		VoiceChat:             boolPtr(h.state.FeatureFlags.IsVoiceChatEnabled(r.Context())),
 		UserAPIKeys:           boolPtr(h.state.FeatureFlags.UserAPIKeysEnabled(r.Context())),
 		UserAPIKeyAllowedCaps: &caps,
 	}
@@ -218,6 +222,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"feature_route_only_enabled", pick(req.RouteOnly, false), req.RouteOnly != nil, "feature_route_only_enabled", "routeOnly"},
 		{"apikeys_user_enabled", pick(req.UserAPIKeys, false), req.UserAPIKeys != nil, "apikeys_user_enabled", "userApiKeys"},
 		{services.ProxyProtocolSettingKey, pick(req.ProxyProtocol, false), req.ProxyProtocol != nil, services.ProxyProtocolSettingKey, "proxyProtocol"},
+		{services.VoiceChatSettingKey, pick(req.VoiceChat, false), req.VoiceChat != nil, services.VoiceChatSettingKey, "voiceChat"},
 	}
 	for _, kv := range writes {
 		if !kv.send {

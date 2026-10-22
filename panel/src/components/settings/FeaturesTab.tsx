@@ -16,6 +16,7 @@ import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import MetricsDatabaseCard from '@/components/settings/MetricsDatabaseCard';
+import VoiceAccessCard from '@/components/settings/VoiceAccessCard';
 import { SwitchRow } from '@/components/ui/Switch';
 import Checkbox from '@/components/ui/Checkbox';
 import { useAppData } from '@/lib/AppDataContext';
@@ -53,7 +54,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -227,7 +228,7 @@ export default function FeaturesTab() {
     // inline so a new flag has exactly one place to be added and cannot end up
     // in no tab at all - which would make it unsavable while looking fine.
     const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library'] as const;
-    const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol'] as const;
+    const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
 
     // One registration covering all three: the unsaved-changes guard asks "is
@@ -477,6 +478,13 @@ export default function FeaturesTab() {
                         disabled={gatewayOff}
                         onChange={v => editPlatformFlag('proxyProtocol', v)}
                     />
+                    <SwitchRow
+                        label="Voice chat"
+                        description="Lets server owners give Simple Voice Chat or Plasmo Voice a public address through the gateway. Needs a voice relay in the server's region. Turning it off turns voice off within a minute on every server without an allow override. Overrides per server, user or role are below."
+                        checked={!!platformFlags.voiceChat}
+                        disabled={gatewayOff}
+                        onChange={v => editPlatformFlag('voiceChat', v)}
+                    />
                     {gatewayOff && (
                         <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
                             <AlertTriangle size={12} className="mt-0.5 shrink-0" />
@@ -489,6 +497,7 @@ export default function FeaturesTab() {
                     )}
                 </SettingsGroup>
                             </SettingsCard>
+                            {!gatewayOff && <VoiceAccessCard />}
                             <MetricsDatabaseCard />
                         </>
                     )}

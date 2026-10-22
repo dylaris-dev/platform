@@ -1318,6 +1318,9 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	// restart for no reason. A stamp that did NOT land means the file lacks the
 	// setting, so a restart really is still owed.
 	needsRestart := !h.syncRconToSubServer(srv, subName)
+	// Voice is re-asserted the same way, but its result is logged inside and
+	// never feeds the RCON restart flag or holds the switch up.
+	h.syncVoiceToSubServer(srv, subName)
 	if err := h.state.Store.SetServerRconNeedsRestart(serverID, needsRestart); err != nil {
 		log.Printf("SwitchSubServer: rcon needs-restart for server %d: %v", serverID, err)
 	}
@@ -1689,6 +1692,9 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		// sub-server is about to run. See rconNeedsStamping for why it can be
 		// a different one than SetConfig last wrote.
 		rconSynced := h.syncRconToSubServer(srv, srv.ActiveSubServer)
+		// The voice mod reads its config at boot too. Logged only: voice never
+		// blocks a start and never touches the RCON restart flag.
+		h.syncVoiceToSubServer(srv, srv.ActiveSubServer)
 		// A (re)start reloads server.properties, so any pending RCON change is
 		// now live: clear the persisted "restart required" flag that keeps the
 		// panel banner up and the RCON-dependent Players tabs locked. Non-fatal

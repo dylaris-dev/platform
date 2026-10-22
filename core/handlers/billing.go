@@ -81,6 +81,9 @@ type trafficPool struct {
 	// giving each product its own ceiling would hand a tenant the same free
 	// allowance once per product they own.
 	ByProductBytes map[string]int64 `json:"byProductBytes,omitempty"`
+	// VoiceBytes is the part of the pool that was voice chat. A subset of
+	// UsedGB, never added on top: voice shares the player pool and its limit.
+	VoiceBytes int64 `json:"voiceBytes"`
 }
 
 // GetMyBilling GET /api/me/billing - the caller's lifecycle state for the banner.
@@ -183,7 +186,7 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 			return nil
 		}
 		usedGB := c.bytes / trafficGB
-		p := trafficPool{Kind: c.kind, Region: c.region, UsedGB: usedGB, ByProductBytes: c.byProduct}
+		p := trafficPool{Kind: c.kind, Region: c.region, UsedGB: usedGB, ByProductBytes: c.byProduct, VoiceBytes: c.voice}
 		if lim.IncludedGB != nil {
 			limited = true
 			total := *lim.IncludedGB * units
@@ -506,6 +509,7 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 type trafficCell struct {
 	region, kind string
 	bytes        int64
+	voice        int64 // subset of bytes
 	// byProduct describes who filled the pool. Never a second pool - see below.
 	byProduct map[string]int64
 }
@@ -540,6 +544,7 @@ func foldTrafficCells(cells []store.RegionUsage) []trafficCell {
 			out = append(out, trafficCell{region: k.region, kind: k.kind, byProduct: map[string]int64{}})
 		}
 		out[i].bytes += c.Bytes
+		out[i].voice += c.VoiceBytes
 		out[i].byProduct[c.Product] += c.Bytes
 	}
 	return out

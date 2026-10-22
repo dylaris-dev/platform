@@ -182,6 +182,16 @@ func (f *FeatureFlags) IsProxyProtocolEnabled(ctx context.Context) bool {
 	return f.Get(ctx, ProxyProtocolSettingKey, false)
 }
 
+// VoiceChatSettingKey is the GLOBAL scope of the voice chat permission: the
+// answer for a server when no server, user or role row says anything.
+const VoiceChatSettingKey = "gateway.voice_chat_enabled"
+
+// IsVoiceChatEnabled is that global scope. Default = false: voice stays off
+// everywhere until the operator, or a narrower scope, allows it.
+func (f *FeatureFlags) IsVoiceChatEnabled(ctx context.Context) bool {
+	return f.Get(ctx, VoiceChatSettingKey, false)
+}
+
 // IsBYONEnabled gates the bring-your-own-node multi-tenancy (per-user node
 // enrollment, node ownership scoping, plans/billing). Default = false: the
 // platform ships as today's single-operator panel and the operator opts in.

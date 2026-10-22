@@ -117,6 +117,9 @@ export interface TrafficPool {
     // unit HELD and pooled across products, so these describe who filled the
     // pool and are judged against nothing.
     byProductBytes?: Record<string, number>;
+    // BYTES of this pool that were voice chat. A subset of usedGb, never on
+    // top of it. Absent from an older Core.
+    voiceBytes?: number;
 }
 
 // getMyBilling returns the caller's lifecycle state for the banner.

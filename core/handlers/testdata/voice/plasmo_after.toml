@@ -1,0 +1,87 @@
+# Used to store server-related config file on the client
+# Set it to a single value on different servers if you want them to share config
+server_id = "6f1c2a4e-3b7d-4c9a-9e21-5d8f0b7a1c33"
+# Language used when client's language doesn't exist
+# 
+# By default, client's language used for translations
+# For example, if default_language is set to ja_jp but the client uses en_us, then en_us will be used
+# If you want to use one specific language for all clients, uncomment and set forced_language below
+default_language = "en_us"
+# Language used for all clients
+#forced_language = "ja_jp"
+# Enables debug logging
+debug = false
+# Enables translations from Crowdin
+use_crowdin_translations = true
+check_for_updates = true
+
+[host]
+# IP address for the voice server to bind to
+# 0.0.0.0 = bind to all available interfaces
+ip = "0.0.0.0"
+# UDP port for the voice server
+# 0 = same port as Minecraft server
+port = 24454
+
+# Public IP and port that clients will connect to
+# If ip set to 0.0.0.0, ip from [host] will be used
+# If port set to 0, port from [host] will be used
+# Ignored when using BungeeCord/Velocity (proxy manages public address instead)
+#[host.public]
+#ip = "127.0.0.1"
+#port = 0
+
+[host.public]
+ip = "a.eu.dylaris.com"
+port = 26000
+
+[voice]
+# The maximum amount, in blocks, to broadcast audio packets past the audible proximity distance.
+# The plugin will send audio packets to players within 2x the proximity distance, or the distance plus this number - whichever is smaller.
+max_extra_audio_broadcast_distance = 16
+# Supported sample rates: [8000, 12000, 24000, 48000]
+# Don't change this to reduce bandwidth; adjust opus bitrate instead
+sample_rate = 48000
+# Time before voice client connection is considered timed out
+# Server will try to automatically reconnect the client after timeout
+keep_alive_timeout_ms = 15000
+# Maximum packet size for voice data transmission
+mtu_size = 1024
+# Requires players to have the Plasmo Voice mod installed
+client_mod_required = false
+# Time before player is kicked if the mod is required but not installed
+client_mod_required_check_timeout_ms = 3000
+# Minimum required version for a client with the mod to connect to the voice server
+# This will not kick the player but will simply not connect them to the voice server and will suggest downloading the required version
+client_mod_min_version = "2.0.0"
+
+[voice.reuse_port]
+# Enables SO_REUSEPORT
+# Instead of using one single thread for all incoming connections,
+# multiple sockets will be bound on the same port
+# and distribute connections between multiple worker threads
+# Requires Linux or macOS
+enabled = false
+# Amount of sockets that'll be open with SO_REUSEPORT enabled
+# When set to 0, amount of channel will match amount of available CPU cores * 2
+sockets = 4
+
+[voice.proximity]
+distances = [8, 16, 32]
+default_distance = 16
+
+[voice.opus]
+# Opus application mode
+# Supported values: VOIP, AUDIO, RESTRICTED_LOWDELAY
+# Default is VOIP
+mode = "VOIP"
+# Opus bitrate
+# Supported values: -1000 (auto), -1 (max), [500-512_000]
+# Default is -1000
+bitrate = -1000
+
+[notifications]
+# Notify a player when their voice chat is muted ("You've been muted ..." message)
+muted = true
+# Notify a player when their voice chat is unmuted ("You've been unmuted" message)
+unmuted = true

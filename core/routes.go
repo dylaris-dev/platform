@@ -132,6 +132,7 @@ var requiredCaps = map[string]string{
 	"/api/gateway-bandwidth/overview":        "settings.read",
 	"/api/gateway-bandwidth/history":         "settings.read",
 	"/api/gateway-bandwidth/rebalance":       "settings.read",
+	"/api/voice/overview":                    "settings.read",
 	"/api/servers/{id:[0-9]+}/audit":         "server.audit.read",
 	"/api/servers/{id:[0-9]+}/audit/status":  "server.audit.read",
 	"/api/servers/{id:[0-9]+}/audit/force":   "server.settings.write",
@@ -213,6 +214,12 @@ var requiredCaps = map[string]string{
 	// Real player IP forwarding for one server: a network setting, so the same
 	// capability that may change its routes.
 	"/api/servers/{id:[0-9]+}/proxy-protocol": "network.write",
+	// Voice chat: reading it is a network read, the switch a network write.
+	"/api/servers/{id:[0-9]+}/voice":        "network.read",
+	"/api/servers/{id:[0-9]+}/voice/switch": "network.write",
+	// Who may turn voice on: policy, so settings. GET is settings.read; the
+	// PUT/DELETE settings.write lives at the RequireCap call.
+	"/api/admin/voice-permissions": "settings.read",
 
 	// Phase 4 Task 12: users + roles + panel-roles + admin 2FA reset (PANEL
 	// users.*/panelroles.*). GET+POST /users share one template -> users.read
@@ -605,6 +612,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
 	gatewayDNSHandler := handlers.NewGatewayDNSHandler(appState)
 	gatewayBandwidthHandler := handlers.NewGatewayBandwidthHandler(appState)
+	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)
 	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -1452,6 +1460,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.CreateServerRoute)))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.DeleteServerRoute))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.SetServerProxyProtocol)))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(appState.RequireGatewayEnabled(gatewayHandler.GetServerVoice)))).Methods("GET")
+	// No RequireGatewayEnabled: turning voice off must work with the gateway
+	// off; SetServerVoice gates the enable itself.
+	api.HandleFunc("/servers/{id:[0-9]+}/voice/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetServerVoice))).Methods("PUT")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayHandler.ListVoicePermissions))).Methods("GET")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.SetVoicePermission))).Methods("PUT")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.DeleteVoicePermission))).Methods("DELETE")
 
 	// Route-only (external origin): a protected address pointed at a server the
 	// user already runs, no managed node. Owner-scoped; create is gateway-gated.
@@ -1577,6 +1592,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway-bandwidth/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetHistory))).Methods("GET")
 	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetRebalance))).Methods("GET")
 	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayBandwidthHandler.SetRebalanceMode))).Methods("POST")
+	api.HandleFunc("/voice/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(appState.RequireGatewayEnabled(voiceStatsHandler.GetOverview)))).Methods("GET")
 
 	// Placement / Scheduling. /placement/pick + /tags + /regions stay authed-exempt
 	// (Phase 4 Task 13): they are node-picking helper reads/preview any authed user

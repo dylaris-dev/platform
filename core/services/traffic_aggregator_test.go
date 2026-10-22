@@ -33,6 +33,8 @@ type trafficFakeStore struct {
 	addUsageErrFor  map[string]error
 	addRegionCalls  []trafficRegionCall
 	addRegionErrFor map[string]error
+	addVoiceCalls   []trafficRegionCall
+	addVoiceErrFor  map[string]error
 	setBackupCalls  []trafficBackupCall
 	setBackupErrFor map[string]error
 }
@@ -75,6 +77,14 @@ func (f *trafficFakeStore) AddTrafficUsageRegion(userID string, period time.Time
 	f.addRegionCalls = append(f.addRegionCalls, trafficRegionCall{userID, period, region, kind, product, bytes})
 	if f.addRegionErrFor != nil {
 		return f.addRegionErrFor[region]
+	}
+	return nil
+}
+
+func (f *trafficFakeStore) AddTrafficUsageRegionVoice(userID string, period time.Time, region, kind, product string, bytes int64) error {
+	f.addVoiceCalls = append(f.addVoiceCalls, trafficRegionCall{userID, period, region, kind, product, bytes})
+	if f.addVoiceErrFor != nil {
+		return f.addVoiceErrFor[region]
 	}
 	return nil
 }
@@ -863,4 +873,156 @@ func TestTrafficAggregator_ACorruptSeenStartsOver(t *testing.T) {
 	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 100 {
 		t.Fatalf("addUsageCalls = %+v, want the 100 bytes since", fs.addUsageCalls)
 	}
+}
+
+func TestVoiceIsInTheBillAndInTheSubset(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{
+		"rx:eu": 1000, "tx:eu": 1000, "vrx:eu": 200, "vtx:eu": 100,
+	})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 2300 {
+		t.Fatalf("the bill must keep voice in edge bytes: %+v", fs.addUsageCalls)
+	}
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].region != "eu" || fs.addRegionCalls[0].kind != store.TrafficKindEdge || fs.addRegionCalls[0].bytes != 2300 {
+		t.Fatalf("region cell must keep voice in its bytes: %+v", fs.addRegionCalls)
+	}
+	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].region != "eu" || fs.addVoiceCalls[0].kind != store.TrafficKindEdge || fs.addVoiceCalls[0].bytes != 300 {
+		t.Fatalf("voice subset = %+v, want eu/edge 300", fs.addVoiceCalls)
+	}
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "300")
+
+	// Nothing new: no second subset write.
+	fs.addVoiceCalls = nil
+	agg.runOnce(context.Background())
+	if len(fs.addVoiceCalls) != 0 {
+		t.Fatalf("an unchanged counter wrote a voice subset: %+v", fs.addVoiceCalls)
+	}
+}
+
+// A subject being seeded bills its region 0 this tick. Its voice marker is
+// missing too (and bills in full by rule), so only the cap keeps the subset
+// from claiming 300 bytes of a cell that grew by nothing.
+func TestVoiceSubsetNeverExceedsTheRegionDelta(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{
+		"rx:eu": 1000, "tx:eu": 1000, "vrx:eu": 200, "vtx:eu": 100,
+	})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "2250")
+
+	agg.runOnce(context.Background())
+	if len(fs.addRegionCalls) != 0 || len(fs.addVoiceCalls) != 0 {
+		t.Fatalf("tick 1 must seed: regions %+v voice %+v", fs.addRegionCalls, fs.addVoiceCalls)
+	}
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "300")
+
+	fs.addRegionCalls, fs.addVoiceCalls = nil, nil
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1050, "vrx:eu": 250})
+	agg.runOnce(context.Background())
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 100 {
+		t.Fatalf("tick 2 region = %+v, want 100", fs.addRegionCalls)
+	}
+	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].bytes != 50 {
+		t.Fatalf("tick 2 voice = %+v, want 50", fs.addVoiceCalls)
+	}
+}
+
+// A region cell that could not be written must not get a voice subset either,
+// or voice_bytes would run ahead of the bytes it is a part of.
+func TestVoiceSubsetSkippedWhenItsRegionCellFailed(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners:          map[string]string{"srv-1": "tenant-a"},
+		addRegionErrFor: map[string]error{"eu": errors.New("db down")},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "vrx:eu": 200})
+
+	agg.runOnce(context.Background())
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 1200 {
+		t.Fatalf("the bill must stand: %+v", fs.addUsageCalls)
+	}
+	if len(fs.addVoiceCalls) != 0 {
+		t.Fatalf("voice written for a failed region cell: %+v", fs.addVoiceCalls)
+	}
+	// Under-count the split, never the bill: the markers advance.
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "200")
+}
+
+func TestVoiceCounterResetCountsCurrent(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 100, "vrx:eu": 40})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "5000")
+	mustSet(t, rdb, "dylaris:traffic:agg:rinit:edge:srv-1", "1")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1#eu", "5000")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "900")
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].bytes != 40 {
+		t.Fatalf("voice after reset = %+v, want 40", fs.addVoiceCalls)
+	}
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "40")
+}
+
+func TestRegionBytesStillCountsVoiceFields(t *testing.T) {
+	fields := map[string]string{"rx:eu": "1000", "vrx:eu": "200", "vtx:eu": "100", "vrx:us": "7"}
+	got := regionBytes(fields)
+	if got["eu"] != 1300 || got["us"] != 7 {
+		t.Fatalf("regionBytes = %v: voice must stay inside the region bytes", got)
+	}
+	v := voiceRegionBytes(fields)
+	if len(v) != 2 || v["eu"] != 300 || v["us"] != 7 {
+		t.Fatalf("voiceRegionBytes = %v, want eu 300 / us 7", v)
+	}
+}
+
+// Player bytes moving while voice stays flat must still renew the voice marker,
+// or it expires under a counter that does not and the next tick re-adds the
+// lifetime voice bytes to the subset.
+func TestVoiceMarkerRenewedWhileVoiceIsFlat(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1100, "vrx:eu": 200, "vtx:eu": 100})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "1300")
+	mustSet(t, rdb, "dylaris:traffic:agg:rinit:edge:srv-1", "1")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1#eu", "1300")
+	const voiceKey = "dylaris:traffic:agg:seen:voice:srv-1#eu"
+	if err := rdb.Set(ctx, voiceKey, "300", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	agg.runOnce(ctx)
+
+	if len(fs.addVoiceCalls) != 0 {
+		t.Fatalf("flat voice wrote a subset: %+v", fs.addVoiceCalls)
+	}
+	if ttl := rdb.TTL(ctx, voiceKey).Val(); ttl <= time.Hour {
+		t.Fatalf("voice marker TTL = %v, want renewed to %v", ttl, trafficSeenTTL)
+	}
+}
+
+// A failed subset write under-counts the split, never re-bills it: the markers
+// advance as they do for a failed region write.
+func TestVoiceSubsetWriteFailureStillAdvancesTheMarkers(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners:         map[string]string{"srv-1": "tenant-a"},
+		addVoiceErrFor: map[string]error{"eu": errors.New("db down")},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "vrx:eu": 200})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addVoiceCalls) != 1 {
+		t.Fatalf("voice write not attempted: %+v", fs.addVoiceCalls)
+	}
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "1200")
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1#eu", "1200")
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "200")
 }

@@ -33,6 +33,7 @@ function shellSlugs(): string[] {
 const GATED: Record<string, string> = {
     gateway: 'gatewayDeployed',
     bandwidth: 'gatewayEnabled',
+    voice: 'gatewayEnabled',
 };
 
 describe('infrastructure tab routes', () => {
@@ -59,7 +60,9 @@ describe('infrastructure tab routes', () => {
         for (const [slug, gate] of Object.entries(GATED)) {
             const src = readFileSync(join(APP, slug, 'page.tsx'), 'utf8');
             expect(src, `${slug} does not read ${gate}`).toContain(gate);
-            expect(src, `${slug} does not refuse when ${gate} is false`).toContain('TabGuard');
+            // The guard itself, not the import: a page that imports TabGuard
+            // and never returns it passed the old substring check.
+            expect(src, `${slug} does not refuse when ${gate} is false`).toMatch(new RegExp(`if \\(!${gate}\\) \\{\\s*return <TabGuard`));
         }
     });
 

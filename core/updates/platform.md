@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.22
+
+### Features
+- **Groundwork for voice chat (Simple Voice Chat, Plasmo Voice).** Core, panel and node carry the voice
+  relay integration; it stays hidden until the voice relay is deployed and you enable it. `core` `node`
+- **Infrastructure has a Voice tab and Settings a "Voice chat access" section** (allow or deny per role,
+  user or server); player traffic pools show their voice share once voice runs. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.21.2
 
 ### Features

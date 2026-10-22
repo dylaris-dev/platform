@@ -57,6 +57,7 @@ export default function InfrastructureShell({ children }: { children: React.Reac
         // reading 2 next to a list of six is worse than no badge.
         { slug: 'gateway', label: 'Gateway', visible: infra.gatewayDeployed },
         { slug: 'bandwidth', label: 'Bandwidth', visible: infra.gatewayEnabled },
+        { slug: 'voice', label: 'Voice', visible: infra.gatewayEnabled },
         // Always shown. Whether there is anything recorded is a SERVER fact
         // (the feature flag, and whether the metrics database opened), and the
         // page says which. Hiding the tab when the panel cannot know would make

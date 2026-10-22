@@ -28,6 +28,10 @@ export interface FeatureFlags {
     // per-server and per-route switches may be shown. Optional: an older Core
     // omits it, which means off.
     proxyProtocol?: boolean;
+    // Voice chat, global scope: whether servers may turn it on unless a
+    // role, user or server override says otherwise. Optional: an older Core
+    // omits it, which means off.
+    voiceChat?: boolean;
     // Store integration (dylaris.com). True only when the hosted Core has both
     // STORE_URL + STORE_SHARED_KEY set. Gates the connect-store button and the
     // demo account/server admin UI; false on a self-host/open-core build.
@@ -65,6 +69,9 @@ export interface FeatureFlagsAdminPayload {
     // Opens the real player IP switches. Off until every gateway piece that
     // carries the address is deployed.
     proxyProtocol?: boolean;
+    // Voice chat, global scope. Role, user and server overrides live behind
+    // /admin/voice-permissions.
+    voiceChat?: boolean;
     // NO metrics flag. Long-term statistics are switched on by
     // /admin/settings/metrics-db, together with the database they record into:
     // the resolution is fixed the moment recording starts and nothing can be

@@ -57,6 +57,16 @@ export function productShares(p: TrafficPool): { product: string; label: string;
         .sort((a, b) => b.bytes - a.bytes);
 }
 
+/** The voice chat part of a player-traffic pool. A subset of usedGb, which
+ *  Core counts in decimal GB and truncates, so the share is floored like pct
+ *  and capped at 100: a pool truncated to 1 GB can hold 1.4 GB of voice. */
+export function voiceShare(p: TrafficPool): { bytes: number; pct: number } | null {
+    const bytes = p.voiceBytes ?? 0;
+    if (p.kind !== 'edge' || bytes <= 0) return null;
+    const used = p.usedGb * 1_000_000_000;
+    return { bytes, pct: used > 0 ? Math.min(100, Math.floor((bytes * 100) / used)) : 0 };
+}
+
 /** The notice a pool has earned. Kept beside the bar so the two never disagree. */
 export function poolTone(warn: number): { bar: string; text: string; label: string } | null {
     if (warn >= 100) return { bar: 'bg-(--error)', text: 'text-(--error-light)', label: 'over the allowance' };
@@ -107,6 +117,7 @@ function PoolBar({ p }: { p: TrafficPool }) {
     // reassuring full bar.
     const width = Math.min(100, Math.max(0, p.pct));
     const shares = productShares(p);
+    const voice = voiceShare(p);
 
     return (
         <li>
@@ -144,6 +155,13 @@ function PoolBar({ p }: { p: TrafficPool }) {
                         </span>
                     ))}
                 </div>
+            )}
+            {voice && (
+                <p className="text-xs text-(--base-06) mt-1">
+                    Voice chat
+                    <span className="ml-1.5 tabular-nums text-(--base-07)">{formatBytes(voice.bytes)}</span>
+                    {p.usedGb > 0 && <span className="ml-1.5 tabular-nums">({voice.pct}% of this pool)</span>}
+                </p>
             )}
         </li>
     );

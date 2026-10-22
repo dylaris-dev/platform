@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boxesFor, isCapped, poolRegion, poolTone, productShares, formatBytes } from './TrafficPools';
+import { boxesFor, isCapped, poolRegion, poolTone, productShares, formatBytes, voiceShare } from './TrafficPools';
 import type { TrafficPool } from '@/lib/api/billing';
 
 const pool = (p: Partial<TrafficPool>): TrafficPool => ({
@@ -117,5 +117,32 @@ describe('poolTone', () => {
 
     it('reads past the allowance as over, not as 90%', () => {
         expect(poolTone(100)?.label).toBe('over the allowance');
+    });
+});
+
+describe('voiceShare', () => {
+    it('is absent when Core sent no voice bytes', () => {
+        expect(voiceShare(pool({ usedGb: 1 }))).toBeNull();
+    });
+
+    it('is absent for a pool that saw no voice', () => {
+        expect(voiceShare(pool({ usedGb: 1, voiceBytes: 0 }))).toBeNull();
+    });
+
+    it('is absent on the data-traffic pool, which carries no voice', () => {
+        expect(voiceShare(pool({ kind: 'relay', usedGb: 1, voiceBytes: 300_000_000 }))).toBeNull();
+    });
+
+    it('is the share of the pool in decimal GB, rounded down like pct', () => {
+        expect(voiceShare(pool({ usedGb: 1, voiceBytes: 300_000_000 }))).toEqual({ bytes: 300_000_000, pct: 30 });
+        expect(voiceShare(pool({ usedGb: 1, voiceBytes: 299_999_999 }))).toEqual({ bytes: 299_999_999, pct: 29 });
+    });
+
+    it('is 0% of a pool truncated to 0 GB, still with its bytes', () => {
+        expect(voiceShare(pool({ usedGb: 0, voiceBytes: 400_000_000 }))).toEqual({ bytes: 400_000_000, pct: 0 });
+    });
+
+    it('never claims more than the whole pool', () => {
+        expect(voiceShare(pool({ usedGb: 1, voiceBytes: 1_400_000_000 }))?.pct).toBe(100);
     });
 });

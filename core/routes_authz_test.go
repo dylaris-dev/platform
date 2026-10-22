@@ -793,6 +793,91 @@ func TestCap_ServerProxyProtocolNeedsNetworkWrite(t *testing.T) {
 	}
 }
 
+// The voice switch is a network write and reading it a network read, on THAT
+// server: the owner and a network.write member may switch it, a
+// network.read-only member may read but not switch, a stranger may do neither.
+func TestCap_ServerVoiceSwitchNeedsNetworkWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("net-id", "net", false)
+	fs.addUser("writer-id", "writer", false)
+	fs.addUser("stranger-id", "stranger", false)
+	fs.servers = map[int]*models.Server{16: {ID: 16, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{
+		70: {ID: 70, Capabilities: []string{"network.read"}},
+		71: {ID: 71, Capabilities: []string{"network.write"}},
+	}
+	fs.serverGrants = map[string]*store.ServerGrant{
+		skey(16, "net-id"):    {UserID: "net-id", ServerRoleID: intPtr(70)},
+		skey(16, "writer-id"): {UserID: "writer-id", ServerRoleID: intPtr(71)},
+	}
+	srv := newAuthzTestServer(t, fs)
+	sw := "/api/servers/16/voice/switch"
+	owner := testIdentity{UserID: "owner-id", Username: "owner"}
+	writer := testIdentity{UserID: "writer-id", Username: "writer"}
+	reader := testIdentity{UserID: "net-id", Username: "net"}
+	stranger := testIdentity{UserID: "stranger-id", Username: "stranger"}
+	if deniedAtChokepoint(t, srv, "PUT", sw, owner) || deniedAtChokepoint(t, srv, "PUT", sw, writer) {
+		t.Error("owner and network.write member must pass the switch chokepoint")
+	}
+	if !deniedAtChokepoint(t, srv, "PUT", sw, reader) {
+		t.Error("network.read-only member must be refused the switch")
+	}
+	if deniedAtChokepoint(t, srv, "GET", "/api/servers/16/voice", reader) {
+		t.Error("network.read member must pass the read chokepoint")
+	}
+	if !deniedAtChokepoint(t, srv, "PUT", sw, stranger) || !deniedAtChokepoint(t, srv, "GET", "/api/servers/16/voice", stranger) {
+		t.Error("stranger must be refused both")
+	}
+}
+
+// The voice overview is operator data across every tenant: settings.read, and
+// a server owner without it is refused.
+func TestCap_VoiceOverviewNeedsSettingsRead(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "reader-id", "reader", "settings.read")
+	owner := fs.addUser("owner-id", "owner", false)
+	fs.servers = map[int]*models.Server{7: {ID: 7, OwnerID: owner.ID, OwnerName: "owner"}}
+	srv := newAuthzTestServer(t, fs)
+	path := "/api/voice/overview"
+	if deniedAtChokepoint(t, srv, "GET", path, testIdentity{UserID: "reader-id", Username: "reader"}) {
+		t.Error("settings.read holder must pass")
+	}
+	if !deniedAtChokepoint(t, srv, "GET", path, testIdentity{UserID: owner.ID, Username: "owner"}) {
+		t.Error("a server owner without settings.read must be refused")
+	}
+}
+
+// Voice permissions are policy: settings.read lists them, only settings.write
+// changes them, and a server owner holds neither.
+func TestCap_VoicePermissionsNeedSettings(t *testing.T) {
+	fs := &authzFakeStore{}
+	panelHolder(fs, "reader-id", "reader", "settings.read")
+	panelHolder(fs, "writer-id", "writer", "settings.read", "settings.write")
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	path := "/api/admin/voice-permissions"
+	reader := testIdentity{UserID: "reader-id", Username: "reader"}
+	writer := testIdentity{UserID: "writer-id", Username: "writer"}
+	plain := testIdentity{UserID: "plain-id", Username: "plain"}
+	if deniedAtChokepoint(t, srv, "GET", path, reader) {
+		t.Error("settings.read holder must list voice permissions")
+	}
+	for _, m := range []string{"PUT", "DELETE"} {
+		if !deniedAtChokepoint(t, srv, m, path, reader) {
+			t.Errorf("settings.read-only holder must be refused %s", m)
+		}
+		if deniedAtChokepoint(t, srv, m, path, writer) {
+			t.Errorf("settings.write holder must pass %s", m)
+		}
+	}
+	for _, m := range []string{"GET", "PUT", "DELETE"} {
+		if !deniedAtChokepoint(t, srv, m, path, plain) {
+			t.Errorf("a user without settings caps must be refused %s", m)
+		}
+	}
+}
+
 // TestCap_LinkRoutesExemptAuthed proves /gateway/link-routes is EXEMPT-authed:
 // any authed user passes the chokepoint (no RequireCap); the in-handler owner
 // filter is the boundary, not tested here.

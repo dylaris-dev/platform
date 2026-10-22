@@ -439,6 +439,15 @@ func main() {
 	trafficAggregator.SetLeader(coreLeader)
 	trafficAggregator.Start(bgCtx)
 
+	// Voice chat ports: the leader rewrites the Redis mapping from voice_ports
+	// every 60 s and sweeps keys that have no row.
+	voiceService := services.NewVoiceService(pgStore, redisClient)
+	voiceService.SetLeader(coreLeader)
+	voiceService.SetRevoke(func(ctx context.Context, srv *models.Server) error {
+		return handlers.RevokeServerVoice(ctx, appState, srv)
+	})
+	voiceService.Start(bgCtx)
+
 	// Long-term metrics — leader-gated and OFF by default
 	// (feature_metrics_enabled). Records what the platform handled over months,
 	// into minute buckets in a statistics database of its own. Nothing leaves

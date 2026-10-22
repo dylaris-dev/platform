@@ -118,6 +118,9 @@ type RegionUsage struct {
 	// products, so every limit decision folds this away first.
 	Product string `json:"product"`
 	Bytes   int64  `json:"bytes"`
+	// VoiceBytes is the part of Bytes that was voice chat. A subset, never
+	// added on top: Bytes already includes it.
+	VoiceBytes int64 `json:"voiceBytes"`
 }
 
 // Traffic kinds. Open set on purpose - see the traffic_usage_region comment in
@@ -162,7 +165,7 @@ func (s *PostgresStore) AddTrafficUsageRegion(userID string, period time.Time, r
 // region tagging leaves behind.
 func (s *PostgresStore) GetTrafficUsageRegions(userID string, period time.Time) ([]RegionUsage, error) {
 	rows, err := s.db.Query(`
-		SELECT region, kind, product, bytes FROM traffic_usage_region
+		SELECT region, kind, product, bytes, voice_bytes FROM traffic_usage_region
 		WHERE user_id = $1 AND period = $2
 		ORDER BY bytes DESC, region, kind, product`, userID, period)
 	if err != nil {
@@ -172,7 +175,7 @@ func (s *PostgresStore) GetTrafficUsageRegions(userID string, period time.Time) 
 	var out []RegionUsage
 	for rows.Next() {
 		var r RegionUsage
-		if err := rows.Scan(&r.Region, &r.Kind, &r.Product, &r.Bytes); err != nil {
+		if err := rows.Scan(&r.Region, &r.Kind, &r.Product, &r.Bytes, &r.VoiceBytes); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

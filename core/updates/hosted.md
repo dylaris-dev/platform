@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.22
+
+### Features
+- **Your node is ready for voice chat.** BYON nodes update by themselves; the voice chat switch for
+  Simple Voice Chat and Plasmo Voice comes in a later release. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.21.2
 
 ### Features
