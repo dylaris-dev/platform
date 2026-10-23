@@ -217,7 +217,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                             placeholder="Search domain, target, link, server, owner..."
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            className="input-field w-full pl-8 text-sm"
+                            className="input-field input-icon-left w-full"
                         />
                         {search && (
                             <button

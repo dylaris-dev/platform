@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
     Pencil, SlidersHorizontal, AlertTriangle, Zap, Plus,
-    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2, X,
+    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2, X, ShieldCheck,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import {
@@ -814,6 +814,15 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 Demo · read-only
                             </span>
                         )}
+                        {selectedServer.role === 'admin' && !selectedServer.invitedHere && (
+                            <span
+                                className="mono-label bg-(--warning-ghost) border border-(--warning)/30 px-2 py-0.5 rounded-sm text-(--warning-light) flex items-center gap-1"
+                                title="You are here as an admin, not as the owner or an invitee."
+                            >
+                                <ShieldCheck size={11} aria-hidden="true" />
+                                Admin access
+                            </span>
+                        )}
                         {selectedServer.activeSubServer && (
                             <span className="mono-label bg-(--base-03) px-2 py-0.5 rounded-sm text-(--base-07) flex items-center gap-1.5">
                                 <span className="text-(--base-05)">Active Server</span>
@@ -955,12 +964,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 className="focus-ring relative inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) hover:bg-(--accent)/15 active:bg-(--accent)/25 transition-colors"
                             >
                                 <Globe size={14} />
-                                <span
-                                    aria-hidden="true"
-                                    className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 rounded-full bg-(--accent) text-(--base-09) text-[10px] font-semibold leading-4 text-center tabular-nums"
-                                >
-                                    {serverRoutes.length}
-                                </span>
                             </button>
                         ) : (
                             <button

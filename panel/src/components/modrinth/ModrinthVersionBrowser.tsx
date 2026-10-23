@@ -118,7 +118,7 @@ export default function ModrinthVersionBrowser({
                     value={query}
                     onChange={e => setQuery(e.target.value)}
                     placeholder="Search mods…"
-                    className="input-field w-full pl-8 text-sm"
+                    className="input-field input-icon-left w-full"
                 />
             </div>
 

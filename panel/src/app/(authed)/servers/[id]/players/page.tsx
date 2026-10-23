@@ -312,7 +312,7 @@ export default function ServerPlayersPage() {
                                 value={search}
                                 onChange={e => setSearch(e.target.value)}
                                 placeholder="Search…"
-                                className="input-field pl-7 w-48 text-xs py-1"
+                                className="input-field input-icon-left w-48"
                             />
                         </div>
                         {/* Not onClick={refresh}: the handler would receive the

@@ -129,6 +129,9 @@ func applyPhase10Schema(db *sql.DB) error {
 		// from a superseded attempt would overwrite the state of the one that
 		// replaced it - two clicks in a row is all that takes.
 		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS install_id VARCHAR(64) NOT NULL DEFAULT ''`,
+		// Set by a member who wants this mod left alone by "Update all". The
+		// install upsert does not name it, so a manual update keeps the pin.
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS updates_paused BOOLEAN NOT NULL DEFAULT FALSE`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("phase 10: %s: %w", stmt, err)

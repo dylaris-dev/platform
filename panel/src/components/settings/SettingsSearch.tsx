@@ -75,7 +75,7 @@ export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void
                     onKeyDown={onKeyDown}
                     placeholder="Search settings"
                     aria-label="Search settings"
-                    className="input-field text-sm w-full pl-8 pr-7"
+                    className="input-field input-icon-left input-icon-right w-full"
                 />
                 {q && (
                     <button

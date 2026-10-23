@@ -521,6 +521,11 @@ type Server struct {
 	CreatedAt    time.Time       `json:"createdAt"`
 	Role         string          `json:"role,omitempty"`
 	Permissions  *TabPermissions `json:"permissions,omitempty"`
+	// InvitedHere is set at response time on an admin's "admin" row when an
+	// invite names this server. The role stays "admin" (the admin's access is
+	// not narrowed by the invite); the flag only lets the panel file the row
+	// with the invitations instead of with the admin-only ones.
+	InvitedHere bool `json:"invitedHere,omitempty"`
 	// IsDemo is set at response time (not a DB column) when this server is on the
 	// admin's demo list. Non-owner viewers get read-only access; the panel uses
 	// this to render a read-only badge and suppress write affordances.

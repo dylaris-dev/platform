@@ -118,7 +118,7 @@ export default function ModpackPicker({ selection, onSelect }: ModpackPickerProp
                             value={query}
                             onChange={e => setQuery(e.target.value)}
                             placeholder="Search Modrinth modpacks…"
-                            className="input-field w-full pl-8"
+                            className="input-field input-icon-left w-full"
                         />
                     </div>
 

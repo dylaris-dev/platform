@@ -115,7 +115,7 @@ export default function AdminServersPage() {
                         placeholder="Search by name, UUID or owner..."
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        className="input-field w-full pl-8"
+                        className="input-field input-icon-left w-full"
                     />
                 </div>
                 {search && (

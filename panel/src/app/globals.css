@@ -413,6 +413,10 @@ input[type="number"] {
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
+/* An input with an icon inside it. Tailwind padding utilities lose to the
+   unlayered .input-field padding above, so the room for the icon lives here. */
+.input-field.input-icon-left { padding-left: 32px; }
+.input-field.input-icon-right { padding-right: 28px; }
 .input-field:focus {
   border-color: var(--accent-light);
   box-shadow: 0 0 0 3px var(--accent-ghost);

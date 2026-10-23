@@ -189,6 +189,8 @@ export interface Server {
     proxyProtocol?: boolean;
     createdAt?: string;
     role?: 'owner' | 'invited' | 'admin' | 'inherited' | 'demo';
+    /** On an admin's 'admin' row: an invite names this server, so it is filed with the invitations. */
+    invitedHere?: boolean;
     permissions?: TabPermissions;
     region?: string;
     // Read-only showcase server (admin-flagged). Non-owner viewers may only read;

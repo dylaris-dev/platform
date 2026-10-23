@@ -67,7 +67,14 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'mine' | 'invited'>('mine');
+  // Admin mode folds the reader's own lists away so the admin-only block below
+  // them is what the eye lands on; leaving it opens them again.
+  const [openSections, setOpenSections] = useState({ mine: true, invited: true });
+  const toggleAdminMode = () => {
+    const next = !isAdminMode;
+    setIsAdminMode(next);
+    setOpenSections({ mine: !next, invited: !next });
+  };
   const [collapsedUsers, setCollapsedUsers] = useState<Set<string>>(new Set());
   const [collapsedProxies, setCollapsedProxies] = useState<Set<number>>(new Set());
 
@@ -102,21 +109,22 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
     return servers.filter(s => directMatches.has(s.id) || neededProxyIds.has(s.id));
   }, [servers, searchQuery]);
 
-  // Backend returns ALL servers when the caller is an admin, tagging
-  // foreign-owned ones with role='admin' so the admin view can list
-  // them. Without the explicit exclusion here those rows would land in
-  // "my servers" -- so an admin sees every server on the platform in
-  // the default sidebar without ever toggling admin-mode. Exclude
-  // role='admin' from both lanes; it only belongs in the dedicated
-  // admin-mode view (renderAdminList).
+  // Backend returns every server an admin can reach, tagging foreign-owned
+  // ones with role='admin'. Those belong only in the admin block, unless an
+  // invite names the server (invitedHere): then the admin is there as a guest
+  // like anyone else, and it is filed with the invitations.
+  const isAdminOnly = (s: Server) => s.role === 'admin' && !s.invitedHere;
   const myServers = useMemo(() =>
     filteredServers.filter(s => s.role !== 'invited' && s.role !== 'inherited' && s.role !== 'admin'),
     [filteredServers]
   );
   const invitedServers = useMemo(() =>
-    filteredServers.filter(s => s.role === 'invited' || s.role === 'inherited'),
+    filteredServers.filter(s => s.role === 'invited' || s.role === 'inherited' || (s.role === 'admin' && s.invitedHere)),
     [filteredServers]
   );
+  const adminOnlyServers = useMemo(() => filteredServers.filter(isAdminOnly), [filteredServers]);
+  // A search opens every section, or a hit inside a folded one is invisible.
+  const isOpen = (k: 'mine' | 'invited') => !!searchQuery.trim() || openSections[k];
 
   const toggleUserCollapse = (owner: string) => {
     setCollapsedUsers(prev => {
@@ -143,7 +151,8 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
     const isProxy = server.serverType === 'proxy';
     // 'admin' is what an operator gets for a customer's server in the admin view;
     // it used to fall through to 'Owner' and label every customer server as theirs.
-    const roleLabel = server.role === 'inherited' ? 'Inherited' : server.role === 'invited' ? 'Invited'
+    const roleLabel = server.role === 'inherited' ? 'Inherited'
+        : server.role === 'invited' || (server.role === 'admin' && server.invitedHere) ? 'Invited'
         : server.role === 'admin' ? 'Admin' : isProxy ? 'Proxy' : 'Owner';
     return (
       <GuardedLink
@@ -258,9 +267,27 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
     );
   };
 
-  const renderAdminList = () => {
+  const renderSection = (k: 'mine' | 'invited', title: string, list: Server[], empty: string) => (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setOpenSections(prev => ({ ...prev, [k]: !prev[k] }))}
+        aria-expanded={isOpen(k)}
+        className="flex items-center gap-1 w-full input-label py-1.5 px-1 hover:text-(--base-08) transition-colors"
+      >
+        <ChevronDown size={14} className="transition-transform" style={{ transform: isOpen(k) ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+        {title}
+        <span className="text-(--base-05) ml-auto">{list.length}</span>
+      </button>
+      {isOpen(k) && (list.length === 0
+        ? <div className="text-sm text-(--base-06) italic px-1">{empty}</div>
+        : renderServerList(list))}
+    </div>
+  );
+
+  const renderAdminList = (list: Server[]) => {
     const groups: Record<string, Server[]> = {};
-    for (const s of filteredServers) {
+    for (const s of list) {
       const owner = s.ownerName || s.owner || `User #${s.ownerId}`;
       if (!groups[owner]) groups[owner] = [];
       groups[owner].push(s);
@@ -306,7 +333,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto hide-scrollbar py-2 flex flex-col items-center gap-1.5">
-          {filteredServers.map(s => {
+          {filteredServers.filter(s => isAdminMode || !isAdminOnly(s)).map(s => {
             const isActive = activeServerId === s.id;
             const { tier } = nodeConnectivity(s.status, undefined, Date.now());
             return (
@@ -340,7 +367,8 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
         <div className="flex items-center justify-between mb-2">
           {isAdmin ? (
             <button
-              onClick={() => setIsAdminMode(!isAdminMode)}
+              onClick={toggleAdminMode}
+              aria-pressed={isAdminMode}
               className={`btn text-xs px-2.5 py-1 ${isAdminMode ? 'btn-primary' : 'btn-secondary'}`}
             >
               <ShieldCheck size={14} />
@@ -378,42 +406,25 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           />
         )}
 
-        {!isAdminMode && (
-          <div className="flex mt-1 bg-(--base-03)/50 rounded-md p-0.5">
-            <button
-              onClick={() => setActiveTab('mine')}
-              className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-colors ${
-                activeTab === 'mine'
-                  ? 'bg-(--base-02) text-(--base-09) shadow-sm'
-                  : 'text-(--base-07) hover:text-(--base-09)'
-              }`}
-            >
-              My Servers
-            </button>
-            <button
-              onClick={() => setActiveTab('invited')}
-              className={`flex-1 text-xs font-medium py-1.5 rounded-sm transition-colors ${
-                activeTab === 'invited'
-                  ? 'bg-(--base-02) text-(--base-09) shadow-sm'
-                  : 'text-(--base-07) hover:text-(--base-09)'
-              }`}
-            >
-              Invited {invitedServers.length > 0 && <span className="ml-1 text-(--accent-light)">({invitedServers.length})</span>}
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 pt-3 pb-2">
-        {isAdminMode ? renderAdminList() : (
-          <>
-            {activeTab === 'mine' && renderServerList(myServers)}
-            {activeTab === 'invited' && (
-              invitedServers.length === 0
-                ? <div className="text-sm text-(--base-06) italic">No invited servers.</div>
-                : renderServerList(invitedServers)
-            )}
-          </>
+        {renderSection('mine', 'My servers', myServers, 'No servers yet.')}
+        {(invitedServers.length > 0 || isAdminMode) && renderSection('invited', 'Invited', invitedServers, 'No invitations.')}
+        {/* Framed and labelled so it is never mistaken for the reader's own
+            access: everything in here is reachable only because they are an
+            admin. */}
+        {isAdminMode && (
+          <section aria-label="Admin access" className="mt-3 rounded-lg border border-(--accent-border) bg-(--accent-ghost) p-2">
+            <div className="flex items-center gap-1.5 input-label text-(--accent-light) px-1">
+              <ShieldCheck size={13} />
+              Admin access
+            </div>
+            <p className="text-[11px] text-(--base-06) px-1 pt-0.5 pb-2">
+              Servers you reach only as an admin, not as their owner or an invitee.
+            </p>
+            {renderAdminList(adminOnlyServers)}
+          </section>
         )}
       </div>
 

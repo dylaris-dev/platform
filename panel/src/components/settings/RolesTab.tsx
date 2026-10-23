@@ -310,7 +310,7 @@ export default function RolesTab() {
                             onChange={e => setUserQuery(e.target.value)}
                             placeholder="Search by username or email"
                             aria-label="Search users"
-                            className="input-field w-full pl-8"
+                            className="input-field input-icon-left w-full"
                             spellCheck={false}
                         />
                     </div>

@@ -92,19 +92,20 @@ var requiredCaps = map[string]string{
 	// mods.read is the representative; the fine POST->mods.write lives at the
 	// RequireCap call. GET+POST /tabs share -> tabs.read representative;
 	// PATCH+DELETE /tabs/{tabId} share -> tabs.write.
-	"/api/servers/{id:[0-9]+}/mods":                             "mods.read",
-	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}":              "mods.delete",
-	"/api/servers/{id:[0-9]+}/mods/compat":                      "mods.read",
-	"/api/servers/{id:[0-9]+}/mods/unmanaged":                   "mods.read",
-	"/api/servers/{id:[0-9]+}/mods/history":                     "mods.read",
-	"/api/servers/{id:[0-9]+}/mods/identify":                    "mods.write",
-	"/api/servers/{id:[0-9]+}/mods/plan":                        "mods.write",
-	"/api/servers/{id:[0-9]+}/modpack-contents":                 "mods.read",
-	"/api/servers/{id:[0-9]+}/installs":                         "server.settings.write",
-	"/api/servers/{id:[0-9]+}/tabs":                             "tabs.read",
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":              "tabs.write",
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link":   "tabs.write",
-	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-ticket": "tabs.read",
+	"/api/servers/{id:[0-9]+}/mods":                               "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}":                "mods.delete",
+	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/updates-paused": "mods.write",
+	"/api/servers/{id:[0-9]+}/mods/compat":                        "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/unmanaged":                     "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/history":                       "mods.read",
+	"/api/servers/{id:[0-9]+}/mods/identify":                      "mods.write",
+	"/api/servers/{id:[0-9]+}/mods/plan":                          "mods.write",
+	"/api/servers/{id:[0-9]+}/modpack-contents":                   "mods.read",
+	"/api/servers/{id:[0-9]+}/installs":                           "server.settings.write",
+	"/api/servers/{id:[0-9]+}/tabs":                               "tabs.read",
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}":                "tabs.write",
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link":     "tabs.write",
+	"/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-ticket":   "tabs.read",
 
 	// Phase 4 Task 7: scheduled tasks + spark. GET+POST /scheduled-tasks share
 	// one template -> schedule.read representative; the fine POST->schedule.write
@@ -846,6 +847,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.read")(serverModsHandler.List))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.Install))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.delete")(serverModsHandler.Uninstall))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/updates-paused", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.SetUpdatesPaused))).Methods("PUT")
 	// Cross-Minecraft-version availability + the move itself. These literals
 	// cannot be swallowed by the /mods/{modId} pattern above: that one is
 	// numeric-constrained.

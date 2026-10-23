@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"path"
@@ -13,6 +14,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/store"
 	"dylaris-pkg/validate"
 
 	"github.com/google/uuid"
@@ -410,6 +412,36 @@ func (h *ServerModsHandler) ModHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "history": entries})
+}
+
+// SetUpdatesPaused PUT /api/servers/{id}/mods/{modId}/updates-paused - keeps
+// one mod out of "Update all", or lets it back in. Body {"paused": bool}.
+func (h *ServerModsHandler) SetUpdatesPaused(w http.ResponseWriter, r *http.Request) {
+	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
+	if _, ok := h.getServer(serverID); !ok {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		Paused *bool `json:"paused"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil || req.Paused == nil {
+		sendJSONError(w, "paused (true or false) is required", http.StatusBadRequest)
+		return
+	}
+	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])
+	if err := h.state.Store.SetServerModUpdatesPaused(modID, serverID, *req.Paused); err != nil {
+		if errors.Is(err, store.ErrServerModNotFound) {
+			sendJSONError(w, "Mod not found", http.StatusNotFound)
+			return
+		}
+		sendJSONError(w, "Could not save the setting", http.StatusInternalServerError)
+		return
+	}
+	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
+		"serverId": serverID,
+	})
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 // Uninstall DELETE /api/servers/{id}/mods/{modId} - queues removal of one mod

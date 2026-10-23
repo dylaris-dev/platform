@@ -175,4 +175,62 @@ func TestIntegrationRowsWrittenBeforeStatusExistedReadAsInstalled(t *testing.T) 
 	}
 }
 
+// A pin against "Update all" must survive what rewrites the row: a manual
+// update (the install upsert) and a backup restore (ReplaceServerMods, which
+// deletes and re-inserts from an archive that does not carry the pin).
+func TestIntegrationAModPinSurvivesUpdateAndRestore(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+	mod := models.ServerMod{
+		ServerID: f.server.ID, SubServerName: "survival",
+		ModrinthProjectID: "lithium", ModrinthVersionID: "v1",
+		Title: "Lithium", FileName: "lithium-1.jar", TargetDir: "mods",
+		Status: models.ServerModInstalled, InstallID: "a1",
+	}
+	id, err := st.UpsertServerMod(&mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := mod
+	other.ModrinthProjectID, other.FileName = "sodium", "sodium-1.jar"
+	if _, err := st.UpsertServerMod(&other); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetServerModUpdatesPaused(id, f.server.ID+1000, true); err == nil {
+		t.Fatal("a pin through another server's id was accepted")
+	}
+	if err := st.SetServerModUpdatesPaused(id, f.server.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	paused := func() map[string]bool {
+		rows, err := st.ListServerMods(f.server.ID, "survival")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, r := range rows {
+			out[r.ModrinthProjectID] = r.UpdatesPaused
+		}
+		return out
+	}
+	if p := paused(); !p["lithium"] || p["sodium"] {
+		t.Fatalf("after pinning: %v, want only lithium", p)
+	}
+
+	mod.ModrinthVersionID, mod.FileName, mod.InstallID = "v2", "lithium-2.jar", "a2"
+	if _, err := st.UpsertServerMod(&mod); err != nil {
+		t.Fatal(err)
+	}
+	if p := paused(); !p["lithium"] {
+		t.Fatal("a manual update dropped the pin")
+	}
+
+	if err := st.ReplaceServerMods(f.server.ID, "survival", []models.ServerMod{mod, other}); err != nil {
+		t.Fatal(err)
+	}
+	if p := paused(); !p["lithium"] || p["sodium"] {
+		t.Fatalf("after a restore: %v, want only lithium pinned", p)
+	}
+}
+
 var _ = store.PostgresStore{}

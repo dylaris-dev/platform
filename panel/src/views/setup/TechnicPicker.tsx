@@ -143,7 +143,7 @@ export default function TechnicPicker({ selection, onSelect }: TechnicPickerProp
                     value={query}
                     onChange={e => setQuery(e.target.value)}
                     placeholder="Search Technic modpacks…"
-                    className="input-field w-full pl-8"
+                    className="input-field input-icon-left w-full"
                 />
             </div>
 

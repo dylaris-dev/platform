@@ -600,7 +600,9 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		// Scale CPU% relative to the cores it may use (100% = all of them busy)
 		cpuPct := stats.CPUPercent
 		if cpuDiv > 0 {
-			cpuPct = cpuPct / cpuDiv
+			// Capped: the cgroup and the host counters are read a few ms apart,
+			// which over a 2 s window reads a saturated server as 100.5%.
+			cpuPct = min(cpuPct/cpuDiv, 100)
 		}
 
 		payload := StatsPayload{

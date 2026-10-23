@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
 
-import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw } from 'lucide-react';
+import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw, Lock, LockOpen } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
@@ -10,12 +10,12 @@ import { ModDescription } from '@/components/mods/ModDescription';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
-    listInstalledMods, uninstallMod, pickPrimaryFile,
-    getServerModpackInfo, getModHistory, getModrinthVersion,
+    listInstalledMods, uninstallMod, setModUpdatesPaused, pickPrimaryFile,
+    getServerModpackInfo, getModHistory,
     getModrinthVersionsByIds, getModrinthProjectsByIds, getLatestVersionsFromHashes,
     planModInstall,
     type ModHistoryEntry, type InstallModPayload,
-    type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject,
+    type ModrinthSearchHit, type ModrinthSearchResult, type ModrinthProject, type ModrinthProjectName,
     type ModrinthVersion, type ModrinthCategory, type InstalledMod, type ServerModpackContent,
 } from '@/lib/api/modrinth';
 import { isPackMember } from '@/lib/modpackMembership';
@@ -298,14 +298,13 @@ export default function ServerContentPage() {
     // an unmounted component.
     useEffect(() => () => { bulkCancelled.current = true; }, []);
 
-    // Sides of installed mods, for the server-side tag on every row and the
-    // filter. null = asked, Modrinth did not answer for it: the marker is what
+    // Modrinth project data of installed mods: the icon on every row, and on a
+    // mod server the sides for the server-side tag and the filter. null = asked, Modrinth did not answer for it: the marker is what
     // stops this effect asking again on every render. A mod without sides (not
     // fetched yet, null, or the lookup failed) stays visible: hiding it would
     // read as "not installed".
-    const [installedSides, setInstalledSides] = useState<Map<string, ModSides | null>>(new Map());
+    const [installedSides, setInstalledSides] = useState<Map<string, ModrinthProjectName | null>>(new Map());
     useEffect(() => {
-        if (!isModServer) return;
         const missing = [...new Set(installed.map(m => m.modrinthProjectId))].filter(id => id && !installedSides.has(id));
         if (missing.length === 0) return;
         let cancelled = false;
@@ -319,7 +318,7 @@ export default function ServerContentPage() {
             });
         }).catch(() => { /* fail-open: unfiltered rows stay visible */ });
         return () => { cancelled = true; };
-    }, [isModServer, installed, installedSides]);
+    }, [installed, installedSides]);
     // The installed builds themselves, by version id, to mark the ones that do
     // not fit this server (a Forge jar left over on NeoForge, a 26.3 beta on
     // 1.21.1). Same null-marker guard as the sides above. Keyed by version, so
@@ -664,20 +663,27 @@ export default function ServerContentPage() {
     // version, and the build being returned to need not match today's filter.
     const handleRollback = async (m: InstalledMod, entry: ModHistoryEntry) => {
         setRollbackFor(null);
+        // Both builds by number, so the reader confirms the move they mean. The
+        // file names alone often differ only in a build suffix.
+        let builds: ModrinthVersion[];
+        try {
+            builds = await getModrinthVersionsByIds([m.modrinthVersionId, entry.modrinthVersionId]);
+        } catch (e) {
+            showToast(e instanceof Error ? e.message : 'Could not load that build', false);
+            return;
+        }
+        const version = builds.find(b => b.id === entry.modrinthVersionId);
+        if (!version) { showToast('Modrinth no longer has that build', false); return; }
+        const from = builds.find(b => b.id === m.modrinthVersionId)?.version_number ?? m.fileName;
         const notice = await clientSideWarning([m.modrinthProjectId]);
-        if (notice && !await confirmDialog({
+        if (!await confirmDialog({
             title: `Roll back ${m.title || m.fileName}?`,
-            message: notice,
+            message: `From ${from} back to ${version.version_number} (${entry.fileName}), the build this server ran until ${new Date(entry.replacedAt).toLocaleString()}.`
+                + (notice ? `\n\n${notice}` : ''),
             confirmLabel: 'Roll back',
+            destructive: !!notice,
         })) return;
         await withBusy(m.modrinthProjectId, async () => {
-            let version;
-            try {
-                version = await getModrinthVersion(entry.modrinthVersionId);
-            } catch (e) {
-                showToast(e instanceof Error ? e.message : 'Could not load that build', false);
-                return;
-            }
             const file = pickPrimaryFile(version);
             if (!file) { showToast('That build has no downloadable file', false); return; }
             const job = await installs.start(serverId, serverName, {
@@ -713,7 +719,11 @@ export default function ServerContentPage() {
     const handleUpdateAll = async () => {
         if (updateAllBlocked) { showToast(updateAllBlocked, false); return; }
         const targets = updatableMods(installed);
-        if (targets.length === 0) { showToast('Nothing installed to update', false); return; }
+        const paused = installed.filter(m => isOnServer(m) && m.updatesPaused).map(m => m.title || m.fileName);
+        if (targets.length === 0) {
+            showToast(paused.length ? 'Every installed mod is paused for updates' : 'Nothing installed to update', false);
+            return;
+        }
         bulkCancelled.current = false;
         setBulkSkipped([]);
         const tally = emptyTally();
@@ -746,6 +756,7 @@ export default function ServerContentPage() {
             message: `${planned.length} ${planned.length === 1 ? 'mod moves' : 'mods move'} to a newer build for ${pinnedLoader} ${pinnedMcVersion}, never to a less stable channel. Dependencies a new build needs are installed first.`
                 + (skipped.length ? ` ${skipped.length} skipped: ${shown}${more}.` : ' Nothing skipped.')
                 + (tally.unknown ? ` ${tally.unknown} could not be checked.` : '')
+                + (paused.length ? `\n\nPaused, staying on their build: ${paused.slice(0, 8).join(', ')}${paused.length > 8 ? ` and ${paused.length - 8} more` : ''}.` : '')
                 + (notice ? ` ${notice}` : ''),
             confirmLabel: `Update ${planned.length}`,
             destructive: !!notice,
@@ -798,48 +809,10 @@ export default function ServerContentPage() {
         showToast(summarise(tally) + extra, runWasClean(tally));
     };
 
-    // Put every mod back to the build it had before its last update.
-    //
-    // The counterpart to the run above and the reason it can be offered at all:
-    // each update files the build it replaced, so a bulk update that breaks the
-    // server has a bulk way back.
-    const handleRollbackAll = async () => {
-        const targets = updatableMods(installed).filter(m => historyFor(m.modrinthProjectId).length > 0);
-        if (targets.length === 0) { showToast('No earlier builds to go back to', false); return; }
-        const notice = await clientSideWarning(targets.map(m => m.modrinthProjectId));
-        if (notice && !await confirmDialog({
-            title: `Roll back ${targets.length} ${targets.length === 1 ? 'mod' : 'mods'}?`,
-            message: `Each goes back to the build it had before its last update. ${notice}`,
-            confirmLabel: 'Roll back',
-        })) return;
-        bulkCancelled.current = false;
-        const tally = emptyTally();
-
-        for (const [i, m] of targets.entries()) {
-            if (bulkCancelled.current) break;
-            setBulk({ done: i, total: targets.length, current: m.title || m.fileName });
-            const entry = historyFor(m.modrinthProjectId)[0];
-            let version;
-            try {
-                version = await getModrinthVersion(entry.modrinthVersionId);
-            } catch { tally.unknown++; continue; }
-            const file = pickPrimaryFile(version);
-            if (!file) { tally.failed++; continue; }
-            const job = await installs.start(serverId, serverName, {
-                projectId: m.modrinthProjectId,
-                projectSlug: m.modrinthProjectSlug,
-                versionId: version.id,
-                title: m.title,
-                fileName: file.filename,
-                downloadUrl: file.url,
-                sha512: file.hashes.sha512,
-            });
-            if (job.state !== 'failed') tally.updated++; else tally.failed++;
-        }
-
-        setBulk(null);
-        refreshInstalled();
-        showToast(summarise(tally), runWasClean(tally));
+    const handleTogglePaused = async (m: InstalledMod) => {
+        const res = await setModUpdatesPaused(serverId, m.id, !m.updatesPaused);
+        if (res.success) refreshInstalled();
+        else showToast(res.message || 'Could not save the setting', false);
     };
 
     const handleUninstall = async (m: InstalledMod) => {
@@ -1178,7 +1151,7 @@ export default function ServerContentPage() {
                                 value={query}
                                 onChange={e => setQuery(e.target.value)}
                                 placeholder="Search mods, plugins, datapacks…"
-                                className="input-field w-full pl-8"
+                                className="input-field input-icon-left w-full"
                             />
                         </div>
 
@@ -1453,17 +1426,6 @@ export default function ServerContentPage() {
                                         <RefreshCw size={12} className={bulk ? 'animate-spin' : ''} />
                                         {bulk ? 'Working…' : 'Update all'}
                                     </button>
-                                    {installed.some(m => historyFor(m.modrinthProjectId).length > 0) && (
-                                        <button
-                                            onClick={handleRollbackAll}
-                                            disabled={bulk !== null}
-                                            className="btn btn-secondary btn-sm"
-                                            title="Put every mod back to the build it had before its last update"
-                                        >
-                                            <RotateCcw size={12} />
-                                            Roll back all
-                                        </button>
-                                    )}
                                 </div>
                             </div>
                             {/* Said once, next to the button that starts it, rather than in a
@@ -1496,9 +1458,14 @@ export default function ServerContentPage() {
                             )}
                             {visibleInstalled.map(m => (
                                 <article key={m.id} className="card p-3 flex items-start gap-3">
-                                    <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                                        <Box size={16} className="text-(--accent-light)" />
-                                    </div>
+                                    {installedSides.get(m.modrinthProjectId)?.icon_url ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={installedSides.get(m.modrinthProjectId)!.icon_url} alt="" className="w-10 h-10 rounded-md shrink-0" />
+                                    ) : (
+                                        <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                                            <Box size={16} className="text-(--accent-light)" />
+                                        </div>
+                                    )}
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span className="text-sm font-medium text-(--base-09) truncate">{m.title || m.fileName}</span>
@@ -1586,6 +1553,15 @@ export default function ServerContentPage() {
                                                 )}
                                             </div>
                                         )}
+                                        <button
+                                            onClick={() => handleTogglePaused(m)}
+                                            aria-pressed={!!m.updatesPaused}
+                                            className={`btn btn-secondary btn-sm ${m.updatesPaused ? 'text-(--warning-light)' : ''}`}
+                                            title={m.updatesPaused ? 'Paused: Update all skips this mod. Click to include it again.' : 'Included in Update all. Click to pause updates for this mod.'}
+                                        >
+                                            {m.updatesPaused ? <Lock size={12} /> : <LockOpen size={12} />}
+                                            <span className="sr-only">{m.updatesPaused ? 'Updates paused' : 'Pause updates'}</span>
+                                        </button>
                                         <a
                                             href={`https://modrinth.com/project/${m.modrinthProjectSlug || m.modrinthProjectId}`}
                                             target="_blank"
@@ -1740,6 +1716,9 @@ function BucketTag({ sides }: { sides?: ModSides | null }) {
 // categoryIconMask turns an SVG string into a CSS mask: an image the browser
 // draws, never markup it parses into the page.
 function categoryIconMask(svg: string): CSSProperties {
+    // An SVG loaded as an image renders nothing without its namespace, and
+    // Modrinth serves most category icons without one (written for inline use).
+    if (!/xmlns\s*=/.test(svg)) svg = svg.replace(/<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
     const url = `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
     return {
         maskImage: url,

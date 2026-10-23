@@ -32,6 +32,9 @@ type ServerMod struct {
 	// attempt this row no longer holds is a late answer about a superseded
 	// install and is dropped.
 	InstallID string `json:"-"`
+	// UpdatesPaused keeps the mod out of "Update all". It is a choice about
+	// the bulk run only; updating this one mod by hand still works.
+	UpdatesPaused bool `json:"updatesPaused"`
 }
 
 // ServerModHistoryEntry is a version this mod USED to be, kept so an update can

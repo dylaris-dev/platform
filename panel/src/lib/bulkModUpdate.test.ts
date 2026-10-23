@@ -26,6 +26,14 @@ describe('updatableMods', () => {
         ];
         expect(updatableMods(list).map(m => m.modrinthProjectId)).toEqual(['a', 'd']);
     });
+
+    it('leaves out a mod its members paused', () => {
+        const list = [
+            mod({ id: 1, modrinthProjectId: 'a', updatesPaused: true }),
+            mod({ id: 2, modrinthProjectId: 'b', updatesPaused: false }),
+        ];
+        expect(updatableMods(list).map(m => m.modrinthProjectId)).toEqual(['b']);
+    });
 });
 
 

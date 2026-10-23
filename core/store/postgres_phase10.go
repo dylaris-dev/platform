@@ -8,11 +8,11 @@ import (
 
 // server_mods queries (Modrinth-sourced installs).
 
-var errServerModNotFound = errors.New("server mod not found")
+var ErrServerModNotFound = errors.New("server mod not found")
 
 const serverModCols = `id, server_id, sub_server_name, modrinth_project_id,
 		modrinth_project_slug, modrinth_version_id, title, file_name, target_dir,
-		sha512, installed_at, installed_by, status, status_message, install_id`
+		sha512, installed_at, installed_by, status, status_message, install_id, updates_paused`
 
 func scanServerMod(row interface {
 	Scan(dest ...interface{}) error
@@ -21,7 +21,7 @@ func scanServerMod(row interface {
 	var installedBy sql.NullString
 	if err := row.Scan(&m.ID, &m.ServerID, &m.SubServerName, &m.ModrinthProjectID,
 		&m.ModrinthProjectSlug, &m.ModrinthVersionID, &m.Title, &m.FileName, &m.TargetDir,
-		&m.SHA512, &m.InstalledAt, &installedBy, &m.Status, &m.StatusMessage, &m.InstallID); err != nil {
+		&m.SHA512, &m.InstalledAt, &installedBy, &m.Status, &m.StatusMessage, &m.InstallID, &m.UpdatesPaused); err != nil {
 		return nil, err
 	}
 	if installedBy.Valid {
@@ -182,6 +182,18 @@ func (s *PostgresStore) ListServerMods(serverID int, subServerName string) ([]mo
 	return out, rows.Err()
 }
 
+// SetServerModUpdatesPaused pins (or unpins) one mod against "Update all".
+func (s *PostgresStore) SetServerModUpdatesPaused(id, serverID int, paused bool) error {
+	res, err := s.db.Exec(`UPDATE server_mods SET updates_paused=$3 WHERE id=$1 AND server_id=$2`, id, serverID, paused)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrServerModNotFound
+	}
+	return nil
+}
+
 func (s *PostgresStore) DeleteServerMod(id, serverID int) error {
 	res, err := s.db.Exec(`DELETE FROM server_mods WHERE id=$1 AND server_id=$2`, id, serverID)
 	if err != nil {
@@ -189,7 +201,7 @@ func (s *PostgresStore) DeleteServerMod(id, serverID int) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return errServerModNotFound
+		return ErrServerModNotFound
 	}
 	return nil
 }
@@ -241,6 +253,27 @@ func (s *PostgresStore) ReplaceServerMods(serverID int, subServerName string, mo
 	}
 	defer tx.Rollback()
 
+	// A pin is the members' choice, not part of the archive: carry it over for
+	// every project that comes back, or a restore would hand those mods back to
+	// "Update all" without anyone asking.
+	paused := map[string]bool{}
+	rows, err := tx.Query(`SELECT modrinth_project_id FROM server_mods
+		WHERE server_id=$1 AND sub_server_name=$2 AND updates_paused`, serverID, subServerName)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		paused[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM server_mods WHERE server_id=$1 AND sub_server_name=$2`,
 		serverID, subServerName); err != nil {
 		return err
@@ -250,12 +283,12 @@ func (s *PostgresStore) ReplaceServerMods(serverID int, subServerName string, mo
 		if _, err := tx.Exec(`INSERT INTO server_mods
 			(server_id, sub_server_name, modrinth_project_id, modrinth_project_slug,
 			 modrinth_version_id, title, file_name, target_dir, sha512, installed_by,
-			 status, status_message, install_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,'','')
+			 status, status_message, install_id, updates_paused)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,'','',$11)
 			ON CONFLICT (server_id, sub_server_name, modrinth_project_id) DO NOTHING`,
 			serverID, subServerName, m.ModrinthProjectID, m.ModrinthProjectSlug,
 			m.ModrinthVersionID, m.Title, m.FileName, m.TargetDir, m.SHA512,
-			models.ServerModInstalled); err != nil {
+			models.ServerModInstalled, paused[m.ModrinthProjectID]); err != nil {
 			return err
 		}
 	}

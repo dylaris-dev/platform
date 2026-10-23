@@ -1851,6 +1851,24 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 				OR s.owner_id::text = $1
 				OR EXISTS (SELECT 1 FROM server_invites si WHERE si.server_id = s.id AND si.user_id::text = $1)
 			ORDER BY s.id ASC`
+		invited := map[int]bool{}
+		irows, err := s.db.Query(`SELECT server_id FROM server_invites
+			WHERE server_id IS NOT NULL AND user_id::text = $1`, userID)
+		if err != nil {
+			return nil, err
+		}
+		for irows.Next() {
+			var id int
+			if err := irows.Scan(&id); err != nil {
+				irows.Close()
+				return nil, err
+			}
+			invited[id] = true
+		}
+		irows.Close()
+		if err := irows.Err(); err != nil {
+			return nil, err
+		}
 		rows, err := s.db.Query(query, userID)
 		if err != nil {
 			return nil, err
@@ -1865,6 +1883,7 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 			srv.Role = "owner"
 			if srv.OwnerID != userID {
 				srv.Role = "admin"
+				srv.InvitedHere = invited[srv.ID]
 			}
 			servers = append(servers, srv)
 		}

@@ -787,6 +787,9 @@ type Store interface {
 	// "there were none" rather than saying nothing.
 	ReplaceServerMods(serverID int, subServerName string, mods []models.ServerMod) error
 	DeleteServerMod(id, serverID int) error
+	// SetServerModUpdatesPaused pins one mod against "Update all". Not found
+	// when the id is not a mod row of that server.
+	SetServerModUpdatesPaused(id, serverID int, paused bool) error
 	// GetServerModByProject is what an install has to read BEFORE its own
 	// upsert: that upsert overwrites file_name, and the overwritten value is
 	// the name of the jar the old version left behind.

@@ -206,7 +206,7 @@ export function getModrinthVersionsByIds(ids: string[]): Promise<ModrinthVersion
     return ids.length ? bulkGet<ModrinthVersion>('/modrinth/versions', ids) : Promise.resolve([]);
 }
 
-export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title' | 'client_side' | 'server_side'>;
+export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title' | 'icon_url' | 'client_side' | 'server_side'>;
 
 /** Project names by id (Core slims these to id, slug, title, icon, type, client_side, server_side). */
 export function getModrinthProjectsByIds(ids: string[]): Promise<ModrinthProjectName[]> {
@@ -284,6 +284,8 @@ export interface InstalledMod {
     status?: 'installing' | 'installed' | 'failed';
     /** The node's reason for a failure. Empty otherwise. */
     statusMessage?: string;
+    /** Kept out of "Update all". Updating it by hand still works. */
+    updatesPaused?: boolean;
 }
 
 // RAISES on a failed request, unlike getServerModpackContents below, which
@@ -382,6 +384,17 @@ export async function uninstallMod(serverId: number, modId: number): Promise<{ s
         const res = await fetch(`${API_URL}/servers/${serverId}/mods/${modId}`, {
             method: 'DELETE',
             headers: getAuthHeader(),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+export async function setModUpdatesPaused(serverId: number, modId: number, paused: boolean): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/mods/${modId}/updates-paused`, {
+            method: 'PUT',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paused }),
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }

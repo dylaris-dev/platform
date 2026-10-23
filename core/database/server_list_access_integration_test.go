@@ -253,6 +253,11 @@ func TestIntegrationAdminListReachesACustomersServerOnlyByANamedInvite(t *testin
 	seen := map[int]bool{}
 	for _, s := range listed {
 		seen[s.ID] = true
+		// The sidebar files a row under the invitations by this flag; on any
+		// other row it would hide that the admin is there as an admin only.
+		if s.InvitedHere != (s.ID == named) {
+			t.Errorf("server %d: invitedHere=%v, want it only on the server the invite names", s.ID, s.InvitedHere)
+		}
 	}
 	if !seen[named] {
 		t.Errorf("a server on a customer's machine the admin was invited to by name is missing from the admin list")

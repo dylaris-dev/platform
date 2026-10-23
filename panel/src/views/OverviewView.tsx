@@ -418,6 +418,9 @@ export default function OverviewView({ server }: OverviewViewProps) {
                   contentStyle={tooltipStyle}
                   labelFormatter={(v) => formatTime(v as number)}
                   formatter={(v, name) => [formatMB(Number(v)), name === 'javaHeapUsed' ? 'JVM heap' : 'Container']}
+                  // Container first, as it sits above the heap on the chart. The
+                  // default sorts by dataKey, which put the heap on top.
+                  itemSorter={(item) => (item.dataKey === 'memUsed' ? 0 : 1)}
                   cursor={{ stroke: 'var(--base-05)', strokeWidth: 1, strokeDasharray: '4 4' }}
                 />
                 {heapMaxMb > 0 && <ReferenceLine y={heapMaxMb} stroke="var(--base-06)" strokeDasharray="4 4" ifOverflow="extendDomain" />}
