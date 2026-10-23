@@ -270,8 +270,8 @@ function MyNodesInner() {
 
     // Required and to a fixed shape. It used to default to "my machine" for
     // everyone who left it blank, which made a list of machines unreadable the
-    // moment there was more than one - and the name is what the snippet slugs
-    // into NODE_ID, where a leading hyphen reads as a flag. Core rejects the same
+    // moment there was more than one - and the name is the enroll token's label,
+    // which becomes the machine's name in the panel. Core rejects the same
     // shapes; this is the version that says so before the round trip.
     const draft = nodeLabelDraft.trim();
     const nameValid = isLocationName(draft);
@@ -321,7 +321,7 @@ function MyNodesInner() {
     };
 
     // Roll = new secret, SAME machine. node_id and the location name do not move,
-    // so the node keeps identifying itself with the same NODE_ID and every server
+    // so the node keeps identifying itself with the same id and every server
     // on it keeps resolving to the same node row - nothing is recreated and no
     // world data is touched.
     //
@@ -375,9 +375,9 @@ function MyNodesInner() {
     );
     const freeKeys = nodeKeys.filter(k => !k.bound_node_id);
 
-    // Pre-selects the key created under this machine's location name - the node
-    // reports that name slugged, which is what nodeIdFromLabel produces from the
-    // key's name. Nothing is pre-selected when no name matches: the owner picks.
+    // Pre-selects the key created under this machine's location name: the node is
+    // named after its enroll token's label, the key after the same name, and both
+    // are compared slugged. Nothing is pre-selected when no name matches.
     const openLinkSetup = (n: OwnNode) => {
         const slug = nodeIdFromLabel(nodeLabel(n));
         const match = freeKeys.find(k => nodeIdFromLabel(k.name) === slug);
@@ -769,9 +769,8 @@ function MyNodesInner() {
                             <p className="text-xs text-(--base-07)">
                                 This machine&apos;s key is connected. If it still runs an earlier file, redeploy it
                                 with the one below - a node updated without it keeps running and serves nobody -
-                                keeping the values of <code className="font-mono">API_KEY</code>,{' '}
-                                <code className="font-mono">NODE_ID</code> and <code className="font-mono">NODE_ENROLL_TOKEN</code>{' '}
-                                from the file it runs now; <code className="font-mono">LINK_BOOT_KEY</code> takes the same
+                                keeping the values of <code className="font-mono">API_KEY</code> and{' '}
+                                <code className="font-mono">NODE_ENROLL_TOKEN</code> from the file it runs now; <code className="font-mono">LINK_BOOT_KEY</code> takes the same
                                 key as <code className="font-mono">API_KEY</code>. Players connected at that moment
                                 reconnect once while the Link moves over.
                             </p>
@@ -779,7 +778,6 @@ function MyNodesInner() {
                                 kind="node"
                                 warpKey={null}
                                 enrollUrl={enrollUrl}
-                                nodeId={nodeIdFromLabel(nodeLabel(linkFor))}
                                 config={deployConfig}
                                 linkBesideNode
                             />
@@ -905,7 +903,6 @@ function MyNodesInner() {
                         enrollUrl={enrollUrl}
                         nodeEnrollToken={revealedNode.token}
                         grpcTlsFingerprint={revealedNode.grpcTlsFingerprint}
-                        nodeId={nodeIdFromLabel(revealedNode.label)}
                         config={deployConfig}
                         linkBesideNode={revealedNode.linkBeside}
                     />

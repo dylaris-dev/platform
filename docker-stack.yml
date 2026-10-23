@@ -20,7 +20,7 @@
 #
 # Join more hosts as Nodes:  `docker swarm join-token worker`  → run the printed
 # command on each host. The `node` service is GLOBAL, so every host becomes a
-# Node automatically (NODE_ID templated from the hostname).
+# Node automatically (named after the host via NODE_HOSTNAME).
 #
 # For a single machine, use docker-compose.yml instead.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -267,8 +267,6 @@ services:
   node:
     image: ghcr.io/dylaris-dev/platform-node:latest
     environment:
-      # Templated per host → every swarm host is a distinct Node.
-      NODE_ID: "{{.Node.Hostname}}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       NODE_TAGS: "${NODE_TAGS:-}"
       NODE_REGION: "${NODE_REGION:-}"

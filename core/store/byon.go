@@ -104,6 +104,18 @@ func (s *PostgresStore) ResolveNodeEnrollToken(plaintext string) (userID string,
 	return userID, platform, true, nil
 }
 
+// NodeEnrollTokenLabel returns the label an enroll token was minted under,
+// whether or not it is still valid; "" for an unknown token.
+func (s *PostgresStore) NodeEnrollTokenLabel(plaintext string) (string, error) {
+	var label string
+	err := s.db.QueryRow(`SELECT label FROM node_enroll_tokens WHERE token_hash = $1`,
+		hashAuthToken(plaintext)).Scan(&label)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return label, err
+}
+
 // ConsumeNodeEnrollToken atomically marks a valid, unexpired, still-unconsumed
 // token as used and returns its owner + the node token it recovers (empty for a
 // normal enroll token). Single-use.

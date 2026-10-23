@@ -15,6 +15,7 @@ import (
 // it needs. Call counters let tests assert a step was (or was NOT) reached -
 // e.g. that Enroll never consumes the token when the node limit is hit.
 type fakeHandshakeStore struct {
+	tokenLabel  string // what EnrollTokenLabel answers
 	suspended   map[string]bool
 	secretEnc   map[int]string
 	uuidsByNode map[int][]string
@@ -87,6 +88,7 @@ func (f *fakeHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool,
 	f.resolveCalls++
 	return f.resolveOwnerID, f.resolvePlatform, f.resolveOK, f.resolveErr
 }
+func (f *fakeHandshakeStore) EnrollTokenLabel(string) string { return f.tokenLabel }
 func (f *fakeHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, error) {
 	f.consumeCalls++
 	return f.consumeOwnerID, f.consumeOK, f.consumeErr
@@ -629,5 +631,27 @@ func TestEnroll_RefusedPlatformTokenCreatesNothing(t *testing.T) {
 	}
 	if store.createCalls != 0 {
 		t.Errorf("create calls = %d, want 0", store.createCalls)
+	}
+}
+
+// The display name is what the owner called the machine when minting its
+// token; the name the node sends (hostname, or an old kit's NODE_ID) is only
+// the fallback for a token without a label.
+func TestEnroll_DisplayNameIsTheTokenLabel(t *testing.T) {
+	for _, c := range []struct{ label, want string }{
+		{"Home PC", "Home PC"},
+		{"", "my-hostname"},
+	} {
+		store := newFakeHandshakeStore()
+		store.resolveOK, store.consumeOK = true, true
+		store.consumeOwnerID, store.createNodeID = "owner", 42
+		store.tokenLabel = c.label
+		h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+		// The test Redis has no ACL command, so provisioning after the row is
+		// created errors; the row - and its name - is what this is about.
+		_, _, _, _, _ = h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
+		if store.lastCreateDisplayName != c.want {
+			t.Errorf("label %q: display name %q, want %q", c.label, store.lastCreateDisplayName, c.want)
+		}
 	}
 }

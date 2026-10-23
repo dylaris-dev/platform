@@ -9,7 +9,7 @@ import {
 } from '@/lib/api/types';
 import {
     nodeCompose, deployCli, redeployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, nodeIdFromLabel, EXTERNAL_NODE_PORTS, kitInput, watchtowerNote,
+    DEPLOY_PORTAINER_NOTE, EXTERNAL_NODE_PORTS, kitInput, watchtowerNote,
 } from '@/lib/warpDeploy';
 import { getWarpDeployConfig, type WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import { coreOrigin } from '@/lib/api/core';
@@ -22,8 +22,8 @@ import ModalPanel from '@/components/ui/ModalPanel';
 
 const enrollUrl = coreOrigin();
 
-// The same rule Core applies (validate.IsLocationName): the name is slugged into
-// the node's NODE_ID by the deploy file.
+// The same rule Core applies (validate.IsLocationName): the name is the enroll
+// token's label, which becomes the node's name when it enrols.
 const EXTERNAL_NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
 
 /**
@@ -210,7 +210,7 @@ export default function ExternalMachines({ nodes }: { nodes: Node[] }) {
                         </button>
                     </div>
                     <p id="external-node-name-rule" className={`text-[11px] ${extName !== '' && !extNameValid ? 'text-(--error-light)' : 'text-(--base-06)'}`}>
-                        {EXTERNAL_NAME_RULE} It becomes the node&apos;s NODE_ID in the file.
+                        {EXTERNAL_NAME_RULE} The machine shows up under this name.
                     </p>
                 </fieldset>
             </div>
@@ -376,7 +376,6 @@ function DeployModal({ name, keyNodeId, enrolled, rolled, apiKey, enrollToken, g
         tunnelSubnets,
         config,
         grpcTlsFingerprint,
-        nodeId: nodeIdFromLabel(name),
         nodeEnrollToken: enrollToken ?? undefined,
         platform,
         linkBesideNode: external,

@@ -178,7 +178,6 @@ services:
     depends_on:
       - redis
     environment:
-      NODE_ID: "${NODE_ID:-node-01}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       NODE_TAGS: "${NODE_TAGS:-}"
       NODE_REGION: "${NODE_REGION:-}"
@@ -197,11 +196,10 @@ services:
       # bring a node back.
       CORE_GRPC_ADDR: "core:25501"
       NODE_ENROLL_TOKEN: "${NODE_ENROLL_TOKEN:-}"
-      # The machine's own name, shown next to a refused connection so an
-      # operator can tell which host is knocking. Plain Docker gives the
-      # container a useful hostname already, so the node's own os.Hostname() is
-      # the fallback and this is only needed under Swarm - see docker-stack.yml.
-      NODE_HOSTNAME: "${NODE_HOSTNAME:-}"
+      # The machine's own name: the node's name in the panel when it first
+      # pairs, and what is shown next to a refused connection. Inside a
+      # container os.Hostname() is the container id, hence the default.
+      NODE_HOSTNAME: "${NODE_HOSTNAME:-node-01}"
       PORT_RANGE: "${PORT_RANGE:-25600-25699}"
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com

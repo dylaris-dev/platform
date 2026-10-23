@@ -169,6 +169,7 @@ func (f *fakeACLHandshakeStore) ServerUUIDsByNode(nodeID int) ([]string, error) 
 func (f *fakeACLHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, bool, error) {
 	return "", false, false, nil
 }
+func (f *fakeACLHandshakeStore) EnrollTokenLabel(string) string { return "" }
 func (f *fakeACLHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, error) {
 	return "", false, nil
 }

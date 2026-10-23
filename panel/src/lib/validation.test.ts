@@ -63,8 +63,8 @@ describe('isLocationName (mirrors validate.LocationName)', () => {
     it('rejects too short, too long and empty', () => {
         for (const s of ['', 'pc1', 'twenty-one-chars-here']) expect(isLocationName(s)).toBe(false);
     });
-    // A leading hyphen survives into NODE_ID and reads as a flag to anything
-    // that shells out; a trailing one is just noise.
+    // A leading hyphen reads as a flag to anything that shells out; a trailing
+    // one is just noise.
     it('rejects a hyphen at either end', () => {
         for (const s of ['-leading', 'trailing-', '-', '----']) expect(isLocationName(s)).toBe(false);
     });

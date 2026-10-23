@@ -36,7 +36,6 @@ services:
     image: ghcr.io/dylaris-dev/platform-node:latest
     restart: unless-stopped
     environment:
-      NODE_ID: "<stable-id-for-this-machine>"
       # The same value Core runs with. A fleet host is trusted infrastructure:
       # it pairs by proving this secret, so no enroll token is involved.
       CLUSTER_SECRET: "\${CLUSTER_SECRET}"

@@ -32,6 +32,9 @@ type HandshakeStore interface {
 	// is then only who minted it.
 	ResolveEnrollToken(plaintext string) (ownerID string, platform bool, ok bool, err error)
 	ConsumeEnrollToken(plaintext string) (ownerID string, ok bool, err error)
+	// EnrollTokenLabel is the name the token was minted under (the location
+	// the owner typed), "" when it has none or cannot be read.
+	EnrollTokenLabel(plaintext string) string
 	NodeLimitReached(ownerID string) bool
 	// OwnerSuspended reports whether the owner is suspended or cut off for
 	// holding more than they bought.
@@ -102,8 +105,10 @@ func (h *Handshake) EnsureForToken(ctx context.Context, token string) error {
 }
 
 // Enroll creates the node row an enroll token was minted for, with a
-// Core-minted, unguessable identity, then provisions its ACL. The node-supplied
-// token (its hostname) is kept only as a cosmetic display name. Returns the
+// Core-minted, unguessable identity, then provisions its ACL. The display name
+// is the token's label - what the owner called the machine when minting it -
+// and only falls back to what the node sent (its hostname, or a NODE_ID an
+// older kit still sets) when the token has none. Returns the
 // assigned id + new node id + secret hex, and whether the row is owned.
 //
 // A tenant's token produces a BYON node bound to the token's owner. A platform
@@ -140,12 +145,16 @@ func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address stri
 	if !cok {
 		return "", 0, "", false, ErrEnrollInvalid
 	}
+	name := token
+	if label := h.store.EnrollTokenLabel(enrollToken); label != "" {
+		name = label
+	}
 	assignedID := uuid.New().String()
 	var id int
 	if platform {
-		id, err = h.store.CreatePlatformTokenNode(assignedID, address, token)
+		id, err = h.store.CreatePlatformTokenNode(assignedID, address, name)
 	} else {
-		id, err = h.store.CreateBYONNode(assignedID, address, consumedOwner, token)
+		id, err = h.store.CreateBYONNode(assignedID, address, consumedOwner, name)
 	}
 	if err != nil {
 		return "", 0, "", false, err

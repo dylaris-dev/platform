@@ -26,8 +26,8 @@ export const NODE_LABEL = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
 // The name a customer gives one of their own machines. Mirrors
 // validate.LocationName: 4-20 characters, letters / digits / hyphen, and no
-// hyphen at either end - a LEADING one would read as a flag once the name is
-// slugged into NODE_ID and pasted into a compose file.
+// hyphen at either end - a LEADING one reads as a flag wherever the name is
+// pasted into a command or a compose file.
 export const LOCATION_NAME = /^[a-zA-Z0-9]([a-zA-Z0-9-]{2,18})[a-zA-Z0-9]$/;
 
 // Semver-ish version (e.g. the beam minVersion): 1.2.3 with optional pre/build.

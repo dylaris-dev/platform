@@ -36,8 +36,6 @@ export type WarpDeployInput = {
      * undefined means not known yet, which is neither.
      */
     grpcTlsFingerprint?: string;
-    /** Stable id for the machine. */
-    nodeId?: string;
     /** Route-only: the local host(s) the link may dial, comma-separated. Hosts only, no port. */
     localTarget?: string;
     /**
@@ -233,12 +231,10 @@ export function kitGrpcTlsFingerprint(
 }
 
 /**
- * Turns the location name a customer typed into a usable NODE_ID.
- *
- * NODE_ID ends up in Redis keys, the mesh identity and the environment of every
- * container the node starts, so "My Home PC" cannot be pre-filled verbatim.
- * Returns undefined when nothing usable is left, which leaves the snippet's
- * placeholder in place rather than a value that is silently wrong.
+ * Slugs a location name ("My Home PC" -> "my-home-pc"), so a node's name and a
+ * key's name can be compared however each was typed. Undefined when nothing
+ * usable is left. (It used to pre-fill NODE_ID; the kit no longer has one - a
+ * node is named after its enroll token's label.)
  */
 export function nodeIdFromLabel(label: string | undefined): string | undefined {
     const slug = (label ?? '')
@@ -518,11 +514,7 @@ ${LOGS}    depends_on: [warp]
           : 'this machine is yours, not ours.'}
       NODE_EXTERNAL: "true"
 
-${manageLink}      # EDIT only for a different name. It ends up in keys and in the
-      # environment of every container, so letters, digits and dashes.
-      NODE_ID: "${or(i.nodeId, '<stable-id-for-this-machine>')}"
-
-      # keep - single-use, first boot only.
+${manageLink}      # keep - single-use, first boot only.
       NODE_ENROLL_TOKEN: "${or(i.nodeEnrollToken, '<enroll-token-from-panel>')}"
 
       # EDIT to "false" to drop the Beam LAN fast-path. It is a TLS listener on
@@ -580,7 +572,6 @@ export type KitInputProps = {
     enrollUrl: string;
     nodeEnrollToken?: string;
     grpcTlsFingerprint?: string;
-    nodeId?: string;
     platform: DeployPlatform;
     config?: { tunnelSubnets?: string; grpcTlsFingerprint?: string } | null;
     /** An explicitly saved overlay CIDR, which wins over the detected one. */
@@ -607,7 +598,6 @@ export function kitInput(p: KitInputProps): WarpDeployInput {
         enrollUrl: p.enrollUrl,
         nodeEnrollToken: p.nodeEnrollToken,
         grpcTlsFingerprint: kitGrpcTlsFingerprint(p.grpcTlsFingerprint, p.config),
-        nodeId: p.nodeId,
         platform: p.platform,
         // Undetermined values stay undefined so the snippet keeps its
         // placeholder: a blank tells the reader something is missing, an empty

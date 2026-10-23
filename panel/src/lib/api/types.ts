@@ -1411,7 +1411,7 @@ export const bindNodeWarpKey = (nodeId: string, node: number): Promise<{ success
 // Same in-place roll as rollLinkKit. The node_id and the location name do not
 // move, which is what keeps the tenant's servers pointing at the same machine:
 // a server resolves through the node row, and the node identifies itself by
-// NODE_ID, not by this key.
+// the id Core assigned at enrolment, not by this key.
 export const rollNodeWarpKey = (nodeId: string): Promise<MintedNodeWarpKey> =>
     fetchAPI(`/warp/node-keys/${encodeURIComponent(nodeId)}/roll`, { method: 'POST' });
 

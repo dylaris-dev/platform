@@ -128,6 +128,15 @@ func (a *aclHandshakeStore) ResolveEnrollToken(plaintext string) (string, bool, 
 	return a.store.ResolveNodeEnrollToken(plaintext)
 }
 
+func (a *aclHandshakeStore) EnrollTokenLabel(plaintext string) string {
+	label, err := a.store.NodeEnrollTokenLabel(plaintext)
+	if err != nil {
+		log.Printf("enroll: reading the token label: %v (the node's own name is used)", err)
+		return ""
+	}
+	return strings.TrimSpace(label)
+}
+
 func (a *aclHandshakeStore) ConsumeEnrollToken(plaintext string) (string, bool, error) {
 	ownerID, _, ok, err := a.store.ConsumeNodeEnrollToken(plaintext)
 	return ownerID, ok, err

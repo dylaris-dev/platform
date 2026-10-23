@@ -87,6 +87,8 @@ type Store interface {
 	// born unowned. Only the admin External node mint calls it.
 	CreatePlatformNodeEnrollToken(minterID, plaintext, label string, expiresAt *time.Time, warpKeyNodeID string) error
 	ResolveNodeEnrollToken(plaintext string) (userID string, platform bool, ok bool, err error)
+	// NodeEnrollTokenLabel is the label a token was minted under, "" if unknown.
+	NodeEnrollTokenLabel(plaintext string) (string, error)
 	ConsumeNodeEnrollToken(plaintext string) (userID string, recoversNodeToken string, ok bool, err error)
 	ListNodeEnrollTokens(userID string) ([]NodeEnrollToken, error)
 	CountPendingNodeEnrollTokens(userID string) (int, error)

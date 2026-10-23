@@ -97,18 +97,18 @@ describe('nodeCompose', () => {
             ...base,
             tunnelSubnets: '10.20.0.0/16',
             nodeEnrollToken: 'TOK',
-            nodeId: 'home-desktop',
             grpcTlsFingerprint: '',
         });
         expect(out).toContain('NODE_ENROLL_TOKEN: "TOK"');
-        expect(out).toContain('NODE_ID: "home-desktop"');
+        // The kit no longer names the node: Core names it after the token's label.
+        expect(out).not.toContain('NODE_ID');
         expect(out).not.toContain('<');
     });
 
     // The whole point of the local proxy: the file carries no overlay address,
     // so a platform that moves does not send every customer back to the panel.
     it('carries no overlay address at all', () => {
-        const out = nodeCompose({ ...base, tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK', nodeId: 'n' });
+        const out = nodeCompose({ ...base, tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK' });
         // The names still appear in the comment that explains their absence,
         // so assert on the assignment, which is what a reader would have to edit.
         expect(out).not.toContain('CORE_GRPC_ADDR: "');
@@ -151,16 +151,14 @@ describe('nodeCompose', () => {
 });
 
 describe('nodeIdFromLabel', () => {
-    // NODE_ID lands in Redis keys, the mesh identity and every container's
-    // environment, so the free-text location name cannot go in verbatim.
-    it('reduces a typed location name to a safe id', () => {
+    // Names are compared slugged (node name vs key name in the link setup).
+    it('reduces a typed location name to a slug', () => {
         expect(nodeIdFromLabel('My Home PC')).toBe('my-home-pc');
         expect(nodeIdFromLabel('  Rack #3 / EU  ')).toBe('rack-3-eu');
         expect(nodeIdFromLabel('home-desktop')).toBe('home-desktop');
     });
 
-    // undefined leaves the snippet's placeholder in place; an empty string
-    // would render as NODE_ID: "" and read like a deliberate setting.
+    // undefined, so an empty name never matches another empty name.
     it('returns undefined when nothing usable is left', () => {
         expect(nodeIdFromLabel('')).toBeUndefined();
         expect(nodeIdFromLabel('   ')).toBeUndefined();
@@ -433,10 +431,10 @@ describe('nodeCompose with the Link beside the node', () => {
 
     // Everything the node kit promised before still holds with the link in it.
     it('keeps every node setting and adds no fleet secret or overlay address', () => {
-        const out = kit({ tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK', nodeId: 'home-desktop', grpcTlsFingerprint: '' });
+        const out = kit({ tunnelSubnets: '10.20.0.0/16', nodeEnrollToken: 'TOK', grpcTlsFingerprint: '' });
         for (const line of [
             'API_KEY: "KEY123"', 'PROXY_BIND_DOCKER_BRIDGES: "true"', 'NODE_EXTERNAL: "true"',
-            'NODE_ID: "home-desktop"', 'NODE_ENROLL_TOKEN: "TOK"', 'BEAM_LAN_FASTPATH: "true"',
+            'NODE_ENROLL_TOKEN: "TOK"', 'BEAM_LAN_FASTPATH: "true"',
             'GRPC_TLS_ENABLED: "false"', '- byon_data:/app/dylaris_data',
         ]) {
             expect(out).toContain(line);
@@ -699,12 +697,11 @@ describe('kitInput', () => {
     });
 
     it('carries every value the file cannot be written without', () => {
-        const i = kitInput({ ...props, nodeEnrollToken: 'TOK', nodeId: 'n1', localTarget: '192.168.1.10' });
+        const i = kitInput({ ...props, nodeEnrollToken: 'TOK', localTarget: '192.168.1.10' });
         expect(i).toMatchObject({
             apiKey: 'KEY123',
             enrollUrl: 'https://api.example.com',
             nodeEnrollToken: 'TOK',
-            nodeId: 'n1',
             tunnelSubnets: '10.20.0.0/16',
             grpcTlsFingerprint: 'ab:cd',
             localTarget: '192.168.1.10',

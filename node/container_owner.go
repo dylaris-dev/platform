@@ -69,6 +69,11 @@ func nodeIdentity(secretDir string) string {
 // that is running normally. Matching on only the current one would make a node
 // disown the containers it created an hour earlier, which is the same failure
 // this whole file exists to prevent, just arriving from the other direction.
+//
+// NODE_ID is still read HERE, and only here, after it stopped being the node's
+// name (2026-10-23): a node that labelled containers with it before enrolling
+// would otherwise disown them on the first update. Unset on new installs, where
+// it adds nothing.
 func nodeIdentities(secretDir string) []string {
 	var out []string
 	if id, ok := loadNodeID(secretDir); ok {

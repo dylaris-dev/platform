@@ -561,7 +561,6 @@ func parseConfig() {
 	}
 
 	// 1. Node Basics
-	nodeID = os.Getenv("NODE_ID")
 	clusterSecret = getSecretEnv("CLUSTER_SECRET")
 	nodeTags = os.Getenv("NODE_TAGS")
 	nodeExternal = os.Getenv("NODE_EXTERNAL") == "true" || hasTag(nodeTags, "external")
@@ -574,17 +573,17 @@ func parseConfig() {
 	// CLUSTER_SECRET is OPTIONAL: a node authenticates to Redis via its
 	// gRPC-bootstrapped per-node secret, not the cluster secret. In-cluster nodes
 	// still use CLUSTER_SECRET for the cluster proof + gRPC TLS pin when present.
+	// The name this node gives on FIRST contact. Its identity is the uuid Core
+	// assigns at enrolment (cached in .node_id, loaded before anything dials);
+	// this name only matters until then, and Core prefers the enroll token's
+	// label over it. NODE_ID is no longer read here: it used to be this name,
+	// and an old kit that still sets it changes nothing now.
+	//
+	// machineHostname, not os.Hostname: inside a Swarm task the kernel answers
+	// with the container id (2026-10-17: "7e85474cec0f").
+	nodeID = machineHostname()
 	if nodeID == "" {
-		// machineHostname, not os.Hostname: inside a Swarm task the kernel
-		// answers with the container id, and this value becomes the name Core
-		// shows for a node it has never seen (2026-10-17: "7e85474cec0f"). Only
-		// the first enrol uses it - an enrolled node runs on its cached uuid.
-		hostname := machineHostname()
-		if hostname == "" {
-			log.Fatal("FATAL: NODE_ID is missing and hostname could not be determined!")
-		}
-		nodeID = hostname
-		log.Printf("No Node ID provided. Automatically using system hostname: '%s'", nodeID)
+		log.Fatal("FATAL: the machine's hostname could not be determined (set NODE_HOSTNAME)")
 	}
 
 	// 2. Node Redis. Where the address STARTS: REDIS_ADDR, or the warp proxy's

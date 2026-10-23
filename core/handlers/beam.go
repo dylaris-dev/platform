@@ -273,7 +273,7 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 		if s.NodeID > 0 {
 			node, err := h.state.Store.GetNodeByID(s.NodeID)
 			if err == nil && node != nil {
-				nodeDiscoveryID = node.Token // Token = DYLARIS_NODE_ID used in discovery
+				nodeDiscoveryID = node.Token // Token = the id Core assigned at enrolment, used in discovery
 				nodeName = node.Name
 			}
 		}
@@ -411,7 +411,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		filePerms.Write, filePerms.Delete = false, false
 	}
 
-	// Resolve node discovery ID (Token field = DYLARIS_NODE_ID) + direct-connect
+	// Resolve node discovery ID (Token field = the id Core assigned at enrolment) + direct-connect
 	// hint inputs. Whether these are actually handed out is decided below by relay
 	// presence, not by node ownership.
 	nodeDiscoveryID := ""
