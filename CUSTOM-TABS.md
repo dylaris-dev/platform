@@ -219,8 +219,11 @@ Both switches default to off.
 **Server -> Config -> Tabs -> New.**
 
 - **Mode**: proxied
-- **Target port**: the port inside the container, e.g. `8123` for BlueMap or
-  Dynmap, `8100` for squaremap
+- **Target port**: the port inside the container: `8080` for squaremap and
+  Pl3xMap, `8100` for BlueMap, `8123` for Dynmap (each map's default; the form
+  has presets). BlueMap renders nothing until `accept-download: true` is set in
+  its `core.conf`, which means accepting Mojang's EULA - the server owner's
+  call, not something to set for them
 - **Target path**: usually `/`
 - **Surface**: `tab` shows it in the panel, `page` gives it a standalone share
   link, `both` does both

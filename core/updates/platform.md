@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.6
+
+### Features
+- **Web map presets for custom tabs.** A proxied tab fills in squaremap, BlueMap, Pl3xMap or
+  Dynmap with its default port; the map itself is installed from the Content tab. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.23.5
 
 ### Features

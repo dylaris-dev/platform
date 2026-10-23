@@ -49,6 +49,16 @@ interface EditingTab extends Partial<ServerTab> {
     isNew?: boolean;
 }
 
+// Default web ports of the map plugins/mods, from each project's own default
+// config (checked 2026-10-23): squaremap and Pl3xMap 8080, BlueMap 8100,
+// Dynmap 8123.
+const MAP_PRESETS = [
+    { name: 'squaremap', port: 8080 },
+    { name: 'BlueMap', port: 8100 },
+    { name: 'Pl3xMap', port: 8080 },
+    { name: 'Dynmap', port: 8123 },
+];
+
 export default function ServerConfigTabsPage() {
     const paramId = useRouteId('servers');
     const { servers, gatewayEnabled, coreInfo } = useAppData();
@@ -501,6 +511,23 @@ export default function ServerConfigTabsPage() {
                                 </div>
                             ) : (
                                 <>
+                                    {/* The maps' own default ports. They only fill the form; the
+                                        map itself is installed from the Content tab, and a changed
+                                        port in its config has to be changed here too. */}
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="text-xs text-(--base-06)">Web map preset:</span>
+                                        {MAP_PRESETS.map(p => (
+                                            <button
+                                                key={p.name}
+                                                type="button"
+                                                onClick={() => setEditing({ ...editing, targetPort: p.port, targetPath: '/', name: editing.name || p.name, icon: 'map' })}
+                                                className="btn btn-secondary btn-sm"
+                                                title={`${p.name} serves its map on port ${p.port}`}
+                                            >
+                                                {p.name} <span className="font-mono text-(--base-06)">:{p.port}</span>
+                                            </button>
+                                        ))}
+                                    </div>
                                     <div className="grid grid-cols-2 gap-3">
                                         <div>
                                             <label className="input-label">Container port</label>

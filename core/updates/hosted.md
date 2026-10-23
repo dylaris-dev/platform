@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.6
+
+### Features
+- **A live web map in your panel in two steps.** Install squaremap or BlueMap from the Content
+  tab, then add a proxied tab with the new map preset. No port has to be opened.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.23.4
 
 ### Features
