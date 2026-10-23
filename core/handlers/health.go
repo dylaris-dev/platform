@@ -84,6 +84,7 @@ func (h *HealthHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	components = append(components, h.redisComponent(r.Context(), &redisUp))
 	components = append(components, h.nodesComponent())
 	components = append(components, h.gatewayComponent(r.Context()))
+	components = append(components, h.voiceComponent(r.Context()))
 	components = append(components, h.storageComponent())
 	components = append(components, h.redisACLComponent(r.Context(), redisUp))
 	components = append(components, h.storefrontComponent(r.Context()))
@@ -543,6 +544,71 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	}
 	comp.Status, comp.Detail, comp.Reason = status, detail, reason
 	return comp
+}
+
+// voicePoolWarnPct is how full a region's voice port pool may get before the
+// status page says so. There is no per-customer cap; this is how an operator
+// learns the pool needs one, or a second region, before it runs out.
+const voicePoolWarnPct = 80
+
+// voiceComponent reports the voice relays and each region's port pool.
+func (h *HealthHandler) voiceComponent(ctx context.Context) healthComponent {
+	comp := healthComponent{Key: "voice", Name: "Voice chat"}
+	if !h.state.gatewayEnabled() || h.state.Redis == nil || h.state.Store == nil {
+		comp.Status, comp.Detail = "disabled", "Voice needs gateway routing"
+		return comp
+	}
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	relays, err := services.LiveVoiceRelays(cctx, h.state.Redis)
+	if err != nil {
+		comp.Status, comp.Detail, comp.Reason = "degraded", "Relay registry unreadable", err.Error()
+		return comp
+	}
+	ports, err := h.state.Store.ListVoicePorts()
+	if err != nil {
+		comp.Status, comp.Detail, comp.Reason = "degraded", "Voice ports unreadable", err.Error()
+		return comp
+	}
+	comp.Status, comp.Detail, comp.Reason, comp.Items = voiceVerdict(buildVoiceOverview("", relays, ports, nil).Regions)
+	return comp
+}
+
+// voiceVerdict rates each region: down when servers hold voice ports and no
+// relay runs there (their players hear nothing), degraded from
+// voicePoolWarnPct of the pool, up otherwise. No region at all means voice is
+// not set up, which is not a fault.
+func voiceVerdict(regions []VoiceRegionStat) (status, detail, reason string, items []healthItem) {
+	if len(regions) == 0 {
+		return "disabled", "No voice relay running", "", nil
+	}
+	status = "up"
+	worse := func(s string) {
+		if s == "down" || (s == "degraded" && status == "up") {
+			status = s
+		}
+	}
+	var reasons []string
+	relays := 0
+	for _, r := range regions {
+		relays += r.Relays
+		pct := 0
+		if r.PortsTotal > 0 {
+			pct = r.PortsUsed * 100 / r.PortsTotal
+		}
+		it := healthItem{Name: r.Region, Status: "up", Detail: fmt.Sprintf("%d relay(s), %d of %d ports (%d%%)", r.Relays, r.PortsUsed, r.PortsTotal, pct)}
+		switch {
+		case r.Relays == 0 && r.PortsUsed > 0:
+			it.Status = "down"
+			reasons = append(reasons, fmt.Sprintf("%s: %d server(s) have voice on and no relay runs there", r.Region, r.PortsUsed))
+		case pct >= voicePoolWarnPct:
+			it.Status = "degraded"
+			reasons = append(reasons, fmt.Sprintf("%s: the voice port pool is %d%% full", r.Region, pct))
+		}
+		worse(it.Status)
+		items = append(items, it)
+	}
+	return status, fmt.Sprintf("%d relay(s) in %d region(s)", relays, len(regions)), strings.Join(reasons, "; "), items
 }
 
 // gatewayVerdict turns the four counts into the component's verdict. Separate
