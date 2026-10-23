@@ -251,6 +251,12 @@ jobs:
         with:
           name: dylaris-ci
           cleanup: false
+          # Repository/org variable CI_CGROUP_PARENT (e.g. ci.slice) puts the
+          # BuildKit container - and with it every build and the -race tests -
+          # under the runner host's CI resource limit. Unset: no change. Only a
+          # NEW builder picks it up: remove dylaris-ci on the host once after
+          # setting it (docker buildx rm dylaris-ci).
+          driver-opts: ${{ vars.CI_CGROUP_PARENT && format('cgroup-parent={0}', vars.CI_CGROUP_PARENT) || '' }}
 
       # BUILDKIT_PROGRESS=plain so the test output lands in the job log. Without
       # it buildx collapses the RUN and a PASSING run tells you nothing about
@@ -303,8 +309,14 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: go test against a real Postgres
+        env:
+          # See the buildx step: the test Postgres and the test run go under
+          # the same CI limit when the variable is set.
+          CI_CGROUP_PARENT: ${{ vars.CI_CGROUP_PARENT }}
         run: |
           set -eu
+          CG=""
+          [ -n "${CI_CGROUP_PARENT:-}" ] && CG="--cgroup-parent=$CI_CGROUP_PARENT"
           NET="dyl-dbtest-${{ github.run_id }}"
           PG="dyl-pg-${{ github.run_id }}"
           IMG="dyl-dbtest:${{ github.run_id }}"
@@ -317,7 +329,7 @@ jobs:
           trap cleanup EXIT
 
           docker network create "$NET"
-          docker run -d --name "$PG" --network "$NET"             -e POSTGRES_USER=dylaris -e POSTGRES_PASSWORD=testpw -e POSTGRES_DB=dylaris_test             --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20             postgres:16-alpine
+          docker run -d $CG --name "$PG" --network "$NET"             -e POSTGRES_USER=dylaris -e POSTGRES_PASSWORD=testpw -e POSTGRES_DB=dylaris_test             --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20             postgres:16-alpine
 
           # Wait on the container's own healthcheck. Bounded at ~90s: the image
           # is small and already local, so anything slower is a real failure and
@@ -332,12 +344,12 @@ jobs:
             exit 1
           fi
 
-          docker build -f .github/db.Dockerfile -t "$IMG" .
+          docker build $CG -f .github/db.Dockerfile -t "$IMG" .
 
           # DYLARIS_TEST_DB_HOST is also the switch that turns the suite on: it
           # skips itself when unset, so `go test ./...` stays green anywhere
           # without a database.
-          docker run --rm --network "$NET"             -e DYLARIS_TEST_DB_HOST="$PG"             -e DYLARIS_TEST_DB_PORT=5432             -e DYLARIS_TEST_DB_USER=dylaris             -e DYLARIS_TEST_DB_PASSWORD=testpw             -e DYLARIS_TEST_DB_NAME=dylaris_test             "$IMG"
+          docker run --rm $CG --network "$NET"             -e DYLARIS_TEST_DB_HOST="$PG"             -e DYLARIS_TEST_DB_PORT=5432             -e DYLARIS_TEST_DB_USER=dylaris             -e DYLARIS_TEST_DB_PASSWORD=testpw             -e DYLARIS_TEST_DB_NAME=dylaris_test             "$IMG"
 
   panel-tests:
     runs-on: self-hosted
@@ -571,6 +583,12 @@ jobs:
         with:
           name: dylaris-ci
           cleanup: false
+          # Repository/org variable CI_CGROUP_PARENT (e.g. ci.slice) puts the
+          # BuildKit container - and with it every build and the -race tests -
+          # under the runner host's CI resource limit. Unset: no change. Only a
+          # NEW builder picks it up: remove dylaris-ci on the host once after
+          # setting it (docker buildx rm dylaris-ci).
+          driver-opts: ${{ vars.CI_CGROUP_PARENT && format('cgroup-parent={0}', vars.CI_CGROUP_PARENT) || '' }}
 
       - name: Build and push Core
         uses: docker/build-push-action@v7
@@ -669,6 +687,12 @@ jobs:
         with:
           name: dylaris-ci
           cleanup: false
+          # Repository/org variable CI_CGROUP_PARENT (e.g. ci.slice) puts the
+          # BuildKit container - and with it every build and the -race tests -
+          # under the runner host's CI resource limit. Unset: no change. Only a
+          # NEW builder picks it up: remove dylaris-ci on the host once after
+          # setting it (docker buildx rm dylaris-ci).
+          driver-opts: ${{ vars.CI_CGROUP_PARENT && format('cgroup-parent={0}', vars.CI_CGROUP_PARENT) || '' }}
 
       # Minecraft 26.1+ refuses to start on anything below Java 25 ("Minecraft
       # 26.1 and newer requires running the server with Java 25 or above"), and
