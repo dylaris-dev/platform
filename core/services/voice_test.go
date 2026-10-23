@@ -320,3 +320,24 @@ func TestReconcileRechecksTheRowBeforePublishing(t *testing.T) {
 		})
 	}
 }
+
+// The reconcile re-reads the row before publishing; what it publishes must be
+// that fresh row, not the list's copy. Same port, but a host changed through
+// the API in between must reach the relay as the new host.
+func TestReconcilePublishesTheReReadRow(t *testing.T) {
+	p := testVoicePort()
+	fresh := p
+	fresh.Host = "new.eu.dylaris.com"
+	mr, rdb := newVoiceRedis(t)
+	fs := &voiceFakeStore{rows: []store.VoicePort{p}, current: map[int]*store.VoicePort{p.ServerID: &fresh}}
+	if err := NewVoiceService(fs, rdb).Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := mr.Get(ServerVoiceKey(p.ServerUUID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"host":"new.eu.dylaris.com"`) {
+		t.Fatalf("published %s, want the re-read host", got)
+	}
+}

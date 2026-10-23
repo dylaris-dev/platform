@@ -302,6 +302,13 @@ func writeBackVoiceConfig(st *AppState, srv *models.Server) {
 		back = plasmoVoiceDisable(content)
 	}
 	if back != content {
+		// Asked again right before the write: on a slow node this runs long
+		// after the disable, and if voice was turned on meanwhile the "off"
+		// config would leave a voice port the mod no longer uses.
+		if p, err := st.Store.GetVoicePort(srv.ID); err != nil || p != nil {
+			log.Printf("voice: server %d: config write-back skipped, voice is on again (or unreadable: %v)", srv.ID, err)
+			return
+		}
 		if err := rh.writeNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
 			log.Printf("voice: server %d: config write-back of %s failed: %v", srv.ID, rel, err)
 		}

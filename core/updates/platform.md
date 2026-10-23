@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Turning voice back on right after it was revoked keeps it working.** A slow node's late
+  config write-back no longer switches the mod off again, and the relay gets the current row. `core`
+- **The beta config editor no longer lists hidden folders,** such as Paper's own remapping cache
+  under plugins/.paper-remapped. `panel`
+
 ## 2026.10.23.4
 
 ### Features

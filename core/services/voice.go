@@ -277,7 +277,9 @@ func (v *VoiceService) Reconcile(ctx context.Context) error {
 			// Moved: whoever moved it published the new keys.
 			continue
 		}
-		if err := PublishVoice(ctx, v.redis, p); err != nil {
+		// cur, not p: same port, but whatever else the API changed since the
+		// list was read (host, uplink key) is what the relay must get.
+		if err := PublishVoice(ctx, v.redis, *cur); err != nil {
 			return err
 		}
 	}

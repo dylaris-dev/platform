@@ -127,3 +127,38 @@ func TestReconcileRevocationDoesNotWaitOnAHungNode(t *testing.T) {
 		t.Fatal("the config write-back never reached the node")
 	}
 }
+
+type voiceWriteBackStore struct {
+	store.Store
+	row *store.VoicePort
+}
+
+func (f *voiceWriteBackStore) GetVoicePort(int) (*store.VoicePort, error) { return f.row, nil }
+
+// A disable's config write-back can land long after the disable: the node may
+// be slow. If voice was turned on again meanwhile, writing the "off" config
+// would leave the server with a voice port and a mod that does not use it.
+func TestALateWriteBackDoesNotUndoAReEnable(t *testing.T) {
+	srv := &models.Server{ID: 7, UUID: "srv-7", NodeID: 7, ActiveSubServer: "survival"}
+	path := "plugins/voicechat/voicechat-server.properties"
+	cases := []struct {
+		name      string
+		row       *store.VoicePort
+		wantWrite bool
+	}{
+		{"still off: the address is stripped", nil, true},
+		{"on again: the config is left alone", &store.VoicePort{ServerID: 7, Region: "eu", Port: 26000}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st, _, node := voiceNodeState(t, &voiceWriteBackStore{row: c.row}, path, "svc_after.properties")
+			writeBackVoiceConfig(st, srv)
+			node.mu.Lock()
+			wrote := node.writes > 0
+			node.mu.Unlock()
+			if wrote != c.wantWrite {
+				t.Fatalf("wrote = %v, want %v", wrote, c.wantWrite)
+			}
+		})
+	}
+}
