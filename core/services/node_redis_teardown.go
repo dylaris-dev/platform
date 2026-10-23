@@ -22,6 +22,7 @@ func NodeRedisKeys(token string) []string {
 		"dylaris:node:" + token + ":storage_placement",
 		"dylaris:node:" + token + ":cpu",
 		"dylaris:node:" + token + ":cpu:sig",
+		"dylaris:node:" + token + ":cpuload",
 		"dylaris:node:" + token + ":cmds",
 	}
 }

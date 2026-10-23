@@ -456,6 +456,7 @@ func main() {
 	coreRequest = meshMgr.Request
 
 	go startDiscoveryLoop(ctx, rdb, nodeID, nodeTags, nodeRegion, mon, dockerMgr)
+	go runCoreLoadPublisher(ctx, rdb, nodeID)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	go startVoiceForwarder(ctx, rdb, dockerMgr, nodeID)

@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **529 routes** in 53 sections: 234 GET, 163 POST, 41 PUT, 37 PATCH, 55 DELETE.
+- **530 routes** in 53 sections: 235 GET, 163 POST, 41 PUT, 37 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **344** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **345** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (81)
+- [/api/servers](#apiservers) (82)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -738,6 +738,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/spark/profiles` | session | `spark.use` | - | `SparkHandler.List` | the 50 most recent spark profiles for one server, newest first. |
 | POST | `/api/servers/{id:[0-9]+}/spark/profiles` | session | `spark.use` | - | `SparkHandler.Record` | records a finished spark profile. |
 | DELETE | `/api/servers/{id:[0-9]+}/spark/profiles/{profileId:[0-9]+}` | session | `spark.use` | - | `SparkHandler.Delete` | removes one profile reference. |
+| GET | `/api/servers/{id:[0-9]+}/stats/cores` | session | `stats.read` | - | `StatsHandler.GetCores` | how busy each core the server is pinned to is. |
 | GET | `/api/servers/{id:[0-9]+}/stats/disk` | session | `stats.read` | - | `StatsHandler.GetDisk` | Returns disk usage data for the server. |
 | GET | `/api/servers/{id:[0-9]+}/stats/history` | session | `stats.read` | - | `StatsHandler.GetHistory` | Returns historical stats data points from PostgreSQL. |
 | GET | `/api/servers/{id:[0-9]+}/stats/stream` | session | `stats.read` | - | `StatsHandler.StreamStats` | SSE endpoint: sends buffered data from Redis Stream first, then live pub/sub updates. |

@@ -11,6 +11,7 @@ import { latestValue, chartSeries, appendSamples } from '@/lib/statsSeries';
 import { jvmHeapMB } from '@/lib/jvmHeap';
 import { parseStatsSample } from '@/lib/statsSample';
 import MemoryHelp from '@/components/MemoryHelp';
+import CoreLoadBars from '@/components/CoreLoadBars';
 import { formatBytes, formatMB } from '@/lib/format';
 import { timeAgo } from '@/lib/time';
 
@@ -431,6 +432,8 @@ export default function OverviewView({ server }: OverviewViewProps) {
           ) : emptyState}
         </ChartCard>
       </div>
+
+      <CoreLoadBars serverId={server.id} active={mode === 'live' && !isOffline} />
 
       {/* Disk Limit Warning */}
       {diskUsage?.warning && diskUsage.limit > 0 && (

@@ -265,6 +265,87 @@ func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(data))
 }
 
+// coreLoadEntry is one pinned core in GET /stats/cores. ID and Shared are
+// filled for an admin only: a member without the settings capability is not
+// shown the server's cpuset elsewhere either, so they get a position, not an id.
+type coreLoadEntry struct {
+	Index  int     `json:"index"`
+	ID     *int    `json:"id,omitempty"`
+	Load   float64 `json:"load"`
+	Shared bool    `json:"shared,omitempty"`
+}
+
+// GetCores GET /api/servers/{id}/stats/cores - how busy each core the server
+// is pinned to is.
+//
+// The load is the HOST's per core (the node cannot measure a container per
+// core), so it is only the server's own when no other server can run on those
+// cores. A member sees it only then; an admin always, with the shared cores
+// marked. An unpinned server, or a node too old to publish the load, answers
+// with no cores.
+func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil || h.state.Redis == nil {
+		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		sendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	out := struct {
+		Cores     []coreLoadEntry `json:"cores"`
+		Exclusive bool            `json:"exclusive"`
+	}{Cores: []coreLoadEntry{}}
+	w.Header().Set("Content-Type", "application/json")
+
+	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	if err != nil {
+		json.NewEncoder(w).Encode(out)
+		return
+	}
+	var published struct {
+		Cores map[int]float64 `json:"cores"`
+	}
+	raw, err := h.state.Redis.Get(r.Context(), fmt.Sprintf("dylaris:node:%s:cpuload", node.Token)).Bytes()
+	if err != nil || json.Unmarshal(raw, &published) != nil || len(published.Cores) == 0 {
+		json.NewEncoder(w).Encode(out)
+		return
+	}
+	others, err := h.state.Store.ListServersByNode(node.ID)
+	if err != nil {
+		sendJSONError(w, "Could not read the node's servers", http.StatusInternalServerError)
+		return
+	}
+	all := make([]int, 0, len(published.Cores))
+	for c := range published.Cores {
+		all = append(all, c)
+	}
+	cores, shared := services.PinnedCoreSharing(*srv, others, node.CpusetCpus, all)
+	out.Exclusive = len(cores) > 0 && len(shared) == 0
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if isAdmin || out.Exclusive {
+		for i, c := range cores {
+			load, ok := published.Cores[c]
+			if !ok {
+				continue // a core the host does not have (or did not report)
+			}
+			e := coreLoadEntry{Index: i + 1, Load: load}
+			if isAdmin {
+				id := c
+				e.ID, e.Shared = &id, shared[c]
+			}
+			out.Cores = append(out.Cores, e)
+		}
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
 // clearStatsWatch removes the watch key so the node stops publishing live stats
 // as soon as the last viewer leaves.
 //

@@ -128,6 +128,7 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/stats/stream":  "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/history": "stats.read",
 	"/api/servers/{id:[0-9]+}/stats/disk":    "stats.read",
+	"/api/servers/{id:[0-9]+}/stats/cores":   "stats.read",
 	"/api/traffic-limits":                    "settings.write",
 	"/api/traffic-limits/resolve":            "settings.read",
 	"/api/gateway-bandwidth/overview":        "settings.read",
@@ -1415,6 +1416,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/stream", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.StreamStats))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.GetHistory))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/stats/disk", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.GetDisk))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/stats/cores", authHandler.AuthMiddleware(appState.Authz.RequireCap("stats.read")(statsHandler.GetCores))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.read")(memberHandler.GetMembers))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/members", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.write")(memberHandler.InviteMember))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/members/inherited", authHandler.AuthMiddleware(appState.Authz.RequireCap("members.read")(memberHandler.GetInheritedMembers))).Methods("GET")

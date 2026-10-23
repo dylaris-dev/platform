@@ -785,6 +785,19 @@ export const getStatsHistory = (id: number, range?: string) =>
 
 export const getDiskUsage = (id: number) => fetchAPI(`/servers/${id}/stats/disk`);
 
+/** One core a pinned server runs on. id and shared reach admins only. */
+export interface CoreLoad {
+    index: number;
+    id?: number;
+    load: number;
+    shared?: boolean;
+}
+export interface ServerCoreLoad {
+    cores: CoreLoad[];
+    exclusive: boolean;
+}
+export const getServerCoreLoad = (id: number): Promise<ServerCoreLoad> => fetchAPI(`/servers/${id}/stats/cores`);
+
 // --- SERVER SETTINGS ---
 export interface ServerLimitSettings {
     // null = no cap, 0 = none may be created, n = the cap.
