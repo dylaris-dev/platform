@@ -1673,6 +1673,11 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	switch req.Action {
 	case "start", "restart":
 		newStatus = "starting"
+		if req.Action == "restart" {
+			// What the node reports next for a restart; "starting" here made the
+			// panel step back: starting -> restarting -> starting -> online.
+			newStatus = "restarting"
+		}
 		// The node clears these when it runs the command, which can be a while
 		// behind a busy queue; until then the status watcher read them as
 		// unlanded and set the intent back to stopped under the start.

@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The status no longer steps backwards on a restart.** Core wrote "starting" and the node then
+  reported "restarting", so the panel showed starting, restarting, starting, online. `core`
+- **A restore, reinstall or move no longer flips between its own status and "stopping".** The stop
+  inside it now leaves the operation's status alone. `node`
+
 ## 2026.10.23
 
 ### Features

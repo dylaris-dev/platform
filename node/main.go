@@ -2276,6 +2276,17 @@ func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) f
 	}
 }
 
+// announceStopping reports "stopping" for gracefulStop, unless a busy hold
+// (restore, install, move) is reporting its own status: the hold rewrites it
+// every ttl/3, so a "stopping" here took turns with it and the panel
+// alternated restarting -> stopping -> restarting until the work ended.
+func announceStopping(ctx context.Context, rdb *redis.Client, uuid string) {
+	if isNodeBusy(ctx, rdb, uuid) {
+		return
+	}
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopping", 30*time.Second)
+}
+
 // saveAllMinUptime is how long a container must have run before a stop sends
 // save-all ahead of "stop"; see gracefulStop.
 const saveAllMinUptime = time.Minute
@@ -2331,7 +2342,7 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 	// container's tunnel had already gone while the status had not moved.
 	//
 	// Callers overwrite this with the outcome (stopped / starting) as before.
-	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopping", 30*time.Second)
+	announceStopping(ctx, rdb, uuid)
 
 	// save-all first, so a stop that has to be forced below still left a save
 	// behind. Not for a container that only just started: its world may not be

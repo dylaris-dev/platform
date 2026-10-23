@@ -64,3 +64,25 @@ func TestBusyInterlockIsTheKeyTheReconcilerReads(t *testing.T) {
 		t.Fatal("interlock still reported after release")
 	}
 }
+
+// A stop inside a busy operation (restore, install, move) must not announce
+// "stopping": the hold refreshes its own status every ttl/3, so the two writes
+// took turns and the panel alternated restarting -> stopping -> restarting.
+// A plain stop still announces it, before the wait (see gracefulStop).
+func TestAStopInsideABusyHoldKeepsTheHoldsStatus(t *testing.T) {
+	rdb, _ := newBusyRedis(t)
+	ctx := context.Background()
+	statusKey := "dylaris:server:srv-1:status"
+
+	announceStopping(ctx, rdb, "srv-1")
+	if got := rdb.Get(ctx, statusKey).Val(); got != "stopping" {
+		t.Fatalf("a plain stop announced %q, want stopping", got)
+	}
+
+	release := holdBusyStatus(rdb, "srv-1", "restarting", busyStatusTTL)
+	defer release()
+	announceStopping(ctx, rdb, "srv-1")
+	if got := rdb.Get(ctx, statusKey).Val(); got != "restarting" {
+		t.Fatalf("a stop inside a restore announced %q, want the hold's restarting", got)
+	}
+}

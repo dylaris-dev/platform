@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.2
+
+### Features
+- **Paying by SEPA Direct Debit activates your plan right away.** It used to wait until the debit
+  cleared. If the debit fails, the plan ends and later purchases on that account are card only.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Server status no longer jumps back and forth on a restart or a restore.** A restart showed
+  starting, restarting, starting; a restore flipped between restarting and stopping. `node`
+
 ## 2026.10.23
 
 ### Features

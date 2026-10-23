@@ -711,7 +711,9 @@ func TestServerPowerHandler_HappyPath_QueuesCommandAndUpdatesState(t *testing.T)
 		wantDesiredState string
 	}{
 		{"start", "stopped", "starting", "online"},
-		{"restart", "online", "starting", "online"},
+		// What the node reports next; "starting" made the panel step back:
+		// starting -> restarting -> starting -> online (measured live 2026-10-23).
+		{"restart", "online", "restarting", "online"},
 		{"stop", "online", "stopping", "stopped"},
 		{"kill", "online", "stopping", "stopped"},
 	}
