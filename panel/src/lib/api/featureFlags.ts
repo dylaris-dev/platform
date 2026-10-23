@@ -43,6 +43,9 @@ export interface FeatureFlags {
     // the subsystem can be switched on with no storage behind it, and until now
     // that only surfaced as an HTTP 424 at the end of building a pack.
     modpackStorage: boolean;
+    // The beta mod and plugin config editor, already resolved for this caller
+    // (Core holds off / admin / all). Optional: an older Core omits it.
+    modConfigs?: boolean;
 }
 
 // Every field is optional on the way OUT: the Features screen is a set of tabs
@@ -84,6 +87,8 @@ export interface FeatureFlagsAdminPayload {
     // NO EXTRA RESTRICTION, not "none" - the backend already stops a key from
     // exceeding what its creator holds.
     userApiKeyAllowedCaps?: string;
+    // Who is offered the beta config editor.
+    modConfigs?: 'off' | 'admin' | 'all';
 }
 
 export async function getSystemFeatures(): Promise<{ success: boolean; features?: FeatureFlags; message?: string }> {

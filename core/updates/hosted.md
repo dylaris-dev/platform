@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.4
+
+### Features
+- **You can pause updates for single mods.** Update all leaves them alone and says so, and a
+  rollback now asks first and shows which version you go back to.
+- **Pinned servers show the load of each of their CPU cores** while no other server shares them.
+  Needs the current node, which updates itself. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Mod icons and Modrinth category icons show again,** and search fields no longer type over
+  their icon. The sidebar now separates your own servers from the ones you were invited to.
+- **CPU no longer reads above 100%.** Needs the current node, which updates itself. `node`
+
 ## 2026.10.23.3
 
 ### Features

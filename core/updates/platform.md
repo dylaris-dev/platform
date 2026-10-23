@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.4
+
+### Features
+- **Mods can be paused for updates.** Update all skips a paused mod and names it in its confirm; a
+  rollback now asks first and shows both version numbers. Roll back all is gone. `core` `panel`
+- **Per-core CPU for pinned servers.** Members see it while no other server can use their cores,
+  admins always, with shared cores marked. `core` `node` `panel`
+- **Beta config editor for mods and plugins** under Configuration, offered to nobody, admins or
+  everyone from Settings, Features. It uses the file manager's permissions. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The sidebar separates your servers, invitations and admin access.** Admin mode frames servers
+  you reach only as an admin; servers an admin was invited to are listed as invitations. `core` `panel`
+- **Mod icons show on Installed, and Modrinth category icons render again.** Search fields no
+  longer type over their magnifier icon. `panel`
+- **CPU no longer reads above 100%,** and the memory tooltip lists Container above JVM heap, as
+  the chart does. `node` `panel`
+
 ## 2026.10.23.3
 
 ### Features

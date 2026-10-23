@@ -20,6 +20,8 @@ func NewSystemFeaturesHandler(state *AppState) *SystemFeaturesHandler {
 // (so anonymous browsers can't fingerprint the platform config), no admin
 // requirement.
 func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	modConfigs := h.state.FeatureFlags.ModConfigsAudience(r.Context())
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"features": map[string]bool{
@@ -60,6 +62,10 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// upload that ends it. Not sensitive: it says a backend exists, not
 			// what or where it is.
 			"modpackStorage": h.state.ModpackStorageConfigured(),
+			// The beta config editor, resolved for THIS caller: the setting is
+			// off, admin or all, and the panel only needs to know whether to
+			// offer the tab.
+			"modConfigs": modConfigs == "all" || (modConfigs == "admin" && isAdmin),
 		},
 	})
 }

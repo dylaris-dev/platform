@@ -18,6 +18,7 @@ import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard'
 import MetricsDatabaseCard from '@/components/settings/MetricsDatabaseCard';
 import VoiceAccessCard from '@/components/settings/VoiceAccessCard';
 import { SwitchRow } from '@/components/ui/Switch';
+import Segmented from '@/components/ui/Segmented';
 import Checkbox from '@/components/ui/Checkbox';
 import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
@@ -54,7 +55,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -227,7 +228,7 @@ export default function FeaturesTab() {
     // The three groups the one payload is now cut into. Listed here rather than
     // inline so a new flag has exactly one place to be added and cannot end up
     // in no tab at all - which would make it unsavable while looking fine.
-    const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library'] as const;
+    const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library', 'modConfigs'] as const;
     const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
 
@@ -422,6 +423,25 @@ export default function FeaturesTab() {
                     <p className="text-xs text-(--base-06)">
                         Who sees it - admins only, or everyone - stays in Settings, Modules.
                     </p>
+                </SettingsGroup>
+                <SettingsGroup title="Mod and plugin config editor (beta)">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs text-(--base-06) max-w-prose">
+                            A Mod configs tab under each server&apos;s Configuration that lists the files in config/ and
+                            plugins/ with an editor beside them. It uses the file manager&apos;s permissions, so it only
+                            decides who is offered the tab.
+                        </p>
+                        <Segmented
+                            ariaLabel="Who is offered the config editor"
+                            value={platformFlags.modConfigs ?? 'off'}
+                            onChange={v => editPlatformFlag('modConfigs', v)}
+                            options={[
+                                { id: 'off', label: 'Off' },
+                                { id: 'admin', label: 'Admins' },
+                                { id: 'all', label: 'Everyone' },
+                            ]}
+                        />
+                    </div>
                 </SettingsGroup>
                         </SettingsCard>
                     )}

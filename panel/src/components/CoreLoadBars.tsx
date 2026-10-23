@@ -16,7 +16,7 @@ export default function CoreLoadBars({ serverId, active }: { serverId: number; a
   const [data, setData] = useState<ServerCoreLoad | null>(null);
 
   useEffect(() => {
-    if (!active) { setData(null); return; }
+    if (!active) return;
     let cancelled = false;
     const tick = async () => {
       if (document.visibilityState !== 'visible') return;
@@ -30,7 +30,7 @@ export default function CoreLoadBars({ serverId, active }: { serverId: number; a
     return () => { cancelled = true; clearInterval(t); };
   }, [serverId, active]);
 
-  if (!data || data.cores.length === 0) return null;
+  if (!active || !data || data.cores.length === 0) return null;
   const anyShared = data.cores.some(c => c.shared);
 
   return (

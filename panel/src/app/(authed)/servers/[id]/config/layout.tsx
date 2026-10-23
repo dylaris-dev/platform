@@ -4,7 +4,7 @@ import React from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAppData } from '@/lib/AppDataContext';
-import { Settings2, Image as ImageIcon, Activity, Clock, LayoutGrid, Network as NetworkIcon } from 'lucide-react';
+import { Settings2, Image as ImageIcon, Activity, Clock, LayoutGrid, Network as NetworkIcon, FileCode2 } from 'lucide-react';
 import { useRouteId } from '@/lib/routeParams';
 
 // Configuration sub-tab strip. Each sub-tab is a nested route under
@@ -19,7 +19,7 @@ import { useRouteId } from '@/lib/routeParams';
 export default function ServerConfigLayout({ children }: { children: React.ReactNode }) {
     const paramId = useRouteId('servers');
     const pathname = usePathname();
-    const { servers } = useAppData();
+    const { servers, featureFlags } = useAppData();
 
     const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
@@ -32,6 +32,8 @@ export default function ServerConfigLayout({ children }: { children: React.React
         { slug: 'scheduled',  label: 'Scheduled',  Icon: Clock },
         { slug: 'tabs',       label: 'Tabs',       Icon: LayoutGrid },
         ...(isProxy ? [{ slug: 'proxy', label: 'Proxy', Icon: NetworkIcon }] : []),
+        // Beta, offered per the admin's Features setting (admins only, or everyone).
+        ...(featureFlags?.modConfigs ? [{ slug: 'mods', label: 'Mod configs', Icon: FileCode2 }] : []),
     ];
 
     return (

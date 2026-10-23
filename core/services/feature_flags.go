@@ -192,6 +192,21 @@ func (f *FeatureFlags) IsVoiceChatEnabled(ctx context.Context) bool {
 	return f.Get(ctx, VoiceChatSettingKey, false)
 }
 
+// ModConfigsSettingKey holds who is offered the beta mod and plugin config
+// editor: "off" (the default), "admin" or "all". Presentation only - the
+// editor reads and writes through the file endpoints, which check files.read
+// and files.write like the file manager does.
+const ModConfigsSettingKey = "feature_mod_configs"
+
+// ModConfigsAudience is that setting, with anything unrecognised read as off.
+func (f *FeatureFlags) ModConfigsAudience(ctx context.Context) string {
+	switch v := f.GetString(ctx, ModConfigsSettingKey, "off"); v {
+	case "admin", "all":
+		return v
+	}
+	return "off"
+}
+
 // IsBYONEnabled gates the bring-your-own-node multi-tenancy (per-user node
 // enrollment, node ownership scoping, plans/billing). Default = false: the
 // platform ships as today's single-operator panel and the operator opts in.

@@ -83,6 +83,8 @@ type featureSettingsPayload struct {
 	// meaningful value here (no restriction), so "not sent" needs its own shape
 	// or the API-keys tab would have to be saved from every other tab.
 	UserAPIKeyAllowedCaps *string `json:"userApiKeyAllowedCaps"`
+	// ModConfigs is who is offered the beta config editor: off, admin or all.
+	ModConfigs *string `json:"modConfigs"`
 }
 
 // boolPtr / strPtr fill the GET response, which always states every flag.
@@ -114,6 +116,8 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		UserAPIKeys:           boolPtr(h.state.FeatureFlags.UserAPIKeysEnabled(r.Context())),
 		UserAPIKeyAllowedCaps: &caps,
 	}
+	modConfigs := h.state.FeatureFlags.ModConfigsAudience(r.Context())
+	out.ModConfigs = &modConfigs
 	resp := map[string]interface{}{
 		"success":  true,
 		"features": out,
@@ -148,6 +152,10 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req featureSettingsPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.ModConfigs != nil && *req.ModConfigs != "off" && *req.ModConfigs != "admin" && *req.ModConfigs != "all" {
+		sendJSONError(w, "modConfigs must be off, admin or all", http.StatusBadRequest)
 		return
 	}
 
@@ -244,6 +252,18 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// the list is a NARROWING filter, and an entry that no key could carry
 	// anyway narrows nothing. Refusing the whole save over one stale id would
 	// make the field impossible to edit after a capability is renamed.
+	if req.ModConfigs != nil {
+		if err := h.state.Store.SetSetting(services.ModConfigsSettingKey, *req.ModConfigs); err != nil {
+			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.state.FeatureFlags.Invalidate(services.ModConfigsSettingKey)
+		h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
+			"feature": "modConfigs",
+			"enabled": *req.ModConfigs != "off",
+		})
+	}
+
 	if req.UserAPIKeyAllowedCaps != nil {
 		if err := h.state.Store.SetSetting("apikeys_user_allowed_caps", sanitizeKeyCapList(*req.UserAPIKeyAllowedCaps)); err != nil {
 			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
