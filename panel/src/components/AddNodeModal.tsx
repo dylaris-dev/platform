@@ -36,6 +36,9 @@ services:
     image: ghcr.io/dylaris-dev/platform-node:latest
     restart: unless-stopped
     environment:
+      # Names this node after its host; inside a task the hostname is the
+      # container id.
+      NODE_HOSTNAME: "{{.Node.Hostname}}"
       # The same value Core runs with. A fleet host is trusted infrastructure:
       # it pairs by proving this secret, so no enroll token is involved.
       CLUSTER_SECRET: "\${CLUSTER_SECRET}"

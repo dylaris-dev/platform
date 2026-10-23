@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -113,9 +114,8 @@ func ensureNodeSecret(ctx context.Context) []byte {
 			"behind, Core refuses the node as presenting a secret proof for an identity it does not know.", idErr, nodeSecretDir)
 	}
 	hadAssignedID := id != ""
-	if hadAssignedID {
-		nodeID = id
-	}
+	_, paired := loadNodeSecret(nodeSecretDir)
+	nodeID = dialIdentity(id, paired, os.Getenv("NODE_ID"), nodeID)
 	// The key before anything dials, for the same reason. A key this node cannot
 	// read is not replaced; the node goes on without one, which Core admits by
 	// the secret only while its row has never held a key.
@@ -422,4 +422,24 @@ func isRedisAuthError(err error) bool {
 	}
 	s := err.Error()
 	return strings.Contains(s, "NOAUTH") || strings.Contains(s, "NOPERM") || strings.Contains(s, "WRONGPASS")
+}
+
+// dialIdentity is the name this node presents to Core.
+//
+// The cached, Core-assigned id when there is one. Otherwise the machine's name
+// (fallback) - EXCEPT on a node that is already paired (it holds a secret) but
+// has no cached id: a row created before Core assigned ids (2026-07) has the
+// name the node enrolled with as its identity, and that name was NODE_ID. Such
+// a node must keep presenting it, or Core no longer knows it. Everywhere else
+// NODE_ID is ignored (2026-10-23).
+func dialIdentity(cachedID string, paired bool, legacyNodeID, fallback string) string {
+	if cachedID != "" {
+		return cachedID
+	}
+	if paired {
+		if v := strings.TrimSpace(legacyNodeID); v != "" {
+			return v
+		}
+	}
+	return fallback
 }

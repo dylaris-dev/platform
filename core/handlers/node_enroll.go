@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -152,7 +154,14 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	}
 	t := time.Now().AddDate(0, 0, days)
 	exp := &t
-	if err := h.state.Store.CreateNodeEnrollToken(userID, token, strings.TrimSpace(req.Label), exp, warpKeyNodeID); err != nil {
+	// The label becomes the node's display name when the token is redeemed, so
+	// it is held to what a name can be: short, one line, no control characters.
+	label := strings.TrimSpace(req.Label)
+	if !validEnrollLabel(label) {
+		sendJSONError(w, "The name may be at most 64 characters, on one line.", http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.CreateNodeEnrollToken(userID, token, label, exp, warpKeyNodeID); err != nil {
 		sendJSONError(w, "Failed to create token", http.StatusInternalServerError)
 		return
 	}
@@ -220,4 +229,18 @@ func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// validEnrollLabel: empty (the node's own name is used), or at most 64
+// characters with no control character in it.
+func validEnrollLabel(s string) bool {
+	if utf8.RuneCountInString(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }

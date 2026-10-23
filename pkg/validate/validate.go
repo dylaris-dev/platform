@@ -57,8 +57,8 @@ var (
 	//
 	// The hyphen is allowed on purpose - "home-desktop" is how people name a
 	// machine - but only in the middle. A LEADING hyphen is the one that bites:
-	// the name is slugged into NODE_ID and lands in a compose file, where
-	// anything that shells out reads "-foo" as a flag. The panel's
+	// the name lands in a compose file and command lines, where anything that
+	// shells out reads "-foo" as a flag. The panel's
 	// nodeIdFromLabel already stripped those, and this makes the two agree
 	// instead of one silently rewriting what the other accepted.
 	//
