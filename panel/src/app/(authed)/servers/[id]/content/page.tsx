@@ -24,10 +24,10 @@ import { matchesServerBucket, serverBucket, serverBucketLabel, serverBucketTitle
 import { EnvTag, ServerSideFilter } from '@/components/mods/EnvironmentFilter';
 import { browseNotice, envFilterName } from '@/lib/browseNotice';
 import {
-    pickPreferredVersion, rowUpdateTarget, dependencyProblems, unresolvedDependencyVersionIds,
+    pickPreferredVersion, rowUpdateTarget,
     type ModStatus,
 } from '@/lib/modVersionCompare';
-import { installQueue, planConfirm, planRefused } from '@/lib/modInstallPlan';
+import { installQueue, planConfirm, planRefused, updateQueue } from '@/lib/modInstallPlan';
 import { MOD_LOADERS_FOR, PLUGIN_LOADERS, buildMismatch, loaderName, modFitKnown } from '@/lib/modFit';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
@@ -559,52 +559,6 @@ export default function ServerContentPage() {
         }
     };
 
-    // A single update is the reader's explicit choice, so a dependency problem
-    // warns rather than blocks - unlike Update all, which skips the mod.
-    const confirmDependencies = async (project: ModrinthProject, version: ModrinthVersion): Promise<boolean> => {
-        const ids = new Set(installed.filter(m => isOnServer(m)).map(m => m.modrinthProjectId));
-        // A dependency named only by a build is judged by that build's project.
-        const versionIds = unresolvedDependencyVersionIds(version);
-        const versionProjects = new Map<string, string>();
-        if (versionIds.length) {
-            try { for (const v of await getModrinthVersionsByIds(versionIds)) versionProjects.set(v.id, v.project_id); } catch { /* stays unresolved */ }
-        }
-        const problems = dependencyProblems(version, ids, versionProjects);
-        if (!problems.missing.length && !problems.incompatible.length) return true;
-        const names = new Map<string, string>();
-        try {
-            for (const p of await getModrinthProjectsByIds([...problems.missing, ...problems.incompatible])) names.set(p.id, p.title);
-        } catch { /* ids stay as they are */ }
-        const missing = problems.missing.map(id => names.get(id) ?? id);
-        const incompatible = problems.incompatible.map(id => names.get(id) ?? id);
-        const parts: string[] = [];
-        if (missing.length) parts.push(`It requires ${missing.join(', ')}, which this server does not have as a managed mod.`);
-        if (incompatible.length) parts.push(`It is incompatible with ${incompatible.join(', ')}, which is installed.`);
-        return confirmDialog({
-            title: `${version.version_number} of "${project.title}" may stop the server from starting`,
-            message: parts.join(' '),
-            confirmLabel: 'Update anyway',
-        });
-    };
-
-    // Fires the actual install call (no confirm - callers run
-    // confirmModpackCrossCheck first). Progress and the outcome show on the
-    // button and in the navbar widget; a failure also toasts from the manager.
-    const doInstall = async (project: ModrinthProject, version: ModrinthVersion) => {
-        const file = pickPrimaryFile(version);
-        if (!file) { showToast('Version has no downloadable file', false); return; }
-        const job = await installs.start(serverId, serverName, {
-            projectId: project.id,
-            projectSlug: project.slug,
-            versionId: version.id,
-            title: project.title,
-            fileName: file.filename,
-            downloadUrl: file.url,
-            sha512: file.hashes.sha512,
-        });
-        if (job.state !== 'failed') refreshInstalledSoon();
-    };
-
     // Without the server's Minecraft version nothing can tell a build for it
     // from one for another version, which is how a 26.3 beta landed on a
     // 1.21.1 server. Advanced is the explicit "I pick the build" way round.
@@ -789,7 +743,7 @@ export default function ServerContentPage() {
         const notice = await clientSideWarning(planned.map(p => p.mod.modrinthProjectId));
         const ok = await confirmDialog({
             title: `Update ${planned.length} ${planned.length === 1 ? 'mod' : 'mods'}?`,
-            message: `${planned.length} ${planned.length === 1 ? 'mod moves' : 'mods move'} to a newer build for ${pinnedLoader} ${pinnedMcVersion}, never to a less stable channel.`
+            message: `${planned.length} ${planned.length === 1 ? 'mod moves' : 'mods move'} to a newer build for ${pinnedLoader} ${pinnedMcVersion}, never to a less stable channel. Dependencies a new build needs are installed first.`
                 + (skipped.length ? ` ${skipped.length} skipped: ${shown}${more}.` : ' Nothing skipped.')
                 + (tally.unknown ? ` ${tally.unknown} could not be checked.` : '')
                 + (notice ? ` ${notice}` : ''),
@@ -798,12 +752,18 @@ export default function ServerContentPage() {
         });
         if (!ok) return;
 
+        // Each update is planned like a single install: what the new build needs
+        // is installed first. A build Core cannot plan, or one that would leave
+        // a dependency unresolved or clash with an installed mod, is not
+        // installed - the run must not leave a server that cannot start.
+        const runSkipped: { title: string; reason: string }[] = [];
         for (const [i, { mod: m, build }] of planned.entries()) {
             if (bulkCancelled.current) break;
-            setBulk({ done: i, total: planned.length, current: m.title || m.fileName });
+            const title = m.title || m.fileName;
+            setBulk({ done: i, total: planned.length, current: title });
             const file = pickPrimaryFile(build);
             if (!file) { tally.failed++; continue; }
-            const job = await installs.start(serverId, serverName, {
+            const root: InstallModPayload = {
                 projectId: m.modrinthProjectId,
                 projectSlug: m.modrinthProjectSlug,
                 versionId: build.id,
@@ -811,13 +771,30 @@ export default function ServerContentPage() {
                 fileName: file.filename,
                 downloadUrl: file.url,
                 sha512: file.hashes.sha512,
-            });
-            if (job.state !== 'failed') tally.updated++; else tally.failed++;
+            };
+            const res = await planModInstall(serverId, build.id);
+            if (!res.ok) {
+                // The session or the permission is gone: every further plan
+                // would be refused the same way.
+                if (res.status === 401 || res.status === 403) { showToast(res.message, false); break; }
+                runSkipped.push({ title, reason: res.message });
+                continue;
+            }
+            const step = updateQueue(res.plan, root);
+            if ('skip' in step) { runSkipped.push({ title, reason: step.skip }); continue; }
+            let ok = true;
+            for (const p of step.queue) {
+                const job = await installs.start(serverId, serverName, p);
+                if (job.state === 'failed') { ok = false; break; }
+            }
+            if (ok) tally.updated++; else tally.failed++;
         }
+        if (runSkipped.length) setBulkSkipped(prev => [...prev, ...runSkipped]);
 
         setBulk(null);
         refreshInstalled();
-        const extra = skipped.length ? ` ${skipped.length} skipped, listed below.` : '';
+        const allSkipped = skipped.length + runSkipped.length;
+        const extra = allSkipped ? ` ${allSkipped} skipped, listed below.` : '';
         showToast(summarise(tally) + extra, runWasClean(tally));
     };
 
@@ -928,8 +905,9 @@ export default function ServerContentPage() {
             const project = await getModrinthProject(hit.slug);
             if (!project) { showToast('Failed to load project details', false); return; }
             if (!await confirmModpackCrossCheck(project, latest)) return;
-            if (!await confirmDependencies(project, latest)) return;
-            await doInstall(project, latest);
+            // The same path as an install: Core plans it, and what the new build
+            // needs is installed first.
+            await handleInstall(project, latest);
         });
 
     // ----- Advanced toggle -----

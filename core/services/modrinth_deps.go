@@ -384,12 +384,13 @@ type depResolution struct {
 const maxDepNodes = 50
 
 // resolveDeps walks the required dependencies of root breadth-first. A
-// dependency in have (already installed) or already seen (cycles, diamonds) is
-// not resolved again. A pinned version is used only when it fits the server;
+// dependency in have (already satisfied) or already seen (cycles, diamonds) is
+// not resolved again. present is what is on the server at all, fitting or not:
+// an incompatible project is a conflict whichever build of it is installed. A pinned version is used only when it fits the server;
 // otherwise, and for an unpinned dependency, the preferred fitting version of
 // the project is taken. A version_id-only dependency learns its project from
 // that version.
-func resolveDeps(ctx context.Context, root *modrinthVersion, loader, mc string, have map[string]bool) (*depResolution, error) {
+func resolveDeps(ctx context.Context, root *modrinthVersion, loader, mc string, have, present map[string]bool) (*depResolution, error) {
 	loader = strings.ToLower(strings.TrimSpace(loader))
 	mc = strings.TrimSpace(mc)
 	if !ModFitKnown(loader, mc) {
@@ -437,7 +438,7 @@ func resolveDeps(ctx context.Context, root *modrinthVersion, loader, mc string, 
 		for _, v := range frontier {
 			for _, d := range v.Dependencies {
 				if d.DependencyType == "incompatible" {
-					if have[d.ProjectID] && !reportedIncompat[d.ProjectID] {
+					if present[d.ProjectID] && !reportedIncompat[d.ProjectID] {
 						reportedIncompat[d.ProjectID] = true
 						res.incompatible = append(res.incompatible, DepProblem{ProjectID: d.ProjectID, by: v.ProjectID})
 					}
@@ -535,7 +536,7 @@ type ResolvedDep struct {
 // project ids that are already there. Dependencies that could not be resolved
 // are left out of the list and returned as unresolved, for the caller to report.
 func ResolveModrinthDependencies(root *modrinthVersion, mc, loader string, alreadyHave map[string]bool) ([]ResolvedDep, []DepProblem, error) {
-	res, err := resolveDeps(context.Background(), root, loader, mc, alreadyHave)
+	res, err := resolveDeps(context.Background(), root, loader, mc, alreadyHave, alreadyHave)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -573,12 +574,34 @@ type ModFitError struct{ Reason string }
 func (e *ModFitError) Error() string { return e.Reason }
 
 // PlanModInstall works out what installing versionID onto a server with this
-// loader and Minecraft version takes. installed holds the project ids already
-// on the server. It reads Modrinth only.
-func PlanModInstall(ctx context.Context, versionID, loader, mc string, installed map[string]bool) (*ModInstallPlan, error) {
-	got, err := fetchVersionsByID(ctx, []string{versionID})
+// loader and Minecraft version takes. installed maps the projects already on
+// the server to the version installed. It reads Modrinth only.
+//
+// An installed build that does not fit the server (a Forge jar on NeoForge, a
+// build for another Minecraft version) does not satisfy a dependency: the
+// plan installs a fitting one, and the install replaces the jar. A build
+// Modrinth does not know is taken as fitting, so nothing is reinstalled on a
+// guess.
+func PlanModInstall(ctx context.Context, versionID, loader, mc string, installed map[string]string) (*ModInstallPlan, error) {
+	lookup := []string{versionID}
+	for _, vid := range installed {
+		if vid != "" && vid != versionID {
+			lookup = append(lookup, vid)
+		}
+	}
+	got, err := fetchVersionsByID(ctx, lookup)
 	if err != nil {
 		return nil, err
+	}
+	present, satisfied := map[string]bool{}, map[string]bool{}
+	for pid, vid := range installed {
+		present[pid] = true
+		if b := got[vid]; b != nil {
+			if ok, _ := ModVersionFits(loader, mc, b.Loaders, b.GameVersions); !ok {
+				continue
+			}
+		}
+		satisfied[pid] = true
 	}
 	root := got[versionID]
 	if root == nil {
@@ -587,7 +610,7 @@ func PlanModInstall(ctx context.Context, versionID, loader, mc string, installed
 	if ok, reason := ModVersionFits(loader, mc, root.Loaders, root.GameVersions); !ok {
 		return nil, &ModFitError{Reason: reason}
 	}
-	res, err := resolveDeps(ctx, root, loader, mc, installed)
+	res, err := resolveDeps(ctx, root, loader, mc, satisfied, present)
 	if err != nil {
 		return nil, err
 	}

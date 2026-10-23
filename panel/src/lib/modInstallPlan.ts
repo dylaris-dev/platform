@@ -34,6 +34,21 @@ export function installQueue(plan: ModInstallPlan, root: InstallModPayload): Ins
     return [...deps, root];
 }
 
+/**
+ * What Update all does with one mod's plan: the installs to run, dependencies
+ * first, or why the mod is left on its current build. There is nobody to ask
+ * mid-run, so a build that would leave a dependency unresolved or clash with an
+ * installed mod is not installed: the run must not leave a server that cannot
+ * start.
+ */
+export function updateQueue(plan: ModInstallPlan, root: InstallModPayload): { queue: InstallModPayload[] } | { skip: string } {
+    const blockers = [...plan.unresolved, ...plan.incompatible];
+    if (blockers.length) {
+        return { skip: `the new build needs or clashes with ${blockers.map(p => p.title || p.reason).join(', ')}` };
+    }
+    return { queue: installQueue(plan, root) };
+}
+
 export interface PlanConfirm {
     title: string;
     message: string;

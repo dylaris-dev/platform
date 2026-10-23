@@ -194,10 +194,11 @@ describe('planModUpdate', () => {
             want: 'current',
         },
         {
-            name: 'missing required dependency is skipped',
+            // The run plans it with Core and installs the dependency first.
+            name: 'missing required dependency is updated, not skipped',
             installed: installedRelease,
             candidates: [forge({ id: 'r2', dependencies: [{ project_id: 'dragons-plus', dependency_type: 'required' }] })],
-            want: 'skip:r2',
+            want: 'update:r2',
         },
         {
             name: 'installed required dependency is fine',

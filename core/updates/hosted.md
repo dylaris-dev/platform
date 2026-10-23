@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Updating a mod now brings the dependencies its new build needs,** for a single mod and for
+  Update all. An installed mod built for another loader or Minecraft version is replaced when needed.
+
 ## 2026.10.23.2
 
 ### Features

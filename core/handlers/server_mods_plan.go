@@ -55,11 +55,12 @@ func (h *ServerModsHandler) Plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A failed row's jar is not there, so its project is still something a
-	// dependency has to bring.
-	installed := map[string]bool{}
+	// dependency has to bring. The version goes along so the planner can tell
+	// an installed build that does not fit the server from one that does.
+	installed := map[string]string{}
 	for _, m := range mods {
 		if m.ModrinthProjectID != "" && (m.Status == "installed" || m.Status == "installing") {
-			installed[m.ModrinthProjectID] = true
+			installed[m.ModrinthProjectID] = m.ModrinthVersionID
 		}
 	}
 

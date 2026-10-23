@@ -108,7 +108,7 @@ func TestPlanModInstall(t *testing.T) {
 	tests := []struct {
 		name             string
 		versions         map[string]*modrinthVersion
-		installed        map[string]bool
+		installed        map[string]string
 		wantInstall      []string
 		wantUnresolved   []string
 		wantIncompatible []string
@@ -137,7 +137,7 @@ func TestPlanModInstall(t *testing.T) {
 				ver("b1", "B", "2026-01-01", req("C", "")),
 				ver("c1", "C", "2026-01-01"),
 			),
-			installed:   map[string]bool{"B": true},
+			installed:   map[string]string{"B": "b1"},
 			wantInstall: []string{"a1"},
 		},
 		{
@@ -200,7 +200,55 @@ func TestPlanModInstall(t *testing.T) {
 			versions: catalog(
 				ver("a1", "A", "2026-01-01", dep{ProjectID: "X", DependencyType: "incompatible"}, dep{ProjectID: "Y", DependencyType: "incompatible"}),
 			),
-			installed:        map[string]bool{"X": true},
+			installed:        map[string]string{"X": "x-gone"},
+			wantInstall:      []string{"a1"},
+			wantIncompatible: []string{"X"},
+		},
+		{
+			// The B on the server is a Forge jar; a NeoForge server cannot load it,
+			// so B is not satisfied and the plan brings the fitting one.
+			name: "installed wrong-loader build does not satisfy",
+			versions: catalog(
+				ver("a1", "A", "2026-01-01", req("B", "")),
+				ver("b1", "B", "2026-01-01"),
+				forgeBuild,
+			),
+			installed:   map[string]string{"B": "b-forge"},
+			wantInstall: []string{"b1", "a1"},
+		},
+		{
+			name: "installed build for another MC version does not satisfy",
+			versions: catalog(
+				ver("a1", "A", "2026-01-01", req("B", "")),
+				ver("b1", "B", "2026-01-01"),
+				wrongMC,
+			),
+			installed:   map[string]string{"B": "b-263"},
+			wantInstall: []string{"b1", "a1"},
+		},
+		{
+			// Modrinth does not know the installed version (pulled, or a jar we
+			// never placed): taken as fitting rather than reinstalled on a guess.
+			name: "installed build Modrinth does not know still satisfies",
+			versions: catalog(
+				ver("a1", "A", "2026-01-01", req("B", "")),
+				ver("b1", "B", "2026-01-01"),
+			),
+			installed:   map[string]string{"B": "b-unknown"},
+			wantInstall: []string{"a1"},
+		},
+		{
+			// A conflict is a conflict whichever build of X is on disk.
+			name: "installed incompatible project is reported even as a wrong build",
+			versions: catalog(
+				ver("a1", "A", "2026-01-01", dep{ProjectID: "X", DependencyType: "incompatible"}),
+				func() *modrinthVersion {
+					v := ver("x-forge", "X", "2026-01-01")
+					v.Loaders = []string{"forge"}
+					return v
+				}(),
+			),
+			installed:        map[string]string{"X": "x-forge"},
 			wantInstall:      []string{"a1"},
 			wantIncompatible: []string{"X"},
 		},
@@ -247,7 +295,7 @@ func TestPlanModInstallEntryShape(t *testing.T) {
 		ver("a1", "A", "2026-01-01", dep{ProjectID: "X", DependencyType: "incompatible"}),
 	)}
 	f.install(t)
-	plan, err := PlanModInstall(context.Background(), "a1", "neoforge", "1.21.1", map[string]bool{"X": true})
+	plan, err := PlanModInstall(context.Background(), "a1", "neoforge", "1.21.1", map[string]string{"X": ""})
 	if err != nil {
 		t.Fatal(err)
 	}

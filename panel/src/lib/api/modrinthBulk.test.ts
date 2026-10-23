@@ -188,8 +188,9 @@ describe('checkModUpdates on a 343-mod server', () => {
         expect(got).not.toBeNull();
 
         // 4 x versions?ids, 2 hash groups (release, beta), 5 one-by-one, 1 dependency
-        // resolution, 1 naming call. The old loop made at least one per mod: 343.
-        expect(calls.length).toBe(13);
+        // resolution. No naming call: nothing is skipped. The old loop made at
+        // least one per mod: 343.
+        expect(calls.length).toBe(12);
         expect(calls.filter(c => c.startsWith('/project/'))).toHaveLength(5);
         expect(progress.at(-1)).toBe(N);
 
@@ -201,8 +202,10 @@ describe('checkModUpdates on a 343-mod server', () => {
         expect(plannedById.get('p30')).toBe('p30c');
         // The version-only dependency resolves to an installed project: no skip.
         expect(plannedById.get('p2')).toBe('p2b');
-        // The one that resolves to an absent project is skipped, by name.
-        expect(got!.skipped.map(s => [s.mod.modrinthProjectId, s.reason])).toEqual([['p8', 'needs Shared Lib']]);
+        // The one that needs an absent project is planned too: the run plans it
+        // with Core and installs Shared Lib first.
+        expect(plannedById.get('p8')).toBe('p8b');
+        expect(got!.skipped).toEqual([]);
         expect(got!.unknown).toBe(0);
         expect(got!.planned.length + got!.skipped.length + got!.current).toBe(N);
     });

@@ -35,8 +35,8 @@ func (f *planFakeStore) ListServerMods(int, string) ([]models.ServerMod, error) 
 func TestPlanEndpoint(t *testing.T) {
 	known := models.Server{InstallerType: "neoforge", MinecraftVersion: "1.21.1", ActiveSubServer: "main"}
 	mods := []models.ServerMod{
-		{ModrinthProjectID: "OK", Status: "installed"},
-		{ModrinthProjectID: "BUSY", Status: "installing"},
+		{ModrinthProjectID: "OK", ModrinthVersionID: "ok1", Status: "installed"},
+		{ModrinthProjectID: "BUSY", ModrinthVersionID: "busy1", Status: "installing"},
 		{ModrinthProjectID: "BROKEN", Status: "failed"},
 		{Status: "installed"},
 	}
@@ -57,11 +57,11 @@ func TestPlanEndpoint(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotInstalled map[string]bool
+			var gotInstalled map[string]string
 			called := false
 			old := planModInstall
 			t.Cleanup(func() { planModInstall = old })
-			planModInstall = func(_ context.Context, versionID, loader, mc string, installed map[string]bool) (*services.ModInstallPlan, error) {
+			planModInstall = func(_ context.Context, versionID, loader, mc string, installed map[string]string) (*services.ModInstallPlan, error) {
 				called = true
 				gotInstalled = installed
 				if versionID != "v1" || loader != "neoforge" || mc != "1.21.1" {
@@ -93,7 +93,7 @@ func TestPlanEndpoint(t *testing.T) {
 			if tt.wantStatus != 200 {
 				return
 			}
-			if want := map[string]bool{"OK": true, "BUSY": true}; !reflect.DeepEqual(gotInstalled, want) {
+			if want := map[string]string{"OK": "ok1", "BUSY": "busy1"}; !reflect.DeepEqual(gotInstalled, want) {
 				t.Errorf("installed = %v, want %v", gotInstalled, want)
 			}
 			var body struct {

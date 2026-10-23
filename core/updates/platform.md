@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Updating a mod installs the dependencies its new build needs.** The row Update only warned, and
+  Update all skipped such mods; both now plan the update and install what is missing first. `panel`
+- **An installed build that does not fit the server no longer counts as a satisfied dependency.**
+  A Forge jar on a NeoForge server is replaced by a fitting build when a mod needs it. `core`
+
 ## 2026.10.23.2
 
 ### Features

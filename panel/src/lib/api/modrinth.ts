@@ -357,7 +357,9 @@ export async function planModInstall(
     versionId: string,
 ): Promise<{ ok: true; plan: ModInstallPlan } | { ok: false; status?: number; message: string }> {
     try {
-        const res = await fetch(`${API_URL}/servers/${serverId}/mods/plan`, {
+        // Rate-limit aware: Update all plans every mod it updates, and the plan
+        // shares Core's 30/min Modrinth bucket with the update check before it.
+        const res = await fetchRetryingRateLimit(`${API_URL}/servers/${serverId}/mods/plan`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ versionId }),

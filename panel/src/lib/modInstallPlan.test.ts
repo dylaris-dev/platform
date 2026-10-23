@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { installQueue, planConfirm, planRefused } from './modInstallPlan';
+import { installQueue, planConfirm, planRefused, updateQueue } from './modInstallPlan';
 import type { InstallModPayload, ModInstallPlan, ModPlanEntry } from './api/modrinth';
 
 function entry(id: string, versionNumber = '1.0'): ModPlanEntry {
@@ -41,6 +41,23 @@ describe('installQueue', () => {
 
     it('is just the root when nothing else is needed', () => {
         expect(installQueue(plan(), root)).toEqual([root]);
+    });
+});
+
+describe('updateQueue', () => {
+    it('installs what the new build needs first, then the mod', () => {
+        const step = updateQueue(plan({ install: [entry('lib'), entry('root')] }), root);
+        expect('queue' in step && step.queue.map(x => x.versionId)).toEqual(['v-lib', 'v-root']);
+    });
+
+    it('leaves the mod alone when a dependency cannot be resolved', () => {
+        const step = updateQueue(plan({ unresolved: [{ projectId: 'p-x', title: 'Lib X', reason: 'No build fits.' }] }), root);
+        expect(step).toEqual({ skip: 'the new build needs or clashes with Lib X' });
+    });
+
+    it('leaves the mod alone when it clashes with an installed mod', () => {
+        const step = updateQueue(plan({ incompatible: [{ projectId: 'p-y', title: 'Mod Y', reason: 'marked incompatible' }] }), root);
+        expect('skip' in step).toBe(true);
     });
 });
 

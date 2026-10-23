@@ -169,7 +169,9 @@ export interface UpdateTarget {
 
 // What a bulk update should do with one mod. Never moves to a less stable
 // channel than the installed build, never to an older build, and skips a
-// build whose dependencies the server cannot satisfy.
+// build that clashes with an installed mod. A missing required dependency is
+// not a reason to skip: the run plans each update with Core and installs what
+// it needs first, the way a single install does.
 export function planModUpdate(
     installedVersionId: string,
     candidates: ModrinthVersion[],
@@ -192,6 +194,6 @@ export function planModUpdate(
         if (!(Date.parse(next.date_published) > installedAt)) return { kind: 'unknown' };
     }
     const problems = dependencyProblems(next, t.installedProjectIds, t.versionProjects);
-    if (problems.missing.length || problems.incompatible.length) return { kind: 'skip', build: next, problems };
+    if (problems.incompatible.length) return { kind: 'skip', build: next, problems: { missing: [], incompatible: problems.incompatible } };
     return { kind: 'update', build: next };
 }
