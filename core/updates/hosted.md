@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.7
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **NODE_ID is no longer needed.** You can delete the line from your node's compose file; leaving
+  it changes nothing. A new machine shows up under the name you gave it in the panel. `node`
+
 ## 2026.10.23.6
 
 ### Features

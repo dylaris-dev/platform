@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.23.7
+
+### Features
+- **The status page shows voice chat per region,** amber from 80% of a region's port pool and red
+  when servers hold voice ports where no relay runs. `core`
+
+### Breaking
+- **NODE_ID is no longer read.** A node is named after its enroll token's label, or its hostname
+  (NODE_HOSTNAME); an old file that still sets NODE_ID keeps working. `core` `node` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- **The daily platform backup includes the statistics database again.** Its dump failed on
+  pg_subscription through PgBouncer since 2026-10-17; dumps now skip subscriptions. `core`
+- **A failed pg_dump logs its reason,** not only the tail of the query it ran. `core`
+
 ## 2026.10.23.6
 
 ### Features
