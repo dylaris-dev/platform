@@ -1457,6 +1457,28 @@ func (s *PostgresStore) ResetServerCPUPinningByNode(nodeID int) (int64, error) {
 	return n, nil
 }
 
+// ListServerPinningByNode returns every server on the node with only its id,
+// pinning mode and cpuset filled: what deciding whether a core is one
+// server's alone needs. ListServersByNode reads neither column, and a
+// neighbour read without them looks like it runs on every core.
+func (s *PostgresStore) ListServerPinningByNode(nodeID int) ([]models.Server, error) {
+	rows, err := s.db.Query(`SELECT id, COALESCE(cpu_pinning_mode, 'shared'), COALESCE(cpuset, '')
+		FROM servers WHERE node_id = $1 ORDER BY id`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Server
+	for rows.Next() {
+		var srv models.Server
+		if err := rows.Scan(&srv.ID, &srv.CPUPinningMode, &srv.Cpuset); err != nil {
+			return nil, err
+		}
+		out = append(out, srv)
+	}
+	return out, rows.Err()
+}
+
 // ListServerCpusetsByNode returns serverID -> cpuset for every server on the
 // node that has a non-empty cpuset. Used to compute per-core load for the
 // auto-distribution spread.
@@ -1851,19 +1873,28 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 				OR s.owner_id::text = $1
 				OR EXISTS (SELECT 1 FROM server_invites si WHERE si.server_id = s.id AND si.user_id::text = $1)
 			ORDER BY s.id ASC`
-		invited := map[int]bool{}
-		irows, err := s.db.Query(`SELECT server_id FROM server_invites
-			WHERE server_id IS NOT NULL AND user_id::text = $1`, userID)
+		// Which rows the admin also holds an invite for, so the panel can file
+		// them with the invitations: one naming the server, or an owner-wide
+		// one from the server's owner. An owner-wide invite still adds no row
+		// here (see above); it only labels a row that is listed anyway.
+		invited, invitedBy := map[int]bool{}, map[string]bool{}
+		irows, err := s.db.Query(`SELECT COALESCE(server_id, 0), COALESCE(owner_user_id::text, '')
+			FROM server_invites WHERE user_id::text = $1`, userID)
 		if err != nil {
 			return nil, err
 		}
 		for irows.Next() {
 			var id int
-			if err := irows.Scan(&id); err != nil {
+			var owner string
+			if err := irows.Scan(&id, &owner); err != nil {
 				irows.Close()
 				return nil, err
 			}
-			invited[id] = true
+			if id != 0 {
+				invited[id] = true
+			} else if owner != "" {
+				invitedBy[owner] = true
+			}
 		}
 		irows.Close()
 		if err := irows.Err(); err != nil {
@@ -1883,7 +1914,7 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 			srv.Role = "owner"
 			if srv.OwnerID != userID {
 				srv.Role = "admin"
-				srv.InvitedHere = invited[srv.ID]
+				srv.InvitedHere = invited[srv.ID] || invitedBy[srv.OwnerID]
 			}
 			servers = append(servers, srv)
 		}

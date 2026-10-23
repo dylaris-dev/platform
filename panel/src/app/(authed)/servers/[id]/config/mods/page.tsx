@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileCode2, RefreshCw, Search, Save, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { useRouteId } from '@/lib/routeParams';
@@ -34,6 +34,22 @@ export default function ModConfigsPage() {
     const [loadingFile, setLoadingFile] = useState(false);
     const [saving, setSaving] = useState(false);
     const dirty = open !== null && text !== saved;
+    // The file a load was started for. An answer for any other file is late and
+    // is dropped, or a slow load could land under the name of the next file
+    // clicked - and a save would then write it there.
+    const loadFor = useRef<string | null>(null);
+
+    // Another sub-server is another tree: what is open belongs to the old one,
+    // and a save would write it into the new one at the same relative path.
+    // Reset during render (not in an effect) when the sub-server changes.
+    const [openSub, setOpenSub] = useState(sub);
+    if (openSub !== sub) {
+        setOpenSub(sub);
+        setOpen(null);
+        setText('');
+        setSaved('');
+        loadFor.current = null;
+    }
 
     const scan = useCallback(async () => {
         if (!uuid || !sub) return;
@@ -78,8 +94,10 @@ export default function ModConfigsPage() {
         })) return;
         setOpen(path);
         setLoadingFile(true);
+        loadFor.current = path;
         try {
             const res = await getFileContent(`${sub}/${path}`, uuid);
+            if (loadFor.current !== path) return;
             if (res?.success === false) {
                 toast(res.message || 'Could not open the file', false);
                 setOpen(null);
@@ -89,7 +107,7 @@ export default function ModConfigsPage() {
             setText(content);
             setSaved(content);
         } finally {
-            setLoadingFile(false);
+            if (loadFor.current === path) setLoadingFile(false);
         }
     };
 

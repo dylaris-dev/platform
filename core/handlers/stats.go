@@ -317,7 +317,7 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(out)
 		return
 	}
-	others, err := h.state.Store.ListServersByNode(node.ID)
+	others, err := h.state.Store.ListServerPinningByNode(node.ID)
 	if err != nil {
 		sendJSONError(w, "Could not read the node's servers", http.StatusInternalServerError)
 		return

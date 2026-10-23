@@ -31,7 +31,7 @@ func (f *coresFakeStore) GetServerByID(id int) (*models.Server, error) {
 func (f *coresFakeStore) GetNodeByID(id int) (*models.Node, error) {
 	return &models.Node{ID: id, Token: "tok"}, nil
 }
-func (f *coresFakeStore) ListServersByNode(int) ([]models.Server, error) { return f.servers, nil }
+func (f *coresFakeStore) ListServerPinningByNode(int) ([]models.Server, error) { return f.servers, nil }
 
 // The per-core load is the HOST's, so it is the server's own only while no
 // other server can run on those cores. A member must not be shown a

@@ -178,6 +178,9 @@ type Store interface {
 	ServerDiskLimitsByNode(nodeID int) (map[string]int64, error)
 	CountServersByNode(nodeID int) (int, error)
 	ListServersByNode(nodeID int) ([]models.Server, error)
+	// ListServerPinningByNode is every server on the node with id, pinning
+	// mode and cpuset only.
+	ListServerPinningByNode(nodeID int) ([]models.Server, error)
 	DeleteServersByNode(nodeID int) error
 	DeleteStaleOfflineNodes(offlineSince time.Time) (int, error)
 

@@ -38,4 +38,22 @@ func TestIntegrationServerListCarriesPinningAndAutoMove(t *testing.T) {
 	find("admin list", admin, err)
 	all, err := st.ListAllServers()
 	find("fleet", all, err)
+	// The per-core view decides "are these cores this server's alone" from
+	// this read; a row without mode and cpuset reads as running everywhere.
+	pins, err := st.ListServerPinningByNode(f.server.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, s := range pins {
+		if s.ID == f.server.ID {
+			seen = true
+			if s.CPUPinningMode != "manual" || s.Cpuset != "2-3" {
+				t.Errorf("pinning by node: mode %q cpuset %q, want manual 2-3", s.CPUPinningMode, s.Cpuset)
+			}
+		}
+	}
+	if !seen {
+		t.Error("pinning by node: fixture server missing")
+	}
 }
