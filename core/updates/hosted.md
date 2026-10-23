@@ -16,18 +16,21 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - **You can pause updates for single mods.** Update all leaves them alone and says so, and a
   rollback now asks first and shows which version you go back to.
+- **The sidebar shows how many players are on each server,** counted where they connect through
+  the gateway, for servers that use it.
 - **Pinned servers show the load of each of their CPU cores** while no other server shares them.
   Needs the current node, which updates itself. `node`
 
 ### Breaking
-- Nothing.
+- **Roll back all is gone from the Content tab.** It moved every mod to its previous build,
+  including mods the last update never touched; roll back single mods instead.
 
 ### Security
 - Nothing.
 
 ### Fixes
 - **Mod icons and Modrinth category icons show again,** and search fields no longer type over
-  their icon. The sidebar now separates your own servers from the ones you were invited to.
+  their icon. The sidebar lists your own servers and your invitations as two sections.
 - **CPU no longer reads above 100%.** Needs the current node, which updates itself. `node`
 
 ## 2026.10.23.3

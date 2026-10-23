@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **530 routes** in 53 sections: 235 GET, 163 POST, 41 PUT, 37 PATCH, 55 DELETE.
+- **531 routes** in 53 sections: 236 GET, 163 POST, 41 PUT, 37 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **345** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **115** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **345** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **116** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (82)
+- [/api/servers](#apiservers) (83)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -676,6 +676,7 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/servers` | session | _no capability_ | - | `ServerHandler.GetServers` | the servers the caller may see: their own plus any they were invited to, or the whole fleet for an admin. |
 | POST | `/api/servers` | session | _no capability_ | - | `ServerHandler.CreateServer` | (Step 1): Creates container with resources, status=pending_setup |
+| GET | `/api/servers/players` | session | _no capability_ | - | `ServerHandler.GetGatewayPlayers` | players connected through the gateway, per server id, for the servers the caller's own list shows. |
 | DELETE | `/api/servers/{id:[0-9]+}` | session | `server.delete` | - | `ServerHandler.DeleteServer` | Completely delete a server |
 | GET | `/api/servers/{id:[0-9]+}/audit` | session | `server.audit.read` | - | `ServerAuditHandler.ListAudit` | the server's audit trail, paged with ?limit and ?offset and filterable by ?eventType. |
 | PUT | `/api/servers/{id:[0-9]+}/audit/force` | session | `server.settings.write` | - | `ServerAuditHandler.SetForce` | gated by the route (RequireCap(server.settings.write)): the owner, or a role-holder granted that cap, can force their own server's audit on regardless of member state. |

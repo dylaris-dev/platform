@@ -12,14 +12,17 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Features
 - **Mods can be paused for updates.** Update all skips a paused mod and names it in its confirm; a
-  rollback now asks first and shows both version numbers. Roll back all is gone. `core` `panel`
+  rollback now asks first and shows both version numbers. `core` `panel`
+- **Gateway-routed servers show a player count in the sidebar,** counted at the edges rather than
+  asked from the server. Needs an edge from gateway fab5e58 or later. `core` `panel`
 - **Per-core CPU for pinned servers.** Members see it while no other server can use their cores,
   admins always, with shared cores marked. `core` `node` `panel`
 - **Beta config editor for mods and plugins** under Configuration, offered to nobody, admins or
   everyone from Settings, Features. It uses the file manager's permissions. `core` `panel`
 
 ### Breaking
-- Nothing.
+- **Roll back all is removed from the Content tab.** It moved every mod to its previous build,
+  including mods the last Update all never touched. `panel`
 
 ### Security
 - Nothing.

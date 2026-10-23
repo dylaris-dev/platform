@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -154,6 +155,38 @@ type ServerHandler struct {
 
 func NewServerHandler(state *AppState) *ServerHandler {
 	return &ServerHandler{state: state}
+}
+
+// GetGatewayPlayers GET /api/servers/players - players connected through the
+// gateway, per server id, for the servers the caller's own list shows. The
+// edges count them (a play session per stream), so a server on IP:port
+// routing, or one nobody is on, is absent.
+//
+// ponytail: one server-list query per poll per open panel; serve it from the
+// list the panel already holds if that load ever shows.
+func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil || h.state.Redis == nil {
+		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
+	servers, err := h.state.Store.ListServersForUser(userID, isAdmin)
+	if err != nil {
+		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	servers = applyResolvedTabPermissions(h.state, servers, userID, username)
+	counts := services.GatewayPlayersByServer(r.Context(), h.state.Redis)
+	out := map[string]int{}
+	for _, s := range servers {
+		if n := counts[s.UUID]; n > 0 {
+			out[strconv.Itoa(s.ID)] = n
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"players": out})
 }
 
 // GetServers GET /api/servers - the servers the caller may see: their own plus

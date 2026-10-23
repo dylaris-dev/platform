@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
-import { Server } from '../lib/api';
-import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Server, getGatewayPlayers } from '../lib/api';
+import { ShieldCheck, Search, X, ChevronDown, ChevronRight, Network, PanelLeftClose, PanelLeftOpen, Users } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import GuardedLink from '@/components/GuardedLink';
 import { useSidebarCollapse } from '@/lib/SidebarCollapse';
@@ -59,7 +59,7 @@ function buildProxyHierarchy(servers: Server[]) {
 
 export default function Sidebar({ onNewServer }: SidebarProps) {
   const { collapsed, toggle, width } = useSidebarCollapse();
-  const { servers, user: currentUser, proxiesEnabled, featureFlags } = useAppData();
+  const { servers, user: currentUser, proxiesEnabled, featureFlags, gatewayEnabled } = useAppData();
   const paramId = useRouteId('servers');
   const activeServerId = paramId ? Number(paramId) : null;
   const now = useNow();
@@ -79,6 +79,25 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   const [collapsedProxies, setCollapsedProxies] = useState<Set<number>>(new Set());
 
   const isAdmin = currentUser?.isAdmin ?? false;
+
+  // Players connected through the gateway, counted at the edges rather than
+  // asked from each server. Polled at the edges' own publish cadence while the
+  // tab is visible; no gateway, no poll.
+  const [players, setPlayers] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!gatewayEnabled) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const res = await getGatewayPlayers();
+        if (!cancelled && res?.players) setPlayers(res.players);
+      } catch { /* keep the last counts; the next tick tries again */ }
+    };
+    tick();
+    const t = setInterval(tick, 5000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [gatewayEnabled]);
   // There used to be a third "Via tickets" tab here listing servers a supporter
   // could reach through an assigned ticket. It sat beside "My Servers" and
   // "Invited", which framed a temporary support grant as a standing
@@ -177,6 +196,16 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             <span>{roleLabel}</span>
           </div>
         </div>
+        {gatewayEnabled && players[server.id] > 0 && (
+          <span
+            className="flex items-center gap-1 text-[11px] font-mono tabular-nums text-(--base-07) shrink-0"
+            title={`${players[server.id]} connected through the gateway`}
+          >
+            <Users size={11} aria-hidden="true" />
+            {players[server.id]}
+            <span className="sr-only">players online</span>
+          </span>
+        )}
         {(() => {
           const { tier } = nodeConnectivity(server.nodeStatus, server.nodeLastSeenAt, now);
           const title = tier === 'ok' ? server.status : connLabel(tier, server.nodeLastSeenAt);

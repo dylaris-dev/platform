@@ -621,6 +621,15 @@ func DeriveDiscoveryProof(nodeID, clusterSecret string) string {
 // GetEdgesFromRedis reads all edges from Redis (edge:registry:{id} keys) and
 // merges the latest stats snapshot from each edge's stats stream.
 func GetEdgesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo {
+	edges := listEdgeRegistry(ctx, rdb)
+	for i := range edges {
+		edges[i].Stats = readLatestEdgeStats(ctx, rdb, edges[i].EdgeID)
+	}
+	return edges
+}
+
+// listEdgeRegistry reads every edge:registry:* entry, without stats.
+func listEdgeRegistry(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo {
 	var edges []GatewayEdgeInfo
 	var cursor uint64
 	for {
@@ -638,7 +647,6 @@ func GetEdgesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo
 				if e.Status == "" {
 					e.Status = "online"
 				}
-				e.Stats = readLatestEdgeStats(ctx, rdb, e.EdgeID)
 				edges = append(edges, e)
 			}
 		}

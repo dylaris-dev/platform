@@ -3400,6 +3400,16 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/servers/players",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "players connected through the gateway, per server id, for the servers the caller's own list shows.",
+      "handler": "ServerHandler.GetGatewayPlayers",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "DELETE",
       "path": "/api/servers/{id:[0-9]+}",
       "auth": "session",
@@ -5289,10 +5299,10 @@
     }
   ],
   "counts": {
-    "total": 531,
+    "total": 532,
     "byAuth": {
       "none": 31,
-      "session": 484,
+      "session": 485,
       "user API key": 10,
       "warp key": 6
     },
@@ -5327,7 +5337,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 82,
+      "servers": 83,
       "settings": 28,
       "setup": 2,
       "share": 1,

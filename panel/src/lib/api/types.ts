@@ -798,6 +798,9 @@ export interface ServerCoreLoad {
 }
 export const getServerCoreLoad = (id: number): Promise<ServerCoreLoad> => fetchAPI(`/servers/${id}/stats/cores`);
 
+/** Players connected through the gateway, by server id, as the edges count them. */
+export const getGatewayPlayers = (): Promise<{ players?: Record<string, number> }> => fetchAPI('/servers/players');
+
 // --- SERVER SETTINGS ---
 export interface ServerLimitSettings {
     // null = no cap, 0 = none may be created, n = the cap.

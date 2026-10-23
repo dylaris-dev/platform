@@ -180,8 +180,9 @@ var ExemptRoutes = map[string]bool{
 	"/api/placement/regions": true, // authed; helper
 
 	// User-facing servers list/create and enabled-region picker.
-	"/api/servers": true, // authed; own servers (list/create), plan-limited in-handler
-	"/api/regions": true, // authed; enabled-region picker
+	"/api/servers":         true, // authed; own servers (list/create), plan-limited in-handler
+	"/api/servers/players": true, // authed; counts only for the caller's own server list
+	"/api/regions":         true, // authed; enabled-region picker
 
 	// Cron preview: pure transform, no server scoping needed.
 	"/api/scheduled-tasks/validate": true, // authed; pure preview

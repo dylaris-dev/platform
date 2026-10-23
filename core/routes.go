@@ -1391,6 +1391,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/disk/orphans/assign", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.AssignOrphan))).Methods("POST")
 
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.GetServers)).Methods("GET")
+	api.HandleFunc("/servers/players", authHandler.AuthMiddleware(serverHandler.GetGatewayPlayers)).Methods("GET")
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.CreateServer)).Methods("POST")
 	// POWER is in-handler-enforced (Rule R5): the action is in the request body
 	// (start|stop|restart|kill), so a single route-level RequireCap would wrongly
