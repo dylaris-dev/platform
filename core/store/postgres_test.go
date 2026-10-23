@@ -232,6 +232,10 @@ func TestListServersForAdminAsksTheDatabaseToExcludeCustomerHardware(t *testing.
 	s := NewPostgresStore(db)
 
 	admin := "33333333-3333-3333-3333-333333333333"
+	// First the admin's own invites, which only label rows (InvitedHere).
+	mock.ExpectQuery(regexp.QuoteMeta("FROM server_invites WHERE user_id::text = $1")).
+		WithArgs(admin).
+		WillReturnRows(sqlmock.NewRows([]string{"server_id", "owner_user_id"}))
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE n.owner_id IS NULL")).
 		WithArgs(admin).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))

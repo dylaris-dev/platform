@@ -16,8 +16,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - **You can pause updates for single mods.** Update all leaves them alone and says so, and a
   rollback now asks first and shows which version you go back to.
-- **The sidebar shows how many players are on each server,** counted where they connect through
-  the gateway, for servers that use it.
+- **The sidebar will show how many players are on each server** that uses the gateway, counted
+  where they connect. The numbers appear once our gateway update is rolled out.
 - **Pinned servers show the load of each of their CPU cores** while no other server shares them.
   Needs the current node, which updates itself. `node`
 

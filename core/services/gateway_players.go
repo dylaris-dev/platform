@@ -60,6 +60,10 @@ func GatewayPlayersByServer(ctx context.Context, rdb *redis.Client) map[string]i
 	if gatewayPlayersCache.val != nil && time.Since(gatewayPlayersCache.at) < gatewayPlayersCacheTTL {
 		return gatewayPlayersCache.val
 	}
+	// Detached from the caller: this read is shared by every polling panel, and
+	// one panel navigating away must not cache an empty answer for all of them.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
 	var samples []edgePlayersSample
 	for _, e := range GetEdgeIDsFromRedis(ctx, rdb) {
 		msgs, err := rdb.XRevRangeN(ctx, "dylaris:edge:"+e+":stats", "+", "-", 1).Result()
@@ -86,7 +90,8 @@ func GatewayPlayersByServer(ctx context.Context, rdb *redis.Client) map[string]i
 
 // streamIDTime reads the millisecond timestamp Redis puts in a stream entry
 // id ("1729700000000-0"). It is the time the entry was ADDED, set by Redis,
-// so it does not depend on the edge's clock.
+// so it does not depend on the edge's clock (only Core's against Redis's,
+// which NTP keeps well inside edgePlayersMaxAge).
 func streamIDTime(id string) (time.Time, bool) {
 	ms, err := strconv.ParseInt(strings.SplitN(id, "-", 2)[0], 10, 64)
 	if err != nil {

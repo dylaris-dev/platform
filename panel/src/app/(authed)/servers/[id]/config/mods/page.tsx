@@ -34,10 +34,10 @@ export default function ModConfigsPage() {
     const [loadingFile, setLoadingFile] = useState(false);
     const [saving, setSaving] = useState(false);
     const dirty = open !== null && text !== saved;
-    // The file a load was started for. An answer for any other file is late and
-    // is dropped, or a slow load could land under the name of the next file
-    // clicked - and a save would then write it there.
-    const loadFor = useRef<string | null>(null);
+    // Which load is current. A late answer for an earlier load is dropped, or a
+    // slow load could land under the next file clicked - the same relative path
+    // in another sub-server included - and a save would then write it there.
+    const loadSeq = useRef(0);
 
     // Another sub-server is another tree: what is open belongs to the old one,
     // and a save would write it into the new one at the same relative path.
@@ -48,7 +48,8 @@ export default function ModConfigsPage() {
         setOpen(null);
         setText('');
         setSaved('');
-        loadFor.current = null;
+        setLoadingFile(false);
+        loadSeq.current++;
     }
 
     const scan = useCallback(async () => {
@@ -94,10 +95,10 @@ export default function ModConfigsPage() {
         })) return;
         setOpen(path);
         setLoadingFile(true);
-        loadFor.current = path;
+        const seq = ++loadSeq.current;
         try {
             const res = await getFileContent(`${sub}/${path}`, uuid);
-            if (loadFor.current !== path) return;
+            if (loadSeq.current !== seq) return;
             if (res?.success === false) {
                 toast(res.message || 'Could not open the file', false);
                 setOpen(null);
@@ -107,7 +108,7 @@ export default function ModConfigsPage() {
             setText(content);
             setSaved(content);
         } finally {
-            if (loadFor.current === path) setLoadingFile(false);
+            if (loadSeq.current === seq) setLoadingFile(false);
         }
     };
 

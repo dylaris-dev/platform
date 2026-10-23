@@ -19,8 +19,11 @@ type modConfigsFlagStore struct {
 }
 
 func (f *modConfigsFlagStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
+
 // The module rows are not what this test is about; the save logs and moves on.
-func (f *modConfigsFlagStore) ListModules() ([]models.Module, error) { return nil, errors.New("no modules here") }
+func (f *modConfigsFlagStore) ListModules() ([]models.Module, error) {
+	return nil, errors.New("no modules here")
+}
 func (f *modConfigsFlagStore) SetSetting(key, value string) error {
 	f.settings[key] = value
 	return nil
