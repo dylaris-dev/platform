@@ -12,7 +12,9 @@ const tree: Record<string, ListedEntry[]> = {
         { name: 'EssentialsX.jar', is_dir: false },
         { name: 'bStats', is_dir: true },
         { name: 'Essentials', is_dir: true },
+        { name: '.paper-remapped', is_dir: true },
     ],
+    'main/plugins/.paper-remapped': [{ name: 'index.json', is_dir: false }],
     'main/plugins/bStats': [{ name: 'config.yml', is_dir: false }],
     'main/plugins/Essentials': [
         { name: 'config.yml', is_dir: false },
@@ -23,7 +25,7 @@ const tree: Record<string, ListedEntry[]> = {
 const lister = async (p: string) => tree[p] ?? null;
 
 describe('findConfigFiles', () => {
-    it('lists mod and plugin configs, skips data dirs, jars and non-config files', async () => {
+    it('lists mod and plugin configs, skips data dirs, hidden dirs, jars and non-config files', async () => {
         const { files, truncated } = await findConfigFiles('main', lister);
         expect(files).toEqual([
             'config/create/server.toml',

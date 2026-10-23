@@ -39,6 +39,9 @@ export async function findConfigFiles(root: string, list: Lister): Promise<{ fil
         const entries = await list(`${root}/${rel}`);
         if (!entries) continue;
         for (const e of entries) {
+            // Hidden entries are the server's own bookkeeping, never a config
+            // to edit: Paper keeps plugins/.paper-remapped/**/index.json.
+            if (e.name.startsWith('.')) continue;
             const path = `${rel}/${e.name}`;
             if (e.is_dir) {
                 if (depth < MAX_DEPTH && !SKIP_DIRS.has(e.name.toLowerCase())) queue.push({ rel: path, depth: depth + 1 });
