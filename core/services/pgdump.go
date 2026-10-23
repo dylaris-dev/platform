@@ -90,8 +90,16 @@ func (c PGConn) env() []string {
 // table already held exclusively - a TimescaleDB compress_chunk, a migration -
 // would otherwise park the dump, and the backup run with it, forever. Failing
 // after a minute is a run the operator sees as failed, not one that never ends.
+//
+// --no-subscriptions because pg_dump decides whether to read pg_subscription
+// from the connection's is_superuser parameter alone, and through PgBouncer
+// that read "on" for the non-superuser statistics role: pg_dump then asked for
+// subconninfo and every daily statistics dump failed with "permission denied
+// for table pg_subscription" (2026-10-17 to 10-23). Subscriptions do not belong
+// in a bundle anyway - restored elsewhere they would connect to the source's
+// publishers.
 func (c PGConn) dumpArgs() []string {
-	return append(c.args(), "--format=custom", "--no-owner", "--no-acl", "--compress=6", "--lock-wait-timeout=60s")
+	return append(c.args(), "--format=custom", "--no-owner", "--no-acl", "--no-subscriptions", "--compress=6", "--lock-wait-timeout=60s")
 }
 
 // DumpDatabase writes a custom-format dump of the whole database to dest.
@@ -162,12 +170,28 @@ func runPGRestore(ctx context.Context, c PGConn, serverMajor int, src io.Reader,
 
 // lastLines trims a tool's stderr to something that fits in an error message
 // without losing the part that says what went wrong, which is the end.
+// The tool's own "error:" lines go first: after a failed query pg_dump prints
+// the error and then the whole query, so the last lines alone are SQL and the
+// reason is cut off - which is how a week of failed statistics dumps logged
+// only the tail of a SELECT.
 func lastLines(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
+	isErr := func(l string) bool { return strings.Contains(l, "error:") || strings.Contains(l, "ERROR:") }
+	var out []string
+	for _, l := range lines {
+		if isErr(l) && len(out) < 2 {
+			out = append(out, strings.TrimSpace(l))
+		}
+	}
 	if len(lines) > 5 {
 		lines = lines[len(lines)-5:]
 	}
-	return strings.Join(lines, "; ")
+	for _, l := range lines {
+		if !isErr(l) {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "; ")
 }
 
 // The statistics database.

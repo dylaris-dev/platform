@@ -150,10 +150,25 @@ func TestPGToolPathFallsBackToThePathWhenNothingIsVersioned(t *testing.T) {
 func TestDumpArgsBoundTheLockWait(t *testing.T) {
 	args := PGConn{Host: "db", User: "u", Password: "secret", Name: "n"}.dumpArgs()
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--lock-wait-timeout=60s") || !strings.Contains(joined, "--format=custom") {
+	if !strings.Contains(joined, "--lock-wait-timeout=60s") || !strings.Contains(joined, "--format=custom") || !strings.Contains(joined, "--no-subscriptions") {
 		t.Errorf("args = %v", args)
 	}
 	if strings.Contains(joined, "secret") {
 		t.Errorf("the password is in the argument list: %v", args)
+	}
+}
+
+// pg_dump prints the error, then the failed query; the error must survive the
+// trimming or the log shows only SQL (as it did for a week of failed dumps).
+func TestLastLinesKeepsTheErrorLine(t *testing.T) {
+	stderr := "pg_dump: error: query failed: ERROR:  permission denied for table pg_subscription\n" +
+		"pg_dump: detail: Query was: SELECT s.tableoid, s.oid, s.subname,\n s.subowner,\n s.subconninfo,\n" +
+		" false AS subenabled,\n s.subfailover\nFROM pg_subscription s\nWHERE s.subdbid = 1"
+	got := lastLines(stderr)
+	if !strings.Contains(got, "permission denied for table pg_subscription") {
+		t.Fatalf("the reason was trimmed away: %q", got)
+	}
+	if !strings.HasPrefix(got, "pg_dump: error:") {
+		t.Fatalf("the error line does not lead: %q", got)
 	}
 }
