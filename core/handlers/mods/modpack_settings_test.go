@@ -1,4 +1,4 @@
-package handlers
+package mods
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 )
@@ -17,7 +19,7 @@ import (
 // core_storage_gate_test.go does for FeatureSettingsHandler, since Set()
 // unconditionally invalidates flags and publishes events on success.
 func newModpackSettingsTestHandler(fs *coreStorageHTTPFakeStore) *ModpackSettingsHandler {
-	st := &AppState{
+	st := &handlers.AppState{
 		Store:  fs,
 		Events: services.NewSystemEventsPublisher(nil),
 	}

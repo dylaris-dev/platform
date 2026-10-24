@@ -365,3 +365,26 @@ func SubServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (ins
 func IsBYONNode(n models.Node) bool { return isBYONNode(n) }
 
 type DylarisMetadata = dylarisMetadata
+
+// --- mods --------------------------------------------------------------------
+
+func SendCooldown(w http.ResponseWriter, upstream string, left time.Duration) {
+	sendCooldown(w, upstream, left)
+}
+
+// UpstreamCooldown is the per-upstream back-off a proxy handler embeds.
+type UpstreamCooldown = upstreamCooldown
+
+func (c *upstreamCooldown) Blocked(now time.Time) (time.Duration, bool) { return c.blocked(now) }
+
+func (c *upstreamCooldown) Trip(h http.Header, now time.Time) time.Duration { return c.trip(h, now) }
+
+func HashURL(s string) string { return hashURL(s) }
+
+const MaxCachedResponseBytes = maxCachedResponseBytes
+
+const KeyModpackStorageConnectionID = keyModpackStorageConnectionID
+
+func StorageConnIDSetting(id int) string { return storageConnIDSetting(id) }
+
+func BoolStr(b bool) string { return boolStr(b) }

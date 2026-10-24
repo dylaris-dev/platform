@@ -1,4 +1,4 @@
-package handlers
+package mods
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/pkg/crypto"
 	"dylaris-core/services"
@@ -23,11 +25,11 @@ import (
 // + the "modrinth-pat" purpose tag.
 
 type ModrinthPATHandler struct {
-	state         *AppState
+	state         *handlers.AppState
 	clusterSecret string
 }
 
-func NewModrinthPATHandler(state *AppState, clusterSecret string) *ModrinthPATHandler {
+func NewModrinthPATHandler(state *handlers.AppState, clusterSecret string) *ModrinthPATHandler {
 	return &ModrinthPATHandler{state: state, clusterSecret: clusterSecret}
 }
 
@@ -53,12 +55,12 @@ type patStatus struct {
 func (h *ModrinthPATHandler) Status(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	pat, err := h.state.Store.GetModrinthPAT(userID)
 	if err != nil {
-		sendJSONError(w, "DB error", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "DB error", http.StatusInternalServerError)
 		return
 	}
 	if pat == nil {
@@ -79,31 +81,31 @@ func (h *ModrinthPATHandler) Status(w http.ResponseWriter, r *http.Request) {
 func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req setPATRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Token = strings.TrimSpace(req.Token)
 	if req.Token == "" {
-		sendJSONError(w, "Token required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Token required", http.StatusBadRequest)
 		return
 	}
 	username, err := h.validatePAT(r.Context(), req.Token)
 	if err != nil {
-		sendJSONError(w, "Token rejected by Modrinth: "+err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, "Token rejected by Modrinth: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	ciphertext, err := crypto.Encrypt(h.key(), []byte(req.Token))
 	if err != nil {
-		sendJSONError(w, "Failed to encrypt token", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to encrypt token", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetModrinthPAT(userID, ciphertext, username); err != nil {
-		sendJSONError(w, "Failed to store token", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to store token", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(patStatus{
@@ -118,11 +120,11 @@ func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
 func (h *ModrinthPATHandler) Clear(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if err := h.state.Store.ClearModrinthPAT(userID); err != nil {
-		sendJSONError(w, "Failed to clear PAT", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to clear PAT", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

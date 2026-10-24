@@ -1,4 +1,4 @@
-package handlers
+package mods
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 )
 
 // TestValidatePublicBaseURL pins the input rules for core_public_url. A node is
@@ -31,7 +33,7 @@ func TestValidatePublicBaseURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := validatePublicBaseURL("core public URL", c.in)
+			err := handlers.ValidatePublicBaseURL("core public URL", c.in)
 			if c.ok && err != nil {
 				t.Fatalf("validatePublicBaseURL(%q) = %v, want nil", c.in, err)
 			}

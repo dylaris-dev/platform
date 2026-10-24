@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/gateway"
+	"dylaris-core/handlers/mods"
 	"dylaris-core/handlers/nodes"
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/stats"
@@ -607,19 +608,19 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 	rconHandler := handlers.NewRconHandler(appState)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
-	modrinthHandler := handlers.NewModrinthHandler(appState)
+	modrinthHandler := mods.NewModrinthHandler(appState)
 	technicHandler := handlers.NewTechnicHandler(appState)
 	serverModsHandler := handlers.NewServerModsHandler(appState)
 	sparkHandler := handlers.NewSparkHandler(appState)
 	serverTabsHandler := tabs.NewServerTabsHandler(appState)
 	proxyHandler := tabs.NewProxyHandler(appState, authHandler)
-	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
+	modrinthPATHandler := mods.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	packsHandler := packs.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
 	appState.InstallMrpack = packsHandler.EnsureInstallMrpack
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
-	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)
+	modpackSettingsHandler := mods.NewModpackSettingsHandler(appState)
 	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)

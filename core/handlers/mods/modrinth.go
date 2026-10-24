@@ -1,10 +1,8 @@
-package handlers
+package mods
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 )
@@ -31,29 +31,19 @@ const (
 )
 
 type ModrinthHandler struct {
-	state *AppState
+	state *handlers.AppState
 	http  *http.Client
 	// cool is Modrinth's 429: the limit is per IP and Core is one IP for
 	// every customer, so one busy panel must not turn into a ban for all.
-	cool upstreamCooldown
+	cool handlers.UpstreamCooldown
 }
 
-func NewModrinthHandler(state *AppState) *ModrinthHandler {
+func NewModrinthHandler(state *handlers.AppState) *ModrinthHandler {
 	return &ModrinthHandler{
 		state: state,
 		http:  &http.Client{Timeout: 15 * time.Second},
 	}
 }
-
-// maxCachedResponseBytes caps what one cache entry may weigh.
-//
-// Measured against the live API: a project's version list runs 290 KB for
-// Sodium filtered to one loader, 494 KB unfiltered, and 1.19 MB for Fabric API.
-// The proxy keys those per filter combination for an hour and the shipped Redis
-// runs with no maxmemory, so without a cap the tail of that distribution is what
-// decides how much memory the control plane has left. Over the cap the response
-// is served straight through: one extra upstream call, no stored megabyte.
-const maxCachedResponseBytes = 512 << 10
 
 // modrinthMaxBody caps how much of one upstream reply is read at all.
 const modrinthMaxBody = 16 << 20
@@ -75,9 +65,9 @@ func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, 
 // handling. A body (POST) is part of the cache key, since the same URL answers
 // differently per body.
 func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, method, urlStr string, reqBody []byte, w http.ResponseWriter, transform func([]byte) []byte) {
-	cacheKey := "dylaris:modrinth:" + hashURL(urlStr)
+	cacheKey := "dylaris:modrinth:" + handlers.HashURL(urlStr)
 	if reqBody != nil {
-		cacheKey = "dylaris:modrinth:" + hashURL(method+" "+urlStr+" "+string(reqBody))
+		cacheKey = "dylaris:modrinth:" + handlers.HashURL(method+" "+urlStr+" "+string(reqBody))
 	}
 	if h.state.Cache != nil {
 		if cached, ok := h.state.Cache.Get(ctx, cacheKey); ok {
@@ -88,8 +78,8 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 		}
 	}
 
-	if left, ok := h.cool.blocked(time.Now()); ok {
-		sendCooldown(w, "Modrinth", left)
+	if left, ok := h.cool.Blocked(time.Now()); ok {
+		handlers.SendCooldown(w, "Modrinth", left)
 		return
 	}
 
@@ -99,7 +89,7 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 	}
 	req, err := http.NewRequestWithContext(ctx, method, urlStr, bodyReader)
 	if err != nil {
-		sendJSONError(w, "Bad upstream request", http.StatusBadGateway)
+		handlers.SendJSONError(w, "Bad upstream request", http.StatusBadGateway)
 		return
 	}
 	req.Header.Set("User-Agent", services.DylarisUserAgent())
@@ -110,12 +100,12 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 
 	resp, err := h.http.Do(req)
 	if err != nil {
-		sendJSONError(w, "Upstream call failed: "+err.Error(), http.StatusBadGateway)
+		handlers.SendJSONError(w, "Upstream call failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
-		sendCooldown(w, "Modrinth", h.cool.trip(resp.Header, time.Now()))
+		handlers.SendCooldown(w, "Modrinth", h.cool.Trip(resp.Header, time.Now()))
 		return
 	}
 	// Bounded: a bulk version-files answer for a large server is a few MB, and
@@ -123,7 +113,7 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 	// liked. Over the cap is an error, not a truncated (invalid) JSON body.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, modrinthMaxBody+1))
 	if len(body) > modrinthMaxBody {
-		sendJSONError(w, "Modrinth response too large", http.StatusBadGateway)
+		handlers.SendJSONError(w, "Modrinth response too large", http.StatusBadGateway)
 		return
 	}
 
@@ -135,7 +125,7 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 
 	// Cache only successful 200s — error responses change shape and
 	// shouldn't poison the cache for 5+ minutes.
-	if resp.StatusCode == http.StatusOK && h.state.Cache != nil && len(body) <= maxCachedResponseBytes {
+	if resp.StatusCode == http.StatusOK && h.state.Cache != nil && len(body) <= handlers.MaxCachedResponseBytes {
 		h.state.Cache.Set(ctx, cacheKey, string(body), ttl)
 	}
 
@@ -145,11 +135,6 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 	}
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
-}
-
-func hashURL(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:16])
 }
 
 // Search GET /api/modrinth/search
@@ -248,7 +233,7 @@ func (h *ModrinthHandler) Project(w http.ResponseWriter, r *http.Request) {
 		slug = strings.TrimPrefix(r.URL.Path, "/api/modrinth/project/")
 	}
 	if slug == "" {
-		sendJSONError(w, "slug required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "slug required", http.StatusBadRequest)
 		return
 	}
 	upstream := fmt.Sprintf("%s/project/%s", modrinthBaseURL, url.PathEscape(slug))
@@ -266,7 +251,7 @@ func (h *ModrinthHandler) ProjectVersions(w http.ResponseWriter, r *http.Request
 		slug = path
 	}
 	if slug == "" {
-		sendJSONError(w, "slug required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "slug required", http.StatusBadRequest)
 		return
 	}
 	values := url.Values{}
@@ -294,7 +279,7 @@ func (h *ModrinthHandler) ProjectVersions(w http.ResponseWriter, r *http.Request
 func (h *ModrinthHandler) Version(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/modrinth/version/")
 	if id == "" {
-		sendJSONError(w, "version id required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "version id required", http.StatusBadRequest)
 		return
 	}
 	upstream := fmt.Sprintf("%s/version/%s", modrinthBaseURL, url.PathEscape(id))

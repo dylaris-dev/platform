@@ -1,4 +1,4 @@
-package handlers
+package mods
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -20,7 +22,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func bulkHandler(reply string) (*ModrinthHandler, *[]*http.Request, *[]string) {
 	var reqs []*http.Request
 	var bodies []string
-	h := NewModrinthHandler(&AppState{})
+	h := NewModrinthHandler(&handlers.AppState{})
 	h.http = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		reqs = append(reqs, r)
 		b := ""

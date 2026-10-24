@@ -1,20 +1,20 @@
-package handlers
+package mods
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
 )
 
 type ModpackSettingsHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewModpackSettingsHandler(state *AppState) *ModpackSettingsHandler {
+func NewModpackSettingsHandler(state *handlers.AppState) *ModpackSettingsHandler {
 	return &ModpackSettingsHandler{state: state}
 }
 
@@ -118,7 +118,7 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	out.UpdateCheckIntervalHours = interval
 	out.ShareLinksEnabled = get("modpack_share_links_enabled") == "true"
-	out.ConnectionID, _ = strconv.Atoi(get(keyModpackStorageConnectionID)) // "" or bad -> 0 = none
+	out.ConnectionID, _ = strconv.Atoi(get(handlers.KeyModpackStorageConnectionID)) // "" or bad -> 0 = none
 	out.CorePublicURL = get("core_public_url")
 	out.DetectedCorePublicURL = requestOrigin(r)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -144,34 +144,6 @@ func validModpackProvider(p string) bool {
 		return true
 	}
 	return false
-}
-
-// validatePublicBaseURL accepts an empty value (the feature stays unconfigured
-// and says so) or an absolute http/https URL with a host and no credentials.
-//
-// Stricter than validateS3Endpoint, which only has to survive being handed to
-// the AWS SDK. This value is published to third-party launchers as the base
-// they download from, AND it is the host isSnapshotFetchHostAllowed compares
-// against, so a relative or scheme-less string would both hand clients a URL
-// they cannot resolve and widen an SSRF allowlist by accident.
-func validatePublicBaseURL(subject, raw string) error {
-	if raw == "" {
-		return nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("%s is not a valid URL: %w", subject, err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("%s must start with http:// or https://", subject)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("%s must include a host, e.g. https://panel.example.com", subject)
-	}
-	if u.User != nil {
-		return fmt.Errorf("%s must not contain credentials", subject)
-	}
-	return nil
 }
 
 // modpackS3SecretRebound reports whether this save would point the STORED s3
@@ -214,14 +186,14 @@ func modpackS3SecretRebound(req modpackSettings, get func(string) string) bool {
 func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req modpackSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Provider == "" {
 		req.Provider = "local"
 	}
 	if !validModpackProvider(req.Provider) {
-		sendJSONError(w, "provider must be local, s3 or core-storage", http.StatusBadRequest)
+		handlers.SendJSONError(w, "provider must be local, s3 or core-storage", http.StatusBadRequest)
 		return
 	}
 	// Checked for every provider, not only "s3": the writes below persist the
@@ -229,8 +201,8 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// modpackBackendLabel reads it straight out of the settings table. Gating
 	// this on req.Provider == "s3" would leave a save with provider "local" as
 	// an open path for the same credential.
-	if err := validateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+	if err := handlers.ValidateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	get := func(k string) string {
@@ -238,15 +210,15 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return v
 	}
 	if modpackS3SecretRebound(req, get) {
-		sendJSONError(w, "the s3 endpoint, bucket or access key changed, so the stored secret cannot be reused - re-enter the secret access key with this change",
+		handlers.SendJSONError(w, "the s3 endpoint, bucket or access key changed, so the stored secret cannot be reused - re-enter the secret access key with this change",
 			http.StatusBadRequest)
 		return
 	}
 	// Validated whatever the provider is, for the same reason the S3 endpoint
 	// above is: the write below persists it either way.
 	req.CorePublicURL = strings.TrimSpace(req.CorePublicURL)
-	if err := validatePublicBaseURL("core public URL", req.CorePublicURL); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+	if err := handlers.ValidatePublicBaseURL("core public URL", req.CorePublicURL); err != nil {
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -285,19 +257,19 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_storage_s3_region", req.S3Region},
 		{"modpack_storage_s3_access_key", req.S3AccessKey},
 		{"modpack_update_check_interval_hours", strconv.Itoa(uch)},
-		{"modpack_share_links_enabled", boolStr(req.ShareLinksEnabled)},
-		{keyModpackStorageConnectionID, storageConnIDSetting(req.ConnectionID)},
+		{"modpack_share_links_enabled", handlers.BoolStr(req.ShareLinksEnabled)},
+		{handlers.KeyModpackStorageConnectionID, handlers.StorageConnIDSetting(req.ConnectionID)},
 		{"core_public_url", req.CorePublicURL},
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
-			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	if req.S3SecretKey != "" {
 		if err := h.state.Store.SetSetting("modpack_storage_s3_secret_key", req.S3SecretKey); err != nil {
-			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -318,13 +290,6 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}
-
 // --- Per-user modpack flag ---
 
 type modpackUserFlagRequest struct {
@@ -334,19 +299,19 @@ type modpackUserFlagRequest struct {
 // SetUserFlag PATCH /api/admin/users/{id}/modpack-flag - PANEL settings.write
 // (RequireCap at the route).
 func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Request) {
-	userID, ok := parseUserID(w, r)
+	userID, ok := handlers.ParseUserID(w, r)
 	if !ok {
 		return
 	}
 	var req modpackUserFlagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// Marks the row manual as a side effect, so the platform authoring toggle's
 	// bulk apply leaves this decision alone (see SetUserCanCreateModpacks).
 	if err := h.state.Store.SetUserCanCreateModpacks(userID, req.CanCreate); err != nil {
-		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
@@ -362,12 +327,12 @@ func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Requ
 // hand" checkbox, which resets EVERY overridden user at once. Without it a row
 // marked manual once would be pinned out of every later toggle forever.
 func (h *ModpackSettingsHandler) ClearUserFlagOverride(w http.ResponseWriter, r *http.Request) {
-	userID, ok := parseUserID(w, r)
+	userID, ok := handlers.ParseUserID(w, r)
 	if !ok {
 		return
 	}
 	if err := h.state.Store.ClearUserCanCreateModpacksManual(userID); err != nil {
-		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
