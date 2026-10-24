@@ -137,15 +137,6 @@ func TestWritesOnACustomersMachineAreNotFound(t *testing.T) {
 			s.Redis, _ = newQuotaHTTPRedis(t) // asked before the server is loaded
 			(&ServerHandler{state: s}).CancelMigration(w, foreignAdminRequest("POST", id, ""))
 		}},
-		{"reset pairing", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			(&NodeAdmissionHandler{state: s}).ResetPairing(w, foreignAdminRequest("POST", id, ""))
-		}},
-		{"roll the key", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			(&NodeAdmissionHandler{state: s}).RollSecret(w, foreignAdminRequest("POST", id, ""))
-		}},
-		{"set the CPU pool", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			(&NodeHandler{state: s}).UpdateNode(w, foreignAdminRequest("PUT", id, `{}`))
-		}},
 		{"set overcommit", func(t *testing.T, s *AppState, w http.ResponseWriter) {
 			r := foreignAdminRequest("PUT", id, `{"cpuOvercommitRatio":1,"ramOvercommitRatio":1}`)
 			r.URL.Path = "/api/nodes/7/placement"

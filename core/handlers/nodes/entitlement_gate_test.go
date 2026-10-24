@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -52,12 +54,12 @@ func (f *entGateStore) CreateNodeEnrollToken(string, string, string, *time.Time,
 // newEntGateState builds a BYON-on state. storeEnabled is what separates a
 // hosted install (entitlement required) from a self-host one (everything
 // allowed), and getting it wrong in either direction is the whole risk here.
-func newEntGateState(billing *store.UserBilling, storeEnabled bool) *AppState {
+func newEntGateState(billing *store.UserBilling, storeEnabled bool) *handlers.AppState {
 	fs := &entGateStore{
 		settings: map[string]string{"feature_byon_enabled": "true"},
 		billing:  billing,
 	}
-	return &AppState{
+	return &handlers.AppState{
 		Store:        fs,
 		FeatureFlags: services.NewFeatureFlags(fs),
 		StoreEnabled: storeEnabled,
@@ -68,7 +70,7 @@ func newEntGateState(billing *store.UserBilling, storeEnabled bool) *AppState {
 	}
 }
 
-func mintEnrollToken(state *AppState, userID string) *httptest.ResponseRecorder {
+func mintEnrollToken(state *handlers.AppState, userID string) *httptest.ResponseRecorder {
 	h := NewNodeEnrollHandler(state)
 	rec := httptest.NewRecorder()
 	h.MintToken(rec, nodeEnrollMintReq(userID, map[string]interface{}{}))
@@ -98,23 +100,23 @@ func TestMintToken_RefusedWithoutEntitlement(t *testing.T) {
 			// never went near the store.
 			name:     "a fresh account has no billing row",
 			billing:  nil,
-			wantCode: DenyNoEntitlement,
+			wantCode: handlers.DenyNoEntitlement,
 		},
 		{
 			// What a cancellation pushes. Reads as unlimited to a bare cap check.
 			name:     "an explicit zero is not unlimited",
 			billing:  &store.UserBilling{Status: "active", MaxNodes: ptrI64(0)},
-			wantCode: DenyNoEntitlement,
+			wantCode: handlers.DenyNoEntitlement,
 		},
 		{
 			name:     "route-only does not buy a node",
 			billing:  &store.UserBilling{Status: "active", MaxLinks: ptrI64(1)},
-			wantCode: DenyNoEntitlement,
+			wantCode: handlers.DenyNoEntitlement,
 		},
 		{
 			name:     "suspended is named as suspended, not as unpurchased",
 			billing:  &store.UserBilling{Status: "suspended", MaxNodes: ptrI64(1)},
-			wantCode: DenySuspended,
+			wantCode: handlers.DenySuspended,
 		},
 	}
 	for _, tc := range cases {

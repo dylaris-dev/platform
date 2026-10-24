@@ -1,9 +1,7 @@
-package handlers
+package nodes
 
 import (
 	"encoding/json"
-	"os"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -30,7 +28,7 @@ func TestEveryNodeListEndpointEnrichesFromTheHeartbeat(t *testing.T) {
 		fn   string
 	}{
 		{"nodes.go", "GetNodes"},
-		{"infrastructure.go", "GetOverview"},
+		{"../infrastructure.go", "GetOverview"},
 	}
 
 	for _, site := range sites {
@@ -46,22 +44,6 @@ func TestEveryNodeListEndpointEnrichesFromTheHeartbeat(t *testing.T) {
 			}
 		})
 	}
-}
-
-// funcBody returns the text of one top-level func, from its signature to the
-// closing brace in column 0.
-func funcBody(t *testing.T, file, fn string) string {
-	t.Helper()
-	src, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatalf("read %s: %v", file, err)
-	}
-	re := regexp.MustCompile(`(?ms)^func (?:\([^)]*\) )?` + regexp.QuoteMeta(fn) + `\(.*?^}`)
-	body := re.FindString(string(src))
-	if body == "" {
-		t.Fatalf("%s not found in %s", fn, file)
-	}
-	return body
 }
 
 // nil is a third answer and has to stay absent on the wire.

@@ -1,10 +1,12 @@
-package handlers
+package nodes
 
 import (
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -45,7 +47,7 @@ func TestRevokingAnEnrollTokenSaysWhatHappened(t *testing.T) {
 		st := &enrollRevokeStore{removed: removed}
 		// FeatureFlags reads the same fake store, whose GetSetting answers
 		// "true", so the BYON gate in front of the handler is open.
-		h := &NodeEnrollHandler{state: &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
+		h := &NodeEnrollHandler{state: &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
 		r := httptest.NewRequest(http.MethodDelete, "/api/nodes/enroll-token/abc", nil)
 		ctx := context.WithValue(r.Context(), "userID", "u1")
 		ctx = context.WithValue(ctx, "isAdmin", true)

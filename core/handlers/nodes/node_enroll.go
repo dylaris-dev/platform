@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"crypto/rand"
@@ -12,6 +12,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"dylaris-core/handlers"
+
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -23,10 +25,10 @@ import (
 // NODE_ENROLL_TOKEN; on first heartbeat the node is bound to that user (wired in
 // the discovery binding chunk). All endpoints require feature_byon_enabled.
 type NodeEnrollHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewNodeEnrollHandler(state *AppState) *NodeEnrollHandler {
+func NewNodeEnrollHandler(state *handlers.AppState) *NodeEnrollHandler {
 	return &NodeEnrollHandler{state: state}
 }
 
@@ -37,20 +39,20 @@ const maxNodeEnrollTokenExpiryDays = 30
 // MintToken POST /api/nodes/enroll-token — generate a new enroll token for the
 // calling user. The plaintext is returned ONCE; only its hash is stored.
 func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
-	if !byonActive(h.state, r) {
-		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+	if !handlers.ByonActive(h.state, r) {
+		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := byonCallerID(r)
+	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	// May they at all, before how many. The cap below is a ceiling and skips
 	// itself at zero, which is exactly the value an account that bought nothing
 	// carries; without this a fresh registration could mint enroll tokens
 	// forever. See entitlement_gate.go.
-	if !h.state.requireEntitlement(r, w, userID, services.EntitlementByon) {
+	if !h.state.RequireEntitlement(r, w, userID, services.EntitlementByon) {
 		return
 	}
 	var req struct {
@@ -67,7 +69,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// meant a caller who sent `{"expiresDays": 30}` with a typo elsewhere in the
 	// JSON got a silent 7-day token back and no way to tell.
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	// Checked here, where a refusal can still be acted on: at the far end the
@@ -76,13 +78,13 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// not confirm that key exists.
 	warpKeyNodeID := strings.TrimSpace(req.WarpKeyNodeID)
 	if warpKeyNodeID != "" {
-		key, _, msg := ownNodeKey(h.state.Store, warpKeyNodeID, userID)
+		key, _, msg := handlers.OwnNodeKey(h.state.Store, warpKeyNodeID, userID)
 		if key == nil {
-			sendJSONError(w, msg, http.StatusBadRequest)
+			handlers.SendJSONError(w, msg, http.StatusBadRequest)
 			return
 		}
 		if key.BoundNodeID != 0 {
-			sendJSONError(w, "This node key already belongs to a machine", http.StatusBadRequest)
+			handlers.SendJSONError(w, "This node key already belongs to a machine", http.StatusBadRequest)
 			return
 		}
 	}
@@ -117,17 +119,17 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// a way past the cap.
 	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
 	if lerr != nil {
-		sendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
+		handlers.SendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
 		return
 	}
 	if lim.MaxNodes != nil {
 		slots, serr := services.CountNodeSlots(h.state.Store, userID)
 		if serr != nil {
-			sendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
+			handlers.SendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
 			return
 		}
 		if services.Exceeds(lim.MaxNodes, slots.UsedWithEnrollToken()) {
-			sendJSONError(w, fmt.Sprintf(
+			handlers.SendJSONError(w, fmt.Sprintf(
 				"Node limit reached (%d). Remove a machine, or revoke an unused enroll token or node key, before adding another.", *lim.MaxNodes),
 				http.StatusForbidden)
 			return
@@ -136,7 +138,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		sendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 	token := hex.EncodeToString(b)
@@ -158,11 +160,11 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// it is held to what a name can be: short, one line, no control characters.
 	label := strings.TrimSpace(req.Label)
 	if !validEnrollLabel(label) {
-		sendJSONError(w, "The name may be at most 64 characters, on one line.", http.StatusBadRequest)
+		handlers.SendJSONError(w, "The name may be at most 64 characters, on one line.", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.CreateNodeEnrollToken(userID, token, label, exp, warpKeyNodeID); err != nil {
-		sendJSONError(w, "Failed to create token", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to create token", http.StatusInternalServerError)
 		return
 	}
 	// The fingerprint is only meaningful pinning material when TLS is actually
@@ -182,18 +184,18 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 
 // ListTokens GET /api/nodes/enroll-token — the caller's tokens (metadata only).
 func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
-	if !byonActive(h.state, r) {
-		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+	if !handlers.ByonActive(h.state, r) {
+		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := byonCallerID(r)
+	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	tokens, err := h.state.Store.ListNodeEnrollTokens(userID)
 	if err != nil {
-		sendJSONError(w, "Failed to load tokens", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load tokens", http.StatusInternalServerError)
 		return
 	}
 	if tokens == nil {
@@ -205,19 +207,19 @@ func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
 // RevokeToken DELETE /api/nodes/enroll-token/{id} — revoke one of the caller's
 // tokens (scoped to owner).
 func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) {
-	if !byonActive(h.state, r) {
-		sendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+	if !handlers.ByonActive(h.state, r) {
+		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := byonCallerID(r)
+	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	id := mux.Vars(r)["id"]
 	removed, err := h.state.Store.DeleteNodeEnrollToken(id, userID)
 	if err != nil {
-		sendJSONError(w, "Failed to revoke token", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to revoke token", http.StatusInternalServerError)
 		return
 	}
 	// Nothing removed is not success. The delete is scoped to the caller's own
@@ -225,7 +227,7 @@ func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 	// deliberately the same answer - telling a stranger which ids exist is a
 	// different kind of mistake.
 	if !removed {
-		sendJSONError(w, "No such enroll token", http.StatusNotFound)
+		handlers.SendJSONError(w, "No such enroll token", http.StatusNotFound)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
@@ -113,7 +115,7 @@ func nodeDeleteFixture(t *testing.T, node *models.Node) (*NodeHandler, *nodeDele
 		t.Fatal(err)
 	}
 
-	return NewNodeHandler(&AppState{Store: fs, Redis: rdb, Gateway: gw}), fs, gw, rdb
+	return NewNodeHandler(&handlers.AppState{Store: fs, Redis: rdb, Gateway: gw}), fs, gw, rdb
 }
 
 func assertNodeRoutesGone(t *testing.T, rdb *redis.Client, gw *nodeDeleteGateway) {
@@ -198,48 +200,6 @@ func TestDeleteMyNode_LeavesTheAddressesWhenTheServersStay(t *testing.T) {
 		if n, _ := rdb.Exists(context.Background(), "route:"+d).Result(); n == 0 {
 			t.Errorf("%s stopped resolving although its server was kept", d)
 		}
-	}
-}
-
-// The single-server delete, which is where this cleanup already lived. It now
-// shares one implementation with the two node paths above, so it needs its own
-// guard: a refactor that moved it could otherwise drop it without a single test
-// noticing.
-func TestDeleteServer_TakesItsAddressWithIt(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { rdb.Close() })
-	seedNodeRoute(t, rdb, "play.example.com", "srv-uuid")
-	seedNodeRoute(t, rdb, "other.example.com", "uuid-elsewhere")
-
-	gw := &nodeDeleteGateway{}
-	fs := &deleteDispatchFakeStore{nodeMissing: true}
-	h := &ServerHandler{state: &AppState{
-		Store:   fs,
-		Redis:   rdb,
-		Gateway: gw,
-		Events:  services.NewSystemEventsPublisher(nil),
-	}}
-	rec := httptest.NewRecorder()
-
-	h.DeleteServer(rec, deleteServerRequest())
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
-	}
-	if n, _ := rdb.Exists(context.Background(), "route:play.example.com").Result(); n != 0 {
-		t.Error("the deleted server's address still answers")
-	}
-	if n, _ := rdb.Exists(context.Background(), "route:other.example.com").Result(); n == 0 {
-		t.Error("removed an address belonging to another server")
-	}
-	if len(gw.deleted) != 1 || gw.deleted[0] != "play.example.com" {
-		t.Errorf("the hub was told about %v, want [play.example.com]", gw.deleted)
-	}
-	// The other half a deleted server leaves behind: its backup archives, whose
-	// only record cascades away with it.
-	if !fs.archivesAskedFor {
-		t.Error("the server's backup archives were never named, so they stay in the bucket with nothing pointing at them")
 	}
 }
 

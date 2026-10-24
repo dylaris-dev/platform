@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -61,25 +63,25 @@ type nodeServerContents struct {
 // asking.
 func (h *NodeHandler) myNode(w http.ResponseWriter, r *http.Request) (*models.Node, bool) {
 	if h.state.Store == nil {
-		sendJSONError(w, "DB error", 503)
+		handlers.SendJSONError(w, "DB error", 503)
 		return nil, false
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid node id", 400)
+		handlers.SendJSONError(w, "Invalid node id", 400)
 		return nil, false
 	}
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return nil, false
 	}
-	uid := byonCallerID(r)
+	uid := handlers.ByonCallerID(r)
 	if uid == "" || node.OwnerID == nil || *node.OwnerID != uid {
 		// 404 rather than 403: on a /me route, "not yours" and "does not exist"
 		// are the same answer, and the difference would confirm the existence of
 		// other tenants' nodes to anyone who guessed an id.
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return nil, false
 	}
 	return node, true
@@ -99,7 +101,7 @@ func (h *NodeHandler) GetMyNodeContents(w http.ResponseWriter, r *http.Request) 
 	}
 	servers, err := h.state.Store.ListServersByNode(node.ID)
 	if err != nil {
-		sendJSONError(w, "Failed to load servers", 500)
+		handlers.SendJSONError(w, "Failed to load servers", 500)
 		return
 	}
 	out := make([]nodeServerContents, 0, len(servers))
@@ -160,19 +162,19 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 		if servers, lerr = h.state.Store.ListServersByNode(node.ID); lerr != nil {
 			log.Printf("DeleteMyNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", node.ID, lerr)
 		}
-		purgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
+		handlers.PurgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
 		if err := h.state.Store.DeleteServersByNode(node.ID); err != nil {
-			sendJSONError(w, "Failed to delete the servers on this machine", 500)
+			handlers.SendJSONError(w, "Failed to delete the servers on this machine", 500)
 			return
 		}
 	}
 
 	if err := h.state.Store.DeleteNode(node.ID); err != nil {
 		if errors.Is(err, store.ErrNodeHasServers) {
-			sendJSONError(w, "This machine still has servers on it. Delete them with it, or move them to another machine first.", 409)
+			handlers.SendJSONError(w, "This machine still has servers on it. Delete them with it, or move them to another machine first.", 409)
 			return
 		}
-		sendJSONError(w, "Delete failed", 500)
+		handlers.SendJSONError(w, "Delete failed", 500)
 		return
 	}
 
@@ -183,7 +185,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	// Background, not the request context: a browser that timed out must not be
 	// the reason an address outlives the machine behind it.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
-	dropDemoServers(h.state, services.ServerUUIDs(servers))
+	handlers.DropDemoServers(h.state, services.ServerUUIDs(servers))
 	log.Printf("DeleteMyNode: node %d — cleaned up %d route(s) across %d server(s)", node.ID, matched, len(servers))
 
 	// The Redis ACL user and the node's keys are all keyed by its token, which
@@ -207,9 +209,9 @@ func (h *NodeHandler) ResetMyNodePairing(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if err := resetNodePairing(r.Context(), h.state, node, byonCallerID(r)); err != nil {
+	if err := resetNodePairing(r.Context(), h.state, node, handlers.ByonCallerID(r)); err != nil {
 		log.Printf("reset-my-pairing: %v", err)
-		sendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -229,7 +231,7 @@ func (h *NodeHandler) GetMyNodeJoinAttempt(w http.ResponseWriter, r *http.Reques
 	}
 	a, err := h.state.Store.GetNodeJoinAttempt(node.Token)
 	if err != nil {
-		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	var out interface{}
@@ -276,32 +278,32 @@ func (h *NodeHandler) AdmitMyNode(w http.ResponseWriter, r *http.Request) {
 		Fingerprint string `json:"fingerprint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Fingerprint) == "" {
-		sendJSONError(w, "Say which key to admit", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Say which key to admit", http.StatusBadRequest)
 		return
 	}
 	fp := normalizeFingerprint(req.Fingerprint)
 	if len(fp) != 16 && len(fp) != 64 {
-		sendJSONError(w, "Paste the fingerprint your machine logs: the line starting with \"nodekey: this node's key fingerprint is\".", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Paste the fingerprint your machine logs: the line starting with \"nodekey: this node's key fingerprint is\".", http.StatusBadRequest)
 		return
 	}
 	// Same order as the operator's Admit: take the current login away first, or
 	// the next connect is answered with a challenge and never reaches the check.
 	if err := (&NodeAdmissionHandler{state: h.state}).revokeNodeLogin(node.ID, false); err != nil {
 		log.Printf("admit-my-node: %v", err)
-		sendJSONError(w, "Failed to admit the machine", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to admit the machine", http.StatusInternalServerError)
 		return
 	}
 	if h.state.Redis != nil {
 		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
-	uid := byonCallerID(r)
+	uid := handlers.ByonCallerID(r)
 	armed, err := h.state.Store.ApproveNodeJoinAttemptForKey(node.Token, fp, uid)
 	if err != nil {
-		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	if !armed {
-		sendJSONError(w, "The admission could not be armed. Try again.", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "The admission could not be armed. Try again.", http.StatusInternalServerError)
 		return
 	}
 	_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{

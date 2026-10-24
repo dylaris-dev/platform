@@ -1,7 +1,9 @@
-package handlers
+package nodes
 
 import (
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 )
@@ -65,10 +67,10 @@ func TestNodeScopePredicates(t *testing.T) {
 			if got := isExternalPlatformNode(tt.node); got != tt.external {
 				t.Errorf("isExternalPlatformNode = %v, want %v", got, tt.external)
 			}
-			if got := isBYONNode(tt.node); got != tt.byon {
+			if got := handlers.IsBYONNode(tt.node); got != tt.byon {
 				t.Errorf("isBYONNode = %v, want %v", got, tt.byon)
 			}
-			if isExternalPlatformNode(tt.node) && isBYONNode(tt.node) {
+			if isExternalPlatformNode(tt.node) && handlers.IsBYONNode(tt.node) {
 				t.Error("a node landed in both tabs; the two kinds must be disjoint")
 			}
 		})
@@ -82,7 +84,7 @@ func TestFilterNodesKeepsOrderAndNeverReturnsNil(t *testing.T) {
 		{Name: "b"},
 		{Name: "c", OwnerID: &owner},
 	}
-	got := filterNodes(in, isBYONNode)
+	got := filterNodes(in, handlers.IsBYONNode)
 	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "c" {
 		t.Fatalf("filterNodes = %+v, want a then c", got)
 	}
@@ -205,7 +207,7 @@ func TestFleetScopeKeepsTheOperatorsMachinesAndNoCustomers(t *testing.T) {
 		{Name: "customer-box-tagged", OwnerID: &someoneElse, Tags: "external"},
 	}
 
-	got := filterNodes(nodes, func(n models.Node) bool { return !isBYONNode(n) })
+	got := filterNodes(nodes, func(n models.Node) bool { return !handlers.IsBYONNode(n) })
 
 	var names []string
 	for _, n := range got {

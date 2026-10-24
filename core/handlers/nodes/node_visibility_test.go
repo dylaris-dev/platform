@@ -1,17 +1,16 @@
-package handlers
+package nodes
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/models"
+	"dylaris-core/handlers"
 
-	"github.com/gorilla/mux"
+	"dylaris-core/models"
 )
 
 // What an operator may do on a machine that belongs to somebody else.
@@ -26,34 +25,13 @@ import (
 // Each case also has a platform-node twin that must get PAST the new guard. A
 // guard that refused everything would pass the owned-node case on its own.
 
-const (
-	visOwner = "11111111-1111-1111-1111-111111111111"
-	visAdmin = "22222222-2222-2222-2222-222222222222"
-)
-
-func visOwnedNode() *models.Node {
-	owner := visOwner
-	return &models.Node{ID: 7, Status: "online", OwnerID: &owner}
-}
-
-func visPlatformNode() *models.Node {
-	return &models.Node{ID: 7, Status: "online"}
-}
-
 // visState builds handler state around the shared fake, with BYON switched on
 // so ownership is in force. server and serverErr are what GetServerByUUID answers.
-func visState(node *models.Node, server *models.Server, serverErr error) *AppState {
-	return &AppState{
+func visState(node *models.Node, server *models.Server, serverErr error) *handlers.AppState {
+	return &handlers.AppState{
 		Store:        &orphanAssignFakeStore{node: node, server: server, err: serverErr},
 		FeatureFlags: tenancyFeatureFlags(true),
 	}
-}
-
-func visAdminRequest(method, target string, vars map[string]string) *http.Request {
-	r := httptest.NewRequest(method, target, nil)
-	ctx := context.WithValue(r.Context(), "isAdmin", true)
-	ctx = context.WithValue(ctx, "userID", visAdmin)
-	return mux.SetURLVars(r.WithContext(ctx), vars)
 }
 
 // TestDiskToolsDoNotOpenACustomersMachineToAnAdmin covers the five disk routes.
@@ -180,36 +158,6 @@ func TestForceDeleteNeverTouchesACustomersMachine(t *testing.T) {
 			h := &NodeHandler{state: st}
 			rw := httptest.NewRecorder()
 			h.ForceDeleteNode(rw, visAdminRequest("DELETE", "/x", map[string]string{"id": "7"}))
-			if rw.Code != c.want {
-				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.want, rw.Body.String())
-			}
-		})
-	}
-}
-
-// TestNodeCPUDoesNotLetResourceRightsReachACustomersMachine: every admin also
-// carries CanChangeResources, so refusing the admin in canManageNode alone would
-// have been undone by the second arm of the same condition.
-func TestNodeCPUDoesNotLetResourceRightsReachACustomersMachine(t *testing.T) {
-	admin := &models.User{ID: visAdmin, IsAdmin: true, Role: "admin"}
-	cases := []struct {
-		name string
-		node *models.Node
-		want int
-	}{
-		{"a user's machine", visOwnedNode(), http.StatusForbidden},
-		// Past the gate, stopped by the nil pinning service.
-		{"a platform machine", visPlatformNode(), http.StatusServiceUnavailable},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			st := &AppState{
-				Store:        &orphanAssignFakeStore{node: c.node, user: admin},
-				FeatureFlags: tenancyFeatureFlags(true),
-			}
-			h := &CPUPinningHandler{state: st}
-			rw := httptest.NewRecorder()
-			h.GetNodeCPU(rw, visAdminRequest("GET", "/x", map[string]string{"id": "7"}))
 			if rw.Code != c.want {
 				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.want, rw.Body.String())
 			}

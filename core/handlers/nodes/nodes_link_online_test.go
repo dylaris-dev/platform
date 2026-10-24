@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -36,7 +38,7 @@ func listNodesFor(t *testing.T, rdb *redis.Client, nodes []models.Node) map[stri
 		settings: map[string]string{"routing_mode": "gateway", "feature_byon_enabled": "true"},
 		nodes:    nodes,
 	}
-	state := &AppState{
+	state := &handlers.AppState{
 		Store:         fs,
 		FeatureFlags:  services.NewFeatureFlags(fs),
 		Redis:         rdb,

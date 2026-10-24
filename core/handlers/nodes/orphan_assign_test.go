@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -97,7 +99,7 @@ func TestAssignOrphan_DuplicateCheck(t *testing.T) {
 			// GRPCRegistry stays nil: the orphan case must get PAST the
 			// duplicate check and stop at the gRPC guard with 503. Anything
 			// else means it was refused earlier.
-			h := &NodeHandler{state: &AppState{Store: &orphanAssignFakeStore{server: c.server, err: c.err}}}
+			h := &NodeHandler{state: &handlers.AppState{Store: &orphanAssignFakeStore{server: c.server, err: c.err}}}
 
 			rw := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody()))
@@ -114,7 +116,7 @@ func TestAssignOrphan_DuplicateCheck(t *testing.T) {
 // staff role holding nodes.write could take a deleted customer's world for
 // itself. Admin-only, like changing a server's owner.
 func TestAssignOrphanIsAdminOnly(t *testing.T) {
-	h := &NodeHandler{state: &AppState{Store: &orphanAssignFakeStore{}}}
+	h := &NodeHandler{state: &handlers.AppState{Store: &orphanAssignFakeStore{}}}
 	rw := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody()))
 	ctx := context.WithValue(req.Context(), "isAdmin", false)

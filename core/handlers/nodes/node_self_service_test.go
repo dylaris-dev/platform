@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -57,7 +59,7 @@ func ownedBy(uid string) *models.Node {
 // narrower surface precisely so that never has to be relaxed.
 func TestMyNodeIsOwnerScoped(t *testing.T) {
 	t.Run("the owner reaches it", func(t *testing.T) {
-		h := &NodeHandler{state: &AppState{Store: &selfNodeStore{node: ownedBy("me")}}}
+		h := &NodeHandler{state: &handlers.AppState{Store: &selfNodeStore{node: ownedBy("me")}}}
 		w := httptest.NewRecorder()
 		h.GetMyNodeContents(w, selfNodeReq("GET", "/api/me/nodes/7/contents", "me"))
 		if w.Code != 200 {
@@ -67,7 +69,7 @@ func TestMyNodeIsOwnerScoped(t *testing.T) {
 
 	t.Run("another tenant does not", func(t *testing.T) {
 		fs := &selfNodeStore{node: ownedBy("someone-else")}
-		h := &NodeHandler{state: &AppState{Store: fs}}
+		h := &NodeHandler{state: &handlers.AppState{Store: fs}}
 		w := httptest.NewRecorder()
 		h.DeleteMyNode(w, selfNodeReq("DELETE", "/api/me/nodes/7", "me"))
 		// 404, not 403: on a /me route the difference would confirm that
@@ -85,7 +87,7 @@ func TestMyNodeIsOwnerScoped(t *testing.T) {
 	// capability-gated route for other people's machines.
 	t.Run("an admin does not get in through this door", func(t *testing.T) {
 		fs := &selfNodeStore{node: ownedBy("someone-else")}
-		h := &NodeHandler{state: &AppState{Store: fs}}
+		h := &NodeHandler{state: &handlers.AppState{Store: fs}}
 		r := selfNodeReq("DELETE", "/api/me/nodes/7", "admin-id")
 		r = r.WithContext(context.WithValue(r.Context(), "isAdmin", true)) //nolint:staticcheck
 		w := httptest.NewRecorder()
@@ -101,7 +103,7 @@ func TestMyNodeIsOwnerScoped(t *testing.T) {
 	// A platform node has no owner at all. Nobody may reach it here.
 	t.Run("an unowned node belongs to nobody", func(t *testing.T) {
 		fs := &selfNodeStore{node: &models.Node{ID: 7, Name: "swarm-1"}}
-		h := &NodeHandler{state: &AppState{Store: fs}}
+		h := &NodeHandler{state: &handlers.AppState{Store: fs}}
 		w := httptest.NewRecorder()
 		h.DeleteMyNode(w, selfNodeReq("DELETE", "/api/me/nodes/7", "me"))
 		if w.Code != 404 {
@@ -112,7 +114,7 @@ func TestMyNodeIsOwnerScoped(t *testing.T) {
 	// No identity on the request must not match an owner-less comparison.
 	t.Run("an empty caller matches nothing", func(t *testing.T) {
 		fs := &selfNodeStore{node: ownedBy("")}
-		h := &NodeHandler{state: &AppState{Store: fs}}
+		h := &NodeHandler{state: &handlers.AppState{Store: fs}}
 		w := httptest.NewRecorder()
 		h.DeleteMyNode(w, selfNodeReq("DELETE", "/api/me/nodes/7", ""))
 		if w.Code != 404 {
@@ -126,7 +128,7 @@ func TestMyNodeIsOwnerScoped(t *testing.T) {
 func TestDeleteMyNodeOnlyTakesServersWhenAsked(t *testing.T) {
 	t.Run("without the flag the servers stay", func(t *testing.T) {
 		fs := &selfNodeStore{node: ownedBy("me")}
-		h := &NodeHandler{state: &AppState{Store: fs}}
+		h := &NodeHandler{state: &handlers.AppState{Store: fs}}
 		h.DeleteMyNode(httptest.NewRecorder(), selfNodeReq("DELETE", "/api/me/nodes/7", "me"))
 		if fs.deletedServersOf != 0 {
 			t.Error("the servers were deleted without being asked for")
@@ -135,7 +137,7 @@ func TestDeleteMyNodeOnlyTakesServersWhenAsked(t *testing.T) {
 
 	t.Run("with the flag they go together", func(t *testing.T) {
 		fs := &selfNodeStore{node: ownedBy("me")}
-		h := &NodeHandler{state: &AppState{Store: fs}}
+		h := &NodeHandler{state: &handlers.AppState{Store: fs}}
 		h.DeleteMyNode(httptest.NewRecorder(), selfNodeReq("DELETE", "/api/me/nodes/7?servers=delete", "me"))
 		if fs.deletedServersOf != 7 {
 			t.Error("servers=delete did not take the servers")
@@ -156,7 +158,7 @@ func TestMyNodeContentsNamesEverySubServer(t *testing.T) {
 			3: {{SubServerName: "main"}, {SubServerName: "creative-test"}},
 		},
 	}
-	h := &NodeHandler{state: &AppState{Store: fs}}
+	h := &NodeHandler{state: &handlers.AppState{Store: fs}}
 	w := httptest.NewRecorder()
 	h.GetMyNodeContents(w, selfNodeReq("GET", "/api/me/nodes/7/contents", "me"))
 

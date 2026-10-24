@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/gateway"
+	"dylaris-core/handlers/nodes"
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/tabs"
@@ -538,7 +539,7 @@ var requiredCaps = map[string]string{
 func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandler, cfg routeCfg) (*mux.Router, *routeExtras) {
 	// Initialize handlers
 	serverHandler := handlers.NewServerHandler(appState)
-	nodeHandler := handlers.NewNodeHandler(appState)
+	nodeHandler := nodes.NewNodeHandler(appState)
 	userHandler := handlers.NewUserHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	serverRolesHandler := handlers.NewServerRolesHandler(appState)
@@ -631,8 +632,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	storageMigrationHandler := handlers.NewStorageMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
-	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
-	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
+	nodeEnrollHandler := nodes.NewNodeEnrollHandler(appState)
+	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(appState)
 	gatewayDNSHandler := gateway.NewGatewayDNSHandler(appState)
 	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(appState)
 	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)

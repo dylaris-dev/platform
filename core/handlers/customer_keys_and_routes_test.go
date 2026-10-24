@@ -25,14 +25,4 @@ func TestPlacementAndForceDeleteFailClosed(t *testing.T) {
 			t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
 		}
 	})
-	t.Run("force delete a customer's machine", func(t *testing.T) {
-		st := &orphanAssignFakeStore{node: visOwnedNode()}
-		flags := &foreignFakeStore{settingErr: fault}
-		h := &NodeHandler{state: &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(flags)}}
-		rec := httptest.NewRecorder()
-		h.ForceDeleteNode(rec, visAdminRequest("DELETE", "/x", map[string]string{"id": "7"}))
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("status = %d, want 409 (%s)", rec.Code, rec.Body.String())
-		}
-	})
 }

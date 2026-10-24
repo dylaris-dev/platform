@@ -1,12 +1,8 @@
-package handlers
+package nodes
 
 import (
 	"context"
 	"database/sql"
-	"dylaris-core/models"
-	"dylaris-core/services"
-	"dylaris-core/services/redisacl"
-	"dylaris-core/store"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -17,6 +13,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers"
+
+	"dylaris-core/models"
+	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
+	"dylaris-core/store"
 
 	pb "dylaris-proto/node"
 
@@ -35,10 +38,10 @@ func isSafeOrphanName(name string) bool {
 }
 
 type NodeHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewNodeHandler(state *AppState) *NodeHandler {
+func NewNodeHandler(state *handlers.AppState) *NodeHandler {
 	return &NodeHandler{state: state}
 }
 
@@ -65,7 +68,7 @@ func (h *NodeHandler) diskToolNode(r *http.Request, nodeID int) bool {
 	if err != nil || node == nil {
 		return false
 	}
-	return !ownedByOther(h.state, r, node)
+	return !handlers.OwnedByOther(h.state, r, node)
 }
 
 // requireOrphan writes an error and returns false unless uuid has NO server row,
@@ -89,11 +92,11 @@ func (h *NodeHandler) diskToolNode(r *http.Request, nodeID int) bool {
 func (h *NodeHandler) requireOrphan(w http.ResponseWriter, uuid string) bool {
 	existing, err := h.state.Store.GetServerByUUID(uuid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		sendJSONError(w, "database error checking existing server", 500)
+		handlers.SendJSONError(w, "database error checking existing server", 500)
 		return false
 	}
 	if existing != nil {
-		sendJSONError(w, "Server exists in database - use the server's own file manager", 400)
+		handlers.SendJSONError(w, "Server exists in database - use the server's own file manager", 400)
 		return false
 	}
 	return true
@@ -110,58 +113,12 @@ func (h *NodeHandler) requireOrphan(w http.ResponseWriter, uuid string) bool {
 // Both delegate to models.Node.Kind so the scope filter, the placement rules
 // and the metrics collector cannot drift into three answers to one question.
 func isExternalPlatformNode(n models.Node) bool { return n.Kind() == models.NodeKindExternal }
-func isBYONNode(n models.Node) bool             { return n.Kind() == models.NodeKindBYON }
-
-// setNodesLinkOnline fills LinkOnline: is the Link that carries each node's
-// players actually connected? The heartbeat's linkCount says how many Link
-// containers the node sees on its own host, which stays 1 while that Link
-// reaches no edge and nobody can join. This asks the Link itself, through the
-// key it refreshes, about the token this node's ROUTES use - the Hub-named one
-// where there is one, so a machine served by a self-enrolled Link is not
-// reported as dead. Shared by /api/nodes and the infrastructure overview.
-//
-// Only where the answer can be trusted: a machine whose Link the Hub has
-// named, and a customer's machine, whose Link boots with the token Core
-// derives (link-boot hands it out). An in-cluster machine served by a
-// self-enrolled Link runs under a Hub-GENERATED token, so asking about the
-// derived one would report it as not connected for as long as the learner
-// has no answer - a red badge on a machine that is serving players.
-func setNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Node) {
-	if len(nodes) == 0 {
-		return
-	}
-	askFor := func(n *models.Node) string {
-		if n.LinkToken == "" && !isBYONNode(*n) {
-			return ""
-		}
-		return services.EffectiveLinkToken(n, state.ClusterSecret)
-	}
-	tokens := make([]string, 0, len(nodes))
-	for i := range nodes {
-		if t := askFor(&nodes[i]); t != "" {
-			tokens = append(tokens, t)
-		}
-	}
-	online := services.LinkOnline(ctx, state.Redis, tokens)
-	if online == nil {
-		return
-	}
-	for i := range nodes {
-		t := askFor(&nodes[i])
-		if t == "" {
-			continue
-		}
-		if v, ok := online[t]; ok {
-			nodes[i].LinkOnline = &v
-		}
-	}
-}
 
 // ownedBYONNode is the "Your machines" predicate: a BYON node belonging to this
 // caller. An empty caller matches nothing, so a request that arrived without an
 // identity gets an empty list rather than the fleet.
 func ownedBYONNode(uid string) func(models.Node) bool {
-	return func(n models.Node) bool { return isBYONNode(n) && uid != "" && *n.OwnerID == uid }
+	return func(n models.Node) bool { return handlers.IsBYONNode(n) && uid != "" && *n.OwnerID == uid }
 }
 
 // placeableNode is the PLACEMENT predicate: a node this caller may be offered
@@ -200,21 +157,21 @@ func filterNodes(nodes []models.Node, keep func(models.Node) bool) []models.Node
 // sense that matters.
 func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "DB error", 503)
+		handlers.SendJSONError(w, "DB error", 503)
 		return
 	}
 	// Node list is admin-only today. In BYON mode a non-admin tenant may list
 	// THEIR OWN nodes; everything else stays admin-only.
-	admin := IsAdmin(r)
-	byon := byonActive(h.state, r)
+	admin := handlers.IsAdmin(r)
+	byon := handlers.ByonActive(h.state, r)
 	if !admin && !byon {
-		sendJSONError(w, "Forbidden", 403)
+		handlers.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 
 	nodes, err := h.state.Store.ListNodes()
 	if err != nil {
-		sendJSONError(w, "Failed to load nodes", 500)
+		handlers.SendJSONError(w, "Failed to load nodes", 500)
 		return
 	}
 	if nodes == nil {
@@ -223,7 +180,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 
 	// BYON tenant: scope the list to nodes they own.
 	if !admin && byon {
-		uid := byonCallerID(r)
+		uid := handlers.ByonCallerID(r)
 		owned := make([]models.Node, 0, len(nodes))
 		for _, n := range nodes {
 			if n.OwnerID != nil && *n.OwnerID == uid {
@@ -244,7 +201,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 		switch scope {
 		case "external":
 			if !admin {
-				sendJSONError(w, "Forbidden", 403)
+				handlers.SendJSONError(w, "Forbidden", 403)
 				return
 			}
 			nodes = filterNodes(nodes, isExternalPlatformNode)
@@ -259,13 +216,13 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			// filter here looked like it finished the job while only the
 			// unprivileged half of it was ever enforced. An admin who needs the
 			// whole fleet asks for the unscoped list, which is still theirs.
-			nodes = filterNodes(nodes, ownedBYONNode(byonCallerID(r)))
+			nodes = filterNodes(nodes, ownedBYONNode(handlers.ByonCallerID(r)))
 		case "placement":
 			// What may I put a server on. Answers the target-node picker in the
 			// create wizard and the transfer dialog, and deliberately hides
 			// another tenant's machine from an operator: their hardware is not
 			// the operator's capacity, and canPlaceOnNode refuses it anyway.
-			nodes = filterNodes(nodes, placeableNode(byonCallerID(r), admin, byon))
+			nodes = filterNodes(nodes, placeableNode(handlers.ByonCallerID(r), admin, byon))
 		case "fleet":
 			// The machines the OPERATOR runs: platform and external, never a
 			// customer's. It backs Settings -> Nodes, which offers Configure,
@@ -275,12 +232,12 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			// That screen used to ask for the unscoped list, so every tenant's
 			// machine appeared there with those buttons live next to it.
 			if !admin {
-				sendJSONError(w, "Forbidden", 403)
+				handlers.SendJSONError(w, "Forbidden", 403)
 				return
 			}
-			nodes = filterNodes(nodes, func(n models.Node) bool { return !isBYONNode(n) })
+			nodes = filterNodes(nodes, func(n models.Node) bool { return !handlers.IsBYONNode(n) })
 		default:
-			sendJSONError(w, "Unknown scope", 400)
+			handlers.SendJSONError(w, "Unknown scope", 400)
 			return
 		}
 	}
@@ -303,13 +260,13 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 
 	// One round trip for the whole list, after the scope filter, so it covers
 	// exactly the rows being returned.
-	setNodesLinkOnline(r.Context(), h.state, nodes)
+	handlers.SetNodesLinkOnline(r.Context(), h.state, nodes)
 
 	// Derive the unusable flag at response time (no DB column needed): an
 	// external/home node only routes via gateway+beam, so while the platform
 	// is in ip_port mode it has no reachable path. Panel uses this to show a
 	// "requires gateway" badge instead of letting admins place servers there.
-	gatewayOn := h.state.gatewayEnabled()
+	gatewayOn := h.state.GatewayEnabled()
 	for i := range nodes {
 		if nodes[i].IsExternal() && !gatewayOn {
 			nodes[i].Unusable = true
@@ -334,7 +291,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 // omitted address defaults to 0.0.0.0.
 func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "DB error", 503)
+		handlers.SendJSONError(w, "DB error", 503)
 		return
 	}
 
@@ -349,7 +306,7 @@ func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 	req.CreatedAt = time.Now()
 
 	if err := h.state.Store.CreateNode(&req); err != nil {
-		sendJSONError(w, "Failed to create node", 500)
+		handlers.SendJSONError(w, "Failed to create node", 500)
 		return
 	}
 
@@ -362,15 +319,15 @@ func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 // alone, the CPU pinning mask.
 func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "DB error", 503)
+		handlers.SendJSONError(w, "DB error", 503)
 		return
 	}
 
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 	// The CPU pool of a customer's machine is theirs to set.
-	if foreignToCaller(h.state, r, id) {
-		sendJSONError(w, "Node not found", 404)
+	if handlers.ForeignToCaller(h.state, r, id) {
+		handlers.SendJSONError(w, "Node not found", 404)
 		return
 	}
 
@@ -381,7 +338,7 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 
 	if req.CpusetCpus != nil {
 		if err := h.state.Store.UpdateNodeCpusetCpus(id, *req.CpusetCpus); err != nil {
-			sendJSONError(w, "Failed to update node", 500)
+			handlers.SendJSONError(w, "Failed to update node", 500)
 			return
 		}
 	}
@@ -397,7 +354,7 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 // row still goes and the leftovers are logged rather than silently abandoned.
 func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "DB error", 503)
+		handlers.SendJSONError(w, "DB error", 503)
 		return
 	}
 
@@ -416,10 +373,10 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 		// Collapsing it into a 500 left an admin with a button that does nothing
 		// and no hint that the servers have to go first.
 		if errors.Is(err, store.ErrNodeHasServers) {
-			sendJSONError(w, "This node still has servers on it. Move or delete them first, or use force-delete to remove the node and its servers together (not available for a machine that belongs to a user).", 409)
+			handlers.SendJSONError(w, "This node still has servers on it. Move or delete them first, or use force-delete to remove the node and its servers together (not available for a machine that belongs to a user).", 409)
 			return
 		}
-		sendJSONError(w, "Delete failed", 500)
+		handlers.SendJSONError(w, "Delete failed", 500)
 		return
 	}
 
@@ -514,17 +471,17 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !canManageNode(h.state, r, node) {
-		sendJSONError(w, "Forbidden", 403)
+	if !handlers.CanManageNode(h.state, r, node) {
+		handlers.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 
 	servers, err := h.state.Store.ListServersByNode(id)
 	if err != nil {
-		sendJSONError(w, "Failed to load servers", 500)
+		handlers.SendJSONError(w, "Failed to load servers", 500)
 		return
 	}
 	if servers == nil {
@@ -532,7 +489,7 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 	}
 	// This is the view an operator opens when a node looks wrong, so it is the
 	// one place a stalled install most needs to be visible.
-	annotateStalledInstallsFor(r.Context(), h.state, servers)
+	handlers.AnnotateStalledInstallsFor(r.Context(), h.state, servers)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,
@@ -546,7 +503,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return
 	}
 
@@ -556,13 +513,13 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// them in one call. Decommissioning a customer's machine is the plain
 	// DELETE /api/nodes/{id}, which is refused while servers remain and names
 	// none. Its owner removes their own through /api/me/nodes/{id}.
-	if node.OwnerID != nil && ownershipInForce(h.state, r) {
-		sendJSONError(w, "This machine belongs to a user, and its servers are theirs. Remove the node once they are gone.", http.StatusConflict)
+	if node.OwnerID != nil && handlers.OwnershipInForce(h.state, r) {
+		handlers.SendJSONError(w, "This machine belongs to a user, and its servers are theirs. Remove the node once they are gone.", http.StatusConflict)
 		return
 	}
 
 	if node.Status == "online" {
-		sendJSONError(w, "Cannot force-delete an online node", 400)
+		handlers.SendJSONError(w, "Cannot force-delete an online node", 400)
 		return
 	}
 
@@ -577,16 +534,16 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 
 	// Before the rows: their backup archives are named by run rows that cascade
 	// away with the servers.
-	purgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
+	handlers.PurgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
 
 	// Delete all servers on this node first (FK constraint)
 	if err := h.state.Store.DeleteServersByNode(id); err != nil {
-		sendJSONError(w, "Failed to delete servers on node", 500)
+		handlers.SendJSONError(w, "Failed to delete servers on node", 500)
 		return
 	}
 
 	if err := h.state.Store.DeleteNode(id); err != nil {
-		sendJSONError(w, "Failed to delete node", 500)
+		handlers.SendJSONError(w, "Failed to delete node", 500)
 		return
 	}
 
@@ -599,7 +556,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// Background, not the request context: an operator who hung up must not be
 	// the reason a deleted machine's addresses keep resolving.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
-	dropDemoServers(h.state, services.ServerUUIDs(servers))
+	handlers.DropDemoServers(h.state, services.ServerUUIDs(servers))
 	log.Printf("ForceDeleteNode: node %d — cleaned up %d route(s) across %d server(s)", id, matched, len(servers))
 	h.cleanupDeletedNode(r, node, warpKeys)
 
@@ -622,11 +579,11 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !canManageNode(h.state, r, node) {
-		sendJSONError(w, "Forbidden", 403)
+	if !handlers.CanManageNode(h.state, r, node) {
+		handlers.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -651,7 +608,7 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 
 	var heartbeat map[string]interface{}
 	if err := json.Unmarshal([]byte(val), &heartbeat); err != nil {
-		sendJSONError(w, "Failed to parse heartbeat", 500)
+		handlers.SendJSONError(w, "Failed to parse heartbeat", 500)
 		return
 	}
 
@@ -740,25 +697,25 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !canManageNode(h.state, r, node) {
-		sendJSONError(w, "Forbidden", 403)
+	if !handlers.CanManageNode(h.state, r, node) {
+		handlers.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	if h.state.Redis == nil {
-		sendJSONError(w, "Redis unavailable", 503)
+		handlers.SendJSONError(w, "Redis unavailable", 503)
 		return
 	}
 
 	var req storagePlacement
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", 400)
+		handlers.SendJSONError(w, "Invalid request body", 400)
 		return
 	}
 	if req.Mode != "auto" && req.Mode != "manual" {
-		sendJSONError(w, "mode must be auto or manual", 400)
+		handlers.SendJSONError(w, "mode must be auto or manual", 400)
 		return
 	}
 
@@ -774,7 +731,7 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 			continue
 		}
 		if len(known) > 0 && !known[p] {
-			sendJSONError(w, "unknown storage path: "+p, 400)
+			handlers.SendJSONError(w, "unknown storage path: "+p, 400)
 			return
 		}
 		seen[p] = true
@@ -783,14 +740,14 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 
 	payload, err := json.Marshal(storagePlacement{Mode: req.Mode, Order: order})
 	if err != nil {
-		sendJSONError(w, "Failed to encode placement", 500)
+		handlers.SendJSONError(w, "Failed to encode placement", 500)
 		return
 	}
 	// No TTL: this is configuration, and the node re-reads it on every settings
 	// poll. It survives a node restart but not a Redis flush - same as the other
 	// dylaris:placement:* settings.
 	if err := h.state.Redis.Set(r.Context(), storagePlacementKey(node.Token), payload, 0).Err(); err != nil {
-		sendJSONError(w, "Failed to store placement", 500)
+		handlers.SendJSONError(w, "Failed to store placement", 500)
 		return
 	}
 
@@ -806,7 +763,7 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 // describes the fleet).
 func (h *NodeHandler) GetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
-		sendJSONError(w, "Redis unavailable", 503)
+		handlers.SendJSONError(w, "Redis unavailable", 503)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -821,16 +778,16 @@ func (h *NodeHandler) GetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 // order. Stored in Redis, not in the database.
 func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
-		sendJSONError(w, "Redis unavailable", 503)
+		handlers.SendJSONError(w, "Redis unavailable", 503)
 		return
 	}
 	var req storagePlacement
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", 400)
+		handlers.SendJSONError(w, "Invalid request body", 400)
 		return
 	}
 	if req.Mode != "auto" && req.Mode != "manual" {
-		sendJSONError(w, "mode must be auto or manual", 400)
+		handlers.SendJSONError(w, "mode must be auto or manual", 400)
 		return
 	}
 
@@ -849,7 +806,7 @@ func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 
 	next := services.NodePlacement{Mode: req.Mode, Order: order}
 	if err := services.SaveFleetPlacement(r.Context(), h.state.Redis, next); err != nil {
-		sendJSONError(w, "Failed to store placement", 500)
+		handlers.SendJSONError(w, "Failed to store placement", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "placement": next})
@@ -893,11 +850,11 @@ func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !canManageNode(h.state, r, node) {
-		sendJSONError(w, "Forbidden", 403)
+	if !handlers.CanManageNode(h.state, r, node) {
+		handlers.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 
@@ -928,15 +885,15 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(vars["id"])
 
 	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil || ownedByOther(h.state, r, node) {
+	if err != nil || node == nil || handlers.OwnedByOther(h.state, r, node) {
 		// Every server's name and owner is in this answer. See diskToolNode.
-		sendJSONError(w, "Node not found", 404)
+		handlers.SendJSONError(w, "Node not found", 404)
 		return
 	}
 
 	dbServers, err := h.state.Store.ListServersByNode(id)
 	if err != nil {
-		sendJSONError(w, "Failed to load servers", 500)
+		handlers.SendJSONError(w, "Failed to load servers", 500)
 		return
 	}
 
@@ -1017,7 +974,7 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 
 	orphanUUID := r.URL.Query().Get("uuid")
 	if orphanUUID == "" {
-		sendJSONError(w, "uuid query param required", 400)
+		handlers.SendJSONError(w, "uuid query param required", 400)
 		return
 	}
 	// Path-traversal guard: orphan folder names must be safe filename chars only.
@@ -1025,11 +982,11 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 	// We don't strictly require UUIDv4 since orphans are scanned from disk and
 	// may have non-UUID names from manual setups.
 	if !isSafeOrphanName(orphanUUID) {
-		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		handlers.SendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 	if !h.diskToolNode(r, nodeID) {
-		sendJSONError(w, "Node not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 
@@ -1041,7 +998,7 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 	}
 
 	if h.state.GRPCRegistry == nil {
-		sendJSONError(w, "gRPC not available", 503)
+		handlers.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
@@ -1051,11 +1008,11 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 		Payload:    &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: "."}},
 	}, 30*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		handlers.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, 500)
+		handlers.SendJSONError(w, errResp.Message, 500)
 		return
 	}
 
@@ -1074,11 +1031,11 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 	orphanUUID := vars["uuid"]
 
 	if !isSafeOrphanName(orphanUUID) {
-		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		handlers.SendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 	if !h.diskToolNode(r, nodeID) {
-		sendJSONError(w, "Node not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	if !h.requireOrphan(w, orphanUUID) {
@@ -1088,7 +1045,7 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 	pathParam := r.URL.Query().Get("path")
 	// Reject any path containing ".." or starting with "/" to prevent traversal outside the orphan root.
 	if strings.Contains(pathParam, "..") || (len(pathParam) > 0 && pathParam[0] == '/') {
-		sendJSONError(w, "Path must not contain '..' or start with '/'", 400)
+		handlers.SendJSONError(w, "Path must not contain '..' or start with '/'", 400)
 		return
 	}
 	// Default to root when path is empty.
@@ -1097,7 +1054,7 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.state.GRPCRegistry == nil {
-		sendJSONError(w, "gRPC not available", 503)
+		handlers.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
@@ -1107,17 +1064,17 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 		Payload:    &pb.NodeMessage_ListReq{ListReq: &pb.ListFilesReq{Path: pathParam}},
 	}, 30*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		handlers.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		handlers.SendJSONError(w, errResp.Message, handlers.NodeErrorStatus(errResp.Code))
 		return
 	}
 
 	listResp := resp.GetListResp()
 	if listResp == nil {
-		sendJSONError(w, "Unexpected response from node", 500)
+		handlers.SendJSONError(w, "Unexpected response from node", 500)
 		return
 	}
 
@@ -1146,11 +1103,11 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 	orphanUUID := vars["uuid"]
 
 	if !isSafeOrphanName(orphanUUID) {
-		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		handlers.SendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 	if !h.diskToolNode(r, nodeID) {
-		sendJSONError(w, "Node not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	if !h.requireOrphan(w, orphanUUID) {
@@ -1159,16 +1116,16 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 
 	pathParam := r.URL.Query().Get("path")
 	if strings.Contains(pathParam, "..") || (len(pathParam) > 0 && pathParam[0] == '/') {
-		sendJSONError(w, "Path must not contain '..' or start with '/'", 400)
+		handlers.SendJSONError(w, "Path must not contain '..' or start with '/'", 400)
 		return
 	}
 	if pathParam == "" {
-		sendJSONError(w, "path query param required", 400)
+		handlers.SendJSONError(w, "path query param required", 400)
 		return
 	}
 
 	if h.state.GRPCRegistry == nil {
-		sendJSONError(w, "gRPC not available", 503)
+		handlers.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
@@ -1183,18 +1140,18 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 
 	ch, err := h.state.GRPCRegistry.SendRequestStreaming(nodeID, msg)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		handlers.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
-	data, errResp, rerr := collectNodeFile(ch, maxOpenFileBytes)
+	data, errResp, rerr := handlers.CollectNodeFile(ch, handlers.MaxOpenFileBytes)
 	if errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		handlers.SendJSONError(w, errResp.Message, handlers.NodeErrorStatus(errResp.Code))
 		return
 	}
 	if rerr != nil {
-		sendJSONError(w, rerr.Error(), readErrStatus(rerr))
+		handlers.SendJSONError(w, rerr.Error(), handlers.ReadErrStatus(rerr))
 		return
 	}
 
@@ -1218,83 +1175,6 @@ type AssignOrphanRequest struct {
 	CPULimit float64 `json:"cpu_limit"`
 }
 
-// dylarisMetadata mirrors the relevant fields of .dylaris.json on disk.
-type dylarisMetadata struct {
-	Name            string  `json:"name"`
-	MemoryMB        int     `json:"memory_mb"`
-	CPULimit        float64 `json:"cpu_limit"`
-	ActiveSubServer string  `json:"active_sub_server"`
-	SubServers      []struct {
-		Name             string `json:"name"`
-		Type             string `json:"type"`
-		MinecraftVersion string `json:"minecraft_version"`
-		Build            string `json:"build"`
-	} `json:"sub_servers"`
-}
-
-// inspectOrphanOnNode sends an inspect_orphan gRPC request to nodeID for orphanUUID
-// and returns the parsed response. Returns nil, error on gRPC failure or missing orphan.
-// Package-level (not a NodeHandler method) so the server-lifecycle switch path can
-// reuse it to refresh a server's loader metadata from the node's .dylaris.json.
-func inspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
-	resp, err := state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
-		RequestId:  uuid.NewString(),
-		ServerUuid: orphanUUID,
-		Payload:    &pb.NodeMessage_InspectOrphanReq{InspectOrphanReq: &pb.InspectOrphanReq{}},
-	}, 30*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("node communication error: %w", err)
-	}
-	if errResp := resp.GetError(); errResp != nil {
-		code := nodeErrorStatus(errResp.Code)
-		if code == 0 {
-			code = 500
-		}
-		return nil, fmt.Errorf("node error %d: %s", code, errResp.Message)
-	}
-	orphanInfo := resp.GetInspectOrphanResp()
-	if orphanInfo == nil {
-		return nil, fmt.Errorf("orphan folder not found or inspect failed")
-	}
-	return orphanInfo, nil
-}
-
-// subServerLoaderFromInspect extracts one sub-server's loader/version/build from
-// a node's inspect_orphan response. It prefers the richer .dylaris.json metadata
-// (which carries minecraft_version and build) and falls back to the directory
-// scan, which reports the type only. ok reports whether the sub-server was found
-// at all, so callers can leave existing values untouched instead of wiping them
-// when the node cannot describe the sub-server.
-//
-// Shared by orphan adoption (first fill) and the sub-server switch (refresh), so
-// both derive installer_type/minecraft_version/build_number the same way and
-// cannot drift apart.
-func subServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (instType, mcVer, build string, ok bool) {
-	if resp == nil || subName == "" {
-		return "", "", "", false
-	}
-	if resp.HasMetadata && resp.MetadataJson != "" {
-		var meta dylarisMetadata
-		if err := json.Unmarshal([]byte(resp.MetadataJson), &meta); err == nil {
-			for _, ss := range meta.SubServers {
-				if ss.Name == subName {
-					// A NeoForge build is recorded as its loader, as a setup does.
-					return ss.Type, services.RecordedMinecraftVersion(ss.Type, ss.MinecraftVersion, ss.Build, ss.Build), ss.Build, true
-				}
-			}
-		}
-	}
-	// Fall back to the directory scan when metadata is absent or omits this
-	// sub-server. SubServerInfo carries no minecraft_version/build, so those
-	// stay empty.
-	for _, ss := range resp.SubServers {
-		if ss.Name == subName {
-			return ss.Type, "", "", true
-		}
-	}
-	return "", "", "", false
-}
-
 // InspectOrphan returns metadata about an orphaned folder without assigning it.
 // GET /api/disk/orphans/{nodeId:[0-9]+}/{uuid}/inspect  (admin-only)
 func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
@@ -1303,11 +1183,11 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 	orphanUUID := vars["uuid"]
 
 	if !isSafeOrphanName(orphanUUID) {
-		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		handlers.SendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 	if !h.diskToolNode(r, nodeID) {
-		sendJSONError(w, "Node not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	// The route, not inspectOrphanOnNode: the sub-server switch reuses that
@@ -1317,20 +1197,20 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.state.GRPCRegistry == nil {
-		sendJSONError(w, "gRPC not available", 503)
+		handlers.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
-	orphanInfo, err := inspectOrphanOnNode(h.state, nodeID, orphanUUID)
+	orphanInfo, err := handlers.InspectOrphanOnNode(h.state, nodeID, orphanUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), 502)
+		handlers.SendJSONError(w, err.Error(), 502)
 		return
 	}
 
 	// Parse metadata JSON server-side so the panel receives a clean object.
 	var metadataObj interface{}
 	if orphanInfo.HasMetadata && orphanInfo.MetadataJson != "" {
-		var meta dylarisMetadata
+		var meta handlers.DylarisMetadata
 		if jsonErr := json.Unmarshal([]byte(orphanInfo.MetadataJson), &meta); jsonErr == nil {
 			metadataObj = meta
 		}
@@ -1370,57 +1250,57 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	// AdminUpdateServerOwner. The body names the owner, and the owner gets the
 	// resolver's owner short-circuit: a staff role holding nodes.write could
 	// adopt a deleted customer's world for itself, console and files included.
-	if !IsAdmin(r) {
-		sendJSONError(w, "Only an administrator can adopt an orphaned server", http.StatusForbidden)
+	if !handlers.IsAdmin(r) {
+		handlers.SendJSONError(w, "Only an administrator can adopt an orphaned server", http.StatusForbidden)
 		return
 	}
 	if h.state.Store == nil {
-		sendJSONError(w, "DB error", 503)
+		handlers.SendJSONError(w, "DB error", 503)
 		return
 	}
 
 	var req AssignOrphanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON body", 400)
+		handlers.SendJSONError(w, "Invalid JSON body", 400)
 		return
 	}
 
 	// --- Input validation ---
 	if !isSafeOrphanName(req.UUID) {
-		sendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
+		handlers.SendJSONError(w, "invalid uuid: only a-z, A-Z, 0-9, '-' and '_' allowed, max 64 chars", 400)
 		return
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		sendJSONError(w, "name is required", 400)
+		handlers.SendJSONError(w, "name is required", 400)
 		return
 	}
 	if req.MemoryMB <= 0 {
-		sendJSONError(w, "memory_mb must be > 0", 400)
+		handlers.SendJSONError(w, "memory_mb must be > 0", 400)
 		return
 	}
 	if req.NodeID <= 0 {
-		sendJSONError(w, "node_id is required", 400)
+		handlers.SendJSONError(w, "node_id is required", 400)
 		return
 	}
 	// Adopting inspects the folder and writes a server row for whichever owner the
 	// body names, so on a customer's machine it is both a look inside and a
 	// placement onto hardware that is not the operator's.
 	if !h.diskToolNode(r, req.NodeID) {
-		sendJSONError(w, "Node not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	// Exactly one owner source must be provided.
 	if req.OwnerUserID == nil && req.NewUser == nil {
-		sendJSONError(w, "exactly one of owner_user_id or new_user must be set", 400)
+		handlers.SendJSONError(w, "exactly one of owner_user_id or new_user must be set", 400)
 		return
 	}
 	if req.OwnerUserID != nil && req.NewUser != nil {
-		sendJSONError(w, "exactly one of owner_user_id or new_user must be set, not both", 400)
+		handlers.SendJSONError(w, "exactly one of owner_user_id or new_user must be set, not both", 400)
 		return
 	}
 	if req.NewUser != nil {
 		if strings.TrimSpace(req.NewUser.Username) == "" || req.NewUser.Password == "" {
-			sendJSONError(w, "new_user.username and new_user.password are required", 400)
+			handlers.SendJSONError(w, "new_user.username and new_user.password are required", 400)
 			return
 		}
 	}
@@ -1440,17 +1320,17 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	// AuthMiddleware makes between a deleted account and an unreachable store.
 	existing, err := h.state.Store.GetServerByUUID(req.UUID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		sendJSONError(w, "database error checking existing server", 500)
+		handlers.SendJSONError(w, "database error checking existing server", 500)
 		return
 	}
 	if existing != nil {
-		sendJSONError(w, "A server with this UUID already exists in the database", 409)
+		handlers.SendJSONError(w, "A server with this UUID already exists in the database", 409)
 		return
 	}
 
 	// --- gRPC availability check (before any user creation) ---
 	if h.state.GRPCRegistry == nil {
-		sendJSONError(w, "gRPC not available", 503)
+		handlers.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
@@ -1459,7 +1339,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	if req.OwnerUserID != nil {
 		user, err := h.state.Store.GetUserByID(*req.OwnerUserID)
 		if err != nil || user == nil {
-			sendJSONError(w, fmt.Sprintf("User with id %s not found", *req.OwnerUserID), 400)
+			handlers.SendJSONError(w, fmt.Sprintf("User with id %s not found", *req.OwnerUserID), 400)
 			return
 		}
 		ownerID = user.ID
@@ -1467,7 +1347,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		// Create a new non-admin user.
 		hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewUser.Password), bcrypt.DefaultCost)
 		if err != nil {
-			sendJSONError(w, "Failed to hash password", 500)
+			handlers.SendJSONError(w, "Failed to hash password", 500)
 			return
 		}
 		// Verified at creation: the admin vouches for it and it has no address a
@@ -1481,16 +1361,16 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := h.state.Store.CreateUser(newUser); err != nil {
 			log.Printf("AssignOrphan: CreateUser failed for username=%q: %v", req.NewUser.Username, err)
-			sendJSONError(w, "Failed to create user (username may already exist)", 409)
+			handlers.SendJSONError(w, "Failed to create user (username may already exist)", 409)
 			return
 		}
 		ownerID = newUser.ID
 	}
 
 	// --- Inspect the orphan on the node ---
-	orphanInfo, err := inspectOrphanOnNode(h.state, req.NodeID, req.UUID)
+	orphanInfo, err := handlers.InspectOrphanOnNode(h.state, req.NodeID, req.UUID)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+		handlers.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
 	}
 
@@ -1507,10 +1387,10 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	if activeSubServer != "" && !validate.IsSubServerName(activeSubServer) {
 		log.Printf("AssignOrphan: node %d reported an unusable active sub-server name %q for %s; refusing adoption",
 			req.NodeID, activeSubServer, req.UUID)
-		sendJSONError(w, "The node reported an invalid active sub-server name for this server", 400)
+		handlers.SendJSONError(w, "The node reported an invalid active sub-server name for this server", 400)
 		return
 	}
-	installerType, minecraftVersion, buildNumber, _ := subServerLoaderFromInspect(orphanInfo, activeSubServer)
+	installerType, minecraftVersion, buildNumber, _ := handlers.SubServerLoaderFromInspect(orphanInfo, activeSubServer)
 
 	// --- Create the servers DB row ---
 	srv := &models.Server{
@@ -1531,7 +1411,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		if req.NewUser != nil {
 			log.Printf("AssignOrphan: WARNING — new user (id=%s username=%q) was created but server insert failed; manual cleanup may be required", ownerID, req.NewUser.Username)
 		}
-		sendJSONError(w, "Failed to create server record", 500)
+		handlers.SendJSONError(w, "Failed to create server record", 500)
 		return
 	}
 	srv.ID = int(newID)

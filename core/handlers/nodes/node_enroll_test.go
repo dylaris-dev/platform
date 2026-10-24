@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -83,7 +85,7 @@ func (f *nodeEnrollFakeStore) CreateNodeEnrollToken(userID, plaintext, label str
 // newNodeEnrollState builds an AppState with a real *services.FeatureFlags
 // backed by the fake store (feature_byon_enabled drives byonActive), plus
 // the GRPC TLS fields MintToken's fingerprint-disclosure gate reads.
-func newNodeEnrollState(fs *nodeEnrollFakeStore, byonEnabled, grpcTLSEnabled bool, grpcFingerprint string) *AppState {
+func newNodeEnrollState(fs *nodeEnrollFakeStore, byonEnabled, grpcTLSEnabled bool, grpcFingerprint string) *handlers.AppState {
 	if fs.settings == nil {
 		fs.settings = map[string]string{}
 	}
@@ -91,7 +93,7 @@ func newNodeEnrollState(fs *nodeEnrollFakeStore, byonEnabled, grpcTLSEnabled boo
 	if byonEnabled {
 		fs.settings["feature_byon_enabled"] = "true"
 	}
-	return &AppState{
+	return &handlers.AppState{
 		Store:              fs,
 		FeatureFlags:       services.NewFeatureFlags(fs),
 		GRPCTLSEnabled:     grpcTLSEnabled,

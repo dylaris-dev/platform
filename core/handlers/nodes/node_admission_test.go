@@ -1,4 +1,4 @@
-package handlers
+package nodes
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -98,7 +100,7 @@ func TestSetAdmission_ValidationAndPersistence(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &nodeAdmissionFakeStore{}
-			h := NewNodeAdmissionHandler(&AppState{Store: fs})
+			h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 			rec := httptest.NewRecorder()
 
 			h.SetAdmission(rec, nodeAdmissionReq("PUT", "/api/admin/settings/node-admission", true, map[string]interface{}{
@@ -130,7 +132,7 @@ func TestSetAdmission_ValidationAndPersistence(t *testing.T) {
 
 func TestSetAdmission_InvalidJSON(t *testing.T) {
 	fs := &nodeAdmissionFakeStore{}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
+	h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 	r := httptest.NewRequest("PUT", "/api/admin/settings/node-admission", bytes.NewReader([]byte("not json")))
 	r = r.WithContext(context.WithValue(r.Context(), "isAdmin", true))
 	rec := httptest.NewRecorder()
@@ -151,7 +153,7 @@ func TestSetAdmission_InvalidJSON(t *testing.T) {
 
 func TestAddCIDR_MalformedRejected(t *testing.T) {
 	fs := &nodeAdmissionFakeStore{}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
+	h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
 	h.AddCIDR(rec, nodeAdmissionReq("POST", "/api/admin/settings/node-admission/cidrs", true, map[string]interface{}{
@@ -172,7 +174,7 @@ func TestAddCIDR_MalformedRejected(t *testing.T) {
 // must be persisted (and echoed back) as "10.0.0.0/24".
 func TestAddCIDR_NormalizesToNetworkAddress(t *testing.T) {
 	fs := &nodeAdmissionFakeStore{}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
+	h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
 	h.AddCIDR(rec, nodeAdmissionReq("POST", "/api/admin/settings/node-admission/cidrs", true, map[string]interface{}{
@@ -287,7 +289,7 @@ func rollSecretReq(id string) *http.Request {
 // anyway would silently turn the action into Reset pairing, so NOTHING changes.
 func TestRollSecret_NoRecordedAddressChangesNothing(t *testing.T) {
 	fs := &rollSecretFakeStore{node: &models.Node{ID: 5, Token: "node-abc"}}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
+	h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
 	h.RollSecret(rec, rollSecretReq("5"))
@@ -309,7 +311,7 @@ func TestRollSecret_NoRecordedAddressChangesNothing(t *testing.T) {
 
 func TestRollSecret_ArmsTheAdmissionAtTheLastAuthAddress(t *testing.T) {
 	fs := &rollSecretFakeStore{node: &models.Node{ID: 5, Token: "node-abc"}, lastAuthIP: "203.0.113.7"}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
+	h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
 	h.RollSecret(rec, rollSecretReq("5"))
@@ -361,7 +363,7 @@ func TestAdminActionsReplaceTheKeyAndOnlyResetRotatesAKeyNodesSecret(t *testing.
 			t.Run(fmt.Sprintf("%s, key node %v", a.name, keyNode), func(t *testing.T) {
 				fs := &rollSecretFakeStore{node: &models.Node{ID: 5, Token: "node-abc"}, lastAuthIP: "203.0.113.7", keyNode: keyNode}
 				rec := httptest.NewRecorder()
-				a.run(NewNodeAdmissionHandler(&AppState{Store: fs}), rec)
+				a.run(NewNodeAdmissionHandler(&handlers.AppState{Store: fs}), rec)
 
 				if rec.Code != http.StatusOK {
 					t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
@@ -388,7 +390,7 @@ func TestAdminActionsReplaceTheKeyAndOnlyResetRotatesAKeyNodesSecret(t *testing.
 
 func TestRollSecret_UnknownNode(t *testing.T) {
 	fs := &rollSecretFakeStore{node: &models.Node{ID: 5, Token: "node-abc"}, lastAuthIP: "203.0.113.7"}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
+	h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
 	h.RollSecret(rec, rollSecretReq("6"))
@@ -403,7 +405,7 @@ func TestRollSecret_UnknownNode(t *testing.T) {
 
 func TestAddCIDR_InvalidJSON(t *testing.T) {
 	fs := &nodeAdmissionFakeStore{}
-	h := NewNodeAdmissionHandler(&AppState{Store: fs})
+	h := NewNodeAdmissionHandler(&handlers.AppState{Store: fs})
 	r := httptest.NewRequest("POST", "/api/admin/settings/node-admission/cidrs", bytes.NewReader([]byte("not json")))
 	r = r.WithContext(context.WithValue(r.Context(), "isAdmin", true))
 	rec := httptest.NewRecorder()
@@ -426,7 +428,7 @@ func TestAdmitRefusesAnAttemptThatChangedSinceItWasShown(t *testing.T) {
 		fs := &rollSecretFakeStore{node: &models.Node{ID: 5, Token: "node-abc"}}
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/api/admin/nodes/join-attempts/node-abc/approve", strings.NewReader(body))
-		NewNodeAdmissionHandler(&AppState{Store: fs}).ApproveJoinAttempt(rec, mux.SetURLVars(r, map[string]string{"token": "node-abc"}))
+		NewNodeAdmissionHandler(&handlers.AppState{Store: fs}).ApproveJoinAttempt(rec, mux.SetURLVars(r, map[string]string{"token": "node-abc"}))
 		if rec.Code == http.StatusOK || len(fs.ops) != 0 {
 			t.Errorf("%s: status %d, ops %v; want a refusal that touches nothing", body, rec.Code, fs.ops)
 		}

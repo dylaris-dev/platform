@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	pb "dylaris-proto/node"
 	"net/http"
 	"time"
 
@@ -312,3 +313,55 @@ var (
 func AdminRouteScope(userID string) string { return adminRouteScope(userID) }
 
 const DefaultWarpSpokeAllowedPorts = defaultWarpSpokeAllowedPorts
+
+// --- nodes -------------------------------------------------------------------
+
+func ForeignToCaller(state *AppState, r *http.Request, nodeID int) bool {
+	return foreignToCaller(state, r, nodeID)
+}
+
+func CanManageNode(state *AppState, r *http.Request, node *models.Node) bool {
+	return canManageNode(state, r, node)
+}
+
+func OwnedByOther(state *AppState, r *http.Request, node *models.Node) bool {
+	return ownedByOther(state, r, node)
+}
+
+func OwnershipInForce(state *AppState, r *http.Request) bool { return ownershipInForce(state, r) }
+
+func PurgeBackupArchivesForServers(state *AppState, serverIDs []int) {
+	purgeBackupArchivesForServers(state, serverIDs)
+}
+
+func DropDemoServers(s *AppState, uuids []string) { dropDemoServers(s, uuids) }
+
+func AnnotateStalledInstallsFor(ctx context.Context, state *AppState, servers []models.Server) {
+	annotateStalledInstallsFor(ctx, state, servers)
+}
+
+func ReadErrStatus(err error) int { return readErrStatus(err) }
+
+func CollectNodeFile(ch <-chan *pb.NodeMessage, max int) ([]byte, *pb.OpError, error) {
+	return collectNodeFile(ch, max)
+}
+
+func NodeErrorStatus(code int32) int { return nodeErrorStatus(code) }
+
+const MaxOpenFileBytes = maxOpenFileBytes
+
+func SetNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Node) {
+	setNodesLinkOnline(ctx, state, nodes)
+}
+
+func InspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
+	return inspectOrphanOnNode(state, nodeID, orphanUUID)
+}
+
+func SubServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (instType, mcVer, build string, ok bool) {
+	return subServerLoaderFromInspect(resp, subName)
+}
+
+func IsBYONNode(n models.Node) bool { return isBYONNode(n) }
+
+type DylarisMetadata = dylarisMetadata
