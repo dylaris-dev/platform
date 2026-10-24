@@ -150,7 +150,7 @@ func (h *ServerHandler) isSnapshotFetchHostAllowed(rawURL string) bool {
 	if host == "cdn.modrinth.com" {
 		return true
 	}
-	if base, err := modpackMirrorBase(h.state.Store.GetSetting); err == nil {
+	if base, err := ModpackMirrorBase(h.state.Store.GetSetting); err == nil {
 		if mu, err := url.Parse(base); err == nil && strings.EqualFold(mu.Hostname(), host) {
 			return true
 		}

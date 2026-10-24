@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/packs"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -605,8 +606,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	serverTabsHandler := handlers.NewServerTabsHandler(appState)
 	proxyHandler := handlers.NewProxyHandler(appState, authHandler)
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
-	packsHandler := handlers.NewPacksHandler(appState)
+	packsHandler := packs.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
+	appState.InstallMrpack = packsHandler.EnsureInstallMrpack
 	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := handlers.NewModpackSettingsHandler(appState)

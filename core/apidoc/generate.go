@@ -31,6 +31,7 @@ func Generate(coreDir string) (string, error) {
 	// served by a plain function in package main rather than by a handler method.
 	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{
 		filepath.Join(coreDir, "handlers"),
+		filepath.Join(coreDir, "handlers", "packs"),
 		coreDir,
 	})
 	if err != nil {

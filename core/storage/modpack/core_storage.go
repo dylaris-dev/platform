@@ -54,7 +54,7 @@ func (p *CoreStorageProvider) Put(ctx context.Context, key string, data []byte) 
 }
 
 // Get reads the whole object. A genuinely missing key is translated to
-// ErrNotFound, because every caller in handlers/packs_*.go branches on
+// ErrNotFound, because every caller in handlers/packs/packs_*.go branches on
 // ErrNotFound and would otherwise treat a 404 as a 500.
 func (p *CoreStorageProvider) Get(ctx context.Context, key string) ([]byte, error) {
 	rc, err := p.prov.GetFile(ctx, key)

@@ -19,8 +19,7 @@ import (
 // packBuildDirs returns the storage directories that hold a build's objects:
 // the derived one, and the stored key's when a publish recorded another.
 func (s *AppState) packBuildDirs(pack *models.Pack, build *models.PackBuild) []string {
-	h := &PacksHandler{state: s}
-	dirs := []string{strings.TrimSuffix(h.mrpackStorageKey(pack, build), "pack.mrpack")}
+	dirs := []string{strings.TrimSuffix(s.MrpackStorageKey(pack, build), "pack.mrpack")}
 	if k := build.MrpackStorageKey; strings.HasPrefix(k, "modpacks/") && strings.HasSuffix(k, "/pack.mrpack") {
 		if d := path.Dir(k) + "/"; d != dirs[0] {
 			dirs = append(dirs, d)

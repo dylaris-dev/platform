@@ -95,6 +95,7 @@ func groupOf(path string) string {
 func GenerateJSON(coreDir string) (string, error) {
 	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{
 		filepath.Join(coreDir, "handlers"),
+		filepath.Join(coreDir, "handlers", "packs"),
 		coreDir,
 	})
 	if err != nil {

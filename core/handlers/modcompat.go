@@ -7,9 +7,10 @@ import (
 	"strconv"
 	"strings"
 
+	"dylaris-pkg/validate"
+
 	"dylaris-core/models"
 	"dylaris-core/services"
-	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
 )
@@ -53,63 +54,6 @@ func resolveTargets(ctx context.Context, current, mode, specific string) ([]stri
 		return nil, err
 	}
 	return services.SelectCompatTargets(services.ReleaseVersions(tags), current, mode, specific), nil
-}
-
-// BuildCompat GET /api/packs/{id}/builds/{buildId}/compat
-func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
-	build, _, ok := h.loadBuild(r, packRead)
-	if !ok {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	if build.Minecraft == "" || build.Loader == "" {
-		sendJSONError(w, "This build has no Minecraft version or loader set, so nothing can be compared against it", http.StatusUnprocessableEntity)
-		return
-	}
-	content, err := h.state.Store.ListBuildContent(build.ID)
-	if err != nil {
-		sendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
-		return
-	}
-
-	items := make([]services.CompatItem, 0, len(content))
-	for _, e := range content {
-		// Config bundles and other non-mod content have no Modrinth identity to
-		// check and would only pad the unlinked count with things that are
-		// meant to be local.
-		if e.ContentType != models.ContentTypeMod && e.ModrinthProjectID == "" {
-			continue
-		}
-		items = append(items, services.CompatItem{
-			Key:                  strconv.Itoa(e.ID),
-			ProjectID:            e.ModrinthProjectID,
-			Title:                e.PrettyName,
-			Slug:                 e.ModSlug,
-			Side:                 e.Side,
-			CurrentVersionID:     e.ModrinthVersionID,
-			CurrentVersionNumber: e.Version,
-		})
-	}
-
-	mode, specific := compatQuery(r)
-	targets, err := resolveTargets(r.Context(), build.Minecraft, mode, specific)
-	if err != nil {
-		sendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	matrix, err := services.BuildMatrix(r.Context(), services.CompatRequest{
-		Items:   items,
-		Loader:  build.Loader,
-		Current: build.Minecraft,
-		Mode:    mode,
-		Targets: targets,
-		Cache:   h.state.availabilityCache(),
-	})
-	if err != nil {
-		sendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "matrix": matrix})
 }
 
 // ServerCompat GET /api/servers/{id}/mods/compat

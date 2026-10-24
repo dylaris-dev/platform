@@ -694,14 +694,17 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 			snapshotBuild = build
 
-			ph := NewPacksHandler(h.state)
-			key, err := ph.ensureInstallMrpack(r.Context(), pack, build)
+			if h.state.InstallMrpack == nil {
+				sendJSONError(w, "Modpack installs are not available", 503)
+				return
+			}
+			key, err := h.state.InstallMrpack(r.Context(), pack, build)
 			if err != nil {
 				log.Printf("ensureInstallMrpack failed for pack %d build %d: %v", pack.ID, build.ID, err)
 				sendJSONError(w, "Failed to prepare pack for install", 500)
 				return
 			}
-			base, err := modpackMirrorBase(h.state.Store.GetSetting)
+			base, err := ModpackMirrorBase(h.state.Store.GetSetting)
 			if err != nil {
 				log.Printf("modpackMirrorBase failed: %v", err)
 				sendJSONError(w, "Failed to prepare pack for install", 500)

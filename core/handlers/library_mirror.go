@@ -84,7 +84,7 @@ func resolveLibraryInstall(ctx context.Context, state *AppState, rawPath string,
 			return "", http.StatusForbidden, "Access denied"
 		}
 	}
-	base, err := modpackMirrorBase(state.Store.GetSetting)
+	base, err := ModpackMirrorBase(state.Store.GetSetting)
 	if err != nil {
 		return "", http.StatusConflict, "Core has no public address set, so a node cannot download from the library"
 	}
