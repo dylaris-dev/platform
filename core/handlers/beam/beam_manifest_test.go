@@ -1,4 +1,4 @@
-package handlers
+package beam
 
 import (
 	"bytes"
@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/store"
 )
@@ -171,7 +173,7 @@ func TestEffectiveMinVersion(t *testing.T) {
 		"beam.min_version_mode": "manual",
 		"beam.release_manifest": unverifiable(t),
 	}}
-	hAuto := &BeamHandler{state: &AppState{Store: autoStore}}
+	hAuto := &BeamHandler{state: &handlers.AppState{Store: autoStore}}
 	if got := hAuto.effectiveMinVersion(context.Background()); got != "" {
 		t.Errorf("unverifiable manifest floor = %q, want \"\" (fail-open, retired settings ignored)", got)
 	}
@@ -181,7 +183,7 @@ func TestEffectiveMinVersion(t *testing.T) {
 		"beam.min_version":      "2.0.0",
 		"beam.release_manifest": "http://127.0.0.1:1/never",
 	}}
-	hDead := &BeamHandler{state: &AppState{Store: deadStore}}
+	hDead := &BeamHandler{state: &handlers.AppState{Store: deadStore}}
 	if got := hDead.effectiveMinVersion(context.Background()); got != "" {
 		t.Errorf("unreachable manifest floor = %q, want \"\" (fail-open)", got)
 	}

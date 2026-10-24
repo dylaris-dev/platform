@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/backup"
+	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/stats"
@@ -578,7 +579,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	statsHandler := stats.NewStatsHandler(appState)
 	memberHandler := handlers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
-	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
+	beamHandler := beam.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
 	timezoneHandler := handlers.NewTimezoneHandler(appState)
 	backupHandler := backup.NewBackupHandler(appState)

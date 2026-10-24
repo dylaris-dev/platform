@@ -1,4 +1,4 @@
-package handlers
+package beam
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -18,149 +17,21 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/handlers"
+
+	beamauth "dylaris-pkg/beam/auth"
+	"dylaris-pkg/fileperms"
+
+	"github.com/redis/go-redis/v9"
+
 	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
-	beamauth "dylaris-pkg/beam/auth"
-	"dylaris-pkg/fileperms"
-	"github.com/redis/go-redis/v9"
 )
 
-// Beam relay discovery — matches the heartbeat pattern in
-// gateway/beam/relay: each relay writes JSON to beam:registry:<id> with a
-// 30s TTL and adds its id to the sys:beams set. The Core resolves "alive"
-// relays by intersecting the set with surviving keys.
-const beamRegistrySet = "sys:beams"
-
-// BeamRelayInfo describes one discovered relay. Mirrors what the relay's
-// heartbeat publishes so we can surface it raw in the admin UI.
-type BeamRelayInfo struct {
-	BeamID     string `json:"beam_id"`
-	IP         string `json:"ip"`
-	PrivateIP  string `json:"private_ip,omitempty"`
-	PublicHost string `json:"public_host,omitempty"` // e.g. "beam.dylaris.com" — preferred over IP
-	// Region groups relays the way EdgeRegion groups edges. Matched against the
-	// region of the NODE a transfer targets, because the payload path is
-	// client -> relay -> node: a relay near the client but far from the node
-	// makes the round trip worse, not better.
-	Region       string `json:"region,omitempty"`
-	ServicePort  string `json:"service_port"`
-	ClientPort   string `json:"client_port,omitempty"`
-	DownloadPort string `json:"download_port,omitempty"`
-	Timestamp    int64  `json:"timestamp"`
-}
-
-// PublicAddress returns the host:port the panel should hand out to clients.
-// Prefers the operator-configured public host over the internal overlay IP
-// so we never accidentally publish a 172.x address to a browser.
-func (i BeamRelayInfo) PublicAddress(port string) string {
-	host := strings.TrimSpace(i.PublicHost)
-	if host == "" {
-		host = i.IP
-	}
-	if host == "" {
-		host = i.BeamID
-	}
-	if port == "" || strings.Contains(host, ":") {
-		return host
-	}
-	return host + ":" + port
-}
-
-// DiscoverBeamRelays reads sys:beams and resolves each entry against the
-// corresponding beam:registry:<id> key. Stale entries (TTL expired) are
-// skipped silently — the relay's own cleanup loop will eventually prune
-// them from sys:beams.
-func DiscoverBeamRelays(ctx context.Context, rdb *redis.Client) []BeamRelayInfo {
-	if rdb == nil {
-		return nil
-	}
-	ids, err := rdb.SMembers(ctx, beamRegistrySet).Result()
-	if err != nil {
-		return nil
-	}
-	out := make([]BeamRelayInfo, 0, len(ids))
-	for _, id := range ids {
-		raw, err := rdb.Get(ctx, "beam:registry:"+id).Bytes()
-		if err != nil {
-			continue
-		}
-		var info BeamRelayInfo
-		if json.Unmarshal(raw, &info) != nil {
-			continue
-		}
-		if info.BeamID == "" {
-			info.BeamID = id
-		}
-		out = append(out, info)
-	}
-	return out
-}
-
-// PickBeamRelay returns one live relay, preferring preferredRegion and falling
-// back to any relay when that region has none.
-//
-// The random choice among equals is the load balancing: several relays sharing
-// one region (and therefore one DNS name) split traffic and can be rolled one at
-// a time. The region is a HARD filter rather than a score because the wrong
-// region is not "slightly slower" - it can double a transatlantic hop.
-//
-// Falling back to another region rather than failing is deliberate: a transfer
-// over a distant relay beats no transfer at all, and because clients re-resolve
-// on every connect, the next one returns to the right region on its own the
-// moment a relay there registers. No re-check loop is needed for that.
-func PickBeamRelay(ctx context.Context, rdb *redis.Client, preferredRegion string) (BeamRelayInfo, bool) {
-	relays := DiscoverBeamRelays(ctx, rdb)
-	if len(relays) == 0 {
-		return BeamRelayInfo{}, false
-	}
-	if region := strings.TrimSpace(preferredRegion); region != "" {
-		matching := make([]BeamRelayInfo, 0, len(relays))
-		for _, r := range relays {
-			if strings.EqualFold(strings.TrimSpace(r.Region), region) {
-				matching = append(matching, r)
-			}
-		}
-		if len(matching) > 0 {
-			relays = matching
-		}
-	}
-	return relays[rand.Intn(len(relays))], true
-}
-
-// resolveRelay returns the effective public address for Beam Desktop
-// clients. Discovery supplies which relay is alive and its port; the
-// externally reachable host comes from publicHost (DB setting
-// beam.public_host) — the relay's own registered IP is an internal
-// overlay address a desktop client can't reach. Manual override (DB
-// setting beam.relay_address) still wins outright for incident routing.
-func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost, preferredRegion string) (string, string) {
-	if strings.TrimSpace(manualOverride) != "" {
-		return manualOverride, "manual"
-	}
-	if info, ok := PickBeamRelay(ctx, rdb, preferredRegion); ok {
-		// A relay that reports its own public host knows better than one
-		// fleet-wide setting can: with several regions there is no single
-		// correct hostname. The setting stays the fallback, which is what a
-		// relay predating BEAM_PUBLIC_HOST relies on.
-		if info.PublicHost == "" {
-			info.PublicHost = strings.TrimSpace(publicHost)
-		}
-		port := info.ClientPort
-		if port == "" {
-			port = info.ServicePort
-		}
-		addr := info.PublicAddress(port)
-		if addr != "" {
-			return addr, "discovered"
-		}
-	}
-	return "", ""
-}
-
 type BeamHandler struct {
-	state     *AppState
+	state     *handlers.AppState
 	jwtSecret string
 	// clusterSecret unwraps a node's stored per-node secret, which keys the LAN
 	// fast-path certificate. Not the same secret as jwtSecret on purpose - see
@@ -176,7 +47,7 @@ type BeamHandler struct {
 	minCacheAt  time.Time
 }
 
-func NewBeamHandler(state *AppState, jwtSecret, clusterSecret string) *BeamHandler {
+func NewBeamHandler(state *handlers.AppState, jwtSecret, clusterSecret string) *BeamHandler {
 	return &BeamHandler{state: state, jwtSecret: jwtSecret, clusterSecret: clusterSecret}
 }
 
@@ -247,13 +118,13 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 	// Use ListServersForUser which handles access control
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil || user == nil {
-		sendJSONError(w, "User not found", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
 	servers, err := h.state.Store.ListServersForUser(user.ID, isAdmin)
 	if err != nil {
-		sendJSONError(w, "Failed to load servers", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load servers", http.StatusInternalServerError)
 		return
 	}
 
@@ -334,7 +205,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// GetBeamConfig, so a disabled Beam kept minting tickets and the node, which
 	// never sees this setting, honoured them.
 	if v, _ := h.state.Store.GetSetting("beam.enabled"); v == "false" {
-		sendJSONError(w, "Beam is disabled", http.StatusForbidden)
+		handlers.SendJSONError(w, "Beam is disabled", http.StatusForbidden)
 		return
 	}
 
@@ -351,14 +222,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		serverUUID = req.ServerUUID
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 
 	// Resolve server
 	server, err := h.state.Store.GetServerByUUID(serverUUID)
 	if err != nil || server == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
@@ -379,7 +250,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// was refused.
 	allowed, filePerms := h.canBeam(r, server.ID)
 	if !allowed {
-		sendJSONError(w, "Access denied", http.StatusForbidden)
+		handlers.SendJSONError(w, "Access denied", http.StatusForbidden)
 		return
 	}
 
@@ -387,13 +258,13 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// hands out a write credential the node enforces without knowing about demo.
 	// Fail closed: an unreadable demo setting is not proof of a normal account.
 	userID, _ := r.Context().Value("userID").(string)
-	demo, err := isDemoAccountChecked(h.state, userID)
+	demo, err := handlers.IsDemoAccountChecked(h.state, userID)
 	if err != nil {
-		sendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
+		handlers.SendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
 		return
 	}
 	if demo {
-		sendJSONError(w, "Not available in the demo", http.StatusForbidden)
+		handlers.SendJSONError(w, "Not available in the demo", http.StatusForbidden)
 		return
 	}
 
@@ -401,7 +272,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// as everything else a cut-off tenant may not ask the node to do. Measured
 	// on production: a suspended account minted a ticket and the relay spliced
 	// it through to the node.
-	if refuseIfSuspended(w, r, h.state, server) {
+	if handlers.RefuseIfSuspended(w, r, h.state, server) {
 		return
 	}
 	// Read-only while the server moves: the source copy is deleted after
@@ -430,7 +301,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if nodeDiscoveryID == "" {
-		sendJSONError(w, "Server has no assigned node", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Server has no assigned node", http.StatusBadRequest)
 		return
 	}
 
@@ -469,13 +340,13 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		val, _ := h.state.Store.GetSetting(key)
 		return val
 	}
-	relayAddr, _ := resolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
+	relayAddr, _ := handlers.ResolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
 	// "No relay registered" is also every relay restart: heartbeats live 30s, so
 	// a member asking during a relay deploy got the node's public address, the
 	// one the server list hides from them. The same rule decides here, so an
 	// admin or the node's own owner keeps the direct path.
 	probe := models.Server{NodeID: server.NodeID, NodeAddress: nodePublicIP}
-	redactNodeAddressOne(h.state, &probe, isAdmin, userID)
+	handlers.RedactNodeAddressOne(h.state, &probe, isAdmin, userID)
 	nodePublicIP = probe.NodeAddress
 	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
 
@@ -511,7 +382,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	ticketString, err := beamauth.SignBeamTicketWithNodeProof(
 		h.jwtSecret, claims, beamauth.BeamTicketTTL, nodeProofSecret)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
+		handlers.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -593,7 +464,7 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	publicHost := getSetting("beam.public_host")
 	// No server context here, so no region to prefer: this endpoint answers
 	// "which relay can I reach at all", and the ticket path applies the region.
-	relayAddress, _ := resolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost, "")
+	relayAddress, _ := handlers.ResolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost, "")
 	enabled := getSetting("beam.enabled")
 	if enabled == "" {
 		enabled = "true"
@@ -715,7 +586,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !validBeamPlatforms[platform] {
-		sendJSONError(w, "Invalid platform", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid platform", http.StatusBadRequest)
 		return
 	}
 
@@ -738,12 +609,12 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		// problem the visitor can only wait out, and its detail belongs in the
 		// log rather than in a stranger's browser.
 		if errors.Is(resolveErr, errBeamPlatformNotInManifest) {
-			sendJSONError(w, "Beam is not available for "+platform+" yet.", http.StatusNotFound)
+			handlers.SendJSONError(w, "Beam is not available for "+platform+" yet.", http.StatusNotFound)
 			return
 		}
 		log.Printf("beam-download: cannot resolve %s from the signed release manifest "+
 			"(check beam.release_manifest, or set beam.download_link): %v", platform, resolveErr)
-		sendJSONError(w, "The Beam download is temporarily unavailable. Please try again shortly.",
+		handlers.SendJSONError(w, "The Beam download is temporarily unavailable. Please try again shortly.",
 			http.StatusServiceUnavailable)
 		return
 	}
@@ -783,7 +654,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		if lastErr != nil {
 			msg += ": " + lastErr.Error()
 		}
-		sendJSONError(w, msg, http.StatusBadGateway)
+		handlers.SendJSONError(w, msg, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -800,7 +671,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	verified, size, vErr := verifiedBeamBody(resp.Body, expectedSHA)
 	if vErr != nil {
 		log.Printf("beam-download: REFUSING %s for platform=%s: %v", winningURL, platform, vErr)
-		sendJSONError(w, "The Beam binary served for "+platform+
+		handlers.SendJSONError(w, "The Beam binary served for "+platform+
 			" does not match the signed release manifest, so it was not delivered."+
 			" If beam.download_link is set, that mirror is serving something else.",
 			http.StatusBadGateway)

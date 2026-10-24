@@ -198,3 +198,22 @@ func (s *AppState) StoreAccountSummary(ctx context.Context, uuid string) (map[st
 func (s *AppState) StoreSetBillingConsent(ctx context.Context, uuid string, traffic, backup *bool) (int, string, error) {
 	return s.storeSetBillingConsent(ctx, uuid, traffic, backup)
 }
+
+func ResolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost, preferredRegion string) (string, string) {
+	return resolveRelay(ctx, rdb, manualOverride, publicHost, preferredRegion)
+}
+
+func IsDemoAccountChecked(s *AppState, userID string) (bool, error) {
+	return isDemoAccountChecked(s, userID)
+}
+
+func RedactNodeAddressOne(state *AppState, srv *models.Server, isAdmin bool, userID string) {
+	redactNodeAddressOne(state, srv, isAdmin, userID)
+}
+
+// SuspendedMessage is what a suspended account is told; for the subpackages'
+// tests that assert it.
+const SuspendedMessage = suspendedMessage
+
+// DemoAccountUUIDSetting is the settings key naming the demo account.
+const DemoAccountUUIDSetting = demoAccountUUIDSetting

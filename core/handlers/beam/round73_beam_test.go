@@ -1,4 +1,4 @@
-package handlers
+package beam
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
 	"dylaris-core/pkg/crypto"
@@ -56,7 +58,7 @@ func TestBeamTicketRefusesTheDemoAccount(t *testing.T) {
 		name, demo string
 		want       int
 	}{{"demo account", "owner-id", 403}, {"another demo account", "someone-else", 200}, {"no demo", "", 200}} {
-		h := newBeamAccessHandler(beamTicketStore(t, map[string]string{demoAccountUUIDSetting: c.demo}))
+		h := newBeamAccessHandler(beamTicketStore(t, map[string]string{handlers.DemoAccountUUIDSetting: c.demo}))
 		h.state.StoreEnabled = true
 		if got := mintBeamTicket(t, h, "owner-id"); got != c.want {
 			t.Errorf("%s: status %d, want %d", c.name, got, c.want)
@@ -93,7 +95,7 @@ func TestBeamSettingsShowOnlyEnabledWithoutSettingsRead(t *testing.T) {
 				"beam.public_host":      "beam.example.test",
 				"beam.max_upload_bytes": "1024",
 			}), grant: c.grant}
-			h := NewSettingsHandler(&AppState{Store: fs, Authz: authz.NewResolver(fs)})
+			h := handlers.NewSettingsHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
 
 			r := httptest.NewRequest("GET", "/api/settings/beam", nil)
 			ctx := context.WithValue(r.Context(), "username", "u")

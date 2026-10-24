@@ -250,13 +250,6 @@ func TestFilesAndBeamAskTheResolverForAnAdmin(t *testing.T) {
 				t.Fatalf("err = %v, allowed = %v", err, c.allowed)
 			}
 		})
-		t.Run("beam/"+c.name, func(t *testing.T) {
-			h := &BeamHandler{state: foreignState(c.node)}
-			ok, perms := h.canBeam(foreignAdminRequest("GET", nil, ""), 3)
-			if ok != c.allowed || perms.Write != c.allowed {
-				t.Fatalf("canBeam = %v %+v, want %v", ok, perms, c.allowed)
-			}
-		})
 	}
 }
 

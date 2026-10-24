@@ -1,4 +1,4 @@
-package handlers
+package beam
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -137,7 +139,7 @@ func (f *beamAccessFakeStore) GetAccountGrant(ownerUserID, userID string) (*stor
 // manifest from GitHub on every ticket request, which a unit test must not do;
 // an unexpired cache entry short-circuits that fetch (beam_manifest.go).
 func newBeamAccessHandler(fs *beamAccessFakeStore) *BeamHandler {
-	h := NewBeamHandler(&AppState{Store: fs, Authz: authz.NewResolver(fs)}, "beam-test-secret", "test-cluster-secret")
+	h := NewBeamHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}, "beam-test-secret", "test-cluster-secret")
 	h.minCacheVal = ""
 	h.minCacheAt = time.Now()
 	return h
@@ -346,7 +348,7 @@ func TestGetBeamTicket_RefusedWhileTheOwnerIsSuspended(t *testing.T) {
 			if rec.Code != 403 || body.Ticket != "" {
 				t.Fatalf("status=%d ticket=%q, want 403 and no ticket", rec.Code, body.Ticket)
 			}
-			if body.Message != suspendedMessage {
+			if body.Message != handlers.SuspendedMessage {
 				t.Errorf("message = %q, want the suspension message so the tenant is told to settle payment", body.Message)
 			}
 		})
