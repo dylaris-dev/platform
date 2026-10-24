@@ -22,6 +22,7 @@ import { listStorageConnections, type StorageConnection } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
     preparing: 'Preparing',
@@ -558,7 +559,7 @@ function DataSetRow({
                     <div className="mono-label truncate">{ds.backendLabel}</div>
                     <div className="text-[11px] text-(--base-06) mt-0.5">
                         {m
-                            ? <>Last inventory: {m.objectCount.toLocaleString()} objects, {formatBytes(m.totalBytes)} ({new Date(m.capturedAt).toLocaleString()})</>
+                            ? <>Last inventory: {m.objectCount.toLocaleString()} objects, {formatBytes(m.totalBytes)} ({fmtDateTime(m.capturedAt)})</>
                             : <>Not yet inventoried</>}
                     </div>
                     {ds.note && (
@@ -621,7 +622,7 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
             <div className="text-xs text-(--base-06) space-y-0.5">
                 <div>
                     Started by <span className="text-(--base-08)">{job.startedByName || job.startedBy || 'unknown'}</span>
-                    {' '}&middot; {new Date(job.startedAt).toLocaleString()}
+                    {' '}&middot; {fmtDateTime(job.startedAt)}
                 </div>
                 <div>Source: <span className="font-mono">{job.sourceLabel || job.dataSet}</span></div>
                 {job.targetLabel && <div>Target: <span className="font-mono">{job.targetLabel}</span></div>}

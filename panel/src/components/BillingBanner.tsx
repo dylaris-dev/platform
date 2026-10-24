@@ -6,6 +6,7 @@ import { getMyUsage, EntitlementState } from '@/lib/api/usage';
 import { useAppData } from '@/lib/AppDataContext';
 import { trafficBannerState } from '@/components/trafficBanner';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
+import { fmtDateTime } from '@/lib/time';
 
 // BillingBanner is the non-dismissible red bar shown to a tenant in past_due or
 // suspended. Clicking it goes to the payment URL. Renders nothing when active,
@@ -68,7 +69,7 @@ export default function BillingBanner() {
                     <span>
                         You are using more than your subscription covers. Reduce what you have or
                         raise your subscription by{' '}
-                        <strong>{new Date(overLimit.cutoffAt).toLocaleString()}</strong>, or
+                        <strong>{fmtDateTime(overLimit.cutoffAt)}</strong>, or
                         everything on your account is disconnected. Nothing is deleted.
                     </span>
                 </div>
@@ -146,7 +147,7 @@ export default function BillingBanner() {
     const suspended = status === 'suspended';
     const message = suspended
         ? 'Your services are suspended for non-payment. Your data and backups are safe — settle payment to reactivate.'
-        : `Payment required. Your services will be suspended${graceUntil ? ` on ${new Date(graceUntil).toLocaleString()}` : ''}. Pay now to avoid interruption.`;
+        : `Payment required. Your services will be suspended${graceUntil ? ` on ${fmtDateTime(graceUntil)}` : ''}. Pay now to avoid interruption.`;
 
     const inner = (
         <div className="flex items-center justify-center gap-3 bg-(--error) text-white px-4 py-2.5 text-sm font-medium shadow-md">

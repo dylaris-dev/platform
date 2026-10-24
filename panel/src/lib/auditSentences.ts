@@ -196,6 +196,10 @@ function predicate(ev: AuditSentenceEvent): string | null {
             return `changed the permissions of ${target(ev, m)}`;
         case 'resources_changed':
             return resourcesPredicate(m);
+        case 'timezone_changed': {
+            const to = str(m, 'to');
+            return to ? `set the server's time zone to ${to}` : "set the server's time zone back to the owner's";
+        }
         case 'name_changed': {
             const from = str(m, 'from');
             const to = str(m, 'to');

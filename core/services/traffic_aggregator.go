@@ -184,39 +184,24 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 
 	period := monthStartUTC(time.Now())
 	for tenant, acc := range perTenant {
-		if err := a.store.AddTrafficUsage(tenant, period, acc.edge, acc.relay); err != nil {
-			// Leave `seen` untouched so the delta is retried next tick.
+		// One transaction per tenant: the total, the region cells and their
+		// voice subsets. Overage is billed off the region cells, so a cell
+		// that failed while the total landed was traffic never billed. Now the
+		// tick lands whole or not at all, and only then do the markers move;
+		// a failure leaves them, so the same delta is retried next tick.
+		cells := make([]store.TrafficTickCell, 0, len(acc.byRegion))
+		for rk, bytes := range acc.byRegion {
+			cells = append(cells, store.TrafficTickCell{Region: rk.region, Kind: rk.kind, Product: rk.product,
+				Bytes: bytes, Voice: acc.voiceByRegion[rk]})
+		}
+		for rk, voice := range acc.voiceByRegion {
+			if _, ok := acc.byRegion[rk]; !ok {
+				cells = append(cells, store.TrafficTickCell{Region: rk.region, Kind: rk.kind, Product: rk.product, Voice: voice})
+			}
+		}
+		if err := a.store.AddTrafficTick(tenant, period, acc.edge, acc.relay, cells); err != nil {
 			logErrf("traffic-aggregator", "add usage for %s: %v", tenant, err)
 			continue
-		}
-		// The breakdown is written AFTER the total and its failure does not
-		// abort the tick: traffic_usage is what a tenant is charged on, and a
-		// region row that cannot be written must never hold that back. The
-		// markers still advance, so a lost region delta is lost rather than
-		// re-billed - under-counting the split, never the bill.
-		var regionFailed map[breakdownCell]bool
-		for rk, bytes := range acc.byRegion {
-			if bytes <= 0 {
-				continue
-			}
-			if err := a.store.AddTrafficUsageRegion(tenant, period, rk.region, rk.kind, rk.product, bytes); err != nil {
-				logErrf("traffic-aggregator", "add region usage for %s/%s/%s/%s: %v", tenant, rk.region, rk.kind, rk.product, err)
-				if regionFailed == nil {
-					regionFailed = map[breakdownCell]bool{}
-				}
-				regionFailed[rk] = true
-			}
-		}
-		// The voice subset follows the same rule, one step further down: it is
-		// written after its region cell and only if that cell was written, so
-		// voice_bytes can never run ahead of the bytes it is a part of.
-		for rk, bytes := range acc.voiceByRegion {
-			if bytes <= 0 || regionFailed[rk] {
-				continue
-			}
-			if err := a.store.AddTrafficUsageRegionVoice(tenant, period, rk.region, rk.kind, rk.product, bytes); err != nil {
-				logErrf("traffic-aggregator", "add voice usage for %s/%s/%s/%s: %v", tenant, rk.region, rk.kind, rk.product, err)
-			}
 		}
 		for _, su := range tenantSeen[tenant] {
 			a.redis.Set(ctx, su.key, su.val, trafficSeenTTL)

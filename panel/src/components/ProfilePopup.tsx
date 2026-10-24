@@ -13,6 +13,7 @@ import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { isHighContrast, setHighContrast } from '@/lib/contrastMode';
 import { Badge } from '@/components/ui/Badge';
+import { fmtDateTime } from '@/lib/time';
 
 interface UserProfile {
     username: string;
@@ -693,7 +694,7 @@ function UsernameHistorySection() {
                 <li key={r.id}>
                   <div className="font-mono text-xs text-(--base-09)">{r.oldUsername} → {r.newUsername}</div>
                   <div className="text-[11px] text-(--base-06) mt-0.5">
-                    {new Date(r.changedAt).toLocaleString()} · {r.byAdmin ? 'by admin' : 'self'}
+                    {fmtDateTime(r.changedAt)} · {r.byAdmin ? 'by admin' : 'self'}
                   </div>
                 </li>
               ))}

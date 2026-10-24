@@ -35,6 +35,7 @@ type trafficFakeStore struct {
 	addRegionErrFor map[string]error
 	addVoiceCalls   []trafficRegionCall
 	addVoiceErrFor  map[string]error
+	tickAttempts    int
 	setBackupCalls  []trafficBackupCall
 	setBackupErrFor map[string]error
 }
@@ -93,6 +94,34 @@ func (f *trafficFakeStore) AddTrafficUsage(userID string, period time.Time, edge
 	f.addUsageCalls = append(f.addUsageCalls, trafficUsageCall{userID, period, edgeBytes, relayBytes})
 	if f.addUsageErrFor != nil {
 		return f.addUsageErrFor[userID]
+	}
+	return nil
+}
+
+// AddTrafficTick is the real store's transaction: any part failing writes
+// nothing, which is what the aggregator's retry relies on. Calls are recorded
+// only for a tick that landed.
+func (f *trafficFakeStore) AddTrafficTick(userID string, period time.Time, edge, relay int64, cells []store.TrafficTickCell) error {
+	f.tickAttempts++
+	if err := f.addUsageErrFor[userID]; err != nil {
+		return err
+	}
+	for _, c := range cells {
+		if c.Bytes > 0 && f.addRegionErrFor[c.Region] != nil {
+			return f.addRegionErrFor[c.Region]
+		}
+		if c.Voice > 0 && f.addVoiceErrFor[c.Region] != nil {
+			return f.addVoiceErrFor[c.Region]
+		}
+	}
+	f.addUsageCalls = append(f.addUsageCalls, trafficUsageCall{userID, period, edge, relay})
+	for _, c := range cells {
+		if c.Bytes > 0 {
+			f.addRegionCalls = append(f.addRegionCalls, trafficRegionCall{userID, period, c.Region, c.Kind, c.Product, c.Bytes})
+		}
+		if c.Voice > 0 {
+			f.addVoiceCalls = append(f.addVoiceCalls, trafficRegionCall{userID, period, c.Region, c.Kind, c.Product, c.Voice})
+		}
 	}
 	return nil
 }
@@ -281,8 +310,8 @@ func TestTrafficAggregator_AddTrafficUsageError_LeavesSeenUntouchedForRetry(t *t
 
 	agg.runOnce(ctx)
 
-	if len(fs.addUsageCalls) != 1 {
-		t.Fatalf("expected exactly one attempted AddTrafficUsage call, got %+v", fs.addUsageCalls)
+	if fs.tickAttempts != 1 || len(fs.addUsageCalls) != 0 {
+		t.Fatalf("expected exactly one attempted, unwritten tick, got %d attempts and %+v", fs.tickAttempts, fs.addUsageCalls)
 	}
 	// seen must remain at the pre-tick value so the same 800-byte delta is retried next tick.
 	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", "200")
@@ -576,9 +605,10 @@ func TestTrafficAggregator_NewSubjectBillsRegionsImmediately(t *testing.T) {
 	}
 }
 
-// A failing region write must not take the bill with it: the total is what the
-// tenant is charged on, and it has already been written at that point.
-func TestTrafficAggregator_RegionWriteFailureKeepsTheTotal(t *testing.T) {
+// Overage is billed off the region cells, so a cell that cannot be written is
+// a bill that cannot be written: the whole tick waits, markers included, and
+// the next tick bills the delta exactly once.
+func TestTrafficAggregator_RegionWriteFailureRetriesTheWholeTick(t *testing.T) {
 	fs := &trafficFakeStore{
 		owners:          map[string]string{"srv-1": "tenant-a"},
 		addRegionErrFor: map[string]error{"eu-central": errors.New("boom")},
@@ -587,19 +617,18 @@ func TestTrafficAggregator_RegionWriteFailureKeepsTheTotal(t *testing.T) {
 	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu-central": 500})
 
 	agg.runOnce(context.Background())
-
-	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 500 {
-		t.Fatalf("the billing total must still be written: %+v", fs.addUsageCalls)
+	if fs.tickAttempts != 1 || len(fs.addUsageCalls) != 0 {
+		t.Fatalf("a failed tick wrote %+v", fs.addUsageCalls)
+	}
+	if n, _ := rdb.Exists(context.Background(), "dylaris:traffic:agg:seen:edge:srv-1").Result(); n != 0 {
+		t.Fatal("markers advanced for a tick that was not written; those bytes are never billed")
 	}
 
-	// And the markers must still advance. If a failing region write skipped
-	// them, the next tick would re-read the same counter as new bytes and bill
-	// the tenant a second time for traffic they used once - a broken breakdown
-	// turning into a wrong invoice, which is the one thing the write order
-	// exists to prevent.
+	fs.addRegionErrFor = nil
 	agg.runOnce(context.Background())
-	if len(fs.addUsageCalls) != 1 {
-		t.Fatalf("the same bytes were billed again after a region write failed: %+v", fs.addUsageCalls)
+	agg.runOnce(context.Background())
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 500 || len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 500 {
+		t.Fatalf("after recovery: totals %+v regions %+v, want 500 billed once to both", fs.addUsageCalls, fs.addRegionCalls)
 	}
 }
 
@@ -967,8 +996,8 @@ func TestVoiceSubsetNeverExceedsTheRegionDelta(t *testing.T) {
 	}
 }
 
-// A region cell that could not be written must not get a voice subset either,
-// or voice_bytes would run ahead of the bytes it is a part of.
+// A region cell that could not be written takes its voice subset with it (one
+// transaction), so voice_bytes never runs ahead of the bytes it is part of.
 func TestVoiceSubsetSkippedWhenItsRegionCellFailed(t *testing.T) {
 	fs := &trafficFakeStore{
 		owners:          map[string]string{"srv-1": "tenant-a"},
@@ -978,14 +1007,13 @@ func TestVoiceSubsetSkippedWhenItsRegionCellFailed(t *testing.T) {
 	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "vrx:eu": 200})
 
 	agg.runOnce(context.Background())
-	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 1200 {
-		t.Fatalf("the bill must stand: %+v", fs.addUsageCalls)
+	if len(fs.addVoiceCalls) != 0 || len(fs.addUsageCalls) != 0 {
+		t.Fatalf("written for a failed region cell: totals %+v voice %+v", fs.addUsageCalls, fs.addVoiceCalls)
 	}
-	if len(fs.addVoiceCalls) != 0 {
-		t.Fatalf("voice written for a failed region cell: %+v", fs.addVoiceCalls)
+	// Nothing written, nothing marked: the next tick retries all of it.
+	if n, _ := rdb.Exists(context.Background(), "dylaris:traffic:agg:seen:voice:srv-1#eu").Result(); n != 0 {
+		t.Fatal("the voice marker advanced for a tick that was not written")
 	}
-	// Under-count the split, never the bill: the markers advance.
-	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "200")
 }
 
 func TestVoiceCounterResetCountsCurrent(t *testing.T) {
@@ -1043,9 +1071,9 @@ func TestVoiceMarkerRenewedWhileVoiceIsFlat(t *testing.T) {
 	}
 }
 
-// A failed subset write under-counts the split, never re-bills it: the markers
-// advance as they do for a failed region write.
-func TestVoiceSubsetWriteFailureStillAdvancesTheMarkers(t *testing.T) {
+// The voice subset is written in the same tick: a failure holds the tick back
+// whole, and the retry writes the subset with the bytes it belongs to.
+func TestVoiceSubsetWriteFailureRetriesTheWholeTick(t *testing.T) {
 	fs := &trafficFakeStore{
 		owners:         map[string]string{"srv-1": "tenant-a"},
 		addVoiceErrFor: map[string]error{"eu": errors.New("db down")},
@@ -1054,9 +1082,13 @@ func TestVoiceSubsetWriteFailureStillAdvancesTheMarkers(t *testing.T) {
 	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "vrx:eu": 200})
 
 	agg.runOnce(context.Background())
-
-	if len(fs.addVoiceCalls) != 1 {
-		t.Fatalf("voice write not attempted: %+v", fs.addVoiceCalls)
+	if fs.tickAttempts != 1 || len(fs.addUsageCalls)+len(fs.addVoiceCalls) != 0 {
+		t.Fatalf("a failed tick wrote totals %+v voice %+v", fs.addUsageCalls, fs.addVoiceCalls)
+	}
+	fs.addVoiceErrFor = nil
+	agg.runOnce(context.Background())
+	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].bytes != 200 {
+		t.Fatalf("voice after recovery: %+v", fs.addVoiceCalls)
 	}
 	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "1200")
 	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1#eu", "1200")

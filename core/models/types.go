@@ -503,6 +503,10 @@ type Server struct {
 	// carrying the real player address. Off by default: a backend not
 	// configured to expect the header refuses every connection that has one.
 	ProxyProtocol bool `json:"proxyProtocol"`
+	// Timezone is the zone the server runs in: its own, else its owner's, else
+	// UTC. Filled by GetServerByID/ByUUID only; a list leaves it empty, which a
+	// node reads as "keep the container's TZ".
+	Timezone string `json:"timezone,omitempty"`
 	// MemoryGuardAction is what Core does when the node reports the container
 	// held near its memory limit (see memory_guard.go). LastCrash* is the last
 	// OOM kill the node reported; nil when there was none.

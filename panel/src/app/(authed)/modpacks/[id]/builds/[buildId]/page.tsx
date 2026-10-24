@@ -25,6 +25,7 @@ import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDate } from '@/lib/time';
 
 // Build content editor. Two panels:
 //   left:  the build's content list (mods / resource-packs / plugins), with a
@@ -737,7 +738,7 @@ export default function BuildContentEditorPage() {
                                         <>
                                             {link.expiresAt && (
                                                 <span className="text-(--base-06) shrink-0">
-                                                    expires {new Date(link.expiresAt).toLocaleDateString()}
+                                                    expires {fmtDate(link.expiresAt)}
                                                 </span>
                                             )}
                                             <button

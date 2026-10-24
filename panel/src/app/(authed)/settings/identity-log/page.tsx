@@ -13,6 +13,7 @@ import { History, RefreshCw, Loader2, ShieldAlert } from 'lucide-react';
 
 import { listIdentityAudit, type IdentityAuditEvent } from '@/lib/api/identityAudit';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
+import { fmtDateTime } from '@/lib/time';
 
 // The event types the trail actually produces, most-asked-about first. An
 // unknown type still renders, verbatim - a filter list that silently hides a
@@ -201,7 +202,7 @@ function EventRow({ ev }: { ev: IdentityAuditEvent }) {
                     </p>
                 </div>
                 <time className="text-[10px] font-mono text-(--base-06) shrink-0" title={ev.createdAt}>
-                    {new Date(ev.createdAt).toLocaleString()}
+                    {fmtDateTime(ev.createdAt)}
                 </time>
             </div>
             {ev.metadata && Object.keys(ev.metadata).length > 0 && (

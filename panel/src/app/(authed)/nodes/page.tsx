@@ -34,6 +34,7 @@ import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
 import TrafficPools from '@/components/infra/TrafficPools';
 import RemoveMachineDialog from '@/components/infra/RemoveMachineDialog';
+import { fmtDate } from '@/lib/time';
 
 // ---------------------------------------------------------------------------
 // "My infrastructure" - hardware that is not in the cluster, in three tabs.
@@ -662,7 +663,7 @@ function MyNodesInner() {
                                             <div className="text-(--base-08) truncate">{t.label || '(unnamed)'}</div>
                                             {t.expiresAt && (
                                                 <div className="text-xs text-(--base-06) flex items-center gap-1">
-                                                    <Clock size={10} /> expires {new Date(t.expiresAt).toLocaleDateString()}
+                                                    <Clock size={10} /> expires {fmtDate(t.expiresAt)}
                                                 </div>
                                             )}
                                         </div>

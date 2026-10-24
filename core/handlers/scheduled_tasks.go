@@ -32,6 +32,9 @@ type scheduledTaskRequest struct {
 	ScheduleCron string `json:"scheduleCron"`
 	Payload      string `json:"payload"`
 	Enabled      *bool  `json:"enabled,omitempty"`
+	// Timezone: IANA zone the schedule is read in. Empty on create means the
+	// server's zone; empty on a patch keeps the task's.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // Task types pinned to restart + say. RCON-via-cron was considered but kept
@@ -157,7 +160,8 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// for what is plainly a 404. Update and Delete already resolve the task
 	// first, so Create was the only entry point left without the check; the
 	// sibling handlers (tabs, backup jobs, members) all answer 404 here.
-	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
 		sendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
@@ -176,7 +180,18 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if h.refuseWithoutTaskCap(w, r, serverID, req.TaskType) {
 		return
 	}
-	next, err := services.ComputeNextRun(req.ScheduleCron, time.Now().UTC())
+	tz := strings.TrimSpace(req.Timezone)
+	if tz == "" {
+		tz = srv.Timezone
+	}
+	if tz == "" {
+		tz = "UTC"
+	}
+	if !services.ValidTimezone(tz) {
+		sendJSONError(w, "Unknown time zone", http.StatusBadRequest)
+		return
+	}
+	next, err := services.ComputeNextRunIn(req.ScheduleCron, tz, time.Now().UTC())
 	if err != nil {
 		sendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
 		return
@@ -201,6 +216,7 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name:         req.Name,
 		TaskType:     req.TaskType,
 		ScheduleCron: req.ScheduleCron,
+		Timezone:     tz,
 		Payload:      req.Payload,
 		Enabled:      enabled,
 		NextRun:      &next,
@@ -248,7 +264,7 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// holding schedule.write but not power.restart could not pause the owner's
 	// restart task, only delete it (and only with schedule.delete).
 	onlyDisabling := req.Enabled != nil && !*req.Enabled &&
-		req.Name == "" && req.TaskType == "" && req.Payload == "" && req.ScheduleCron == ""
+		req.Name == "" && req.TaskType == "" && req.Payload == "" && req.ScheduleCron == "" && req.Timezone == ""
 	// Apply the patch onto a copy first, then validate the RESULT with the same
 	// rules Create uses. Validating the request alone would miss the combination
 	// that only a patch can reach - changing taskType to "say" while leaving the
@@ -276,18 +292,28 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
 	}
-	if req.ScheduleCron != "" && req.ScheduleCron != existing.ScheduleCron {
-		next, err := services.ComputeNextRun(req.ScheduleCron, time.Now().UTC())
+	tz := strings.TrimSpace(req.Timezone)
+	if tz != "" && !services.ValidTimezone(tz) {
+		sendJSONError(w, "Unknown time zone", http.StatusBadRequest)
+		return
+	}
+	if (req.ScheduleCron != "" && req.ScheduleCron != existing.ScheduleCron) || (tz != "" && tz != existing.Timezone) {
+		if req.ScheduleCron != "" {
+			existing.ScheduleCron = req.ScheduleCron
+		}
+		if tz != "" {
+			existing.Timezone = tz
+		}
+		next, err := services.ComputeNextRunIn(existing.ScheduleCron, existing.Timezone, time.Now().UTC())
 		if err != nil {
 			sendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
 			return
 		}
-		existing.ScheduleCron = req.ScheduleCron
 		existing.NextRun = &next
 	}
 	// If we're (re-)enabling a task that lost its next_run, compute one.
 	if existing.Enabled && existing.NextRun == nil {
-		next, err := services.ComputeNextRun(existing.ScheduleCron, time.Now().UTC())
+		next, err := services.ComputeNextRunIn(existing.ScheduleCron, existing.Timezone, time.Now().UTC())
 		if err == nil {
 			existing.NextRun = &next
 		}
@@ -336,12 +362,17 @@ func (h *ScheduledTasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *ScheduledTasksHandler) ValidateCron(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ScheduleCron string `json:"scheduleCron"`
+		Timezone     string `json:"timezone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	next, err := services.ComputeNextRun(strings.TrimSpace(req.ScheduleCron), time.Now().UTC())
+	tz := strings.TrimSpace(req.Timezone)
+	if tz == "" {
+		tz = "UTC"
+	}
+	next, err := services.ComputeNextRunIn(strings.TrimSpace(req.ScheduleCron), tz, time.Now().UTC())
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,

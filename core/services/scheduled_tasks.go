@@ -50,8 +50,9 @@ func skipped(format string, a ...any) error { return skipError{fmt.Sprintf(forma
 
 // ScheduledTaskCronParser is the cron flavour we accept from users. Standard
 // 5-field UNIX cron — no seconds, no exotic descriptors. The robfig parser also
-// accepts "@daily", "@hourly" etc. as a convenience. Always evaluated in UTC,
-// which ComputeNextRun enforces: the parser on its own uses the HOST's zone.
+// accepts "@daily", "@hourly" etc. as a convenience. Always evaluated in the
+// task's own zone, which ComputeNextRunIn names explicitly: the parser on its
+// own uses the HOST's zone.
 var ScheduledTaskCronParser = cron.NewParser(
 	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 )
@@ -103,6 +104,19 @@ func (s *ScheduledTaskService) Start(ctx context.Context) {
 // the parser slice out of range and panic mid-request. So a user-supplied zone
 // is refused here, and UTC is named for the parser explicitly.
 func ComputeNextRun(cronExpr string, from time.Time) (time.Time, error) {
+	return ComputeNextRunIn(cronExpr, "UTC", from)
+}
+
+// ComputeNextRunIn is ComputeNextRun with the schedule read in zone tz. The
+// zone is a separate, validated argument rather than a prefix in the spec, so
+// the user still cannot reach the parser's own TZ= handling.
+func ComputeNextRunIn(cronExpr, tz string, from time.Time) (time.Time, error) {
+	if tz == "" {
+		tz = "UTC" // a row or caller from before zones existed
+	}
+	if !ValidTimezone(tz) {
+		return time.Time{}, fmt.Errorf("invalid time zone %q", tz)
+	}
 	spec := strings.TrimSpace(cronExpr)
 	if spec == "" {
 		return time.Time{}, fmt.Errorf("invalid cron: empty schedule")
@@ -113,7 +127,7 @@ func ComputeNextRun(cronExpr string, from time.Time) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid cron: longer than %d characters", ScheduledTaskMaxCron)
 	}
 	if strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
-		return time.Time{}, fmt.Errorf("invalid cron: a time zone cannot be set, schedules run in UTC")
+		return time.Time{}, fmt.Errorf("invalid cron: set the time zone in its own field, not in the schedule")
 	}
 	// "@every" is the one form that can go below a minute. The executor ticks
 	// every 30s, so anything shorter did not run more often - it fired on every
@@ -124,11 +138,23 @@ func ComputeNextRun(cronExpr string, from time.Time) (time.Time, error) {
 			return time.Time{}, fmt.Errorf("invalid cron: the shortest interval is %s", ScheduledTaskMinInterval)
 		}
 	}
-	sched, err := ScheduledTaskCronParser.Parse("CRON_TZ=UTC " + spec)
+	sched, err := ScheduledTaskCronParser.Parse("CRON_TZ=" + tz + " " + spec)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid cron: %w", err)
 	}
 	return sched.Next(from), nil
+}
+
+// ValidTimezone reports whether tz is an IANA zone name Go can load. "Local"
+// is refused: it means the host's zone, which is exactly the dependency a
+// stored zone exists to remove. LoadLocation itself refuses "..", absolute
+// paths and names that resolve to nothing.
+func ValidTimezone(tz string) bool {
+	if tz == "" || tz == "Local" || len(tz) > 64 || strings.ContainsAny(tz, " \t\r\n") {
+		return false
+	}
+	_, err := time.LoadLocation(tz)
+	return err == nil
 }
 
 func (s *ScheduledTaskService) runDue(ctx context.Context) {
@@ -144,7 +170,7 @@ func (s *ScheduledTaskService) runDue(ctx context.Context) {
 
 	publishServers := false
 	for _, t := range due {
-		next, parseErr := ComputeNextRun(t.ScheduleCron, now)
+		next, parseErr := ComputeNextRunIn(t.ScheduleCron, t.Timezone, now)
 		if parseErr != nil {
 			// The cron string somehow became invalid (e.g. someone edited the
 			// DB by hand): disable the row instead of looping forever.
@@ -275,8 +301,11 @@ func (s *ScheduledTaskService) execute(ctx context.Context, t *models.ScheduledT
 			return fmt.Errorf("queue not available")
 		}
 		_ = s.store.UpdateServerDesiredState(srv.ID, "online")
-		_ = s.store.UpdateServerStatus(srv.ID, "starting")
-		configPayload := map[string]interface{}{"uuid": srv.UUID}
+		_ = s.store.UpdateServerStatus(srv.ID, "restarting")
+		configPayload := map[string]interface{}{
+			"uuid":   srv.UUID,
+			"docker": map[string]interface{}{"timezone": srv.Timezone},
+		}
 		if err := s.queue.SendCommand(ctx, node.Token, "restart", configPayload, nil); err != nil {
 			return fmt.Errorf("queue restart: %w", err)
 		}

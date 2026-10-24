@@ -203,6 +203,15 @@ select:focus {
 .animate-slide-up {
   animation: slide-up 0.25s ease-out;
 }
+/* Content arriving after a load: a short fade so data settles in instead of
+   snapping, never long enough to make the panel feel slower. */
+.animate-content-in {
+  animation: fade-in 0.15s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in, .animate-slide-up, .animate-content-in { animation: none; }
+  .animate-pulse { animation: none; }
+}
 
 /* ── Shine border — used on attention-grabbing CTAs while empty ── */
 @property --shine-angle {

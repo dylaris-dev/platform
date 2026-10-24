@@ -16,14 +16,26 @@ export default function CoreLoadBars({ serverId, active }: { serverId: number; a
   const [data, setData] = useState<ServerCoreLoad | null>(null);
 
   useEffect(() => {
+    // Another server's bars are not this one's: start empty.
+    setData(null);
     if (!active) return;
     let cancelled = false;
+    let inFlight = false;
+    let misses = 0;
     const tick = async () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible' || inFlight) return;
+      inFlight = true;
       try {
         const res = await getServerCoreLoad(serverId);
-        if (!cancelled && Array.isArray(res?.cores)) setData(res);
-      } catch { /* keep the last reading; the next tick tries again */ }
+        if (cancelled) return;
+        if (Array.isArray(res?.cores)) { setData(res); misses = 0; }
+        else if (++misses >= 3) setData(null);
+      } catch {
+        // One failed poll keeps the last reading; a run of them is no reading.
+        if (!cancelled && ++misses >= 3) setData(null);
+      } finally {
+        inFlight = false;
+      }
     };
     tick();
     const t = setInterval(tick, POLL_MS);

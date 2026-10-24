@@ -11,6 +11,7 @@ import { ArrowLeft, Trash2, ShieldAlert, RefreshCw, Loader2 } from 'lucide-react
 import { useAppData } from '@/lib/AppDataContext';
 import { listTicketDeletions, TicketDeletion } from '@/lib/api/tickets';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
+import { fmtDateTime } from '@/lib/time';
 
 const PAGE_SIZE = 50;
 
@@ -210,7 +211,7 @@ export default function TicketDeletionLogPage() {
 function formatTimestamp(iso: string): string {
     try {
         const d = new Date(iso);
-        return d.toLocaleString();
+        return fmtDateTime(d);
     } catch {
         return iso;
     }

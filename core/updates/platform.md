@@ -8,6 +8,35 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.24
+
+### Features
+- **Time zones per account and per server.** The panel shows times in the account's zone and 12- or
+  24-hour clock; a server runs in its own zone or its owner's, its console from the next start. `core` `node` `panel`
+- **Scheduled tasks run in a time zone of their own,** daylight saving included. New tasks start in
+  the server's zone; tasks created before keep UTC. `core` `panel`
+- **Mods and plugins can be switched off without removing them.** The jar moves to `.disabled/`
+  and back, effective at the next restart. `core` `panel`
+
+### Breaking
+- **The first panel load sets an account's zone to its browser's,** and servers that inherit it run
+  in that zone from their next start. Set UTC under Account, Time & date to keep the old clock. `core` `node` `panel`
+
+### Security
+- **The node writes its own files in a server's directory through os.Root,** so a link planted
+  there by code in the container cannot carry the write out of it. `node`
+- **File names from an imported archive are checked** before they reach node file operations. `core`
+
+### Fixes
+- **Traffic billing writes a tick whole or not at all.** A failed region write used to lose those
+  bytes from overage while the total landed; the tick is now retried. `core`
+- **Real player IP can no longer lock players out on a version update or a move.** Either is refused
+  when the target cannot expect the header; an unconfirmed default switches back off. `core`
+- **The mod config editor no longer saves one file's text into the next one opened,** and Update
+  all leaves paused or switched-off dependencies alone. `panel`
+- **Loading fades in from placeholders,** route addresses copy on click, Start counts down after a
+  power action, and scheduled restarts show "restarting". `core` `node` `panel`
+
 ## 2026.10.23.7
 
 ### Features

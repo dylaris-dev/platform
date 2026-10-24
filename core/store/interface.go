@@ -116,6 +116,12 @@ type Store interface {
 	// The voice SUBSET of the same row; the bytes also go through
 	// AddTrafficUsageRegion.
 	AddTrafficUsageRegionVoice(userID string, period time.Time, region, kind, product string, bytes int64) error
+	// AddTrafficTick is the three above for one tenant's tick, in one
+	// transaction: what overage bills (the region cells) and the total cannot
+	// drift apart by a write that failed half way.
+	// RotateVoiceUplinkKey: nil, nil when the server has no voice port.
+	RotateVoiceUplinkKey(serverID int, key []byte) (*VoicePort, error)
+	AddTrafficTick(userID string, period time.Time, edgeBytes, relayBytes int64, cells []TrafficTickCell) error
 	AddVoiceUsage(serverID int, period time.Time, region string, rx, tx int64) error
 	ListVoiceUsage(period time.Time) ([]VoiceUsageRow, error)
 	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error
@@ -795,6 +801,8 @@ type Store interface {
 	// SetServerModUpdatesPaused pins one mod against "Update all". Not found
 	// when the id is not a mod row of that server.
 	SetServerModUpdatesPaused(id, serverID int, paused bool) error
+	// SetServerModDisabled records whether the mod's jar is in .disabled/.
+	SetServerModDisabled(id, serverID int, disabled bool) error
 	// GetServerModByProject is what an install has to read BEFORE its own
 	// upsert: that upsert overwrites file_name, and the overwritten value is
 	// the name of the jar the old version left behind.
@@ -947,6 +955,12 @@ type Store interface {
 	// In-panel update feed: per-user acknowledged feed counts (platform,
 	// gateway) so the navbar bell badge clears. Missing/legacy rows default to 0.
 	GetUserUpdatesSeen(userID string) (version string, err error)
+	GetUserTimePreferences(userID string) (timezone, timeFormat string, err error)
+	SetUserTimePreferences(userID, timezone, timeFormat string) error
+	// GetServerTimezone: own is "" when the server inherits; effective is
+	// own, else the owner's, else "UTC".
+	GetServerTimezone(serverID int) (own, effective string, err error)
+	SetServerTimezone(serverID int, timezone string) error
 	SetUserUpdatesSeen(userID, version string) error
 
 	// --- Setup wizard ---

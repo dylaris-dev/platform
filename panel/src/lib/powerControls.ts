@@ -132,6 +132,9 @@ function baseModel(status: string, pending: PendingPower | null, now: number, g:
     // `blocked`, which also gates kill.
     const cooling = !blocked && !!g.cooldownUntil && now < g.cooldownUntil;
     const lock = blocked || (cooling ? COOLDOWN_TITLE : '');
+    // Shown on the button while the pause runs, so a user who just killed or
+    // stopped the server sees when Start comes back instead of a grey button.
+    const wait = cooling ? ` in ${Math.ceil((g.cooldownUntil! - now) / 1000)}s` : '';
     const offline = OFFLINE_STATUSES.includes(status);
     const local = pending?.action ?? null;
     const action = local ?? statusAction(status);
@@ -145,7 +148,7 @@ function baseModel(status: string, pending: PendingPower | null, now: number, g:
             const diskFull = status === 'disk_full';
             return {
                 primary: {
-                    action: 'start', label: 'Start', icon: 'start', variant: 'start',
+                    action: 'start', label: `Start${wait}`, icon: 'start', variant: 'start',
                     disabled: !!lock || diskFull,
                     title: lock || (diskFull ? 'Storage full. Delete files or raise the limit.' : 'Start server'),
                 },
@@ -154,7 +157,7 @@ function baseModel(status: string, pending: PendingPower | null, now: number, g:
             };
         }
         return {
-            primary: { action: 'stop', label: 'Stop', icon: 'stop', variant: 'stop', disabled: !!lock, title: lock || 'Stop server' },
+            primary: { action: 'stop', label: `Stop${wait}`, icon: 'stop', variant: 'stop', disabled: !!lock, title: lock || 'Stop server' },
             showSecondary: true,
             restartDisabled: !!lock,
             menuDisabled: !!blocked,

@@ -330,12 +330,13 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 	out.Exclusive = len(cores) > 0 && len(shared) == 0
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	if isAdmin || out.Exclusive {
-		for i, c := range cores {
+		for _, c := range cores {
 			load, ok := published.Cores[c]
 			if !ok {
 				continue // a core the host does not have (or did not report)
 			}
-			e := coreLoadEntry{Index: i + 1, Load: load}
+			// Counted over what is shown, so a skipped core leaves no gap.
+			e := coreLoadEntry{Index: len(out.Cores) + 1, Load: load}
 			if isAdmin {
 				id := c
 				e.ID, e.Shared = &id, shared[c]

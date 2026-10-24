@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -93,7 +94,17 @@ func (s *PostgresStore) TenantBackupBytes() (map[string]int64, error) {
 // creating it on first write. The aggregator computes deltas from monotonic
 // Redis counters, so this accumulates the running monthly total.
 func (s *PostgresStore) AddTrafficUsage(userID string, period time.Time, edgeBytes, relayBytes int64) error {
-	_, err := s.db.Exec(`
+	return addTrafficUsage(s.db, userID, period, edgeBytes, relayBytes)
+}
+
+// trafficExecer is a *sql.DB or a *sql.Tx: the tick writes through a
+// transaction, the single-row methods straight through the pool.
+type trafficExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func addTrafficUsage(x trafficExecer, userID string, period time.Time, edgeBytes, relayBytes int64) error {
+	_, err := x.Exec(`
 		INSERT INTO traffic_usage (user_id, period, edge_bytes, relay_bytes, updated_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (user_id, period) DO UPDATE SET
@@ -149,7 +160,11 @@ const (
 // total correct and only the split incomplete, which is the right way round -
 // the reverse would let a broken breakdown change what a tenant is charged.
 func (s *PostgresStore) AddTrafficUsageRegion(userID string, period time.Time, region, kind, product string, bytes int64) error {
-	_, err := s.db.Exec(`
+	return addTrafficUsageRegion(s.db, userID, period, region, kind, product, bytes)
+}
+
+func addTrafficUsageRegion(x trafficExecer, userID string, period time.Time, region, kind, product string, bytes int64) error {
+	_, err := x.Exec(`
 		INSERT INTO traffic_usage_region (user_id, period, region, kind, product, bytes, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
 		ON CONFLICT (user_id, period, region, kind, product) DO UPDATE SET
@@ -236,4 +251,39 @@ func (s *PostgresStore) ListTrafficUsage(period time.Time) ([]TrafficUsage, erro
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// TrafficTickCell is one region cell of a tick: the bytes it adds and the
+// voice subset of them.
+type TrafficTickCell struct {
+	Region, Kind, Product string
+	Bytes, Voice          int64
+}
+
+// AddTrafficTick writes one tenant's tick - the total, its region cells and
+// their voice subsets - in one transaction. Overage is billed off the region
+// cells, so they are as much the bill as the total is: all of it lands or none
+// of it does, and the caller retries the whole delta.
+func (s *PostgresStore) AddTrafficTick(userID string, period time.Time, edgeBytes, relayBytes int64, cells []TrafficTickCell) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := addTrafficUsage(tx, userID, period, edgeBytes, relayBytes); err != nil {
+		return fmt.Errorf("total: %w", err)
+	}
+	for _, c := range cells {
+		if c.Bytes > 0 {
+			if err := addTrafficUsageRegion(tx, userID, period, c.Region, c.Kind, c.Product, c.Bytes); err != nil {
+				return fmt.Errorf("region %s/%s/%s: %w", c.Region, c.Kind, c.Product, err)
+			}
+		}
+		if c.Voice > 0 {
+			if err := addTrafficUsageRegionVoice(tx, userID, period, c.Region, c.Kind, c.Product, c.Voice); err != nil {
+				return fmt.Errorf("voice %s/%s/%s: %w", c.Region, c.Kind, c.Product, err)
+			}
+		}
+	}
+	return tx.Commit()
 }

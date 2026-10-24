@@ -32,6 +32,8 @@ type flowStore struct {
 	nodes    map[int]*models.Node
 	enc      string
 	cutovers []int
+	// voiceRotations counts the voice keys the move replaced.
+	voiceRotations int
 }
 
 func (f *flowStore) GetServerByID(int) (*models.Server, error) {
@@ -61,6 +63,12 @@ func (f *flowStore) UpdateServerStatus(_ int, status string) error {
 	return nil
 }
 func (f *flowStore) UpdateServerDesiredState(int, string) error { return nil }
+func (f *flowStore) RotateVoiceUplinkKey(int, []byte) (*store.VoicePort, error) {
+	f.mu.Lock()
+	f.voiceRotations++
+	f.mu.Unlock()
+	return nil, nil
+}
 func (f *flowStore) UpdateServerNode(_ int, node int) error {
 	f.mu.Lock()
 	f.srv.NodeID = node
@@ -199,6 +207,10 @@ func TestAMoveNamesTheSourceByTheIDItPublishesUnder(t *testing.T) {
 	}
 	if len(fs.cutovers) != 1 || fs.cutovers[0] != 2 {
 		t.Fatalf("cutovers %v, want onto node 2", fs.cutovers)
+	}
+	// The machine the server left could read its voice key.
+	if fs.voiceRotations != 1 {
+		t.Fatalf("voice key rotated %d times on a move, want once", fs.voiceRotations)
 	}
 }
 

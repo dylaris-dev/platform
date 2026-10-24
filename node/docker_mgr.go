@@ -321,6 +321,24 @@ type DockerConfig struct {
 	// Container memory on top of the booked RAM, for what the JVM needs outside
 	// its heap. nil = not sent (older Core): the container label, else 512.
 	RAMPaddingMB *int `json:"ramPaddingMB,omitempty"`
+	// Timezone becomes the container's TZ, which the JVM (and so the console's
+	// timestamps) reads. Empty = not sent (older Core): a rebuilt container
+	// keeps the TZ it had, a new one runs in UTC as before.
+	Timezone string `json:"timezone,omitempty"`
+}
+
+// tzEnv is the TZ entry for a container, or nothing for a zone this node
+// cannot resolve. The JVM ships its own zone database, so only the name has to
+// be right; "Local" would mean the node host's zone and is refused.
+func tzEnv(tz string) []string {
+	if tz == "" || tz == "Local" || strings.ContainsAny(tz, " =\t\r\n") {
+		return nil
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		log.Printf("ignoring unknown time zone %q for a server container", tz)
+		return nil
+	}
+	return []string{"TZ=" + tz}
 }
 
 // ramPaddingLabel records the padding a container was created with, so a
@@ -949,7 +967,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		User:       mcUserSpec(),
 		WorkingDir: "/data",
 		Hostname:   containerName,
-		Env:        buildRedisEnv(config.UUID, "", sidecarAddr),
+		Env:        append(buildRedisEnv(config.UUID, "", sidecarAddr), tzEnv(config.Docker.Timezone)...),
 		// Stamped so another node sharing this docker.sock can tell whose it
 		// is. See container_owner.go.
 		Labels: map[string]string{
@@ -1059,6 +1077,9 @@ func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 		return nil
 	}
 	wasRunning := info.State != nil && info.State.Running
+	if config.Docker.Timezone == "" {
+		config.Docker.Timezone = envValue(info.Config.Env, "TZ")
+	}
 
 	if wasRunning && dm.stopGracefully != nil {
 		dm.stopGracefully(config.UUID)
@@ -1191,7 +1212,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		User:       mcUserSpec(),
 		WorkingDir: fmt.Sprintf("/data/%s", config.ActiveSubServer),
 		Hostname:   containerName,
-		Env:        buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr),
+		Env:        append(buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr), tzEnv(config.Docker.Timezone)...),
 		// Stamped so another node sharing this docker.sock can tell whose it
 		// is. See container_owner.go.
 		Labels: map[string]string{
@@ -1322,7 +1343,42 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 // removes the old container, and creates + starts a fresh one with identical settings.
 // This is more reliable than ContainerStart on an exited container.
 func (dm *DockerManager) RestartContainer(uuid string) error {
+	return dm.RestartContainerInZone(uuid, "")
+}
+
+// rememberTimezone writes the zone into the saved config, which the reconciler
+// rebuilds a missing container from. Only that one field is touched, through a
+// generic map so fields this build does not know survive.
+func (dm *DockerManager) rememberTimezone(uuid, tz string) {
+	dir := dm.resolveLocalServerPath(uuid)
+	data, err := os.ReadFile(filepath.Join(dir, ".node_config.json"))
+	if err != nil {
+		return
+	}
+	var saved map[string]any
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
+	docker, _ := saved["docker"].(map[string]any)
+	if docker == nil || docker["timezone"] == tz {
+		return
+	}
+	docker["timezone"] = tz
+	if out, err := json.Marshal(saved); err == nil {
+		if err := writeServerRootFile(dir, ".node_config.json", out); err != nil {
+			log.Printf("rememberTimezone %s: %v", uuid, err)
+		}
+	}
+}
+
+// RestartContainerInZone is RestartContainer with the container's TZ set to
+// tz; "" keeps the one it has. A start or restart from the panel carries the
+// server's current zone, which is how a zone change reaches the container.
+func (dm *DockerManager) RestartContainerInZone(uuid, tz string) error {
 	containerName := fmt.Sprintf("mc_%s", uuid)
+	if tz != "" {
+		dm.rememberTimezone(uuid, tz)
+	}
 
 	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
 	if err != nil {
@@ -1344,6 +1400,10 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 	}
 	config.Docker.CPULimit = float64(info.HostConfig.NanoCPUs) / 1e9
 	config.Docker.CpusetCpus = info.HostConfig.CpusetCpus
+	config.Docker.Timezone = tz
+	if tz == "" {
+		config.Docker.Timezone = envValue(info.Config.Env, "TZ")
+	}
 
 	// Preserve the previous bind mounts verbatim so the world data on disk
 	// can't be lost to a storage-path resolution change between create and
@@ -1392,6 +1452,9 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 	if err == nil {
 		if config.Docker.Image == "" {
 			config.Docker.Image = info.Config.Image
+		}
+		if config.Docker.Timezone == "" {
+			config.Docker.Timezone = envValue(info.Config.Env, "TZ")
 		}
 		if config.ActiveSubServer == "" && info.Config.WorkingDir != "" &&
 			strings.HasPrefix(info.Config.WorkingDir, "/data/") {

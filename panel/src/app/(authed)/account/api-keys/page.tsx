@@ -10,6 +10,7 @@ import { useBusy } from '@/lib/useBusy';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import { toast } from '@/components/ui/Toast';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 // per-user API key management. Lives under /account/ because
 // keys are owned by users, not the admin platform. Plaintext is shown
@@ -209,7 +210,7 @@ export default function ApiKeysPage() {
                                 </div>
                                 {k.lastUsedAt && (
                                     <div className="text-xs text-(--base-06) mt-0.5">
-                                        Last used: <span className="text-(--base-08)">{new Date(k.lastUsedAt).toLocaleString()}</span>
+                                        Last used: <span className="text-(--base-08)">{fmtDateTime(k.lastUsedAt)}</span>
                                     </div>
                                 )}
                             </div>

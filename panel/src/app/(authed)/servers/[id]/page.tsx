@@ -19,9 +19,7 @@ export default function ServerIndexPage() {
         router.replace(`/servers/${id}/${target}`);
     }, [ready, paramId, servers, router]);
 
-    return (
-        <div className="flex h-full items-center justify-center text-(--base-06) text-sm">
-            Loading server…
-        </div>
-    );
+    // Only on screen for the moment the redirect takes; the server header and
+    // tabs above are already there, so a word in the middle would just flash.
+    return <div className="h-full" aria-busy="true" />;
 }

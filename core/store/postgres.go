@@ -588,6 +588,45 @@ func (s *PostgresStore) BulkSetCanCreateModpacks(can bool, includeManual bool) (
 	return n, nil
 }
 
+// GetUserTimePreferences returns the user's chosen IANA zone ("" = not
+// chosen) and clock format ("auto", "24h" or "12h").
+func (s *PostgresStore) GetUserTimePreferences(userID string) (timezone, timeFormat string, err error) {
+	err = s.db.QueryRow(`SELECT timezone, time_format FROM users WHERE id = $1`, userID).Scan(&timezone, &timeFormat)
+	return timezone, timeFormat, err
+}
+
+// SetUserTimePreferences stores both; the caller validates them.
+func (s *PostgresStore) SetUserTimePreferences(userID, timezone, timeFormat string) error {
+	res, err := s.db.Exec(`UPDATE users SET timezone = $2, time_format = $3 WHERE id = $1`, userID, timezone, timeFormat)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
+// GetServerTimezone returns the server's own zone ("" = inherits) and the one
+// it actually runs in: its own, else its owner's, else UTC.
+func (s *PostgresStore) GetServerTimezone(serverID int) (own, effective string, err error) {
+	err = s.db.QueryRow(`SELECT s.timezone, COALESCE(NULLIF(s.timezone, ''), NULLIF(u.timezone, ''), 'UTC')
+		FROM servers s LEFT JOIN users u ON u.id = s.owner_id WHERE s.id = $1`, serverID).Scan(&own, &effective)
+	return own, effective, err
+}
+
+// SetServerTimezone stores the server's own zone; "" makes it inherit again.
+func (s *PostgresStore) SetServerTimezone(serverID int, timezone string) error {
+	res, err := s.db.Exec(`UPDATE servers SET timezone = $2 WHERE id = $1`, serverID, timezone)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("server not found")
+	}
+	return nil
+}
+
 // GetUserUpdatesSeen returns the release this user has acknowledged in the
 // updates view, or "" when they have acknowledged nothing.
 func (s *PostgresStore) GetUserUpdatesSeen(userID string) (string, error) {
@@ -1328,14 +1367,14 @@ func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error
 func (s *PostgresStore) GetServerByID(id int) (*models.Server, error) {
 	var srv models.Server
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.auto_move, FALSE), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE)
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.auto_move, FALSE), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE), COALESCE(NULLIF(s.timezone, ''), NULLIF(u.timezone, ''), 'UTC')
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.id = $1
 	`
 	var pad ramPaddingScan
-	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.AutoMove, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol)
+	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.AutoMove, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol, &srv.Timezone)
 	if err != nil {
 		return nil, err
 	}
@@ -1346,14 +1385,14 @@ func (s *PostgresStore) GetServerByID(id int) (*models.Server, error) {
 func (s *PostgresStore) GetServerByUUID(uuid string) (*models.Server, error) {
 	var srv models.Server
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE)
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE), COALESCE(NULLIF(s.timezone, ''), NULLIF(u.timezone, ''), 'UTC')
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.uuid = $1
 	`
 	var pad ramPaddingScan
-	err := s.db.QueryRow(query, uuid).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol)
+	err := s.db.QueryRow(query, uuid).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol, &srv.Timezone)
 	if err != nil {
 		return nil, err
 	}

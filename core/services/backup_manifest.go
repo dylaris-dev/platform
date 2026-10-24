@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"dylaris-core/models"
+	"dylaris-pkg/validate"
 )
 
 // BackupManifestSchema is the version of the manifest FORMAT.
@@ -68,6 +69,10 @@ type BackupManifestMod struct {
 	FileName            string `json:"fileName"`
 	TargetDir           string `json:"targetDir,omitempty"`
 	SHA512              string `json:"sha512,omitempty"`
+	// Disabled: the archive holds this jar in <targetDir>/.disabled/. An
+	// archive from before the field reads as enabled, which is where it kept
+	// every jar.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // ManifestModRows turns a manifest's portable mod descriptions into rows.
@@ -79,6 +84,11 @@ type BackupManifestMod struct {
 func ManifestModRows(mods []BackupManifestMod) []models.ServerMod {
 	rows := make([]models.ServerMod, 0, len(mods))
 	for _, mod := range mods {
+		// An archive is input: a name that is not a plain file name would be
+		// joined into node file operations later.
+		if !validate.IsPlainFileName(mod.FileName) {
+			continue
+		}
 		rows = append(rows, models.ServerMod{
 			ModrinthProjectID:   mod.ModrinthProjectID,
 			ModrinthProjectSlug: mod.ModrinthProjectSlug,
@@ -87,6 +97,7 @@ func ManifestModRows(mods []BackupManifestMod) []models.ServerMod {
 			FileName:            mod.FileName,
 			TargetDir:           mod.TargetDir,
 			SHA512:              mod.SHA512,
+			Disabled:            mod.Disabled,
 		})
 	}
 	return rows
@@ -145,6 +156,7 @@ func BuildBackupManifest(st backupManifestStore, serverID int, scope, release st
 				FileName:            r.FileName,
 				TargetDir:           r.TargetDir,
 				SHA512:              r.SHA512,
+				Disabled:            r.Disabled,
 			})
 		}
 		m.Mods = append(m.Mods, BackupManifestMods{SubServer: sub, Mods: mods})

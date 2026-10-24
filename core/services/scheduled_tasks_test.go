@@ -184,7 +184,7 @@ func TestRunDue_RestartTask_Success(t *testing.T) {
 	if len(fs.desiredCalls) != 1 || fs.desiredCalls[0] != (schedDesiredCall{1, "online"}) {
 		t.Errorf("desiredCalls = %+v, want [{1 online}]", fs.desiredCalls)
 	}
-	if len(fs.statusCalls) != 1 || fs.statusCalls[0] != (schedStatusCall{1, "starting"}) {
+	if len(fs.statusCalls) != 1 || fs.statusCalls[0] != (schedStatusCall{1, "restarting"}) {
 		t.Errorf("statusCalls = %+v, want [{1 starting}]", fs.statusCalls)
 	}
 

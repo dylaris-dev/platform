@@ -24,6 +24,7 @@ import { cnameTargetsFor } from '@/lib/cnameTargets';
 import HelpTip from '@/components/ui/HelpTip';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -220,7 +221,7 @@ function DnsCheckCard() {
 
                     {result.checkedAt && (
                         <p className="text-[11px] font-mono text-(--base-05)">
-                            Last checked {new Date(result.checkedAt).toLocaleString()}
+                            Last checked {fmtDateTime(result.checkedAt)}
                         </p>
                     )}
                 </div>

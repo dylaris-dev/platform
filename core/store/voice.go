@@ -115,6 +115,19 @@ func (s *PostgresStore) GetVoicePort(serverID int) (*VoicePort, error) {
 	return &p, nil
 }
 
+// RotateVoiceUplinkKey replaces the server's uplink key and returns the row, or
+// nil, nil when the server has no voice port.
+func (s *PostgresStore) RotateVoiceUplinkKey(serverID int, key []byte) (*VoicePort, error) {
+	res, err := s.db.Exec(`UPDATE voice_ports SET uplink_key = $2 WHERE server_id = $1`, serverID, key)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, nil
+	}
+	return s.GetVoicePort(serverID)
+}
+
 // UpdateVoicePortMod refreshes mod, internal_port and host of the row only if
 // it still holds (region, port). false means the row was deleted or moved since
 // the caller read it; unlike AllocateVoicePort this never inserts or moves one.
@@ -197,7 +210,11 @@ func (s *PostgresStore) ListVoiceUsage(period time.Time) ([]VoiceUsageRow, error
 // AddTrafficUsageRegion, so bytes stays the total and voice_bytes is the part
 // of it that was voice.
 func (s *PostgresStore) AddTrafficUsageRegionVoice(userID string, period time.Time, region, kind, product string, bytes int64) error {
-	_, err := s.db.Exec(`
+	return addTrafficUsageRegionVoice(s.db, userID, period, region, kind, product, bytes)
+}
+
+func addTrafficUsageRegionVoice(x trafficExecer, userID string, period time.Time, region, kind, product string, bytes int64) error {
+	_, err := x.Exec(`
 		INSERT INTO traffic_usage_region (user_id, period, region, kind, product, voice_bytes, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
 		ON CONFLICT (user_id, period, region, kind, product) DO UPDATE SET

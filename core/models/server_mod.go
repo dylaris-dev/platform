@@ -35,6 +35,8 @@ type ServerMod struct {
 	// UpdatesPaused keeps the mod out of "Update all". It is a choice about
 	// the bulk run only; updating this one mod by hand still works.
 	UpdatesPaused bool `json:"updatesPaused"`
+	// Disabled: the jar was moved to <TargetDir>/.disabled/ and is not loaded.
+	Disabled bool `json:"disabled"`
 }
 
 // ServerModHistoryEntry is a version this mod USED to be, kept so an update can

@@ -41,12 +41,21 @@ export function installQueue(plan: ModInstallPlan, root: InstallModPayload): Ins
  * installed mod is not installed: the run must not leave a server that cannot
  * start.
  */
-export function updateQueue(plan: ModInstallPlan, root: InstallModPayload): { queue: InstallModPayload[] } | { skip: string } {
+export function updateQueue(
+    plan: ModInstallPlan, root: InstallModPayload, held: Map<string, string> = new Map(),
+): { queue: InstallModPayload[] } | { skip: string } {
     const blockers = [...plan.unresolved, ...plan.incompatible];
     if (blockers.length) {
         return { skip: `the new build needs or clashes with ${blockers.map(p => p.title || p.reason).join(', ')}` };
     }
-    return { queue: installQueue(plan, root) };
+    const queue = installQueue(plan, root);
+    // A dependency its members paused or switched off is not replaced behind
+    // their back by another mod's update.
+    const touched = queue.filter(p => p.projectId !== root.projectId && held.has(p.projectId));
+    if (touched.length) {
+        return { skip: `it would replace ${touched.map(p => held.get(p.projectId)).join(', ')}, which is paused or switched off` };
+    }
+    return { queue };
 }
 
 export interface PlanConfirm {

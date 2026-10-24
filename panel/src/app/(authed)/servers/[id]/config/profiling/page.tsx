@@ -12,6 +12,7 @@ import { subscribeEventSource } from '@/lib/sse';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
+import { fmtDateTime } from '@/lib/time';
 
 // Spark profiler integration. UX:
 //   * "Not installed" → prompts user to add `spark` from the Content tab
@@ -291,7 +292,7 @@ export default function ServerConfigProfilingPage() {
                                         {p.url}
                                     </a>
                                     <div className="text-xs text-(--base-06)">
-                                        Captured {new Date(p.completedAt).toLocaleString()}
+                                        Captured {fmtDateTime(p.completedAt)}
                                         {p.subServerName && <> · {p.subServerName}</>}
                                     </div>
                                 </div>

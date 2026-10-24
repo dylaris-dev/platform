@@ -11,9 +11,10 @@ import { latestValue, chartSeries, appendSamples } from '@/lib/statsSeries';
 import { jvmHeapMB } from '@/lib/jvmHeap';
 import { parseStatsSample } from '@/lib/statsSample';
 import MemoryHelp from '@/components/MemoryHelp';
+import { Skeleton } from '@/components/Skeleton';
 import CoreLoadBars from '@/components/CoreLoadBars';
 import { formatBytes, formatMB } from '@/lib/format';
-import { timeAgo } from '@/lib/time';
+import { fmtDateTime, timeAgo } from '@/lib/time';
 
 import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive, PowerOff } from 'lucide-react';
 
@@ -99,6 +100,9 @@ export default function OverviewView({ server }: OverviewViewProps) {
   const [historyRange, setHistoryRange] = useState('24h');
   const [historyAt, setHistoryAt] = useState(() => Date.now());
   const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
+  // Until the first answer the disk card's place is held by a skeleton, so the
+  // page does not jump when it arrives.
+  const [diskCheckedFor, setDiskCheckedFor] = useState<number | null>(null);
   const [backupConfig, setBackupConfig] = useState<BackupConfig | null>(null);
   const [backupUsage, setBackupUsage] = useState<BackupUsage | null>(null);
 
@@ -179,7 +183,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
   useEffect(() => {
     getDiskUsage(server.id).then((data: DiskUsage) => {
       if (data && typeof data.total === 'number') setDiskUsage(data);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setDiskCheckedFor(server.id));
 
     const interval = setInterval(() => {
       getDiskUsage(server.id).then((data: DiskUsage) => {
@@ -258,7 +262,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
       <span className="text-sm text-(--base-08)">Server offline</span>
       <span className="text-xs text-(--base-06)">
         {lastSampleAt
-          ? `Last sample ${new Date(lastSampleAt).toLocaleString()} (${timeAgo(new Date(lastSampleAt).toISOString())})`
+          ? `Last sample ${fmtDateTime(lastSampleAt)} (${timeAgo(new Date(lastSampleAt).toISOString())})`
           : 'No recent samples'}
       </span>
     </div>
@@ -476,6 +480,9 @@ export default function OverviewView({ server }: OverviewViewProps) {
           still application-level. */}
 
       {/* Disk Usage Section — iPhone-style stacked bar */}
+      {!diskUsage && diskCheckedFor !== server.id && (
+        <Skeleton className="h-28 w-full rounded-xl" aria-hidden="true" />
+      )}
       {diskUsage && (() => {
         const segmentColors = [
           'var(--color-primary)',

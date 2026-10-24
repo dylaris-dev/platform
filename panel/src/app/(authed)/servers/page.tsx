@@ -8,7 +8,7 @@ export default function ServersIndexPage() {
     const { servers } = useAppData();
 
     return (
-        <div className="flex-1 flex flex-col items-center justify-center text-(--base-06) p-6">
+        <div className="flex-1 flex flex-col items-center justify-center text-(--base-06) p-6 animate-content-in">
             <ServerIcon size={64} className="mb-4 opacity-40" />
             <p className="h-section text-(--base-07) mb-2">
                 {servers.length === 0 ? 'No servers yet' : 'No server selected'}

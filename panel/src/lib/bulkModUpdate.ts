@@ -29,14 +29,15 @@ export function emptyTally(): BulkTally {
 /**
  * Which mods a bulk update should even look at.
  *
- * A paused mod is left out: its members chose to update it by hand.
+ * A paused mod is left out: its members chose to update it by hand. A switched-off
+ * one too: its jar is in .disabled/ and Core refuses to install over it.
  *
  * isOnServer, not "a row exists": a queued install has not happened yet and a
  * failed one never will, so updating either would be updating from a build the
  * server is not running.
  */
 export function updatableMods(installed: InstalledMod[]): InstalledMod[] {
-    return installed.filter(m => isOnServer(m) && !m.updatesPaused);
+    return installed.filter(m => isOnServer(m) && !m.updatesPaused && !m.disabled);
 }
 
 /**

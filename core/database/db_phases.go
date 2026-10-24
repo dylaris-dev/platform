@@ -132,6 +132,10 @@ func applyPhase10Schema(db *sql.DB) error {
 		// Set by a member who wants this mod left alone by "Update all". The
 		// install upsert does not name it, so a manual update keeps the pin.
 		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS updates_paused BOOLEAN NOT NULL DEFAULT FALSE`,
+		// Switched off by a member: the jar sits in <targetDir>/.disabled/, which
+		// no loader reads (Fabric/Paper/NeoForge/Forge list one level, Quilt
+		// skips dot-folders). The upsert does not name it.
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT FALSE`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("phase 10: %s: %w", stmt, err)

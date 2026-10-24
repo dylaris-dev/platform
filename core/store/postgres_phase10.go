@@ -12,7 +12,7 @@ var ErrServerModNotFound = errors.New("server mod not found")
 
 const serverModCols = `id, server_id, sub_server_name, modrinth_project_id,
 		modrinth_project_slug, modrinth_version_id, title, file_name, target_dir,
-		sha512, installed_at, installed_by, status, status_message, install_id, updates_paused`
+		sha512, installed_at, installed_by, status, status_message, install_id, updates_paused, disabled`
 
 func scanServerMod(row interface {
 	Scan(dest ...interface{}) error
@@ -21,7 +21,7 @@ func scanServerMod(row interface {
 	var installedBy sql.NullString
 	if err := row.Scan(&m.ID, &m.ServerID, &m.SubServerName, &m.ModrinthProjectID,
 		&m.ModrinthProjectSlug, &m.ModrinthVersionID, &m.Title, &m.FileName, &m.TargetDir,
-		&m.SHA512, &m.InstalledAt, &installedBy, &m.Status, &m.StatusMessage, &m.InstallID, &m.UpdatesPaused); err != nil {
+		&m.SHA512, &m.InstalledAt, &installedBy, &m.Status, &m.StatusMessage, &m.InstallID, &m.UpdatesPaused, &m.Disabled); err != nil {
 		return nil, err
 	}
 	if installedBy.Valid {
@@ -46,8 +46,8 @@ func (s *PostgresStore) UpsertServerMod(m *models.ServerMod) (int, error) {
 	err := s.db.QueryRow(`INSERT INTO server_mods
 		(server_id, sub_server_name, modrinth_project_id, modrinth_project_slug,
 		 modrinth_version_id, title, file_name, target_dir, sha512, installed_by,
-		 status, status_message, install_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'',$12)
+		 status, status_message, install_id, disabled)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'',$12,$13)
 		ON CONFLICT (server_id, sub_server_name, modrinth_project_id)
 		DO UPDATE SET
 			modrinth_project_slug = EXCLUDED.modrinth_project_slug,
@@ -64,7 +64,7 @@ func (s *PostgresStore) UpsertServerMod(m *models.ServerMod) (int, error) {
 		RETURNING id`,
 		m.ServerID, m.SubServerName, m.ModrinthProjectID, m.ModrinthProjectSlug,
 		m.ModrinthVersionID, m.Title, m.FileName, m.TargetDir, m.SHA512, installedBy,
-		m.Status, m.InstallID,
+		m.Status, m.InstallID, m.Disabled,
 	).Scan(&id)
 	return id, err
 }
@@ -182,6 +182,18 @@ func (s *PostgresStore) ListServerMods(serverID int, subServerName string) ([]mo
 	return out, rows.Err()
 }
 
+// SetServerModDisabled records whether a mod's jar sits in .disabled/.
+func (s *PostgresStore) SetServerModDisabled(id, serverID int, disabled bool) error {
+	res, err := s.db.Exec(`UPDATE server_mods SET disabled=$3 WHERE id=$1 AND server_id=$2`, id, serverID, disabled)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrServerModNotFound
+	}
+	return nil
+}
+
 // SetServerModUpdatesPaused pins (or unpins) one mod against "Update all".
 func (s *PostgresStore) SetServerModUpdatesPaused(id, serverID int, paused bool) error {
 	res, err := s.db.Exec(`UPDATE server_mods SET updates_paused=$3 WHERE id=$1 AND server_id=$2`, id, serverID, paused)
@@ -256,6 +268,9 @@ func (s *PostgresStore) ReplaceServerMods(serverID int, subServerName string, mo
 	// A pin is the members' choice, not part of the archive: carry it over for
 	// every project that comes back, or a restore would hand those mods back to
 	// "Update all" without anyone asking.
+	//
+	// Disabled is the opposite: it says where the jar IS, and the files the
+	// restore just put back decide that, so it comes from the rows passed in.
 	paused := map[string]bool{}
 	rows, err := tx.Query(`SELECT modrinth_project_id FROM server_mods
 		WHERE server_id=$1 AND sub_server_name=$2 AND updates_paused`, serverID, subServerName)
@@ -283,12 +298,12 @@ func (s *PostgresStore) ReplaceServerMods(serverID int, subServerName string, mo
 		if _, err := tx.Exec(`INSERT INTO server_mods
 			(server_id, sub_server_name, modrinth_project_id, modrinth_project_slug,
 			 modrinth_version_id, title, file_name, target_dir, sha512, installed_by,
-			 status, status_message, install_id, updates_paused)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,'','',$11)
+			 status, status_message, install_id, updates_paused, disabled)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,'','',$11,$12)
 			ON CONFLICT (server_id, sub_server_name, modrinth_project_id) DO NOTHING`,
 			serverID, subServerName, m.ModrinthProjectID, m.ModrinthProjectSlug,
 			m.ModrinthVersionID, m.Title, m.FileName, m.TargetDir, m.SHA512,
-			models.ServerModInstalled, paused[m.ModrinthProjectID]); err != nil {
+			models.ServerModInstalled, paused[m.ModrinthProjectID], m.Disabled); err != nil {
 			return err
 		}
 	}

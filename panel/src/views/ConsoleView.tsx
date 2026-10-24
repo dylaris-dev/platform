@@ -10,6 +10,8 @@ import { Power, Send, Cpu, MemoryStick, ArrowDown, RefreshCw } from 'lucide-reac
 import { parseStatsSample } from '@/lib/statsSample';
 import { jvmHeapMB } from '@/lib/jvmHeap';
 import MemoryHelp from '@/components/MemoryHelp';
+import { SkeletonText } from '@/components/Skeleton';
+import { consoleClock, uses12h } from '@/lib/time';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
 // ANSI spec for terminal color rendering and are intentionally NOT mapped to
@@ -58,7 +60,7 @@ function parseAnsiLine(line: string): React.ReactNode {
 const ConsoleRow = memo(function ConsoleRow({ text, level }: { text: string; level: Level }) {
   return (
     <div className={`whitespace-pre-wrap break-all leading-5 ${levelClass(level)}`}>
-      {parseAnsiLine(text)}
+      {parseAnsiLine(consoleClock(text, uses12h()))}
     </div>
   );
 });
@@ -98,6 +100,9 @@ interface ConsoleViewProps {
 
 export default function ConsoleView({ server }: ConsoleViewProps) {
   const [lines, setLines] = useState<ConsoleLine[]>([]);
+  // The backlog has answered (or failed). Before that an empty console is not
+  // "waiting for output", it is still loading what was already there.
+  const [historySettled, setHistorySettled] = useState(false);
   // 'more': older lines can be fetched; 'start': Core said there are none
   // before startKeyRef; 'unknown': a Core that predates paging, so no top row.
   const [olderState, setOlder] = useState<'more' | 'loading' | 'start' | 'unknown'>('unknown');
@@ -176,6 +181,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   useEffect(() => {
     const gen = ++genRef.current;
     setLines([]);
+    setHistorySettled(false);
     setOlder('unknown');
     setStartTrimmed(true);
     startKeyRef.current = '';
@@ -226,6 +232,7 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
       if (gen !== genRef.current) return;
       historyLoaded = true;
       setLines(mergeOrdered(history, pendingLines));
+      setHistorySettled(true);
     };
     fetch(historyUrl(''))
       .then(r => r.json())
@@ -443,8 +450,12 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
             <p className="h-section text-(--base-07)">Server is offline</p>
             <p className="text-sm mt-1 text-(--base-06)">Start the server to see console output.</p>
           </div>
+        ) : lines.length === 0 && !historySettled ? (
+          <div className="space-y-2 pt-1" aria-busy="true" aria-label="Loading console output">
+            {['w-3/4', 'w-1/2', 'w-5/6', 'w-2/3', 'w-1/3', 'w-3/5'].map((w, i) => <SkeletonText key={i} width={w} />)}
+          </div>
         ) : lines.length === 0 ? (
-          <p className="text-(--base-06) italic">Waiting for server output...</p>
+          <p className="text-(--base-06) italic animate-content-in">Waiting for server output...</p>
         ) : (
           <>
             {/* One fixed-height row for every state, so its text changing never moves the lines below. */}

@@ -20,6 +20,7 @@ import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 // Custom Tabs management.
 //
@@ -435,8 +436,8 @@ export default function ServerConfigTabsPage() {
                                         }`}>
                                             <Clock size={11} className="shrink-0" />
                                             {shareLinkExpired(t.shareExpiresAt)
-                                                ? `Expired ${new Date(t.shareExpiresAt).toLocaleString()} - rotate to hand out a working one`
-                                                : `Expires ${new Date(t.shareExpiresAt).toLocaleString()}`}
+                                                ? `Expired ${fmtDateTime(t.shareExpiresAt)} - rotate to hand out a working one`
+                                                : `Expires ${fmtDateTime(t.shareExpiresAt)}`}
                                         </span>
                                     )}
                                     {t.shareToken && !coreInfo?.tabProxyAvailable && (

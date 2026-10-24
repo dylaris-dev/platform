@@ -19,6 +19,7 @@ import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { formatBytes } from '@/lib/format';
 import { currentSkip, relativeTime } from '@/lib/backupJobStatus';
+import { fmtDateTime } from '@/lib/time';
 
 // A run that archived nothing yet shows a dash rather than "0 B".
 function runSize(b: number): string {
@@ -26,7 +27,7 @@ function runSize(b: number): string {
 }
 
 function localTime(iso: string): string {
-    return new Date(iso).toLocaleString();
+    return fmtDateTime(iso);
 }
 
 // Runs shown before "Show all": enough for the usual retention of a few.
@@ -636,7 +637,7 @@ export default function ServerBackupsView() {
                         <div className="modal-body space-y-3">
                             <p className="text-sm text-(--base-08)">
                                 Replace the current world data with the backup from {' '}
-                                <span className="font-mono text-(--base-09)">{new Date(restoreTarget.startedAt).toLocaleString()}</span>?
+                                <span className="font-mono text-(--base-09)">{fmtDateTime(restoreTarget.startedAt)}</span>?
                             </p>
                             <p className="alert alert-warning text-xs">
                                 <AlertTriangle size={13} className="shrink-0 mt-0.5" />

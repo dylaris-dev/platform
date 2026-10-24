@@ -16,6 +16,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	// The core image has no zoneinfo, and time zones are now user input
+	// (account, server, scheduled task) that LoadLocation must resolve.
+	_ "time/tzdata"
 
 	"dylaris-core/authz"
 	"dylaris-core/config"

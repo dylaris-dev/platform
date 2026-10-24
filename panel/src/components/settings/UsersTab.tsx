@@ -42,6 +42,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { reauthDialog } from '@/components/ui/ReauthDialog';
 import HelpTip from '@/components/ui/HelpTip';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDate, fmtDateTime } from '@/lib/time';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -460,7 +461,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     )}
                                     {u.deletionStatus === 'pending_deletion' && (
                                         <span
-                                            title={u.deletionScheduledAt ? `Scheduled for deletion on ${new Date(u.deletionScheduledAt).toLocaleDateString()}` : 'Scheduled for deletion'}
+                                            title={u.deletionScheduledAt ? `Scheduled for deletion on ${fmtDate(u.deletionScheduledAt)}` : 'Scheduled for deletion'}
                                             className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-[0.06em] bg-(--error-ghost) text-(--error-light) border border-(--error)/15"
                                         >
                                             <ShieldAlert size={10} />
@@ -484,7 +485,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         return <span className={cls}>{role.toUpperCase()}</span>;
                                     })()}
                                 </td>
-                                <td className="table-td text-sm text-(--base-06)">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'N/A'}</td>
+                                <td className="table-td text-sm text-(--base-06)">{u.createdAt ? fmtDate(u.createdAt) : 'N/A'}</td>
                                 <td className="table-td text-right">
                                     <div className="flex items-center justify-end gap-2">
                                         <button
@@ -619,7 +620,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                     <p className="text-(--error-light) font-medium">Scheduled for deletion</p>
                                                     <p className="text-xs text-(--base-07) mt-0.5">
                                                         {settingsUser.deletionScheduledAt
-                                                            ? <>This account will be auto-removed on <span className="font-mono">{new Date(settingsUser.deletionScheduledAt).toLocaleString()}</span> unless rescued. The user can also rescue it themselves by signing in.</>
+                                                            ? <>This account will be auto-removed on <span className="font-mono">{fmtDateTime(settingsUser.deletionScheduledAt)}</span> unless rescued. The user can also rescue it themselves by signing in.</>
                                                             : 'This account will be auto-removed soon.'}
                                                     </p>
                                                 </div>
@@ -1031,7 +1032,7 @@ function UsernameHistoryModal({ user, onClose }: { user: { id: string; username:
                                 <div key={r.id} className="p-2 rounded-md border border-(--base-04) text-xs">
                                     <div className="font-mono text-(--base-09)">{r.oldUsername} → {r.newUsername}</div>
                                     <div className="text-(--base-06) mt-0.5">
-                                        {new Date(r.changedAt).toLocaleString()} · {r.byAdmin ? 'by admin' : 'self'}
+                                        {fmtDateTime(r.changedAt)} · {r.byAdmin ? 'by admin' : 'self'}
                                     </div>
                                 </div>
                             ))}
@@ -1370,10 +1371,10 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                     revoked links and keys have to be created again.
                                 </p>
                                 {data.graceUntil && (
-                                    <p className="text-xs text-(--base-06)">Grace until {new Date(data.graceUntil).toLocaleString()}</p>
+                                    <p className="text-xs text-(--base-06)">Grace until {fmtDateTime(data.graceUntil)}</p>
                                 )}
                                 {data.suspendedAt && (
-                                    <p className="text-xs text-(--base-06)">Suspended {new Date(data.suspendedAt).toLocaleString()}</p>
+                                    <p className="text-xs text-(--base-06)">Suspended {fmtDateTime(data.suspendedAt)}</p>
                                 )}
                                 <div className="flex items-center gap-2">
                                     <select
@@ -1632,7 +1633,7 @@ function GrantRow({
                         not the question being asked while deciding whether to
                         extend - that one is "how soon". */}
                     {granted
-                        ? `Granted until ${new Date(expiresAt).toLocaleDateString()} · ${formatDaysLeft(expiresAt)}`
+                        ? `Granted until ${fmtDate(expiresAt)} · ${formatDaysLeft(expiresAt)}`
                         : 'Not granted'}
                 </div>
             </div>

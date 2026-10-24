@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
 
-import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw, Lock, LockOpen } from 'lucide-react';
+import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw, Lock, LockOpen, Power, PowerOff } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
@@ -10,7 +10,7 @@ import { ModDescription } from '@/components/mods/ModDescription';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
-    listInstalledMods, uninstallMod, setModUpdatesPaused, pickPrimaryFile,
+    listInstalledMods, uninstallMod, setModUpdatesPaused, setModEnabled, pickPrimaryFile,
     getServerModpackInfo, getModHistory,
     getModrinthVersionsByIds, getModrinthProjectsByIds, getLatestVersionsFromHashes,
     planModInstall,
@@ -47,6 +47,7 @@ import { useModInstalls } from '@/lib/modInstallManager';
 import { isPending, jobLabel, type InstallJob } from '@/lib/modInstallJobs';
 import { InstallBar } from '@/components/ModInstallWidget';
 import { createCoalescer } from '@/lib/coalesce';
+import { fmtDateTime } from '@/lib/time';
 
 // Modrinth Content tab, Modrinth-style layout: an always-visible category
 // sidebar (with the loader + MC-version filters below it, gated behind an
@@ -111,6 +112,12 @@ export default function ServerContentPage() {
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
     const [installed, setInstalled] = useState<InstalledMod[]>([]);
+    // False until the first answer: "No mods installed" before the list has
+    // arrived is a claim the panel cannot make yet.
+    // Kept per server, so switching to another one does not read the previous
+    // server's answer as this one's.
+    const [installedLoadedFor, setInstalledLoadedFor] = useState<number | null>(null);
+    const installedLoaded = installedLoadedFor === serverId;
     const installedByProject = useMemo(() => {
         const m = new Map<string, InstalledMod>();
         for (const im of installed) m.set(im.modrinthProjectId, im);
@@ -367,6 +374,7 @@ export default function ServerContentPage() {
         try {
             const rows = await listInstalledMods(serverId);
             setInstalled(rows);
+            setInstalledLoadedFor(serverId);
             adoptInstalls(serverId, serverNameRef.current, rows);
             setInstalledError(null);
             // Fail-open, and the difference from the list above is deliberate:
@@ -383,6 +391,7 @@ export default function ServerContentPage() {
             // to decide whether a mod is already on the server. An empty one
             // says "install it" about everything.
             setInstalledError(e instanceof Error ? e.message : 'Could not load the installed mods.');
+            setInstalledLoadedFor(serverId);
         }
     }, [serverId, adoptInstalls]);
 
@@ -678,7 +687,7 @@ export default function ServerContentPage() {
         const notice = await clientSideWarning([m.modrinthProjectId]);
         if (!await confirmDialog({
             title: `Roll back ${m.title || m.fileName}?`,
-            message: `From ${from} back to ${version.version_number} (${entry.fileName}), the build this server ran until ${new Date(entry.replacedAt).toLocaleString()}.`
+            message: `From ${from} back to ${version.version_number} (${entry.fileName}), the build this server ran until ${fmtDateTime(entry.replacedAt)}.`
                 + (notice ? `\n\n${notice}` : ''),
             confirmLabel: 'Roll back',
             destructive: !!notice,
@@ -739,6 +748,8 @@ export default function ServerContentPage() {
         tally.current = check.current;
         tally.unknown = check.unknown;
         const planned = check.planned;
+        const held = new Map(installed.filter(m => m.updatesPaused || m.disabled)
+            .map(m => [m.modrinthProjectId, m.title || m.fileName] as [string, string]));
         const skipped = check.skipped.map(s => ({ title: s.mod.title || s.mod.fileName, reason: s.reason }));
         setBulkSkipped(skipped);
         setBulk(null);
@@ -791,7 +802,7 @@ export default function ServerContentPage() {
                 runSkipped.push({ title, reason: res.message });
                 continue;
             }
-            const step = updateQueue(res.plan, root);
+            const step = updateQueue(res.plan, root, held);
             if ('skip' in step) { runSkipped.push({ title, reason: step.skip }); continue; }
             let ok = true;
             for (const p of step.queue) {
@@ -809,10 +820,24 @@ export default function ServerContentPage() {
         showToast(summarise(tally) + extra, runWasClean(tally));
     };
 
+    const handleToggleEnabled = async (m: InstalledMod) => {
+        await withBusy(m.modrinthProjectId, async () => {
+            const res = await setModEnabled(serverId, m.id, !!m.disabled);
+            if (res.success) {
+                showToast(`${m.title || m.fileName} switched ${m.disabled ? 'on' : 'off'}. Takes effect at the next restart.`, true);
+                refreshInstalled();
+            } else {
+                showToast(res.message || 'Could not switch the mod', false);
+            }
+        });
+    };
+
     const handleTogglePaused = async (m: InstalledMod) => {
-        const res = await setModUpdatesPaused(serverId, m.id, !m.updatesPaused);
-        if (res.success) refreshInstalled();
-        else showToast(res.message || 'Could not save the setting', false);
+        await withBusy(m.modrinthProjectId, async () => {
+            const res = await setModUpdatesPaused(serverId, m.id, !m.updatesPaused);
+            if (res.success) refreshInstalled();
+            else showToast(res.message || 'Could not save the setting', false);
+        });
     };
 
     const handleUninstall = async (m: InstalledMod) => {
@@ -1164,7 +1189,9 @@ export default function ServerContentPage() {
 
                         <div className="flex-1 overflow-y-auto space-y-2">
                             {searchLoading ? (
-                                <div className="text-center py-12 text-sm text-(--base-06)">Searching…</div>
+                                <div className="space-y-2" aria-busy="true" aria-label="Searching">
+                                    {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-20 w-full rounded-(--radius-md)" />)}
+                                </div>
                             ) : notice?.kind === 'failed' ? (
                                 <div role="alert" className="text-center py-12 text-sm text-(--warning-light)">
                                     <AlertTriangle size={20} className="mx-auto mb-2" />
@@ -1400,10 +1427,14 @@ export default function ServerContentPage() {
                                 </button>
                             </div>
                         </div>
+                    ) : !installedLoaded ? (
+                        <div className="space-y-2" aria-busy="true" aria-label="Loading installed mods">
+                            {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-16 w-full rounded-(--radius-md)" />)}
+                        </div>
                     ) : installed.length === 0 ? (
-                        <div className="text-center py-12 text-sm text-(--base-06)">No mods installed.</div>
+                        <div className="text-center py-12 text-sm text-(--base-06) animate-content-in">No mods installed.</div>
                     ) : (
-                        <div className="space-y-2">
+                        <div className="space-y-2 animate-content-in">
                             <div className="flex items-center justify-between gap-3 flex-wrap pb-1">
                                 <div className="text-xs text-(--base-06)">
                                     {bulk
@@ -1457,7 +1488,7 @@ export default function ServerContentPage() {
                                 </p>
                             )}
                             {visibleInstalled.map(m => (
-                                <article key={m.id} className="card p-3 flex items-start gap-3">
+                                <article key={m.id} className={`card p-3 flex items-start gap-3 ${m.disabled ? 'opacity-70' : ''}`}>
                                     {installedSides.get(m.modrinthProjectId)?.icon_url ? (
                                         // eslint-disable-next-line @next/next/no-img-element
                                         <img src={installedSides.get(m.modrinthProjectId)!.icon_url} alt="" className="w-10 h-10 rounded-md shrink-0" />
@@ -1469,6 +1500,9 @@ export default function ServerContentPage() {
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span className="text-sm font-medium text-(--base-09) truncate">{m.title || m.fileName}</span>
+                                            {m.disabled && (
+                                                <span className="badge text-[10px] font-sans shrink-0" title="The jar is in .disabled/ and is not loaded">Off</span>
+                                            )}
                                             {isModServer && <BucketTag sides={installedSides.get(m.modrinthProjectId)} />}
                                             {mismatchFor(m) && (
                                                 <span className="badge badge-warning text-[10px] font-sans shrink-0">
@@ -1483,7 +1517,7 @@ export default function ServerContentPage() {
                                                 ? 'Installing - the node is downloading it'
                                                 : m.status === 'failed'
                                                 ? null
-                                                : `Installed ${new Date(m.installedAt).toLocaleString()}`}
+                                                : `Installed ${fmtDateTime(m.installedAt)}`}
                                         </div>
                                         {/* The node reported a reason and this is the only place it can
                                             reach. Core used to write this row before dispatching and never
@@ -1508,7 +1542,9 @@ export default function ServerContentPage() {
                                         )}
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
-                                        {mismatchFor(m) && (
+                                        {/* A switched-off mod offers only switching it back on and
+                                            removing it: Core refuses to install over its jar. */}
+                                        {!m.disabled && mismatchFor(m) && (
                                             <button
                                                 onClick={() => handleSwap(m)}
                                                 disabled={busyProjects.has(m.modrinthProjectId)}
@@ -1523,7 +1559,7 @@ export default function ServerContentPage() {
                                             version list is one click away and offers everything; what it
                                             cannot tell you is which build you had before the update that
                                             broke something. */}
-                                        {historyFor(m.modrinthProjectId).length > 0 && (
+                                        {!m.disabled && historyFor(m.modrinthProjectId).length > 0 && (
                                             <div className="relative">
                                                 <button
                                                     onClick={() => setRollbackFor(rollbackFor === m.modrinthProjectId ? null : m.modrinthProjectId)}
@@ -1545,7 +1581,7 @@ export default function ServerContentPage() {
                                                             >
                                                                 <span className="font-mono text-xs truncate w-full text-left">{h.fileName}</span>
                                                                 <span className="text-[10px] text-(--base-06)">
-                                                                    replaced {new Date(h.replacedAt).toLocaleString()}
+                                                                    replaced {fmtDateTime(h.replacedAt)}
                                                                 </span>
                                                             </button>
                                                         ))}
@@ -1553,15 +1589,29 @@ export default function ServerContentPage() {
                                                 )}
                                             </div>
                                         )}
-                                        <button
+                                        {isOnServer(m) && (
+                                            <button
+                                                onClick={() => handleToggleEnabled(m)}
+                                                disabled={busyProjects.has(m.modrinthProjectId)}
+                                                aria-pressed={!m.disabled}
+                                                className={`btn btn-secondary btn-sm ${m.disabled ? 'text-(--warning-light)' : ''}`}
+                                                title={m.disabled ? 'Switched off. Click to switch it on (moves it back from .disabled/, takes effect at the next restart).' : 'Click to switch it off (moves it to .disabled/, takes effect at the next restart).'}
+                                            >
+                                                {m.disabled ? <PowerOff size={12} /> : <Power size={12} />}
+                                                <span className="sr-only">Enabled</span>
+                                            </button>
+                                        )}
+                                        {!m.disabled && <button
                                             onClick={() => handleTogglePaused(m)}
+                                            disabled={busyProjects.has(m.modrinthProjectId)}
                                             aria-pressed={!!m.updatesPaused}
                                             className={`btn btn-secondary btn-sm ${m.updatesPaused ? 'text-(--warning-light)' : ''}`}
                                             title={m.updatesPaused ? 'Paused: Update all skips this mod. Click to include it again.' : 'Included in Update all. Click to pause updates for this mod.'}
                                         >
                                             {m.updatesPaused ? <Lock size={12} /> : <LockOpen size={12} />}
-                                            <span className="sr-only">{m.updatesPaused ? 'Updates paused' : 'Pause updates'}</span>
-                                        </button>
+                                            {/* A fixed name: aria-pressed already says whether it is on. */}
+                                            <span className="sr-only">Pause updates</span>
+                                        </button>}
                                         <a
                                             href={`https://modrinth.com/project/${m.modrinthProjectSlug || m.modrinthProjectId}`}
                                             target="_blank"

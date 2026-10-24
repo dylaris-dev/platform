@@ -226,6 +226,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 				"ramPaddingMB": services.EffectiveRAMPaddingMB(h.state.Store, req.Docker.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":     req.Docker.CPULimit,
 				"cpusetCpus":   effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":     srv.Timezone,
 				"diskLimit":    req.Docker.DiskLimit,
 				"command":      "",
 			},
@@ -753,6 +754,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
 				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":      srv.Timezone,
 				"extraJvmFlags": combinedJvmFlags,
 			},
 			"activeSubServer": subName,
@@ -1074,6 +1076,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
 				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":      srv.Timezone,
 				"extraJvmFlags": combinedJvmFlags,
 			},
 			"activeSubServer": subName,
@@ -1338,6 +1341,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 					"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 					"cpuLimit":      srv.CPULimit,
 					"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+					"timezone":      srv.Timezone,
 					"extraJvmFlags": combinedJvmFlags,
 				},
 			}
@@ -1727,6 +1731,9 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	if h.state.Queue != nil {
 		configPayload := map[string]interface{}{
 			"uuid": srv.UUID,
+			// A start or restart rebuilds the container, which is where a
+			// changed server zone reaches its TZ. Stop and kill ignore it.
+			"docker": map[string]interface{}{"timezone": srv.Timezone},
 		}
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, req.Action, configPayload, nil); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
@@ -2045,6 +2052,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 				"ram":        req.RAM,
 				"cpuLimit":   req.CPULimit,
 				"cpusetCpus": effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":   srv.Timezone,
 				"diskLimit":  req.DiskLimit,
 				"image":      srv.GameImage,
 			}
@@ -2280,6 +2288,23 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 	if inPowerTransition(srv.Status) {
 		sendJSONError(w, "The server is "+srv.Status+". Move it when it has finished.", http.StatusConflict)
 		return
+	}
+	// With Real player IP on, the gateway sends the header through the target's
+	// link from the first player on. A link that cannot carry the address gets
+	// the header-less stream and every join is refused. Fails closed.
+	if srv.ProxyProtocol && h.state.Gateway != nil {
+		tok := target.LinkToken
+		if tok == "" {
+			tok = h.state.Gateway.LinkToken(target.Token)
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		ok, err := linkAnnouncesCap(ctx, h.state.Redis, tok, linkCapClientAddr)
+		cancel()
+		if err != nil || !ok {
+			sendJSONErrorCode(w, "Real player IP is on for this server, and the target node's link has not reported that it can pass the player IP. Update that link or turn Real player IP off first.",
+				"link_without_client_addr", http.StatusConflict)
+			return
+		}
 	}
 	if refuseIfServerBusy(w, r, h.state, srv) {
 		return
@@ -2775,6 +2800,7 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
 				"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":      srv.Timezone,
 				"extraJvmFlags": combinedJvmFlags,
 			},
 		}

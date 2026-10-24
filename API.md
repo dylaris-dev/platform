@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **531 routes** in 53 sections: 236 GET, 163 POST, 41 PUT, 37 PATCH, 55 DELETE.
+- **536 routes** in 53 sections: 238 GET, 163 POST, 44 PUT, 37 PATCH, 55 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **345** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **116** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **348** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -157,7 +157,7 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (29)
+- [/api/me](#apime) (31)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (83)
+- [/api/servers](#apiservers) (86)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -538,6 +538,8 @@ can still show what exists.
 | GET | `/api/me/ssh-keys` | session | _no capability_ | - | `SSHKeysHandler.List` | - |
 | POST | `/api/me/ssh-keys` | session | _no capability_ | Limit, LimitBody | `SSHKeysHandler.Create` | - |
 | DELETE | `/api/me/ssh-keys/{id:[0-9]+}` | session | _no capability_ | - | `SSHKeysHandler.Delete` | - |
+| GET | `/api/me/time-preferences` | session | _no capability_ | - | `TimezoneHandler.GetMine` | {timezone, timeFormat}; timezone "" means not chosen yet (the panel then offers the browser's). |
+| PUT | `/api/me/time-preferences` | session | _no capability_ | - | `TimezoneHandler.SetMine` | body {timezone, timeFormat}. |
 | PUT | `/api/me/updates-seen` | session | _no capability_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge everything published so far, clearing this user's badge. |
 | GET | `/api/me/usage` | session | _no capability_ | - | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
 | GET | `/api/me/username-history` | session | _no capability_ | - | `UsernameHistoryHandler.Me` | the calling user's own past usernames. |
@@ -711,6 +713,7 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/mods/plan` | session | `mods.write` | Limit | `ServerModsHandler.Plan` | what installing one Modrinth version takes on this server: the required dependencies, dependency-first, that are not installed yet, the ones nothing fits, and installed projects it is incompatible with. |
 | GET | `/api/servers/{id:[0-9]+}/mods/unmanaged` | session | `mods.read` | - | `ServerModsHandler.UnmanagedMods` | A jar placed by hand (SFTP, beam, the file manager) has no row saying which Modrinth project it is, so a version move cannot carry it and cannot even tell whether it would survive. |
 | DELETE | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}` | session | `mods.delete` | - | `ServerModsHandler.Uninstall` | queues removal of one mod from the active sub-server. |
+| PUT | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/enabled` | session | `mods.write` | - | `ServerModsHandler.SetEnabled` | switches one mod on or off by moving its jar between <dir>/ and <dir>/.disabled/. |
 | PUT | `/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/updates-paused` | session | `mods.write` | - | `ServerModsHandler.SetUpdatesPaused` | keeps one mod out of "Update all", or lets it back in. |
 | PATCH | `/api/servers/{id:[0-9]+}/name` | session | `server.settings.write` | - | `ServerHandler.UpdateServerName` | renames a server and records the old and new name in its audit trail. |
 | POST | `/api/servers/{id:[0-9]+}/players/action` | session | `players.manage` | - | `PlayersHandler.Action` | one of a fixed set of player commands. |
@@ -753,6 +756,8 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-ticket` | session | `tabs.read` | - | `ProxyHandler.MintTicket` | issues a tab-proxy ticket on the PANEL's origin, where the session is: POST /api/servers/{id}/tabs/{tabId}/proxy-ticket. |
 | POST | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RotateShareLink` | (re)generate the unguessable slug for a proxied page tab. |
 | DELETE | `/api/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/share-link` | session | `tabs.write` | - | `ServerTabsHandler.RevokeShareLink` | null the slug so the standalone page 404s. |
+| GET | `/api/servers/{id:[0-9]+}/timezone` | session | `overview.read` | - | `TimezoneHandler.GetServer` | {timezone, effective}: timezone "" means the server inherits, effective is the zone it runs in. |
+| PUT | `/api/servers/{id:[0-9]+}/timezone` | session | `server.settings.write` | - | `TimezoneHandler.SetServer` | body {timezone}; "" inherits the owner's again. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
 | POST | `/api/servers/{id:[0-9]+}/version-update` | session | `server.settings.write` | - | `ServerModsHandler.VersionUpdate` | - |
 | GET | `/api/servers/{id:[0-9]+}/voice` | session | `network.read` | RequireGatewayEnabled | `GatewayHandler.GetServerVoice` | the server's voice port, if any, and whether it may turn voice on. |

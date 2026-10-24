@@ -33,7 +33,9 @@ export default function ModConfigsPage() {
     const [saved, setSaved] = useState('');
     const [loadingFile, setLoadingFile] = useState(false);
     const [saving, setSaving] = useState(false);
-    const dirty = open !== null && text !== saved;
+    // Never while a file loads: until its text arrives the editor still holds
+    // the previous file's, and a save would write that into the new path.
+    const dirty = open !== null && !loadingFile && text !== saved;
     // Which load is current. A late answer for an earlier load is dropped, or a
     // slow load could land under the next file clicked - the same relative path
     // in another sub-server included - and a save would then write it there.
@@ -52,8 +54,11 @@ export default function ModConfigsPage() {
         loadSeq.current++;
     }
 
+    // A scan of the sub-server switched away from must not fill the list.
+    const scanSeq = useRef(0);
     const scan = useCallback(async () => {
         if (!uuid || !sub) return;
+        const seq = ++scanSeq.current;
         setFiles(null);
         setListError(null);
         try {
@@ -61,9 +66,11 @@ export default function ModConfigsPage() {
                 const r = await getFiles(path, uuid);
                 return r?.success === false || !Array.isArray(r?.files) ? null : (r.files as ListedEntry[]);
             });
+            if (scanSeq.current !== seq) return;
             setFiles(res.files);
             setTruncated(res.truncated);
         } catch (e) {
+            if (scanSeq.current !== seq) return;
             setListError(e instanceof Error ? e.message : 'Could not list the config files');
             setFiles([]);
         }
@@ -94,6 +101,8 @@ export default function ModConfigsPage() {
             confirmLabel: 'Discard',
         })) return;
         setOpen(path);
+        setText('');
+        setSaved('');
         setLoadingFile(true);
         const seq = ++loadSeq.current;
         try {

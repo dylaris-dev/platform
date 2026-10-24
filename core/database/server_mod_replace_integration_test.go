@@ -225,11 +225,42 @@ func TestIntegrationAModPinSurvivesUpdateAndRestore(t *testing.T) {
 		t.Fatal("a manual update dropped the pin")
 	}
 
-	if err := st.ReplaceServerMods(f.server.ID, "survival", []models.ServerMod{mod, other}); err != nil {
+	// Disabled says where the jar IS, so the archive decides it: sodium is off
+	// in the database but on in the archive, lithium the other way round.
+	var sodiumID int
+	rows, _ := st.ListServerMods(f.server.ID, "survival")
+	for _, r := range rows {
+		if r.ModrinthProjectID == "sodium" {
+			sodiumID = r.ID
+		}
+	}
+	if err := st.SetServerModDisabled(sodiumID, f.server.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	archived := mod
+	archived.Disabled = true
+	if err := st.ReplaceServerMods(f.server.ID, "survival", []models.ServerMod{archived, other}); err != nil {
 		t.Fatal(err)
 	}
 	if p := paused(); !p["lithium"] || p["sodium"] {
 		t.Fatalf("after a restore: %v, want only lithium pinned", p)
+	}
+	after, _ := st.ListServerMods(f.server.ID, "survival")
+	for _, r := range after {
+		if (r.ModrinthProjectID == "lithium") != r.Disabled {
+			t.Fatalf("after a restore %s disabled=%v, want what the archive says (only lithium off)", r.ModrinthProjectID, r.Disabled)
+		}
+	}
+
+	// A copied row keeps where its jar is.
+	copied := archived
+	copied.SubServerName = "copy"
+	if _, err := st.UpsertServerMod(&copied); err != nil {
+		t.Fatal(err)
+	}
+	cp, _ := st.ListServerMods(f.server.ID, "copy")
+	if len(cp) != 1 || !cp[0].Disabled {
+		t.Fatalf("copied rows %+v, want lithium still switched off", cp)
 	}
 }
 

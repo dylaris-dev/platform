@@ -31,7 +31,7 @@ func TestGetServerByUUID_ScansNodeStatusAndLastSeen(t *testing.T) {
 		"build_number", "disk_limit", "server_type", "proxy_id", "node_address", "host_port",
 		"container_port", "cpu_pinning_mode", "cpuset", "node_status", "node_last_seen_at",
 		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb",
-		"memory_guard_action", "last_crash_reason", "last_crash_at", "proxy_protocol",
+		"memory_guard_action", "last_crash_reason", "last_crash_at", "proxy_protocol", "timezone",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		1, "uuid-a", "alpha", 7, "node-1", "owner-1", "owner-name", "itzg/minecraft-server",
@@ -40,7 +40,7 @@ func TestGetServerByUUID_ScansNodeStatusAndLastSeen(t *testing.T) {
 		"", int64(0), "game", nil, "10.0.0.5", 25565,
 		25565, "shared", "", "offline", now,
 		nil, nil, nil,
-		"off", nil, nil, false,
+		"off", nil, nil, false, "",
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.uuid = $1")).
 		WithArgs("uuid-a").
@@ -82,7 +82,7 @@ func TestGetServerByUUID_NilLastSeenWhenNodeNeverReported(t *testing.T) {
 		"build_number", "disk_limit", "server_type", "proxy_id", "node_address", "host_port",
 		"container_port", "cpu_pinning_mode", "cpuset", "node_status", "node_last_seen_at",
 		"ram_padding_mb", "node_ram_padding_mb", "global_ram_padding_mb",
-		"memory_guard_action", "last_crash_reason", "last_crash_at", "proxy_protocol",
+		"memory_guard_action", "last_crash_reason", "last_crash_at", "proxy_protocol", "timezone",
 	}
 	rows := sqlmock.NewRows(cols).AddRow(
 		1, "uuid-b", "bravo", 7, "node-1", "owner-1", "owner-name", "itzg/minecraft-server",
@@ -91,7 +91,7 @@ func TestGetServerByUUID_NilLastSeenWhenNodeNeverReported(t *testing.T) {
 		"", int64(0), "game", nil, "10.0.0.5", 25565,
 		25565, "shared", "", "offline", nil,
 		nil, nil, nil,
-		"off", nil, nil, false,
+		"off", nil, nil, false, "",
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE s.uuid = $1")).
 		WithArgs("uuid-b").

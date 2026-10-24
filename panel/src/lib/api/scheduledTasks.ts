@@ -18,6 +18,8 @@ export interface ScheduledTask {
     name: string;
     taskType: ScheduledTaskType;
     scheduleCron: string;
+    /** IANA zone the schedule is read in. */
+    timezone: string;
     payload: string;
     enabled: boolean;
     nextRun?: string;
@@ -37,6 +39,8 @@ export interface ScheduledTaskInput {
     scheduleCron: string;
     payload?: string;
     enabled?: boolean;
+    /** Empty on create = the server's zone; omitted on a patch = unchanged. */
+    timezone?: string;
 }
 
 export async function listScheduledTasks(serverId: number): Promise<{ success: boolean; tasks?: ScheduledTask[]; message?: string }> {
@@ -81,12 +85,12 @@ export async function deleteScheduledTask(serverId: number, taskId: number): Pro
 // validateCron returns whether the expression parses + the next run if so.
 // Single-source-of-truth: the same parser as the executor. The panel uses
 // this to surface "Next run: 2026-05-30 04:00 UTC" under the input field.
-export async function validateCron(scheduleCron: string): Promise<{ success: boolean; valid: boolean; nextRun?: string; error?: string }> {
+export async function validateCron(scheduleCron: string, timezone = 'UTC'): Promise<{ success: boolean; valid: boolean; nextRun?: string; error?: string }> {
     try {
         const res = await fetch(`${API_URL}/scheduled-tasks/validate`, {
             method: 'POST',
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scheduleCron }),
+            body: JSON.stringify({ scheduleCron, timezone }),
         });
         return handleResponse(res);
     } catch (err) { return { ...handleError(err), valid: false }; }

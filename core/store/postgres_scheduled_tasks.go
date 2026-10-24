@@ -21,7 +21,7 @@ func scanScheduledTask(row interface {
 	var nextRun, lastRun sql.NullTime
 	var createdBy sql.NullString
 	err := row.Scan(
-		&t.ID, &t.ServerID, &t.Name, &t.TaskType, &t.ScheduleCron, &t.Payload,
+		&t.ID, &t.ServerID, &t.Name, &t.TaskType, &t.ScheduleCron, &t.Timezone, &t.Payload,
 		&t.Enabled, &nextRun, &lastRun, &t.LastStatus, &t.LastError,
 		&createdBy, &t.CreatedAt, &t.UpdatedAt,
 	)
@@ -43,9 +43,18 @@ func scanScheduledTask(row interface {
 	return &t, nil
 }
 
-const scheduledTaskCols = `id, server_id, name, task_type, schedule_cron, payload,
+const scheduledTaskCols = `id, server_id, name, task_type, schedule_cron, timezone, payload,
 		enabled, next_run, last_run, last_status, last_error,
 		created_by, created_at, updated_at`
+
+// taskZone is the zone a task row stores: "" (a caller that never set one)
+// is UTC, which every task meant before zones existed.
+func taskZone(tz string) string {
+	if tz == "" {
+		return "UTC"
+	}
+	return tz
+}
 
 func (s *PostgresStore) ListScheduledTasksByServer(serverID int) ([]models.ScheduledTask, error) {
 	rows, err := s.db.Query(`SELECT `+scheduledTaskCols+`
@@ -85,9 +94,9 @@ func (s *PostgresStore) CreateScheduledTask(t *models.ScheduledTask) (int, error
 	}
 	var id int
 	err := s.db.QueryRow(`INSERT INTO scheduled_tasks
-		(server_id, name, task_type, schedule_cron, payload, enabled, next_run, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		t.ServerID, t.Name, t.TaskType, t.ScheduleCron, t.Payload, t.Enabled, nextRun, createdBy,
+		(server_id, name, task_type, schedule_cron, payload, enabled, next_run, created_by, timezone)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+		t.ServerID, t.Name, t.TaskType, t.ScheduleCron, t.Payload, t.Enabled, nextRun, createdBy, taskZone(t.Timezone),
 	).Scan(&id)
 	return id, err
 }
@@ -99,9 +108,9 @@ func (s *PostgresStore) UpdateScheduledTask(t *models.ScheduledTask) error {
 	}
 	res, err := s.db.Exec(`UPDATE scheduled_tasks SET
 		name=$2, task_type=$3, schedule_cron=$4, payload=$5, enabled=$6, next_run=$7,
-		updated_at=NOW()
+		timezone=$8, updated_at=NOW()
 		WHERE id=$1`,
-		t.ID, t.Name, t.TaskType, t.ScheduleCron, t.Payload, t.Enabled, nextRun,
+		t.ID, t.Name, t.TaskType, t.ScheduleCron, t.Payload, t.Enabled, nextRun, taskZone(t.Timezone),
 	)
 	if err != nil {
 		return err

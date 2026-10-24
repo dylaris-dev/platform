@@ -23,6 +23,7 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { useBusy } from '@/lib/useBusy';
 import { scheduleIntervalMs, scheduleWarning } from '@/lib/platformBackupSchedule';
+import { fmtDateTime } from '@/lib/time';
 
 const MIN_PASSPHRASE = 12;
 
@@ -35,7 +36,7 @@ function formatSize(bytes: number): string {
 
 function formatWhen(iso?: string): string {
     if (!iso) return 'never';
-    return new Date(iso).toLocaleString();
+    return fmtDateTime(iso);
 }
 
 const COMPONENTS: { key: keyof Omit<PlatformBackupSelection, 'servers'>; label: string; hint: string }[] = [

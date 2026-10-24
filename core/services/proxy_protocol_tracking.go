@@ -108,6 +108,15 @@ func (s *SetupResultService) sweepProxyProtocolResults(ctx context.Context, now 
 		res, err := s.redis.Get(ctx, ProxyProtocolResultKey(uuid)).Result()
 		if errors.Is(err, redis.Nil) {
 			if now.Sub(time.Unix(p.At, 0)) > proxyProtocolNoAnswer {
+				// A switch the default turned on has nothing behind it until an
+				// install confirms the config, so no answer counts as "no": off
+				// is the direction that cannot lock players out. One the owner
+				// had on before is theirs, and stays.
+				if srv, serr := s.store.GetServerByUUID(uuid); p.Default && serr == nil && srv != nil {
+					log.Printf("proxy-protocol sweep: server %q (%s) never answered the real-IP request it was switched on for; switching it back off", uuid, p.Sub)
+					s.applyProxyProtocolReport(srv, p.Sub, false)
+					continue
+				}
 				log.Printf("proxy-protocol sweep: server %q (%s) never answered the real-IP request; the switch is left as it is", uuid, p.Sub)
 				s.redis.HDel(ctx, proxyProtocolPendingKey, uuid)
 			}

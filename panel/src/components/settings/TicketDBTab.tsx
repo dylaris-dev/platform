@@ -18,6 +18,7 @@ import SettingsPage from '@/components/settings/SettingsPage';
 import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
 import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
@@ -278,7 +279,7 @@ function BackupCard({ onChanged, flash }: { onChanged: () => void; flash: (msg: 
                             <div className="min-w-0">
                                 <p className="text-sm font-mono truncate">{b.name}</p>
                                 <p className="text-[10px] text-(--base-06)">
-                                    {formatBytes(b.size)} · {new Date(b.createdAt).toLocaleString()}
+                                    {formatBytes(b.size)} · {fmtDateTime(b.createdAt)}
                                 </p>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">

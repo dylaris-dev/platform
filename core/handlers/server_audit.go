@@ -37,6 +37,7 @@ const (
 	ServerAuditEventRuntimeChanged         = "runtime_changed"
 	ServerAuditEventForceOnChanged         = "audit_force_on_changed"
 	ServerAuditEventLoaderMetadataDeclared = "loader_metadata_declared"
+	ServerAuditEventTimezoneChanged        = "timezone_changed"
 )
 
 // LogServerAudit appends one audit row when the server has audit enabled

@@ -9,6 +9,7 @@ import { useBusy } from '@/lib/useBusy';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 import { toast } from '@/components/ui/Toast';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 // per-user SSH keys for SFTP. Modelled on the API keys page beside it: same
 // reauth on add, same confirm dialog on delete.
@@ -129,7 +130,7 @@ export default function SshKeysPage() {
                                 <div className="font-medium text-sm text-(--base-09)">{k.name}</div>
                                 <div className="mt-1 text-xs text-(--base-06) font-mono break-all">{k.fingerprint}</div>
                                 <div className="text-xs text-(--base-06) mt-0.5">
-                                    Added: <span className="text-(--base-08)">{new Date(k.createdAt).toLocaleString()}</span>
+                                    Added: <span className="text-(--base-08)">{fmtDateTime(k.createdAt)}</span>
                                 </div>
                             </div>
                             <button onClick={() => setDeleting(k)} className="btn btn-secondary btn-sm shrink-0">

@@ -55,6 +55,13 @@ describe('updateQueue', () => {
         expect(step).toEqual({ skip: 'the new build needs or clashes with Lib X' });
     });
 
+    it('leaves the mod alone when it would replace a paused or switched-off mod', () => {
+        const step = updateQueue(plan({ install: [entry('lib'), entry('root')] }), root, new Map([['p-lib', 'Lib']]));
+        expect(step).toEqual({ skip: 'it would replace Lib, which is paused or switched off' });
+        // The root itself being held is the caller's filter, not this one's.
+        expect('queue' in updateQueue(plan({ install: [entry('root')] }), root, new Map([['p-root', 'Biomes']]))).toBe(true);
+    });
+
     it('leaves the mod alone when it clashes with an installed mod', () => {
         const step = updateQueue(plan({ incompatible: [{ projectId: 'p-y', title: 'Mod Y', reason: 'marked incompatible' }] }), root);
         expect('skip' in step).toBe(true);

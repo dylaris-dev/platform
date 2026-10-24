@@ -286,6 +286,8 @@ export interface InstalledMod {
     statusMessage?: string;
     /** Kept out of "Update all". Updating it by hand still works. */
     updatesPaused?: boolean;
+    /** Switched off: the jar is in <dir>/.disabled/ and not loaded. */
+    disabled?: boolean;
 }
 
 // RAISES on a failed request, unlike getServerModpackContents below, which
@@ -384,6 +386,17 @@ export async function uninstallMod(serverId: number, modId: number): Promise<{ s
         const res = await fetch(`${API_URL}/servers/${serverId}/mods/${modId}`, {
             method: 'DELETE',
             headers: getAuthHeader(),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+
+export async function setModEnabled(serverId: number, modId: number, enabled: boolean): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/servers/${serverId}/mods/${modId}/enabled`, {
+            method: 'PUT',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled }),
         });
         return handleResponse(res);
     } catch (err) { return handleError(err); }

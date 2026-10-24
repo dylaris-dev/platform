@@ -14,6 +14,8 @@ import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import TimeZoneSelect from '@/components/ui/TimeZoneSelect';
+import { fmtDateTime, getServerTimezone, setServerTimezone } from '@/lib/time';
 
 // Scheduled Tasks sub-tab. Per-server cron jobs (restart, say).
 // Presets cover the 90% of operator wishes (daily restart at 4 AM, "10
@@ -27,10 +29,10 @@ const CRON_PRESETS: { label: string; cron: string }[] = [
     { label: 'Every hour',                                 cron: '0 * * * *' },
     { label: 'Every 6 hours',                              cron: '0 */6 * * *' },
     { label: 'Every 12 hours',                             cron: '0 */12 * * *' },
-    { label: 'Daily at 04:00 UTC',                         cron: '0 4 * * *' },
-    { label: 'Daily at 06:00 UTC',                         cron: '0 6 * * *' },
-    { label: 'Daily at 12:00 UTC (noon)',                  cron: '0 12 * * *' },
-    { label: 'Weekly — Sunday at 03:00 UTC',               cron: '0 3 * * 0' },
+    { label: 'Daily at 04:00',                             cron: '0 4 * * *' },
+    { label: 'Daily at 06:00',                             cron: '0 6 * * *' },
+    { label: 'Daily at 12:00 (noon)',                      cron: '0 12 * * *' },
+    { label: 'Weekly, Sunday at 03:00',                    cron: '0 3 * * 0' },
 ];
 
 const TASK_TYPE_LABEL: Record<ScheduledTaskType, string> = {
@@ -47,8 +49,7 @@ interface EditingTask extends Partial<ScheduledTask> {
 function formatDate(iso: string | undefined): string {
     if (!iso) return '—';
     try {
-        const d = new Date(iso);
-        return d.toLocaleString(undefined, {
+        return fmtDateTime(iso, {
             year: 'numeric', month: '2-digit', day: '2-digit',
             hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
         });
@@ -78,6 +79,26 @@ export default function ServerConfigScheduledPage() {
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<EditingTask | null>(null);
     const [deletePrompt, setDeletePrompt] = useState<ScheduledTask | null>(null);
+    // The zone a new task starts in: the server's own, else its owner's.
+    const [serverZone, setServerZone] = useState('UTC');
+    const [ownZone, setOwnZone] = useState<string | null>(null);
+    const [savingZone, runSaveZone] = useBusy();
+    const loadZone = useCallback(async () => {
+        if (!serverId) return;
+        const r = await getServerTimezone(serverId);
+        if (r) { setServerZone(r.effective || 'UTC'); setOwnZone(r.timezone); }
+    }, [serverId]);
+    useEffect(() => { loadZone(); }, [loadZone]);
+
+    const changeZone = (tz: string) => runSaveZone(async () => {
+        const res = await setServerTimezone(serverId, tz);
+        if (res.success) {
+            toast('Time zone saved. The console uses it from the next start.', true);
+            loadZone();
+        } else {
+            toast(res.message || 'Could not save the time zone', false);
+        }
+    });
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
@@ -102,6 +123,7 @@ export default function ServerConfigScheduledPage() {
             name: '',
             taskType: 'restart',
             scheduleCron: CRON_PRESETS[3].cron,
+            timezone: serverZone,
             payload: '',
             enabled: true,
             presetCron: CRON_PRESETS[3].cron,
@@ -133,7 +155,8 @@ export default function ServerConfigScheduledPage() {
         }
         // Pre-validate via backend so the user gets a clean error instead of
         // a generic "Failed to create" if the cron is malformed.
-        const v = await validateCron(cron);
+        const tz = editing.timezone || serverZone;
+        const v = await validateCron(cron, tz);
         if (!v.valid) {
             showToast(`Invalid cron: ${v.error || 'parse error'}`, false);
             return;
@@ -144,6 +167,7 @@ export default function ServerConfigScheduledPage() {
             scheduleCron: cron,
             payload: editing.taskType === 'say' ? (editing.payload || '').trim() : '',
             enabled: editing.enabled ?? true,
+            timezone: tz,
         };
         const res = editing.isNew
             ? await createScheduledTask(serverId, input)
@@ -186,7 +210,7 @@ export default function ServerConfigScheduledPage() {
                     <div>
                         <h2 className="text-base font-display font-semibold text-(--base-09)">Scheduled Tasks</h2>
                         <p className="text-xs text-(--base-06) mt-0.5">
-                            Cron jobs that fire against this server. All times are UTC.
+                            Cron jobs that fire against this server, each in its own time zone.
                             Restart tasks re-launch the container; broadcasts run
                             <code className="font-mono mx-1">say &lt;message&gt;</code> in the server console.
                         </p>
@@ -197,6 +221,28 @@ export default function ServerConfigScheduledPage() {
                     New Task
                 </button>
             </header>
+
+            <section className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3" aria-label="Server time zone">
+                <div className="min-w-0 flex-1">
+                    <label htmlFor="server-tz" className="text-sm font-medium text-(--base-09)">Server time zone</label>
+                    <p className="text-xs text-(--base-06) mt-0.5">
+                        The console&apos;s timestamps (from the next start) and the zone new tasks start in.
+                    </p>
+                </div>
+                <div className="sm:w-64 shrink-0">
+                    {ownZone === null ? (
+                        <Skeleton className="h-9 w-full rounded-md" />
+                    ) : (
+                        <TimeZoneSelect
+                            id="server-tz"
+                            value={ownZone}
+                            onChange={changeZone}
+                            disabled={savingZone}
+                            inheritLabel={`Same as the owner's account${!ownZone ? ` (${serverZone.replace(/_/g, ' ')})` : ''}`}
+                        />
+                    )}
+                </div>
+            </section>
 
             {loading ? (
                 <div className="space-y-2">
@@ -268,6 +314,7 @@ export default function ServerConfigScheduledPage() {
                                     <div>
                                         <span className="text-(--base-06)">Schedule</span>{' '}
                                         <code className="font-mono text-(--base-08)">{t.scheduleCron}</code>
+                                        <span className="text-(--base-05)"> {t.timezone || 'UTC'}</span>
                                     </div>
                                     <div>
                                         <span className="text-(--base-06)">Next</span>{' '}
@@ -369,14 +416,14 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
         let cancelled = false;
         setPreviewLoading(true);
         const id = setTimeout(async () => {
-            const res = await validateCron(activeCron);
+            const res = await validateCron(activeCron, editing.timezone || 'UTC');
             if (!cancelled) {
                 setPreview({ valid: !!res.valid, nextRun: res.nextRun, error: res.error });
                 setPreviewLoading(false);
             }
         }, 250);
         return () => { cancelled = true; clearTimeout(id); setPreviewLoading(false); };
-    }, [activeCron]);
+    }, [activeCron, editing.timezone]);
 
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
@@ -506,6 +553,13 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
                                 <span className="text-(--base-05) font-mono">format: min hour dom mon dow</span>
                             )}
                         </div>
+                    </div>
+
+                    {/* Time zone */}
+                    <div>
+                        <label className="input-label" htmlFor="task-tz">Time zone</label>
+                        <TimeZoneSelect id="task-tz" value={editing.timezone || 'UTC'} onChange={tz => setEditing({ ...editing, timezone: tz })} />
+                        <p className="text-xs text-(--base-06) mt-1">The schedule above is read in this zone, daylight saving included.</p>
                     </div>
 
                     {/* Enabled toggle */}

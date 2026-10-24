@@ -238,7 +238,7 @@ func (m *MemoryGuardService) power(ctx context.Context, srv *models.Server, acti
 	}
 	desired, status := "stopped", "stopping"
 	if action == models.MemoryGuardRestart {
-		desired, status = "online", "starting"
+		desired, status = "online", "restarting"
 	}
 	if err := m.store.UpdateServerDesiredState(srv.ID, desired); err != nil {
 		return fmt.Errorf("desired_state: %w", err)

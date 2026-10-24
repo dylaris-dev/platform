@@ -87,12 +87,17 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   useEffect(() => {
     if (!gatewayEnabled) return;
     let cancelled = false;
+    let misses = 0;
+    // One failed poll keeps the last counts; two in a row are no counts, not
+    // the counts from before Core stopped answering.
+    const miss = () => { if (!cancelled && ++misses >= 2) setPlayers({}); };
     const tick = async () => {
       if (document.visibilityState !== 'visible') return;
       try {
         const res = await getGatewayPlayers();
-        if (!cancelled && res?.players) setPlayers(res.players);
-      } catch { /* keep the last counts; the next tick tries again */ }
+        if (cancelled) return;
+        if (res?.players) { setPlayers(res.players); misses = 0; } else miss();
+      } catch { miss(); }
     };
     tick();
     const t = setInterval(tick, 5000);

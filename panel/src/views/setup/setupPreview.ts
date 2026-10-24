@@ -1,4 +1,5 @@
 import type { SubServerInstall } from '@/lib/api/subServerInstalls';
+import { fmtDateTime } from '@/lib/time';
 
 /** One labelled line of the read-only "Installed software" block. */
 export interface InstalledRow {
@@ -72,7 +73,7 @@ export function setupPreviewModel(
     if (rec?.loader) installed.push({ label: 'Loader', value: rec.loader, mono: true });
     if (rec?.installedAt) {
         const d = new Date(rec.installedAt);
-        if (!isNaN(d.getTime())) installed.push({ label: 'Installed', value: d.toLocaleString() });
+        if (!isNaN(d.getTime())) installed.push({ label: 'Installed', value: fmtDateTime(d) });
     }
 
     return { subServer, isActive, installed, mcVersion };

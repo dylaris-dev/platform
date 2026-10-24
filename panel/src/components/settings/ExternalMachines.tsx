@@ -19,6 +19,7 @@ import { toast } from '@/components/ui/Toast';
 import { platformNote, useDeployPlatform } from '@/components/infra/DeployKit';
 import { isLocationName } from '@/lib/validation';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 const enrollUrl = coreOrigin();
 
@@ -261,7 +262,7 @@ export default function ExternalMachines({ nodes }: { nodes: Node[] }) {
                                             </div>
                                             <p className="text-xs text-(--base-06) mt-1">
                                                 {machine ? <>Node <span className="text-(--base-08)">{machine.displayName || machine.name}</span> - </> : k.bound_node_id ? 'Node removed - ' : 'Not enrolled yet - '}
-                                                added {new Date(k.created_at).toLocaleString()}
+                                                added {fmtDateTime(k.created_at)}
                                             </p>
                                         </div>
                                         <div className="flex flex-wrap items-center gap-2 shrink-0">

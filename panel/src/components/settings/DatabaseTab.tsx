@@ -16,6 +16,7 @@ import { systemEvents } from '@/lib/systemEvents';
 import HelpTip from '@/components/ui/HelpTip';
 import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
 import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
+import { fmtDateTime } from '@/lib/time';
 
 const EMPTY_FORM: DBTargetForm = {
     host: '', port: '5432', user: 'dylaris', password: '', dbName: 'dylaris',
@@ -563,5 +564,5 @@ function fmtTime(iso: string): string {
     if (!iso) return '';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
+    return fmtDateTime(d);
 }

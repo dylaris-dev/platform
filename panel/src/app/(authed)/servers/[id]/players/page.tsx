@@ -70,7 +70,9 @@ export default function ServerPlayersPage() {
     const [ops, setOps] = useState<PlayerListEntry[]>([]);
     const [known, setKnown] = useState<KnownPlayer[]>([]);
     const [whitelistState, setWhitelistState] = useState<{ enabled?: boolean; enforced?: boolean }>({});
-    const [loading, setLoading] = useState(false);
+    // True from the start: the first render must show the skeleton, not
+    // "Nobody has joined yet." for the moment before the first fetch begins.
+    const [loading, setLoading] = useState(true);
     const [actionError, setActionError] = useState<string | null>(null);
     const [rconEnabled, setRconEnabled] = useState(false);
     const [rconLoaded, setRconLoaded] = useState(false);
@@ -146,7 +148,7 @@ export default function ServerPlayersPage() {
     // and an explicit Refresh show a loading state; a poll replaces the data in
     // place, which is what makes it invisible.
     const refresh = useCallback(async (background = false, rosterOnly = false) => {
-        if (!serverId || effectiveSection === 'rcon') return;
+        if (!serverId || effectiveSection === 'rcon') { setLoading(false); return; }
         if (!background) setLoading(true);
         setActionError(null);
 

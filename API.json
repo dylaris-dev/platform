@@ -2557,6 +2557,26 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/me/time-preferences",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "{timezone, timeFormat}; timezone \"\" means not chosen yet (the panel then offers the browser's).",
+      "handler": "TimezoneHandler.GetMine",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/time-preferences",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "body {timezone, timeFormat}.",
+      "handler": "TimezoneHandler.SetMine",
+      "group": "me",
+      "external": false
+    },
+    {
       "method": "PUT",
       "path": "/api/me/updates-seen",
       "auth": "session",
@@ -3750,6 +3770,16 @@
     },
     {
       "method": "PUT",
+      "path": "/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/enabled",
+      "auth": "session",
+      "authorization": "mods.write",
+      "description": "switches one mod on or off by moving its jar between \u003cdir\u003e/ and \u003cdir\u003e/.disabled/.",
+      "handler": "ServerModsHandler.SetEnabled",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PUT",
       "path": "/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/updates-paused",
       "auth": "session",
       "authorization": "mods.write",
@@ -4165,6 +4195,26 @@
       "authorization": "tabs.write",
       "description": "(re)generate the unguessable slug for a proxied page tab.",
       "handler": "ServerTabsHandler.RotateShareLink",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/timezone",
+      "auth": "session",
+      "authorization": "overview.read",
+      "description": "{timezone, effective}: timezone \"\" means the server inherits, effective is the zone it runs in.",
+      "handler": "TimezoneHandler.GetServer",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/servers/{id:[0-9]+}/timezone",
+      "auth": "session",
+      "authorization": "server.settings.write",
+      "description": "body {timezone}; \"\" inherits the owner's again.",
+      "handler": "TimezoneHandler.SetServer",
       "group": "servers",
       "external": false
     },
@@ -5299,10 +5349,10 @@
     }
   ],
   "counts": {
-    "total": 532,
+    "total": 537,
     "byAuth": {
       "none": 31,
-      "session": 485,
+      "session": 490,
       "user API key": 10,
       "warp key": 6
     },
@@ -5325,7 +5375,7 @@
       "infrastructure": 3,
       "library": 6,
       "maintenance": 1,
-      "me": 29,
+      "me": 31,
       "mirror": 2,
       "modrinth": 9,
       "modules": 6,
@@ -5337,7 +5387,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 83,
+      "servers": 86,
       "settings": 28,
       "setup": 2,
       "share": 1,

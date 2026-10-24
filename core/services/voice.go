@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
@@ -85,6 +86,22 @@ func PublishVoice(ctx context.Context, rdb *redis.Client, p store.VoicePort) err
 		return fmt.Errorf("publish voice port %s:%d: %w", p.Region, p.Port, err)
 	}
 	return nil
+}
+
+// RotateVoiceKey gives a server's voice port a new uplink key and publishes it.
+// For a server that moved: the machine it left could read the old key (its
+// node ACL covered the server's keys), and a REG signed with it would steer the
+// server's voice to that machine.
+func RotateVoiceKey(ctx context.Context, st store.Store, rdb *redis.Client, serverID int) error {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	p, err := st.RotateVoiceUplinkKey(serverID, key)
+	if err != nil || p == nil {
+		return err
+	}
+	return PublishVoice(ctx, rdb, *p)
 }
 
 // UnpublishVoice removes the three keys of one voice port.

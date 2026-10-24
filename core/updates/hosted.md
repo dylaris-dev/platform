@@ -11,6 +11,32 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.24
+
+### Features
+- **Your own time zone and clock.** Account, Time & date sets the zone the panel shows times in
+  (it starts as your browser's) and 12- or 24-hour; a server can set its own under Configuration.
+- **Console timestamps in your server's zone,** from its next start, and new scheduled tasks run in
+  it; older tasks keep UTC. On your own machine this needs the current node. `node`
+- **Switch mods and plugins off** under Content without uninstalling them. It takes effect at the
+  next restart.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A version update or move that would lock players out with Real player IP on is refused** with
+  an explanation, instead of going through.
+- **The mod config editor (beta) no longer saves one file's text into the next one opened,** and
+  Update all leaves paused or switched-off mods alone.
+- **Pages fade in from placeholders instead of flashing,** gateway addresses copy with one click,
+  and Start counts down after a stop or kill.
+- **The BlueMap web map renders only after its download is accepted** (`accept-download: true`
+  in BlueMap's core config); the earlier note left that out.
+
 ## 2026.10.23.7
 
 ### Features

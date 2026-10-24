@@ -9,6 +9,7 @@ import {
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
+import { fmtDateTime } from '@/lib/time';
 
 // Modrinth account integration. Lets the user attach a Personal
 // Access Token so the platform can publish modpacks on their behalf. Token
@@ -116,7 +117,7 @@ export default function ModrinthIntegrationPage() {
                             </h2>
                             {status.lastValidatedAt && (
                                 <p className="text-xs text-(--base-06) mt-0.5">
-                                    Token validated {new Date(status.lastValidatedAt).toLocaleString()}
+                                    Token validated {fmtDateTime(status.lastValidatedAt)}
                                 </p>
                             )}
                         </div>

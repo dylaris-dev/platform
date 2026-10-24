@@ -737,6 +737,12 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		return
 	}
 
+	// The machine the server left could read its voice key; a new one ends
+	// that. Best-effort: a failure leaves voice on the old key, as before.
+	if err := RotateVoiceKey(ctx, o.store, o.redis, srv.ID); err != nil {
+		log.Printf("migration %s: rotating the voice key failed: %v", srv.UUID, err)
+	}
+
 	// Re-resolve CPU pinning for the target host. Different hardware (fewer cores,
 	// different P/E or X3D layout) means the source cpuset is no longer valid or
 	// meaningful: auto is recomputed on the target, manual is reset to shared
@@ -765,6 +771,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 			"ramPaddingMB":  EffectiveRAMPaddingMB(o.store, srv.RAMPaddingMB, targetNode.RAMPaddingMB),
 			"cpuLimit":      srv.CPULimit,
 			"cpusetCpus":    effCpuset,
+			"timezone":      srv.Timezone,
 			"extraJvmFlags": strings.TrimSpace(DefaultJvmFlags + " " + srv.ExtraJvmFlags),
 		},
 	}, nil)

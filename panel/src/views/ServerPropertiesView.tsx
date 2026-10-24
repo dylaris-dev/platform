@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspens
 
 import { AlertTriangle, RotateCcw, Code2, ListChecks, Search, FileQuestion, Power } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import { SkeletonFormRow } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { SettingsCardSave } from '@/components/settings/SettingsCard';
@@ -517,7 +518,9 @@ export default function ServerPropertiesView() {
             </div>
 
             {loading && (
-                <p className="text-sm text-(--base-07)">Loading server.properties…</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4" aria-busy="true" aria-label="Loading server.properties">
+                    {Array.from({ length: 8 }, (_, i) => <SkeletonFormRow key={i} />)}
+                </div>
             )}
 
             {error && (

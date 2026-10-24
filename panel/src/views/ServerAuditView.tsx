@@ -10,7 +10,7 @@ import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { auditActor, auditSentence } from '@/lib/auditSentences';
 import { auditStep } from '@/lib/auditPaging';
-import { timeAgo } from '@/lib/time';
+import { fmtDateTime, timeAgo } from '@/lib/time';
 
 // One page of the trail. The popup pages past it by asking for the next one.
 const PAGE_SIZE = 50;
@@ -271,7 +271,7 @@ export default function ServerAuditView() {
 }
 
 function absoluteTime(iso: string): string {
-    return new Date(iso).toLocaleString();
+    return fmtDateTime(iso);
 }
 
 function EventRow({ ev, onOpen }: { ev: ServerAuditEvent; onOpen: () => void }) {

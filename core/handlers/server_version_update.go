@@ -350,10 +350,29 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		sendJSONError(w, "This server's loader is not one Modrinth knows, so its mods cannot be resolved for another version. Declare the loader first.", http.StatusUnprocessableEntity)
 		return
 	}
+	// The update reinstalls the server like a setup does, so it needs the same
+	// answer setup gets: with Real player IP on, a target the node cannot
+	// configure to expect the header would refuse every player.
+	if _, refused := proxyProtocolInstallGate(w, srv, loader, req.Minecraft); refused {
+		return
+	}
 
 	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
 		sendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
+		return
+	}
+	// The update writes every mod's new jar into the loaded directory, so a
+	// switched-off one would come back on with its old jar left in .disabled/.
+	var off []string
+	for _, m := range mods {
+		if m.Disabled {
+			off = append(off, m.Title+" ("+m.FileName+")")
+		}
+	}
+	if len(off) > 0 {
+		sendJSONErrorCode(w, fmt.Sprintf("Switch these mods on or remove them first: %s.", strings.Join(off, ", ")),
+			"mods_switched_off", http.StatusConflict)
 		return
 	}
 	install, unavailable, err := resolveServerModTargets(mods, loader, req.Minecraft)
@@ -412,6 +431,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 			"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 			"cpuLimit":      srv.CPULimit,
 			"cpusetCpus":    effectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+			"timezone":      srv.Timezone,
 			"extraJvmFlags": strings.TrimSpace(defaultJvmFlags + " " + srv.ExtraJvmFlags),
 		},
 	}

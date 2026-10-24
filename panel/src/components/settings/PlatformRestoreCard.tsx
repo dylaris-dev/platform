@@ -10,6 +10,7 @@ import {
 import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import { useBusy } from '@/lib/useBusy';
+import { fmtDateTime } from '@/lib/time';
 
 /**
  * Reading a bundle back.
@@ -101,7 +102,7 @@ export default function PlatformRestoreCard() {
                             <p className="text-sm font-mono text-(--base-09) truncate">{file.name}</p>
                             <p className="text-xs text-(--base-06)">
                                 {inspecting ? 'Reading...' : info?.success
-                                    ? `written by ${info.source || 'an unknown release'}${info.createdAt ? ` on ${new Date(info.createdAt).toLocaleString()}` : ''}`
+                                    ? `written by ${info.source || 'an unknown release'}${info.createdAt ? ` on ${fmtDateTime(info.createdAt)}` : ''}`
                                     : 'not readable as a bundle'}
                             </p>
                         </div>
@@ -235,7 +236,7 @@ function RestoreResult({ result }: { result: PlatformRestoreResult }) {
         <div className="border border-(--base-04) rounded-md p-3 space-y-2 bg-(--base-02)">
             <p className="text-sm text-(--base-09)">
                 From {result.source || 'an unknown release'}
-                {result.createdAt ? `, ${new Date(result.createdAt).toLocaleString()}` : ''}
+                {result.createdAt ? `, ${fmtDateTime(result.createdAt)}` : ''}
             </p>
             {(result.components || []).map((c, i) => (
                 <p key={i} className="text-xs text-(--base-07)">

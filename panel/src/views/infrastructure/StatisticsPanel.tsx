@@ -21,6 +21,7 @@ import {
 } from '@/lib/api/metrics';
 import { useInfra } from './context';
 import { liveStatus } from './livePlayers';
+import { fmtDate, fmtDateTime, fmtTime } from '@/lib/time';
 
 /**
  * The long-term record.
@@ -53,9 +54,9 @@ const tooltipStyle = {
 /** Axis label density, by range. A day wants clock time, a year wants months. */
 function formatTick(iso: string, range: string): string {
     const d = new Date(iso);
-    if (range === '24h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (range === '365d') return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
-    return d.toLocaleDateString([], { day: '2-digit', month: 'short' });
+    if (range === '24h') return fmtTime(d, { hour: '2-digit', minute: '2-digit' });
+    if (range === '365d') return fmtDate(d, { month: 'short', year: '2-digit' });
+    return fmtDate(d, { day: '2-digit', month: 'short' });
 }
 
 function Unavailable({ reason, message }: { reason?: MetricsUnavailableReason; message?: string }) {
@@ -275,7 +276,7 @@ function MetricChart({ info, series, range, headline }: ChartProps) {
                             />
                             <Tooltip
                                 contentStyle={tooltipStyle}
-                                labelFormatter={v => new Date(v as string).toLocaleString()}
+                                labelFormatter={v => fmtDateTime(v as string)}
                                 // `unknown`, not `number`, and not by preference:
                                 // recharts types the formatter's value as a
                                 // union that has been spelled differently
@@ -313,7 +314,7 @@ function CoverageLine({ coverage }: { coverage: MetricCoverage | null }) {
     const days = Math.max(0, Math.floor((Date.now() - since.getTime()) / 86_400_000));
     return (
         <span className="text-xs text-(--base-06)">
-            Recording since {since.toLocaleDateString()} ({days} {days === 1 ? 'day' : 'days'}),
+            Recording since {fmtDate(since)} ({days} {days === 1 ? 'day' : 'days'}),
             {' '}at {coverage.resolution} resolution.
         </span>
     );

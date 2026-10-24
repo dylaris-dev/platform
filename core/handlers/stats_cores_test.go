@@ -85,4 +85,11 @@ func TestServerCoresShowOnlyWhatIsTheReadersOwn(t *testing.T) {
 	if len(got.Cores) != 2 || got.Cores[1].ID == nil || *got.Cores[1].ID != 1 || !got.Cores[1].Shared || got.Cores[0].Shared {
 		t.Fatalf("admin, a neighbour on core 1: %+v, want both cores with core 1 marked shared", got)
 	}
+
+	// A core missing from the published load leaves no gap in the positions.
+	mr.Set("dylaris:node:tok:cpuload", `{"cores":{"1":20}}`)
+	got = get([]models.Server{own, neighbour}, false)
+	if len(got.Cores) != 1 || got.Cores[0].Index != 1 {
+		t.Fatalf("with core 0 unreported: %+v, want one core at position 1", got)
+	}
 }

@@ -27,6 +27,14 @@ describe('updatableMods', () => {
         expect(updatableMods(list).map(m => m.modrinthProjectId)).toEqual(['a', 'd']);
     });
 
+    it('leaves out a switched-off mod', () => {
+        const list = [
+            mod({ id: 1, modrinthProjectId: 'a', disabled: true }),
+            mod({ id: 2, modrinthProjectId: 'b' }),
+        ];
+        expect(updatableMods(list).map(m => m.modrinthProjectId)).toEqual(['b']);
+    });
+
     it('leaves out a mod its members paused', () => {
         const list = [
             mod({ id: 1, modrinthProjectId: 'a', updatesPaused: true }),

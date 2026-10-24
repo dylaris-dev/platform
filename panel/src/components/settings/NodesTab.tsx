@@ -14,7 +14,7 @@ import DeleteNodeModal, { type DeletableNode } from '@/components/nodes/DeleteNo
 import NodeJoinAttempts from '@/components/settings/NodeJoinAttempts';
 import { parseCpuset, compactCpuset } from '@/lib/cpuset';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
-import { timeAgo } from '@/lib/time';
+import { fmtDateTime, timeAgo } from '@/lib/time';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -1721,7 +1721,7 @@ function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string,
         else showToast(res.message || 'Revoke failed.', false);
     };
 
-    const fmt = (s?: string) => (s ? new Date(s).toLocaleString() : '—');
+    const fmt = (s?: string) => (s ? fmtDateTime(s) : '—');
 
     return (
         <div className="card p-6 space-y-5">

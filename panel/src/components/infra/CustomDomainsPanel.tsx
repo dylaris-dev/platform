@@ -10,6 +10,7 @@ import {
 } from '@/lib/api/customDomains';
 import { getGatewayRouteOptions } from '@/lib/api/types';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
+import { fmtDateTime } from '@/lib/time';
 
 // Plain language per state. The customer needs to know what to DO, not what the
 // state machine calls itself.
@@ -80,7 +81,7 @@ export function describeClaim(
 
 function formatDate(iso: string): string {
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? 'the deadline' : new Date(t).toLocaleString();
+  return Number.isNaN(t) ? 'the deadline' : fmtDateTime(t);
 }
 
 function timeLeft(deadlineAt?: string): string | null {

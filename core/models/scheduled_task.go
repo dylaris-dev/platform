@@ -14,18 +14,21 @@ import "time"
 // LastStatus values: "" (never run) | "ok" | "error". LastError is human-
 // readable explanation when LastStatus == "error".
 type ScheduledTask struct {
-	ID           int        `json:"id"`
-	ServerID     int        `json:"serverId"`
-	Name         string     `json:"name"`
-	TaskType     string     `json:"taskType"`
-	ScheduleCron string     `json:"scheduleCron"`
-	Payload      string     `json:"payload"`
-	Enabled      bool       `json:"enabled"`
-	NextRun      *time.Time `json:"nextRun,omitempty"`
-	LastRun      *time.Time `json:"lastRun,omitempty"`
-	LastStatus   string     `json:"lastStatus"`
-	LastError    string     `json:"lastError,omitempty"`
-	CreatedBy    *string    `json:"createdBy,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID           int    `json:"id"`
+	ServerID     int    `json:"serverId"`
+	Name         string `json:"name"`
+	TaskType     string `json:"taskType"`
+	ScheduleCron string `json:"scheduleCron"`
+	// Timezone is the IANA zone the cron is read in. Tasks from before zones
+	// existed are "UTC".
+	Timezone   string     `json:"timezone"`
+	Payload    string     `json:"payload"`
+	Enabled    bool       `json:"enabled"`
+	NextRun    *time.Time `json:"nextRun,omitempty"`
+	LastRun    *time.Time `json:"lastRun,omitempty"`
+	LastStatus string     `json:"lastStatus"`
+	LastError  string     `json:"lastError,omitempty"`
+	CreatedBy  *string    `json:"createdBy,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
 }

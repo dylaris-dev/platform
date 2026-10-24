@@ -926,10 +926,22 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 		log.Printf("saveNodeConfig: marshal error for %s: %v", config.UUID, err)
 		return
 	}
-	configPath := filepath.Join(serverDir, ".node_config.json")
-	if err := os.WriteFile(configPath, data, nodeOwnedFileMode); err != nil {
+	if err := writeServerRootFile(serverDir, ".node_config.json", data); err != nil {
 		log.Printf("saveNodeConfig: write error for %s: %v", config.UUID, err)
 	}
+}
+
+// writeServerRootFile writes one of the node's own files into a server's
+// directory. That directory is the tenant's /data, so the name may be a link
+// planted by code running in the container: through os.Root the write cannot
+// leave the server's directory, where a plain WriteFile followed the link.
+func writeServerRootFile(serverDir, name string, data []byte) error {
+	root, err := os.OpenRoot(serverDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.WriteFile(name, data, nodeOwnedFileMode)
 }
 
 // storageManager is set during init and used by heartbeat to publish storage info.
@@ -1662,7 +1674,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// and stops the server the user just asked for.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 		dm.PullContainerImage(cmd.Config.UUID)
-		if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
+		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone); err != nil {
 			log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
 		} else {
 			log.Printf("Server %s started", cmd.Config.UUID)
@@ -1697,7 +1709,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
 		time.Sleep(2 * time.Second)
 		// Recreate container (more reliable than ContainerStart on exited container)
-		if err := dm.RestartContainer(cmd.Config.UUID); err != nil {
+		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone); err != nil {
 			log.Printf("Failed to restart server %s: %v", cmd.Config.UUID, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		} else {

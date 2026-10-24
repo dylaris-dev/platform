@@ -93,7 +93,7 @@ func TestMemoryGuardCritical(t *testing.T) {
 	}{
 		{"stop sets desired stopped and sends stop", "stop", "online", "stop", "stopped", "stopping", "was stopped to save the world"},
 		{"empty value behaves as the default, off", "", "online", "", "", "", "about to run out of memory"},
-		{"restart restarts", "restart", "online", "restart", "online", "starting", "was restarted"},
+		{"restart restarts", "restart", "online", "restart", "online", "restarting", "was restarted"},
 		{"off only warns", "off", "online", "", "", "", "about to run out of memory"},
 		{"not running: no power action", "stop", "installing", "", "", "", "about to run out of memory"},
 	}

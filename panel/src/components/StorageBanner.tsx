@@ -11,6 +11,7 @@ import {
     INITIAL_STORAGE_CONNECTION,
     type StorageConnectionState,
 } from '@/lib/storageConnection';
+import { fmtTime } from '@/lib/time';
 
 // StorageBanner is mounted globally in the authenticated layout. It warns that
 // a storage backend is degraded, which matters BEFORE an upload starts: the
@@ -102,5 +103,5 @@ export default function StorageBanner() {
 function formatSince(iso: string): string {
     const t = new Date(iso).getTime();
     if (Number.isNaN(t)) return '';
-    return `since ${new Date(t).toLocaleTimeString()}`;
+    return `since ${fmtTime(t)}`;
 }

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { getSystemHealth, type SystemHealth, type HealthStatus, type HealthComponent } from '@/lib/api';
 import { healthGuidance } from '@/lib/healthGuidance';
+import { fmtTime } from '@/lib/time';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -210,7 +211,7 @@ export default function StatusTab() {
     const oc = colorClasses(overall.color);
     const OIcon = overall.Icon;
     const checked = (() => {
-        try { return new Date(health.checkedAt).toLocaleTimeString(); } catch { return health.checkedAt; }
+        try { return fmtTime(health.checkedAt); } catch { return health.checkedAt; }
     })();
 
     return (

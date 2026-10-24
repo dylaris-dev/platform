@@ -7,6 +7,7 @@ import { fleetHealthySummary, statusLabel, statusRemedy } from '@/lib/storageRea
 import { Badge } from '@/components/ui/Badge';
 import { SkeletonCard } from '@/components/Skeleton';
 import { systemEvents } from '@/lib/systemEvents';
+import { fmtDateTime } from '@/lib/time';
 
 /**
  * Fleet storage health. A Core that fails its boot or periodic self-check
@@ -87,7 +88,7 @@ export default function StorageHealthCard() {
                                     <span className="font-mono text-[11px] text-(--base-05)">{f.detail}</span>
                                 )}
                                 <span className="text-(--base-05)">
-                                    Failing since {new Date(f.since * 1000).toLocaleString()}
+                                    Failing since {fmtDateTime(f.since * 1000)}
                                 </span>
                             </li>
                         ))}

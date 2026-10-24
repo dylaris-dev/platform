@@ -319,10 +319,20 @@ func TestProxyProtocolSweep(t *testing.T) {
 		t.Fatal("a durable yes did not record the sub-server")
 	}
 
+	// Unanswered: the default's own switch goes back off (nothing confirmed a
+	// config behind it); one the owner had on before stays.
 	s3, st3 := newProxyReportService(t)
 	track(t, s3)
 	s3.sweepProxyProtocolResults(ctx, now.Add(proxyProtocolNoAnswer+time.Minute))
-	if ok, _ := s3.redis.HExists(ctx, proxyProtocolPendingKey, "srv-7").Result(); ok || len(st3.writes) != 0 {
-		t.Fatalf("an unanswered request: pending %v, writes %v", ok, st3.writes)
+	if ok, _ := s3.redis.HExists(ctx, proxyProtocolPendingKey, "srv-7").Result(); ok || len(st3.writes) != 1 || st3.writes[0] {
+		t.Fatalf("an unanswered default: pending %v, writes %v, want switched off", ok, st3.writes)
+	}
+	s4, st4 := newProxyReportService(t)
+	if err := TrackProxyProtocolInstall(ctx, s4.redis, "srv-7", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	s4.sweepProxyProtocolResults(ctx, now.Add(proxyProtocolNoAnswer+time.Minute))
+	if ok, _ := s4.redis.HExists(ctx, proxyProtocolPendingKey, "srv-7").Result(); ok || len(st4.writes) != 0 {
+		t.Fatalf("an unanswered request on a server already on: pending %v, writes %v", ok, st4.writes)
 	}
 }

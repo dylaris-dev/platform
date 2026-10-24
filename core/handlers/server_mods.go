@@ -17,6 +17,8 @@ import (
 	"dylaris-core/store"
 	"dylaris-pkg/validate"
 
+	pb "dylaris-proto/node"
+
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
@@ -297,6 +299,12 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 			req.ProjectID, prevErr)
 		prev = nil
 	}
+	// A switched-off mod's jar is in .disabled/; installing over it would put a
+	// second, enabled copy next to it and lose track of the first.
+	if prev != nil && prev.Disabled {
+		sendJSONError(w, "This mod is switched off. Switch it on first, then update or roll it back.", http.StatusConflict)
+		return
+	}
 	previousFileName := ""
 	if prev != nil {
 		previousFileName = prev.FileName
@@ -473,6 +481,30 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		sendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	// A switched-off jar is in .disabled/, where remove_mod (mods|plugins only)
+	// does not reach: delete it with the plain file operation instead.
+	if target.Disabled {
+		if !validate.IsPlainFileName(target.FileName) {
+			sendJSONError(w, "This mod's file name cannot be removed safely.", http.StatusConflict)
+			return
+		}
+		_, off, _ := modPaths(srv, target)
+		if h.state.GRPCRegistry == nil {
+			sendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := h.nodeFileOp(srv, &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: off}}); err != nil {
+			sendJSONError(w, "Failed to remove the switched-off jar: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := h.state.Store.DeleteServerMod(modID, serverID); err != nil {
+			sendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
+			return
+		}
+		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		return
 	}
 	targetDir := uninstallTargetDir(target, srv.InstallerType)

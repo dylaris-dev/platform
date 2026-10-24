@@ -16,6 +16,7 @@ import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { fmtDateTime } from '@/lib/time';
 
 // Pack detail. Shows pack metadata + its builds. Each build pins a
 // Minecraft version + loader and links to the per-build content editor at
@@ -200,7 +201,7 @@ export default function PackDetailPage() {
                                         </span>
                                     </div>
                                     <div className="text-xs text-(--base-06) mt-0.5 flex items-center gap-2 flex-wrap">
-                                        <span>Created {new Date(b.createdAt).toLocaleString()}</span>
+                                        <span>Created {fmtDateTime(b.createdAt)}</span>
                                         <Badge variant={b.modrinthPublished ? 'success' : 'neutral'}>modrinth: {b.modrinthPublished ? 'published' : 'not published'}</Badge>
                                         {b.frozen && <Badge variant="warning">frozen</Badge>}
                                     </div>

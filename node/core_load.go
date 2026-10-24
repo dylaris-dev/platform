@@ -35,13 +35,21 @@ func runCoreLoadPublisher(ctx context.Context, rdb *redis.Client, id string) {
 	t := time.NewTicker(coreLoadInterval)
 	defer t.Stop()
 	var prev map[int]coreTicks
+	failing := false
 	for {
 		cur, err := readProcStatCores("/proc/stat")
+		// One failed read is not the end of the bars: try again next tick, and
+		// log only the change, not every two seconds on a host without access.
 		if err != nil {
-			log.Printf("core load: %v", err)
-			return
+			if !failing {
+				log.Printf("core load: %v (retrying)", err)
+			}
+			failing, cur = true, nil
+		} else if failing {
+			log.Printf("core load: reading /proc/stat again")
+			failing = false
 		}
-		if prev != nil {
+		if prev != nil && cur != nil {
 			b, _ := json.Marshal(map[string]any{"cores": coreLoad(prev, cur)})
 			rdb.Set(ctx, key, b, 10*time.Second)
 		}

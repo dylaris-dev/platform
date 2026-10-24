@@ -146,7 +146,10 @@ describe('powerModel', () => {
         expect(on.primary).toMatchObject({ action: 'stop', disabled: true, title: COOLDOWN_TITLE });
         expect(on).toMatchObject({ restartDisabled: true, killDisabled: false, menuDisabled: false });
         const off = powerModel('stopped', null, T0 + 1000, { ...open, cooldownUntil: until });
-        expect(off.primary).toMatchObject({ action: 'start', disabled: true, title: COOLDOWN_TITLE });
+        expect(off.primary).toMatchObject({ action: 'start', disabled: true, title: COOLDOWN_TITLE, label: 'Start in 4s' });
+        // Counts down to the deadline, then the plain label is back.
+        expect(powerModel('stopped', null, until - 1, { ...open, cooldownUntil: until }).primary.label).toBe('Start in 1s');
+        expect(powerModel('stopped', null, until, { ...open, cooldownUntil: until }).primary.label).toBe('Start');
         // Over at the deadline.
         const after = powerModel('online', null, until, { ...open, cooldownUntil: until });
         expect(after.primary).toMatchObject({ disabled: false, title: 'Stop server' });

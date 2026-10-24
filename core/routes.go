@@ -46,14 +46,17 @@ var requiredCaps = map[string]string{
 	// POST /api/servers/{id:[0-9]+}/power is deliberately absent: the action
 	// (start|stop|restart|kill) lives in the body, so it is in-handler-enforced
 	// (Rule R5) rather than RequireCap-gated at the route.
-	"/api/servers/{id:[0-9]+}/install-cooldown":            "overview.read",
-	"/api/servers/{id:[0-9]+}/setup":                       "server.settings.write",
-	"/api/servers/{id:[0-9]+}/runtime":                     "server.settings.write",
-	"/api/servers/{id:[0-9]+}/reinstall":                   "server.settings.write",
-	"/api/servers/{id:[0-9]+}/version-update":              "server.settings.write",
-	"/api/servers/{id:[0-9]+}/copy-sub-server":             "server.settings.write",
-	"/api/servers/{id:[0-9]+}/switch":                      "server.settings.write",
-	"/api/servers/{id:[0-9]+}/name":                        "server.settings.write",
+	"/api/servers/{id:[0-9]+}/install-cooldown": "overview.read",
+	"/api/servers/{id:[0-9]+}/setup":            "server.settings.write",
+	"/api/servers/{id:[0-9]+}/runtime":          "server.settings.write",
+	"/api/servers/{id:[0-9]+}/reinstall":        "server.settings.write",
+	"/api/servers/{id:[0-9]+}/version-update":   "server.settings.write",
+	"/api/servers/{id:[0-9]+}/copy-sub-server":  "server.settings.write",
+	"/api/servers/{id:[0-9]+}/switch":           "server.settings.write",
+	"/api/servers/{id:[0-9]+}/name":             "server.settings.write",
+	// GET+PUT share the template -> overview.read representative; PUT's
+	// server.settings.write lives at the RequireCap call.
+	"/api/servers/{id:[0-9]+}/timezone":                    "overview.read",
 	"/api/servers/{id:[0-9]+}/resources":                   "server.settings.write",
 	"/api/servers/{id:[0-9]+}/loader-metadata":             "server.settings.write",
 	"/api/servers/{id:[0-9]+}":                             "server.delete",
@@ -95,6 +98,7 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/mods":                               "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}":                "mods.delete",
 	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/updates-paused": "mods.write",
+	"/api/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/enabled":        "mods.write",
 	"/api/servers/{id:[0-9]+}/mods/compat":                        "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/unmanaged":                     "mods.read",
 	"/api/servers/{id:[0-9]+}/mods/history":                       "mods.read",
@@ -563,6 +567,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
+	timezoneHandler := handlers.NewTimezoneHandler(appState)
 	backupHandler := handlers.NewBackupHandler(appState)
 	platformBackupHandler := handlers.NewPlatformBackupHandler(appState)
 	storageConnectionsHandler := handlers.NewStorageConnectionsHandler(appState)
@@ -849,6 +854,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.Install))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.delete")(serverModsHandler.Uninstall))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/updates-paused", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.SetUpdatesPaused))).Methods("PUT")
+	api.HandleFunc("/servers/{id:[0-9]+}/mods/{modId:[0-9]+}/enabled", authHandler.AuthMiddleware(appState.Authz.RequireCap("mods.write")(serverModsHandler.SetEnabled))).Methods("PUT")
 	// Cross-Minecraft-version availability + the move itself. These literals
 	// cannot be swallowed by the /mods/{modId} pattern above: that one is
 	// numeric-constrained.
@@ -1406,6 +1412,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/reinstall", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.ReinstallServer))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SwitchSubServer))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/name", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerName))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/timezone", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(timezoneHandler.GetServer))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/timezone", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(timezoneHandler.SetServer))).Methods("PUT")
 	api.HandleFunc("/servers/{id:[0-9]+}/resources", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.UpdateServerResources))).Methods("PATCH")
 	// Metadata-only declare (no reinstall): persists installerType/minecraftVersion/
 	// buildNumber for an imported server so the Content tab's loader/version
@@ -1770,6 +1778,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// PUT /me/updates-seen clears the caller's own badge (own data).
 	api.HandleFunc("/updates", authHandler.AuthMiddleware(updatesHandler.GetUpdates)).Methods("GET")
 	api.HandleFunc("/me/updates-seen", authHandler.AuthMiddleware(updatesHandler.MarkUpdatesSeen)).Methods("PUT")
+	// Own time zone and clock format (own data).
+	api.HandleFunc("/me/time-preferences", authHandler.AuthMiddleware(timezoneHandler.GetMine)).Methods("GET")
+	api.HandleFunc("/me/time-preferences", authHandler.AuthMiddleware(timezoneHandler.SetMine)).Methods("PUT")
 
 	// --- Backup Endpoints ---
 	// backup-storages are platform-shared storage-provider configs -> PANEL

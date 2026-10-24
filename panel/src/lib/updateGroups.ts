@@ -1,4 +1,5 @@
 import type { UpdateComponent, UpdateInstance, Release, ReleaseEntry, ReleaseRequired } from '@/lib/api/updates';
+import { fmtDateTime } from './time';
 
 // Presentation helpers for the updates view. Pure functions, so the grouping
 // rules can be tested without rendering anything.
@@ -198,7 +199,7 @@ export function mergeReleases(releases: Release[]): MergedReleases | null {
 export function formatDeadline(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString(undefined, {
+    return fmtDateTime(d, {
         year: 'numeric', month: 'short', day: 'numeric',
         hour: '2-digit', minute: '2-digit',
     });

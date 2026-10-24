@@ -75,7 +75,7 @@ describe('auditSentence: named server events', () => {
 describe('auditSentence: missing metadata never throws or leaks JSON', () => {
     const types = ['power_action', 'member_invited', 'member_removed', 'member_perms_changed', 'resources_changed',
         'name_changed', 'setup', 'reinstall', 'subserver_deleted', 'subserver_switched', 'deleted', 'runtime_changed',
-        'audit_force_on_changed', 'loader_metadata_declared', 'player_action', 'memory_guard', 'sftp.changes', 'beam.changes'];
+        'audit_force_on_changed', 'loader_metadata_declared', 'timezone_changed', 'player_action', 'memory_guard', 'sftp.changes', 'beam.changes'];
     it.each(types)('%s', type => {
         const s = by(type, undefined);
         expect(s.startsWith('BartisD ')).toBe(true);

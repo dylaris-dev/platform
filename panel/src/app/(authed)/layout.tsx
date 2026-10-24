@@ -26,7 +26,8 @@ import BeamDownloadButton from '@/components/BeamDownloadButton';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ModInstallProvider } from '@/lib/modInstallManager';
-import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical } from 'lucide-react';
+import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical, Clock } from 'lucide-react';
+import { loadTimePrefs } from '@/lib/time';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
 import { followSignOuts, markSessionSeen } from '@/lib/api/session';
@@ -82,11 +83,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     }
 
     if (!ready || !user) {
-        return (
-            <div className="flex h-screen items-center justify-center bg-(--base-00) text-(--base-07)">
-                Loading...
-            </div>
-        );
+        return <AppShellSkeleton />;
     }
 
     const settingsActive = pathname.startsWith('/settings');
@@ -240,6 +237,12 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 <button onClick={() => { setIsProfileDropdownOpen(false); setShowProfilePopup(true); }} className="dropdown-item">
                                     <UserCog size={20} className="mr-3" /> Edit Profile
                                 </button>
+                                <GuardedLink
+                                    href="/account/time"
+                                    className="dropdown-item"
+                                >
+                                    <Clock size={20} className="mr-3" /> Time &amp; date
+                                </GuardedLink>
                                 <GuardedLink
                                     href="/account/api-keys"
                                     className="dropdown-item"
@@ -433,6 +436,10 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
                 return;
             }
             markSessionSeen();
+            // Before the shell renders, so the first paint already shows times
+            // in the account's zone and clock. A failure keeps the browser's.
+            await loadTimePrefs();
+            if (cancelled) return;
             setTokenChecked(true);
         })();
         return () => { cancelled = true; };
@@ -475,42 +482,7 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
         // content placeholder. Avoids the spinner→full-UI snap when the
         // setup/token check resolves.
         return (
-            <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
-                {/* Navbar placeholder */}
-                <div className="shrink-0 h-14 border-b border-(--base-03) px-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <SkeletonCircle size="h-8 w-8" />
-                        <SkeletonText width="w-28" className="h-4" />
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <Skeleton className="h-7 w-20 rounded-md" />
-                        <SkeletonCircle size="h-8 w-8" />
-                        <SkeletonCircle size="h-8 w-8" />
-                        <div className="flex items-center gap-2 pl-3 border-l border-(--base-03)">
-                            <SkeletonCircle size="h-8 w-8" />
-                            <SkeletonText width="w-20" className="h-3 hidden md:block" />
-                        </div>
-                    </div>
-                </div>
-                {/* Body: sidebar + main area */}
-                <div className="flex flex-1 overflow-hidden">
-                    <aside className="w-60 shrink-0 border-r border-(--base-03) p-4 space-y-2">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <Skeleton key={i} className="h-9 w-full rounded-md" />
-                        ))}
-                    </aside>
-                    <main className="flex-1 p-6 space-y-4">
-                        <SkeletonText width="w-48" className="h-5" />
-                        <SkeletonText width="w-72" className="h-3" />
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
-                            {Array.from({ length: 4 }).map((_, i) => (
-                                <Skeleton key={i} className="h-20 w-full rounded-(--radius-md)" />
-                            ))}
-                        </div>
-                        <Skeleton className="h-64 w-full rounded-(--radius-md) mt-4" />
-                    </main>
-                </div>
-            </div>
+            <AppShellSkeleton />
         );
     }
 
@@ -525,5 +497,50 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
                 </UploadManagerProvider>
             </UnsavedChangesProvider>
         </AppDataProvider>
+    );
+}
+
+// Skeleton chrome that mirrors the authed shell: a top navbar with logo + utility
+// cluster, then a flex row of left sidebar + main content placeholder. Shown for
+// BOTH waits before the shell - the token check and the first data load - so the
+// screen goes skeleton -> panel once instead of skeleton -> "Loading..." -> panel.
+function AppShellSkeleton() {
+    return (
+        <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
+            {/* Navbar placeholder */}
+            <div className="shrink-0 h-14 border-b border-(--base-03) px-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <SkeletonCircle size="h-8 w-8" />
+                    <SkeletonText width="w-28" className="h-4" />
+                </div>
+                <div className="flex items-center gap-3">
+                    <Skeleton className="h-7 w-20 rounded-md" />
+                    <SkeletonCircle size="h-8 w-8" />
+                    <SkeletonCircle size="h-8 w-8" />
+                    <div className="flex items-center gap-2 pl-3 border-l border-(--base-03)">
+                        <SkeletonCircle size="h-8 w-8" />
+                        <SkeletonText width="w-20" className="h-3 hidden md:block" />
+                    </div>
+                </div>
+            </div>
+            {/* Body: sidebar + main area */}
+            <div className="flex flex-1 overflow-hidden">
+                <aside className="w-60 shrink-0 border-r border-(--base-03) p-4 space-y-2">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                        <Skeleton key={i} className="h-9 w-full rounded-md" />
+                    ))}
+                </aside>
+                <main className="flex-1 p-6 space-y-4">
+                    <SkeletonText width="w-48" className="h-5" />
+                    <SkeletonText width="w-72" className="h-3" />
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                            <Skeleton key={i} className="h-20 w-full rounded-(--radius-md)" />
+                        ))}
+                    </div>
+                    <Skeleton className="h-64 w-full rounded-(--radius-md) mt-4" />
+                </main>
+            </div>
+        </div>
     );
 }

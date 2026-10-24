@@ -3,9 +3,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import CopyText from '@/components/ui/CopyText';
 import {
     Pencil, SlidersHorizontal, AlertTriangle, Zap, Plus,
-    HardDrive, MoveHorizontal, RefreshCw, Copy, Globe, Link2, ChevronDown, Move, Clock, Undo2, X, ShieldCheck,
+    HardDrive, MoveHorizontal, RefreshCw, Globe, Link2, ChevronDown, Move, Clock, Undo2, X, ShieldCheck,
 } from 'lucide-react';
 import { DynamicIcon } from '@/lib/icons';
 import {
@@ -42,6 +43,7 @@ import { MEMORY_GUARD_HELP, MEMORY_GUARD_OPTIONS, memoryGuardPatch, oomDismissKe
 import type { MemoryGuardAction } from '@/lib/api/types';
 import PowerControls from '@/components/server/PowerControls';
 import { advancePending, startPending, POWER_COOLDOWN_MS, type PendingPower, type PowerAction } from '@/lib/powerControls';
+import { fmtDateTime } from '@/lib/time';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -979,34 +981,25 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                         {routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0 && (
                             <div className="flex items-center gap-2">
                                 <span className="mono-label text-(--base-05)">Direct</span>
-                                <div className="flex items-center gap-1.5 bg-(--base-03)/50 border border-(--base-04) rounded-md px-2.5 py-1">
-                                    <Link2 size={11} className="text-(--base-06) shrink-0" />
-                                    <span className="text-xs font-mono text-(--base-07)">{selectedServer.nodeAddress}:{selectedServer.hostPort}</span>
-                                    <button
-                                        onClick={() => navigator.clipboard.writeText(`${selectedServer.nodeAddress}:${selectedServer.hostPort}`)}
-                                        className="text-(--base-06) hover:text-(--base-09) transition-colors ml-0.5"
-                                        title="Copy address"
-                                    >
-                                        <Copy size={11} />
-                                    </button>
-                                </div>
+                                <CopyText
+                                    value={`${selectedServer.nodeAddress}:${selectedServer.hostPort}`}
+                                    title="Click to copy the address"
+                                    label={<span className="inline-flex items-center gap-1.5"><Link2 size={11} className="text-(--base-06) shrink-0" aria-hidden="true" />{selectedServer.nodeAddress}:{selectedServer.hostPort}</span>}
+                                    className="bg-(--base-03)/50 border border-(--base-04) hover:border-(--base-05) rounded-md px-2.5 py-1 text-xs font-mono text-(--base-07) cursor-copy"
+                                />
                             </div>
                         )}
                         {gatewayEnabled && serverRoutes.length > 0 && (
                             <div className="flex items-center gap-2 flex-wrap">
                                 <span className="mono-label text-(--base-05)">Gateway</span>
                                 {serverRoutes.map(route => (
-                                    <div key={route.domain} className="flex items-center gap-1.5 bg-(--accent-ghost) border border-(--accent-border) rounded-md px-2.5 py-1">
-                                        <Globe size={11} className="text-(--accent-light) shrink-0" />
-                                        <span className="text-xs font-mono text-(--accent-light)">{route.domain}</span>
-                                        <button
-                                            onClick={() => navigator.clipboard.writeText(route.domain)}
-                                            className="text-(--accent-light)/60 hover:text-(--accent-light) transition-colors ml-0.5"
-                                            title="Copy domain"
-                                        >
-                                            <Copy size={11} />
-                                        </button>
-                                    </div>
+                                    <CopyText
+                                        key={route.domain}
+                                        value={route.domain}
+                                        title="Click to copy the address"
+                                        label={<span className="inline-flex items-center gap-1.5"><Globe size={11} className="shrink-0" aria-hidden="true" />{route.domain}</span>}
+                                        className="bg-(--accent-ghost) border border-(--accent-border) hover:bg-(--accent)/15 rounded-md px-2.5 py-1 text-xs font-mono text-(--accent-light) cursor-copy"
+                                    />
                                 ))}
                             </div>
                         )}
@@ -1096,7 +1089,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                         <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                         <span className="flex-1">
                             <strong className="font-semibold">Killed: out of memory</strong>
-                            {selectedServer.lastCrashAt ? ` at ${new Date(selectedServer.lastCrashAt).toLocaleString()}` : ''}.
+                            {selectedServer.lastCrashAt ? ` at ${fmtDateTime(selectedServer.lastCrashAt)}` : ''}.
                             {' '}The server reached its memory limit and was killed; anything not yet saved was lost. It needs more RAM or RAM headroom.
                         </span>
                         {user?.isAdmin && (

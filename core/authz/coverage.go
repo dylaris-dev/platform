@@ -142,6 +142,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/me/ssh-keys":             true, // authed; own SSH keys
 	"/api/me/ssh-keys/{id:[0-9]+}": true, // authed; own SSH key
 	"/api/me/updates-seen":         true, // authed; own update-feed badge marker
+	"/api/me/time-preferences":     true, // authed; own time zone and clock format
 	"/api/me/servers/via-tickets":  true, // authed; own tickets sidebar
 
 	// The caller's OWN machine. Not capability-gated on purpose: no customer
