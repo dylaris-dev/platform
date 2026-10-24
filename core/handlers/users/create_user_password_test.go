@@ -1,4 +1,4 @@
-package handlers
+package users
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -56,7 +58,7 @@ func (f *createUserFakeStore) CreateUser(u *models.User) error {
 // of the two bugs.
 func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(&AppState{Store: fake})
+	h := NewUserHandler(&handlers.AppState{Store: fake})
 
 	const plaintext = "correct-horse-battery"
 	body := `{"username":"alice","password":"` + plaintext + `","isAdmin":false}`
@@ -71,8 +73,8 @@ func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 		t.Fatal("nothing reached the store")
 	}
 	// Creating an account - possibly an admin - left no record before.
-	if len(fake.audits) != 1 || fake.audits[0] != AuditEventUserCreated {
-		t.Errorf("audit events = %v, want one %q", fake.audits, AuditEventUserCreated)
+	if len(fake.audits) != 1 || fake.audits[0] != handlers.AuditEventUserCreated {
+		t.Errorf("audit events = %v, want one %q", fake.audits, handlers.AuditEventUserCreated)
 	}
 	if fake.created.Password == "" {
 		t.Fatal("the account was persisted with an empty password")
@@ -90,7 +92,7 @@ func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 // A timestamp in the body is replaced, not trusted.
 func TestCreateUserStoresTheAccountVerified(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(&AppState{Store: fake})
+	h := NewUserHandler(&handlers.AppState{Store: fake})
 
 	body := `{"username":"alice","password":"correct-horse-battery","emailVerifiedAt":"2001-01-01T00:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(body))
@@ -113,7 +115,7 @@ func TestCreateUserStoresTheAccountVerified(t *testing.T) {
 // all is still refused rather than persisted with an empty hash.
 func TestCreateUserStillRefusesAnEmptyPassword(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(&AppState{Store: fake})
+	h := NewUserHandler(&handlers.AppState{Store: fake})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"alice"}`))
 	rec := httptest.NewRecorder()

@@ -1,4 +1,4 @@
-package handlers
+package users
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -106,7 +108,7 @@ func TestDeleteUserReportsWhyItCannotDeleteAnOwner(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &deleteUserFakeStore{deleteErr: c.err}
-			h := &UserHandler{state: &AppState{Store: fs}}
+			h := &UserHandler{state: &handlers.AppState{Store: fs}}
 			rw := httptest.NewRecorder()
 
 			h.DeleteUser(rw, deleteUserRequest())
@@ -124,7 +126,7 @@ func TestDeleteUserReportsWhyItCannotDeleteAnOwner(t *testing.T) {
 // The ordinary case must not have picked up a conflict branch by accident.
 func TestDeleteUserSucceeds(t *testing.T) {
 	fs := &deleteUserFakeStore{}
-	h := &UserHandler{state: &AppState{Store: fs}}
+	h := &UserHandler{state: &handlers.AppState{Store: fs}}
 	rw := httptest.NewRecorder()
 
 	h.DeleteUser(rw, deleteUserRequest())
@@ -143,7 +145,7 @@ func TestDeleteUserSucceeds(t *testing.T) {
 // went to the Core log, where the person clicking delete cannot read it.
 func TestDeleteUserStillOwningServersIs409WithTheCount(t *testing.T) {
 	fs := &deleteUserFakeStore{ownedServers: 2}
-	h := &UserHandler{state: &AppState{Store: fs}}
+	h := &UserHandler{state: &handlers.AppState{Store: fs}}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -172,7 +174,7 @@ func TestDeleteUserStillOwningServersIs409WithTheCount(t *testing.T) {
 // saying "some account was removed at this time".
 func TestDeleteUserIsOnTheRecord(t *testing.T) {
 	fs := &deleteUserFakeStore{}
-	h := &UserHandler{state: &AppState{Store: fs}}
+	h := &UserHandler{state: &handlers.AppState{Store: fs}}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -182,12 +184,12 @@ func TestDeleteUserIsOnTheRecord(t *testing.T) {
 
 	var row *models.AuditEventIdentity
 	for i := range fs.auditRows {
-		if fs.auditRows[i].EventType == AuditEventUserHardDeleted {
+		if fs.auditRows[i].EventType == handlers.AuditEventUserHardDeleted {
 			row = &fs.auditRows[i]
 		}
 	}
 	if row == nil {
-		t.Fatalf("no %q row was written; the deletion left no trace at all", AuditEventUserHardDeleted)
+		t.Fatalf("no %q row was written; the deletion left no trace at all", handlers.AuditEventUserHardDeleted)
 	}
 	if row.ActorUserID == nil || *row.ActorUserID == "" {
 		t.Error("the row does not say WHO removed the account")
@@ -213,7 +215,7 @@ func TestDeleteUserIsOnTheRecord(t *testing.T) {
 // A refused delete must not claim one happened.
 func TestARefusedDeleteWritesNoRow(t *testing.T) {
 	fs := &deleteUserFakeStore{ownedServers: 1}
-	h := &UserHandler{state: &AppState{Store: fs}}
+	h := &UserHandler{state: &handlers.AppState{Store: fs}}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -221,7 +223,7 @@ func TestARefusedDeleteWritesNoRow(t *testing.T) {
 		t.Fatalf("status = %d, want 409", rr.Code)
 	}
 	for _, row := range fs.auditRows {
-		if row.EventType == AuditEventUserHardDeleted {
+		if row.EventType == handlers.AuditEventUserHardDeleted {
 			t.Fatal("a refused delete was recorded as a deletion")
 		}
 	}
@@ -232,7 +234,7 @@ func TestARefusedDeleteWritesNoRow(t *testing.T) {
 // them. Without the re-proof nothing is torn down and nothing is deleted.
 func TestDeleteUserNeedsTheAdministratorToReauthenticate(t *testing.T) {
 	fake := &deleteUserFakeStore{}
-	h := NewUserHandler(&AppState{Store: fake})
+	h := NewUserHandler(&handlers.AppState{Store: fake})
 	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", nil)
 	ctx := context.WithValue(req.Context(), "username", "admin")
 	ctx = context.WithValue(ctx, "userID", "admin-id")

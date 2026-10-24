@@ -1,4 +1,4 @@
-package handlers
+package users
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"github.com/gorilla/mux"
 
@@ -58,7 +60,7 @@ func TestDeleteUser_HandsTheOverlayTeardownDown(t *testing.T) {
 	const victimID = "3f1c2b8e-0d44-4a91-9a6f-1d2e3c4b5a60"
 	fs := &userDeleteWarpStore{keys: []store.WarpAPIKey{{ID: 11, NodeID: "node-abc", OwnerID: victimID}}}
 	peers := &userDeleteWarpPeers{}
-	h := NewUserHandler(&AppState{Store: fs, WarpPeers: peers})
+	h := NewUserHandler(&handlers.AppState{Store: fs, WarpPeers: peers})
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+victimID, strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
 	ctx := context.WithValue(r.Context(), "userID", "admin-id")

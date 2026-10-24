@@ -20,12 +20,3 @@ func mustHash(pw string) string {
 	}
 	return string(h)
 }
-
-// withReauth adds the acting administrator's credential to a request body.
-func withReauth(body map[string]interface{}) map[string]interface{} {
-	if body == nil {
-		body = map[string]interface{}{}
-	}
-	body["reauth"] = map[string]string{"password": testReauthPassword}
-	return body
-}

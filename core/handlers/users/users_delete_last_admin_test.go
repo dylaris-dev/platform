@@ -1,4 +1,4 @@
-package handlers
+package users
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -122,7 +124,7 @@ func TestDeleteUserRefusesTheLastAdmin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &lastAdminFakeStore{target: tt.target, users: tt.users, listErr: tt.listErr}
-			h := &UserHandler{state: &AppState{Store: fs}}
+			h := &UserHandler{state: &handlers.AppState{Store: fs}}
 			rw := httptest.NewRecorder()
 
 			h.DeleteUser(rw, lastAdminRequest())

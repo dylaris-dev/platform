@@ -35,10 +35,17 @@ func TestAdminAccountActionsReauthenticate(t *testing.T) {
 		"SetUserPanelRoleHandler":   "a panel role is the level-1 grant; panelroles.write alone is effectively full admin",
 	}
 
+	// The handlers split into handlers/<domain> subpackages; they call the
+	// check as handlers.RequireAdminReauth.
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
+	sub, err := filepath.Glob(filepath.Join("*", "*.go"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	files = append(files, sub...)
 	fset := token.NewFileSet()
 	found := map[string]bool{}
 	for _, f := range files {
@@ -67,6 +74,11 @@ func TestAdminAccountActionsReauthenticate(t *testing.T) {
 				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "requireAdminReauth" {
 					calls = true
 				}
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "RequireAdminReauth" {
+					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "handlers" {
+						calls = true
+					}
+				}
 				return true
 			})
 			if !calls {
@@ -78,7 +90,7 @@ func TestAdminAccountActionsReauthenticate(t *testing.T) {
 	// A handler that was renamed away would otherwise pass by not being there.
 	for name := range want {
 		if !found[name] {
-			t.Errorf("%s was not found in this package; if it moved or was renamed, move the entry with it", name)
+			t.Errorf("%s was not found in this package or its subpackages; if it moved or was renamed, move the entry with it", name)
 		}
 	}
 }

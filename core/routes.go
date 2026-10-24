@@ -17,6 +17,7 @@ import (
 	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
 	"dylaris-core/handlers/tickets"
+	"dylaris-core/handlers/users"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -542,7 +543,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Initialize handlers
 	serverHandler := handlers.NewServerHandler(appState)
 	nodeHandler := nodes.NewNodeHandler(appState)
-	userHandler := handlers.NewUserHandler(appState)
+	userHandler := users.NewUserHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	serverRolesHandler := handlers.NewServerRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
@@ -619,8 +620,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	packsHandler := packs.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
 	appState.InstallMrpack = packsHandler.EnsureInstallMrpack
-	usernameHistoryHandler := handlers.NewUsernameHistoryHandler(appState)
-	accountPolicyHandler := handlers.NewAccountPolicyHandler(appState)
+	usernameHistoryHandler := users.NewUsernameHistoryHandler(appState)
+	accountPolicyHandler := users.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := mods.NewModpackSettingsHandler(appState)
 	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
@@ -805,7 +806,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// The keys the caller signs in to SFTP with. Own account only, like the
 	// API keys above; adding one re-asks password and code, so it is throttled
 	// and body-capped for the same reason.
-	sshKeysHandler := handlers.NewSSHKeysHandler(appState)
+	sshKeysHandler := users.NewSSHKeysHandler(appState)
 	api.HandleFunc("/me/ssh-keys", authHandler.AuthMiddleware(sshKeysHandler.List)).Methods("GET")
 	api.HandleFunc("/me/ssh-keys", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(sshKeysHandler.Create)))).Methods("POST")
 	api.HandleFunc("/me/ssh-keys/{id:[0-9]+}", authHandler.AuthMiddleware(sshKeysHandler.Delete)).Methods("DELETE")

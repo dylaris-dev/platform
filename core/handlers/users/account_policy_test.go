@@ -1,4 +1,4 @@
-package handlers
+package users
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/store"
 )
@@ -54,7 +56,7 @@ func acctPolicyReq(method string, body []byte, isAdmin bool) *http.Request {
 
 func TestAccountPolicyGet_ReturnsStorePolicy(t *testing.T) {
 	fs := &accountPolicyFakeStore{allowChange: true, cooldownDays: 30}
-	h := NewAccountPolicyHandler(&AppState{Store: fs})
+	h := NewAccountPolicyHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
 	h.Get(rec, acctPolicyReq("GET", nil, true))
@@ -84,7 +86,7 @@ func TestAccountPolicyGet_ReturnsStorePolicy(t *testing.T) {
 
 func TestAccountPolicySet_InvalidJSON(t *testing.T) {
 	fs := &accountPolicyFakeStore{}
-	h := NewAccountPolicyHandler(&AppState{Store: fs})
+	h := NewAccountPolicyHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 
 	h.Set(rec, acctPolicyReq("PUT", []byte("not json"), true))
@@ -111,7 +113,7 @@ func TestAccountPolicySet_CooldownRange(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &accountPolicyFakeStore{}
-			h := NewAccountPolicyHandler(&AppState{Store: fs})
+			h := NewAccountPolicyHandler(&handlers.AppState{Store: fs})
 			body, _ := json.Marshal(map[string]interface{}{"allowNameChange": true, "nameChangeCooldownDays": tc.days})
 			rec := httptest.NewRecorder()
 
@@ -129,7 +131,7 @@ func TestAccountPolicySet_CooldownRange(t *testing.T) {
 
 func TestAccountPolicySet_Success(t *testing.T) {
 	fs := &accountPolicyFakeStore{}
-	h := NewAccountPolicyHandler(&AppState{Store: fs})
+	h := NewAccountPolicyHandler(&handlers.AppState{Store: fs})
 	body, _ := json.Marshal(map[string]interface{}{"allowNameChange": false, "nameChangeCooldownDays": 14})
 	rec := httptest.NewRecorder()
 

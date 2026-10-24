@@ -1,4 +1,4 @@
-package handlers
+package users
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -28,20 +30,22 @@ const (
 // SSHKeysHandler serves /me/ssh-keys: the public keys the caller signs in to
 // SFTP with. Always the caller's own; there is no route that names another
 // account.
-type SSHKeysHandler struct{ state *AppState }
+type SSHKeysHandler struct{ state *handlers.AppState }
 
-func NewSSHKeysHandler(state *AppState) *SSHKeysHandler { return &SSHKeysHandler{state: state} }
+func NewSSHKeysHandler(state *handlers.AppState) *SSHKeysHandler {
+	return &SSHKeysHandler{state: state}
+}
 
 // List GET /me/ssh-keys
 func (h *SSHKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	keys, err := h.state.Store.ListSSHKeysByUser(userID)
 	if err != nil {
-		sendJSONError(w, "Failed to load SSH keys", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load SSH keys", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "keys": keys})
@@ -53,49 +57,49 @@ type addSSHKeyRequest struct {
 	// A key opens every file the account can reach, without the second
 	// factor, so adding one asks for the password and the code again - the
 	// same rule as minting an API key.
-	reauthFields
+	handlers.ReauthFields
 }
 
 // Create POST /me/ssh-keys
 func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req addSSHKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || len(req.Name) > 128 {
-		sendJSONError(w, "Give the key a name of up to 128 characters", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Give the key a name of up to 128 characters", http.StatusBadRequest)
 		return
 	}
 	line, fp, err := normalizeSSHPublicKey(req.PublicKey)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if rerr := requireReauth(h.state, userID, req.Password, req.Code); rerr != nil {
-		writeReauthError(w, rerr)
+	if rerr := handlers.RequireReauth(h.state, userID, req.Password, req.Code); rerr != nil {
+		handlers.WriteReauthError(w, rerr)
 		return
 	}
 	added, err := h.state.Store.AddSSHKey(&models.SSHKey{UserID: userID, Name: req.Name, PublicKey: line, Fingerprint: fp}, maxSSHKeysPerUser)
 	switch {
 	case errors.Is(err, store.ErrSSHKeyExists):
-		sendJSONError(w, "This key is already on your account", http.StatusConflict)
+		handlers.SendJSONError(w, "This key is already on your account", http.StatusConflict)
 		return
 	case err != nil:
 		log.Printf("ssh keys: add for %s: %v", userID, err)
-		sendJSONError(w, "Failed to add the SSH key", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to add the SSH key", http.StatusInternalServerError)
 		return
 	case !added:
-		sendJSONError(w, "An account can hold up to "+strconv.Itoa(maxSSHKeysPerUser)+" SSH keys. Remove one first.", http.StatusConflict)
+		handlers.SendJSONError(w, "An account can hold up to "+strconv.Itoa(maxSSHKeysPerUser)+" SSH keys. Remove one first.", http.StatusConflict)
 		return
 	}
-	LogIdentityAudit(h.state, r, AuditEventSSHKeyAdded, userID, userID, map[string]interface{}{"name": req.Name, "fingerprint": fp})
+	handlers.LogIdentityAudit(h.state, r, AuditEventSSHKeyAdded, userID, userID, map[string]interface{}{"name": req.Name, "fingerprint": fp})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "fingerprint": fp,
 		"note": "SFTP accepts the key within a minute."})
 }
@@ -104,24 +108,24 @@ func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *SSHKeysHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid key ID", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid key ID", http.StatusBadRequest)
 		return
 	}
 	found, err := h.state.Store.DeleteSSHKey(userID, id)
 	if err != nil {
-		sendJSONError(w, "Failed to remove the SSH key", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to remove the SSH key", http.StatusInternalServerError)
 		return
 	}
 	if !found {
-		sendJSONError(w, "Key not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
-	LogIdentityAudit(h.state, r, AuditEventSSHKeyRemoved, userID, userID, map[string]interface{}{"id": id})
+	handlers.LogIdentityAudit(h.state, r, AuditEventSSHKeyRemoved, userID, userID, map[string]interface{}{"id": id})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -164,18 +168,4 @@ func rsaKeyBits(pk ssh.PublicKey) int {
 		return k.Size() * 8
 	}
 	return 0
-}
-
-// revokeAllSSHKeys removes every SFTP key of an account, on the same recovery
-// paths as revokeAllAPIKeys and for the same reason: a key added while the
-// account was in someone else's hands is a way back in no password reset sees.
-func revokeAllSSHKeys(state *AppState, userID, why string) int {
-	if state == nil || state.Store == nil {
-		return 0
-	}
-	n, err := state.Store.DeleteAllSSHKeys(userID)
-	if err != nil {
-		log.Printf("%s: remove SSH keys of %s: %v", why, userID, err)
-	}
-	return n
 }

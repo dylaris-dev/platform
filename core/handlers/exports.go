@@ -458,3 +458,62 @@ const (
 	KeyCoreStorageS3Region     = keyCoreStorageS3Region
 	KeyCoreStorageConnectionID = keyCoreStorageConnectionID
 )
+
+// --- users -------------------------------------------------------------------
+
+func MayManageAccount(state *AppState, r *http.Request, target *models.User) bool {
+	return mayManageAccount(state, r, target)
+}
+
+func ActingOnSelf(r *http.Request, targetID string) bool { return actingOnSelf(r, targetID) }
+
+// AdminReauthRequest is embedded in the admin account-action bodies; the alias
+// keeps the JSON shape ({"reauth": {...}}) exactly as it was.
+type (
+	AdminReauthRequest = adminReauthRequest
+	ReauthFields       = reauthFields
+)
+
+func RequireAdminReauth(w http.ResponseWriter, r *http.Request, state *AppState, body adminReauthRequest) bool {
+	return requireAdminReauth(w, r, state, body)
+}
+
+func RequireReauth(state *AppState, userID, password, code string) *reauthError {
+	return requireReauth(state, userID, password, code)
+}
+
+func WriteReauthError(w http.ResponseWriter, e *reauthError) { writeReauthError(w, e) }
+
+func NotifyPasswordChanged(state *AppState, email, username string) {
+	notifyPasswordChanged(state, email, username)
+}
+
+func RevokeAllAPIKeys(state *AppState, userID, why string) int {
+	return revokeAllAPIKeys(state, userID, why)
+}
+
+func RevokeAllSSHKeys(state *AppState, userID, why string) int {
+	return revokeAllSSHKeys(state, userID, why)
+}
+
+func StampBeamAccessForUser(ctx context.Context, state *AppState, userID string) {
+	stampBeamAccessForUser(ctx, state, userID)
+}
+
+func StampBeamUUIDs(ctx context.Context, state *AppState, uuids []string) {
+	stampBeamUUIDs(ctx, state, uuids)
+}
+
+func BeamReachOf(state *AppState, userID string) []string { return beamReachOf(state, userID) }
+
+func CatalogCaps(caps []string) []string { return catalogCaps(caps) }
+
+func ValidatePanelCaps(caps []string) error { return validatePanelCaps(caps) }
+
+// SetAccountMailSender replaces the account notice sender for a test and
+// returns the restore func. Production never calls it.
+func SetAccountMailSender(fn func(services.MailStore, string, string, string, map[string]string) error) (restore func()) {
+	prev := sendAccountMail
+	sendAccountMail = fn
+	return func() { sendAccountMail = prev }
+}

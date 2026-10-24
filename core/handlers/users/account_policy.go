@@ -1,15 +1,17 @@
-package handlers
+package users
 
 import (
 	"encoding/json"
 	"net/http"
+
+	"dylaris-core/handlers"
 )
 
 type AccountPolicyHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewAccountPolicyHandler(state *AppState) *AccountPolicyHandler {
+func NewAccountPolicyHandler(state *handlers.AppState) *AccountPolicyHandler {
 	return &AccountPolicyHandler{state: state}
 }
 
@@ -31,15 +33,15 @@ func (h *AccountPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *AccountPolicyHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req accountPolicy
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.NameChangeCooldownDays < 0 || req.NameChangeCooldownDays > 3650 {
-		sendJSONError(w, "Cooldown must be 0-3650 days", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Cooldown must be 0-3650 days", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetUserAccountPolicy(req.AllowNameChange, req.NameChangeCooldownDays); err != nil {
-		sendJSONError(w, "Save failed", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "users.policy.changed", nil)

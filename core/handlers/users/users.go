@@ -1,10 +1,6 @@
-package handlers
+package users
 
 import (
-	"dylaris-core/models"
-	"dylaris-core/services"
-	"dylaris-core/services/redisacl"
-	"dylaris-core/store"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -14,28 +10,34 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers"
+	"dylaris-core/models"
+	"dylaris-core/services"
+	"dylaris-core/services/redisacl"
+	"dylaris-core/store"
+
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type UserHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewUserHandler(state *AppState) *UserHandler {
+func NewUserHandler(state *handlers.AppState) *UserHandler {
 	return &UserHandler{state: state}
 }
 
 // GetAllUsers GET /api/users - every account.
 func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		handlers.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	users, err := h.state.Store.ListUsers()
 	if err != nil {
-		sendJSONError(w, "Failed to fetch users", 500)
+		handlers.SendJSONError(w, "Failed to fetch users", 500)
 		return
 	}
 
@@ -68,7 +70,7 @@ type createUserRequest struct {
 	// carry one. Plaintext on the way in, hashed into req.User.Password below
 	// - never assign this field to the model directly.
 	Password string `json:"password"`
-	adminReauthRequest
+	handlers.AdminReauthRequest
 }
 
 // createsPrivilegedAccount reports whether this create hands out power rather
@@ -90,13 +92,13 @@ func createsPrivilegedAccount(req createUserRequest) bool {
 // the account still exists afterwards.
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		handlers.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	var req createUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		handlers.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 
@@ -106,7 +108,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// exactly like the register + rename paths.
 	req.Username = strings.TrimSpace(req.Username)
 	if !validate.IsUsername(req.Username) {
-		sendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", 400)
+		handlers.SendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", 400)
 		return
 	}
 	// The fourth door onto a username, and the only one that never checked at
@@ -115,11 +117,11 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// unique index on LOWER(username) is the real guard now; this is the
 	// message that says which name the collision is with.
 	if taken, _ := h.state.Store.UsernameTaken(req.Username, ""); taken {
-		sendJSONError(w, "Username is taken", 409)
+		handlers.SendJSONError(w, "Username is taken", 409)
 		return
 	}
 	if req.Password == "" {
-		sendJSONError(w, "Password is required", 400)
+		handlers.SendJSONError(w, "Password is required", 400)
 		return
 	}
 	// Stored as the other doors store it. Kept as typed, "Bob@X.com" passed
@@ -127,25 +129,25 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// account on one reset mailbox.
 	req.User.Email = strings.ToLower(strings.TrimSpace(req.User.Email))
 	if req.User.Email != "" && !validate.IsEmail(req.User.Email) {
-		sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid email address", http.StatusBadRequest)
 		return
 	}
 	// There is no unique index on users.email, and a second account on an
 	// existing address makes that address's password reset pick either row.
 	if email := req.User.Email; email != "" {
 		if existing, eerr := h.state.Store.GetUserByEmail(email); eerr == nil && existing != nil {
-			sendJSONError(w, "Email is already in use", http.StatusConflict)
+			handlers.SendJSONError(w, "Email is already in use", http.StatusConflict)
 			return
 		}
 	}
 	// The body decodes into models.User, whose isAdmin is written as sent.
-	if req.User.IsAdmin && !IsAdmin(r) {
-		sendJSONError(w, "Only an admin can create an admin", http.StatusForbidden)
+	if req.User.IsAdmin && !handlers.IsAdmin(r) {
+		handlers.SendJSONError(w, "Only an admin can create an admin", http.StatusForbidden)
 		return
 	}
 	// Enforce the same password-length policy the register + reset paths apply.
-	if min := LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
-		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
+	if min := handlers.LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
+		handlers.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
 	}
 	// A PRIVILEGED account is durable access that outlives the session creating
@@ -153,14 +155,14 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// it holds nothing until somebody grants it something, and every route that
 	// grants is gated the same way. Gating routine user creation as well would
 	// train operators to type their password without reading the dialog.
-	if createsPrivilegedAccount(req) && !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
+	if createsPrivilegedAccount(req) && !handlers.RequireAdminReauth(w, r, h.state, req.AdminReauthRequest) {
 		return
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("CreateUser: bcrypt hashing failed for username=%q: %v", req.Username, err)
-		sendJSONError(w, "Could not create user", 500)
+		handlers.SendJSONError(w, "Could not create user", 500)
 		return
 	}
 	// req.User, not req: CreateUser persists the embedded model, and the
@@ -174,12 +176,12 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.state.Store.CreateUser(&req.User); err != nil {
 		log.Printf("CreateUser failed for username=%q: %v", req.Username, err)
-		sendJSONError(w, "Could not create user", 409)
+		handlers.SendJSONError(w, "Could not create user", 409)
 		return
 	}
 
 	creatorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -194,23 +196,23 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 // the user logs in themselves. Idempotent on already-active users.
 func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		handlers.SendJSONError(w, "Database not connected", 503)
 		return
 	}
-	id, ok := parseUserID(w, r)
+	id, ok := handlers.ParseUserID(w, r)
 	if !ok {
 		return
 	}
-	if target, terr := h.state.Store.GetUserByID(id); terr != nil || target == nil || !mayManageAccount(h.state, r, target) {
-		sendJSONError(w, "You cannot change an account with more rights than yours", http.StatusForbidden)
+	if target, terr := h.state.Store.GetUserByID(id); terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target) {
+		handlers.SendJSONError(w, "You cannot change an account with more rights than yours", http.StatusForbidden)
 		return
 	}
 	if err := h.state.Store.CancelUserDeletion(id); err != nil {
-		sendJSONError(w, "Failed to cancel deletion", 500)
+		handlers.SendJSONError(w, "Failed to cancel deletion", 500)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventDeletionCancelledByAdmin, actorID, id, nil)
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventDeletionCancelledByAdmin, actorID, id, nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -235,11 +237,11 @@ func (h *UserHandler) otherAdminExists(excludeID string) (bool, error) {
 // 409 with that reason rather than a bare 500.
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		handlers.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
-	id, ok := parseUserID(w, r)
+	id, ok := handlers.ParseUserID(w, r)
 	if !ok {
 		return
 	}
@@ -248,11 +250,11 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	userToDelete, err := h.state.Store.GetUserByID(id)
 
 	if err == nil && userToDelete.Username == currentUser {
-		sendJSONError(w, "You cannot delete yourself", 403)
+		handlers.SendJSONError(w, "You cannot delete yourself", 403)
 		return
 	}
-	if !IsAdmin(r) && (err != nil || userToDelete == nil || !mayManageAccount(h.state, r, userToDelete)) {
-		sendJSONError(w, "You cannot delete an account with more rights than yours", 403)
+	if !handlers.IsAdmin(r) && (err != nil || userToDelete == nil || !handlers.MayManageAccount(h.state, r, userToDelete)) {
+		handlers.SendJSONError(w, "You cannot delete an account with more rights than yours", 403)
 		return
 	}
 
@@ -265,11 +267,11 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		if cerr != nil {
 			// Refuse when the answer is unknown. Guessing "yes" here is the one
 			// direction that is unrecoverable.
-			sendJSONError(w, "Could not verify how many admins remain", 503)
+			handlers.SendJSONError(w, "Could not verify how many admins remain", 503)
 			return
 		}
 		if !others {
-			sendJSONError(w, "This is the last admin. Make someone else an admin first.", 409)
+			handlers.SendJSONError(w, "This is the last admin. Make someone else an admin first.", 409)
 			return
 		}
 	}
@@ -277,11 +279,11 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// Deletion is the most destructive account action and cannot be undone -
 	// it tears down link kits, BYON nodes and addresses - yet it was the one
 	// that skipped the re-proof a password, email, role or 2FA change asks for.
-	var reauth adminReauthRequest
+	var reauth handlers.AdminReauthRequest
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&reauth)
 	}
-	if !requireAdminReauth(w, r, h.state, reauth) {
+	if !handlers.RequireAdminReauth(w, r, h.state, reauth) {
 		return
 	}
 
@@ -302,7 +304,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	//
 	// The Beam stamp goes first of all: once the grants are gone there is no
 	// list of what this account could reach left to stamp.
-	stampBeamAccessForUser(r.Context(), h.state, id)
+	handlers.StampBeamAccessForUser(r.Context(), h.state, id)
 	// Read now, removed once the row is gone: the packs cascade with it.
 	packDirs := h.state.PackDirsOfUser(id)
 	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
@@ -312,10 +314,10 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		// sentence naming what is in the way is the whole value of the refusal.
 		var owns *services.TenantStillOwnsServersError
 		if errors.As(err, &owns) {
-			sendJSONError(w, owns.Error()+" Nothing was deleted.", http.StatusConflict)
+			handlers.SendJSONError(w, owns.Error()+" Nothing was deleted.", http.StatusConflict)
 			return
 		}
-		sendJSONError(w, "Could not remove what this account still holds. Nothing was deleted.", 500)
+		handlers.SendJSONError(w, "Could not remove what this account still holds. Nothing was deleted.", 500)
 		return
 	}
 
@@ -327,11 +329,11 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		// no way to find out why.
 		switch {
 		case errors.Is(err, store.ErrUserOwnsServers):
-			sendJSONError(w, "This user still owns servers. Transfer or delete their servers first.", 409)
+			handlers.SendJSONError(w, "This user still owns servers. Transfer or delete their servers first.", 409)
 		case errors.Is(err, store.ErrUserStillReferenced):
-			sendJSONError(w, "This user is still referenced by other records (for example server invites they issued) and cannot be deleted yet.", 409)
+			handlers.SendJSONError(w, "This user is still referenced by other records (for example server invites they issued) and cannot be deleted yet.", 409)
 		default:
-			sendJSONError(w, "Delete failed", 500)
+			handlers.SendJSONError(w, "Delete failed", 500)
 		}
 		return
 	}
@@ -365,7 +367,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		deleted["username"] = userToDelete.Username
 		deleted["email"] = userToDelete.Email
 	}
-	LogIdentityAudit(h.state, r, AuditEventUserHardDeleted, actorID, "", deleted)
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventUserHardDeleted, actorID, "", deleted)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -374,61 +376,61 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 // account, hashed before it is stored. No current password is asked for; this
 // is the admin path, not the self-service one.
 func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseUserID(w, r)
+	id, ok := handlers.ParseUserID(w, r)
 	if !ok {
 		return
 	}
 
 	var req struct {
 		Password string `json:"password"`
-		adminReauthRequest
+		handlers.AdminReauthRequest
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
-		sendJSONError(w, "Password is required", 400)
+		handlers.SendJSONError(w, "Password is required", 400)
 		return
 	}
 	target, terr := h.state.Store.GetUserByID(id)
 	if terr != nil || target == nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
-	if !mayManageAccount(h.state, r, target) {
-		sendJSONError(w, "You cannot change the password of an account with more rights than yours", http.StatusForbidden)
+	if !handlers.MayManageAccount(h.state, r, target) {
+		handlers.SendJSONError(w, "You cannot change the password of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
-	if min := LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
-		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
+	if min := handlers.LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
+		handlers.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
 	}
 
 	// Setting somebody else's password is taking their account over, so the
 	// question is not what this session may do but whether the administrator is
 	// the one asking. Last, after every cheap check and before the hash.
-	if !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
+	if !handlers.RequireAdminReauth(w, r, h.state, req.AdminReauthRequest) {
 		return
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		sendJSONError(w, "Failed to hash password", 500)
+		handlers.SendJSONError(w, "Failed to hash password", 500)
 		return
 	}
 
 	if err := h.state.Store.UpdateUserPassword(id, string(hashed)); err != nil {
-		sendJSONError(w, "Failed to update password", 500)
+		handlers.SendJSONError(w, "Failed to update password", 500)
 		return
 	}
 	// An operator sets someone's password because the account is not in its
 	// owner's hands any more. The password change ended the sessions; the API
 	// keys are the other way in, and they used to keep working.
-	revoked := revokeAllAPIKeys(h.state, id, "admin password reset")
-	stampBeamAccessForUser(r.Context(), h.state, id)
-	sshRevoked := revokeAllSSHKeys(h.state, id, "admin password reset")
+	revoked := handlers.RevokeAllAPIKeys(h.state, id, "admin password reset")
+	handlers.StampBeamAccessForUser(r.Context(), h.state, id)
+	sshRevoked := handlers.RevokeAllSSHKeys(h.state, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 	// The owner hears about it: an operator account setting passwords is also
 	// what a compromised operator account looks like.
-	notifyPasswordChanged(h.state, target.Email, target.Username)
+	handlers.NotifyPasswordChanged(h.state, target.Email, target.Username)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Password updated"})
 }
@@ -440,7 +442,7 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	id := vars["id"]
 	// The operator's own layer. "default" here means the purchase (user:<id>)
 	// and the platform scopes below it answer.
-	scope := adminRouteScope(id)
+	scope := handlers.AdminRouteScope(id)
 
 	limit, err := h.state.Store.GetGatewayRouteLimit(scope)
 	if err != nil || limit == nil {
@@ -476,14 +478,14 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
-	scope := adminRouteScope(id)
+	scope := handlers.AdminRouteScope(id)
 	// A route limit is a quota. Nobody but an admin sets their own, and staff
 	// set it only on accounts they may manage.
-	if !IsAdmin(r) {
+	if !handlers.IsAdmin(r) {
 		actorID, _ := r.Context().Value("userID").(string)
 		target, terr := h.state.Store.GetUserByID(id)
-		if actorID == id || terr != nil || target == nil || !mayManageAccount(h.state, r, target) {
-			sendJSONError(w, "You cannot change this account's route limit", http.StatusForbidden)
+		if actorID == id || terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target) {
+			handlers.SendJSONError(w, "You cannot change this account's route limit", http.StatusForbidden)
 			return
 		}
 	}
@@ -493,7 +495,7 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 		MaxRoutes int    `json:"maxRoutes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		handlers.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 
@@ -509,14 +511,14 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 		h.state.Store.SetGatewayRouteLimit(scope, nil)
 	case "custom":
 		if req.MaxRoutes < 1 {
-			sendJSONError(w, "Custom limit must be at least 1 (use mode \"disabled\" for none)", 400)
+			handlers.SendJSONError(w, "Custom limit must be at least 1 (use mode \"disabled\" for none)", 400)
 			return
 		}
 		h.state.Store.SetGatewayRouteLimit(scope, &req.MaxRoutes)
 	case "disabled":
 		h.state.Store.SetGatewayRouteLimit(scope, &zero)
 	default:
-		sendJSONError(w, "Invalid mode (use: default, unlimited, custom, disabled)", 400)
+		handlers.SendJSONError(w, "Invalid mode (use: default, unlimited, custom, disabled)", 400)
 		return
 	}
 

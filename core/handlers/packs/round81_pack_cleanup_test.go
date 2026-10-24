@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/users"
 
 	"github.com/gorilla/mux"
 
@@ -255,7 +256,7 @@ func deleteUserPackObjects(t *testing.T, fail bool) {
 	ctx = context.WithValue(ctx, "isAdmin", true)
 	r = mux.SetURLVars(r.WithContext(ctx), map[string]string{"id": cleanupOwner})
 	rec := httptest.NewRecorder()
-	handlers.NewUserHandler(st).DeleteUser(rec, r)
+	users.NewUserHandler(st).DeleteUser(rec, r)
 	if fail {
 		if rec.Code == http.StatusOK || !exists(root, d+"pack.mrpack") {
 			t.Fatalf("a refused delete (%d) removed the account's pack objects", rec.Code)
