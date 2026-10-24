@@ -17,7 +17,7 @@ import MapRenderAction from '@/components/MapRenderAction';
 //    shows a landing card with a popout button (false).
 //  - proxied, surface tab|both: gets a ticket from Core on this origin, has the
 //    tab's OWN host store it as that host's cookie
-//    (core/handlers/tab_proxy_host.go HostMint), and then embeds that host. The
+//    (core/handlers/tabs/tab_proxy_host.go HostMint), and then embeds that host. The
 //    iframe src never carries a token, and the container runs on an origin that
 //    is not the panel's, so its JavaScript reaches neither these pages nor the
 //    session cookie, which is host-only to the panel's host.

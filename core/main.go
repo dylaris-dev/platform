@@ -26,6 +26,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/backup"
+	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/tabs"
 	"dylaris-core/metrics"
 	"dylaris-core/models"
@@ -465,7 +466,7 @@ func main() {
 	voiceService := services.NewVoiceService(pgStore, redisClient)
 	voiceService.SetLeader(coreLeader)
 	voiceService.SetRevoke(func(ctx context.Context, srv *models.Server) error {
-		return handlers.RevokeServerVoice(ctx, appState, srv)
+		return gateway.RevokeServerVoice(ctx, appState, srv)
 	})
 	voiceService.Start(bgCtx)
 

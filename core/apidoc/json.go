@@ -96,6 +96,7 @@ func GenerateJSON(coreDir string) (string, error) {
 	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{
 		filepath.Join(coreDir, "handlers"),
 		filepath.Join(coreDir, "handlers", "packs"),
+		filepath.Join(coreDir, "handlers", "gateway"),
 		filepath.Join(coreDir, "handlers", "beam"),
 		filepath.Join(coreDir, "handlers", "billing"),
 		filepath.Join(coreDir, "handlers", "tabs"),

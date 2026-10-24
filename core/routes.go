@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
+	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/tabs"
@@ -561,7 +562,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// never exercise a warp route.
 	pgStore, _ := appState.Store.(*store.PostgresStore)
 	warpService := services.NewWarpService(pgStore, appState.Redis, cfg.ClusterSecret)
-	warpHandler := handlers.NewWarpHandler(appState, warpService)
+	warpHandler := gateway.NewWarpHandler(appState, warpService)
 	// Published on the state as well: the account delete needs it to drop a
 	// departing tenant's overlay peers, and it lives nowhere else.
 	//
@@ -632,8 +633,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := handlers.NewNodeEnrollHandler(appState)
 	nodeAdmissionHandler := handlers.NewNodeAdmissionHandler(appState)
-	gatewayDNSHandler := handlers.NewGatewayDNSHandler(appState)
-	gatewayBandwidthHandler := handlers.NewGatewayBandwidthHandler(appState)
+	gatewayDNSHandler := gateway.NewGatewayDNSHandler(appState)
+	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(appState)
 	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)
 	ticketDeletionsHandler := tickets.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
@@ -1467,7 +1468,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")
 
 	// --- Gateway Endpoints ---
-	gatewayHandler := handlers.NewGatewayHandler(appState)
+	gatewayHandler := gateway.NewGatewayHandler(appState)
 	dnsHandler := handlers.NewDNSHandler(appState)
 	trafficLimitHandler := billing.NewTrafficLimitHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
@@ -1513,7 +1514,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Custom-domain ownership proof. Scoped to the caller inside each handler -
 	// a claim is one user's relationship to one domain, and the block is per
 	// (user, domain) so nobody can lock a competitor's domain out globally.
-	customDomainHandler := handlers.NewCustomDomainHandler(appState, services.NewNetResolver())
+	customDomainHandler := gateway.NewCustomDomainHandler(appState, services.NewNetResolver())
 	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(customDomainHandler.List)).Methods("GET")
 	api.HandleFunc("/gateway/custom-domains/{domain:.+}/txt-token",
 		authHandler.AuthMiddleware(customDomainHandler.IssueTXTToken)).Methods("POST")

@@ -6,8 +6,9 @@ import { showVoiceSwitch, voiceAddress, voiceErrorMessage } from './voiceChat';
 /** Every 409 code Core's enable can answer, read from the handler rather than
  *  restated, so a new refusal without a panel sentence turns this red. */
 function coreCodes(): string[] {
-    const src = readFileSync(join(__dirname, '../../../core/handlers/gateway_voice.go'), 'utf8');
-    const codes = [...src.matchAll(/sendJSONErrorCode\([^)]*?"([a-z_]+)", http\.StatusConflict\)/g)].map(m => m[1]);
+    const src = readFileSync(join(__dirname, '../../../core/handlers/gateway/gateway_voice.go'), 'utf8');
+    // handlers/gateway calls it as handlers.SendJSONErrorCode.
+    const codes = [...src.matchAll(/[sS]endJSONErrorCode\([^)]*?"([a-z_]+)", http\.StatusConflict\)/g)].map(m => m[1]);
     expect(codes.length, 'no codes found in gateway_voice.go - this test stopped reading it').toBeGreaterThan(5);
     return codes;
 }

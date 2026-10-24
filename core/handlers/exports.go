@@ -217,3 +217,98 @@ const SuspendedMessage = suspendedMessage
 
 // DemoAccountUUIDSetting is the settings key naming the demo account.
 const DemoAccountUUIDSetting = demoAccountUUIDSetting
+
+// --- gateway -----------------------------------------------------------------
+
+func (s *AppState) GatewayEnabled() bool { return s.gatewayEnabled() }
+
+func GatewayDisabledResponse(w http.ResponseWriter) { gatewayDisabledResponse(w) }
+
+func (s *AppState) RequireEntitlement(r *http.Request, w http.ResponseWriter, userID, kind string) bool {
+	return s.requireEntitlement(r, w, userID, kind)
+}
+
+func (s *AppState) UserOwnedByOther(ownerID *string, userID string) bool {
+	return s.userOwnedByOther(ownerID, userID)
+}
+
+func (s *AppState) KitOwnedByOther(ownerID string, userID string) bool {
+	return s.kitOwnedByOther(ownerID, userID)
+}
+
+func (s *AppState) DeployConfig() DeployConfig { return s.deployConfig() }
+
+func MustAtoi(s string) int { return mustAtoi(s) }
+
+func NormHost(s string) string { return normHost(s) }
+
+func IsHostname(s string, minLabels int) bool { return isHostname(s, minLabels) }
+
+func ValidateSubdomain(sub, mode string) bool { return validateSubdomain(sub, mode) }
+
+func ByonActive(state *AppState, r *http.Request) bool { return byonActive(state, r) }
+
+func RouteOnlyActive(state *AppState, r *http.Request) bool { return routeOnlyActive(state, r) }
+
+func OwnerRefusal(state *AppState, r *http.Request, ownerID string) string {
+	return ownerRefusal(state, r, ownerID)
+}
+
+func GenerateLinkIdentity() (string, error) { return generateLinkIdentity() }
+
+func GenerateNodeWarpIdentity() (string, error) { return generateNodeWarpIdentity() }
+
+func OwnNodeKey(st store.Store, nodeID, userID string) (*store.WarpAPIKey, int, string) {
+	return ownNodeKey(st, nodeID, userID)
+}
+
+func NodeReleaseAtLeast(ctx context.Context, st *AppState, nodeToken, since string) bool {
+	return nodeReleaseAtLeast(ctx, st, nodeToken, since)
+}
+
+func LinkAnnouncesCap(ctx context.Context, rdb *redis.Client, token, cap string) (bool, error) {
+	return linkAnnouncesCap(ctx, rdb, token, cap)
+}
+
+func GrpcPortFromEnv() string { return grpcPortFromEnv() }
+
+func OverlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
+	return overlayServiceAddrs(grpcPort)
+}
+
+func SvcVoiceEnable(existing, host string, publicPort int) string {
+	return svcVoiceEnable(existing, host, publicPort)
+}
+
+func SvcVoiceDisable(existing string) string { return svcVoiceDisable(existing) }
+
+func PlasmoVoiceEnable(existing, host string, publicPort int) string {
+	return plasmoVoiceEnable(existing, host, publicPort)
+}
+
+func PlasmoVoiceDisable(existing string) string { return plasmoVoiceDisable(existing) }
+
+func (h *RconHandler) FindVoiceConfig(nodeID int, serverUUID, subServer string) (mod, relPath, content string, err error) {
+	return h.findVoiceConfig(nodeID, serverUUID, subServer)
+}
+
+func (h *RconHandler) WriteNodeFileString(nodeID int, serverUUID, relPath, content string) error {
+	return h.writeNodeFileString(nodeID, serverUUID, relPath, content)
+}
+
+// The voice-mod errors are compared with ==, so these are the same values.
+var (
+	ErrVoiceModMissing   = errVoiceModMissing
+	ErrVoiceModAmbiguous = errVoiceModAmbiguous
+)
+
+const LinkCapClientAddr = linkCapClientAddr
+
+var (
+	DefaultMaxCustomDomains     = defaultMaxCustomDomains
+	DefaultBlockedRoutePrefixes = defaultBlockedRoutePrefixes
+)
+
+func AdminRouteScope(userID string) string { return adminRouteScope(userID) }
+
+const DefaultWarpSpokeAllowedPorts = defaultWarpSpokeAllowedPorts
