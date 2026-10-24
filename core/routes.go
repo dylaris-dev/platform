@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/stats"
+	"dylaris-core/handlers/tabs"
 	"dylaris-core/handlers/tickets"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -39,7 +40,7 @@ type routeCfg struct {
 type routeExtras struct {
 	settingsHandler *handlers.SettingsHandler
 	warpService     *services.WarpService
-	proxyHandler    *handlers.ProxyHandler
+	proxyHandler    *tabs.ProxyHandler
 }
 
 // requiredCaps maps a route's mux path template to the capability id that
@@ -606,8 +607,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	technicHandler := handlers.NewTechnicHandler(appState)
 	serverModsHandler := handlers.NewServerModsHandler(appState)
 	sparkHandler := handlers.NewSparkHandler(appState)
-	serverTabsHandler := handlers.NewServerTabsHandler(appState)
-	proxyHandler := handlers.NewProxyHandler(appState, authHandler)
+	serverTabsHandler := tabs.NewServerTabsHandler(appState)
+	proxyHandler := tabs.NewProxyHandler(appState, authHandler)
 	modrinthPATHandler := handlers.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	packsHandler := packs.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
@@ -618,7 +619,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
-	tabProxySettingsHandler := handlers.NewTabProxySettingsHandler(appState)
+	tabProxySettingsHandler := tabs.NewTabProxySettingsHandler(appState)
 	usageHandler := handlers.NewUsageHandler(appState)
 	billingHandler := handlers.NewBillingHandler(appState)
 	entitlementHandler := handlers.NewEntitlementHandler(appState)
@@ -702,7 +703,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Custom-tab reverse proxy: the CONTENT never appears on this router.
 	//
 	// A proxied tab is served at the root of its own host ("<label>.<suffix>"),
-	// which handlers.TabProxyHostMux takes off the wire before this router or
+	// which tabs.TabProxyHostMux takes off the wire before this router or
 	// CORS ever sees it. That is the point - a tenant's container must not share
 	// an origin with the panel or the API. What stays here is the one lookup the
 	// share-wrapper page needs: token to content host. Anonymous, because the

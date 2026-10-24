@@ -422,7 +422,7 @@ func TestCap_TabsReadVsWrite(t *testing.T) {
 // reaches the authz check without one. The ORDER is asserted too - a capability
 // check after the ticket is issued would be decoration.
 func TestTabTicketStillRequiresTabsRead(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("handlers", "tab_proxy_host.go"))
+	src, err := os.ReadFile(filepath.Join("handlers", "tabs", "tab_proxy_host.go"))
 	if err != nil {
 		t.Fatalf("read tab_proxy_host.go: %v", err)
 	}

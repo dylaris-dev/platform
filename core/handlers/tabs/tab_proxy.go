@@ -1,4 +1,4 @@
-package handlers
+package tabs
 
 // ProxyHandler serves the custom-tab reverse proxy: it streams a server
 // container's HTTP/WebSocket through Core over the existing gRPC mesh, so the
@@ -32,8 +32,11 @@ import (
 	"sync"
 	"time"
 
-	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers"
+
 	pb "dylaris-proto/node"
+
+	nodegrpc "dylaris-core/grpc"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -95,11 +98,11 @@ var coreResponseStrip = map[string]bool{
 }
 
 type ProxyHandler struct {
-	state *AppState
-	auth  *AuthHandler
+	state *handlers.AppState
+	auth  *handlers.AuthHandler
 }
 
-func NewProxyHandler(state *AppState, auth *AuthHandler) *ProxyHandler {
+func NewProxyHandler(state *handlers.AppState, auth *handlers.AuthHandler) *ProxyHandler {
 	return &ProxyHandler{state: state, auth: auth}
 }
 
@@ -135,7 +138,7 @@ func (h *ProxyHandler) rawDB() *sql.DB {
 	if h.state.Store == nil {
 		return nil
 	}
-	provider, ok := h.state.Store.(sparkDBProvider)
+	provider, ok := h.state.Store.(handlers.SparkDBProvider)
 	if !ok {
 		return nil
 	}
@@ -368,7 +371,7 @@ func acceptsGzip(values []string) bool {
 // ticket or an unpublished link leaves it readable until it expires. Held to
 // the ticket's own lifetime, so revocation still takes effect as fast as it
 // did when nothing was cached (owner decision 2026-10-10).
-const tabProxyMaxBrowserCache = int(tabProxyTicketTTL / time.Second)
+const tabProxyMaxBrowserCache = int(handlers.TabProxyTicketTTL / time.Second)
 
 // browserCacheControl turns the container's Cache-Control into the single
 // value Core sends. It is always private (the content sits behind a per-user

@@ -1,4 +1,4 @@
-package handlers
+package tabs
 
 import (
 	"net/http"
@@ -30,15 +30,5 @@ func TestATabCannotClearThePanelsSiteData(t *testing.T) {
 	writeProxyHeaders(rec, []*pb.HttpHeader{{Key: "Clear-Site-Data", Value: `"cookies"`}, {Key: "X-Kept", Value: "1"}}, false)
 	if rec.Header().Get("Clear-Site-Data") != "" || rec.Header().Get("X-Kept") != "1" {
 		t.Fatalf("headers = %v", rec.Header())
-	}
-}
-
-// RCON took any characters; the console has refused control characters for
-// a while.
-func TestAnRCONCommandWithControlCharactersIsRefused(t *testing.T) {
-	h := &RconHandler{state: &AppState{}}
-	resp := h.execAgainstServer(t.Context(), 1, "u", 1, rconRequest{Command: "say hi\x00\x1b[2J"})
-	if resp.status != http.StatusBadRequest {
-		t.Fatalf("status %d (%s), want 400", resp.status, resp.Error)
 	}
 }

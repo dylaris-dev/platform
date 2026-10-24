@@ -1,10 +1,9 @@
-package handlers
+package tabs
 
 import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"dylaris-core/store"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +11,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
+	"dylaris-core/store"
 
 	"dylaris-pkg/validate"
 
@@ -241,18 +243,18 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 	}
 	custom, verr := validateCustomShareSlug(req.Slug)
 	if verr != nil {
-		sendJSONError(w, verr.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, verr.Error(), http.StatusBadRequest)
 		return
 	}
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])
 	db := h.db()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	var mode, surface, owner string
@@ -260,11 +262,11 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 	if err := db.QueryRow(`SELECT mode, surface, share_token, COALESCE(created_by::text,'')
 		FROM server_tabs WHERE id=$1 AND server_id=$2`,
 		tabID, serverID).Scan(&mode, &surface, &existing, &owner); err != nil {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	if mode != "proxied" || (surface != "page" && surface != "both") {
-		sendJSONError(w, "Share links only apply to proxied page tabs", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Share links only apply to proxied page tabs", http.StatusBadRequest)
 		return
 	}
 	// Minting a slug where there was none ADDS to the allowance Create checks
@@ -280,7 +282,7 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 		if owner != "" {
 			if used, uerr := h.countUserShareLinks(db, owner); uerr == nil &&
 				capReached(used, h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(r.Context())) {
-				sendJSONError(w, "This tab's owner has reached their share-link limit.", http.StatusConflict)
+				handlers.SendJSONError(w, "This tab's owner has reached their share-link limit.", http.StatusConflict)
 				return
 			}
 		}
@@ -289,7 +291,7 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 	if tok == "" {
 		var terr error
 		if tok, terr = generateShareToken(); terr != nil {
-			sendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -302,7 +304,7 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 	// sent to - in the old link and in every page it served - stayed open.
 	label, lerr := generateProxyHostLabel()
 	if lerr != nil {
-		sendJSONError(w, "Failed to rotate the link", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to rotate the link", http.StatusInternalServerError)
 		return
 	}
 	res, err := store.RotateTabShare(db, tabID, serverID, tok, label)
@@ -312,14 +314,14 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 		// would both pass a check-then-insert and one would silently take the
 		// other's link.
 		if isShareSlugTaken(err) {
-			sendJSONError(w, "That link is already taken. Pick another.", http.StatusConflict)
+			handlers.SendJSONError(w, "That link is already taken. Pick another.", http.StatusConflict)
 			return
 		}
-		sendJSONError(w, "Failed to save share link", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to save share link", http.StatusInternalServerError)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{"serverId": serverID})
@@ -331,22 +333,22 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 func (h *ServerTabsHandler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])
 	db := h.db()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	res, err := db.Exec(`UPDATE server_tabs SET share_token=NULL WHERE id=$1 AND server_id=$2`, tabID, serverID)
 	if err != nil {
-		sendJSONError(w, "Failed to revoke share link", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to revoke share link", http.StatusInternalServerError)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{"serverId": serverID})

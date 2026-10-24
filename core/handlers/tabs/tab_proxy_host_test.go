@@ -1,4 +1,4 @@
-package handlers
+package tabs
 
 import (
 	"database/sql"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -157,7 +159,7 @@ func (f *hostGateStore) GetServerByID(id int) (*models.Server, error) {
 	return nil, sql.ErrNoRows
 }
 
-func newHostGateHandler(t *testing.T, enabled, allowPublic bool) (*ProxyHandler, *AuthHandler) {
+func newHostGateHandler(t *testing.T, enabled, allowPublic bool) (*ProxyHandler, *handlers.AuthHandler) {
 	t.Helper()
 	fs := &hostGateStore{settings: map[string]string{}}
 	if enabled {
@@ -169,13 +171,13 @@ func newHostGateHandler(t *testing.T, enabled, allowPublic bool) (*ProxyHandler,
 		// cost this test a red run.
 		fs.settings["tab_proxy_allow_public_links"] = "true"
 	}
-	state := &AppState{
+	state := &handlers.AppState{
 		Store:              fs,
 		FeatureFlags:       services.NewFeatureFlags(fs),
 		FrontendURL:        "https://panel.example.com",
 		TabProxyHostSuffix: "share.example.com",
 	}
-	ah := NewAuthHandler(state, "test-tab-proxy-secret")
+	ah := handlers.NewAuthHandler(state, "test-tab-proxy-secret")
 	return NewProxyHandler(state, ah), ah
 }
 

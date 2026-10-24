@@ -157,3 +157,20 @@ func ValidateS3Endpoint(subject, endpoint string) error { return validateS3Endpo
 func PathIsOnContainerRootFS(path string) (onRoot bool, determinable bool) {
 	return pathIsOnContainerRootFS(path)
 }
+
+func ValidateTabURL(raw string) error { return validateTabURL(raw) }
+
+// SessionClaimsKey is the request-context key the auth middleware stores the
+// session's claims under. The value itself, not a copy: a subpackage reading
+// the context has to ask with the identical key.
+const SessionClaimsKey = sessionClaimsKey
+
+const TabProxyTicketTTL = tabProxyTicketTTL
+
+type SparkDBProvider = sparkDBProvider
+
+func SyncCustomTabsModule(state *AppState, enabled bool, audience string) error {
+	return syncCustomTabsModule(state, enabled, audience)
+}
+
+func IsDemoAccount(s *AppState, userID string) bool { return isDemoAccount(s, userID) }

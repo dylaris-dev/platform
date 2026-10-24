@@ -26,6 +26,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/backup"
+	"dylaris-core/handlers/tabs"
 	"dylaris-core/metrics"
 	"dylaris-core/models"
 	"dylaris-core/panelfs"
@@ -998,7 +999,7 @@ func main() {
 	// session cookie is host-only to the panel anyway, and an Authorization
 	// header is not ambient authority. Adding credentials to this CORS config
 	// would turn every origin above into one that can act as the signed-in user.
-	shareWrapperOrigin := handlers.TabProxyWrapperOrigin(cfg.FrontendURL, cfg.TabProxyHostSuffix)
+	shareWrapperOrigin := tabs.TabProxyWrapperOrigin(cfg.FrontendURL, cfg.TabProxyHostSuffix)
 	allowedOrigin := func(origin string) bool {
 		if origin != "" && origin == cfg.FrontendURL {
 			return true
@@ -1041,7 +1042,7 @@ func main() {
 	// configured returns the handler untouched.
 	srv := &http.Server{
 		Addr: ":" + port,
-		Handler: handlers.TabProxyHostMux(
+		Handler: tabs.TabProxyHostMux(
 			appState, extras.proxyHandler, handlers.SecurityHeaders(corsObj(root))),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,

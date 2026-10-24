@@ -1,13 +1,14 @@
-package handlers
+package tabs
 
 import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"github.com/gorilla/mux"
 )
@@ -19,10 +20,10 @@ import (
 // route creation + container-side HTTP reverse-proxy is a follow-up.
 
 type ServerTabsHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewServerTabsHandler(state *AppState) *ServerTabsHandler {
+func NewServerTabsHandler(state *handlers.AppState) *ServerTabsHandler {
 	return &ServerTabsHandler{state: state}
 }
 
@@ -119,7 +120,7 @@ func (h *ServerTabsHandler) db() *sql.DB {
 	if h.state.Store == nil {
 		return nil
 	}
-	provider, ok := h.state.Store.(sparkDBProvider)
+	provider, ok := h.state.Store.(handlers.SparkDBProvider)
 	if !ok {
 		return nil
 	}
@@ -131,12 +132,12 @@ func (h *ServerTabsHandler) db() *sql.DB {
 func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	db := h.db()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	rows, err := db.Query(`SELECT id, server_id, name, icon, url, position, enabled, open_in_panel,
@@ -145,7 +146,7 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 		COALESCE(sub_server_name,'')
 		FROM server_tabs WHERE server_id=$1 ORDER BY position ASC, id ASC`, serverID)
 	if err != nil {
-		sendJSONError(w, "Query failed", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Query failed", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -160,7 +161,7 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&t.ID, &t.ServerID, &t.Name, &t.Icon, &t.URL, &t.Position, &t.Enabled, &t.OpenInPanel,
 			&t.Mode, &t.TargetPort, &t.TargetPath, &t.Surface, &t.Visibility, &t.ShareToken, &expires,
 			&hostLabel, &t.SubServerName); err != nil {
-			sendJSONError(w, "Query failed", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Query failed", http.StatusInternalServerError)
 			return
 		}
 		if expires.Valid {
@@ -183,12 +184,12 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req serverTabRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -204,14 +205,14 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// that can never match would make the tab permanently invisible.
 	subServerName, serr := normalizeTabSubServer(req.SubServerName)
 	if serr != nil {
-		sendJSONError(w, serr.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, serr.Error(), http.StatusBadRequest)
 		return
 	}
 	if req.Icon == "" {
 		req.Icon = "layout-grid"
 	}
 	if req.Name == "" {
-		sendJSONError(w, "Name required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Name required", http.StatusBadRequest)
 		return
 	}
 	if req.Mode == "" {
@@ -219,7 +220,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	db := h.db()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	ctx := r.Context()
@@ -240,19 +241,19 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			targetPort = *req.TargetPort
 		}
 		if err := validateProxiedTab(targetPort, req.TargetPath, req.Surface, req.Visibility); err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if !h.state.FeatureFlags.IsTabProxyEnabled(ctx) {
-			sendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
+			handlers.SendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
 			return
 		}
 		if req.Visibility == "public" && !h.state.FeatureFlags.TabProxyAllowPublicLinks(ctx) {
-			sendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
+			handlers.SendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
 			return
 		}
 		if msg := h.tabCapExceeded(db, ctx, serverID, userID); msg != "" {
-			sendJSONError(w, msg, http.StatusConflict)
+			handlers.SendJSONError(w, msg, http.StatusConflict)
 			return
 		}
 	} else {
@@ -260,8 +261,8 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		req.Surface = "tab"
 		req.Visibility = "private"
 		req.TargetPath = "/"
-		if err := validateTabURL(req.URL); err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+		if err := handlers.ValidateTabURL(req.URL); err != nil {
+			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -273,13 +274,13 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if userID != "" {
 			if used, uerr := h.countUserShareLinks(db, userID); uerr == nil &&
 				capReached(used, h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(ctx)) {
-				sendJSONError(w, "You have reached your share-link limit.", http.StatusConflict)
+				handlers.SendJSONError(w, "You have reached your share-link limit.", http.StatusConflict)
 				return
 			}
 		}
 		tok, terr := generateShareToken()
 		if terr != nil {
-			sendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to generate share token", http.StatusInternalServerError)
 			return
 		}
 		shareToken = tok
@@ -289,7 +290,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// tab the column stays NULL, which is what "never expires" already is.
 	shareExpires, _, eerr := parseShareExpiry(req.ShareExpiresAt, time.Now())
 	if eerr != nil {
-		sendJSONError(w, eerr.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, eerr.Error(), http.StatusBadRequest)
 		return
 	}
 	if shareToken == nil {
@@ -317,7 +318,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		portArg = targetPort
 		lbl, lerr := generateProxyHostLabel()
 		if lerr != nil {
-			sendJSONError(w, "Failed to allocate a tab host", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to allocate a tab host", http.StatusInternalServerError)
 			return
 		}
 		hostLabel = lbl
@@ -333,7 +334,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		hostLabel, subServerName,
 	).Scan(&id)
 	if err != nil {
-		sendJSONError(w, "Failed to create tab", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to create tab", http.StatusInternalServerError)
 		return
 	}
 
@@ -352,13 +353,13 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])
 	var req serverTabRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Mode = strings.TrimSpace(req.Mode)
@@ -366,16 +367,16 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.Surface = strings.TrimSpace(req.Surface)
 	req.Visibility = strings.TrimSpace(req.Visibility)
 	if req.Mode == "proxied" && !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
-		sendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
+		handlers.SendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
 		return
 	}
 	if req.Visibility == "public" && !h.state.FeatureFlags.TabProxyAllowPublicLinks(r.Context()) {
-		sendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
+		handlers.SendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
 		return
 	}
 	if req.URL != "" {
-		if err := validateTabURL(strings.TrimSpace(req.URL)); err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+		if err := handlers.ValidateTabURL(strings.TrimSpace(req.URL)); err != nil {
+			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -388,7 +389,7 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// auth and proxy dispatch downstream trust these DB values, so an invalid
 	// port/path/enum must never reach the UPDATE.
 	if err := validateProxiedTabPatch(targetPort, req.TargetPath, req.Mode, req.Surface, req.Visibility); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if req.Mode == "proxied" {
@@ -409,13 +410,13 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			path = "/"
 		}
 		if err := validateProxiedTab(port, path, surface, visibility); err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
 	db := h.db()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	// The per-server proxied-tab cap was enforced in Create only, so a PATCH
@@ -428,7 +429,7 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		var currentMode string
 		if err := db.QueryRow(`SELECT mode FROM server_tabs WHERE id=$1 AND server_id=$2`,
 			tabID, serverID).Scan(&currentMode); err != nil {
-			sendJSONError(w, "Not found", http.StatusNotFound)
+			handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 			return
 		}
 		if currentMode != "proxied" {
@@ -445,13 +446,13 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 				owner, _ = r.Context().Value("userID").(string)
 			}
 			if msg := h.tabCapExceeded(db, r.Context(), serverID, owner); msg != "" {
-				sendJSONError(w, msg, http.StatusConflict)
+				handlers.SendJSONError(w, msg, http.StatusConflict)
 				return
 			}
 		}
 		// A tab that used to be direct has no content host yet.
 		if err := h.ensureProxyHostLabel(db, tabID); err != nil {
-			sendJSONError(w, "Failed to allocate a tab host", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to allocate a tab host", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -466,12 +467,12 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// the same argument. The explicit set-flag is what tells them apart.
 	shareExpires, setExpiry, eerr := parseShareExpiry(req.ShareExpiresAt, time.Now())
 	if eerr != nil {
-		sendJSONError(w, eerr.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, eerr.Error(), http.StatusBadRequest)
 		return
 	}
 	subServerName, serr := normalizeTabSubServer(req.SubServerName)
 	if serr != nil {
-		sendJSONError(w, serr.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, serr.Error(), http.StatusBadRequest)
 		return
 	}
 	res, err := db.Exec(`UPDATE server_tabs SET
@@ -507,11 +508,11 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		req.SubServerName != nil, subServerName,
 	)
 	if err != nil {
-		sendJSONError(w, "Failed to save tab", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to save tab", http.StatusInternalServerError)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 
@@ -527,22 +528,22 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *ServerTabsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if !h.serverExists(serverID) {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])
 	db := h.db()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	res, err := db.Exec(`DELETE FROM server_tabs WHERE id=$1 AND server_id=$2`, tabID, serverID)
 	if err != nil {
-		sendJSONError(w, "Delete failed", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Delete failed", http.StatusInternalServerError)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 
@@ -551,23 +552,6 @@ func (h *ServerTabsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	})
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
-}
-
-// validateTabURL ensures the URL parses + uses http/https. We don't pin
-// hosts (unlike Modrinth) since custom tabs are the user's own infra and
-// they're responsible for what they wire up.
-func validateTabURL(raw string) error {
-	if raw == "" {
-		return errBadTabURL("url is required")
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return errBadTabURL("invalid url")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return errBadTabURL("url must be http or https")
-	}
-	return nil
 }
 
 // validateProxiedTab checks the proxy-mode fields: a container port in
