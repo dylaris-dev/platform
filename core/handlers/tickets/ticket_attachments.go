@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"crypto/rand"
@@ -17,17 +17,19 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers"
+
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
 )
 
 type TicketAttachmentsHandler struct {
-	state   *AppState
+	state   *handlers.AppState
 	scanner AttachmentScanner
 }
 
-func NewTicketAttachmentsHandler(state *AppState) *TicketAttachmentsHandler {
+func NewTicketAttachmentsHandler(state *handlers.AppState) *TicketAttachmentsHandler {
 	return &TicketAttachmentsHandler{
 		state:   state,
 		scanner: newAttachmentScanner(),
@@ -263,7 +265,7 @@ func (c *clamdScanner) Scan(r io.Reader) error {
 // canAttach gates upload + delete. Mirrors canReply from tickets.go but
 // without the "user reply → may not internal" carve-out — internal-ness
 // belongs to the message, not the attachment.
-func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePermissions, userID string, isWatcher, watcherCanReply bool) bool {
+func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms handlers.EffectivePermissions, userID string, isWatcher, watcherCanReply bool) bool {
 	// Uploading and deleting are acting, so they follow tickets.write. Reading
 	// an attachment stays with IsSupport, beside reading the ticket it hangs on.
 	if perms.IsAdmin || perms.CanManageTickets {
@@ -282,13 +284,13 @@ func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms EffectivePe
 // delete leaned on tickets.write / support alone, so a supporter on another
 // team - who cannot open the ticket - could still add files to it and delete
 // its attachments by walking the sequential ids.
-func (h *TicketAttachmentsHandler) seesTicket(t *models.Ticket, perms EffectivePermissions, userID string) bool {
+func (h *TicketAttachmentsHandler) seesTicket(t *models.Ticket, perms handlers.EffectivePermissions, userID string) bool {
 	return callerSeesTicket(h.state, t, perms, userID)
 }
 
 // callerSeesTicket is canSeeTicket with the watcher flag and support team
 // looked up for the caller.
-func callerSeesTicket(state *AppState, t *models.Ticket, perms EffectivePermissions, userID string) bool {
+func callerSeesTicket(state *handlers.AppState, t *models.Ticket, perms handlers.EffectivePermissions, userID string) bool {
 	isWatcher, _ := state.Store.IsTicketWatcher(t.ID, userID)
 	myTeam := ""
 	if me, err := state.Store.GetUserByID(userID); err == nil && me != nil {
@@ -297,19 +299,19 @@ func callerSeesTicket(state *AppState, t *models.Ticket, perms EffectivePermissi
 	return canSeeTicket(t, perms, userID, isWatcher, LoadTicketSettings(state), myTeam)
 }
 
-func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, EffectivePermissions, string, bool) {
+func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, handlers.EffectivePermissions, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
-		return nil, EffectivePermissions{}, "", false
+		handlers.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
+		return nil, handlers.EffectivePermissions{}, "", false
 	}
 	t, err := h.state.Store.GetTicket(id)
 	if err != nil || t == nil {
-		sendJSONError(w, "Ticket not found", http.StatusNotFound)
-		return nil, EffectivePermissions{}, "", false
+		handlers.SendJSONError(w, "Ticket not found", http.StatusNotFound)
+		return nil, handlers.EffectivePermissions{}, "", false
 	}
 	userID, _ := r.Context().Value("userID").(string)
-	perms := LoadEffectivePermissions(h.state, userID)
+	perms := handlers.LoadEffectivePermissions(h.state, userID)
 	return t, perms, userID, true
 }
 
@@ -443,7 +445,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		}
 	}
 	if !h.canAttach(t, perms, userID, isWatcher, watcherCanReply) || !h.seesTicket(t, perms, userID) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -462,7 +464,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	// capBody, not a bare MaxBytesReader: an over-limit upload has to be refused
 	// before the first body read or a client using Expect: 100-continue hangs
 	// instead of being told (see capBody).
-	if !capBody(w, r, ticketUploadBodyLimit(settings.MaxFileSizeMB)) {
+	if !handlers.CapBody(w, r, ticketUploadBodyLimit(settings.MaxFileSizeMB)) {
 		return
 	}
 
@@ -471,15 +473,15 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			sendJSONError(w, "Upload is too large", http.StatusRequestEntityTooLarge)
+			handlers.SendJSONError(w, "Upload is too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		sendJSONError(w, "Failed to parse upload", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Failed to parse upload", http.StatusBadRequest)
 		return
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		sendJSONError(w, "Missing 'file' field", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Missing 'file' field", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
@@ -495,7 +497,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	// Each of these three guarded on `> 0`, so a cap of 0 - the admin saying
 	// attachments are not allowed - disabled the very check it was setting.
 	if settings.MaxFileSizeMB != nil && size > *settings.MaxFileSizeMB*1024*1024 {
-		sendJSONError(w, fmt.Sprintf("File exceeds the %d MB per-file limit", *settings.MaxFileSizeMB), http.StatusRequestEntityTooLarge)
+		handlers.SendJSONError(w, fmt.Sprintf("File exceeds the %d MB per-file limit", *settings.MaxFileSizeMB), http.StatusRequestEntityTooLarge)
 		return
 	}
 	if settings.MaxTicketSizeMB != nil {
@@ -505,11 +507,11 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		// the per-ticket total could be exceeded freely.
 		current, cerr := h.state.Store.SumAttachmentBytesByTicket(t.ID)
 		if cerr != nil {
-			sendJSONError(w, "Could not verify the ticket attachment quota", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Could not verify the ticket attachment quota", http.StatusInternalServerError)
 			return
 		}
 		if current+size > maxTicket {
-			sendJSONError(w, fmt.Sprintf("Adding this file would exceed the %d MB per-ticket limit", *settings.MaxTicketSizeMB), http.StatusRequestEntityTooLarge)
+			handlers.SendJSONError(w, fmt.Sprintf("Adding this file would exceed the %d MB per-ticket limit", *settings.MaxTicketSizeMB), http.StatusRequestEntityTooLarge)
 			return
 		}
 	}
@@ -517,11 +519,11 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		maxUser := *settings.MaxUserSizeMB * 1024 * 1024
 		current, cerr := h.state.Store.SumAttachmentBytesByUser(userID)
 		if cerr != nil {
-			sendJSONError(w, "Could not verify your attachment quota", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Could not verify your attachment quota", http.StatusInternalServerError)
 			return
 		}
 		if current+size > maxUser {
-			sendJSONError(w, fmt.Sprintf("Adding this file would exceed your %d MB attachment quota", *settings.MaxUserSizeMB), http.StatusRequestEntityTooLarge)
+			handlers.SendJSONError(w, fmt.Sprintf("Adding this file would exceed your %d MB attachment quota", *settings.MaxUserSizeMB), http.StatusRequestEntityTooLarge)
 			return
 		}
 	}
@@ -533,12 +535,12 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	body, head, err := attachmentUploadBody(file)
 	if err != nil {
 		log.Printf("ticket-attachments: %v (ticket %d)", err, t.ID)
-		sendJSONError(w, "Failed to read upload", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to read upload", http.StatusInternalServerError)
 		return
 	}
 	sniffedMime, err := attachmentAllowed(filename, head)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusUnsupportedMediaType)
+		handlers.SendJSONError(w, err.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
 
@@ -548,17 +550,17 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	if h.scanner != nil {
 		tmp, err := os.CreateTemp("", "dylaris-att-*")
 		if err != nil {
-			sendJSONError(w, "Failed to buffer upload", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to buffer upload", http.StatusInternalServerError)
 			return
 		}
 		defer os.Remove(tmp.Name())
 		defer tmp.Close()
 		if _, err := io.Copy(tmp, body); err != nil {
-			sendJSONError(w, "Failed to buffer upload", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to buffer upload", http.StatusInternalServerError)
 			return
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-			sendJSONError(w, "Failed to re-read upload", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to re-read upload", http.StatusInternalServerError)
 			return
 		}
 		// Fail-closed: any non-nil error from Scan (a genuine hit OR an
@@ -571,23 +573,23 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		// the ticket user.
 		if serr := h.scanner.Scan(tmp); serr != nil {
 			if errors.Is(serr, errScanHit) {
-				sendJSONError(w, "File rejected by virus scan", http.StatusUnsupportedMediaType)
+				handlers.SendJSONError(w, "File rejected by virus scan", http.StatusUnsupportedMediaType)
 			} else {
 				log.Printf("ticket-attachments: scan failed for ticket %d: %v", t.ID, serr)
-				sendJSONError(w, "Attachment scanning is temporarily unavailable, please try again later", http.StatusServiceUnavailable)
+				handlers.SendJSONError(w, "Attachment scanning is temporarily unavailable, please try again later", http.StatusServiceUnavailable)
 			}
 			return
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-			sendJSONError(w, "Failed to re-read upload", http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to re-read upload", http.StatusInternalServerError)
 			return
 		}
 		body = tmp // stream the scanned temp file to storage
 	}
 
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -596,7 +598,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	attachID := randomAttachmentID()
 	storageKey := fmt.Sprintf("tickets/%d/%s-%s", t.ID, attachID, filename)
 	if err := prov.WriteFile(r.Context(), storageKey, body); err != nil {
-		sendJSONError(w, "Failed to store file", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to store file", http.StatusInternalServerError)
 		return
 	}
 
@@ -622,7 +624,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	if err != nil {
 		// Best-effort cleanup if the DB rejected after the file landed.
 		_ = prov.DeletePath(r.Context(), storageKey)
-		sendJSONError(w, "Failed to persist metadata", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to persist metadata", http.StatusInternalServerError)
 		return
 	}
 	a.ID = insertedID
@@ -630,7 +632,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	aid := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
-		EventType:   TicketEventAttachmentAdded,
+		EventType:   handlers.TicketEventAttachmentAdded,
 		ActorUserID: &aid,
 		Metadata: map[string]interface{}{
 			"filename": filename,
@@ -659,12 +661,12 @@ func (h *TicketAttachmentsHandler) ListAttachments(w http.ResponseWriter, r *htt
 		myTeam = me.SupportTeam
 	}
 	if !canSeeTicket(t, perms, userID, isWatcher, settings, myTeam) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	atts, err := h.state.Store.ListTicketAttachments(t.ID)
 	if err != nil {
-		sendJSONError(w, "Failed to load attachments", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load attachments", http.StatusInternalServerError)
 		return
 	}
 	if atts == nil {
@@ -692,23 +694,23 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 		myTeam = me.SupportTeam
 	}
 	if !canSeeTicket(t, perms, userID, isWatcher, settings, myTeam) {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	aid, err := strconv.Atoi(mux.Vars(r)["aid"])
 	if err != nil || aid <= 0 {
-		sendJSONError(w, "Invalid attachment id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid attachment id", http.StatusBadRequest)
 		return
 	}
 	a, err := h.state.Store.GetTicketAttachment(aid)
 	if err != nil || a == nil || a.TicketID != t.ID {
-		sendJSONError(w, "Attachment not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Attachment not found", http.StatusNotFound)
 		return
 	}
 
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -720,7 +722,7 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 	// at the cost of not offloading the transfer to the object store.
 	rc, err := prov.GetFile(r.Context(), a.StorageKey)
 	if err != nil {
-		sendJSONError(w, "File missing on storage", http.StatusGone)
+		handlers.SendJSONError(w, "File missing on storage", http.StatusGone)
 		return
 	}
 	defer rc.Close()
@@ -735,7 +737,7 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 	w.Header().Set("Content-Type", clampAttachmentContentType(a.Mime))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", a.SizeBytes))
-	setAttachmentDisposition(w, a.Filename)
+	handlers.SetAttachmentDisposition(w, a.Filename)
 	io.Copy(w, rc)
 }
 
@@ -749,7 +751,7 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 	aid, _ := strconv.Atoi(mux.Vars(r)["aid"])
 	a, err := h.state.Store.GetTicketAttachment(aid)
 	if err != nil || a == nil || a.TicketID != t.ID {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	// tickets.write, not tickets.read: deleting is acting on the ticket.
@@ -761,25 +763,25 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 		allowed = false
 	}
 	if !allowed {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	if err := h.state.Store.DeleteTicketAttachment(aid); err != nil {
-		sendJSONError(w, "Delete failed", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Delete failed", http.StatusInternalServerError)
 		return
 	}
 	// Best-effort blob cleanup: the DB row is already gone, so storage being
 	// unavailable here must not fail the whole request - it's logged and
 	// skipped, exactly like TicketDeletionsHandler.DeleteTicket's cascade
 	// cleanup (ticket_deletions.go).
-	if prov, perr := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments); perr != nil {
+	if prov, perr := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments); perr != nil {
 		log.Printf("ticket-attachments: core storage unavailable, skipping blob cleanup for attachment %d (%s): %v", aid, a.StorageKey, perr)
 	} else {
 		_ = prov.DeletePath(r.Context(), a.StorageKey)
 	}
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
-		EventType:   TicketEventAttachmentRemoved,
+		EventType:   handlers.TicketEventAttachmentRemoved,
 		ActorUserID: &userID,
 		Metadata: map[string]interface{}{
 			"filename": a.Filename,

@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -51,7 +53,7 @@ func newTicketRegionHandler(t *testing.T) (*TicketsHandler, *ticketRegionStore) 
 		ticketAttachFakeStore: base,
 		category:              &models.TicketCategory{ID: 1, Name: "General", Enabled: true, DefaultPriority: "normal"},
 	}
-	return &TicketsHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}, fs
+	return &TicketsHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}, fs
 }
 
 func postTicket(t *testing.T, h *TicketsHandler, body map[string]interface{}) *httptest.ResponseRecorder {

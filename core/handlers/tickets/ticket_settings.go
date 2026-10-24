@@ -1,9 +1,11 @@
-package handlers
+package tickets
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 )
@@ -60,7 +62,7 @@ var defaultTicketSettings = TicketSettings{
 	DeletionEnabled:            false,
 }
 
-func LoadTicketSettings(state *AppState) TicketSettings {
+func LoadTicketSettings(state *handlers.AppState) TicketSettings {
 	s := defaultTicketSettings
 	if v, _ := state.Store.GetSetting("tickets.cross_team_visibility"); v != "" {
 		s.CrossTeamVisibility = v == "true"
@@ -108,10 +110,10 @@ func LoadTicketSettings(state *AppState) TicketSettings {
 }
 
 type TicketSettingsHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewTicketSettingsHandler(state *AppState) *TicketSettingsHandler {
+func NewTicketSettingsHandler(state *handlers.AppState) *TicketSettingsHandler {
 	return &TicketSettingsHandler{state: state}
 }
 
@@ -131,13 +133,13 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	// watches support (1 day erased it on the next sweep), lifts the
 	// attachment quotas and switches on deletion. Same boundary the ticket
 	// migration tools already draw.
-	if !IsAdmin(r) {
-		sendJSONError(w, "Only an administrator can change the ticket settings", http.StatusForbidden)
+	if !handlers.IsAdmin(r) {
+		handlers.SendJSONError(w, "Only an administrator can change the ticket settings", http.StatusForbidden)
 		return
 	}
 	var s TicketSettings
 	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if s.AuditRetentionDays < 0 {
@@ -174,7 +176,7 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	}
 	for _, kv := range pairs {
 		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
-			sendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
 			return
 		}
 	}

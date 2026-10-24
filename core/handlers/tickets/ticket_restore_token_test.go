@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -47,7 +49,7 @@ func newRestoreTest(t *testing.T) (*TicketMigrationHandler, string, string) {
 		t.Fatalf("generate totp: %v", err)
 	}
 	secret := key.Secret()
-	h := NewTicketMigrationHandler(&AppState{
+	h := NewTicketMigrationHandler(&handlers.AppState{
 		Store: &restoreFakeStore{user: &models.User{
 			ID: restoreTestUser, Is2FAEnabled: true, TOTPSecret: secret,
 		}},

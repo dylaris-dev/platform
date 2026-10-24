@@ -31,14 +31,14 @@ func TestAMemberCannotReplaceTheirOwnAccess(t *testing.T) {
 // ticket. Every mutating ticket handler checks the ticket's visibility first.
 func TestTicketMutationsCheckVisibility(t *testing.T) {
 	for _, fn := range []string{"AddReply", "UpdateStatus", "UpdatePriority", "UpdateAssignment", "AddWatcher"} {
-		body := funcBody(t, "tickets.go", fn)
+		body := funcBody(t, "tickets/tickets.go", fn)
 		see := strings.Index(body, "if !callerSeesTicket(h.state, t, perms, userID) {")
 		decode := strings.Index(body, "json.NewDecoder(r.Body)")
 		if see < 0 || (decode >= 0 && see > decode) {
 			t.Errorf("%s acts on a ticket without checking the caller can see it", fn)
 		}
 	}
-	if del := funcBody(t, "ticket_attachments.go", "DeleteAttachment"); strings.Contains(del, "perms.IsSupport ||") {
+	if del := funcBody(t, "tickets/ticket_attachments.go", "DeleteAttachment"); strings.Contains(del, "perms.IsSupport ||") {
 		t.Error("read-only support may still delete attachments")
 	}
 }

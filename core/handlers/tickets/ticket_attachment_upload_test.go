@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"bytes"
@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/storage"
@@ -157,7 +159,7 @@ func newAttachmentUploadHandler(t *testing.T, settings map[string]string, scanne
 		settings: merged,
 		ticket:   &models.Ticket{ID: 1, UserID: testTicketOwner},
 	}
-	st := &AppState{Store: fs}
+	st := &handlers.AppState{Store: fs}
 	h := &TicketAttachmentsHandler{
 		state:   st,
 		scanner: scanner,
@@ -382,7 +384,7 @@ func TestUploadAttachment_ByteIntegrity(t *testing.T) {
 	}
 	storageKey := fs.attachments[0].StorageKey
 
-	prov := &storage.LocalProvider{BasePath: filepath.Join(dir, CoreStoragePrefixAttachments)}
+	prov := &storage.LocalProvider{BasePath: filepath.Join(dir, handlers.CoreStoragePrefixAttachments)}
 	rc, err := prov.GetFile(context.Background(), storageKey)
 	if err != nil {
 		t.Fatalf("GetFile(%q): %v", storageKey, err)

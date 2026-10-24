@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"encoding/json"
@@ -6,16 +6,18 @@ import (
 	"strconv"
 	"strings"
 
+	"dylaris-core/handlers"
+
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
 )
 
 type CannedResponsesHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewCannedResponsesHandler(state *AppState) *CannedResponsesHandler {
+func NewCannedResponsesHandler(state *handlers.AppState) *CannedResponsesHandler {
 	return &CannedResponsesHandler{state: state}
 }
 
@@ -23,9 +25,9 @@ func NewCannedResponsesHandler(state *AppState) *CannedResponsesHandler {
 // Available to support+admin. Filter optional ?categoryId= to limit.
 func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := LoadEffectivePermissions(h.state, userID)
+	perms := handlers.LoadEffectivePermissions(h.state, userID)
 	if !perms.IsAdmin && !perms.IsSupport {
-		sendJSONError(w, "Support or admin required", http.StatusForbidden)
+		handlers.SendJSONError(w, "Support or admin required", http.StatusForbidden)
 		return
 	}
 	var categoryID *int
@@ -36,7 +38,7 @@ func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.R
 	}
 	list, err := h.state.Store.ListCannedResponses(categoryID)
 	if err != nil {
-		sendJSONError(w, "Failed to load", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load", http.StatusInternalServerError)
 		return
 	}
 	if list == nil {
@@ -86,24 +88,24 @@ func (req *cannedRequest) validate() (*models.CannedResponse, error) {
 func (h *CannedResponsesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req cannedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	c, err := req.validate()
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
 	if actorID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	v := actorID
 	c.CreatedBy = &v
 	id, err := h.state.Store.CreateCannedResponse(c)
 	if err != nil {
-		sendJSONError(w, "Create failed (name may already exist)", http.StatusConflict)
+		handlers.SendJSONError(w, "Create failed (name may already exist)", http.StatusConflict)
 		return
 	}
 	created, _ := h.state.Store.GetCannedResponse(id)
@@ -117,27 +119,27 @@ func (h *CannedResponsesHandler) Create(w http.ResponseWriter, r *http.Request) 
 func (h *CannedResponsesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 	existing, _ := h.state.Store.GetCannedResponse(id)
 	if existing == nil {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	var req cannedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	updated, err := req.validate()
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	updated.ID = existing.ID
 	if err := h.state.Store.UpdateCannedResponse(updated); err != nil {
-		sendJSONError(w, "Update failed", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -150,12 +152,18 @@ func (h *CannedResponsesHandler) Update(w http.ResponseWriter, r *http.Request) 
 func (h *CannedResponsesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.DeleteCannedResponse(id); err != nil {
-		sendJSONError(w, "Delete failed", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Delete failed", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
+
+// simpleErr is a validation message returned as an error; a copy of the one in
+// handlers (security_questions.go), whose field is unexported.
+type simpleErr struct{ msg string }
+
+func (e *simpleErr) Error() string { return e.msg }

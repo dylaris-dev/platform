@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -57,7 +59,7 @@ func TestAddWatcherRejectsAnUnknownUser(t *testing.T) {
 		},
 		ticket: &models.Ticket{ID: 4, UserID: adminID},
 	}
-	h := &TicketsHandler{state: &AppState{Store: fs}}
+	h := &TicketsHandler{state: &handlers.AppState{Store: fs}}
 
 	tests := []struct {
 		name     string

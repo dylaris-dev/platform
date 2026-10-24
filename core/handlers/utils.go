@@ -5,6 +5,7 @@ import (
 	"mime"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -111,4 +112,16 @@ func sendConnTestFailure(w http.ResponseWriter, check services.ConnCheck) {
 		"stage":   check.Stage,
 		"message": check.Message,
 	})
+}
+
+// parseIntDefault parses v, or returns def when v is empty or not a number.
+func parseIntDefault(v string, def int) int {
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }

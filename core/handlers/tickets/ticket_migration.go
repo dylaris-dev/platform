@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"bytes"
@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -34,7 +36,7 @@ import (
 //   - A typed confirmation phrase matching the backup name
 //   - A 15-second cooldown between "initiate" and "execute" so a misclick can be cancelled
 type TicketMigrationHandler struct {
-	state *AppState
+	state *handlers.AppState
 
 	// Outstanding restore tokens. Cleared when consumed or when expired.
 	tokensMu sync.Mutex
@@ -54,7 +56,7 @@ const (
 	restoreTTL      = 5 * time.Minute
 )
 
-func NewTicketMigrationHandler(state *AppState) *TicketMigrationHandler {
+func NewTicketMigrationHandler(state *handlers.AppState) *TicketMigrationHandler {
 	return &TicketMigrationHandler{
 		state:  state,
 		tokens: make(map[string]*restoreToken),
@@ -85,10 +87,10 @@ func NewTicketMigrationHandler(state *AppState) *TicketMigrationHandler {
 // Checked in the handler rather than at the route, matching that precedent and
 // so the answer lives next to the code it protects.
 func (h *TicketMigrationHandler) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if IsAdmin(r) {
+	if handlers.IsAdmin(r) {
 		return true
 	}
-	sendJSONError(w, "Admin only", http.StatusForbidden)
+	handlers.SendJSONError(w, "Admin only", http.StatusForbidden)
 	return false
 }
 
@@ -130,12 +132,12 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 	}
 	var req testConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	url := strings.TrimSpace(req.URL)
 	if url == "" {
-		sendJSONError(w, "URL required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "URL required", http.StatusBadRequest)
 		return
 	}
 
@@ -144,14 +146,14 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 	// failed" was the message for both - see services/conncheck.go.
 	if host, port, ok := services.HostPortFromPostgresDSN(url); ok {
 		if reach := services.Reachable(r.Context(), host, port); !reach.OK {
-			sendConnTestFailure(w, reach)
+			handlers.SendConnTestFailure(w, reach)
 			return
 		}
 	}
 
 	db, err := sql.Open("postgres", url)
 	if err != nil {
-		sendConnTestFailure(w, services.Rejected("That DSN could not be parsed: "+err.Error()))
+		handlers.SendConnTestFailure(w, services.Rejected("That DSN could not be parsed: "+err.Error()))
 		return
 	}
 	defer db.Close()
@@ -159,7 +161,7 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 
 	var version string
 	if err := db.QueryRow("SELECT version()").Scan(&version); err != nil {
-		sendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
+		handlers.SendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -183,7 +185,7 @@ func (h *TicketMigrationHandler) DryRunMigration(w http.ResponseWriter, r *http.
 	}
 	var req migrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	src := map[string]int{}
@@ -223,23 +225,23 @@ func (h *TicketMigrationHandler) ExecuteMigration(w http.ResponseWriter, r *http
 	}
 	var req migrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.URL) == "" {
-		sendJSONError(w, "URL required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "URL required", http.StatusBadRequest)
 		return
 	}
 	db, err := sql.Open("postgres", req.URL)
 	if err != nil {
-		sendJSONError(w, "Failed to open target: "+err.Error(), http.StatusBadGateway)
+		handlers.SendJSONError(w, "Failed to open target: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer db.Close()
 
 	// Apply ticket schemas to the target so a fresh DB Just Works.
 	if err := applyTicketSchema(db); err != nil {
-		sendJSONError(w, "Failed to apply schema on target: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to apply schema on target: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -248,12 +250,12 @@ func (h *TicketMigrationHandler) ExecuteMigration(w http.ResponseWriter, r *http
 	for _, t := range store.TicketTablesInOrder() {
 		rows, err := h.state.Store.DumpTicketTable(t)
 		if err != nil {
-			sendJSONError(w, "Dump failed for "+t+": "+err.Error(), http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Dump failed for "+t+": "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		ok, skip, err := bulkInsertRows(db, t, rows)
 		if err != nil {
-			sendJSONError(w, "Insert failed for "+t+": "+err.Error(), http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Insert failed for "+t+": "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		migrated[t] = ok
@@ -283,9 +285,9 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	if !h.requireAdmin(w, r) {
 		return
 	}
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -295,7 +297,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	for _, t := range tables {
 		rows, err := h.state.Store.DumpTicketTable(t)
 		if err != nil {
-			sendJSONError(w, "Dump failed for "+t+": "+err.Error(), http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Dump failed for "+t+": "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// Convert []byte values to string in-place so the JSON output is
@@ -319,7 +321,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	}
 	body, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		sendJSONError(w, "Failed to encode backup", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to encode backup", http.StatusInternalServerError)
 		return
 	}
 
@@ -328,7 +330,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	now := time.Now().UTC()
 	name := "tickets-" + now.Format("20060102-150405") + ".json"
 	if err := prov.WriteFile(r.Context(), name, bytes.NewReader(body)); err != nil {
-		sendJSONError(w, "Failed to write backup: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to write backup: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -355,14 +357,14 @@ func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Requ
 	if !h.requireAdmin(w, r) {
 		return
 	}
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 	files, err := prov.ListFiles(r.Context(), "/")
 	if err != nil {
-		sendJSONError(w, "Failed to list backups: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to list backups: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var out []backupSummary
@@ -388,13 +390,13 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 	}
 	name := safeBackupName(mux.Vars(r)["name"])
 	if name == "" {
-		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
 
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -410,7 +412,7 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 
 	rc, err := prov.GetFile(r.Context(), name)
 	if err != nil {
-		sendJSONError(w, "Backup not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
 	}
 	defer rc.Close()
@@ -420,7 +422,7 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 	// to get this far, so nothing hostile can reach the header here today -
 	// which is exactly why it is worth routing through the one place that does
 	// not require anybody to re-derive that argument.
-	setAttachmentDisposition(w, name)
+	handlers.SetAttachmentDisposition(w, name)
 	io.Copy(w, rc)
 }
 
@@ -432,16 +434,16 @@ func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Req
 	}
 	name := safeBackupName(mux.Vars(r)["name"])
 	if name == "" {
-		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 	if err := prov.DeletePath(r.Context(), name); err != nil {
-		sendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -464,30 +466,30 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 	userID, _ := r.Context().Value("userID").(string)
 	user, err := h.state.Store.GetUserByID(userID)
 	if err != nil || user == nil {
-		sendJSONError(w, "User not found", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 	if !user.Is2FAEnabled {
-		sendJSONError(w, "Restore requires 2FA to be enabled on your account", http.StatusForbidden)
+		handlers.SendJSONError(w, "Restore requires 2FA to be enabled on your account", http.StatusForbidden)
 		return
 	}
 	var req restoreInitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	name := safeBackupName(req.Name)
 	if name == "" {
-		sendJSONError(w, "Invalid backup name", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 	if rc, err := prov.GetFile(r.Context(), name); err != nil {
-		sendJSONError(w, "Backup not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Backup not found", http.StatusNotFound)
 		return
 	} else {
 		rc.Close()
@@ -545,7 +547,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 
 	var req restoreExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -557,20 +559,20 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	}
 	h.tokensMu.Unlock()
 	if !ok {
-		sendJSONError(w, "Invalid or expired token — start the restore flow again", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Invalid or expired token — start the restore flow again", http.StatusUnauthorized)
 		return
 	}
 	if t.UserID != userID {
-		sendJSONError(w, "Token does not belong to you", http.StatusForbidden)
+		handlers.SendJSONError(w, "Token does not belong to you", http.StatusForbidden)
 		return
 	}
 	if time.Now().Before(t.MinExecuteAfter) {
 		secs := int(time.Until(t.MinExecuteAfter).Seconds()) + 1
-		sendJSONError(w, fmt.Sprintf("Cooldown still active — wait %d second(s)", secs), http.StatusTooEarly)
+		handlers.SendJSONError(w, fmt.Sprintf("Cooldown still active — wait %d second(s)", secs), http.StatusTooEarly)
 		return
 	}
 	if req.ConfirmationPhrase != t.ConfirmationPhrase {
-		sendJSONError(w, "Confirmation phrase does not match", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Confirmation phrase does not match", http.StatusBadRequest)
 		return
 	}
 
@@ -578,7 +580,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	// emergency login, not destructive admin actions).
 	user, err := h.state.Store.GetUserByID(userID)
 	if err != nil || user == nil || !user.Is2FAEnabled {
-		sendJSONError(w, "Account no longer has 2FA — aborting", http.StatusForbidden)
+		handlers.SendJSONError(w, "Account no longer has 2FA — aborting", http.StatusForbidden)
 		return
 	}
 	// Spend the token BEFORE the code is checked, so one token buys exactly one
@@ -599,14 +601,14 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	// typos, not credential guesses, and burning the token on them would only
 	// train people to click through the confirmation faster.
 	h.consumeRestoreToken(req.Token)
-	if _, ok := matchTOTPStep(strings.TrimSpace(req.TOTPCode), user.TOTPSecret, time.Now()); !ok {
-		sendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
+	if _, ok := handlers.MatchTOTPStep(strings.TrimSpace(req.TOTPCode), user.TOTPSecret, time.Now()); !ok {
+		handlers.SendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 		return
 	}
 
-	prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixBackups)
+	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
 	if err != nil {
-		coreStorageUnavailableResponse(w, err)
+		handlers.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -616,31 +618,31 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	// sufficient regardless of backend.
 	rc, err := prov.GetFile(r.Context(), t.BackupName)
 	if err != nil {
-		sendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
 		return
 	}
 	body, err := io.ReadAll(rc)
 	rc.Close()
 	if err != nil {
-		sendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to read backup file", http.StatusInternalServerError)
 		return
 	}
 	var payload struct {
 		Tables map[string][]map[string]interface{} `json:"tables"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		sendJSONError(w, "Backup file is malformed", http.StatusUnprocessableEntity)
+		handlers.SendJSONError(w, "Backup file is malformed", http.StatusUnprocessableEntity)
 		return
 	}
 
 	// Wipe + reload inside a single transaction so a mid-restore crash
 	// rolls back to the previous state cleanly.
 	if err := wipeAndReload(h.state.Store, payload.Tables); err != nil {
-		sendJSONError(w, "Restore failed: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Restore failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	LogIdentityAudit(h.state, r, "ticket_restore_executed", userID, "", map[string]interface{}{
+	handlers.LogIdentityAudit(h.state, r, "ticket_restore_executed", userID, "", map[string]interface{}{
 		"backup": t.BackupName,
 	})
 

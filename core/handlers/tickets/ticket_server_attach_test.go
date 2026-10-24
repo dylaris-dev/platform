@@ -1,8 +1,10 @@
-package handlers
+package tickets
 
 import (
 	"database/sql"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -90,7 +92,7 @@ func TestMayAttachServer(t *testing.T) {
 			granteeID: {"overview.read"},
 		},
 	}
-	h := &TicketsHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	h := &TicketsHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
 
 	cases := []struct {
 		name     string

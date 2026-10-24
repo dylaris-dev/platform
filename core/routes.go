@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/packs"
+	"dylaris-core/handlers/tickets"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -585,16 +586,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	passwordResetHandler := handlers.NewPasswordResetHandler(appState)
 	securityQuestionsHandler := handlers.NewSecurityQuestionsHandler(appState)
 	maintenanceHandler := handlers.NewMaintenanceHandler(appState)
-	ticketCategoriesHandler := handlers.NewTicketCategoriesHandler(appState)
-	ticketsHandler := handlers.NewTicketsHandler(appState)
-	ticketSettingsHandler := handlers.NewTicketSettingsHandler(appState)
-	ticketAttachmentsHandler := handlers.NewTicketAttachmentsHandler(appState)
-	cannedResponsesHandler := handlers.NewCannedResponsesHandler(appState)
+	ticketCategoriesHandler := tickets.NewTicketCategoriesHandler(appState)
+	ticketsHandler := tickets.NewTicketsHandler(appState)
+	ticketSettingsHandler := tickets.NewTicketSettingsHandler(appState)
+	ticketAttachmentsHandler := tickets.NewTicketAttachmentsHandler(appState)
+	cannedResponsesHandler := tickets.NewCannedResponsesHandler(appState)
 	notificationsHandler := handlers.NewNotificationsHandler(appState)
 	serverAuditHandler := handlers.NewServerAuditHandler(appState)
 	identityAuditHandler := handlers.NewIdentityAuditHandler(appState)
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
-	ticketMigrationHandler := handlers.NewTicketMigrationHandler(appState)
+	ticketMigrationHandler := tickets.NewTicketMigrationHandler(appState)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 	rconHandler := handlers.NewRconHandler(appState)
@@ -629,7 +630,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	gatewayDNSHandler := handlers.NewGatewayDNSHandler(appState)
 	gatewayBandwidthHandler := handlers.NewGatewayBandwidthHandler(appState)
 	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)
-	ticketDeletionsHandler := handlers.NewTicketDeletionsHandler(appState)
+	ticketDeletionsHandler := tickets.NewTicketDeletionsHandler(appState)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
 	// Set up router and API endpoints

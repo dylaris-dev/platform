@@ -1,9 +1,11 @@
-package handlers
+package tickets
 
 import (
 	"errors"
 	"sort"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -40,7 +42,7 @@ func recipientsOf(sent []models.Notification) []string {
 // stayed at zero.
 func TestOpeningATicketTellsSupport(t *testing.T) {
 	fs := &staffNotifyStore{staff: []string{"admin-1", "support-1", "author"}}
-	state := &AppState{Store: fs}
+	state := &handlers.AppState{Store: fs}
 
 	notifyTicketStaff(state, "author", 7, "Invoice is missing")
 
@@ -48,8 +50,8 @@ func TestOpeningATicketTellsSupport(t *testing.T) {
 	if len(got) != 2 || got[0] != "admin-1" || got[1] != "support-1" {
 		t.Fatalf("notified %v; want admin-1 and support-1, and never the author", got)
 	}
-	if fs.sent[0].Type != NotifyTypeTicketOpened {
-		t.Errorf("type = %q, want %q", fs.sent[0].Type, NotifyTypeTicketOpened)
+	if fs.sent[0].Type != handlers.NotifyTypeTicketOpened {
+		t.Errorf("type = %q, want %q", fs.sent[0].Type, handlers.NotifyTypeTicketOpened)
 	}
 	if fs.sent[0].Link != "/tickets/7" {
 		t.Errorf("link = %q, want the ticket it is about", fs.sent[0].Link)
@@ -63,7 +65,7 @@ func TestOpeningATicketTellsSupport(t *testing.T) {
 // admin on a small platform that is the whole recipient list.
 func TestOpeningATicketNotifiesNobodyWhenTheAuthorIsTheOnlyStaff(t *testing.T) {
 	fs := &staffNotifyStore{staff: []string{"admin-1"}}
-	notifyTicketStaff(&AppState{Store: fs}, "admin-1", 8, "Note to self")
+	notifyTicketStaff(&handlers.AppState{Store: fs}, "admin-1", 8, "Note to self")
 	if len(fs.sent) != 0 {
 		t.Fatalf("sent %d notification(s) to %v; want none", len(fs.sent), recipientsOf(fs.sent))
 	}
@@ -73,7 +75,7 @@ func TestOpeningATicketNotifiesNobodyWhenTheAuthorIsTheOnlyStaff(t *testing.T) {
 // telling fewer people beats telling nobody.
 func TestAFailedStaffLookupStillNotifiesTheParticipants(t *testing.T) {
 	fs := &staffNotifyStore{staffErr: errors.New("db down")}
-	got := withTicketStaff(&AppState{Store: fs}, []string{"customer-1"}, "actor")
+	got := withTicketStaff(&handlers.AppState{Store: fs}, []string{"customer-1"}, "actor")
 	if len(got) != 1 || got[0] != "customer-1" {
 		t.Fatalf("recipients = %v, want the participants that were already known", got)
 	}
@@ -83,7 +85,7 @@ func TestAFailedStaffLookupStillNotifiesTheParticipants(t *testing.T) {
 // one event, and must still drop the actor.
 func TestStaffAreMergedWithoutDuplicatesOrTheActor(t *testing.T) {
 	fs := &staffNotifyStore{staff: []string{"support-1", "admin-1", "actor"}}
-	got := withTicketStaff(&AppState{Store: fs}, []string{"customer-1", "support-1", "actor", ""}, "actor")
+	got := withTicketStaff(&handlers.AppState{Store: fs}, []string{"customer-1", "support-1", "actor", ""}, "actor")
 	sort.Strings(got)
 	want := []string{"admin-1", "customer-1", "support-1"}
 	if len(got) != len(want) {

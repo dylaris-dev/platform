@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"database/sql"
@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 
@@ -17,10 +19,10 @@ import (
 // platform-wide tickets feature toggle (mounted in main.go) and the
 // per-feature tickets.deletion_enabled setting (checked inline).
 type TicketDeletionsHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewTicketDeletionsHandler(state *AppState) *TicketDeletionsHandler {
+func NewTicketDeletionsHandler(state *handlers.AppState) *TicketDeletionsHandler {
 	return &TicketDeletionsHandler{state: state}
 }
 
@@ -33,8 +35,8 @@ func NewTicketDeletionsHandler(state *AppState) *TicketDeletionsHandler {
 // gate is therefore intentionally KEPT (not RequireCap'd, not removed) - it
 // is the actual boundary for the DELETE method on this shared template.
 func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Request) {
-	if !IsAdmin(r) {
-		sendJSONError(w, "Admin only", http.StatusForbidden)
+	if !handlers.IsAdmin(r) {
+		handlers.SendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
 	settings := LoadTicketSettings(h.state)
@@ -51,18 +53,18 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
 		return
 	}
 
 	// Snapshot ticket subject + owner BEFORE delete.
 	t, err := h.state.Store.GetTicket(id)
 	if err == sql.ErrNoRows || t == nil {
-		sendJSONError(w, "Ticket not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Ticket not found", http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -98,7 +100,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 
 	// Build audit row.
 	ownerID := t.UserID
-	ip := clientIP(r)
+	ip := handlers.ClientIP(r)
 	ua := r.UserAgent()
 	rec := &models.TicketDeletion{
 		TicketID:      id,
@@ -115,14 +117,14 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	// Stamp the audit row first so a half-deleted ticket still has a record.
 	// The audit row is the contract; the cascade is the side-effect.
 	if err := h.state.Store.InsertTicketDeletion(rec); err != nil {
-		sendJSONError(w, "Failed to audit deletion: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to audit deletion: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.DeleteTicket(id); err != nil {
 		// Audit row is already in; surface the error but don't try to roll
 		// back the audit — a stamped delete that didn't complete is itself
 		// useful information.
-		sendJSONError(w, "Failed to delete ticket: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to delete ticket: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -133,7 +135,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	// actually written to. Storage being unconfigured/broken here must not
 	// fail the whole request either - it's logged and skipped, not surfaced
 	// as an HTTP error the ticket-delete response never gets to send anyway.
-	if prov, err := h.state.buildCoreStorageProvider(CoreStoragePrefixAttachments); err != nil {
+	if prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments); err != nil {
 		log.Printf("ticket-deletion: core storage unavailable, skipping attachment blob cleanup for ticket %d: %v", id, err)
 	} else {
 		for _, k := range storageKeys {
@@ -172,7 +174,7 @@ func (h *TicketDeletionsHandler) ListDeletions(w http.ResponseWriter, r *http.Re
 
 	rows, total, err := h.state.Store.ListTicketDeletions(limit, offset, deletedBy)
 	if err != nil {
-		sendJSONError(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if rows == nil {

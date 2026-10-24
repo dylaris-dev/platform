@@ -1,4 +1,4 @@
-package handlers
+package tickets
 
 import (
 	"encoding/json"
@@ -6,16 +6,18 @@ import (
 	"strconv"
 	"strings"
 
+	"dylaris-core/handlers"
+
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
 )
 
 type TicketCategoriesHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewTicketCategoriesHandler(state *AppState) *TicketCategoriesHandler {
+func NewTicketCategoriesHandler(state *handlers.AppState) *TicketCategoriesHandler {
 	return &TicketCategoriesHandler{state: state}
 }
 
@@ -31,7 +33,7 @@ func validTicketPriority(p string) bool {
 func (h *TicketCategoriesHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
 	out, err := h.state.Store.ListTicketCategories(false)
 	if err != nil {
-		sendJSONError(w, "Failed to load categories", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load categories", http.StatusInternalServerError)
 		return
 	}
 	if out == nil {
@@ -48,7 +50,7 @@ func (h *TicketCategoriesHandler) ListCategories(w http.ResponseWriter, r *http.
 func (h *TicketCategoriesHandler) AdminListCategories(w http.ResponseWriter, r *http.Request) {
 	out, err := h.state.Store.ListTicketCategories(true)
 	if err != nil {
-		sendJSONError(w, "Failed to load categories", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load categories", http.StatusInternalServerError)
 		return
 	}
 	if out == nil {
@@ -111,17 +113,17 @@ func (req *categoryRequest) toModel(existing *models.TicketCategory) (*models.Ti
 func (h *TicketCategoriesHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	var req categoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	c, err := req.toModel(nil)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	id, err := h.state.Store.CreateTicketCategory(c)
 	if err != nil {
-		sendJSONError(w, "Failed to create (name may already exist)", http.StatusConflict)
+		handlers.SendJSONError(w, "Failed to create (name may already exist)", http.StatusConflict)
 		return
 	}
 	created, _ := h.state.Store.GetTicketCategory(id)
@@ -135,26 +137,26 @@ func (h *TicketCategoriesHandler) CreateCategory(w http.ResponseWriter, r *http.
 func (h *TicketCategoriesHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 	existing, err := h.state.Store.GetTicketCategory(id)
 	if err != nil || existing == nil {
-		sendJSONError(w, "Category not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Category not found", http.StatusNotFound)
 		return
 	}
 	var req categoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	updated, err := req.toModel(existing)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.UpdateTicketCategory(updated); err != nil {
-		sendJSONError(w, "Update failed", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -169,7 +171,7 @@ func (h *TicketCategoriesHandler) UpdateCategory(w http.ResponseWriter, r *http.
 func (h *TicketCategoriesHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 	// Deleting is allowed even with tickets attached. Each ticket carries the
@@ -178,7 +180,7 @@ func (h *TicketCategoriesHandler) DeleteCategory(w http.ResponseWriter, r *http.
 	// exists. Refusing used to be the protection, and it made a typo made in the
 	// first five minutes of an install permanent.
 	if err := h.state.Store.DeleteTicketCategory(id); err != nil {
-		sendJSONError(w, "Could not delete the category", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Could not delete the category", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

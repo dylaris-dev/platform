@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -10,9 +11,10 @@ import (
 	"dylaris-core/storage/modpack"
 )
 
-// Exported for handlers/packs, which lives in its own package so that a change
-// to a pack handler does not recompile all of handlers. Thin wrappers rather
-// than renames: the unexported names stay what the rest of this package calls.
+// Exported for the handlers/<domain> subpackages (packs, tickets, ...), which
+// live in their own packages so that a change there does not recompile all of
+// handlers. Thin wrappers rather than renames: the unexported names stay what
+// the rest of this package calls.
 
 func SendJSONError(w http.ResponseWriter, message string, code int) {
 	sendJSONError(w, message, code)
@@ -62,3 +64,38 @@ func (s *AppState) BuildCoreStorageProvider(subPrefix string) (storage.StoragePr
 func (h *SystemEventsHandler) MayReceive(r *http.Request, payload string) bool {
 	return h.mayReceive(r, payload)
 }
+
+func ParseIntDefault(v string, def int) int { return parseIntDefault(v, def) }
+
+func ClientIP(r *http.Request) string { return clientIP(r) }
+
+func ParseUserID(w http.ResponseWriter, r *http.Request, varName ...string) (string, bool) {
+	return parseUserID(w, r, varName...)
+}
+
+func MatchTOTPStep(code, secret string, now time.Time) (step int64, ok bool) {
+	return matchTOTPStep(code, secret, now)
+}
+
+func CoreStorageUnavailableResponse(w http.ResponseWriter, err error) {
+	coreStorageUnavailableResponse(w, err)
+}
+
+func SendConnTestFailure(w http.ResponseWriter, check services.ConnCheck) {
+	sendConnTestFailure(w, check)
+}
+
+func SetAttachmentDisposition(w http.ResponseWriter, filename string) {
+	setAttachmentDisposition(w, filename)
+}
+
+// Core storage setting keys, for the subpackages' tests that configure a store.
+const (
+	KeyCoreStorageBackend     = keyCoreStorageBackend
+	KeyCoreStoragePath        = keyCoreStoragePath
+	KeyCoreStoragePathConfirm = keyCoreStoragePathConfirm
+	KeyCoreStorageS3Endpoint  = keyCoreStorageS3Endpoint
+	KeyCoreStorageS3Bucket    = keyCoreStorageS3Bucket
+	KeyCoreStorageS3AccessKey = keyCoreStorageS3AccessKey
+	KeyCoreStorageS3SecretKey = keyCoreStorageS3SecretKey
+)
