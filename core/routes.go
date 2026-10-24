@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers/mods"
 	"dylaris-core/handlers/nodes"
 	"dylaris-core/handlers/packs"
+	"dylaris-core/handlers/servers"
 	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
@@ -541,11 +542,11 @@ var requiredCaps = map[string]string{
 // changed relative to the prior inline registration in main().
 func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandler, cfg routeCfg) (*mux.Router, *routeExtras) {
 	// Initialize handlers
-	serverHandler := handlers.NewServerHandler(appState)
+	serverHandler := servers.NewServerHandler(appState)
 	nodeHandler := nodes.NewNodeHandler(appState)
 	userHandler := users.NewUserHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
-	serverRolesHandler := handlers.NewServerRolesHandler(appState)
+	serverRolesHandler := servers.NewServerRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
 	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
 	fileHandler := handlers.NewFileHandler(appState)
@@ -612,7 +613,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
 	modrinthHandler := mods.NewModrinthHandler(appState)
 	technicHandler := handlers.NewTechnicHandler(appState)
-	serverModsHandler := handlers.NewServerModsHandler(appState)
+	serverModsHandler := servers.NewServerModsHandler(appState)
 	sparkHandler := handlers.NewSparkHandler(appState)
 	serverTabsHandler := tabs.NewServerTabsHandler(appState)
 	proxyHandler := tabs.NewProxyHandler(appState, authHandler)

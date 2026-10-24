@@ -1,0 +1,2839 @@
+package servers
+
+import (
+	"context"
+	"dylaris-pkg/validate"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"dylaris-core/handlers"
+
+	"dylaris-core/authz"
+	"dylaris-core/models"
+	"dylaris-core/services"
+	"dylaris-core/store"
+
+	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
+)
+
+// CreateServer (Step 1): Creates container with resources, status=pending_setup
+func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	var req CreateServerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	// The client supplies the UUID and it becomes the %s in every
+	// dylaris:server:<uuid>:* Redis key and the node's server directory name, so
+	// reject anything unsafe to interpolate there (also rejects an empty UUID,
+	// which used to create an unroutable server).
+	if !validate.IsServerUUID(req.UUID) {
+		handlers.SendJSONError(w, "Invalid server UUID", http.StatusBadRequest)
+		return
+	}
+	// Bound the requested resources (create had no check; negative/zero were
+	// accepted and forwarded to the node). Host CPU ceiling is enforced node-side.
+	if msg := validate.ResourceBounds(req.Docker.RAM, req.Docker.CPULimit, req.Docker.DiskLimit, 0); msg != "" {
+		handlers.SendJSONError(w, msg, http.StatusBadRequest)
+		return
+	}
+	if p := req.Docker.RAMPaddingMB; p != nil && !models.ValidRAMPaddingMB(*p) {
+		handlers.SendJSONError(w, handlers.RamPaddingRefused, http.StatusBadRequest)
+		return
+	}
+
+	// The node's numeric id, as a string. Sscanf leaves it at 0 for anything it
+	// cannot read - including a node UUID, which is what the panel calls a node
+	// everywhere else - and 0 then fell through to a lookup that answered "Node
+	// not found". Say which field is wrong instead of describing the row it
+	// failed to find.
+	var nodeIDInt int
+	if raw := strings.TrimSpace(req.NodeID); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			handlers.SendJSONError(w, "nodeId must be the node's numeric id; a node uuid is not accepted here", http.StatusBadRequest)
+			return
+		}
+		nodeIDInt = n
+	}
+
+	// Auto-placement: when no explicit nodeId is given, defer to the
+	// scheduler. Region and tags (AND-filtered) are optional filters that
+	// narrow the candidate pool; with neither the scheduler considers every
+	// online node. Placing without them used to be refused with "Node not
+	// found", which left a region-neutral panel no way to create a server.
+	if nodeIDInt == 0 {
+		pickReq := handlers.PickNodeRequest{
+			Region:       req.Region,
+			Tags:         req.Tags,
+			Tag:          req.Tag,
+			RAMMB:        req.Docker.RAM,
+			RAMPaddingMB: req.Docker.RAMPaddingMB,
+			CPUCores:     req.Docker.CPULimit,
+			DiskGB:       handlers.DiskMBToGBCeil(req.Docker.DiskLimit),
+		}
+		// BYON: scope auto-placement to nodes the caller's party owns, so the
+		// scheduler never picks a foreign node. No-op when BYON is off. See
+		// applyPlacementScope for why an admin is scoped too.
+		handlers.ApplyPlacementScope(h.state, r, &pickReq)
+		pick := handlers.NewPlacementHandler(h.state).PickNodeFor(r.Context(), pickReq)
+		if !pick.Success || pick.Picked == nil {
+			handlers.SendJSONError(w, "No node available: "+pick.Reason, http.StatusServiceUnavailable)
+			return
+		}
+		nodeIDInt = pick.Picked.NodeID
+		log.Printf("Placement: picked node %d (%s) region=%q tags=%v — %s",
+			nodeIDInt, pick.Picked.NodeName, req.Region, req.Tags, pick.Picked.Reason)
+	}
+
+	node, err := h.state.Store.GetNodeByID(nodeIDInt)
+	if err != nil {
+		handlers.SendJSONError(w, "Node not found", 404)
+		return
+	}
+
+	// Placement: a tenant may only deploy on their OWN node, and every other
+	// node is operator territory (canPlaceOnNode). This used to run only while
+	// BYON ownership was in force, so with BYON off - the default - any signed-in
+	// user could create a server on any node, with any memory and no plan to
+	// limit it. canPlaceOnNode already answered that case ("operator territory,
+	// admins only"); nothing asked it.
+	if !handlers.CanPlaceOnNode(h.state, r, node) {
+		if handlers.OwnershipInForce(h.state, r) {
+			handlers.SendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
+		} else {
+			handlers.SendJSONError(w, "Only an administrator can create servers on this platform's nodes", http.StatusForbidden)
+		}
+		return
+	}
+
+	// BYON abuse guard: cap the number of servers a tenant can stack on one of
+	// their own nodes. The limit protects the shared control plane (every
+	// container is a DB row + Redis keys + heartbeat/stats work), not the node's
+	// own hardware. Scales with the node's thread count. Admins are exempt.
+	if handlers.ByonActive(h.state, r) && !handlers.IsAdmin(r) {
+		if reached, capN := h.byonNodeServerCapReached(r.Context(), node); reached {
+			handlers.SendJSONError(w, fmt.Sprintf("This node's server limit (%d) is reached. Stop/delete a server or add another node.", capN), http.StatusForbidden)
+			return
+		}
+	}
+
+	// Non-admins can only create servers they own. Only admins may set an
+	// arbitrary OwnerID; otherwise any authenticated user could create
+	// servers under another user's identity and burn their quotas.
+	if isAdmin, _ := r.Context().Value("isAdmin").(bool); !isAdmin {
+		userID, _ := r.Context().Value("userID").(string)
+		if userID == "" {
+			handlers.SendJSONError(w, "Unauthorized", 401)
+			return
+		}
+		req.OwnerID = userID
+	}
+
+	callerID, _ := r.Context().Value("userID").(string)
+	req.OwnerID = effectiveOwnerID(req.OwnerID, callerID)
+
+	// Validate owner exists before going further.
+	if _, err := h.state.Store.GetUserByID(req.OwnerID); err != nil {
+		handlers.SendJSONError(w, "Owner not found", 404)
+		return
+	}
+	// Setup is refused to a cut-off owner, creation was not: a suspended
+	// tenant still placed new containers and rows on their machines.
+	if msg := handlers.OwnerRefusal(h.state, r, req.OwnerID); msg != "" {
+		handlers.SendJSONError(w, msg, http.StatusForbidden)
+		return
+	}
+
+	// Container name: Heroku-style slug like "crimson-otter-7a3f". The 4-hex
+	// suffix gives ~65k entropy per adj+noun pair, collisions are vanishingly
+	// rare; DB uniqueness still enforces final correctness on insert.
+	containerName := services.GenerateContainerSlug()
+
+	isFixedVal := true
+	if req.IsFixed != nil {
+		isFixedVal = *req.IsFixed
+	}
+
+	// Default server type to "game" if not specified
+	serverType := req.ServerType
+	if serverType != "proxy" {
+		serverType = "game"
+	}
+
+	// Block proxy creation if feature is disabled
+	if serverType == "proxy" {
+		val, _ := h.state.Store.GetSetting("feature_proxy_enabled")
+		if val == "false" {
+			handlers.SendJSONError(w, "Proxy feature is disabled", 403)
+			return
+		}
+	}
+
+	// RAM is stored without buffer (buffer is added on the Node side)
+	srv := &models.Server{
+		UUID:            req.UUID,
+		Name:            containerName,
+		NodeID:          nodeIDInt,
+		OwnerID:         req.OwnerID,
+		GameImage:       "ghcr.io/dylaris-dev/platform-mc-java21:latest", // Default, overridden during setup
+		Port:            25565,
+		Memory:          req.Docker.RAM,
+		RAMPaddingMB:    req.Docker.RAMPaddingMB,
+		CPULimit:        req.Docker.CPULimit,
+		StartCommand:    "",
+		Status:          "pending_setup",
+		IsFixed:         isFixedVal,
+		ActiveSubServer: "",
+		ExtraJvmFlags:   "",
+		DiskLimit:       req.Docker.DiskLimit,
+		ServerType:      serverType,
+		AutoMove:        req.AutoMove,
+		// From the NODE, not from req.Region. The request field is a scheduler
+		// FILTER - it is only read when there is no explicit nodeId, and even then
+		// it says which nodes were eligible, not where the server ended up. The
+		// node is the only thing that knows where this server physically runs, and
+		// that is what servers.region has to mean for the beam relay pick and
+		// the rebalancer's region fence to be right.
+		Region: node.Region,
+	}
+
+	serverID, err := h.state.Store.CreateServer(srv)
+	if err != nil {
+		log.Printf("Create Server DB Error: %v", err)
+		handlers.SendJSONError(w, "Failed to save server", 500)
+		return
+	}
+
+	// Node: Only create directory + container (no install)
+	if h.state.Queue != nil {
+		configPayload := map[string]interface{}{
+			"uuid":    req.UUID,
+			"ownerId": srv.OwnerID,
+			"docker": map[string]interface{}{
+				"image":        srv.GameImage,
+				"ram":          req.Docker.RAM,
+				"ramPaddingMB": services.EffectiveRAMPaddingMB(h.state.Store, req.Docker.RAMPaddingMB, node.RAMPaddingMB),
+				"cpuLimit":     req.Docker.CPULimit,
+				"cpusetCpus":   handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":     srv.Timezone,
+				"diskLimit":    req.Docker.DiskLimit,
+				"command":      "",
+			},
+		}
+		// The wizard offered the choice and the request carried it, but nothing
+		// passed it on, so every server landed wherever the node picked. Only
+		// for whoever runs the node: an operator, or the owner of their own.
+		if sp := strings.TrimSpace(req.StoragePath); sp != "" && (handlers.IsAdmin(r) || (node.OwnerID != nil && *node.OwnerID == callerID)) {
+			configPayload["storagePath"] = sp
+		}
+
+		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "create", configPayload, nil); err != nil {
+			// It answered success and left a row with no directory or container
+			// - and since only this command assigns the disk quota, a later
+			// setup built the server with no disk limit at all. Nothing was
+			// created on the node, so nothing is kept here either.
+			log.Printf("Redis Queue Failed: %v", err)
+			handlers.PurgeBackupArchivesForServers(h.state, []int{int(serverID)})
+			if derr := h.state.Store.DeleteServer(int(serverID)); derr != nil {
+				log.Printf("create: removing server %d after the failed dispatch: %v", serverID, derr)
+			}
+			handlers.SendJSONError(w, "Could not reach the node to create the server. Nothing was created; try again.", http.StatusServiceUnavailable)
+			return
+		} else {
+			// node.ID, not node.Token: the token is the node's gRPC credential.
+			// node.Name is no safer - CreateNode seeds it FROM the token, so it
+			// is the same string until an operator sets a display name.
+			log.Printf("Create command queued for node %d", node.ID)
+		}
+	}
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"server_id": serverID,
+		"message":   "Server container creation queued",
+	})
+}
+
+// resolveJavaImage picks the image a setup or reinstall runs with: the one the
+// request asks for, else the one already stored on the server.
+//
+// Setup used to take the requested image raw. A request without one wrote an
+// empty image to the DB and dispatched it, and Docker accepts that: it builds a
+// container with nothing in it, so the server dies on `exec: "java": executable
+// file not found in $PATH` - by which point the previous sub-server's container
+// is already gone. Reinstall had the fallback, setup did not; both go through
+// here now, and an empty result is a 400 at the caller.
+// The platform's own runtime images. A server's image is the tenant's
+// choice, and it was taken from any registry: an image of their own runs as
+// whatever it says, and one with a setuid binary was root in the container -
+// able to rewrite the node's files in /data that uid 1000 cannot. Further
+// prefixes an operator trusts go in the runtime.allowed_images setting.
+const platformImagePrefix = "ghcr.io/dylaris-dev/platform-mc-java"
+
+const javaImageRefused = "That runtime image is not allowed on this platform. Pick one of the offered Java versions."
+
+// javaImageAllowed reports whether a REQUESTED image may be set. An empty
+// request keeps the stored image, which is not re-judged: servers already on
+// another image keep running on it.
+func javaImageAllowed(st interface {
+	GetSetting(string) (string, error)
+}, requested string) bool {
+	img := strings.TrimSpace(requested)
+	if img == "" {
+		return true
+	}
+	if strings.ContainsAny(img, " \t\n") {
+		return false
+	}
+	if strings.HasPrefix(img, platformImagePrefix) {
+		return true
+	}
+	var prefixes []string
+	if st != nil {
+		if extra, err := st.GetSetting("runtime.allowed_images"); err == nil {
+			for _, p := range strings.Split(extra, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					prefixes = append(prefixes, p)
+				}
+			}
+		}
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(img, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveJavaImage(requested, stored string) string {
+	if img := strings.TrimSpace(requested); img != "" {
+		return img
+	}
+	return strings.TrimSpace(stored)
+}
+
+// SetupServer (Step 2): User configures the server
+// validateInstallerRequest rejects a setup the node cannot possibly complete.
+// Returns "" when the request is acceptable.
+//
+// Every requirement below mirrors node/installer.go's InstallServer switch,
+// which is where these values are actually consumed: installPaper and
+// installVanilla take Version straight to the PaperMC / Mojang APIs,
+// installFabric and installForge use it as the mcVersion in their meta lookup
+// (both resolve the LOADER when it is blank, so only Version is required),
+// installNeoForge is passed Loader as its version, and installFromLibrary
+// needs the file's path in the library, which SetupServer resolves into a
+// signed Core download URL.
+//
+// The type allowlist is validate.IsInstallerType, which already existed and
+// had no caller at all. Reusing it rather than restating the set here is the
+// point: the node's switch and this list must agree. The proxies (velocity,
+// waterfall, bungeecord) put their version into a download URL on the node,
+// so theirs is checked for shape, not only for presence.
+//
+// Without this the node was the first and only thing to notice, long after the
+// caller was told 200 "Server setup queued". Observed end to end on the
+// testbed with type "paper" and no version: install failed, the reconciler
+// restarted the container three times, and a brand-new server came to rest at
+// "offline" with nothing installed.
+//
+// "pack" is deliberately accepted with no field requirement: SetupServer
+// resolves and authorizes it below and rewrites Installer in place, so its
+// own error paths already answer properly.
+func validateInstallerRequest(typ, version, loader, url, path string) string {
+	if !validate.IsInstallerType(typ) {
+		return "Unsupported installer type"
+	}
+	needsVersion := map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true, "velocity": true, "waterfall": true, "bungeecord": true}
+	if needsVersion[typ] && strings.TrimSpace(version) == "" {
+		return "installer.version is required for " + typ
+	}
+	switch typ {
+	case "velocity", "waterfall":
+		if !handlers.PaperMCReleasePattern.MatchString(version) {
+			return "installer.version must be a " + typ + " release such as 3.5.1"
+		}
+	case "bungeecord":
+		if !handlers.BungeeCordBuildPattern.MatchString(version) {
+			return "installer.version must be a BungeeCord build number such as #2104"
+		}
+	case "neoforge":
+		if strings.TrimSpace(loader) == "" {
+			return "installer.loader is required for neoforge"
+		}
+	case "library":
+		// A library file is named by its path in the library. A bare URL used
+		// to be accepted here too, which made "library" a way to have the node
+		// download anything at all into the server.
+		if strings.TrimSpace(path) == "" {
+			return "installer.path is required for library"
+		}
+	}
+	return ""
+}
+
+// recordedInstallerType is what a setup records as the install: an upload
+// installed over with a chosen software IS that software from here on. Mod
+// compatibility and reinstall read it from the server row, the edit form from
+// the sub-server row, and a backup import copies the latter onto the former,
+// so both rows must say the same.
+func recordedInstallerType(typ, software string) string {
+	if software != "" {
+		return software
+	}
+	return typ
+}
+
+// applyExactMinecraftVersion rewrites the setup's mcVersion to the exact
+// Minecraft version (exactMinecraftVersion), and for NeoForge records the
+// loader as the build, as a version update does. The node installs NeoForge
+// from the loader alone, so the version it is sent changes nothing there.
+func applyExactMinecraftVersion(mcVersion, version *string, software, loader string) {
+	*mcVersion = handlers.ExactMinecraftVersion(software, *mcVersion, *version, loader)
+	if software == "neoforge" && strings.TrimSpace(loader) != "" {
+		*version = loader
+	}
+}
+
+// uploadSoftwareSince is the node release that installs installer.software
+// over an upload.
+const uploadSoftwareSince = "2026.10.04.9"
+
+// validateUploadSoftware checks installer.software. An upload without a
+// launcher in its root (a Paper server keeps its jar under versions/) used to
+// be extracted and then fail every start with "no runnable server found".
+// Empty software is "keep the upload's own jar"; the node refuses that when
+// the upload has none.
+func validateUploadSoftware(typ, software, version, loader string) string {
+	if software == "" {
+		return ""
+	}
+	if typ != "upload" && typ != "upload-zip" {
+		return "installer.software applies to an upload only"
+	}
+	if !reinstallableInstallers[software] {
+		return "installer.software must be paper, vanilla, fabric, forge or neoforge"
+	}
+	return validateInstallerRequest(software, version, loader, "", "")
+}
+
+// SetupServer POST /api/servers/{id}/setup - queues first-time provisioning of
+// a created server: image, loader and version. The reply means queued; the
+// node reports progress separately.
+func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+
+	var req SetupServerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+
+	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
+
+	isAdmin := r.Context().Value("isAdmin").(bool)
+
+	// Atomically claim the install cooldown (30s, admins bypass). SetNX closes
+	// the race where two concurrent requests both saw an expired TTL and both
+	// enqueued a setup.
+	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+	if !isAdmin {
+		acquired, err := h.state.Redis.SetNX(context.Background(), cooldownKey, "1", 30*time.Second).Result()
+		if err == nil && !acquired {
+			ttl, _ := h.state.Redis.TTL(context.Background(), cooldownKey).Result()
+			handlers.SendJSONError(w, fmt.Sprintf("Please wait %d seconds before installing again", int(ttl.Seconds())), 429)
+			return
+		}
+	}
+
+	// The same rule SwitchSubServer applies, and for the same reason: this names
+	// a directory on the node. It used to sanitize instead - stripping the
+	// characters it did not like and accepting whatever was left - which had two
+	// consequences. A caller got a sub-server under a name they did not choose
+	// ("../escape" became "escape", "my server" became "my_server") and was never
+	// told. And because sanitizing has no length bound while the rule does, it
+	// could create a 51-character sub-server that no switch would ever accept.
+	//
+	// The panel already applies this exact rule to the field before submitting,
+	// so nothing it can send changes shape here.
+	subName := strings.TrimSpace(req.SubServerName)
+	if !validate.IsSubServerName(subName) {
+		handlers.SendJSONError(w, "Invalid sub-server name: letters, numbers, -, _ or +, up to 50 characters", 400)
+		return
+	}
+
+	// Refuse before anything is written or the container is touched - see
+	// resolveJavaImage.
+	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+		handlers.SendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		return
+	}
+	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
+	if javaImage == "" {
+		handlers.SendJSONError(w, "javaImage is required", 400)
+		return
+	}
+	// Same "refuse before anything is written" reason, for the installer. The
+	// node is the only thing that ever checked these, and by then the request
+	// has already been answered 200 and queued.
+	if msg := validateInstallerRequest(
+		req.Installer.Type, req.Installer.Version,
+		req.Installer.Loader, req.Installer.URL, req.Installer.Path,
+	); msg != "" {
+		handlers.SendJSONError(w, msg, 400)
+		return
+	}
+	// Refused here rather than dropped, and refused BEFORE anything is written or
+	// queued: a wipe target the node will not recognise means the operator asked
+	// for a clean install and would otherwise get a dirty one reported as a
+	// success.
+	if err := validateWipePaths(req.Installer.WipePaths); err != nil {
+		handlers.SendJSONError(w, err.Error(), 400)
+		return
+	}
+	if msg := validateUploadSoftware(req.Installer.Type, req.Installer.Software, req.Installer.Version, req.Installer.Loader); msg != "" {
+		handlers.SendJSONError(w, msg, 400)
+		return
+	}
+	// An older node ignores the field and only extracts - the exact server that
+	// never started. Refused before anything is written, like Technic below.
+	if req.Installer.Software != "" {
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, node.Token, uploadSoftwareSince) {
+			handlers.SendJSONError(w, "This node runs an older release that cannot install server software over an upload. Update the node, then try again.", http.StatusConflict)
+			return
+		}
+	}
+
+	if handlers.ProxyInstallers[req.Installer.Type] {
+		token := ""
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil {
+			token = node.Token
+		}
+		if code, msg := handlers.ProxyInstallRefusal(r.Context(), h.state, srv.ServerType, token, req.Installer.Type); code != 0 {
+			handlers.SendJSONError(w, msg, code)
+			return
+		}
+	}
+	// While real player IP is on, what gets installed must expect it too.
+	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, srv, req.Installer.Type, req.Installer.Version)
+	if proxyRefused {
+		return
+	}
+
+	// A Technic pack is resolved here, before anything is written: the browser
+	// names a slug and a build, and every URL the node receives comes from
+	// Technic now. A node that predates the installer is refused rather than
+	// sent a job it would fail after the container already exists.
+	var technic *handlers.TechnicResolution
+	if req.Installer.Type == "technic" {
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, node.Token, handlers.TechnicSince) {
+			handlers.SendJSONError(w, "This node runs an older release that cannot install Technic packs. Update the node, then try again.", http.StatusConflict)
+			return
+		}
+		res, err := handlers.NewTechnicHandler(h.state).ResolveTechnic(r.Context(), strings.TrimSpace(req.Installer.TechnicSlug), strings.TrimSpace(req.Installer.TechnicBuild))
+		if err != nil {
+			handlers.SendTechnicError(w, err)
+			return
+		}
+		technic = res
+		req.Installer.McVersion = res.MCVersion
+		req.Installer.Version = res.Build
+		req.Installer.URL = res.URL
+	}
+
+	// A library file is resolved into the signed Core URL the node downloads
+	// it from, before anything is written. The node is never sent the path:
+	// it used to copy whatever that path named on its own disk.
+	if req.Installer.Type == "library" {
+		u, code, msg := handlers.ResolveLibraryInstall(r.Context(), h.state, req.Installer.Path, isAdmin)
+		if code != 0 {
+			handlers.SendJSONError(w, msg, code)
+			return
+		}
+		req.Installer.URL = u
+		req.Installer.Path = ""
+	}
+
+	// The recorded Minecraft version is Core's to decide, not the client's: it
+	// is what every later mod install is matched against.
+	applyExactMinecraftVersion(&req.Installer.McVersion, &req.Installer.Version,
+		recordedInstallerType(req.Installer.Type, req.Installer.Software), req.Installer.Loader)
+
+	// Enforce sub-server limit. Skipped during first setup only - the comment
+	// here used to claim admins were exempt too, and they never have been:
+	// the condition below reads srv.Status and nothing else.
+	//
+	// Read through the shared parser: this site used to hold its own copy of the
+	// rule, guarded on `n > 0`, and therefore threw away a stored 0 and fell back
+	// to the default of three. An operator asking for none silently got three,
+	// and an operator asking for unlimited got three as well.
+	//
+	// The count comes from the node. It used to come from the disk-stats cache
+	// in Redis, which a STOPPED server does not write - so the cap did not
+	// apply while a server was stopped, and a stopped server is exactly when a
+	// sub-server gets added. Measured on production: a limit of three, seven
+	// sub-servers.
+	if srv.Status != "pending_setup" {
+		if handlers.RefuseIfSubServerLimitReached(w, h.state, srv.NodeID, srv.UUID, subName) {
+			return
+		}
+	}
+
+	// Build JVM flags: default/Aikar flags followed by server-specific extra flags.
+	// These are forwarded to the node as a dedicated field; the node builds the
+	// full java start command itself via buildStartCommand.
+	extraFlags := strings.TrimSpace(req.ExtraJvmFlags)
+	if extraFlags == "" {
+		if srv.Memory >= 12288 {
+			extraFlags = aikarsHighMemFlags
+		} else {
+			extraFlags = aikarsFlags
+		}
+	}
+	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
+
+	// Update DB (start_command is display-only; store combined flags in extra_jvm_flags).
+	//
+	// Written only once every check below has passed, right before the
+	// command goes out. It used to be written first, so a setup refused
+	// afterwards - a foreign pack, modpacks switched off, an unknown node -
+	// answered 403 or 404 and still left the server "installing" under a
+	// sub-server name that existed nowhere, with no install on its way.
+	recordSetup := func() bool {
+		if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, recordedInstallerType(req.Installer.Type, req.Installer.Software), req.Installer.McVersion, req.Installer.Version); err != nil {
+			handlers.SendJSONError(w, "Failed to update server", 500)
+			return false
+		}
+		h.state.Store.UpdateServerStatus(serverID, "installing")
+		return true
+	}
+	if h.state.Queue == nil && !recordSetup() {
+		return
+	}
+
+	// Node command
+	if h.state.Queue != nil {
+		node, err := h.state.Store.GetNodeByID(srv.NodeID)
+		if err != nil {
+			handlers.SendJSONError(w, "Node not found", 404)
+			return
+		}
+
+		// Decided here, before the install record below is written: that record
+		// is one of the things that tells a new server from an existing one.
+		proxyDefault := !srv.ProxyProtocol && h.proxyProtocolDefault(r.Context(), srv, node, req.Installer.Type, req.Installer.Version, req.CreatesRoute)
+
+		// Cross-check snapshot inputs: capture the ORIGINAL installer type and
+		// the external .mrpack URL BEFORE the pack branch rewrites them below.
+		originalInstallerType := req.Installer.Type
+		externalMrpackURL := req.Installer.URL
+		var snapshotBuild *models.PackBuild
+
+		// Unified pack install: authorize + materialize the build's .mrpack,
+		// then rewrite req.Installer in place so the Node only ever sees the
+		// existing "modpack" installer path. A foreign pack must never reach
+		// the dispatch below.
+		if req.Installer.Type == "pack" {
+			if !h.state.FeatureFlags.IsModpacksEnabled(r.Context()) {
+				handlers.SendJSONError(w, "Modpacks are disabled", http.StatusForbidden)
+				return
+			}
+
+			pack, err := h.state.Store.GetPack(req.Installer.PackID)
+			if err != nil || pack == nil {
+				handlers.SendJSONError(w, "Pack not found", 404)
+				return
+			}
+			packUserID, _ := r.Context().Value("userID").(string)
+			if pack.OwnerID != packUserID && !isAdmin {
+				handlers.SendJSONError(w, "Forbidden", 403)
+				return
+			}
+
+			build, err := h.state.Store.GetPackBuild(req.Installer.BuildID)
+			if err != nil || build == nil || build.PackID != pack.ID {
+				handlers.SendJSONError(w, "Build not found", 404)
+				return
+			}
+			snapshotBuild = build
+
+			if h.state.InstallMrpack == nil {
+				handlers.SendJSONError(w, "Modpack installs are not available", 503)
+				return
+			}
+			key, err := h.state.InstallMrpack(r.Context(), pack, build)
+			if err != nil {
+				log.Printf("ensureInstallMrpack failed for pack %d build %d: %v", pack.ID, build.ID, err)
+				handlers.SendJSONError(w, "Failed to prepare pack for install", 500)
+				return
+			}
+			base, err := handlers.ModpackMirrorBase(h.state.Store.GetSetting)
+			if err != nil {
+				log.Printf("modpackMirrorBase failed: %v", err)
+				handlers.SendJSONError(w, "Failed to prepare pack for install", 500)
+				return
+			}
+
+			req.Installer.Type = "modpack"
+			req.Installer.URL = base + key
+			req.Installer.Loader = build.Loader
+			req.Installer.McVersion = build.Minecraft
+			req.Installer.ModrinthProjectID = ""
+			req.Installer.ModrinthVersionID = ""
+			req.Installer.ModrinthProjectSlug = ""
+		}
+
+		// Record HOW this sub-server is being installed, now that the pack
+		// branch above has resolved a pack into its concrete versions.
+		//
+		// originalInstallerType, not req.Installer.Type: a pack was rewritten to
+		// "modpack" for the node's benefit, and the panel has to put the operator
+		// back on the Packs tab, not on Modrinth. Written wholesale so a reinstall
+		// away from a modpack CLEARS the old reference instead of leaving the
+		// panel prefilling a pack the directory no longer contains.
+		//
+		// Best-effort: a failure here must not fail an install that is about to be
+		// dispatched. The cost of losing it is a form that cannot prefill, which is
+		// exactly where this feature started.
+		if err := h.state.Store.UpsertSubServerInstall(models.SubServerInstall{
+			ServerID:            serverID,
+			SubServerName:       subName,
+			InstallerType:       recordedInstallerType(originalInstallerType, req.Installer.Software),
+			McVersion:           req.Installer.McVersion,
+			BuildVersion:        req.Installer.Version,
+			Loader:              req.Installer.Loader,
+			ModrinthProjectID:   req.Installer.ModrinthProjectID,
+			ModrinthVersionID:   req.Installer.ModrinthVersionID,
+			ModrinthProjectSlug: req.Installer.ModrinthProjectSlug,
+			PackID:              req.Installer.PackID,
+			PackBuildID:         req.Installer.BuildID,
+		}); err != nil {
+			log.Printf("sub-server install record failed for server %d/%s: %v", serverID, subName, err)
+		}
+
+		configPayload := map[string]interface{}{
+			"uuid":    srv.UUID,
+			"ownerId": srv.OwnerID,
+			"docker": map[string]interface{}{
+				"image":         javaImage,
+				"ram":           srv.Memory,
+				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
+				"cpuLimit":      srv.CPULimit,
+				"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":      srv.Timezone,
+				"extraJvmFlags": combinedJvmFlags,
+			},
+			"activeSubServer": subName,
+		}
+		installerPayload := map[string]interface{}{
+			"type":      req.Installer.Type,
+			"version":   req.Installer.Version,
+			"loader":    req.Installer.Loader,
+			"url":       req.Installer.URL,
+			"path":      req.Installer.Path,
+			"structure": req.Installer.Structure,
+			// Modpack metadata forwarded to the node installer.
+			"modrinthProjectId":   req.Installer.ModrinthProjectID,
+			"modrinthVersionId":   req.Installer.ModrinthVersionID,
+			"modrinthProjectSlug": req.Installer.ModrinthProjectSlug,
+			// What to clear first. The node validates these again against its own
+			// copy of the vocabulary before it deletes anything.
+			"wipePaths": req.Installer.WipePaths,
+			"software":  req.Installer.Software,
+		}
+		if technic != nil {
+			installerPayload["variant"] = technic.Variant
+			if len(technic.Mods) > 0 {
+				installerPayload["technicMods"] = technic.Mods
+			}
+		}
+
+		// Recorded before anything is written: unrecorded, the node's answer
+		// could not be acted on, so an install on a server that is already on
+		// is refused rather than sent without it.
+		if proxyKeep && !h.trackProxyProtocolInstall(r.Context(), srv, subName, false) {
+			handlers.SendJSONError(w, "Could not prepare the install; try again in a moment", http.StatusServiceUnavailable)
+			return
+		}
+		services.RememberSetupBefore(r.Context(), h.state.Redis, srv, subName)
+		if !recordSetup() {
+			return
+		}
+		// A new server defaults to real player IP forwarding. The switch goes on
+		// BEFORE the command, through the owner's own write path, and the node
+		// only writes the matching config when told it is on; a node that cannot
+		// write it answers so and Core switches it back off. A server that is
+		// already on gets the same request, so the sub-server it installs into
+		// expects the header too.
+		proxyFlag := proxyKeep
+		if proxyDefault {
+			if h.trackProxyProtocolInstall(r.Context(), srv, subName, true) && h.switchProxyProtocolOn(r.Context(), srv) {
+				proxyFlag = true
+			} else {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.state.Redis, srv.UUID)
+				proxyDefault = false
+			}
+		}
+		if proxyFlag {
+			installerPayload["proxyProtocol"] = true
+		}
+		// Setup installs and starts the server. The intent is published BEFORE
+		// the command: the node asks it when the install is done, and a short
+		// install finished ahead of the scan that would have published it, read
+		// the old "stopped" and left a fresh server down.
+		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
+		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {
+			log.Printf("Redis Queue Failed: %v", err)
+			h.state.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
+			services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, srv.DesiredState)
+			// Nothing was sent, so nothing will report back: put the row back
+			// as it was rather than leave it "installing" a sub-server that
+			// exists nowhere.
+			services.RestoreSetupBefore(r.Context(), h.state.Redis, h.state.Store, srv, subName)
+			h.state.Store.UpdateServerStatus(serverID, srv.Status)
+			if proxyFlag {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.state.Redis, srv.UUID)
+			}
+			if proxyDefault {
+				h.switchProxyProtocolOff(r.Context(), srv)
+			}
+			handlers.SendJSONError(w, "Failed to queue setup", 500)
+			return
+		}
+
+		// Set install cooldown
+		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
+
+		if forgetWipedMods(h.state.Store, serverID, subName, srv.InstallerType, req.Installer.WipePaths) {
+			h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+		}
+
+		// Snapshot the modpack's Modrinth members for the Content-tab
+		// cross-check. Advisory only: the helper logs and swallows every
+		// failure. Run in the background so the external-modpack case (which
+		// fetches the .mrpack over the network) cannot delay this response; the
+		// install command was already dispatched above.
+		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL, false)
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSetup, actorID, "", map[string]interface{}{
+		"sub_server": subName,
+		"installer":  req.Installer.Type,
+		"version":    req.Installer.McVersion,
+	})
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Server setup queued",
+	})
+}
+
+// forgetWipedMods drops the mod rows of a sub-server whose mods/ directory the
+// install was told to wipe, so the Installed list stops naming jars that are
+// gone. Rows in plugins/ stay: the "mods" token does not touch that directory.
+// installerType is the one the rows were placed under, for rows written before
+// target_dir existed. Reports whether any row was dropped; failures are logged,
+// since the install itself is already on its way.
+func forgetWipedMods(st store.Store, serverID int, subName, installerType string, wipePaths []string) bool {
+	wiped := false
+	for _, t := range wipePaths {
+		if strings.TrimSpace(t) == "mods" {
+			wiped = true
+		}
+	}
+	if !wiped {
+		return false
+	}
+	mods, err := st.ListServerMods(serverID, subName)
+	if err != nil {
+		log.Printf("forgetting wiped mods of server %d/%s: %v", serverID, subName, err)
+		return false
+	}
+	dropped := false
+	for i := range mods {
+		if uninstallTargetDir(&mods[i], installerType) != "mods" {
+			continue
+		}
+		if err := st.DeleteServerMod(mods[i].ID, serverID); err != nil {
+			log.Printf("forgetting wiped mod %d of server %d/%s: %v", mods[i].ID, serverID, subName, err)
+			continue
+		}
+		dropped = true
+	}
+	return dropped
+}
+
+// reinstallableInstallers are the sources a reinstall may name: the ones the
+// node installs from a type and a version alone.
+var reinstallableInstallers = map[string]bool{
+	"paper": true, "vanilla": true, "fabric": true, "forge": true, "neoforge": true,
+}
+
+// ReinstallServer: Reinstalls the active sub-server (version update)
+func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+
+	var req struct {
+		Installer struct {
+			Type      string `json:"type"`
+			Version   string `json:"version"`
+			McVersion string `json:"mcVersion"`
+			Loader    string `json:"loader"`
+		} `json:"installer"`
+		JavaImage     string `json:"javaImage"`
+		ExtraJvmFlags string `json:"extraJvmFlags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+
+	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
+
+	isAdmin := r.Context().Value("isAdmin").(bool)
+
+	if srv.Status == "pending_setup" {
+		handlers.SendJSONError(w, "Server must be set up before reinstalling", 400)
+		return
+	}
+
+	// What is sent to the node is what was validated: the request's fields,
+	// each falling back to what the server already runs. The node used to get
+	// the raw request fields while only the database got the fallbacks, and it
+	// deletes the server's jars before it looks at the installer - so a
+	// reinstall naming no type left a server with no jar at all.
+	installerType := req.Installer.Type
+	if installerType == "" {
+		installerType = srv.InstallerType
+	}
+	// A NeoForge reinstall naming no loader reinstalls the recorded one; it
+	// used to be refused, which left a server with an empty Minecraft version
+	// no way to get one recorded.
+	loader := req.Installer.Loader
+	if installerType == "neoforge" && strings.TrimSpace(loader) == "" {
+		if rec, err := h.state.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil && rec.InstallerType == "neoforge" {
+			loader = rec.Loader
+		}
+		if loader == "" && srv.InstallerType == "neoforge" && handlers.NeoForgeMinecraft(srv.BuildNumber) != "" {
+			loader = srv.BuildNumber
+		}
+	}
+	// Derived from the request alone: srv.BuildNumber can be a loader build
+	// (a version update records one), which is no Minecraft version.
+	mcVersion := req.Installer.McVersion
+	reqVersion := req.Installer.Version
+	applyExactMinecraftVersion(&mcVersion, &reqVersion, installerType, loader)
+	if mcVersion == "" {
+		mcVersion = srv.MinecraftVersion
+	}
+	buildNumber := reqVersion
+	if buildNumber == "" {
+		buildNumber = srv.BuildNumber
+	}
+	// Reinstall updates the server software in place. Every other source -
+	// library, modpacks, packs, Technic, uploads - is resolved and authorized
+	// by setup, and this route used to pass them to the node unchecked.
+	if !reinstallableInstallers[installerType] {
+		handlers.SendJSONError(w, "Reinstall updates the server software (paper, vanilla, fabric, forge or neoforge). Use setup for any other install source.", 400)
+		return
+	}
+	if msg := validateInstallerRequest(installerType, buildNumber, loader, "", ""); msg != "" {
+		handlers.SendJSONError(w, msg, 400)
+		return
+	}
+	// While real player IP is on, the reinstalled software must expect it too.
+	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, srv, installerType, buildNumber)
+	if proxyRefused {
+		return
+	}
+
+	// Atomically claim the install cooldown (30s, admins bypass) — SetNX closes
+	// the concurrent-request race.
+	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+	if !isAdmin {
+		acquired, err := h.state.Redis.SetNX(context.Background(), cooldownKey, "1", 30*time.Second).Result()
+		if err == nil && !acquired {
+			ttl, _ := h.state.Redis.TTL(context.Background(), cooldownKey).Result()
+			handlers.SendJSONError(w, fmt.Sprintf("Please wait %d seconds before reinstalling", int(ttl.Seconds())), 429)
+			return
+		}
+	}
+
+	subName := srv.ActiveSubServer
+	if subName == "" {
+		handlers.SendJSONError(w, "No active sub-server to reinstall", 400)
+		return
+	}
+
+	// Update image if provided
+	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+		handlers.SendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		return
+	}
+	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
+	if javaImage == "" {
+		handlers.SendJSONError(w, "javaImage is required", 400)
+		return
+	}
+
+	extraFlags := strings.TrimSpace(req.ExtraJvmFlags)
+	if extraFlags == "" {
+		extraFlags = srv.ExtraJvmFlags
+	}
+	combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
+
+	// Recorded before anything is written, as in setup.
+	if proxyKeep && h.state.Queue != nil && !h.trackProxyProtocolInstall(r.Context(), srv, subName, false) {
+		handlers.SendJSONError(w, "Could not prepare the reinstall; try again in a moment", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Update DB (start_command is display-only; node builds the real command)
+	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, installerType, mcVersion, buildNumber); err != nil {
+		handlers.SendJSONError(w, "Failed to update server", 500)
+		return
+	}
+	h.state.Store.UpdateServerStatus(serverID, "installing")
+	// Undone when the command cannot be sent: nothing would ever report back,
+	// and the server sat "installing" with resources and copies refused.
+	undo := func() {
+		h.state.Store.UpdateServerSetup(serverID, srv.GameImage, srv.StartCommand, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.InstallerType, srv.MinecraftVersion, srv.BuildNumber)
+		h.state.Store.UpdateServerStatus(serverID, srv.Status)
+	}
+
+	if h.state.Queue != nil {
+		node, err := h.state.Store.GetNodeByID(srv.NodeID)
+		if err != nil {
+			undo()
+			handlers.SendJSONError(w, "Node not found", 404)
+			return
+		}
+
+		configPayload := map[string]interface{}{
+			"uuid": srv.UUID,
+			"docker": map[string]interface{}{
+				"image":         javaImage,
+				"ram":           srv.Memory,
+				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
+				"cpuLimit":      srv.CPULimit,
+				"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":      srv.Timezone,
+				"extraJvmFlags": combinedJvmFlags,
+			},
+			"activeSubServer": subName,
+		}
+		installerPayload := map[string]interface{}{
+			"type":    installerType,
+			"version": buildNumber,
+			"loader":  loader,
+		}
+		if proxyKeep {
+			installerPayload["proxyProtocol"] = true
+		}
+
+		// A reinstall starts the server when it is done, as setup does. Published
+		// before the command for the same reason as there; the node now asks
+		// the intent before it starts, so a suspension landing during the
+		// install keeps the server down.
+		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
+		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "reinstall", configPayload, installerPayload); err != nil {
+			log.Printf("Redis Queue Failed: %v", err)
+			h.state.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
+			services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, srv.DesiredState)
+			undo()
+			if proxyKeep {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.state.Redis, srv.UUID)
+			}
+			handlers.SendJSONError(w, "Failed to queue reinstall", 500)
+			return
+		}
+
+		// Set install cooldown
+		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
+
+		// The install record follows the reinstall, as setup's does: the edit
+		// form and the mod checks prefer it over the servers row, and it used to
+		// keep naming the version this reinstall replaced. Written wholesale, so
+		// a reinstall away from a modpack clears the pack reference like setup.
+		// Best-effort for the same reason as there.
+		if err := h.state.Store.UpsertSubServerInstall(models.SubServerInstall{
+			ServerID:      serverID,
+			SubServerName: subName,
+			InstallerType: installerType,
+			McVersion:     mcVersion,
+			BuildVersion:  buildNumber,
+			Loader:        loader,
+		}); err != nil {
+			log.Printf("sub-server install record failed for server %d/%s: %v", serverID, subName, err)
+		}
+
+		// Refresh the modpack cross-check snapshot for the reinstalled
+		// sub-server. Advisory only, never blocks; run in the background so an
+		// external-modpack fetch cannot delay this response. The /reinstall
+		// request carries no packId/buildId, so the "pack" branch gets a nil
+		// build and no-ops (keeping the existing snapshot, which is still
+		// correct for a same-pack reinstall); this call therefore refreshes the
+		// external-modpack URL case and clears when switching to a non-modpack
+		// installer. The panel reinstalls a pack via /setup, not this route.
+		go h.snapshotModpackContents(serverID, subName, installerType, nil, "", true)
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventReinstall, actorID, "", map[string]interface{}{
+		"sub_server": subName,
+		"installer":  installerType,
+		"version":    mcVersion,
+	})
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Server reinstall queued",
+	})
+}
+
+// knownSubServers reports which sub-servers the node last saw on disk for a
+// server, and whether that answer is known at all.
+//
+// The source is the node's disk-usage report (dylaris:server:<uuid>:stats:disk),
+// which carries a per-sub-server size map. It is the only sub-server inventory
+// Core holds without a round trip to the node.
+//
+// ok=false means "no answer", not "none": the key expires ten minutes after the
+// last report, so a server whose node just restarted, or one that has never run,
+// legitimately has nothing here. Callers must not treat that as an empty
+// inventory - refusing every switch and every install while a cache is cold
+// would be a worse failure than the one this guards against, and the node
+// refuses an impossible request safely either way.
+//
+// Both readers of this key go through here. They used to parse it separately,
+// which is how one of them ended up asserting against a map that the node's
+// non-quota path never filled.
+// subServerExists answers whether name is a sub-server of this server, and
+// whether it could be answered at all.
+//
+// It asks Core's OWN record first. The disk report it used to rely on alone is
+// a node-written Redis cache refreshed every 10 seconds when disk quotas are
+// available and every 5 MINUTES when they are not - and both of that cache's
+// failure modes were wrong here, in opposite directions:
+//
+//   - Stale: a sub-server that had just been created was refused with "no
+//     sub-server named X on this server", a message saying it does not exist
+//     about a directory sitting on disk. Measured on production: the files
+//     endpoint listed it at 122 MB and the switch refused it for five minutes.
+//   - Absent: the caller skipped the check entirely, which is precisely the
+//     "switch to a name that is not on disk" case the check was written for.
+//
+// The install table has neither problem: the row is written when setup is
+// dispatched and removed when a sub-server is deleted, so it is current the
+// moment Core knows anything at all. The disk report still gets a say, because
+// a sub-server can predate that table.
+func (h *ServerHandler) subServerExists(ctx context.Context, serverID int, serverUUID, name string) (exists bool, answered bool) {
+	if h.state != nil && h.state.Store != nil {
+		if installs, err := h.state.Store.ListSubServerInstalls(serverID); err == nil {
+			for _, in := range installs {
+				if in.SubServerName == name {
+					return true, true
+				}
+			}
+			answered = true
+		}
+	}
+	if known, ok := h.knownSubServers(ctx, serverUUID); ok {
+		if known[name] {
+			return true, true
+		}
+		answered = true
+	}
+	return false, answered
+}
+
+func (h *ServerHandler) knownSubServers(ctx context.Context, serverUUID string) (map[string]bool, bool) {
+	if h.state == nil || h.state.Redis == nil {
+		return nil, false
+	}
+	data, err := h.state.Redis.Get(ctx, fmt.Sprintf("dylaris:server:%s:stats:disk", serverUUID)).Result()
+	if err != nil {
+		return nil, false
+	}
+	var payload struct {
+		SubServers map[string]int64 `json:"subServers"`
+	}
+	if json.Unmarshal([]byte(data), &payload) != nil || payload.SubServers == nil {
+		return nil, false
+	}
+	known := make(map[string]bool, len(payload.SubServers))
+	for name := range payload.SubServers {
+		known[name] = true
+	}
+	return known, true
+}
+
+// SwitchSubServer: Switches the active MC server in the container
+func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+
+	var req SwitchSubServerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+
+	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
+
+	// Rejected, not sanitized. Setup may sanitize because it is NAMING a new
+	// directory; this is picking an existing one, and quietly rewriting the
+	// caller's string switches them to a different sub-server than they asked
+	// for. "../escape" used to sanitize to "escape" and be accepted.
+	subName := strings.TrimSpace(req.SubServerName)
+	if !validate.IsSubServerName(subName) {
+		handlers.SendJSONError(w, "Invalid sub-server name", 400)
+		return
+	}
+
+	// The sub-server has to exist before it becomes this server's active one.
+	// Without this, any owner could switch to a name that is not on disk: the
+	// write below succeeded, the node then failed asynchronously with "no
+	// runnable server found", and Core's active_sub_server and the node's
+	// .active_server disagreed from then on - with Core's pointing at nothing.
+	// Everything keyed on the active sub-server (the console above all) reads
+	// empty in that state while the old sub-server is still the one running.
+	// Refused when nothing can answer, not waved through: "I could not check"
+	// used to mean "go ahead", which is the one outcome this check exists to
+	// prevent.
+	if exists, answered := h.subServerExists(r.Context(), serverID, srv.UUID, subName); !exists {
+		if !answered {
+			handlers.SendJSONError(w, "Could not check which sub-servers this server has; try again in a moment", 503)
+			return
+		}
+		handlers.SendJSONError(w, "No sub-server named "+subName+" on this server", 400)
+		return
+	}
+	// While real player IP is on, only a sub-server known to expect the
+	// header may become the running one; any other would lock everyone out.
+	if srv.ProxyProtocol && subName != srv.ActiveSubServer {
+		ok, err := services.ProxyProtocolSubConfigured(r.Context(), h.state.Redis, srv.UUID, subName)
+		if err != nil || !ok {
+			handlers.SendJSONErrorCode(w, "Real player IP is on for this server, and "+subName+" is not known to be set up for it. Turn off Real player IP (Routes) first, then switch.",
+				"proxy_protocol_on", http.StatusConflict)
+			return
+		}
+	}
+
+	if err := h.state.Store.UpdateServerActiveSubServer(serverID, subName); err != nil {
+		handlers.SendJSONError(w, "Failed to update server", 500)
+		return
+	}
+
+	// Before the node is told to switch, not after: it restarts the container,
+	// and MC reads server.properties once at boot. The RCON config is stored per
+	// SERVER and lives per SUB-SERVER, so without this the switch quietly moved
+	// to a sub-server whose file never had enable-rcon set - Core kept reporting
+	// RCON as on with nothing pending, and the Players tabs unlocked onto a port
+	// nothing was listening on. Same reason the loader-metadata refresh below
+	// exists: a plain switch used to move only active_sub_server.
+	// The flag rides along in both directions. A switch restarts the container,
+	// so a stamp that landed IS live afterwards - and only the power route used
+	// to clear it, which left "enable RCON, then switch" showing the
+	// restart-pending banner and the Players tabs locked until someone pressed
+	// restart for no reason. A stamp that did NOT land means the file lacks the
+	// setting, so a restart really is still owed.
+	needsRestart := !h.syncRconToSubServer(srv, subName)
+	// Voice is re-asserted the same way, but its result is logged inside and
+	// never feeds the RCON restart flag or holds the switch up.
+	h.syncVoiceToSubServer(srv, subName)
+	if err := h.state.Store.SetServerRconNeedsRestart(serverID, needsRestart); err != nil {
+		log.Printf("SwitchSubServer: rcon needs-restart for server %d: %v", serverID, err)
+	}
+
+	if h.state.Queue != nil {
+		node, err := h.state.Store.GetNodeByID(srv.NodeID)
+		if err == nil {
+			combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + strings.TrimSpace(srv.ExtraJvmFlags))
+			switchPayload := map[string]interface{}{
+				"uuid":            srv.UUID,
+				"activeSubServer": subName,
+				"docker": map[string]interface{}{
+					"image":         srv.GameImage,
+					"ram":           srv.Memory,
+					"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
+					"cpuLimit":      srv.CPULimit,
+					"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+					"timezone":      srv.Timezone,
+					"extraJvmFlags": combinedJvmFlags,
+				},
+			}
+			// A switch starts the server, so the platform means to run it now.
+			// After a crash loop the intent read "stopped" while the switched
+			// server ran, and the reconciler would not bring it back if it fell.
+			if err := h.state.Store.UpdateServerDesiredState(serverID, "online"); err != nil {
+				log.Printf("SwitchSubServer: desired state for server %d: %v", serverID, err)
+			}
+			h.state.Queue.SendCommand(context.Background(), node.Token, "switch_server", switchPayload, nil)
+		}
+	}
+
+	// Bring the server row's loader metadata in step with the sub-server we just
+	// switched to. installer_type/minecraft_version drive the Content tab's mod
+	// browser, the mods-vs-plugins install target, and version highlighting.
+	// Setup writes them, but a plain switch used to move only active_sub_server,
+	// so after switching between sub-servers of different loaders the row kept
+	// pointing at whichever was set up last - installing a plugin onto a
+	// switched-to Paper server then wrote into mods/ (or a mod into plugins/) and
+	// silently never loaded. The node's .dylaris.json is authoritative per
+	// sub-server; refresh from it best-effort. A missing sub-server or an
+	// unreachable node leaves the existing values rather than wiping them (the
+	// switch itself already needs the node, so a node outage stops it upstream).
+	if h.state.GRPCRegistry != nil {
+		if resp, ierr := handlers.InspectOrphanOnNode(h.state, srv.NodeID, srv.UUID); ierr != nil {
+			log.Printf("SwitchSubServer: loader-metadata refresh for %s/%s skipped: %v", srv.UUID, subName, ierr)
+		} else if it, mv, build, ok := handlers.SubServerLoaderFromInspect(resp, subName); ok {
+			mv, build = versionFromInstallRecord(h.state.Store, serverID, subName, it, mv, build)
+			if err := h.state.Store.UpdateServerLoaderMetadata(serverID, it, mv, build); err != nil {
+				log.Printf("SwitchSubServer: persist loader metadata for server %d failed: %v", serverID, err)
+			}
+		}
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSubServerSwitched, actorID, "", map[string]interface{}{
+		"from": srv.ActiveSubServer,
+		"to":   subName,
+	})
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Sub-server switch queued",
+	})
+}
+
+// versionFromInstallRecord fills a switched-to sub-server's empty Minecraft
+// version from what it was installed as. The node's directory scan names the
+// type only, and the switch used to write that empty version onto the server.
+// A record of another type is stale and is not used.
+func versionFromInstallRecord(st interface {
+	GetSubServerInstall(serverID int, subServer string) (*models.SubServerInstall, error)
+}, serverID int, subName, installerType, mv, build string) (string, string) {
+	if mv != "" {
+		return mv, build
+	}
+	rec, err := st.GetSubServerInstall(serverID, subName)
+	if err != nil || rec == nil || !strings.EqualFold(rec.InstallerType, installerType) {
+		return mv, build
+	}
+	if build == "" {
+		build = rec.BuildVersion
+	}
+	return services.RecordedMinecraftVersion(rec.InstallerType, rec.McVersion, rec.BuildVersion, rec.Loader), build
+}
+
+// GetInstallCooldown returns how many seconds remain on the post-install
+// cooldown for a server, so the UI can disable power actions and show a
+// countdown instead of letting the user click and get a 429. Returns 0
+// when no cooldown is active. Admins still see the real number; the gate
+// in ServerPowerHandler is the one that exempts them.
+func (h *ServerHandler) GetInstallCooldown(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	seconds := 0
+	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+	if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
+		seconds = int(ttl.Seconds())
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"seconds": seconds,
+	})
+}
+
+// powerTransitionRefusal is the message a start, stop or restart is refused
+// with while the server is between states, or "" when it may go out. A second
+// command queued behind the first ran on the node right after it, so a stop
+// clicked during a boot stopped the server the moment it came up.
+//
+// Kill is never refused here: it is the way out of a transition that hangs.
+// Operators pass too, because a status can be left behind by a node that died
+// mid-transition, and nothing else could then put the server back in order.
+func powerTransitionRefusal(action, status string, override bool) string {
+	if action == "kill" || override || !inPowerTransition(status) {
+		return ""
+	}
+	return "The server is " + status + ". Wait until it has finished, or use Force kill."
+}
+
+// inPowerTransition reports a server between power states: a JVM is booting,
+// restarting or shutting down. Since the node reports "starting" until the
+// server answers a status ping, this lasts the whole boot, not a moment.
+func inPowerTransition(status string) bool {
+	switch status {
+	case "starting", "stopping", "restarting":
+		return true
+	}
+	return false
+}
+
+// powerLockTTL is how long one power action locks out the next for its server.
+const powerLockTTL = 3 * time.Second
+
+func powerLockKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:power_lock", uuid)
+}
+
+// takePowerLock claims the per-server power lock. A Redis that cannot answer
+// lets the action through: the lock only stops a double click, and failing
+// closed would take power control away whenever Redis has a bad moment.
+func takePowerLock(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	if rdb == nil {
+		return true
+	}
+	ok, err := rdb.SetNX(ctx, powerLockKey(uuid), "1", powerLockTTL).Result()
+	if err != nil {
+		log.Printf("power lock for %s: %v (letting the action through)", uuid, err)
+		return true
+	}
+	return ok
+}
+
+// ServerPowerHandler: Controls Start, Stop, Kill and Restart
+func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+
+	var req PowerActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	validActions := map[string]bool{"start": true, "stop": true, "restart": true, "kill": true}
+	if !validActions[req.Action] {
+		handlers.SendJSONError(w, "Invalid action", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+
+	username := r.Context().Value("username").(string)
+	isAdmin := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+
+	// POWER is in-handler-enforced (Rule R5): the action is in the request body,
+	// so a route-level RequireCap cannot distinguish a kill-only holder from a
+	// start-only holder. Resolve the per-action cap here instead.
+	//
+	// BEFORE the state checks below, not after. They used to run first, so a
+	// stranger asking about somebody else's server was told "not set up yet"
+	// (400) for one still installing, "Forbidden" (403) for a running one and
+	// "not found" (404) for an id that does not exist - enough to enumerate
+	// server ids and their rough state from any account. Measured with a second
+	// account on production. A caller with no right to act on the server now
+	// learns nothing about it beyond the fact that they may not.
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
+	if rerr != nil || !res.HasCap("power."+req.Action) {
+		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Server must be set up before it can be started
+	if srv.Status == "pending_setup" {
+		handlers.SendJSONError(w, "Server is not set up yet", 400)
+		return
+	}
+
+	// Block start/restart when disk quota is full
+	if srv.Status == "disk_full" && (req.Action == "start" || req.Action == "restart") {
+		handlers.SendJSONError(w, "Server cannot start - storage limit reached. Delete files or raise the limit.", 400)
+		return
+	}
+
+	if srv.Status == "suspended" && !handlers.OperatorOverride(r) {
+		handlers.SendJSONError(w, "Server is suspended. Action blocked.", 403)
+		return
+	}
+
+	// BYON billing suspend: a suspended tenant keeps read access but cannot
+	// start/restart their servers until payment is settled (an operator can
+	// reactivate). past_due (grace) is unaffected. Admins bypass.
+	//
+	// Stopping and killing stay open while suspended: a tenant who is cut off
+	// may still put their own server down.
+	if req.Action == "start" || req.Action == "restart" {
+		if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+			return
+		}
+	}
+
+	// Operator override transparency: the two suspend gates above deliberately
+	// let an admin through (a force-suspended server, or a billing-suspended
+	// owner) so support keeps control. Detect such an admin start/restart so the
+	// power-action audit entry below records the override instead of it being
+	// silent.
+	//
+	// The override is genuinely temporary, which is what makes letting an admin
+	// through safe: suspension state lives in user_billing, NOT on the server
+	// row, so starting the server cannot clear it. GetUserBilling still reports
+	// suspended afterwards and the hourly billing-lifecycle enforcement pass
+	// stops the tenant's servers again.
+	//
+	// srv.Status == "suspended" is a different matter: no code path in either
+	// repo ever writes that value (verified repo-wide incl. SQL - suspension is
+	// modelled entirely on the owner), so today it is only reachable by editing
+	// the row by hand. The gate stays because it is an authorization check on a
+	// power action, and a guard that costs one comparison is the wrong place to
+	// economise - but do not read it as evidence that per-server suspension
+	// exists.
+	suspendOverride := ""
+	if handlers.OperatorOverride(r) && (req.Action == "start" || req.Action == "restart") {
+		if srv.Status == "suspended" {
+			suspendOverride = "server_suspended"
+		} else if b, err := h.state.Store.GetUserBilling(srv.OwnerID); err == nil && b.Status == "suspended" {
+			suspendOverride = "owner_billing_suspended"
+		}
+		if suspendOverride != "" {
+			log.Printf("Suspend override: admin %s performed %s on server %d (%s)", username, req.Action, srv.ID, suspendOverride)
+		}
+	}
+
+	// Install cooldown: 30s after setup/reinstall the node sets a Redis key
+	// with TTL so the freshly-installed server can boot to a stable state
+	// without a foot-gun start/stop/kill during world generation. The same
+	// key is checked on setup + reinstall to debounce double-clicks; we
+	// gate power actions on it too. Admins bypass but the frontend prompts
+	// for an explicit confirmation.
+	if !handlers.OperatorOverride(r) {
+		cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+		if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
+			handlers.SendJSONError(w, fmt.Sprintf("Server is finishing install — please wait %d seconds", int(ttl.Seconds())), 429)
+			return
+		}
+	}
+
+	// Status-transition sanity: the frontend already disables nonsensical
+	// transitions (Start on an online server, Stop on an offline one) but
+	// the API was happy to forward them to the node anyway -- a misbehaving
+	// client could spam Stop on a stopped server, queueing N redundant
+	// commands the node has to chew through. Reject them at the boundary.
+	isOffline := srv.Status == "stopped" || srv.Status == "offline" || srv.Status == "disk_full"
+	isOnline := srv.Status == "online"
+	switch req.Action {
+	case "start":
+		if isOnline {
+			handlers.SendJSONError(w, "Server is already running", 409)
+			return
+		}
+	case "stop", "kill", "restart":
+		if isOffline {
+			handlers.SendJSONError(w, "Server is not running", 409)
+			return
+		}
+	}
+	if msg := powerTransitionRefusal(req.Action, srv.Status, handlers.OperatorOverride(r)); msg != "" {
+		handlers.SendJSONError(w, msg, http.StatusConflict)
+		return
+	}
+
+	// The node is in the middle of an install, a restore or a move of this
+	// server. It runs power commands in parallel with that work and nothing
+	// orders them, so a start went into a half-installed directory and a stop
+	// or kill was simply undone when the install finished by starting the
+	// server. The node's busy key is the truth here rather than the status
+	// column: it exists only while the node is actually working and expires
+	// on its own if the node dies, where a status left behind by a lost
+	// update would refuse power actions for good.
+	if h.state.Redis != nil {
+		if busy, err := h.state.Redis.Get(context.Background(), handlers.NodeBusyKey(srv.UUID)).Result(); err == nil && busy != "" {
+			handlers.SendJSONError(w, "The node is still working on this server ("+busy+"). Try again when it has finished.", 409)
+			return
+		}
+	}
+	// A move between nodes is driven by Core, not held on the node for its
+	// whole length. Operators may still act on a migration that is stuck.
+	if srv.Status == "migrating" && !handlers.OperatorOverride(r) {
+		handlers.SendJSONError(w, "Server is being moved to another node. Try again when the move has finished.", 409)
+		return
+	}
+
+	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	if err != nil {
+		handlers.SendJSONError(w, "Node not found", 404)
+		return
+	}
+
+	// Last gate before anything is written: two clicks a moment apart (or two
+	// tabs) both pass the status check above, because the status they read is
+	// the same one, and queue two commands the node runs back to back.
+	if req.Action != "kill" && !takePowerLock(r.Context(), h.state.Redis, srv.UUID) {
+		handlers.SendJSONError(w, "A power action was just sent; wait a moment", http.StatusTooManyRequests)
+		return
+	}
+
+	newStatus := ""
+	switch req.Action {
+	case "start", "restart":
+		newStatus = "starting"
+		if req.Action == "restart" {
+			// What the node reports next for a restart; "starting" here made the
+			// panel step back: starting -> restarting -> starting -> online.
+			newStatus = "restarting"
+		}
+		// The node clears these when it runs the command, which can be a while
+		// behind a busy queue; until then the status watcher read them as
+		// unlanded and set the intent back to stopped under the start.
+		h.state.Redis.Del(r.Context(),
+			fmt.Sprintf("dylaris:server:%s:reconcile_failed", srv.UUID),
+			fmt.Sprintf("dylaris:server:%s:stopped_by_server", srv.UUID))
+		h.state.Store.UpdateServerDesiredState(srv.ID, "online")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")
+		// A server that was stopped starts with nothing waiting on its stdin.
+		// The node's graceful stop pushes "stop" there and the console could
+		// queue more; whatever was left would run the moment it came up.
+		if req.Action == "start" && h.state.Redis != nil {
+			h.state.Redis.Del(r.Context(), fmt.Sprintf("dylaris:server:%s:input", srv.UUID))
+		}
+		// MC reads server.properties at boot and nowhere else, so this is the
+		// one moment the stored RCON config can be made true for whichever
+		// sub-server is about to run. See rconNeedsStamping for why it can be
+		// a different one than SetConfig last wrote.
+		rconSynced := h.syncRconToSubServer(srv, srv.ActiveSubServer)
+		// The voice mod reads its config at boot too. Logged only: voice never
+		// blocks a start and never touches the RCON restart flag.
+		h.syncVoiceToSubServer(srv, srv.ActiveSubServer)
+		// A (re)start reloads server.properties, so any pending RCON change is
+		// now live: clear the persisted "restart required" flag that keeps the
+		// panel banner up and the RCON-dependent Players tabs locked. Non-fatal
+		// - failing to clear it must not block the restart itself.
+		//
+		// Only when the stamp above actually landed: clearing it after a failed
+		// write is how the panel came to unlock the Players tabs for a server
+		// whose file never got the setting.
+		if rconSynced {
+			if err := h.state.Store.SetServerRconNeedsRestart(srv.ID, false); err != nil {
+				log.Printf("failed to clear rcon needs-restart for server %d: %v", srv.ID, err)
+			}
+		}
+	case "stop", "kill":
+		newStatus = "stopping"
+		h.state.Store.UpdateServerDesiredState(srv.ID, "stopped")
+		services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "stopped")
+	}
+	h.state.Store.UpdateServerStatus(srv.ID, newStatus)
+	// The status watcher publishes only when the NODE reports a change, so the
+	// "stopping"/"starting" written here reached the panel never or a tick
+	// late, and the buttons sat on the old state while the node worked.
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	if h.state.Queue != nil {
+		configPayload := map[string]interface{}{
+			"uuid": srv.UUID,
+			// A start or restart rebuilds the container, which is where a
+			// changed server zone reaches its TZ. Stop and kill ignore it.
+			"docker": map[string]interface{}{"timezone": srv.Timezone},
+		}
+		if err := h.state.Queue.SendCommand(context.Background(), node.Token, req.Action, configPayload, nil); err != nil {
+			log.Printf("Redis Queue Failed: %v", err)
+			handlers.SendJSONError(w, "Failed to queue command", 500)
+			return
+		}
+	}
+
+	powerMeta := map[string]interface{}{"action": req.Action}
+	if suspendOverride != "" {
+		powerMeta["admin_suspend_override"] = suspendOverride
+	}
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventPowerAction, userID, "", powerMeta)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Action " + req.Action + " queued successfully",
+	})
+}
+
+// UpdateServerName PATCH /api/servers/{id}/name - renames a server and records
+// the old and new name in its audit trail.
+func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	// Collapse whitespace, then validate against the shared server-name rule so
+	// create and rename agree on one alphabet.
+	name := strings.Join(strings.Fields(req.Name), " ")
+	if !validate.IsServerName(name) {
+		handlers.SendJSONError(w, "Invalid name: 1-50 characters, start with a letter or digit, then letters, digits, space, '-', '+' or '_'", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+
+	previousName := srv.Name
+	if err := h.state.Store.UpdateServerName(serverID, name); err != nil {
+		handlers.SendJSONError(w, "Failed to update name", 500)
+		return
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventNameChanged, actorID, "", map[string]interface{}{
+		"from": previousName,
+		"to":   name,
+	})
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// UpdateServerResources PATCH /api/servers/{id}/resources - changes RAM, CPU
+// and disk limits. Beyond the route's capability an admin must have set the
+// caller's can_change_resources flag; without it the answer is 403, because
+// resources are what a plan is sold on.
+func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	// Capability gate. Admins always pass; non-admins need the
+	// can_change_resources flag set by an admin in the user-settings UI.
+	userID, _ := r.Context().Value("userID").(string)
+	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	if !perms.IsAdmin && !perms.CanChangeResources {
+		handlers.SendJSONError(w, "Changing server resources requires elevated permissions — contact an administrator", 403)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+
+	var req struct {
+		RAM           int     `json:"ram"`
+		CPULimit      float64 `json:"cpuLimit"`
+		DiskLimit     int64   `json:"diskLimit"`
+		HostPort      int     `json:"hostPort"`      // admin-only
+		ContainerPort int     `json:"containerPort"` // admin-only
+		// Optional CPU pinning change. Omitted (nil) = leave pinning unchanged.
+		CPUPinningMode *string `json:"cpuPinningMode"`
+		Cpuset         *string `json:"cpuset"`
+		// RAM padding override: a number sets it, resetRamPadding clears it
+		// (inherit node/global), neither leaves it alone. Same gate as RAM.
+		RAMPaddingMB    *int `json:"ramPaddingMb"`
+		ResetRAMPadding bool `json:"resetRamPadding"`
+		// What Core does when the memory guard reports the server held near its
+		// limit: stop | restart | off. Omitted leaves it alone.
+		MemoryGuardAction *string `json:"memoryGuardAction"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+
+	// Bound all three resources: the update path used to check only RAM, so a
+	// negative CPU or disk was forwarded to the node's docker config.
+	if msg := validate.ResourceBounds(req.RAM, req.CPULimit, req.DiskLimit, 0); msg != "" {
+		handlers.SendJSONError(w, msg, 400)
+		return
+	}
+	if req.HostPort < 0 || req.HostPort > 65535 || req.ContainerPort < 0 || req.ContainerPort > 65535 {
+		handlers.SendJSONError(w, "Ports must be between 1 and 65535", 400)
+		return
+	}
+	if req.RAMPaddingMB != nil && req.ResetRAMPadding {
+		handlers.SendJSONError(w, "Send either ramPaddingMb or resetRamPadding, not both", 400)
+		return
+	}
+	if req.RAMPaddingMB != nil && !models.ValidRAMPaddingMB(*req.RAMPaddingMB) {
+		handlers.SendJSONError(w, handlers.RamPaddingRefused, 400)
+		return
+	}
+	paddingRequested := req.RAMPaddingMB != nil || req.ResetRAMPadding
+	if req.MemoryGuardAction != nil && !models.ValidMemoryGuardAction(*req.MemoryGuardAction) {
+		handlers.SendJSONError(w, "memoryGuardAction must be stop, restart or off", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	// The padding goes to the node only when this save changes the memory
+	// anyway. Sending the current effective value on every save would turn a
+	// CPU-only save into a container recreate (a restart) whenever the node or
+	// global default had changed since; without it the node keeps its label.
+	sendPadding := paddingRequested || req.RAM != srv.Memory
+
+	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	// The node recreates the container for a RAM or port change, which would
+	// pull it out from under a running install or a move between nodes.
+	switch srv.Status {
+	case "installing":
+		handlers.SendJSONError(w, "The server is installing. Change its resources when the install has finished.", http.StatusConflict)
+		return
+	case "migrating":
+		handlers.SendJSONError(w, "The server is being moved to another node. Change its resources when the move has finished.", http.StatusConflict)
+		return
+	}
+
+	isAdmin := r.Context().Value("isAdmin").(bool)
+
+	// Everything is validated before anything is written. A cpuset or port
+	// refused after the RAM had been saved left the server half-changed: the
+	// panel showed the new RAM, and the node never heard of it.
+	pinningRequested := req.CPUPinningMode != nil && h.state.CPUPinning != nil
+	pinningChanged := false
+	var pinMode, newCpuset string
+	if pinningRequested {
+		pinMode = strings.TrimSpace(*req.CPUPinningMode)
+		pinNode, perr := h.state.Store.GetNodeByID(srv.NodeID)
+		if perr != nil {
+			handlers.SendJSONError(w, "Node not found", 404)
+			return
+		}
+		switch pinMode {
+		case "shared":
+			newCpuset = ""
+		case "manual":
+			cs := ""
+			if req.Cpuset != nil {
+				cs = strings.TrimSpace(*req.Cpuset)
+			}
+			if verr := h.state.CPUPinning.ValidateCpuset(r.Context(), pinNode.Token, cs, pinNode.CpusetCpus); verr != nil {
+				handlers.SendJSONError(w, "Invalid cpuset: "+verr.Error(), 400)
+				return
+			}
+			newCpuset = cs
+		case "auto":
+			// "" when the node has not reported a topology yet; mode stays 'auto'
+			// and the effective cpuset falls back to the node default this time.
+			newCpuset, _ = h.state.CPUPinning.AutoCpuset(r.Context(), pinNode.Token, srv.NodeID, srv.ID, req.CPULimit, pinNode.CpusetCpus)
+		default:
+			handlers.SendJSONError(w, "Invalid cpuPinningMode (shared|auto|manual)", 400)
+			return
+		}
+		pinningChanged = pinMode != srv.CPUPinningMode || newCpuset != srv.Cpuset
+	}
+	// A manual pin must hold at least the cores the limit grants, in both
+	// directions: a smaller pin, or a bigger limit on the existing pin.
+	finalMode, finalCpuset := srv.CPUPinningMode, srv.Cpuset
+	if pinningRequested {
+		finalMode, finalCpuset = pinMode, newCpuset
+	}
+	if finalMode == "manual" {
+		if have, need, bad := services.PinTooSmall(req.CPULimit, finalCpuset); bad {
+			handlers.SendJSONErrorCode(w, fmt.Sprintf("The server gets %g CPU cores but is pinned to only %d. Pin at least %d cores, or lower the CPU limit to %d.", req.CPULimit, have, need, have),
+				"pin_smaller_than_limit", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Port changes: admin-only
+	portsRequested := isAdmin && (req.HostPort > 0 || req.ContainerPort > 0)
+	newHostPort, newContainerPort := srv.HostPort, srv.ContainerPort
+	if portsRequested {
+		if req.HostPort > 0 {
+			newHostPort = req.HostPort
+		}
+		if req.ContainerPort > 0 {
+			newContainerPort = req.ContainerPort
+		}
+		if newContainerPort == 0 {
+			newContainerPort = 25565
+		}
+		// Conflict check: ensure no other server on this node uses the same host port
+		if req.HostPort > 0 && req.HostPort != srv.HostPort {
+			// Fail CLOSED. Discarding this error left usedPorts empty, the
+			// loop below found no conflict, and the port was assigned anyway -
+			// so a database hiccup turned a conflict check into a rubber stamp.
+			usedPorts, uerr := h.state.Store.GetUsedHostPortsOnNode(srv.NodeID)
+			if uerr != nil {
+				handlers.SendJSONError(w, "Could not verify host port availability", http.StatusInternalServerError)
+				return
+			}
+			for _, p := range usedPorts {
+				if p == req.HostPort {
+					handlers.SendJSONError(w, "Host port already in use on this node", 409)
+					return
+				}
+			}
+		}
+	}
+	// Either port counts: a container-port-only change used to be saved and
+	// never sent, so the container kept listening where it was.
+	portChanged := newHostPort != srv.HostPort || newContainerPort != srv.ContainerPort
+
+	if err := h.state.Store.UpdateServerResources(serverID, req.RAM, req.CPULimit, req.DiskLimit); err != nil {
+		handlers.SendJSONError(w, "Failed to update resources", 500)
+		return
+	}
+	if paddingRequested {
+		// req.RAMPaddingMB is nil on a reset, which is exactly the cleared value.
+		if err := h.state.Store.SetServerRAMPadding(serverID, req.RAMPaddingMB); err != nil {
+			handlers.SendJSONError(w, "Failed to save RAM headroom", 500)
+			return
+		}
+		srv.RAMPaddingMB = req.RAMPaddingMB
+	}
+	guardChanged := req.MemoryGuardAction != nil && *req.MemoryGuardAction != srv.MemoryGuardAction
+	if guardChanged {
+		if err := h.state.Store.SetServerMemoryGuardAction(serverID, *req.MemoryGuardAction); err != nil {
+			handlers.SendJSONError(w, "Failed to save the out-of-memory action", 500)
+			return
+		}
+	}
+	if pinningRequested {
+		if err := h.state.Store.UpdateServerCPUPinning(srv.ID, pinMode, newCpuset); err != nil {
+			handlers.SendJSONError(w, "Failed to save CPU pinning", 500)
+			return
+		}
+		srv.CPUPinningMode = pinMode
+		srv.Cpuset = newCpuset
+	}
+	if portsRequested {
+		if err := h.state.Store.UpdateServerPorts(serverID, newHostPort, newContainerPort); err != nil {
+			handlers.SendJSONError(w, "Failed to update ports", 500)
+			return
+		}
+	}
+
+	// Recorded once saved, so a node that cannot be reached does not leave the
+	// change out of the trail.
+	auditMeta := map[string]interface{}{
+		"ram":       req.RAM,
+		"cpuLimit":  req.CPULimit,
+		"diskLimit": req.DiskLimit,
+	}
+	if pinningChanged {
+		auditMeta["cpuPinningMode"] = pinMode
+		auditMeta["cpuset"] = newCpuset
+	}
+	if portChanged {
+		auditMeta["hostPort"] = newHostPort
+		auditMeta["containerPort"] = newContainerPort
+	}
+	if paddingRequested {
+		auditMeta["ramPaddingMb"] = req.RAMPaddingMB
+	}
+	if guardChanged {
+		auditMeta["memoryGuardAction"] = *req.MemoryGuardAction
+	}
+	actorID, _ := r.Context().Value("userID").(string)
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventResourcesChanged, actorID, "", auditMeta)
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	// No start command is sent or stored: the node rebuilds it from what is on
+	// disk with its own heap sizing, and uses a sent one only as a fallback.
+	// The jar-form command this used to write was wrong for every argfile
+	// (Forge/NeoForge) install and disagreed with the node's -Xmx.
+	if h.state.Queue != nil {
+		dispatchErr := func() error {
+			node, err := h.state.Store.GetNodeByID(srv.NodeID)
+			if err != nil {
+				return fmt.Errorf("node %d: %w", srv.NodeID, err)
+			}
+			dockerPayload := map[string]interface{}{
+				"ram":        req.RAM,
+				"cpuLimit":   req.CPULimit,
+				"cpusetCpus": handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":   srv.Timezone,
+				"diskLimit":  req.DiskLimit,
+				"image":      srv.GameImage,
+			}
+			if sendPadding {
+				dockerPayload["ramPaddingMB"] = services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB)
+			}
+			// Sent whenever ports were asked for, not only when they differ
+			// from the row: a retry after a failed dispatch finds the row
+			// already saved, and the node treats unchanged ports as a no-op.
+			if portsRequested {
+				dockerPayload["hostPort"] = newHostPort
+				dockerPayload["containerPort"] = newContainerPort
+			}
+			payload := map[string]interface{}{
+				"uuid":            srv.UUID,
+				"activeSubServer": srv.ActiveSubServer,
+				"docker":          dockerPayload,
+			}
+			return h.state.Queue.SendCommand(context.Background(), node.Token, "update_resources", payload, nil)
+		}()
+		if dispatchErr != nil {
+			// Saved but not dispatched, and the node applies nothing on its own:
+			// the panel would show the new values against a container still
+			// running the old ones. Said out loud so the caller can save again.
+			log.Printf("UpdateServerResources: dispatch failed for server %d: %v", serverID, dispatchErr)
+			handlers.SendJSONError(w, "The new resources were saved, but they could not be sent to the node. Save again to apply them.", http.StatusBadGateway)
+			return
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// SetServerAutoMove PATCH /api/servers/{id}/automove
+// Flips the auto-move opt-in flag. Migration itself is handled by the
+// rebalance worker — this endpoint only stores intent.
+func (h *ServerHandler) SetServerAutoMove(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	if err := h.state.Store.SetServerAutoMove(serverID, req.Enabled); err != nil {
+		handlers.SendJSONError(w, "Failed to update auto-move", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// MoveServer (admin oversight, PANEL servers.write) queues a manual node-to-node
+// migration of a server to a target node. Async: it only enqueues; the
+// leader-elected Core runs the migration step machine and the panel polls the
+// orchestration status key. The route is gateway-gated (migration is
+// gateway-only) via RequireGatewayEnabled.
+func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Migration == nil {
+		handlers.SendJSONError(w, "Migration orchestrator not available", 503)
+		return
+	}
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	var req struct {
+		TargetNodeID int `json:"targetNodeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	// Oversight moves between the platform's own machines. Either end on a
+	// customer's machine is their world leaving their hardware, or ours landing
+	// on a box they have root on.
+	if handlers.ForeignToCaller(h.state, r, srv.NodeID) {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	target, err := h.state.Store.GetNodeByID(req.TargetNodeID)
+	if err != nil || target == nil || handlers.ForeignToCaller(h.state, r, target.ID) {
+		handlers.SendJSONError(w, "Target node not found", 404)
+		return
+	}
+	if movesToAnotherOwner(h.state, r, srv, target) {
+		handlers.SendJSONError(w, "A server can only be moved to the platform's nodes or to its owner's own", http.StatusForbidden)
+		return
+	}
+	username, _ := r.Context().Value("username").(string)
+	h.queueMigration(w, r, srv, target, "manual", username)
+}
+
+// TransferServer (tenant) queues a node-to-node migration of a server the caller
+// OWNS to a target node they may place on. BYON-only: outside BYON mode, moves
+// stay admin-only (use MoveServer). The target picker is the tenant-scoped node
+// list, so in practice this covers moving between the user's own nodes (and
+// pulling a platform-hosted server onto their own hardware). Same orchestrator +
+// status as the admin move; gateway-gated (migration is gateway-only).
+func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Migration == nil {
+		handlers.SendJSONError(w, "Migration orchestrator not available", 503)
+		return
+	}
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	// Ownership is now enforced by the route's RequireCap("server.settings.write");
+	// BYON availability stays a separate feature-gate, not authz.
+	username, _ := r.Context().Value("username").(string)
+	if !handlers.IsAdmin(r) {
+		if !handlers.ByonActive(h.state, r) {
+			handlers.SendJSONError(w, "Server transfer is not enabled", 403)
+			return
+		}
+	}
+	var req struct {
+		TargetNodeID int `json:"targetNodeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	target, err := h.state.Store.GetNodeByID(req.TargetNodeID)
+	if err != nil {
+		handlers.SendJSONError(w, "Target node not found", 404)
+		return
+	}
+	// server.settings.write is also something an owner can GRANT, and the target
+	// check below only asks where the caller may place. So an invitee could move
+	// the owner's world onto the invitee's own machine, and an admin invited on a
+	// customer's machine could pull the server onto ours. A transfer is the
+	// owner's decision; oversight moves between platform machines are MoveServer.
+	if handlers.ForeignToCaller(h.state, r, srv.NodeID) || (!handlers.IsAdmin(r) && srv.OwnerID != handlers.ByonCallerID(r)) {
+		handlers.SendJSONError(w, "Only the server's owner can transfer it", 403)
+		return
+	}
+	// Placement authz: the caller must be allowed to place on the target node
+	// (their own BYON node, or a platform node for an admin).
+	if !handlers.CanPlaceOnNode(h.state, r, target) {
+		handlers.SendJSONError(w, "You cannot place servers on the target node", 403)
+		return
+	}
+	if movesToAnotherOwner(h.state, r, srv, target) {
+		handlers.SendJSONError(w, "A server can only be moved to the platform's nodes or to its owner's own", http.StatusForbidden)
+		return
+	}
+	// The same per-node cap as CreateServer: it protects the shared control
+	// plane, and filling one node by creating and then moving servers onto
+	// another got past it.
+	// ponytail: counted at queue time, so moves queued together can overshoot by the queue depth.
+	if handlers.ByonActive(h.state, r) && !handlers.IsAdmin(r) {
+		if reached, capN := h.byonNodeServerCapReached(r.Context(), target); reached {
+			handlers.SendJSONError(w, fmt.Sprintf("The target node's server limit (%d) is reached.", capN), http.StatusForbidden)
+			return
+		}
+	}
+	// A suspended server is not the owner's to move: the move ended in
+	// "stopped", which the power gate does not refuse, so a transfer onto the
+	// owner's own machine lifted an operator's suspension. The account-level
+	// cut-off applies here like on every other action the owner takes.
+	if srv.Status == "suspended" && !handlers.OperatorOverride(r) {
+		handlers.SendJSONError(w, "Server is suspended. Action blocked.", http.StatusForbidden)
+		return
+	}
+	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	h.queueMigration(w, r, srv, target, "transfer", username)
+}
+
+// movesToAnotherOwner reports a move onto a node someone other than the
+// server's owner owns. foreignToCaller and canPlaceOnNode both answer yes for a
+// node the CALLER owns, so a staff member with servers.write (MoveServer), or
+// an admin (TransferServer), could put any customer's world on a machine of
+// their own - root on the box that now holds it. Only while ownership is in
+// force, like every other ownership rule: otherwise owner_id means nothing.
+func movesToAnotherOwner(state *handlers.AppState, r *http.Request, srv *models.Server, target *models.Node) bool {
+	return handlers.OwnershipInForce(state, r) && target.OwnerID != nil && *target.OwnerID != srv.OwnerID
+}
+
+// queueMigration runs the shared validation + enqueue for both the admin move
+// and the tenant transfer: rejects a same-node target, requires the target be
+// online, then enqueues onto the orchestrator (async) and returns 202. Callers
+// own the access-control decision before calling this.
+func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, srv *models.Server, target *models.Node, reason, requestedBy string) {
+	if target.ID == srv.NodeID {
+		handlers.SendJSONError(w, "Target node equals current node", 400)
+		return
+	}
+	if target.Status != "online" {
+		handlers.SendJSONError(w, "Target node is not online", 409)
+		return
+	}
+	if source, serr := h.state.Store.GetNodeByID(srv.NodeID); serr == nil && source != nil && source.Status != "online" {
+		handlers.SendJSONError(w, "The server's current node is offline, so its data cannot be moved right now", http.StatusConflict)
+		return
+	}
+	// A move archives the directory while an install or restore rewrites it,
+	// then deletes the source: the target keeps a half-written world.
+	if srv.Status == "installing" {
+		handlers.SendJSONError(w, "The server is being installed. Move it when the install has finished.", http.StatusConflict)
+		return
+	}
+	// Between states the node is already acting on the server: a restart
+	// recreates its container, a stop is still saving the world. A move queued
+	// behind that archives a directory that is being written. Online is fine -
+	// the move stops it first - and stopped is what a move wants.
+	if inPowerTransition(srv.Status) {
+		handlers.SendJSONError(w, "The server is "+srv.Status+". Move it when it has finished.", http.StatusConflict)
+		return
+	}
+	// With Real player IP on, the gateway sends the header through the target's
+	// link from the first player on. A link that cannot carry the address gets
+	// the header-less stream and every join is refused. Fails closed.
+	if srv.ProxyProtocol && h.state.Gateway != nil {
+		tok := target.LinkToken
+		if tok == "" {
+			tok = h.state.Gateway.LinkToken(target.Token)
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		ok, err := handlers.LinkAnnouncesCap(ctx, h.state.Redis, tok, handlers.LinkCapClientAddr)
+		cancel()
+		if err != nil || !ok {
+			handlers.SendJSONErrorCode(w, "Real player IP is on for this server, and the target node's link has not reported that it can pass the player IP. Update that link or turn Real player IP off first.",
+				"link_without_client_addr", http.StatusConflict)
+			return
+		}
+	}
+	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
+	if err := h.state.Migration.EnqueueMigration(r.Context(), srv.ID, target.ID, reason, requestedBy); err != nil {
+		if errors.Is(err, services.ErrMigrationQueued) {
+			handlers.SendJSONError(w, "A move of this server is already queued or running", http.StatusConflict)
+			return
+		}
+		handlers.SendJSONError(w, "Failed to queue migration", 500)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "migration queued"})
+}
+
+// byonNodeServerFallbackCap bounds servers-per-node when the node has not yet
+// reported its CPU topology (so we can't scale by thread count). Generous enough
+// not to block a legitimate first few servers, low enough to stop runaway abuse.
+const byonNodeServerFallbackCap = 16
+
+// byonNodeServerCapReached reports whether a tenant has hit the per-node server
+// cap on one of their own BYON nodes, plus the resolved cap (for the message).
+// Cap = factor x logical threads (setting byon.max_servers_per_core, default 2);
+// when the topology is unknown it falls back to a fixed ceiling. Fail-open on a
+// store error so a transient DB blip never blocks a legitimate create.
+func (h *ServerHandler) byonNodeServerCapReached(ctx context.Context, node *models.Node) (bool, int) {
+	factor := 2
+	if v, _ := h.state.Store.GetSetting("byon.max_servers_per_core"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			factor = n
+		}
+	}
+
+	cores := 0
+	if h.state.CPUPinning != nil {
+		if topo, _ := h.state.CPUPinning.GetNodeTopology(ctx, node.Token); topo != nil {
+			cores = topo.LogicalCount
+			if cores == 0 {
+				cores = len(topo.Cores)
+			}
+		}
+	}
+
+	capN := factor * cores
+	if capN <= 0 {
+		capN = byonNodeServerFallbackCap // topology not reported yet
+	}
+
+	count, err := h.state.Store.CountServersByNode(node.ID)
+	if err != nil {
+		return false, capN // fail-open: never block on a store error
+	}
+	return count >= capN, capN
+}
+
+// GetMigrationStatus GET /api/servers/{id}/migration-status
+// Returns the orchestrator-owned progress record the migration worker writes
+// to dylaris:migration:<uuid>:orchestration, so the panel can poll it while a
+// move is in flight. When the key is absent (no migration has ever run, or its
+// TTL expired) we return {phase:"none"} so the caller has a stable terminal
+// shape to stop polling on. Read-only; owner-or-admin like SetServerAutoMove.
+func (h *ServerHandler) GetMigrationStatus(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	if h.state.Redis == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": map[string]string{"phase": "none"}})
+		return
+	}
+	key := fmt.Sprintf("dylaris:migration:%s:orchestration", srv.UUID)
+	raw, err := h.state.Redis.Get(context.Background(), key).Result()
+	if err == redis.Nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": map[string]string{"phase": "none"}})
+		return
+	}
+	if err != nil {
+		handlers.SendJSONError(w, "Failed to read migration status", 500)
+		return
+	}
+	var status map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		handlers.SendJSONError(w, "Failed to parse migration status", 500)
+		return
+	}
+	// cancellable: a migration can be cancelled only while it is pre-cutover and
+	// still running - the per-server migration lock is held AND the orchestration
+	// phase is a pre-cutover in-flight phase ("starting"/"migrating"). Post-cutover
+	// ("finalizing"/"done") a cancel is a no-op, so the panel hides the button.
+	cancellable := false
+	if phase, _ := status["phase"].(string); phase == "starting" || phase == "migrating" {
+		if n, lerr := h.state.Redis.Exists(context.Background(), fmt.Sprintf("dylaris:server:%s:migration", srv.UUID)).Result(); lerr == nil && n > 0 {
+			cancellable = true
+		}
+	}
+	status["cancellable"] = cancellable
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": status})
+}
+
+// DeleteSubServer: Delete a single sub-server
+func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+	// Same capability gate as DeleteServer, whose comment says "both gates must
+	// be open" - and of the two delete handlers in this file, only that one
+	// checked both. Both routes carry RequireCap("server.delete"); this one
+	// stopped there.
+	//
+	// A sub-server is a whole instance directory on the node, so deleting one
+	// destroys the same kind of data the flag exists to protect, and a server
+	// made of sub-servers can be emptied a slot at a time. An operator who
+	// deliberately withheld can_delete_servers still handed that out.
+	//
+	// No panel change is needed: the sub-server delete already renders the
+	// response message on failure, and the full-server delete button is
+	// likewise shown to everyone with Core doing the refusing.
+	userID, _ := r.Context().Value("userID").(string)
+	if perms := handlers.LoadEffectivePermissions(h.state, userID); !perms.IsAdmin && !perms.CanDeleteServers {
+		handlers.SendJSONError(w, "Deleting servers requires elevated permissions — contact an administrator", 403)
+		return
+	}
+
+	subServerName := vars["subServerName"]
+	if subServerName == "" {
+		handlers.SendJSONError(w, "Sub-server name required", 400)
+		return
+	}
+	// The create path sanitizes this; delete did not, yet it is forwarded to the
+	// node as a filesystem delete target. Validate the charset (no path metachars).
+	if !validate.IsSubServerName(subServerName) {
+		handlers.SendJSONError(w, "Invalid sub-server name", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+		return
+	}
+
+	// Same silence as DeleteServer had, with the same consequence one level down:
+	// the slot disappears from the panel while its directory stays on disk,
+	// counting against the server's quota with nothing left in the UI pointing at
+	// it. An offline node is fine (durable stream); a missing node row, no queue,
+	// or an unreachable Redis is not.
+	dispatchWarning := ""
+	node, nodeErr := h.state.Store.GetNodeByID(srv.NodeID)
+	switch {
+	case nodeErr != nil:
+		dispatchWarning = "the node record is gone"
+	case h.state.Queue == nil:
+		dispatchWarning = "the command queue is unavailable"
+	default:
+		configPayload := map[string]interface{}{
+			"uuid":            srv.UUID,
+			"activeSubServer": subServerName,
+		}
+		if sendErr := h.state.Queue.SendCommand(context.Background(), node.Token, "delete_sub_server", configPayload, nil); sendErr != nil {
+			dispatchWarning = fmt.Sprintf("the delete command could not be queued: %v", sendErr)
+		}
+	}
+	if dispatchWarning != "" {
+		log.Printf("DeleteSubServer: sub-server %q of %s removed from the panel but the node was never told to delete it — %s; its files remain on node %d",
+			subServerName, srv.UUID, dispatchWarning, srv.NodeID)
+	}
+
+	// If deleting the active sub-server, reset to pending_setup AND
+	// flip desired_state to "stopped". Without the desired_state flip
+	// the Node reconciler races against the delete: it sees the
+	// container missing, reads desired_state="online", and recreates
+	// the container from the saved config -- which still references
+	// the just-deleted sub-server, so Docker auto-creates an empty
+	// bind dir and the user's deleted slot resurrects empty. Setting
+	// desired_state="stopped" tells the reconciler to leave it alone.
+	// The install record outlives the directory otherwise, and the panel would
+	// then prefill an edit form for a modpack that is no longer on disk.
+	if err := h.state.Store.DeleteSubServerInstall(serverID, subServerName); err != nil {
+		log.Printf("sub-server install record cleanup failed for server %d/%s: %v", serverID, subServerName, err)
+	}
+
+	wasActive := srv.ActiveSubServer == subServerName
+	if wasActive {
+		h.state.Store.UpdateServerStatus(serverID, "pending_setup")
+		h.state.Store.UpdateServerActiveSubServer(serverID, "")
+		h.state.Store.UpdateServerDesiredState(serverID, "stopped")
+	}
+
+	actorID, _ := r.Context().Value("userID").(string)
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSubServerDeleted, actorID, "", map[string]interface{}{
+		"sub_server": subServerName,
+		"was_active": wasActive,
+	})
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	resp := map[string]interface{}{"success": true}
+	if dispatchWarning != "" {
+		resp["warning"] = "The sub-server was removed from the panel, but the node was never told to delete it (" +
+			dispatchWarning + "). Its files are still on the node and still count against the disk limit."
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+// effectiveOwnerID is who a newly created server belongs to.
+//
+// The owner named in the request, or the CALLER when none is named: leaving the
+// field out means "mine". It used to be passed through empty and answered with
+// "Owner not found", which describes a user that does not exist rather than a
+// field that was not sent. (A non-admin's value is already overwritten with
+// their own id further up, so this only ever decides for an admin.)
+func effectiveOwnerID(requested, callerID string) string {
+	if strings.TrimSpace(requested) == "" {
+		return callerID
+	}
+	return requested
+}
+
+// DeleteServer: Completely delete a server
+func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+
+	// Capability gate. Admins always pass; non-admins need the
+	// can_delete_servers flag. This is in addition to the route's
+	// RequireCap("server.delete") ownership/grant check — both gates must be open.
+	userID, _ := r.Context().Value("userID").(string)
+	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	if !perms.IsAdmin && !perms.CanDeleteServers {
+		handlers.SendJSONError(w, "Deleting servers requires elevated permissions — contact an administrator", 403)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server ID", 400)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", 404)
+		return
+	}
+	if handlers.RefuseIfMoving(w, r, srv) {
+		return
+	}
+
+	// Dispatching the node-side delete is the only thing that removes the
+	// container and the server's files. SendCommand XADDs to a durable stream, so
+	// an offline node is NOT a failure - it picks the command up on reconnect.
+	// A failure here means the node row is gone, the queue is unconfigured, or
+	// Redis is unreachable, and in all three the data survives on disk while the
+	// DB row below disappears: an orphan only the adoption flow can find again,
+	// still holding its host port, its RAM and its disk.
+	//
+	// Deleting anyway is deliberate - refusing would make a server unremovable
+	// whenever its node is permanently gone, which is precisely when an operator
+	// needs to remove it. But it must not be silent, which it was: no log line,
+	// no word in the response.
+	dispatchWarning := ""
+	node, nodeErr := h.state.Store.GetNodeByID(srv.NodeID)
+	switch {
+	case nodeErr != nil:
+		dispatchWarning = "the node record is gone"
+	case h.state.Queue == nil:
+		dispatchWarning = "the command queue is unavailable"
+	default:
+		configPayload := map[string]interface{}{
+			"uuid": srv.UUID,
+		}
+		if sendErr := h.state.Queue.SendCommand(context.Background(), node.Token, "delete", configPayload, nil); sendErr != nil {
+			dispatchWarning = fmt.Sprintf("the delete command could not be queued: %v", sendErr)
+		}
+	}
+	if dispatchWarning != "" {
+		log.Printf("DeleteServer: server %s (id=%d) removed from the DB but the node was never told to delete it — %s; its container and files remain on node %d",
+			srv.UUID, serverID, dispatchWarning, srv.NodeID)
+	}
+
+	// Gateway routes are stored independently from the DB row (in Redis +
+	// Hub's own DB), so they don't cascade with DeleteServer. Two layers
+	// of cleanup, because both have failure modes:
+	//
+	//   1. Push delete_route to the Hub queue (Gateway.DeleteRoute). This
+	//      is the source of truth -- Hub soft-deletes the row in its DB
+	//      so SyncData doesn't re-publish the route to Redis on its next
+	//      tick. If the Hub queue worker is wedged this step is a no-op
+	//      and the route would otherwise come back from Hub's DB.
+	//   2. Delete the cache keys directly in Redis. Immediate effect on
+	//      traffic routing while we wait for Hub to catch up. Belt-and-
+	//      suspenders -- harmless if Hub is healthy (the keys would
+	//      vanish from the next SyncData anyway), and the only thing
+	//      that works if it isn't.
+	//
+	// The previous version only did step 1, which is why the route kept
+	// reappearing in Redis: when Hub's queue lag bumped into Hub's
+	// SyncData cadence, the route was re-published before the delete
+	// landed.
+	//
+	// Delete the authoritative server row FIRST. If it fails we return having
+	// touched nothing, so Core and Hub stay consistent — the route cleanup
+	// below only runs once the server is actually gone.
+	// Same reason as the schedule delete: this server's backup jobs and their
+	// runs cascade with the row, and the run is the only record of where its
+	// archive lives.
+	handlers.PurgeBackupArchivesForServers(h.state, []int{serverID})
+	// The foreign key nulls the backends' proxy_id with the row, which ends
+	// what they inherited from it. Listed now, stamped once that has happened.
+	var backends []string
+	if srv.ServerType == "proxy" && h.state.Redis != nil {
+		backends = handlers.ProxyBackendUUIDs(h.state, serverID)
+	}
+	if err := h.state.Store.DeleteServer(serverID); err != nil {
+		handlers.SendJSONError(w, "Delete failed", 500)
+		return
+	}
+	handlers.StampBeamUUIDs(r.Context(), h.state, backends)
+
+	// Shared with the two node-delete paths, which used to do none of this: the
+	// same cleanup has to run whether one server goes or every server on a
+	// machine does.
+	//
+	// Background, not the request context: the rows are already gone, and a
+	// caller who hung up must not leave the address answering.
+	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, []string{srv.UUID})
+	handlers.DropDemoServers(h.state, []string{srv.UUID})
+	log.Printf("DeleteServer: server %s — cleaned up %d route(s)", srv.UUID, matched)
+
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	resp := map[string]interface{}{"success": true}
+	if dispatchWarning != "" {
+		resp["warning"] = "The server was removed from the panel, but the node was never told to delete it (" +
+			dispatchWarning + "). Its container and files are still on the node and must be cleaned up there."
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+// SubServerInstalls GET /api/servers/{id}/installs - how each sub-server of this
+// server was installed.
+//
+// One call for all of them rather than one per sub-server: the setup screen
+// switches between them without a round trip, and a per-sub-server endpoint
+// would be N requests to fill one form.
+//
+// A sub-server with NO row is simply absent from the list. That is the honest
+// answer for everything installed before this was recorded, and the panel falls
+// back to the servers row rather than showing an empty form - "we never wrote
+// this down" is not "it was installed with nothing".
+func (h *ServerHandler) SubServerInstalls(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server id", http.StatusBadRequest)
+		return
+	}
+	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	installs, err := h.state.Store.ListSubServerInstalls(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Failed to read installs", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"installs": installs,
+	})
+}
+
+// UpdateServerRuntime PATCH /api/servers/{id}/runtime - change the Java image
+// and the JVM flags WITHOUT reinstalling.
+//
+// Every settings change used to go through SetupServer, because that was the
+// only path that could rebuild a start command. So editing a JVM flag re-ran the
+// installer over a live server directory: the operator was asked what to delete
+// first, and the answer to "I only wanted a different GC flag" was always
+// "nothing", which made the dialog noise in front of a reinstall nobody wanted.
+//
+// Nothing here touches a file. The node rebuilds the start command from what is
+// already on disk and recreates the container around it, leaving the server in
+// whatever run state it was in.
+func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		handlers.SendJSONError(w, "Database not connected", 503)
+		return
+	}
+	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		handlers.SendJSONError(w, "Invalid server id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		JavaImage     string `json:"javaImage"`
+		ExtraJvmFlags string `json:"extraJvmFlags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		return
+	}
+	if srv.Status == "pending_setup" {
+		handlers.SendJSONError(w, "Set the server up before changing its runtime", http.StatusBadRequest)
+		return
+	}
+	subName := srv.ActiveSubServer
+	if subName == "" {
+		handlers.SendJSONError(w, "No active sub-server", http.StatusBadRequest)
+		return
+	}
+
+	// The same resolver the install paths use, so an empty or unknown image
+	// falls back to what the server already runs rather than to nothing. An
+	// empty image is a container Docker builds with no entrypoint.
+	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+		handlers.SendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		return
+	}
+	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
+	if javaImage == "" {
+		handlers.SendJSONError(w, "javaImage is required", http.StatusBadRequest)
+		return
+	}
+	extraFlags := strings.TrimSpace(req.ExtraJvmFlags)
+
+	// Persist BEFORE dispatching. The node's own saved config is rebuilt from
+	// what we send, but the reconciler reads the row - so a dispatch that landed
+	// against a row that did not would be undone the next time it ran.
+	if err := h.state.Store.UpdateServerRuntime(serverID, javaImage, extraFlags); err != nil {
+		handlers.SendJSONError(w, "Failed to save the runtime settings", http.StatusInternalServerError)
+		return
+	}
+
+	// Recorded once saved, so a node that cannot be reached does not leave the
+	// change out of the trail. Whether the flags changed, not what they are: a
+	// flag can carry a secret (-Dsome.token=...), and the audit trail kept every
+	// old value for as long as the retention allows, which by default is forever.
+	actorID, _ := r.Context().Value("userID").(string)
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventRuntimeChanged, actorID, "", map[string]interface{}{
+		"java_image":        javaImage,
+		"jvm_flags_changed": srv.ExtraJvmFlags != extraFlags,
+	})
+
+	if h.state.Queue != nil {
+		node, nerr := h.state.Store.GetNodeByID(srv.NodeID)
+		if nerr != nil {
+			handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
+			return
+		}
+		combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + extraFlags)
+		payload := map[string]interface{}{
+			"uuid":            srv.UUID,
+			"ownerId":         srv.OwnerID,
+			"activeSubServer": subName,
+			"docker": map[string]interface{}{
+				"image":         javaImage,
+				"ram":           srv.Memory,
+				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
+				"cpuLimit":      srv.CPULimit,
+				"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"timezone":      srv.Timezone,
+				"extraJvmFlags": combinedJvmFlags,
+			},
+		}
+		if err := h.state.Queue.SendCommand(context.Background(), node.Token, "reconfigure", payload, nil); err != nil {
+			// Saved but not dispatched. Said out loud rather than swallowed: the
+			// panel would otherwise show the new flags against a container still
+			// running the old ones, and the difference is invisible until the
+			// next restart happens to pick them up.
+			log.Printf("UpdateServerRuntime: dispatch failed for server %d: %v", serverID, err)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"warning": "The settings were saved, but the node was not reachable. They apply the next time the server starts.",
+			})
+			return
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}

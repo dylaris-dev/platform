@@ -30,7 +30,10 @@ func TestAnEmptySecretMatchesNoCode(t *testing.T) {
 // Every check of a stored or submitted secret goes through matchTOTPStep. The
 // setup wizard refuses an empty secret itself before it validates.
 func TestNoHandlerValidatesAroundTheEmptySecretGuard(t *testing.T) {
+	// the handlers/<domain> subpackages included: one of them could grow a check too
 	files, _ := filepath.Glob("*.go")
+	sub, _ := filepath.Glob(filepath.Join("*", "*.go"))
+	files = append(files, sub...)
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") || f == "setup.go" {
 			continue

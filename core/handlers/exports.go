@@ -517,3 +517,175 @@ func SetAccountMailSender(fn func(services.MailStore, string, string, string, ma
 	sendAccountMail = fn
 	return func() { sendAccountMail = prev }
 }
+
+func ApplyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest) {
+	applyPlacementScope(state, r, req)
+}
+
+func ApplyResolvedTabPermissions(state *AppState, servers []models.Server, userID, username string) []models.Server {
+	return applyResolvedTabPermissions(state, servers, userID, username)
+}
+
+var BungeeCordBuildPattern = bungeeCordBuildPattern
+
+func CanPlaceOnNode(state *AppState, r *http.Request, node *models.Node) bool {
+	return canPlaceOnNode(state, r, node)
+}
+
+func CountSubServerDirs(entries []*pb.FileInfo) int { return countSubServerDirs(entries) }
+
+func DiskMBToGBCeil(mb int64) int { return diskMBToGBCeil(mb) }
+
+func EditDemoList(st store.Store, edit func([]string) ([]string, error)) error {
+	return editDemoList(st, edit)
+}
+
+var EffectiveCpuset = effectiveCpuset
+
+var ErrDemoServerGone = errDemoServerGone
+
+func ExactMinecraftVersion(software, mcVersion, version, loader string) string {
+	return exactMinecraftVersion(software, mcVersion, version, loader)
+}
+
+func InstallStatusFor(ctx context.Context, st *AppState, nodeToken string) string {
+	return installStatusFor(ctx, st, nodeToken)
+}
+
+func ListServerDirFor(state *AppState, nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
+	return listServerDirFor(state, nodeID, serverUUID, dir)
+}
+
+func LoadDemoServerUUIDs(st store.Store) []string { return loadDemoServerUUIDs(st) }
+
+func ModFitKnown(serverLoader, serverMC string) bool { return modFitKnown(serverLoader, serverMC) }
+
+func ModVersionFits(serverLoader, serverMC string, versionLoaders, versionGameVersions []string) (bool, string) {
+	return modVersionFits(serverLoader, serverMC, versionLoaders, versionGameVersions)
+}
+
+func NeoForgeMinecraft(loader string) string { return neoForgeMinecraft(loader) }
+
+func NodeBusyKey(uuid string) string { return nodeBusyKey(uuid) }
+
+func NodeReleaseOlderThan(ctx context.Context, st *AppState, nodeToken, since string) bool {
+	return nodeReleaseOlderThan(ctx, st, nodeToken, since)
+}
+
+func NormalizeCaps(caps []string) []string { return normalizeCaps(caps) }
+
+func OperatorOverride(r *http.Request) bool { return operatorOverride(r) }
+
+var PaperMCReleasePattern = paperMCReleasePattern
+
+func ProxyBackendUUIDs(state *AppState, proxyID int) []string {
+	return proxyBackendUUIDs(state, proxyID)
+}
+
+func ProxyInstallRefusal(ctx context.Context, st *AppState, serverType, nodeToken, installerType string) (int, string) {
+	return proxyInstallRefusal(ctx, st, serverType, nodeToken, installerType)
+}
+
+var ProxyInstallers = proxyInstallers
+
+const ProxyProtocolDefaultSince = proxyProtocolDefaultSince
+
+func ProxyProtocolInstallGate(w http.ResponseWriter, srv *models.Server, installerType, version string) (keep, refused bool) {
+	return proxyProtocolInstallGate(w, srv, installerType, version)
+}
+
+var RamPaddingRefused = ramPaddingRefused
+
+func RconNeedsStamping(subServer string, enabled bool, password string) bool {
+	return rconNeedsStamping(subServer, enabled, password)
+}
+
+func RedactNodeAddress(state *AppState, servers []models.Server, isAdmin bool, userID string) {
+	redactNodeAddress(state, servers, isAdmin, userID)
+}
+
+func RedactSettingsFields(s *models.Server) { redactSettingsFields(s) }
+
+func RefuseIfMoving(w http.ResponseWriter, r *http.Request, srv *models.Server) bool {
+	return refuseIfMoving(w, r, srv)
+}
+
+func RefuseIfOverSubServerLimit(w http.ResponseWriter, limit *int64, have int) bool {
+	return refuseIfOverSubServerLimit(w, limit, have)
+}
+
+func RefuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeID int, serverUUID, target string) bool {
+	return refuseIfSubServerLimitReached(w, state, nodeID, serverUUID, target)
+}
+
+func ResolveLibraryInstall(ctx context.Context, state *AppState, rawPath string, isAdmin bool) (string, int, string) {
+	return resolveLibraryInstall(ctx, state, rawPath, isAdmin)
+}
+
+func RevokeUncoversInheritance(state *AppState, srv *models.Server, targetID string) bool {
+	return revokeUncoversInheritance(state, srv, targetID)
+}
+
+func SendTechnicError(w http.ResponseWriter, err error) { sendTechnicError(w, err) }
+
+func StampBeamAccess(ctx context.Context, state *AppState, serverID int) {
+	stampBeamAccess(ctx, state, serverID)
+}
+
+func StampBeamAccessForOwner(ctx context.Context, state *AppState, ownerUserID string) {
+	stampBeamAccessForOwner(ctx, state, ownerUserID)
+}
+
+func StrictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
+	return strictPanelCaps(state, userID)
+}
+
+func SubServerLimit(state *AppState) *int64 { return subServerLimit(state) }
+
+const TechnicSince = technicSince
+
+const UpstreamCooldownDefault = upstreamCooldownDefault
+
+// PickNodeFor runs the placement decision for a server create; the HTTP
+// PickNode handler is a different, request-shaped entry point.
+func (h *PlacementHandler) PickNodeFor(ctx context.Context, req PickNodeRequest) PickNodeResponse {
+	return h.pickNode(ctx, req)
+}
+
+func (h *TechnicHandler) ResolveTechnic(ctx context.Context, slug, build string) (*TechnicResolution, error) {
+	return h.resolveTechnic(ctx, slug, build)
+}
+
+// ApplyProps writes the RCON keys into a sub-server's server.properties through
+// the handler's applyProps seam.
+func (h *RconHandler) ApplyProps(nodeID int, serverUUID, activeSubServer string, enabled bool, port int, password string) error {
+	return h.applyProps(nodeID, serverUUID, activeSubServer, enabled, port, password)
+}
+
+type ApiKeyCtx = apiKeyCtx
+
+type ApiKeyCtxKey = apiKeyCtxKey
+
+var DefaultPlacementSettings = defaultPlacementSettings
+
+const ModReportingSince = modReportingSince
+
+func NeoForgeMajor(v string) (string, bool) { return neoForgeMajor(v) }
+
+var SubRegexDNS = subRegexDNS
+
+const LibraryMirrorTTL = libraryMirrorTTL
+
+func LibraryMirrorURL(base, secret, libPath string, now time.Time) string {
+	return libraryMirrorURL(base, secret, libPath, now)
+}
+
+func (h *PlacementHandler) ScoreNode(ctx context.Context, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
+	return h.scoreNode(ctx, n, req, hb)
+}
+
+// NewAPIKeyCtx is the request context an API key login leaves behind; tests
+// outside this package build it to drive the external endpoints.
+func NewAPIKeyCtx(k *models.APIKey) *ApiKeyCtx { return &apiKeyCtx{key: k} }
+
+const DemoServerUUIDsSetting = demoServerUUIDsSetting

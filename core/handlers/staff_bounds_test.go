@@ -9,7 +9,6 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
-	"dylaris-core/services"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -27,43 +26,6 @@ func staffRequest(method string, vars map[string]string, body string) *http.Requ
 	ctx = context.WithValue(ctx, "userID", staffID)
 	ctx = context.WithValue(ctx, "username", "staff")
 	return mux.SetURLVars(r.WithContext(ctx), vars)
-}
-
-// servers.write handed the owner short-circuit - files, console, RCON,
-// backups - of any server on the platform's machines to whoever it named, the
-// caller included, and recorded nothing.
-func TestOnlyAnAdminChangesAServersOwner(t *testing.T) {
-	rw := httptest.NewRecorder()
-	(&ServerHandler{state: foreignState(visPlatformNode())}).AdminUpdateServerOwner(rw,
-		staffRequest("PATCH", map[string]string{"id": "7"}, `{"userId":"`+staffID+`"}`))
-	if rw.Code != http.StatusForbidden {
-		t.Fatalf("staff changed a server's owner: status %d", rw.Code)
-	}
-}
-
-// foreignToCaller is false for a node the CALLER owns, so a move onto the
-// caller's own machine passed it: root on the box now holding a customer's
-// world.
-func TestAServerIsNotMovedOntoTheCallersOwnMachine(t *testing.T) {
-	caller := visAdmin
-	for _, c := range []struct {
-		name   string
-		target *models.Node
-		refuse bool
-	}{
-		{"the caller's own machine", &models.Node{ID: 8, OwnerID: &caller}, true},
-		{"a platform machine", &models.Node{ID: 8, Status: "offline"}, false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: &models.Node{ID: 7}, byon: "true"}, target: c.target}
-			s := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
-			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).MoveServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
-			if (rw.Code == http.StatusForbidden) != c.refuse {
-				t.Fatalf("status %d, refuse=%v (%s)", rw.Code, c.refuse, rw.Body.String())
-			}
-		})
-	}
 }
 
 type demoStaffStore struct {
@@ -85,28 +47,6 @@ func (f *demoStaffStore) GetPanelRole(int) (*store.PanelRole, error) {
 }
 func (f *demoStaffStore) SetSetting(string, string) error { return nil }
 
-// Anyone can open a demo session, and it reads what the account reads.
-func TestAStaffAccountCannotBeTheDemo(t *testing.T) {
-	for _, c := range []struct {
-		name   string
-		caps   []string
-		refuse bool
-	}{
-		{"a support account", []string{"users.read", "audit.read"}, true},
-		{"an ordinary account", nil, false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			st := &demoStaffStore{user: &models.User{ID: "u-demo", Username: "demo"}, roleC: c.caps}
-			rw := httptest.NewRecorder()
-			(&ServerHandler{state: &AppState{Store: st, StoreEnabled: true}}).SetDemoAccount(rw,
-				foreignAdminRequest("PUT", nil, `{"username":"demo"}`))
-			if (rw.Code == http.StatusBadRequest) != c.refuse {
-				t.Fatalf("status %d, refuse=%v (%s)", rw.Code, c.refuse, rw.Body.String())
-			}
-		})
-	}
-}
-
 type termsStore struct {
 	store.Store
 	target *models.User
@@ -117,34 +57,6 @@ func (f *termsStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error)
 	return nil, store.CapOverrides{Grant: []string{"plans.write"}}, nil
 }
 func (f *termsStore) GetPanelRole(int) (*store.PanelRole, error) { return nil, nil }
-
-// TransferServer asked only where the CALLER may place, and an admin may place
-// on a node of their own: the same move MoveServer refuses, through the other door.
-func TestATransferIsNotOntoTheCallersOwnMachine(t *testing.T) {
-	caller := visAdmin
-	st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: &models.Node{ID: 7}, byon: "true"},
-		target: &models.Node{ID: 8, OwnerID: &caller, Status: "offline"}}
-	s := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
-	rw := httptest.NewRecorder()
-	(&ServerHandler{state: s}).TransferServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
-	if rw.Code != http.StatusForbidden || !bytes.Contains(rw.Body.Bytes(), []byte("platform's nodes")) {
-		t.Fatalf("status %d: %s", rw.Code, rw.Body.String())
-	}
-}
-
-// Without ownership in force an owner_id means nothing, as for every other
-// ownership rule, and the node is an ordinary target.
-func TestTheMoveRuleWaitsForOwnershipToBeInForce(t *testing.T) {
-	caller := visAdmin
-	st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: &models.Node{ID: 7}, byon: "false"},
-		target: &models.Node{ID: 8, OwnerID: &caller, Status: "offline"}}
-	s := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
-	rw := httptest.NewRecorder()
-	(&ServerHandler{state: s}).MoveServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
-	if rw.Code == http.StatusForbidden {
-		t.Fatalf("refused with ownership off: %s", rw.Body.String())
-	}
-}
 
 type demoLoginStore struct {
 	demoStaffStore

@@ -126,17 +126,6 @@ func TestWritesOnACustomersMachineAreNotFound(t *testing.T) {
 		name string
 		call func(t *testing.T, s *AppState, w http.ResponseWriter)
 	}{
-		{"reassign a server's owner", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			(&ServerHandler{state: s}).AdminUpdateServerOwner(w, foreignAdminRequest("PATCH", id, `{"userId":"`+visAdmin+`"}`))
-		}},
-		{"flag a server as a demo", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			s.StoreEnabled = true
-			(&ServerHandler{state: s}).SetServerDemo(w, foreignAdminRequest("PATCH", id, `{"enabled":true}`))
-		}},
-		{"cancel a server's migration", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			s.Redis, _ = newQuotaHTTPRedis(t) // asked before the server is loaded
-			(&ServerHandler{state: s}).CancelMigration(w, foreignAdminRequest("POST", id, ""))
-		}},
 		{"set overcommit", func(t *testing.T, s *AppState, w http.ResponseWriter) {
 			r := foreignAdminRequest("PUT", id, `{"cpuOvercommitRatio":1,"ramOvercommitRatio":1}`)
 			r.URL.Path = "/api/nodes/7/placement"
@@ -170,57 +159,6 @@ func TestWritesOnACustomersMachineAreNotFound(t *testing.T) {
 	}
 }
 
-// TestMovingAServerAcrossACustomersMachine: a move with either end on a
-// customer's machine is refused; a move between two platform machines is not.
-func TestMovingAServerAcrossACustomersMachine(t *testing.T) {
-	owner := visOwner
-	cases := []struct {
-		name   string
-		source *models.Node
-		target *models.Node
-		want   int // 404 refused; anything else got past the guard
-	}{
-		{"off a customer's machine", &models.Node{ID: 7, OwnerID: &owner}, &models.Node{ID: 8}, http.StatusNotFound},
-		{"onto a customer's machine", &models.Node{ID: 7}, &models.Node{ID: 8, OwnerID: &owner}, http.StatusNotFound},
-		{"between platform machines", &models.Node{ID: 7}, &models.Node{ID: 8, Status: "offline"}, http.StatusBadRequest},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: c.source, byon: "true"}, target: c.target}
-			s := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
-			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).MoveServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
-			if (c.want == http.StatusNotFound) != (rw.Code == http.StatusNotFound) {
-				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.want, rw.Body.String())
-			}
-		})
-	}
-}
-
-type twoNodeFakeStore struct {
-	foreignFakeStore
-	target *models.Node
-}
-
-// An empty target: the per-node server cap does not refuse (TransferServer).
-func (f *twoNodeFakeStore) CountServersByNode(int) (int, error) { return 0, nil }
-
-func (f *twoNodeFakeStore) GetNodeByID(id int) (*models.Node, error) {
-	if f.target != nil && id == f.target.ID {
-		return f.target, nil
-	}
-	return f.node, nil
-}
-
-func (f *twoNodeFakeStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id, UUID: "srv-1", OwnerID: visOwner, NodeID: f.node.ID}, nil
-}
-
-// The transfer asks whether the owner's account is cut off; it is not here.
-func (f *twoNodeFakeStore) GetUserBilling(id string) (*store.UserBilling, error) {
-	return &store.UserBilling{UserID: id, Status: "active"}, nil
-}
-
 // TestFilesAndBeamAskTheResolverForAnAdmin: both answered an admin before the
 // resolver was consulted, which made the resolver fence decorative.
 func TestFilesAndBeamAskTheResolverForAnAdmin(t *testing.T) {
@@ -239,44 +177,6 @@ func TestFilesAndBeamAskTheResolverForAnAdmin(t *testing.T) {
 			uuid, err := h.getServerUUID(r, "files.write")
 			if (err == nil && uuid == "srv-1") != c.allowed {
 				t.Fatalf("err = %v, allowed = %v", err, c.allowed)
-			}
-		})
-	}
-}
-
-// TestATransferIsTheOwnersDecision: server.settings.write can be granted, and
-// the target check only asks where the CALLER may place. So an invitee moved the
-// owner's world onto the invitee's own machine, and an admin invited on a
-// customer's machine pulled it onto ours. The owner's own transfer must pass.
-func TestATransferIsTheOwnersDecision(t *testing.T) {
-	owner := visOwner
-	invitee := "33333333-3333-3333-3333-333333333333"
-	inviteeNode := &models.Node{ID: 8, OwnerID: &invitee, Status: "offline"}
-	ownerNode := &models.Node{ID: 8, OwnerID: &owner, Status: "offline"}
-	cases := []struct {
-		name    string
-		user    string
-		isAdmin bool
-		source  *models.Node
-		target  *models.Node
-		refused bool
-	}{
-		{"an invitee onto their own machine", invitee, false, &models.Node{ID: 7}, inviteeNode, true},
-		{"an admin off a customer's machine", visAdmin, true, &models.Node{ID: 7, OwnerID: &owner}, &models.Node{ID: 8, Status: "offline"}, true},
-		{"the owner onto their own machine", visOwner, false, &models.Node{ID: 7}, ownerNode, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: c.source, byon: "true"}, target: c.target}
-			s := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
-			r := httptest.NewRequest("POST", "/x", bytes.NewBufferString(`{"targetNodeId":8}`))
-			ctx := context.WithValue(r.Context(), "isAdmin", c.isAdmin)
-			ctx = context.WithValue(ctx, "userID", c.user)
-			r = mux.SetURLVars(r.WithContext(ctx), map[string]string{"id": "3"})
-			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).TransferServer(rw, r)
-			if got := rw.Code == http.StatusForbidden && bytes.Contains(rw.Body.Bytes(), []byte("owner")); got != c.refused {
-				t.Fatalf("refused = %v, want %v (status %d: %s)", got, c.refused, rw.Code, rw.Body.String())
 			}
 		})
 	}

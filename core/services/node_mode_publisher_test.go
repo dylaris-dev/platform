@@ -185,6 +185,12 @@ func TestEverySettingMirroredIntoRedisIsRepublished(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob handlers: %v (%d files)", err, len(files))
 	}
+	// and the handlers/<domain> subpackages split out of it
+	sub, err := filepath.Glob(filepath.Join("..", "handlers", "*", "*.go"))
+	if err != nil {
+		t.Fatalf("glob handlers subpackages: %v", err)
+	}
+	files = append(files, sub...)
 
 	mirrored := map[string]string{} // key -> file that writes it
 	for _, f := range files {

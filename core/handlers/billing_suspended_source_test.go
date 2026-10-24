@@ -32,10 +32,17 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 		"startBackupRun":  "the SCHEDULE keeps protecting a suspended tenant's data for the retention window; its on-demand caller TriggerJob carries the guard",
 	}
 
+	// The domain subpackages (handlers/servers, handlers/backup, ...) are part
+	// of the same rule: a dispatch that moved there is still a dispatch.
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
+	sub, err := filepath.Glob("*/*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	files = append(files, sub...)
 	fset := token.NewFileSet()
 	checked, guarded := 0, 0
 	for _, f := range files {
@@ -62,8 +69,12 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 					if strings.HasPrefix(fun.Sel.Name, "Send") && isQueueReceiver(fun.X) {
 						sends = true
 					}
+					// a subpackage reaches the guard as handlers.RefuseIfSuspended
+					if pkg, ok := fun.X.(*ast.Ident); ok && pkg.Name == "handlers" && suspensionGuards[fun.Sel.Name] {
+						guards = true
+					}
 				case *ast.Ident:
-					if fun.Name == "refuseIfSuspended" || fun.Name == "suspendedForNonPayment" || fun.Name == "ownerRefusal" {
+					if suspensionGuards[fun.Name] {
 						guards = true
 					}
 				}
@@ -93,11 +104,16 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 	// If the dispatch moves behind a helper this test stops seeing anything,
 	// and silence would read as a pass.
 	if checked == 0 {
-		t.Fatal("no function in this package sends a node command any more - has the dispatch moved? The guard has to move with it")
+		t.Fatal("no function in this package or its subpackages sends a node command any more - has the dispatch moved? The guard has to move with it")
 	}
 	if guarded == 0 {
 		t.Fatal("not one dispatching function carries the guard, which cannot be right")
 	}
+}
+
+var suspensionGuards = map[string]bool{
+	"refuseIfSuspended": true, "suspendedForNonPayment": true, "ownerRefusal": true,
+	"RefuseIfSuspended": true, "SuspendedForNonPayment": true, "OwnerRefusal": true,
 }
 
 // isQueueReceiver reports whether the expression is something.Queue - the
