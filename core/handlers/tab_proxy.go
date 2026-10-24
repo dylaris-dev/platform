@@ -208,6 +208,11 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 		}
 		body = b
 	}
+	// Custom tab traffic is data traffic: counted, and paced while the tenant
+	// is throttled (owner decision 2026-10-24).
+	h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(body))
+	var down int64
+	defer func() { h.state.TabMeter.Add(tab.ServerUUID, tab.NodeID, int64(len(body)), down) }()
 	headers := h.forwardRequestHeaders(r)
 	// An explicit Accept-Encoding stops the node's Go transport from asking
 	// for gzip itself and transparently decompressing, so the compressed body
@@ -299,6 +304,8 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 			w.WriteHeader(http.StatusOK)
 			headerWritten = true
 		}
+		h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(chunk.Data))
+		down += int64(len(chunk.Data))
 		w.Write(chunk.Data)
 		if canFlush {
 			flusher.Flush()
@@ -736,6 +743,8 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 			if rerr != nil {
 				return
 			}
+			h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(data))
+			h.state.TabMeter.Add(tab.ServerUUID, tab.NodeID, int64(len(data)), 0)
 			frags := splitProxyBytes(data, coreWSFragmentSize)
 			for i, f := range frags {
 				if serr := h.state.GRPCRegistry.SendOnStream(tab.NodeID, &pb.NodeMessage{
@@ -787,6 +796,8 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 			if !fr.Fin {
 				continue
 			}
+			h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(rxBuf))
+			h.state.TabMeter.Add(tab.ServerUUID, tab.NodeID, 0, int64(len(rxBuf)))
 			if werr := bconn.WriteMessage(rxOpcode, rxBuf); werr != nil {
 				closeAll()
 				return

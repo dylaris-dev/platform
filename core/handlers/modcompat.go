@@ -57,7 +57,7 @@ func resolveTargets(ctx context.Context, current, mode, specific string) ([]stri
 
 // BuildCompat GET /api/packs/{id}/builds/{buildId}/compat
 func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
-	build, ok := h.loadOwnedBuild(r)
+	build, _, ok := h.loadBuild(r, packRead)
 	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return

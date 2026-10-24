@@ -204,7 +204,7 @@ func TestShareRoutesAreBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `RequireCap("modpack.delete")(appState.AllowReadOnlyWhenDisabled(packsHandler.RevokeShareLink))`) {
+	if !strings.Contains(string(b), `RequireCap("modpack.delete")(appState.AllowReadOnlyWhenDisabled(packsHandler.Audited("share_link.revoked", packsHandler.RevokeShareLink)))`) {
 		t.Error("revoking a share link is gated on authoring")
 	}
 }

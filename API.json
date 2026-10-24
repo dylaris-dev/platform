@@ -2481,10 +2481,60 @@
     },
     {
       "method": "GET",
+      "path": "/api/me/pack-audit",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "and GET /api/me/pack-audit - who changed what on the owner's packs.",
+      "handler": "PacksHandler.PackAudit",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/pack-collaborators",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "the invites the caller handed out, and the ones they hold.",
+      "handler": "PacksHandler.ListCollaborators",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/pack-collaborators",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "invites a user to the caller's packs: all of them (packIds empty) or the ones named, which must be the caller's own.",
+      "handler": "PacksHandler.InviteCollaborator",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/me/pack-collaborators/{cid:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "the owner revokes an invite.",
+      "handler": "PacksHandler.RemoveCollaborator",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/me/pack-collaborators/{cid:[0-9]+}",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "changes the rights of one of the caller's invites.",
+      "handler": "PacksHandler.UpdateCollaborator",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/me/packs",
       "auth": "session",
       "authorization": "modpack.read",
-      "description": "the modpacks the calling user owns.",
+      "description": "the modpacks the calling user owns, and under \"shared\" the ones other users invited them to.",
       "handler": "PacksHandler.List",
       "group": "me",
       "external": false
@@ -2983,6 +3033,16 @@
       "authorization": "modpack.write",
       "description": "edits a modpack the caller owns.",
       "handler": "PacksHandler.Update",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/audit",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "and GET /api/me/pack-audit - who changed what on the owner's packs.",
+      "handler": "PacksHandler.PackAudit",
       "group": "packs",
       "external": false
     },
@@ -5019,6 +5079,26 @@
     },
     {
       "method": "GET",
+      "path": "/api/traffic-limits/data-throttle",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "the speed beam and custom tabs slow to once a tenant without data overage reaches its data allowance.",
+      "handler": "TrafficLimitHandler.GetDataThrottle",
+      "group": "traffic-limits",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/traffic-limits/data-throttle",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "{mbit} - at least the minimum (20 Mbit/s): slower makes a large upload take days, which is a stop in all but name.",
+      "handler": "TrafficLimitHandler.SetDataThrottle",
+      "group": "traffic-limits",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/traffic-limits/resolve",
       "auth": "session",
       "authorization": "settings.read",
@@ -5349,10 +5429,10 @@
     }
   ],
   "counts": {
-    "total": 537,
+    "total": 545,
     "byAuth": {
       "none": 31,
-      "session": 490,
+      "session": 498,
       "user API key": 10,
       "warp key": 6
     },
@@ -5375,13 +5455,13 @@
       "infrastructure": 3,
       "library": 6,
       "maintenance": 1,
-      "me": 31,
+      "me": 36,
       "mirror": 2,
       "modrinth": 9,
       "modules": 6,
       "nodes": 14,
       "notifications": 4,
-      "packs": 23,
+      "packs": 24,
       "placement": 3,
       "platform-backups": 13,
       "regions": 1,
@@ -5403,7 +5483,7 @@
       "ticket-categories": 1,
       "tickets": 15,
       "tools": 1,
-      "traffic-limits": 3,
+      "traffic-limits": 5,
       "updates": 1,
       "users": 7,
       "versions": 2,

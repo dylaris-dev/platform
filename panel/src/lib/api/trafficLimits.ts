@@ -135,3 +135,22 @@ export function writeFor(set: boolean, value: number | null): { mode: LimitMode;
     if (value === null) return { mode: 'unlimited' };
     return { mode: 'custom', gb: value };
 }
+
+// The speed beam and custom tabs slow to once a tenant without data overage
+// has used its data allowance (Mbit/s, at least minMbit).
+export async function getDataThrottle(): Promise<{ success: boolean; mbit?: number; minMbit?: number; defaultMbit?: number; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/traffic-limits/data-throttle`, { headers: getAuthHeader() });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}
+export async function setDataThrottle(mbit: number): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/traffic-limits/data-throttle`, {
+            method: 'PUT',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mbit }),
+        });
+        return handleResponse(res);
+    } catch (err) { return handleError(err); }
+}

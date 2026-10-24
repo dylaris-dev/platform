@@ -18,7 +18,7 @@ import { consequenceOf, type SwitchState } from '@/lib/storeAccount';
  */
 export default function ConsentRow({ title, kind, state, busy, onChange }: {
     title: string;
-    kind: 'traffic' | 'backup';
+    kind: 'traffic' | 'data' | 'backup';
     state: SwitchState;
     busy: boolean;
     onChange: (next: boolean) => void;
@@ -35,7 +35,7 @@ export default function ConsentRow({ title, kind, state, busy, onChange }: {
         );
     }
     const on = state.kind === 'on';
-    const unit = kind === 'traffic' ? 'per started TB' : 'per started block';
+    const unit = kind === 'backup' ? 'per started block' : 'per started TB';
     // Turning it on is agreeing to be charged, so the exact sentence the store
     // records is put in front of the tenant first. Turning it off needs no
     // agreement.

@@ -92,3 +92,8 @@ func TestUpdatePack_ExplicitEmptySummaryStillClears(t *testing.T) {
 		t.Fatalf("summary = %v, want cleared", fs.updated)
 	}
 }
+
+// No collaborator invites in this fake.
+func (*packPatchFakeStore) PackRightsFor(string, string, int) (store.PackRights, error) {
+	return store.PackRights{}, nil
+}

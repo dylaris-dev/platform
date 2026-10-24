@@ -31,7 +31,7 @@ type createShareLinkRequest struct {
 // CreateShareLink POST /api/packs/{id}/builds/{buildId}/share-link - mints a
 // share token for one build, so it can be downloaded without a session.
 func (h *PacksHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
-	b, ok := h.loadOwnedBuild(r)
+	b, _, ok := h.loadBuild(r, packEdit)
 	if !ok {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -73,7 +73,7 @@ func (h *PacksHandler) CreateShareLink(w http.ResponseWriter, r *http.Request) {
 // ListShareLinks GET /api/packs/{id}/builds/{buildId}/share-links - the share
 // links issued for one build.
 func (h *PacksHandler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
-	b, ok := h.loadOwnedBuild(r)
+	b, _, ok := h.loadBuild(r, packRead)
 	if !ok {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -91,15 +91,22 @@ func (h *PacksHandler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 // revoke itself is additionally scoped by creator, so one owner cannot revoke
 // another's link.
 func (h *PacksHandler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
-	// loadOwnedBuild proves the caller owns the pack+build in the path; the store
-	// revoke is additionally created_by-scoped, so cross-user revoke is blocked.
-	if _, ok := h.loadOwnedBuild(r); !ok {
+	// The pack's owner may revoke any link of the build, including one a
+	// collaborator made; everyone else only their own (created_by-scoped).
+	b, owner, ok := h.loadBuild(r, packEdit)
+	if !ok {
 		sendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	userID, _ := r.Context().Value("userID").(string)
 	linkID, _ := strconv.Atoi(mux.Vars(r)["linkId"])
-	if err := h.state.Store.RevokeShareLink(linkID, userID); err != nil {
+	var err error
+	if userID == owner {
+		err = h.state.Store.RevokeShareLinkOfBuild(linkID, b.ID)
+	} else {
+		err = h.state.Store.RevokeShareLink(linkID, userID)
+	}
+	if err != nil {
 		sendJSONError(w, "Share link not found", http.StatusNotFound)
 		return
 	}

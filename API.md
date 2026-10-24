@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **536 routes** in 53 sections: 238 GET, 163 POST, 44 PUT, 37 PATCH, 55 DELETE.
+- **544 routes** in 53 sections: 242 GET, 164 POST, 45 PUT, 38 PATCH, 56 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **348** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **356** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -157,12 +157,12 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (31)
+- [/api/me](#apime) (36)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (4)
-- [/api/packs](#apipacks) (23)
+- [/api/packs](#apipacks) (24)
 - [/api/placement](#apiplacement) (3)
 - [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
@@ -184,7 +184,7 @@ can still show what exists.
 - [/api/ticket-categories](#apiticket-categories) (1)
 - [/api/tickets](#apitickets) (15)
 - [/api/tools](#apitools) (1)
-- [/api/traffic-limits](#apitraffic-limits) (3)
+- [/api/traffic-limits](#apitraffic-limits) (5)
 - [/api/updates](#apiupdates) (1)
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (2)
@@ -530,7 +530,12 @@ can still show what exists.
 | GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
 | GET | `/api/me/nodes/{id:[0-9]+}/join-attempt` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeJoinAttempt` | the connection Core is refusing for this machine, if any, with the fingerprint of the key it presented. |
 | POST | `/api/me/nodes/{id:[0-9]+}/reset-pairing` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.ResetMyNodePairing` | the owner's own Reset pairing, for a machine whose key is wedged or may have leaked. |
-| GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns. |
+| GET | `/api/me/pack-audit` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.PackAudit` | and GET /api/me/pack-audit - who changed what on the owner's packs. |
+| GET | `/api/me/pack-collaborators` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListCollaborators` | the invites the caller handed out, and the ones they hold. |
+| POST | `/api/me/pack-collaborators` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.InviteCollaborator` | invites a user to the caller's packs: all of them (packIds empty) or the ones named, which must be the caller's own. |
+| PATCH | `/api/me/pack-collaborators/{cid:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateCollaborator` | changes the rights of one of the caller's invites. |
+| DELETE | `/api/me/pack-collaborators/{cid:[0-9]+}` | session | `modpack.write` | AllowReadOnlyWhenDisabled | `PacksHandler.RemoveCollaborator` | the owner revokes an invite. |
+| GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns, and under "shared" the ones other users invited them to. |
 | POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
 | GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
 | PUT | `/api/me/security-questions` | session | _no capability_ | Limit, LimitBody | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
@@ -602,28 +607,29 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/packs/{id:[0-9]+}` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.Get` | one modpack. |
-| PATCH | `/api/packs/{id:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Update` | edits a modpack the caller owns. |
-| DELETE | `/api/packs/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Delete` | deletes a modpack the caller owns. |
+| PATCH | `/api/packs/{id:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Update` | edits a modpack the caller owns. |
+| DELETE | `/api/packs/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Delete` | deletes a modpack the caller owns. |
+| GET | `/api/packs/{id:[0-9]+}/audit` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.PackAudit` | and GET /api/me/pack-audit - who changed what on the owner's packs. |
 | GET | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListBuilds` | the builds of one modpack. |
-| POST | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateBuild` | adds a build. |
-| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateBuild` | edits a build. |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.DeleteBuild` | deletes a build that belongs to the pack in the path. |
+| POST | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.CreateBuild` | adds a build. |
+| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UpdateBuild` | edits a build. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.DeleteBuild` | deletes a build that belongs to the pack in the path. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.BuildCompat` | - |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListContent` | the mods and files in one build. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.AddModrinth` | adds a Modrinth version to a build and, on request, its dependencies. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UploadContent` | uploads a file into a build. |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.RemoveContent` | detaches one entry from a build. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ReplaceWithModrinth` | swaps a stored content artifact for Modrinth's exact file: download the chosen Modrinth version's primary file, verify its bytes against Modrinth's published hashes, re-wrap + store it, delete the old storage object, and rewrite the modversion so it becomes byte-identical to Modrinth (clean files[] reference + auto-update eligible). |
-| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetSide` | sets whether an entry ships to the client, the server or both. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.AddModrinth` | adds a Modrinth version to a build and, on request, its dependencies. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UploadContent` | uploads a file into a build. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.RemoveContent` | detaches one entry from a build. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.ReplaceWithModrinth` | swaps a stored content artifact for Modrinth's exact file: download the chosen Modrinth version's primary file, verify its bytes against Modrinth's published hashes, re-wrap + store it, delete the old storage object, and rewrite the modversion so it becomes byte-identical to Modrinth (clean files[] reference + auto-update eligible). |
+| PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.SetSide` | sets whether an entry ships to the client, the server or both. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetContentText` | returns the UTF-8 text of a single stored content entry (e.g. a config file) so the panel can edit it in place. |
-| PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the content zip at the same key and re-hashing. |
+| PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the content zip at the same key and re-hashing. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ExportMrpack` | streams the .mrpack for a build (self-distributed download). |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.MigrateBuild` | - |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.MigrateBuild` | - |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | the share links issued for one build. |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | AllowReadOnlyWhenDisabled | `PacksHandler.RevokeShareLink` | revokes one share link. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | AllowReadOnlyWhenDisabled, Audited | `PacksHandler.RevokeShareLink` | revokes one share link. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
 
 ## /api/placement
 
@@ -918,6 +924,8 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/traffic-limits` | session | `settings.write` | - | `TrafficLimitHandler.ListTrafficLimits` | every configured row. |
 | PUT | `/api/traffic-limits` | session | `settings.write` | - | `TrafficLimitHandler.SetTrafficLimit` | "default" for BOTH values deletes the row, because a row that says nothing about either question is a row that should not exist - leaving it would make the scope answer with two NULLs, which means "no limit", the opposite of deferring. |
+| GET | `/api/traffic-limits/data-throttle` | session | `settings.read` | - | `TrafficLimitHandler.GetDataThrottle` | the speed beam and custom tabs slow to once a tenant without data overage reaches its data allowance. |
+| PUT | `/api/traffic-limits/data-throttle` | session | `settings.write` | - | `TrafficLimitHandler.SetDataThrottle` | {mbit} - at least the minimum (20 Mbit/s): slower makes a large upload take days, which is a stop in all but name. |
 | GET | `/api/traffic-limits/resolve` | session | `settings.read` | - | `TrafficLimitHandler.ResolveTrafficLimit` | answers what actually applies, and says which scope decided it. |
 
 ## /api/updates

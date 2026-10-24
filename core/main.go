@@ -451,6 +451,13 @@ func main() {
 	trafficAggregator.SetLeader(coreLeader)
 	trafficAggregator.Start(bgCtx)
 
+	// Custom tab traffic is data traffic: counted here, paced when the tenant
+	// is throttled. The node region names the counter's region cell.
+	nodeRegions := services.NewNodeRegionCache(pgStore)
+	appState.TabMeter = services.NewTabTrafficMeter(redisClient, nodeRegions.Region)
+	go appState.TabMeter.Run(bgCtx)
+	appState.DataLimiter = services.NewDataLimiter(redisClient)
+
 	// Voice chat ports: the leader rewrites the Redis mapping from voice_ports
 	// every 60 s and sweeps keys that have no row.
 	voiceService := services.NewVoiceService(pgStore, redisClient)

@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layers, Wand2, Grid3x3 } from 'lucide-react';
 import { getNodeCpu, type NodeCpuTopology } from '@/lib/api';
-import { parseCpuset, compactCpuset } from '@/lib/cpuset';
+import { parseCpuset, compactCpuset, pinTooSmall } from '@/lib/cpuset';
 import { groupCoresByCache, formatL3, formatClock } from '@/lib/cpuTopology';
 
 interface CpuPinningControlProps {
@@ -195,11 +195,14 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
                                     <span className="ml-1">CPU limit is {cpuLimit} core{cpuLimit === 1 ? '' : 's'}.</span>
                                 )}
                             </p>
-                            {cpuLimit !== undefined && selected.size > 0 && cpuLimit > selected.size && (
-                                <p className="text-[11px] text-(--warning-light)">
-                                    CPU limit ({cpuLimit}) is higher than the {selected.size} pinned core{selected.size === 1 ? '' : 's'}; actual usage is capped at {selected.size}. Lower the limit or pin more cores.
-                                </p>
-                            )}
+                            {(() => {
+                                const short = pinTooSmall(cpuLimit, 'manual', compactCpuset([...selected]));
+                                return short && (
+                                    <p role="alert" className="text-[11px] text-(--error-light)">
+                                        The server gets {cpuLimit} CPU core{cpuLimit === 1 ? '' : 's'} but would be pinned to only {short.have}. Pin at least {short.need} cores, or lower the CPU limit to {short.have}.
+                                    </p>
+                                );
+                            })()}
                             {nodeCpuset && (
                                 <p className="text-[11px] text-(--base-06)">Node core pool: {nodeCpuset}</p>
                             )}

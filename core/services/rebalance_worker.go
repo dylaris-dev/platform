@@ -166,6 +166,12 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 		return
 	}
 
+	// The same refusal a manual move gets: Real player IP needs the target's
+	// link to carry the address, or every join to the moved server fails.
+	if candidate.ProxyProtocol && !w.orchestrator.TargetCarriesClientAddr(ctx, target) {
+		log.Printf("rebalance: server %s has Real player IP on and node %d's link cannot carry it; not moving it there", candidate.UUID, target.ID)
+		return
+	}
 	if err := w.orchestrator.EnqueueMigration(ctx, candidate.ID, target.ID, "rebalance", "system"); errors.Is(err, ErrMigrationQueued) {
 		return // already on its way somewhere
 	} else if err != nil {

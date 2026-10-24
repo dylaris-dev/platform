@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 	"dylaris-pkg/errlog"
 
@@ -841,4 +843,42 @@ func GetAllServiceErrorsFromRedis(rdb *redis.Client, count int64) map[string][]e
 		}
 	}
 	return result
+}
+
+// LinkAnnouncesCap reports whether the link behind token announced cap in its
+// presence key (online_link:<token> = {"caps":[...]}). An old link writes "1",
+// which is not JSON and so announces nothing; a missing key is an offline link.
+func LinkAnnouncesCap(ctx context.Context, rdb *redis.Client, token, cap string) (bool, error) {
+	v, err := rdb.Get(ctx, "online_link:"+token).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var p struct {
+		Caps []string `json:"caps"`
+	}
+	if json.Unmarshal([]byte(v), &p) != nil {
+		return false, nil
+	}
+	return slices.Contains(p.Caps, cap), nil
+}
+
+// TargetCarriesClientAddr reports whether target's link can carry the real
+// player address. A server with Real player IP on must not be moved behind a
+// link that cannot: the gateway keeps sending the header and every join is
+// refused. Fails closed on a Redis error.
+func (o *MigrationOrchestrator) TargetCarriesClientAddr(ctx context.Context, target *models.Node) bool {
+	if o.gateway == nil || o.redis == nil {
+		return false
+	}
+	tok := target.LinkToken
+	if tok == "" {
+		tok = o.gateway.LinkToken(target.Token)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ok, err := LinkAnnouncesCap(ctx, o.redis, tok, "client-addr")
+	return err == nil && ok
 }

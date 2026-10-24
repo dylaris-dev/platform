@@ -12,7 +12,7 @@ const POLL_MS = 2000;
  * while no other server can run on those cores, an admin always, with the
  * shared ones marked. Renders nothing when there is nothing to show.
  */
-export default function CoreLoadBars({ serverId, active }: { serverId: number; active: boolean }) {
+export default function CoreLoadBars({ serverId, active, cpuLimit }: { serverId: number; active: boolean; cpuLimit?: number }) {
   const [data, setData] = useState<ServerCoreLoad | null>(null);
 
   useEffect(() => {
@@ -48,7 +48,14 @@ export default function CoreLoadBars({ serverId, active }: { serverId: number; a
   return (
     <div className="rounded-xl bg-(--base-01) border border-(--base-03) px-4 py-3">
       <div className="flex items-center justify-between gap-3 pb-2">
-        <span className="input-label text-[11px]">CPU cores</span>
+        <span className="input-label text-[11px]">
+          {/* The bars are where the server MAY run (its pin), the limit is how
+              much CPU time it gets across them: 4 cores of time on 8 pinned
+              cores is 4, spread over 8. */}
+          {cpuLimit && cpuLimit > 0 && cpuLimit < data.cores.length
+            ? `CPU limit ${cpuLimit} of ${data.cores.length} pinned cores`
+            : 'CPU cores'}
+        </span>
         {anyShared && (
           <span className="text-[11px] text-(--warning-light)">
             Marked cores are shared: their load includes other servers.

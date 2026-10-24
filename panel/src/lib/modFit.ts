@@ -36,7 +36,7 @@ function minecraftLine(v: string): string {
 const LOADER_NAMES: Record<string, string> = {
     forge: 'Forge', neoforge: 'NeoForge', fabric: 'Fabric', quilt: 'Quilt',
     bukkit: 'Bukkit', spigot: 'Spigot', paper: 'Paper', purpur: 'Purpur',
-    velocity: 'Velocity', waterfall: 'Waterfall', bungeecord: 'BungeeCord',
+    velocity: 'Velocity', waterfall: 'Waterfall', bungeecord: 'BungeeCord', vanilla: 'Vanilla',
 };
 
 export function loaderName(tag: string): string {

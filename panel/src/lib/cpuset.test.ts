@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCpuset, compactCpuset } from './cpuset';
+import { parseCpuset, compactCpuset, pinTooSmall } from './cpuset';
 
 describe('parseCpuset', () => {
     it('parses a single id', () => {
@@ -59,5 +59,19 @@ describe('compactCpuset', () => {
     it('round-trips through parseCpuset', () => {
         const spec = '0-3,8,10-12';
         expect(compactCpuset(parseCpuset(spec))).toBe(spec);
+    });
+});
+
+describe('pinTooSmall', () => {
+    it('refuses a manual pin with fewer cores than the limit grants', () => {
+        expect(pinTooSmall(4, 'manual', '0-2')).toEqual({ have: 3, need: 4 });
+        expect(pinTooSmall(2.5, 'manual', '0-1')).toEqual({ have: 2, need: 3 });
+    });
+    it('accepts a pin at or above the limit, no limit, no pin, or other modes', () => {
+        expect(pinTooSmall(4, 'manual', '0-3')).toBeNull();
+        expect(pinTooSmall(4, 'manual', '0-7')).toBeNull();
+        expect(pinTooSmall(0, 'manual', '0')).toBeNull();
+        expect(pinTooSmall(4, 'manual', '')).toBeNull();
+        expect(pinTooSmall(4, 'auto', '0')).toBeNull();
     });
 });

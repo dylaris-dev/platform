@@ -69,7 +69,82 @@ async function send(path: string, method: string, body?: unknown) {
 }
 
 export const listPacks = () => get<Pack[]>('/me/packs', [], 'packs');
-export const createPack = (input: { name: string; slug?: string; summary?: string }) => send('/me/packs', 'POST', input);
+export const createPack = (input: { name: string; slug?: string; summary?: string; ownerId?: string }) => send('/me/packs', 'POST', input);
+
+// --- Collaboration: packs other users share with me, and my invites ---
+
+/** A pack someone else owns that the caller was invited to. */
+export interface SharedPack extends Pack {
+    ownerName: string;
+    canEdit: boolean;
+    canDelete: boolean;
+}
+
+export interface PacksOverview {
+    packs: Pack[];
+    shared: SharedPack[];
+    /** Owners whose account the caller may create packs on. */
+    createOn: { id: string; name: string }[];
+}
+
+export async function listPacksOverview(): Promise<PacksOverview> {
+    const empty: PacksOverview = { packs: [], shared: [], createOn: [] };
+    try {
+        const res = await fetch(`${API_URL}/me/packs`, { headers: getAuthHeader() });
+        const d = await handleResponse(res) as any;
+        if (d?.success === false) return empty;
+        return { packs: d.packs ?? [], shared: d.shared ?? [], createOn: d.createOn ?? [] };
+    } catch (err) { handleError(err); return empty; }
+}
+
+export interface PackCollaborator {
+    id: number;
+    ownerId: string;
+    ownerName: string;
+    userId: string;
+    username: string;
+    /** null = every pack of the owner, including future ones. */
+    packId: number | null;
+    packName: string;
+    canCreate: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
+    createdAt: string;
+}
+
+export interface PackCollaboratorInput {
+    username: string;
+    packIds: number[];
+    canCreate: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
+}
+
+export async function listPackCollaborators(): Promise<{ given: PackCollaborator[]; held: PackCollaborator[] }> {
+    try {
+        const res = await fetch(`${API_URL}/me/pack-collaborators`, { headers: getAuthHeader() });
+        const d = await handleResponse(res) as any;
+        return { given: d?.collaborators ?? [], held: d?.collaborations ?? [] };
+    } catch (err) { handleError(err); return { given: [], held: [] }; }
+}
+export const invitePackCollaborator = (input: PackCollaboratorInput) => send('/me/pack-collaborators', 'POST', input);
+export const updatePackCollaborator = (id: number, rights: { canCreate: boolean; canEdit: boolean; canDelete: boolean }) =>
+    send(`/me/pack-collaborators/${id}`, 'PATCH', rights);
+export const removePackCollaborator = (id: number) => send(`/me/pack-collaborators/${id}`, 'DELETE');
+
+export interface PackAuditEvent {
+    id: number;
+    packId: number | null;
+    packName: string;
+    actorId: string;
+    actorName: string;
+    action: string;
+    detail: Record<string, unknown>;
+    createdAt: string;
+}
+/** A pack's history (packId) or the history of all of the caller's packs. */
+export const getPackAudit = (packId?: number) =>
+    get<PackAuditEvent[]>(packId ? `/packs/${packId}/audit` : '/me/pack-audit', [], 'events');
 export const getPack = (id: number) => get<Pack | null>(`/packs/${id}`, null, 'pack');
 export const updatePack = (id: number, input: Partial<Pack>) => send(`/packs/${id}`, 'PATCH', input);
 export const deletePack = (id: number) => send(`/packs/${id}`, 'DELETE');

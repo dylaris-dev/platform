@@ -187,3 +187,77 @@ func (bt *BeamThrottle) watchLimits(ctx context.Context, rdb *redis.Client) {
 		}
 	}
 }
+
+// ServerDataThrottle paces one server's beam bytes while Core has throttled
+// its tenant's data traffic (over the allowance without data overage). Core
+// publishes dylaris:server:<uuid>:data_bw in bytes/s; a missing key is no
+// throttle. One limiter per server, shared by all of its streams, on top of
+// the node-wide BeamThrottle. Read through a 10 s cache: the key changes at
+// most once a minute.
+type ServerDataThrottle struct {
+	rdb *redis.Client
+	mu  sync.Mutex
+	m   map[string]*serverDataLimit
+}
+
+type serverDataLimit struct {
+	bps int64
+	at  time.Time
+	lim *rate.Limiter
+}
+
+func NewServerDataThrottle(rdb *redis.Client) *ServerDataThrottle {
+	return &ServerDataThrottle{rdb: rdb, m: map[string]*serverDataLimit{}}
+}
+
+func (t *ServerDataThrottle) limiter(ctx context.Context, uuid string) *rate.Limiter {
+	t.mu.Lock()
+	e := t.m[uuid]
+	fresh := e != nil && time.Since(e.at) < 10*time.Second
+	t.mu.Unlock()
+	if fresh {
+		return e.lim
+	}
+	var bps int64
+	if t.rdb != nil {
+		v, err := t.rdb.Get(ctx, "dylaris:server:"+uuid+":data_bw").Int64()
+		if err == nil && v > 0 {
+			bps = v
+		}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e = t.m[uuid]
+	if e == nil || e.bps != bps {
+		e = &serverDataLimit{bps: bps}
+		if bps > 0 {
+			// Burst of one second's worth: a 32 KB chunk always fits.
+			e.lim = rate.NewLimiter(rate.Limit(bps), int(bps))
+		}
+		t.m[uuid] = e
+	}
+	e.at = time.Now()
+	return e.lim
+}
+
+// WaitN blocks until n bytes of the server's data may pass.
+func (t *ServerDataThrottle) WaitN(ctx context.Context, uuid string, n int) error {
+	if t == nil || uuid == "" || n <= 0 {
+		return nil
+	}
+	lim := t.limiter(ctx, uuid)
+	if lim == nil {
+		return nil
+	}
+	for n > 0 {
+		step := n
+		if b := lim.Burst(); step > b {
+			step = b
+		}
+		if err := lim.WaitN(ctx, step); err != nil {
+			return err
+		}
+		n -= step
+	}
+	return nil
+}

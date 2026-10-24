@@ -121,6 +121,8 @@ type Store interface {
 	// drift apart by a write that failed half way.
 	// RotateVoiceUplinkKey: nil, nil when the server has no voice port.
 	RotateVoiceUplinkKey(serverID int, key []byte) (*VoicePort, error)
+	GetUserDataBillingEnabled(userID string) (bool, error)
+	SetUserDataBillingEnabled(userID string, v bool) error
 	AddTrafficTick(userID string, period time.Time, edgeBytes, relayBytes int64, cells []TrafficTickCell) error
 	AddVoiceUsage(serverID int, period time.Time, region string, rx, tx int64) error
 	ListVoiceUsage(period time.Time) ([]VoiceUsageRow, error)
@@ -908,6 +910,16 @@ type Store interface {
 	DeletePack(id int, ownerID string) error
 	GetPack(id int) (*models.Pack, error)
 	ListPacksByOwner(ownerID string) ([]models.Pack, error)
+	// Modpack collaboration (pack_collaborators, pack_audit_events).
+	ListPackCollaboratorsByOwner(ownerID string) ([]PackCollaborator, error)
+	ListPackCollaborationsForUser(userID string) ([]PackCollaborator, error)
+	PackRightsFor(ownerID, userID string, packID int) (PackRights, error)
+	UpsertPackCollaborator(c PackCollaborator, createdBy string) (int, error)
+	UpdatePackCollaboratorRights(ownerID string, id int, canCreate, canEdit, canDelete bool) error
+	GetPackCollaborator(ownerID string, id int) (*PackCollaborator, error)
+	DeletePackCollaborator(ownerID string, id int) error
+	AddPackAudit(ownerID string, packID int, packName, actorID, action string, detail map[string]any) error
+	ListPackAudit(ownerID string, packID, limit int) ([]PackAuditEvent, error)
 	CreatePackBuild(b *models.PackBuild) (int, error)
 	UpdatePackBuild(b *models.PackBuild) error
 	DeletePackBuild(id, packID int) error
@@ -919,6 +931,7 @@ type Store interface {
 	GetShareLinkByToken(token string) (*models.ShareLink, error)
 	ListShareLinksByBuild(buildID int) ([]models.ShareLink, error)
 	RevokeShareLink(id int, createdBy string) error
+	RevokeShareLinkOfBuild(id, buildID int) error
 
 	UpsertMod(m *models.Mod) (int, error)
 	GetModBySlug(ownerID, slug string) (*models.Mod, error)

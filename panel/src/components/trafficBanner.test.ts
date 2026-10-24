@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { trafficBannerState, TRAFFIC_WARN_PCT } from './trafficBanner';
+import { dataBannerState, trafficBannerState, TRAFFIC_WARN_PCT } from './trafficBanner';
 import type { MyTrafficStatus } from '@/lib/api/billing';
 
 const t = (usedGb: number, ceilingGb: number, billingEnabled = false): MyTrafficStatus => ({
@@ -61,5 +61,21 @@ describe('trafficBannerState', () => {
         // No ceiling means the store told us nothing, not that the tenant is over
         // an allowance of zero. A self-hosted install lands here.
         expect(trafficBannerState(t(500, 0), 'active')).toBe('none');
+    });
+});
+
+describe('dataBannerState', () => {
+    const base = { usedGb: 0, ceilingGb: 100, pct: 0, billingEnabled: false };
+    const relay = (pct: number) => ({ kind: 'relay', region: '*', usedGb: pct, includedGb: 100, pct, warn: 0 });
+    it('says nothing below 90 % or with data overage on', () => {
+        expect(dataBannerState({ ...base, pools: [relay(89)] })).toBe('none');
+        expect(dataBannerState({ ...base, dataBillingEnabled: true, dataThrottled: true, pools: [relay(150)] })).toBe('none');
+    });
+    it('warns from 90 % and says throttled once Core throttles', () => {
+        expect(dataBannerState({ ...base, pools: [relay(90)] })).toBe('warn');
+        expect(dataBannerState({ ...base, dataThrottled: true, pools: [relay(100)] })).toBe('throttled');
+    });
+    it('ignores player pools', () => {
+        expect(dataBannerState({ ...base, pools: [{ ...relay(99), kind: 'edge', region: 'eu' }] })).toBe('none');
     });
 });

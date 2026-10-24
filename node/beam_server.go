@@ -48,9 +48,12 @@ type beamServer struct {
 	pb.UnimplementedBeamNodeServiceServer
 	storageMgr *StorageManager
 	throttle   *BeamThrottle
-	rdb        *redis.Client // for the beam-upload disk-quota pre-check
-	jwtSecret  string        // BEAM_JWT_SECRET — must match the gateway's beam-relay
-	nodeID     string        // local node id; tickets must claim this same id
+	// dataThrottle paces one server's bytes while its tenant is over the
+	// data allowance (Core decides, see ServerDataThrottle).
+	dataThrottle *ServerDataThrottle
+	rdb          *redis.Client // for the beam-upload disk-quota pre-check
+	jwtSecret    string        // BEAM_JWT_SECRET — must match the gateway's beam-relay
+	nodeID       string        // local node id; tickets must claim this same id
 
 	// serverUUIDByPeer remembers which server a gRPC peer (= one Beam.exe
 	// session's TCP connection) is authenticated for. Authenticate writes
@@ -254,11 +257,12 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 	}
 
 	bs := &beamServer{
-		storageMgr: storageMgr,
-		throttle:   throttle,
-		rdb:        rdb,
-		jwtSecret:  jwtSecret,
-		nodeID:     nodeID,
+		storageMgr:   storageMgr,
+		throttle:     throttle,
+		dataThrottle: NewServerDataThrottle(rdb),
+		rdb:          rdb,
+		jwtSecret:    jwtSecret,
+		nodeID:       nodeID,
 	}
 	srv := grpc.NewServer(grpc.MaxConcurrentStreams(beamMaxStreams), grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer, sess: &bs.sessionByPeer}))
 	pb.RegisterBeamNodeServiceServer(srv, bs)
@@ -1111,6 +1115,9 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 			if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
 			}
+			if err := s.dataThrottle.WaitN(ctx, s.extractServerUUID(ctx), n); err != nil {
+				return status.Errorf(codes.Canceled, "throttle: %v", err)
+			}
 
 			chunk := &pb.BeamChunk{
 				Data:   buf[:n],
@@ -1347,6 +1354,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if err := s.throttle.WaitN(ctx, DirectionUp, len(p.Chunk.Data)); err != nil {
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
 			}
+			if err := s.dataThrottle.WaitN(ctx, s.extractServerUUID(ctx), len(p.Chunk.Data)); err != nil {
+				return status.Errorf(codes.Canceled, "throttle: %v", err)
+			}
 
 			// WriteAt is idempotent on identical offsets, so a client that
 			// resends the last (failed) chunk on resume produces the same
@@ -1564,6 +1574,9 @@ func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], 
 		n, readErr := pr.Read(buf)
 		if n > 0 {
 			if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
+				return status.Errorf(codes.Canceled, "throttle: %v", err)
+			}
+			if err := s.dataThrottle.WaitN(ctx, s.extractServerUUID(ctx), n); err != nil {
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
 			}
 			chunk := &pb.BeamChunk{Data: buf[:n], Offset: offset}

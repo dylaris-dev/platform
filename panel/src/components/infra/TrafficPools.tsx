@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Gauge, AlertTriangle, Loader2 } from 'lucide-react';
 import { getMyBilling, type MyTrafficStatus, type TrafficPool } from '@/lib/api/billing';
 import { getStoreAccountSummary, setStoreBillingConsent, type StoreAccountSummary } from '@/lib/api/store';
-import { trafficSwitch } from '@/lib/storeAccount';
+import { dataSwitch, trafficSwitch } from '@/lib/storeAccount';
 import ConsentRow from '@/components/billing/ConsentRow';
 
 /**
@@ -194,10 +194,12 @@ export default function TrafficPools() {
 
     const metered = traffic.billingEnabled;
 
-    const applyConsent = async (next: boolean) => {
+    const hasData = boxes.some(b => b.kind === 'relay');
+
+    const applyConsent = async (change: { traffic?: boolean; data?: boolean }) => {
         setBusy(true);
         setConsentError('');
-        const res = await setStoreBillingConsent({ traffic: next });
+        const res = await setStoreBillingConsent(change);
         setBusy(false);
         if (!res.success) {
             setConsentError(res.message || 'The change could not be saved.');
@@ -241,13 +243,24 @@ export default function TrafficPools() {
                     </span>
                 )}
                 {summary
-                    ? <ConsentRow
-                        title="Bill me for extra traffic"
-                        kind="traffic"
-                        state={trafficSwitch(summary)}
-                        busy={busy}
-                        onChange={applyConsent}
-                    />
+                    ? <>
+                        <ConsentRow
+                            title="Bill me for extra player traffic"
+                            kind="traffic"
+                            state={trafficSwitch(summary)}
+                            busy={busy}
+                            onChange={next => applyConsent({ traffic: next })}
+                        />
+                        {hasData && (
+                            <ConsentRow
+                                title="Bill me for extra data traffic"
+                                kind="data"
+                                state={dataSwitch(summary)}
+                                busy={busy}
+                                onChange={next => applyConsent({ data: next })}
+                            />
+                        )}
+                    </>
                     : <p className="flex items-center gap-2 text-xs text-(--base-06)">
                         <Loader2 size={13} className="animate-spin" />
                         Reading your subscription to see whether metered traffic can be switched here.

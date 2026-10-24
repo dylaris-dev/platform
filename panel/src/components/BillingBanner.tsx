@@ -4,9 +4,9 @@ import React, { useEffect, useState } from 'react';
 import { getMyBilling, BillingStatus, MyTrafficStatus } from '@/lib/api/billing';
 import { getMyUsage, EntitlementState } from '@/lib/api/usage';
 import { useAppData } from '@/lib/AppDataContext';
-import { trafficBannerState } from '@/components/trafficBanner';
+import { dataBannerState, trafficBannerState } from '@/components/trafficBanner';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
-import { fmtDateTime } from '@/lib/time';
+import { fmtDate, fmtDateTime } from '@/lib/time';
 
 // BillingBanner is the non-dismissible red bar shown to a tenant in past_due or
 // suspended. Clicking it goes to the payment URL. Renders nothing when active,
@@ -133,6 +133,30 @@ export default function BillingBanner() {
                     {paymentUrl && (
                         <span className="inline-flex items-center gap-1 font-semibold underline underline-offset-2 whitespace-nowrap">
                             Turn it on <ArrowRight size={15} />
+                        </span>
+                    )}
+                </div>
+            );
+            return paymentUrl
+                ? <a href={paymentUrl} target="_blank" rel="noreferrer" className="block shrink-0 hover:brightness-110 transition-[filter]">{inner}</a>
+                : <div className="shrink-0">{inner}</div>;
+        }
+        // Data traffic slows rather than stops: amber, and it says when it ends.
+        const dataState = dataBannerState(traffic);
+        if (traffic && dataState !== 'none') {
+            const mbit = traffic.dataThrottleMbit ?? 50;
+            const reset = traffic.resetAt ? fmtDate(traffic.resetAt, { day: 'numeric', month: 'long' }) : 'the start of next month';
+            const inner = (
+                <div className="flex items-center justify-center gap-3 bg-(--warning) text-black px-4 py-2.5 text-sm font-medium shadow-md">
+                    <AlertTriangle size={18} className="shrink-0" />
+                    <span>
+                        {dataState === 'throttled'
+                            ? <>This month&apos;s data traffic is used up: beam transfers and custom tabs are slowed to <strong>{mbit} Mbit/s</strong> until {reset}. Your servers and the web file browser are not affected. Turn on data overage to lift it.</>
+                            : <>You have used 90% of this month&apos;s data traffic. At 100% beam transfers and custom tabs slow to {mbit} Mbit/s until {reset}, unless data overage is on.</>}
+                    </span>
+                    {paymentUrl && (
+                        <span className="inline-flex items-center gap-1 font-semibold underline underline-offset-2 whitespace-nowrap">
+                            Data overage <ArrowRight size={15} />
                         </span>
                     )}
                 </div>

@@ -40,3 +40,17 @@ export function trafficBannerState(
     }
     return traffic.pct >= TRAFFIC_WARN_PCT ? 'approaching' : 'none';
 }
+
+export type DataBannerState = 'none' | 'warn' | 'throttled';
+
+/**
+ * Data traffic (beam + custom tabs) has its own line: past its allowance it is
+ * slowed, never stopped, so it must not borrow the player banner's "stops".
+ * Warned from 90 %, the same point Core notifies at.
+ */
+export function dataBannerState(traffic: MyTrafficStatus | null | undefined): DataBannerState {
+    if (!traffic || traffic.dataBillingEnabled) return 'none';
+    if (traffic.dataThrottled) return 'throttled';
+    const data = traffic.pools?.find(p => p.kind === 'relay' && p.includedGb != null);
+    return data && data.pct >= 90 ? 'warn' : 'none';
+}

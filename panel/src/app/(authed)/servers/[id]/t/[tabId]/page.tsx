@@ -10,6 +10,7 @@ import { tabHost } from '@/lib/tabHost';
 import { useAppData } from '@/lib/AppDataContext';
 import { Skeleton } from '@/components/Skeleton';
 import { useRouteId } from '@/lib/routeParams';
+import MapRenderAction from '@/components/MapRenderAction';
 
 // dynamic renderer for custom tabs. Loads the tab metadata, then either:
 //  - direct: embeds the configured URL in an iframe (open_in_panel=true) or
@@ -41,7 +42,7 @@ export default function ServerCustomTabPage() {
     // Each proxied tab carries its own content origin, computed by Core from
     // the tab's host label. There is no same-origin fallback: without one there
     // is nowhere safe to serve the container, and the page says so.
-    const { coreInfo } = useAppData();
+    const { coreInfo, servers } = useAppData();
     const [tab, setTab] = useState<ServerTab | null | undefined>(undefined);
     const [proxyAuth, setProxyAuth] = useState<ProxyAuthState>('pending');
     const [proxyAuthError, setProxyAuthError] = useState<string | null>(null);
@@ -192,12 +193,20 @@ export default function ServerCustomTabPage() {
         // proxyAuth === 'ready': the dyl_tabproxy cookie is minted and
         // path-scoped to exactly this proxy prefix, so the src below never
         // needs (and never gets) a token of its own.
+        const srv = servers.find(s => s.id === tab.serverId);
+        const isMapPort = tab.targetPort === 8080 || tab.targetPort === 8100;
         return (
-            <main className="h-full overflow-hidden bg-(--base-01)">
+            <main className="h-full overflow-hidden bg-(--base-01) flex flex-col">
+                {srv && isMapPort && (
+                    <div className="flex items-center justify-end gap-2 px-3 py-1.5 border-b border-(--base-03) text-xs text-(--base-06)">
+                        <span className="mr-auto">Parts of the world still blank? A map renders what was played; render the rest once.</span>
+                        <MapRenderAction serverId={srv.id} serverUuid={srv.uuid} subServer={srv.activeSubServer || ''} port={tab.targetPort} />
+                    </div>
+                )}
                 <iframe
                     src={tabContentSrc(tab.proxyOrigin) || undefined}
                     title={tab.name}
-                    className="w-full h-full border-0"
+                    className="w-full flex-1 min-h-0 border-0"
                     referrerPolicy="no-referrer"
                     sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
                 />

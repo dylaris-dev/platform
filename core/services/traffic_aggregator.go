@@ -208,6 +208,8 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 		}
 	}
 
+	a.evaluateDataThrottle(ctx, owners)
+
 	// Deliberately NOT the widened map: this walks tenants who own SERVERS, and
 	// a route-only tenant has no backups to snapshot. Passing them in would
 	// write a zero-byte storage row for an account that never had one.

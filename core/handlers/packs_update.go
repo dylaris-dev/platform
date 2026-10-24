@@ -23,7 +23,7 @@ type updateModsResult struct {
 // the shared safe-cutover align (swapModversionToModrinth). Per-mod failures are
 // reported, not fatal.
 func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
-	build, ok := h.loadOwnedBuild(r)
+	build, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -37,7 +37,6 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	userID, _ := r.Context().Value("userID").(string)
 
 	type job struct {
 		mvID   int
@@ -98,7 +97,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 			results = append(results, updateModsResult{ModversionID: j.mvID, Error: "content not found"})
 			continue
 		}
-		if err := h.swapModversionToModrinth(r.Context(), userID, mv, j.target); err != nil {
+		if err := h.swapModversionToModrinth(r.Context(), owner, mv, j.target); err != nil {
 			results = append(results, updateModsResult{ModversionID: j.mvID, Error: err.Error()})
 			continue
 		}

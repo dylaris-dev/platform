@@ -23,6 +23,7 @@ import {
     limitRegionFor,
     type TrafficLimit,
 } from '@/lib/api/trafficLimits';
+import DataThrottleCard from '@/components/settings/DataThrottleCard';
 
 /**
  * The one platform-wide scope. There used to be a second, "global", asked after
@@ -327,6 +328,7 @@ export default function TrafficLimitsTab() {
                     </div>
                 </SettingsCard>
             )}
+            <DataThrottleCard />
         </SettingsPage>
     );
 }

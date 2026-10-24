@@ -2,9 +2,12 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2 } from 'lucide-react';
+import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2, Users } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
-import { listPacks, createPack, deletePack, type Pack } from '@/lib/api/packs';
+import { createPack, deletePack, type Pack, listPacksOverview, type SharedPack } from '@/lib/api/packs';
+import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal';
+import PackActivity from '@/components/modpacks/PackActivity';
+import Select from '@/components/ui/Select';
 import UnlinkedContentWarning from '@/components/mods/UnlinkedContentWarning';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
@@ -30,15 +33,21 @@ export default function PacksListPage() {
     const [creatingPack, runCreate] = useBusy();
     const [deletingPack, runDelete] = useBusy();
     const [creating, setCreating] = useState<{
-        internalName: string; slug: string; summary: string;
+        internalName: string; slug: string; summary: string; ownerId: string;
     } | null>(null);
+    // Packs others invited the reader to, and whose account they may create on.
+    const [shared, setShared] = useState<SharedPack[]>([]);
+    const [createOn, setCreateOn] = useState<{ id: string; name: string }[]>([]);
+    const [collabOpen, setCollabOpen] = useState(false);
     const [deletePrompt, setDeletePrompt] = useState<Pack | null>(null);
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
-        const list = await listPacks();
-        setPacks(list);
+        const o = await listPacksOverview();
+        setPacks(o.packs);
+        setShared(o.shared);
+        setCreateOn(o.createOn);
         setLoading(false);
     }, []);
 
@@ -56,6 +65,7 @@ export default function PacksListPage() {
             name: creating.internalName.trim(),
             slug: creating.slug.trim() || undefined,
             summary: creating.summary.trim() || undefined,
+            ownerId: creating.ownerId || undefined,
         });
         if (res.success && res.pack) {
             setCreating(null);
@@ -84,11 +94,14 @@ export default function PacksListPage() {
                 <Package size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">My Modpacks</h1>
                 <div className="ml-auto flex items-center gap-2">
+                    <button onClick={() => setCollabOpen(true)} className="btn btn-secondary btn-sm" title="Let other users work on your packs">
+                        <Users size={13} /> Collaborators
+                    </button>
                     <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
                         <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
                     </button>
                     <button
-                        onClick={() => setCreating({ internalName: '', slug: '', summary: '' })}
+                        onClick={() => setCreating({ internalName: '', slug: '', summary: '', ownerId: '' })}
                         className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         disabled={cannotAuthor}
                         title={modpacksDisabled ? 'Modpack authoring is disabled' : noStorage ? 'Modpack storage is not configured' : undefined}
@@ -184,6 +197,37 @@ export default function PacksListPage() {
                 </div>
             )}
 
+            {/* Packs other users share with the reader. */}
+            {!loading && shared.length > 0 && (
+                <section className="mt-6">
+                    <h2 className="mono-label text-(--base-06) mb-2">Shared with me</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {shared.map(p => (
+                            <Link key={p.id} href={`/modpacks/${p.id}`} className="card p-4 hover:border-(--accent-border) transition-colors group">
+                                <div className="flex items-start gap-3">
+                                    <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                                        <Package size={18} className="text-(--accent-light)" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.internalName}</div>
+                                        <div className="text-[10px] font-mono text-(--base-06) truncate">by {p.ownerName}</div>
+                                    </div>
+                                </div>
+                                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                                    <Badge variant="neutral">{p.canEdit ? (p.canDelete ? 'edit & delete' : 'edit') : p.canDelete ? 'delete' : 'view'}</Badge>
+                                </div>
+                            </Link>
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            {!loading && packs.length > 0 && (
+                <div className="mt-6"><PackActivity showPack /></div>
+            )}
+
+            {collabOpen && <PackCollaboratorsModal packs={packs} onClose={() => { setCollabOpen(false); refresh(); }} />}
+
             {/* Create */}
             {creating && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setCreating(null)}>
@@ -201,6 +245,18 @@ export default function PacksListPage() {
                                 file uploaded by hand can never be version-checked
                                 or carried to a newer Minecraft version. */}
                             <UnlinkedContentWarning context="pack" />
+                            {createOn.length > 0 && (
+                                <div>
+                                    <label className="input-label">Account</label>
+                                    <Select
+                                        value={creating.ownerId}
+                                        onChange={v => setCreating({ ...creating, ownerId: v })}
+                                        options={[{ value: '', label: 'Mine' }, ...createOn.map(o => ({ value: o.id, label: `${o.name} (invited)` }))]}
+                                        ariaLabel="Account"
+                                    />
+                                    <p className="text-xs text-(--base-06) mt-1">A pack on someone else&apos;s account is theirs and publishes through their Modrinth token.</p>
+                                </div>
+                            )}
                             <div>
                                 <label className="input-label">Internal name</label>
                                 <input

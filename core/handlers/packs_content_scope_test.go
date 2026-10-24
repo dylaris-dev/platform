@@ -128,3 +128,8 @@ func TestListContent_AdminKeepsCrossOwnerReadWithinTheRightPack(t *testing.T) {
 		t.Fatalf("status = %d, want 404 for a build outside the named pack", rw2.Code)
 	}
 }
+
+// No collaborator invites in this fake.
+func (*packScopeFakeStore) PackRightsFor(string, string, int) (store.PackRights, error) {
+	return store.PackRights{}, nil
+}

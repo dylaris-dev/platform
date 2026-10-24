@@ -282,6 +282,26 @@ func (s *PostgresStore) SetUserBillingConsent(userID string, traffic, backup *bo
 	return err
 }
 
+// GetUserDataBillingEnabled: whether the tenant agreed to pay for DATA traffic
+// overage. Unset follows the player consent (the store's old single flag).
+func (s *PostgresStore) GetUserDataBillingEnabled(userID string) (bool, error) {
+	var v bool
+	err := s.db.QueryRow(`SELECT COALESCE(data_billing_enabled, traffic_billing_enabled, FALSE)
+		FROM user_billing WHERE user_id = $1`, userID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return v, err
+}
+
+// SetUserDataBillingEnabled records the data overage consent.
+func (s *PostgresStore) SetUserDataBillingEnabled(userID string, v bool) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_billing (user_id, data_billing_enabled, updated_at) VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET data_billing_enabled = $2, updated_at = NOW()`, userID, v)
+	return err
+}
+
 // CountNodesByOwner returns how many nodes a tenant owns (for the max_nodes gate).
 func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 	var n int

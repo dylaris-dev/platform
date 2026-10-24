@@ -78,12 +78,16 @@ export interface StoreAccountSummary {
     trafficMeterConfigured?: boolean;
     backupMeterConfigured?: boolean;
     trafficBillingEnabled?: boolean;
+    // Data traffic (beam, custom tabs) has its own consent on the same meter;
+    // without it data past the allowance is slowed down, never stopped.
+    dataBillingEnabled?: boolean;
     backupBillingEnabled?: boolean;
     trafficCutoffAt?: string | null;
     // Per-unit prices read from Stripe, and the sentence each switch agrees
     // to. Absent when the store could not read the price.
     trafficPrice?: string;
     trafficConsentText?: string;
+    dataConsentText?: string;
     backupPrice?: string;
     backupConsentText?: string;
     traffic?: StoreUsageBlock & { warn?: number; cutOff?: boolean };
@@ -103,7 +107,7 @@ export async function getStoreAccountSummary(): Promise<StoreAccountSummary> {
 // POST /store/billing-consent - an omitted field is left alone, so the two
 // switches never overwrite each other.
 export async function setStoreBillingConsent(
-    change: { traffic?: boolean; backup?: boolean },
+    change: { traffic?: boolean; data?: boolean; backup?: boolean },
 ): Promise<{ success: boolean; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/store/billing-consent`, {

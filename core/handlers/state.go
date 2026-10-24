@@ -83,6 +83,11 @@ type AppState struct {
 	// Migration is the leader-driven node-to-node migration orchestrator.
 	// The manual-move endpoint only ENQUEUES onto it; the elected Core executes.
 	Migration *services.MigrationOrchestrator
+	// DataLimiter paces custom tab traffic of a throttled tenant; TabMeter
+	// counts it as data traffic. Both nil-safe: unset means no pacing and no
+	// counting (tests, a Core without Redis).
+	DataLimiter *services.DataLimiter
+	TabMeter    *services.TabTrafficMeter
 
 	// DBMigration drives the in-panel cross-database migration (copy the whole
 	// DB onto a new target under maintenance mode). Shared job state lives in

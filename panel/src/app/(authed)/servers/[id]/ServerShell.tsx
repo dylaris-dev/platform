@@ -44,6 +44,8 @@ import type { MemoryGuardAction } from '@/lib/api/types';
 import PowerControls from '@/components/server/PowerControls';
 import { advancePending, startPending, POWER_COOLDOWN_MS, type PendingPower, type PowerAction } from '@/lib/powerControls';
 import { fmtDateTime } from '@/lib/time';
+import { pinTooSmall } from '@/lib/cpuset';
+import { loaderName } from '@/lib/modFit';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -859,6 +861,17 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                             </button>
                             {ownerCopied && <span className="ml-1 text-(--success-light)">copied</span>}
                         </span>
+                        {/* What the server runs, at a glance: loader and Minecraft version,
+                            the build in the tooltip. */}
+                        {selectedServer.installerType && (
+                            <span
+                                className="mono-label bg-(--base-03) border border-(--base-04) px-2 py-0.5 rounded-sm text-(--base-08)"
+                                title={selectedServer.buildNumber ? `Build ${selectedServer.buildNumber}` : undefined}
+                            >
+                                {loaderName(selectedServer.installerType)}
+                                {selectedServer.minecraftVersion ? ` ${selectedServer.minecraftVersion}` : ''}
+                            </span>
+                        )}
                     </div>
                     <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1.5">
@@ -983,7 +996,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 <span className="mono-label text-(--base-05)">Direct</span>
                                 <CopyText
                                     value={`${selectedServer.nodeAddress}:${selectedServer.hostPort}`}
-                                    title="Click to copy the address"
+                                    bubble
                                     label={<span className="inline-flex items-center gap-1.5"><Link2 size={11} className="text-(--base-06) shrink-0" aria-hidden="true" />{selectedServer.nodeAddress}:{selectedServer.hostPort}</span>}
                                     className="bg-(--base-03)/50 border border-(--base-04) hover:border-(--base-05) rounded-md px-2.5 py-1 text-xs font-mono text-(--base-07) cursor-copy"
                                 />
@@ -996,7 +1009,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     <CopyText
                                         key={route.domain}
                                         value={route.domain}
-                                        title="Click to copy the address"
+                                        bubble
                                         label={<span className="inline-flex items-center gap-1.5"><Globe size={11} className="shrink-0" aria-hidden="true" />{route.domain}</span>}
                                         className="bg-(--accent-ghost) border border-(--accent-border) hover:bg-(--accent)/15 rounded-md px-2.5 py-1 text-xs font-mono text-(--accent-light) cursor-copy"
                                     />
@@ -1571,7 +1584,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                             )}
                             <div className="modal-footer">
                                 <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
-                                <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
+                                <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources || !!pinTooSmall(editCpuLimit, editCpuMode, editCpusetCpus)} title={pinTooSmall(editCpuLimit, editCpuMode, editCpusetCpus) ? 'Pin at least as many cores as the CPU limit' : undefined} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
                             </div>
                         </div>
                     </ModalPanel>

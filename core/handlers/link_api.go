@@ -3,11 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -147,20 +145,7 @@ const linkCapClientAddr = "client-addr"
 // linkAnnouncesCap reports whether online_link:<token> carries cap. A missing
 // key (link offline) or an old link's "1" is false; only a Redis failure is an error.
 func linkAnnouncesCap(ctx context.Context, rdb *redis.Client, token, cap string) (bool, error) {
-	v, err := rdb.Get(ctx, "online_link:"+token).Result()
-	if errors.Is(err, redis.Nil) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	var p struct {
-		Caps []string `json:"caps"`
-	}
-	if json.Unmarshal([]byte(v), &p) != nil {
-		return false, nil
-	}
-	return slices.Contains(p.Caps, cap), nil
+	return services.LinkAnnouncesCap(ctx, rdb, token, cap)
 }
 
 // linkPresenceValue is what a heartbeat writes into online_link:<token>: the

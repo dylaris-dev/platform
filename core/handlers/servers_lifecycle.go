@@ -1943,6 +1943,19 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		}
 		pinningChanged = pinMode != srv.CPUPinningMode || newCpuset != srv.Cpuset
 	}
+	// A manual pin must hold at least the cores the limit grants, in both
+	// directions: a smaller pin, or a bigger limit on the existing pin.
+	finalMode, finalCpuset := srv.CPUPinningMode, srv.Cpuset
+	if pinningRequested {
+		finalMode, finalCpuset = pinMode, newCpuset
+	}
+	if finalMode == "manual" {
+		if have, need, bad := services.PinTooSmall(req.CPULimit, finalCpuset); bad {
+			sendJSONErrorCode(w, fmt.Sprintf("The server gets %g CPU cores but is pinned to only %d. Pin at least %d cores, or lower the CPU limit to %d.", req.CPULimit, have, need, have),
+				"pin_smaller_than_limit", http.StatusBadRequest)
+			return
+		}
+	}
 
 	// Port changes: admin-only
 	portsRequested := isAdmin && (req.HostPort > 0 || req.ContainerPort > 0)

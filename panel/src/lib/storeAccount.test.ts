@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { usagePct, trafficSwitch, backupSwitch, consequenceOf } from './storeAccount';
+import { usagePct, trafficSwitch, dataSwitch, backupSwitch, consequenceOf } from './storeAccount';
 import type { StoreAccountSummary } from '@/lib/api/store';
 
 const base: StoreAccountSummary = {
@@ -13,6 +13,7 @@ const base: StoreAccountSummary = {
     backupMeterConfigured: true,
     trafficPrice: '€4.50',
     trafficConsentText: 'I agree to be charged €4.50 for every started terabyte...',
+    dataConsentText: 'I agree to be charged €4.50 for every started terabyte of data traffic...',
     backupPrice: '€2.00',
     backupConsentText: 'I agree to be charged €2.00 per started 50 GB block...',
 };
@@ -118,9 +119,28 @@ describe('consequenceOf', () => {
         expect(consequenceOf('traffic', false)).toContain('Nothing is charged');
     });
 
+    it('says data traffic is slowed, never stopped', () => {
+        expect(consequenceOf('data', false)).toContain('slowed down');
+        expect(consequenceOf('data', false)).toContain('nothing is stopped');
+        expect(consequenceOf('data', true)).toContain('billed');
+    });
+
     it('says backups are refused rather than deleted', () => {
         const off = consequenceOf('backup', false);
         expect(off).toContain('refused');
         expect(off).toContain('nothing already stored is deleted');
+    });
+});
+
+// The data switch rides the player meter and price but is its own consent:
+// agreeing to one is never agreeing to the other.
+describe('dataSwitch', () => {
+    it('is its own consent with its own sentence', () => {
+        expect(dataSwitch({ ...base, trafficBillingEnabled: true })).toEqual({ kind: 'off', price: '€4.50', consentText: base.dataConsentText });
+        expect(dataSwitch({ ...base, dataBillingEnabled: true })).toEqual({ kind: 'on', price: '€4.50' });
+    });
+
+    it('follows the traffic meter being configured', () => {
+        expect(dataSwitch({ ...base, trafficMeterConfigured: false }).kind).toBe('unavailable');
     });
 });

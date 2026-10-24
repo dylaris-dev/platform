@@ -94,6 +94,12 @@ export interface MyTrafficStatus {
     // Every allowance the tenant is judged against. Player traffic is per
     // region; file transfers hold one pool for all of them.
     pools?: TrafficPool[];
+    // Data traffic (beam + custom tabs) past its allowance is THROTTLED, not
+    // stopped, unless data overage is on. Absent from an older Core.
+    dataBillingEnabled?: boolean;
+    dataThrottled?: boolean;
+    dataThrottleMbit?: number;
+    resetAt?: string;
 }
 
 // TrafficPool is one allowance. includedGb null means nothing is configured for

@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ChevronRight, LayoutDashboard } from 'lucide-react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { AlertTriangle, ChevronDown, ChevronRight, LayoutDashboard, Search, ShieldCheck } from 'lucide-react';
+import { navGroups, parseTabParams, tabHref, type NavGroup } from '@/lib/customTabsNav';
 import { listServerTabs, mintTabProxyAuth, type ServerTab } from '@/lib/api/serverTabs';
 import { tabContentSrc, tabRunsOnActiveSubServer } from '@/lib/tabProxy';
 import { useAppData } from '@/lib/AppDataContext';
@@ -28,11 +30,44 @@ const PROXY_AUTH_REFRESH_MS = 4 * 60 * 1000;
 
 type TabsByServer = Record<number, ServerTab[]>;
 
+// Collapsed server groups, per browser. A convenience only, so storage that is
+// missing or refuses is not an error.
+const COLLAPSED_KEY = 'dyl.tabs.collapsed';
+function readCollapsed(): Set<number> {
+    try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]') as number[]); } catch { return new Set(); }
+}
+function writeCollapsed(ids: Set<number>) {
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...ids])); } catch { /* not kept */ }
+}
+
+const GROUP_LABEL: Record<NavGroup, string> = { mine: 'My servers', invited: 'Invited', admin: 'All servers (admin)' };
+
+// useSearchParams needs a Suspense boundary under the static export.
 export default function CustomTabsPage() {
-    const { servers, coreInfo } = useAppData();
+    return (
+        <Suspense fallback={<div className="flex-1 p-4"><Skeleton className="w-full h-full rounded" /></div>}>
+            <CustomTabsInner />
+        </Suspense>
+    );
+}
+
+function CustomTabsInner() {
+    const { servers, coreInfo, user } = useAppData();
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const isAdmin = !!user?.isAdmin;
     const [tabsByServer, setTabsByServer] = useState<TabsByServer>({});
     const [loading, setLoading] = useState(true);
-    const [selected, setSelected] = useState<ServerTab | null>(null);
+    const [adminMode, setAdminMode] = useState(false);
+    const [query, setQuery] = useState('');
+    const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
+    useEffect(() => { setCollapsed(readCollapsed()); }, []);
+    const toggleCollapsed = (id: number) => setCollapsed(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        writeCollapsed(next);
+        return next;
+    });
     const [authState, setAuthState] = useState<'pending' | 'ready' | 'error'>('pending');
     const [authError, setAuthError] = useState<string | null>(null);
 
@@ -76,6 +111,46 @@ export default function CustomTabsPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [serverKey, load]);
 
+
+    // A tab pinned to a sub-server that is not the running one addresses a port
+    // that only exists while that sub-server is up, and Core refuses to serve it.
+    // Filtered HERE rather than in load() because the pin is compared against
+    // live server state: switching sub-servers has to move a tab in and out of
+    // this list without refetching anything.
+    const visibleByServer = useMemo(() => {
+        const out: TabsByServer = {};
+        for (const s of servers) {
+            const list = (tabsByServer[s.id] ?? []).filter(t => tabRunsOnActiveSubServer(t.subServerName, s.activeSubServer));
+            if (list.length > 0) out[s.id] = list;
+        }
+        return out;
+    }, [servers, tabsByServer]);
+
+    // The tab is the URL's (?server=&tab=), so a refresh or a shared panel
+    // link opens it again. Only a tab from the reader's own list can be
+    // selected: a link to anything else answers "not found", never a frame.
+    const wantedServer = searchParams.get('server');
+    const wantedTab = searchParams.get('tab');
+    const wanted = useMemo(() => parseTabParams(wantedServer, wantedTab), [wantedServer, wantedTab]);
+    const selected: ServerTab | null = useMemo(
+        () => (wanted ? (visibleByServer[wanted.serverId] ?? []).find(t => t.id === wanted.tabId) ?? null : null),
+        [wanted, visibleByServer],
+    );
+    const wantedMissing = !!wanted && !loading && !selected;
+    // A link into another user's server opens the admin group it lives in.
+    useEffect(() => {
+        if (!wanted || !isAdmin) return;
+        const s = servers.find(x => x.id === wanted.serverId);
+        if (s?.role === 'admin' && !s.invitedHere) setAdminMode(true);
+    }, [wanted, isAdmin, servers]);
+    const select = (serverId: number, tab: ServerTab) => router.push(tabHref(serverId, tab.id));
+
+    const groups = useMemo(
+        () => navGroups(servers, id => visibleByServer[id] ?? [], query, adminMode),
+        [servers, visibleByServer, query, adminMode],
+    );
+    const anyListed = groups.mine.length + groups.invited.length + groups.admin.length > 0;
+
     // Mint the ticket for the selected tab before its frame is allowed to load,
     // then keep it fresh. A failing background refresh must never tear down a
     // frame that is already working, so only the first mint may show the error.
@@ -99,25 +174,6 @@ export default function CustomTabsPage() {
         return () => { cancelled = true; clearInterval(interval); };
     }, [selected?.proxyOrigin]);
 
-    // A tab pinned to a sub-server that is not the running one addresses a port
-    // that only exists while that sub-server is up, and Core refuses to serve it.
-    // Filtered HERE rather than in load() because the pin is compared against
-    // live server state: switching sub-servers has to move a tab in and out of
-    // this list without refetching anything.
-    const visibleByServer = useMemo(() => {
-        const out: TabsByServer = {};
-        for (const s of servers) {
-            const list = (tabsByServer[s.id] ?? []).filter(t => tabRunsOnActiveSubServer(t.subServerName, s.activeSubServer));
-            if (list.length > 0) out[s.id] = list;
-        }
-        return out;
-    }, [servers, tabsByServer]);
-
-    const withTabs = useMemo(
-        () => servers.filter(s => (visibleByServer[s.id]?.length ?? 0) > 0),
-        [servers, visibleByServer],
-    );
-
     if (!coreInfo?.tabProxyAvailable) {
         return (
             <main className="flex-1 flex items-center justify-center p-6">
@@ -134,10 +190,33 @@ export default function CustomTabsPage() {
 
     return (
         <div className="flex-1 flex min-h-0">
-            <nav aria-label="Custom tabs" className="w-64 shrink-0 border-r border-(--base-03) bg-(--base-01) overflow-y-auto">
-                <h1 className="px-4 pt-4 pb-2 text-xs font-medium uppercase tracking-wide text-(--base-06)">
-                    Custom tabs
-                </h1>
+            <nav aria-label="Custom tabs" className="w-64 shrink-0 border-r border-(--base-03) bg-(--base-01) overflow-y-auto flex flex-col">
+                <div className="px-4 pt-4 pb-2 flex items-center justify-between gap-2">
+                    <h1 className="text-xs font-medium uppercase tracking-wide text-(--base-06)">Custom tabs</h1>
+                    {isAdmin && (
+                        <button
+                            type="button"
+                            onClick={() => setAdminMode(m => !m)}
+                            aria-pressed={adminMode}
+                            title="Show every server's tabs"
+                            className={`btn text-xs px-2.5 py-1 ${adminMode ? 'btn-primary' : 'btn-secondary'}`}
+                        >
+                            <ShieldCheck size={12} /> Admin
+                        </button>
+                    )}
+                </div>
+                <div className="px-3 pb-2">
+                    <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-06) pointer-events-none" aria-hidden="true" />
+                        <input
+                            value={query}
+                            onChange={e => setQuery(e.target.value)}
+                            placeholder={adminMode ? 'Server, user, UUID or tab' : 'Server or tab'}
+                            aria-label="Search custom tabs"
+                            className="input-field input-icon-left w-full text-xs py-1.5"
+                        />
+                    </div>
+                </div>
                 {loading && (
                     <div className="px-4 space-y-2">
                         <Skeleton className="h-4 w-32 rounded" />
@@ -145,41 +224,63 @@ export default function CustomTabsPage() {
                         <Skeleton className="h-4 w-28 rounded" />
                     </div>
                 )}
-                {!loading && withTabs.length === 0 && (
+                {!loading && !anyListed && (
                     <p className="px-4 py-3 text-xs text-(--base-06)">
-                        None of your servers has a proxied tab yet. Add one under a server&apos;s
-                        Config &rarr; Tabs.
+                        {query.trim()
+                            ? 'Nothing matches the search.'
+                            : <>None of your servers has a proxied tab yet. Add one under a server&apos;s Config &rarr; Tabs.</>}
                     </p>
                 )}
-                {!loading && withTabs.map(server => (
-                    <section key={server.id} className="pb-2">
-                        <h2 className="px-4 py-1.5 text-xs font-medium text-(--base-07) truncate" title={server.name}>
-                            {server.name}
-                        </h2>
-                        <ul>
-                            {(visibleByServer[server.id] ?? []).map(tab => {
-                                const active = selected?.id === tab.id;
-                                return (
-                                    <li key={tab.id}>
-                                        <button
-                                            type="button"
-                                            onClick={() => setSelected(tab)}
-                                            aria-current={active ? 'page' : undefined}
-                                            className={`w-full flex items-center gap-2 px-4 py-1.5 text-sm text-left transition-colors
-                                                focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)
-                                                ${active
-                                                    ? 'bg-(--accent-dim) text-(--base-09) border-l-2 border-(--accent-light)'
-                                                    : 'text-(--base-07) border-l-2 border-transparent hover:bg-(--base-02) hover:text-(--base-09)'}`}
-                                        >
-                                            <DynamicIcon name={tab.icon || 'layout-dashboard'} size={13} className="shrink-0" />
-                                            <span className="truncate">{tab.name}</span>
-                                            {active && <ChevronRight size={12} className="ml-auto shrink-0" />}
-                                        </button>
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                    </section>
+                {!loading && (['mine', 'invited', 'admin'] as NavGroup[]).map(g => groups[g].length > 0 && (
+                    <div key={g} className="pb-1">
+                        {(groups.invited.length > 0 || groups.admin.length > 0) && (
+                            <p className="px-4 pt-2 pb-1 mono-label text-(--base-05)">{GROUP_LABEL[g]}</p>
+                        )}
+                        {groups[g].map(server => {
+                            const open = !collapsed.has(server.id) || !!query.trim();
+                            const list = visibleByServer[server.id] ?? [];
+                            return (
+                                <section key={server.id} className="pb-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleCollapsed(server.id)}
+                                        aria-expanded={open}
+                                        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-(--base-07) hover:text-(--base-09) transition-colors focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)"
+                                        title={g === 'admin' && server.owner ? `${server.name} (${server.owner})` : server.name}
+                                    >
+                                        {open ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
+                                        <span className="truncate">{server.name}</span>
+                                        {g === 'admin' && server.owner && <span className="truncate text-(--base-05) font-normal">{server.owner}</span>}
+                                        <span className="ml-auto mono-label text-(--base-05)">{list.length}</span>
+                                    </button>
+                                    {open && (
+                                        <ul>
+                                            {list.map(tab => {
+                                                const active = selected?.id === tab.id;
+                                                return (
+                                                    <li key={tab.id}>
+                                                        <a
+                                                            href={tabHref(server.id, tab.id)}
+                                                            onClick={e => { e.preventDefault(); select(server.id, tab); }}
+                                                            aria-current={active ? 'page' : undefined}
+                                                            className={`w-full flex items-center gap-2 pl-7 pr-4 py-1.5 text-sm text-left transition-colors
+                                                                focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)
+                                                                ${active
+                                                                    ? 'bg-(--accent-dim) text-(--base-09) border-l-2 border-(--accent-light)'
+                                                                    : 'text-(--base-07) border-l-2 border-transparent hover:bg-(--base-02) hover:text-(--base-09)'}`}
+                                                        >
+                                                            <DynamicIcon name={tab.icon || 'layout-dashboard'} size={13} className="shrink-0" />
+                                                            <span className="truncate">{tab.name}</span>
+                                                        </a>
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    )}
+                                </section>
+                            );
+                        })}
+                    </div>
                 ))}
             </nav>
 
@@ -187,8 +288,17 @@ export default function CustomTabsPage() {
                 {!selected && (
                     <div className="h-full flex items-center justify-center p-6">
                         <div className="text-center space-y-2">
-                            <LayoutDashboard size={22} className="text-(--base-05) mx-auto" />
-                            <p className="text-sm text-(--base-06)">Pick a tab to open it here.</p>
+                            {wantedMissing ? (
+                                <>
+                                    <AlertTriangle size={22} className="text-(--warning-light) mx-auto" />
+                                    <p className="text-sm text-(--base-07)">This tab does not exist, is not running, or you have no access to it.</p>
+                                </>
+                            ) : (
+                                <>
+                                    <LayoutDashboard size={22} className="text-(--base-05) mx-auto" />
+                                    <p className="text-sm text-(--base-06)">Pick a tab to open it here.</p>
+                                </>
+                            )}
                         </div>
                     </div>
                 )}

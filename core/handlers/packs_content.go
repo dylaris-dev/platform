@@ -28,22 +28,22 @@ import (
 // (fm.user_upload_limit) would couple two unrelated features.
 const maxPackContentUploadBytes = 1 << 30 // 1 GiB
 
-// loadOwnedBuild returns the build if the caller owns its pack. Frozen state is
-// left for callers to gate on (list/read is allowed on frozen builds; writes
-// are not).
-func (h *PacksHandler) loadOwnedBuild(r *http.Request) (*models.PackBuild, bool) {
+// loadBuild returns the build in the path if the caller may do need on its
+// pack, and the pack's owner: content added by a collaborator belongs to the
+// pack, so it is stored under the owner. Frozen state is left for callers to
+// gate on (list/read is allowed on frozen builds; writes are not).
+func (h *PacksHandler) loadBuild(r *http.Request, need packNeed) (*models.PackBuild, string, bool) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
-	userID, _ := r.Context().Value("userID").(string)
-	p, err := h.state.Store.GetPack(packID)
-	if err != nil || p == nil || p.OwnerID != userID {
-		return nil, false
+	p, ok := h.packAccess(r, packID, need)
+	if !ok {
+		return nil, "", false
 	}
 	b, err := h.state.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
-		return nil, false
+		return nil, "", false
 	}
-	return b, true
+	return b, p.OwnerID, true
 }
 
 // ListContent GET /api/packs/{id}/builds/{buildId}/content - the mods and
@@ -89,7 +89,7 @@ type addModrinthRequest struct {
 // build is 409, and the reply counts what was actually added, since a
 // dependency that fails is skipped rather than aborting the whole call.
 func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
-	b, ok := h.loadOwnedBuild(r)
+	b, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -103,14 +103,13 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
-	userID, _ := r.Context().Value("userID").(string)
 
 	v, err := services.FetchModrinthVersion(req.VersionID)
 	if err != nil {
 		sendJSONError(w, "Modrinth version lookup failed", http.StatusBadGateway)
 		return
 	}
-	if err := h.addModrinthVersion(userID, b, v, req.Side, req.ContentType); err != nil {
+	if err := h.addModrinthVersion(owner, b, v, req.Side, req.ContentType); err != nil {
 		sendJSONError(w, "Failed to add mod", http.StatusInternalServerError)
 		return
 	}
@@ -129,7 +128,7 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 			resp["unresolved"] = unresolved
 		}
 		for _, d := range deps {
-			if err := h.addModrinthVersion(userID, b, d.Version, models.SideBoth, models.ContentTypeMod); err == nil {
+			if err := h.addModrinthVersion(owner, b, d.Version, models.SideBoth, models.ContentTypeMod); err == nil {
 				added++
 			}
 		}
@@ -205,12 +204,11 @@ func validateStoredModZip(ra io.ReaderAt, size int64) error {
 // memory budget only decides how much is held in RAM, not how much is
 // accepted, and nothing further down this path checks a size at all.
 func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
-	b, ok := h.loadOwnedBuild(r)
+	b, owner, ok := h.loadBuild(r, packEdit)
 	if !ok || b.Frozen {
 		sendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
 		return
 	}
-	userID, _ := r.Context().Value("userID").(string)
 
 	// Bound the body before parsing it. The small memory budget below decides how
 	// much is held in RAM, NOT how much is accepted: ParseMultipartForm reads the
@@ -265,7 +263,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := slugify(strings.TrimSuffix(fileName, ".jar"))
 
-	meta, herr := h.storeUploadedContent(r.Context(), prov, f, hdr, fileName, contentType, userID, slug)
+	meta, herr := h.storeUploadedContent(r.Context(), prov, f, hdr, fileName, contentType, owner, slug)
 	if herr != nil {
 		sendJSONError(w, herr.msg, herr.status)
 		return
@@ -274,7 +272,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	key, version := meta.key, meta.version
 
 	modID, err := h.state.Store.UpsertMod(&models.Mod{
-		OwnerID: userID, Slug: slug, PrettyName: fileName, ContentType: contentType,
+		OwnerID: owner, Slug: slug, PrettyName: fileName, ContentType: contentType,
 	})
 	if err != nil {
 		// The object is stored and nothing points at it yet.
@@ -321,7 +319,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 // RemoveContent DELETE /api/packs/{id}/builds/{buildId}/content/{modversionId}
 // - detaches one entry from a build. A frozen build is refused.
 func (h *PacksHandler) RemoveContent(w http.ResponseWriter, r *http.Request) {
-	b, ok := h.loadOwnedBuild(r)
+	b, _, ok := h.loadBuild(r, packEdit)
 	if !ok || b.Frozen {
 		sendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
 		return
@@ -343,7 +341,7 @@ type setSideRequest struct {
 // sets whether an entry ships to the client, the server or both. A frozen
 // build is refused.
 func (h *PacksHandler) SetSide(w http.ResponseWriter, r *http.Request) {
-	b, ok := h.loadOwnedBuild(r)
+	b, _, ok := h.loadBuild(r, packEdit)
 	if !ok || b.Frozen {
 		sendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
 		return

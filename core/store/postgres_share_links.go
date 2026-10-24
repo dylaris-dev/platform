@@ -82,3 +82,17 @@ func (s *PostgresStore) RevokeShareLink(id int, createdBy string) error {
 	}
 	return nil
 }
+
+// RevokeShareLinkOfBuild revokes a link of one build whoever made it: the pack
+// owner's revoke, which also covers links a collaborator created.
+func (s *PostgresStore) RevokeShareLinkOfBuild(id, buildID int) error {
+	res, err := s.db.Exec(`UPDATE share_links SET revoked=TRUE
+		WHERE id=$1 AND build_id=$2 AND revoked=FALSE`, id, buildID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dylaris-core/models"
+	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
 )
@@ -26,20 +27,56 @@ func (h *PacksHandler) SetPATLoader(p PATLoader) { h.pat = p }
 
 var packSlugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]{1,62}[a-z0-9])?$`)
 
-// ownsPack loads the pack and checks the caller owns it (admins may read).
-func (h *PacksHandler) ownsPack(r *http.Request, packID int) (*models.Pack, bool) {
+// packNeed is what a request wants to do with a pack.
+type packNeed int
+
+const (
+	packRead packNeed = iota
+	packEdit
+	packDelete
+)
+
+// packAccess loads the pack and reports whether the caller may do need on it:
+// the owner may do everything, an admin may read, and a collaborator what the
+// owner's invite grants (any invite = read). Every pack and build handler asks
+// this one function; there used to be about twenty inline owner checks.
+func (h *PacksHandler) packAccess(r *http.Request, packID int, need packNeed) (*models.Pack, bool) {
 	p, err := h.state.Store.GetPack(packID)
 	if err != nil || p == nil {
 		return nil, false
 	}
 	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
+		return nil, false
+	}
 	if p.OwnerID == userID {
 		return p, true
 	}
-	if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin {
-		return p, true // read-only elsewhere; write handlers re-check ownership
+	if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin && need == packRead {
+		return p, true
 	}
-	return nil, false
+	rights, err := h.state.Store.PackRightsFor(p.OwnerID, userID, p.ID)
+	if err != nil || !rights.Found {
+		return nil, false
+	}
+	switch need {
+	case packEdit:
+		return p, rights.CanEdit
+	case packDelete:
+		return p, rights.CanDelete
+	}
+	return p, true
+}
+
+// mayEditPack is packAccess's answer for an already loaded pack.
+func (h *PacksHandler) mayEditPack(r *http.Request, p *models.Pack) bool {
+	_, ok := h.packAccess(r, p.ID, packEdit)
+	return ok
+}
+
+// ownsPack is packAccess for reading.
+func (h *PacksHandler) ownsPack(r *http.Request, packID int) (*models.Pack, bool) {
+	return h.packAccess(r, packID, packRead)
 }
 
 // packRequest is the body for both Create and the Update PATCH.
@@ -52,6 +89,9 @@ type packRequest struct {
 	Name    string  `json:"name"`
 	Slug    string  `json:"slug"`
 	Summary *string `json:"summary"`
+	// OwnerID (create only): whose account the pack is created on. Empty =
+	// the caller's; another user's needs their invite with "create".
+	OwnerID string `json:"ownerId"`
 }
 
 // strVal dereferences an optional request string, treating absent as empty.
@@ -64,7 +104,18 @@ func strVal(p *string) string {
 	return *p
 }
 
-// List GET /api/me/packs - the modpacks the calling user owns.
+// sharedPack is a pack someone else owns that the caller was invited to,
+// with what the invites allow.
+type sharedPack struct {
+	models.Pack
+	OwnerName string `json:"ownerName"`
+	CanEdit   bool   `json:"canEdit"`
+	CanDelete bool   `json:"canDelete"`
+}
+
+// List GET /api/me/packs - the modpacks the calling user owns, and under
+// "shared" the ones other users invited them to. "createOn" lists the owners
+// whose account the caller may create packs on.
 func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -76,7 +127,46 @@ func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "packs": packs})
+	held, err := h.state.Store.ListPackCollaborationsForUser(userID)
+	if err != nil {
+		sendJSONError(w, "Failed to list shared packs", http.StatusInternalServerError)
+		return
+	}
+	shared := []sharedPack{}
+	seen := map[int]int{} // pack id -> index in shared
+	type owner struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	createOn := []owner{}
+	add := func(p models.Pack, c store.PackCollaborator) {
+		if i, ok := seen[p.ID]; ok {
+			shared[i].CanEdit = shared[i].CanEdit || c.CanEdit
+			shared[i].CanDelete = shared[i].CanDelete || c.CanDelete
+			return
+		}
+		seen[p.ID] = len(shared)
+		shared = append(shared, sharedPack{Pack: p, OwnerName: c.OwnerName, CanEdit: c.CanEdit, CanDelete: c.CanDelete})
+	}
+	for _, c := range held {
+		if c.PackID != nil {
+			if p, err := h.state.Store.GetPack(*c.PackID); err == nil && p != nil {
+				add(*p, c)
+			}
+			continue
+		}
+		if c.CanCreate {
+			createOn = append(createOn, owner{ID: c.OwnerID, Name: c.OwnerName})
+		}
+		all, err := h.state.Store.ListPacksByOwner(c.OwnerID)
+		if err != nil {
+			continue
+		}
+		for _, p := range all {
+			add(p, c)
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "packs": packs, "shared": shared, "createOn": createOn})
 }
 
 // Create POST /api/me/packs - creates a modpack owned by the caller. A
@@ -105,8 +195,19 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Invalid slug", http.StatusBadRequest)
 		return
 	}
+	// A collaborator may create a pack on the account of an owner who allowed
+	// it; the pack is the owner's from the start.
+	ownerID := userID
+	if req.OwnerID != "" && req.OwnerID != userID {
+		rights, err := h.state.Store.PackRightsFor(req.OwnerID, userID, 0)
+		if err != nil || !rights.CanCreate {
+			sendJSONError(w, "You may not create packs on that account", http.StatusForbidden)
+			return
+		}
+		ownerID = req.OwnerID
+	}
 	p := &models.Pack{
-		OwnerID:            userID,
+		OwnerID:            ownerID,
 		InternalName:       req.Name,
 		InternalSlug:       slug,
 		Summary:            strings.TrimSpace(strVal(req.Summary)),
@@ -123,7 +224,8 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = id
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
+	h.audit(r, ownerID, id, "pack.created", map[string]any{"slug": slug})
+	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": ownerID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
@@ -142,9 +244,8 @@ func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Update PATCH /api/packs/{id} - edits a modpack the caller owns.
 func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	userID, _ := r.Context().Value("userID").(string)
-	p, err := h.state.Store.GetPack(packID)
-	if err != nil || p == nil || p.OwnerID != userID {
+	p, ok := h.packAccess(r, packID, packEdit)
+	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -163,26 +264,25 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Failed to update", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
+	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
 // Delete DELETE /api/packs/{id} - deletes a modpack the caller owns.
 func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	userID, _ := r.Context().Value("userID").(string)
-	p, err := h.state.Store.GetPack(packID)
-	if err != nil || p == nil || p.OwnerID != userID {
+	p, ok := h.packAccess(r, packID, packDelete)
+	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	dirs := h.state.packDirsOfPack(p)
-	if err := h.state.Store.DeletePack(packID, userID); err != nil {
+	if err := h.state.Store.DeletePack(packID, p.OwnerID); err != nil {
 		sendJSONError(w, "Failed to delete", http.StatusInternalServerError)
 		return
 	}
 	h.state.DropPackDirs(dirs)
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
+	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
@@ -248,9 +348,8 @@ func validateBuildKeyComponents(minecraft, loader, loaderVersion string) string 
 // is 409.
 func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	userID, _ := r.Context().Value("userID").(string)
-	p, err := h.state.Store.GetPack(packID)
-	if err != nil || p == nil || p.OwnerID != userID {
+	_, ok := h.packAccess(r, packID, packEdit)
+	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -296,9 +395,8 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
-	userID, _ := r.Context().Value("userID").(string)
-	p, err := h.state.Store.GetPack(packID)
-	if err != nil || p == nil || p.OwnerID != userID {
+	p, ok := h.packAccess(r, packID, packEdit)
+	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -350,9 +448,8 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
-	userID, _ := r.Context().Value("userID").(string)
-	p, err := h.state.Store.GetPack(packID)
-	if err != nil || p == nil || p.OwnerID != userID {
+	p, ok := h.packAccess(r, packID, packDelete)
+	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}

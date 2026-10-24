@@ -79,10 +79,9 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	}
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
-	userID, _ := r.Context().Value("userID").(string)
 
 	pack, err := h.state.Store.GetPack(packID)
-	if err != nil || pack == nil || pack.OwnerID != userID {
+	if err != nil || pack == nil || !h.mayEditPack(r, pack) {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -123,8 +122,13 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pat, username, err := h.pat.LoadPAT(userID)
+	// The pack publishes to its OWNER's Modrinth account, whoever presses it.
+	pat, username, err := h.pat.LoadPAT(pack.OwnerID)
 	if err != nil {
+		if caller, _ := r.Context().Value("userID").(string); caller != pack.OwnerID {
+			sendJSONError(w, "The pack's owner has not connected a Modrinth token, so it cannot be published yet.", http.StatusPreconditionRequired)
+			return
+		}
 		sendJSONError(w, "Modrinth PAT not configured: "+err.Error(), http.StatusPreconditionRequired)
 		return
 	}
@@ -212,7 +216,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
+	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": pack.OwnerID})
 	json.NewEncoder(w).Encode(publishModrinthResponse{
 		Success:           true,
 		ModrinthProjectID: projectID,

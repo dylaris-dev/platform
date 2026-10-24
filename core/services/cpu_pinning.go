@@ -110,6 +110,20 @@ func (s *CPUPinningService) AutoCpuset(ctx context.Context, nodeToken string, no
 	return computeAutoCpuset(topo, budget, reserve, load, allowed), nil
 }
 
+// PinTooSmall reports a manual pin with fewer cores than the CPU limit grants.
+// The limit is the container's CPU time (NanoCPUs), the pin only where it may
+// run; Docker applies both, so 4 cores of time on 3 pinned cores is 3 cores.
+// need is the cores the limit asks for (rounded up); a limit of 0 (none) or an
+// empty pin never conflicts.
+func PinTooSmall(cpuLimit float64, cpuset string) (have, need int, tooSmall bool) {
+	have = len(parseCpusetList(cpuset))
+	if cpuLimit <= 0 || have == 0 {
+		return have, 0, false
+	}
+	need = int(math.Ceil(cpuLimit - 1e-9))
+	return have, need, have < need
+}
+
 // ValidateCpuset checks a manual cpuset against the node topology AND the node's
 // allowed core pool: every listed core must exist and (when a pool is set) be
 // within it. If the topology is unavailable it cannot validate, so it accepts the

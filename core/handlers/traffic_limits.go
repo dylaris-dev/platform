@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"dylaris-core/models"
@@ -291,3 +294,35 @@ var (
 type limitError struct{ msg string }
 
 func (e *limitError) Error() string { return e.msg }
+
+// GetDataThrottle GET /api/traffic-limits/data-throttle - the speed beam and
+// custom tabs slow to once a tenant without data overage reaches its data
+// allowance.
+func (h *TrafficLimitHandler) GetDataThrottle(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "mbit": services.DataThrottleMbit(h.state.Store),
+		"minMbit": services.DataThrottleMinMbit, "defaultMbit": services.DataThrottleDefaultMbit,
+	})
+}
+
+// SetDataThrottle PUT /api/traffic-limits/data-throttle {mbit} - at least the
+// minimum (20 Mbit/s): slower makes a large upload take days, which is a
+// stop in all but name. Applies at the next aggregator tick.
+func (h *TrafficLimitHandler) SetDataThrottle(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mbit int `json:"mbit"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil {
+		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Mbit < services.DataThrottleMinMbit || req.Mbit > 100000 {
+		sendJSONError(w, fmt.Sprintf("The throttle must be between %d and 100000 Mbit/s", services.DataThrottleMinMbit), http.StatusBadRequest)
+		return
+	}
+	if err := h.state.Store.SetSetting(services.DataThrottleSettingKey, strconv.Itoa(req.Mbit)); err != nil {
+		sendJSONError(w, "Failed to save", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mbit": req.Mbit})
+}

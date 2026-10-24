@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.24.2
+
+### Features
+- **Modpacks can be shared.** An owner invites users to all or chosen packs with create, edit and
+  delete rights; they publish through the owner's token, and every change lands in an activity log. `core` `panel`
+- **Player and data traffic have separate overage switches.** Without data overage, beam and custom
+  tabs slow to a set speed (Settings, Limits, default 50 Mbit/s) at 100 % until the month resets. `core` `node` `panel`
+- **Custom tabs get their own sidebar** with search, an admin view and links that survive a reload,
+  and a map tab offers "Render whole map". `panel`
+
+### Breaking
+- **Custom tab traffic now counts as data traffic** against the tenant's data allowance. `core`
+- **A CPU pin must hold at least as many cores as the CPU limit.** A smaller pin is refused with an
+  explanation; servers already running are not changed. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- **The rebalancer no longer moves a Real player IP server onto a link that cannot carry the
+  address.** `core`
+- **The server header shows loader and version,** and route addresses explain the copy on hover. `panel`
+
 ## 2026.10.24
 
 ### Features

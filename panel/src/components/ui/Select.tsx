@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 import { selectKeyReducer, type SelectKeyState } from './selectKeyboard';
 
@@ -18,6 +18,9 @@ export interface SelectProps {
     disabled?: boolean;
     className?: string;
     ariaLabel?: string;
+    /** A filter field at the top of the open list, for long lists (time zones). */
+    searchable?: boolean;
+    id?: string;
 }
 
 // Reusable branded single-select dropdown. Mirrors NotificationsDropdown's
@@ -35,12 +38,21 @@ export default function Select({
     disabled = false,
     className = '',
     ariaLabel,
+    searchable = false,
+    id,
 }: SelectProps) {
     const [state, setState] = useState<SelectKeyState>({ open: false, highlight: -1 });
+    const [query, setQuery] = useState('');
     const wrapRef = useRef<HTMLDivElement>(null);
 
-    const selectedIndex = options.findIndex(o => o.value === value);
-    const selected = selectedIndex >= 0 ? options[selectedIndex] : undefined;
+    const selected = options.find(o => o.value === value);
+    // What the open list shows; the keyboard reducer works on this list.
+    const shown = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        return q ? options.filter(o => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)) : options;
+    }, [options, query]);
+    const selectedIndex = shown.findIndex(o => o.value === value);
+    useEffect(() => { if (!state.open) setQuery(''); }, [state.open]);
 
     // Click-outside closes the dropdown, same pattern as NotificationsDropdown.
     useEffect(() => {
@@ -53,23 +65,26 @@ export default function Select({
         return () => document.removeEventListener('click', handler);
     }, []);
 
-    const handleKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+        // In the filter field a space is a character, not "open/commit".
+        if (searchable && e.key === ' ' && e.target instanceof HTMLInputElement) return;
         if (['ArrowDown', 'ArrowUp', 'Enter', ' ', 'Escape'].includes(e.key)) {
             e.preventDefault();
         }
-        const r = selectKeyReducer(state, e.key, options.length, selectedIndex);
+        const r = selectKeyReducer(state, e.key, shown.length, selectedIndex);
         setState(r.state);
-        if (r.commit != null) onChange(options[r.commit].value);
+        if (r.commit != null && shown[r.commit]) onChange(shown[r.commit].value);
     };
 
     const handleOptionClick = (index: number) => {
-        onChange(options[index].value);
+        onChange(shown[index].value);
         setState(s => ({ ...s, open: false }));
     };
 
     return (
         <div ref={wrapRef} className={`relative ${className}`}>
             <button
+                id={id}
                 type="button"
                 disabled={disabled}
                 aria-haspopup="listbox"
@@ -93,7 +108,23 @@ export default function Select({
 
             {state.open && !disabled && (
                 <div role="listbox" className="dropdown-menu left-0 right-0 mt-1 max-h-60 overflow-y-auto">
-                    {options.map((option, index) => {
+                    {searchable && (
+                        <div className="sticky top-0 z-10 bg-(--base-02) p-1.5 border-b border-(--base-03)">
+                            <input
+                                autoFocus
+                                value={query}
+                                onChange={e => { setQuery(e.target.value); setState(s => ({ ...s, highlight: 0 })); }}
+                                onKeyDown={handleKeyDown}
+                                placeholder="Search..."
+                                aria-label={ariaLabel ? `Search ${ariaLabel}` : 'Search'}
+                                className="input-field w-full text-xs py-1"
+                            />
+                        </div>
+                    )}
+                    {searchable && shown.length === 0 && (
+                        <div className="px-3 py-2 text-xs text-(--base-06)">Nothing matches.</div>
+                    )}
+                    {shown.map((option, index) => {
                         const isSelected = option.value === value;
                         const isHighlighted = index === state.highlight;
                         return (

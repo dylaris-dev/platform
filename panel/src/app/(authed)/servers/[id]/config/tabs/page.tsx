@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 
-import { LayoutGrid, Plus, Pencil, Trash2, Play, Square, ExternalLink, AlertTriangle, X, Link2, Copy, RotateCw, Clock } from 'lucide-react';
+import { LayoutGrid, Plus, Pencil, Trash2, Play, Square, ExternalLink, AlertTriangle, X, Link2, Copy, RotateCw, Clock, Lock } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listServerTabs, createServerTab, updateServerTab, deleteServerTab,
@@ -429,6 +429,25 @@ export default function ServerConfigTabsPage() {
                                                 private one, which is gated by your sign-in.
                                             </span>
                                         </form>
+                                    )}
+                                    {/* A private tab's link opens only for signed-in members with
+                                        access; to anyone else it says "This page is private". Said
+                                        here, because a link reads as something to hand out. */}
+                                    {t.shareToken && t.visibility !== 'public' && (
+                                        <span className="inline-flex items-center gap-2 flex-wrap text-xs text-(--base-06)">
+                                            <Lock size={11} className="shrink-0" aria-hidden="true" />
+                                            Private: this link opens only for signed-in members with access to the server.
+                                            <button
+                                                onClick={async () => {
+                                                    const res = await updateServerTab(serverId, t.id, { visibility: 'public' });
+                                                    if (res.success) { showToast('The tab is public; anyone with the link can open it.', true); refresh(); }
+                                                    else showToast(res.message || 'Could not make the tab public', false);
+                                                }}
+                                                className="btn btn-secondary btn-sm"
+                                            >
+                                                Make public
+                                            </button>
+                                        </span>
                                     )}
                                     {t.shareToken && t.shareExpiresAt && (
                                         <span className={`inline-flex items-center gap-1 text-xs ${

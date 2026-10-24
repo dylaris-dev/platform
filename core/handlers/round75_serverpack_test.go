@@ -19,6 +19,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
+	"dylaris-core/store"
 )
 
 // countingProvider counts stored server packs, so a render that happened can be
@@ -316,4 +317,9 @@ func TestServerPackKeyIgnoresTheRowOrder(t *testing.T) {
 	if err1 != nil || err2 != nil || k1 != k2 || prov.puts.Load() != 1 {
 		t.Fatalf("row order changed the render: %q %q puts=%d (%v %v)", k1, k2, prov.puts.Load(), err1, err2)
 	}
+}
+
+// No collaborator invites in this fake.
+func (*shareRouteStore) PackRightsFor(string, string, int) (store.PackRights, error) {
+	return store.PackRights{}, nil
 }

@@ -132,3 +132,6 @@ func (voiceOverviewStore) ListVoicePorts() ([]store.VoicePort, error) { return n
 func (voiceOverviewStore) ListVoiceUsage(time.Time) ([]store.VoiceUsageRow, error) {
 	return nil, nil
 }
+
+func (f *voicePoolStore) GetUserDataBillingEnabled(string) (bool, error) { return false, nil }
+func (f *voicePoolStore) GetSetting(string) (string, error)              { return "", nil }

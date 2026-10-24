@@ -50,8 +50,8 @@ func readEditableObject(ctx context.Context, prov modpack.ModpackStorageProvider
 // loadOwnedContentModversion resolves the ownership-checked build, the
 // modversion (verified attached to that build, not a foreign id), and the
 // storage provider. It does NOT check Frozen (callers gate writes on it).
-func (h *PacksHandler) loadOwnedContentModversion(r *http.Request) (*models.PackBuild, *models.Modversion, modpack.ModpackStorageProvider, bool) {
-	b, ok := h.loadOwnedBuild(r)
+func (h *PacksHandler) loadOwnedContentModversion(r *http.Request, need packNeed) (*models.PackBuild, *models.Modversion, modpack.ModpackStorageProvider, bool) {
+	b, _, ok := h.loadBuild(r, need)
 	if !ok {
 		return nil, nil, nil, false
 	}
@@ -74,7 +74,7 @@ func (h *PacksHandler) loadOwnedContentModversion(r *http.Request) (*models.Pack
 // a config file) so the panel can edit it in place. Modrinth-reference /
 // non-text / oversized entries are refused.
 func (h *PacksHandler) GetContentText(w http.ResponseWriter, r *http.Request) {
-	_, mv, prov, ok := h.loadOwnedContentModversion(r)
+	_, mv, prov, ok := h.loadOwnedContentModversion(r, packRead)
 	if !ok {
 		sendJSONError(w, "Content not found", http.StatusNotFound)
 		return
@@ -113,7 +113,7 @@ type setContentTextRequest struct {
 // entry that was Modrinth-linked unlinks it (the file now diverges from the
 // upstream version).
 func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
-	b, mv, prov, ok := h.loadOwnedContentModversion(r)
+	b, mv, prov, ok := h.loadOwnedContentModversion(r, packEdit)
 	if !ok {
 		sendJSONError(w, "Content not found", http.StatusNotFound)
 		return

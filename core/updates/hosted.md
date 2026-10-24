@@ -11,6 +11,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.24.2
+
+### Features
+- **Share your modpacks.** Invite other users to all or chosen packs with create, edit and delete
+  rights; they publish through your Modrinth token, and Activity shows who changed what.
+- **Player and data traffic have their own overage switch.** Without data overage, beam and custom
+  tabs are slowed down at 100 % of the data allowance until the month resets, never stopped.
+- **Custom tabs have their own sidebar** with search and links that survive a reload, and a map
+  tab can render the whole map with one button.
+
+### Breaking
+- **Custom tab traffic now counts as data traffic.** You get a warning at 90 % of the allowance.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A CPU pin smaller than the CPU limit is refused** with an explanation, because the limit could
+  never be reached. Servers already running are not changed.
+- **The server header shows loader and version,** and gateway addresses explain the copy on hover.
+
 ## 2026.10.24
 
 ### Features

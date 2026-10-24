@@ -37,7 +37,7 @@ type migratedItem struct {
 
 // MigrateBuild POST /api/packs/{id}/builds/{buildId}/migrate
 func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
-	source, ok := h.loadOwnedBuild(r)
+	source, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -90,7 +90,6 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, _ := r.Context().Value("userID").(string)
 	// LoaderVersion is deliberately allowed to stay empty: the render path
 	// resolves an empty loader version to latest-stable for the target
 	// Minecraft version, which is what a migration wants.
@@ -115,7 +114,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 	migrated := make([]migratedItem, 0, len(resolved))
 	failed := make([]migratedItem, 0)
 	for _, m := range resolved {
-		if err := h.addModrinthVersion(userID, target, m.version, m.entry.Side, m.entry.ContentType); err != nil {
+		if err := h.addModrinthVersion(owner, target, m.version, m.entry.Side, m.entry.ContentType); err != nil {
 			failed = append(failed, migratedItem{
 				ModversionID: m.entry.ID,
 				Title:        m.entry.PrettyName,
@@ -136,7 +135,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 	// the warning against the new build.
 	copiedUploads := make([]migratedItem, 0, len(uploads))
 	for _, e := range uploads {
-		mvID, err := h.copyUploadedContent(userID, e, target)
+		mvID, err := h.copyUploadedContent(owner, e, target)
 		if err != nil {
 			failed = append(failed, migratedItem{ModversionID: e.ID, Title: e.PrettyName, Reason: err.Error()})
 			continue

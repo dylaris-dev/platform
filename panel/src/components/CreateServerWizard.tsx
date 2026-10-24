@@ -17,6 +17,7 @@ import ResourceSlider from '@/components/ResourceSlider';
 import { DISK_SCALE_GB, cpuScale, ramScale } from '@/lib/resourceSlider';
 import { formatMB } from '@/lib/format';
 import { MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput } from '@/lib/ramPadding';
+import { pinTooSmall } from '@/lib/cpuset';
 
 interface StoragePathInfo {
     path: string;
@@ -774,7 +775,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                     ) : (
                         <button
                             onClick={handleCreate}
-                            disabled={loading}
+                            disabled={loading || !!pinTooSmall(cpuLimit, cpuMode, cpuset)}
+                            title={pinTooSmall(cpuLimit, cpuMode, cpuset) ? 'Pin at least as many cores as the CPU limit' : undefined}
                             className="btn bg-(--success) text-white border-(--success) hover:bg-(--success-light) disabled:opacity-40"
                         >
                             {loading ? 'Creating...' : 'CREATE SERVER'} <Rocket size={18} className="ml-1" />

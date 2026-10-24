@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -36,6 +37,10 @@ type trafficFakeStore struct {
 	addVoiceCalls   []trafficRegionCall
 	addVoiceErrFor  map[string]error
 	tickAttempts    int
+	dataUsage       map[string][]store.RegionUsage
+	dataLimit       *models.TrafficLimit
+	dataConsent     map[string]bool
+	notifications   []string
 	setBackupCalls  []trafficBackupCall
 	setBackupErrFor map[string]error
 }
@@ -1093,4 +1098,27 @@ func TestVoiceSubsetWriteFailureRetriesTheWholeTick(t *testing.T) {
 	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1", "1200")
 	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:edge:srv-1#eu", "1200")
 	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:voice:srv-1#eu", "200")
+}
+
+// The data throttle evaluator reads these after every tick. dataUsage and
+// dataLimit drive it; nothing set means no allowance, so nothing is throttled.
+func (f *trafficFakeStore) GetTrafficUsageRegions(userID string, period time.Time) ([]store.RegionUsage, error) {
+	return f.dataUsage[userID], nil
+}
+func (f *trafficFakeStore) GetTrafficLimit(scope, region, kind string) (*models.TrafficLimit, error) {
+	if f.dataLimit != nil && kind == store.TrafficKindRelay && scope == "user_default" {
+		return f.dataLimit, nil
+	}
+	return nil, nil
+}
+func (f *trafficFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	one := int64(1)
+	return &store.UserBilling{UserID: userID, MaxNodes: &one}, nil
+}
+func (f *trafficFakeStore) GetUserDataBillingEnabled(userID string) (bool, error) {
+	return f.dataConsent[userID], nil
+}
+func (f *trafficFakeStore) InsertNotification(n *models.Notification) (int64, error) {
+	f.notifications = append(f.notifications, n.Title)
+	return 1, nil
 }

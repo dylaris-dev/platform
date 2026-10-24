@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"dylaris-core/services"
 	"dylaris-core/store"
 	"encoding/json"
@@ -56,6 +57,13 @@ type myTrafficStatus struct {
 	// show player traffic per region beside file transfers rather than one bar
 	// standing in for all of them.
 	Pools []trafficPool `json:"pools"`
+	// Data traffic (beam + custom tabs) is throttled, not stopped, past its
+	// allowance when DataBillingEnabled is false: DataThrottled says it is
+	// happening now, at DataThrottleMbit, until ResetAt (next month).
+	DataBillingEnabled bool      `json:"dataBillingEnabled"`
+	DataThrottled      bool      `json:"dataThrottled"`
+	DataThrottleMbit   int       `json:"dataThrottleMbit"`
+	ResetAt            time.Time `json:"resetAt"`
 }
 
 // trafficPool is one allowance as the panel draws it.
@@ -204,7 +212,9 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 			out.Warn = p.Warn
 		}
 		// The pool closest to stopping them is the one the banner speaks for.
-		if p.IncludedGB != nil && p.Pct >= out.Pct {
+		// Player pools only: data traffic is throttled past its allowance, never
+		// stopped, so it has its own line (DataThrottled) instead.
+		if p.IncludedGB != nil && p.Pct >= out.Pct && c.kind == store.TrafficKindEdge {
 			out.Pct, out.UsedGB, out.CeilingGB = p.Pct, p.UsedGB, *p.IncludedGB
 		}
 		out.Pools = append(out.Pools, p)
@@ -215,6 +225,12 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 	if !limited {
 		return nil
 	}
+	out.DataBillingEnabled, _ = h.state.Store.GetUserDataBillingEnabled(userID)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out.DataThrottled = services.IsDataThrottled(ctx, h.state.Redis, userID)
+	out.DataThrottleMbit = services.DataThrottleMbit(h.state.Store)
+	out.ResetAt = period.AddDate(0, 1, 0)
 	return out
 }
 

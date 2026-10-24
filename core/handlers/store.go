@@ -463,6 +463,9 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// what the purchase includes. Its own flag: agreeing to pay for player
 		// traffic is not agreeing to pay for stored backups.
 		BackupBillingEnabled *bool `json:"backupBillingEnabled,omitempty"`
+		// DataBillingEnabled: consent to pay for DATA traffic overage (beam +
+		// custom tabs). Absent = unchanged; never sent = follows the player one.
+		DataBillingEnabled *bool `json:"dataBillingEnabled,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		sendJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -518,6 +521,12 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		if req.TrafficBillingEnabled != nil || req.BackupBillingEnabled != nil {
 			if err := h.state.Store.SetUserBillingConsent(req.UUID, req.TrafficBillingEnabled, req.BackupBillingEnabled); err != nil {
 				sendJSONError(w, "Activated but failed to record the billing consent", http.StatusInternalServerError)
+				return
+			}
+		}
+		if req.DataBillingEnabled != nil {
+			if err := h.state.Store.SetUserDataBillingEnabled(req.UUID, *req.DataBillingEnabled); err != nil {
+				sendJSONError(w, "Activated but failed to record the data billing consent", http.StatusInternalServerError)
 				return
 			}
 		}

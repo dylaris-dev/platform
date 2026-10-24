@@ -267,3 +267,8 @@ func deleteUserPackObjects(t *testing.T, fail bool) {
 		t.Error("the deleted account's pack objects survived")
 	}
 }
+
+// No collaborator invites in this fake.
+func (*packCleanupStore) PackRightsFor(string, string, int) (store.PackRights, error) {
+	return store.PackRights{}, nil
+}

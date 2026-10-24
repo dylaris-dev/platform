@@ -26,7 +26,7 @@ type replaceModrinthRequest struct {
 // and rewrite the modversion so it becomes byte-identical to Modrinth (clean
 // files[] reference + auto-update eligible).
 func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Request) {
-	build, ok := h.loadOwnedBuild(r)
+	build, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
 		sendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -56,8 +56,7 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 		sendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
-	userID, _ := r.Context().Value("userID").(string)
-	if err := h.swapModversionToModrinth(r.Context(), userID, mv, req.VersionID); err != nil {
+	if err := h.swapModversionToModrinth(r.Context(), owner, mv, req.VersionID); err != nil {
 		sendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
 	}

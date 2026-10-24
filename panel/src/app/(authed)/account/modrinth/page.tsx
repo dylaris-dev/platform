@@ -99,6 +99,8 @@ export default function ModrinthIntegrationPage() {
                     Generate a Personal Access Token in your Modrinth settings, paste it below.
                     Token is stored encrypted (AES-256-GCM) and validated against Modrinth&apos;s API
                     once on save — never returned by any read endpoint.
+                    Collaborators you invite on the Modpacks page publish through this token too,
+                    without ever seeing it.
                 </div>
             </div>
 

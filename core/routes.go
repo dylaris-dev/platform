@@ -135,13 +135,16 @@ var requiredCaps = map[string]string{
 	"/api/servers/{id:[0-9]+}/stats/cores":   "stats.read",
 	"/api/traffic-limits":                    "settings.write",
 	"/api/traffic-limits/resolve":            "settings.read",
-	"/api/gateway-bandwidth/overview":        "settings.read",
-	"/api/gateway-bandwidth/history":         "settings.read",
-	"/api/gateway-bandwidth/rebalance":       "settings.read",
-	"/api/voice/overview":                    "settings.read",
-	"/api/servers/{id:[0-9]+}/audit":         "server.audit.read",
-	"/api/servers/{id:[0-9]+}/audit/status":  "server.audit.read",
-	"/api/servers/{id:[0-9]+}/audit/force":   "server.settings.write",
+	// GET+PUT share the template -> settings.read representative; PUT's
+	// settings.write lives at the RequireCap call.
+	"/api/traffic-limits/data-throttle":     "settings.read",
+	"/api/gateway-bandwidth/overview":       "settings.read",
+	"/api/gateway-bandwidth/history":        "settings.read",
+	"/api/gateway-bandwidth/rebalance":      "settings.read",
+	"/api/voice/overview":                   "settings.read",
+	"/api/servers/{id:[0-9]+}/audit":        "server.audit.read",
+	"/api/servers/{id:[0-9]+}/audit/status": "server.audit.read",
+	"/api/servers/{id:[0-9]+}/audit/force":  "server.settings.write",
 
 	// Phase 4 Task 9: members (SERVER scope) + owner server-roles/grants (OWNER
 	// scope). GET+POST /members share one template -> members.read
@@ -453,6 +456,10 @@ var requiredCaps = map[string]string{
 	// deliberately NOT listed here (see the route registration comments).
 	"/api/me/modrinth-pat":                                                                          "modpack.read",
 	"/api/me/packs":                                                                                 "modpack.read",
+	"/api/me/pack-collaborators":                                                                    "modpack.read",
+	"/api/me/pack-collaborators/{cid:[0-9]+}":                                                       "modpack.write",
+	"/api/me/pack-audit":                                                                            "modpack.read",
+	"/api/packs/{id:[0-9]+}/audit":                                                                  "modpack.read",
 	"/api/packs/{id:[0-9]+}":                                                                        "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds":                                                                 "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}":                                                "modpack.write",
@@ -914,37 +921,45 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear))))).Methods("DELETE")
 	// --- Pack builder. Reuses the modpacks feature gates. ---
 	// Phase 4 Task 20: OWNER modpack.read/write/delete, chokepoint-open by
-	// design. The real per-realm boundary is packsHandler.ownsPack's
-	// p.OwnerID == userID check (List/Update/Delete/CreateBuild/... inline the
-	// same check) - untouched, it is the F2 boundary this cap layer sits in
-	// front of.
+	// design. The real per-realm boundary is packsHandler.packAccess: owner,
+	// admin read, or a collaborator's invite (pack_collaborators). Every write
+	// route is wrapped in Audited, which records it in the pack's history.
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.List)))).Methods("GET")
+	// Collaboration: invites the caller gives (owner) or holds, and the history
+	// of the caller's packs. Ownership of an invite is checked in the handler.
+	api.HandleFunc("/me/pack-collaborators", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListCollaborators)))).Methods("GET")
+	api.HandleFunc("/me/pack-collaborators", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.InviteCollaborator))))).Methods("POST")
+	api.HandleFunc("/me/pack-collaborators/{cid:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateCollaborator))))).Methods("PATCH")
+	// Revoking (or leaving) only withdraws access, so it stays open when modpacks are off.
+	api.HandleFunc("/me/pack-collaborators/{cid:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.AllowReadOnlyWhenDisabled(packsHandler.RemoveCollaborator)))).Methods("DELETE")
+	api.HandleFunc("/me/pack-audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Get)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Update))))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Delete))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("pack.updated", packsHandler.Update)))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("pack.deleted", packsHandler.Delete)))))).Methods("DELETE")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListBuilds)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateBuild))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateBuild))))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.DeleteBuild))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.created", packsHandler.CreateBuild)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.updated", packsHandler.UpdateBuild)))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.deleted", packsHandler.DeleteBuild)))))).Methods("DELETE")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListContent)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.AddModrinth))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UploadContent))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.RemoveContent))))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetSide))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.added", packsHandler.AddModrinth)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.uploaded", packsHandler.UploadContent)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.removed", packsHandler.RemoveContent)))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.side_changed", packsHandler.SetSide)))))).Methods("PATCH")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetContentText)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetContentText))))).Methods("PUT")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.PublishModrinth))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.text_edited", packsHandler.SetContentText)))))).Methods("PUT")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.published", packsHandler.PublishModrinth)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ReplaceWithModrinth))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateMods))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.replaced", packsHandler.ReplaceWithModrinth)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.updated", packsHandler.UpdateMods)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.BuildCompat)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.MigrateBuild))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.CreateShareLink)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.migrated", packsHandler.MigrateBuild)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("share_link.created", packsHandler.CreateShareLink))))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListShareLinks)))).Methods("GET")
 	// Revoking only withdraws access, so it stays open when modpacks or authoring
 	// are switched off: those switches stop new links, not the ones already out.
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.AllowReadOnlyWhenDisabled(packsHandler.RevokeShareLink)))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.AllowReadOnlyWhenDisabled(packsHandler.Audited("share_link.revoked", packsHandler.RevokeShareLink))))).Methods("DELETE")
 
 	// --- Username history + account policy ---
 	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap
@@ -1512,6 +1527,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/traffic-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(trafficLimitHandler.ListTrafficLimits))).Methods("GET")
 	api.HandleFunc("/traffic-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(trafficLimitHandler.SetTrafficLimit))).Methods("PUT")
 	api.HandleFunc("/traffic-limits/resolve", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(trafficLimitHandler.ResolveTrafficLimit))).Methods("GET")
+	api.HandleFunc("/traffic-limits/data-throttle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(trafficLimitHandler.GetDataThrottle))).Methods("GET")
+	api.HandleFunc("/traffic-limits/data-throttle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(trafficLimitHandler.SetDataThrottle))).Methods("PUT")
 
 	api.HandleFunc("/infrastructure/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetOverview))).Methods("GET")
 	api.HandleFunc("/infrastructure/players-online", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(infrastructureHandler.GetPlayersOnline))).Methods("GET")

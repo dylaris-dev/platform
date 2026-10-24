@@ -10,6 +10,7 @@ import {
     type Pack, type PackBuild,
 } from '@/lib/api/packs';
 import { useAppData } from '@/lib/AppDataContext';
+import PackActivity from '@/components/modpacks/PackActivity';
 import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
@@ -26,7 +27,7 @@ import { fmtDateTime } from '@/lib/time';
 export default function PackDetailPage() {
     const paramId = useRouteId('modpacks');
     const packId = Number(paramId);
-    const { featureFlags } = useAppData();
+    const { featureFlags, user } = useAppData();
     const modpacksDisabled = !featureFlags.modpacks;
     const [pack, setPack] = useState<Pack | null>(null);
     const [builds, setBuilds] = useState<PackBuild[]>([]);
@@ -312,6 +313,11 @@ export default function PackDetailPage() {
                         </div>
                     </ModalPanel>
                 </div>
+            )}
+
+            {/* The history is the owner's to read; a collaborator's changes show here. */}
+            {pack && user && pack.ownerId === user.id && (
+                <div className="mt-6"><PackActivity packId={packId} /></div>
             )}
         </main>
     );

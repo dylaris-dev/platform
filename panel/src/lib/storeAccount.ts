@@ -81,6 +81,12 @@ export function trafficSwitch(s: StoreAccountSummary): SwitchState {
     return billingSwitch(s, s.trafficBillingEnabled, s.trafficMeterConfigured, 'traffic', s.trafficPrice, s.trafficConsentText);
 }
 
+// Same meter and price as player traffic, so it is configured exactly when
+// that one is.
+export function dataSwitch(s: StoreAccountSummary): SwitchState {
+    return billingSwitch(s, s.dataBillingEnabled, s.trafficMeterConfigured, 'data traffic', s.trafficPrice, s.dataConsentText);
+}
+
 export function backupSwitch(s: StoreAccountSummary): SwitchState {
     return billingSwitch(s, s.backupBillingEnabled, s.backupMeterConfigured, 'backup storage', s.backupPrice, s.backupConsentText);
 }
@@ -91,7 +97,12 @@ export function backupSwitch(s: StoreAccountSummary): SwitchState {
 // Written as a consequence rather than as a setting name because that is the
 // decision being made. "Metered billing: off" tells a tenant nothing; "you will
 // be stopped rather than charged" tells them exactly what they are choosing.
-export function consequenceOf(kind: 'traffic' | 'backup', on: boolean): string {
+export function consequenceOf(kind: 'traffic' | 'data' | 'backup', on: boolean): string {
+    if (kind === 'data') {
+        return on
+            ? 'Past your included data traffic beam transfers and custom tabs keep full speed and the extra is billed by the terabyte.'
+            : 'Past your included data traffic beam transfers and custom tabs are slowed down until the month resets. Nothing is charged, nothing is stopped.';
+    }
     if (kind === 'traffic') {
         return on
             ? 'Past your included traffic you keep running and the extra is billed by the terabyte.'

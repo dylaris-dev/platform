@@ -437,7 +437,7 @@ export default function OverviewView({ server }: OverviewViewProps) {
         </ChartCard>
       </div>
 
-      <CoreLoadBars serverId={server.id} active={mode === 'live' && !isOffline} />
+      <CoreLoadBars serverId={server.id} active={mode === 'live' && !isOffline} cpuLimit={server.cpuLimit} />
 
       {/* Disk Limit Warning */}
       {diskUsage?.warning && diskUsage.limit > 0 && (
