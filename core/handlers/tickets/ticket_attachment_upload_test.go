@@ -124,7 +124,7 @@ func sanitizePathComponent(s string) string {
 // testConnectionProbeDir uses directly.
 func attachmentUploadTestDir(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join(posixTestBase(), "dylaris-test-tmp")
+	root := filepath.Join(posixTestBase(), testTmpRootName("dylaris-test-tmp"))
 	dir := filepath.ToSlash(filepath.Join(root, sanitizePathComponent(t.Name())))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", dir, err)

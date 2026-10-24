@@ -3,6 +3,7 @@ package tickets
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,7 +43,7 @@ func posixTestBase() string {
 // testConnectionProbeDir: see handlers/core_storage_http_test.go.
 func testConnectionProbeDir(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join(posixTestBase(), "dylaris-test-tmp")
+	root := filepath.Join(posixTestBase(), testTmpRootName("dylaris-test-tmp"))
 	dir := filepath.ToSlash(filepath.Join(root, t.Name()))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -77,3 +78,9 @@ func staffRequest(method string, vars map[string]string, body string) *http.Requ
 	ctx = context.WithValue(ctx, "username", "staff")
 	return mux.SetURLVars(r.WithContext(ctx), vars)
 }
+
+// testTmpRootName makes the shared test root per test binary. Every helper
+// above removes its whole root on cleanup, and since handlers was split the
+// packages that use one run in parallel; a shared name let one package's
+// cleanup delete another's directories mid-test.
+func testTmpRootName(base string) string { return fmt.Sprintf("%s-%d", base, os.Getpid()) }

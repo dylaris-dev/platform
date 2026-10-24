@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/models"
+	"dylaris-core/storage"
 	"dylaris-core/storage/modpack"
 )
 
@@ -115,4 +116,38 @@ func (s *AppState) buildModpackStorageProvider() (modpack.ModpackStorageProvider
 		return modpack.NewCoreStorageProvider(prov), nil
 	}
 	return modpack.NewProviderFromSettings(s.Store.GetSetting, s.buildCoreStorageProvider)
+}
+
+// storageConnectionConfig is the non-secret portion of a connection's config
+// JSONB. The access key and the secret live in their own columns, never here.
+type storageConnectionConfig struct {
+	Endpoint       string `json:"endpoint"`
+	Region         string `json:"region"`
+	Bucket         string `json:"bucket"`
+	ForcePathStyle bool   `json:"forcePathStyle"`
+	Prefix         string `json:"prefix"`
+}
+
+// storageConnectionProvider builds a storage.StorageProvider from a resolved
+// connection (its secret already decrypted into SecretAccessKey). The access key
+// and secret come from their own columns; the rest from the config JSONB.
+func storageConnectionProvider(conn *models.StorageConnection) (storage.StorageProvider, error) {
+	if conn.Provider != "s3" {
+		return nil, fmt.Errorf("unsupported provider %q", conn.Provider)
+	}
+	var cfg storageConnectionConfig
+	if len(conn.Config) > 0 {
+		if err := json.Unmarshal(conn.Config, &cfg); err != nil {
+			return nil, fmt.Errorf("invalid config: %w", err)
+		}
+	}
+	return storage.NewProvider("s3", "", map[string]string{
+		storage.OptS3Endpoint:  cfg.Endpoint,
+		storage.OptS3Region:    cfg.Region,
+		storage.OptS3Bucket:    cfg.Bucket,
+		storage.OptS3AccessKey: conn.AccessKey,
+		storage.OptS3SecretKey: conn.SecretAccessKey,
+		storage.OptS3PathStyle: boolStr(cfg.ForcePathStyle),
+		storage.OptS3Prefix:    cfg.Prefix,
+	})
 }

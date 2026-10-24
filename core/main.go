@@ -27,6 +27,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/gateway"
+	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
 	"dylaris-core/metrics"
 	"dylaris-core/models"
@@ -366,7 +367,7 @@ func main() {
 	// Core file storage config, the modpack settings and the backup_storages
 	// rows, so it is wired from appState after appState.Store etc. are set.
 	appState.StorageMigration = services.NewStorageMigrationService(
-		redisClient, pgStore, handlers.NewStorageDataSetResolver(appState),
+		redisClient, pgStore, storageapi.NewStorageDataSetResolver(appState),
 	)
 
 	// Per-server CPU pinning: reads node topology from Redis + computes auto cpusets.

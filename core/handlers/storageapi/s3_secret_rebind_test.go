@@ -1,4 +1,4 @@
-package handlers
+package storageapi
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 
@@ -27,7 +29,7 @@ import (
 // to a host of the caller's choosing. These pin the two that were missing.
 
 func connConfig(endpoint, bucket string) json.RawMessage {
-	b, _ := json.Marshal(storageConnectionConfig{Endpoint: endpoint, Bucket: bucket})
+	b, _ := json.Marshal(handlers.StorageConnectionConfig{Endpoint: endpoint, Bucket: bucket})
 	return b
 }
 
@@ -78,7 +80,7 @@ func TestUpdateConnection_RefusesARebindOnTheWire(t *testing.T) {
 		AccessKey: "AKIAREAL",
 		SecretSet: true,
 	}}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(storageConnectionRequest{
 		Name: "nas", Provider: "s3",

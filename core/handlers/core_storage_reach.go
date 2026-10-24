@@ -324,8 +324,9 @@ func redactReachResults(results []storagereach.CoreResult) []storagereach.CoreRe
 }
 
 // sendReachRefusal writes a refusal as JSON, including the per-Core round
-// result when there is one so the panel can name the failing Cores.
-func (h *CoreStorageHandler) sendReachRefusal(w http.ResponseWriter, err error) {
+// result when there is one so the panel can name the failing Cores. Here rather
+// than on CoreStorageHandler: it reads sharedStorageRefusal's fields.
+func sendReachRefusal(w http.ResponseWriter, err error) {
 	var refusal *sharedStorageRefusal
 	if !errors.As(err, &refusal) {
 		sendJSONError(w, err.Error(), http.StatusServiceUnavailable)
@@ -338,37 +339,4 @@ func (h *CoreStorageHandler) sendReachRefusal(w http.ResponseWriter, err error) 
 		body["round"] = refusal.result
 	}
 	_ = json.NewEncoder(w).Encode(body)
-}
-
-// StorageReachStatus GET /api/settings/storage-reach - PANEL settings.read.
-// The fleet storage-health surface: which Cores are currently failing their
-// self-check, and which are online at all.
-//
-// READ-ONLY by design: it must never trigger a check itself. Service.SelfCheck
-// is documented as unsafe to call concurrently with the service's own running
-// Start loop - both paths end in apply, whose state (notSharedStreak,
-// lastStatus) is single-writer by convention and not mutex-guarded - so this
-// handler only reads what the periodic loop and any in-flight config round
-// have already recorded in Redis.
-func (h *CoreStorageHandler) StorageReachStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	faults, err := storagereach.Faults(ctx, h.state.Redis)
-	if err != nil {
-		sendJSONError(w, "Could not read storage health", http.StatusServiceUnavailable)
-		return
-	}
-	online, err := services.OnlineCoreIDs(ctx, h.state.Redis)
-	if err != nil {
-		sendJSONError(w, "Could not read the online Core set", http.StatusServiceUnavailable)
-		return
-	}
-	if faults == nil {
-		// [] rather than null: the panel maps over this directly.
-		faults = []storagereach.Fault{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"faults":      faults,
-		"onlineCores": online,
-	})
 }

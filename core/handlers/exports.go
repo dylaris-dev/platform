@@ -388,3 +388,73 @@ const KeyModpackStorageConnectionID = keyModpackStorageConnectionID
 func StorageConnIDSetting(id int) string { return storageConnIDSetting(id) }
 
 func BoolStr(b bool) string { return boolStr(b) }
+
+// --- storage -----------------------------------------------------------------
+
+func SendReachRefusal(w http.ResponseWriter, err error) { sendReachRefusal(w, err) }
+
+type CoreStorageSettingWriteError = coreStorageSettingWriteError
+
+func ValidateCoreStorageConfig(c CoreStorageConfig) error { return validateCoreStorageConfig(c) }
+
+func (s *AppState) CheckSharedStorageReachable(ctx context.Context, cfg CoreStorageConfig) error {
+	return s.checkSharedStorageReachable(ctx, cfg)
+}
+
+func (s *AppState) PersistCoreStorageConfig(cfg CoreStorageConfig, secret string) error {
+	return s.persistCoreStorageConfig(cfg, secret)
+}
+
+func NewStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *storage.Gate, s3res *storage.S3Resilience) (storage.StorageProvider, error) {
+	return newStorageProviderForConfig(cfg, subPrefix, gate, s3res)
+}
+
+func NormalizeCoreStorageCandidate(c CoreStorageConfig) CoreStorageConfig {
+	return normalizeCoreStorageCandidate(c)
+}
+
+func MergeCoreStorageCandidate(candidate, existing CoreStorageConfig) CoreStorageConfig {
+	return mergeCoreStorageCandidate(candidate, existing)
+}
+
+func ProbeStorageProvider(ctx context.Context, prov storage.StorageProvider) (ok bool, message string) {
+	return probeStorageProvider(ctx, prov)
+}
+
+func CoreStorageConfigFromTarget(t services.StorageTargetConfig) CoreStorageConfig {
+	return coreStorageConfigFromTarget(t)
+}
+
+func CoreStorageRoot(cfg CoreStorageConfig, subPrefix string) string {
+	return coreStorageRoot(cfg, subPrefix)
+}
+
+func SameCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPrefix string) (bool, error) {
+	return sameCoreStorageLocation(src, tgt, srcSubPrefix, tgtSubPrefix)
+}
+
+func EnsureDistinctCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPrefix string) error {
+	return ensureDistinctCoreStorageLocation(src, tgt, srcSubPrefix, tgtSubPrefix)
+}
+
+func BuildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storage.StorageProvider, error) {
+	return buildTargetStorageProvider(cfg, subPrefix)
+}
+
+type StorageConnectionConfig = storageConnectionConfig
+
+func StorageConnectionProvider(conn *models.StorageConnection) (storage.StorageProvider, error) {
+	return storageConnectionProvider(conn)
+}
+
+// SetReachRoundDeadline and SetReachRoundPoll shorten the shared-storage
+// verification round for the subpackages' tests (see the fields in state.go).
+// Production never calls them.
+func (s *AppState) SetReachRoundDeadline(d time.Duration) { s.reachRoundDeadline = d }
+
+func (s *AppState) SetReachRoundPoll(d time.Duration) { s.reachRoundPoll = d }
+
+const (
+	KeyCoreStorageS3Region     = keyCoreStorageS3Region
+	KeyCoreStorageConnectionID = keyCoreStorageConnectionID
+)

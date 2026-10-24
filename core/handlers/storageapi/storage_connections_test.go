@@ -1,4 +1,4 @@
-package handlers
+package storageapi
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -61,7 +63,7 @@ func (f *connFakeStore) DeleteStorageConnection(int) error {
 
 func TestCreateConnection_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "ftp"})
 	rw := httptest.NewRecorder()
@@ -77,7 +79,7 @@ func TestCreateConnection_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 
 func TestCreateConnection_RejectsMissingName(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(storageConnectionRequest{Provider: "s3"})
 	rw := httptest.NewRecorder()
@@ -93,7 +95,7 @@ func TestCreateConnection_RejectsMissingName(t *testing.T) {
 
 func TestCreateConnection_AcceptsS3(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "s3", AccessKey: "AKIA", SecretAccessKey: "sk"})
 	rw := httptest.NewRecorder()
@@ -112,7 +114,7 @@ func TestCreateConnection_AcceptsS3(t *testing.T) {
 // leave the stored secret untouched.
 func TestUpdateConnection_BlankSecretDoesNotRotate(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "s3", AccessKey: "AKIA"}) // no SecretAccessKey
 	req := httptest.NewRequest(http.MethodPatch, "/api/storage-connections/5", bytes.NewReader(body))
@@ -135,7 +137,7 @@ func TestUpdateConnection_BlankSecretDoesNotRotate(t *testing.T) {
 // exactly once, with the submitted value.
 func TestUpdateConnection_NonBlankSecretRotates(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "s3", AccessKey: "AKIA", SecretAccessKey: "new-secret"})
 	req := httptest.NewRequest(http.MethodPatch, "/api/storage-connections/5", bytes.NewReader(body))
@@ -156,7 +158,7 @@ func TestUpdateConnection_NonBlankSecretRotates(t *testing.T) {
 
 func TestUpdateConnection_RejectsUnknownProvider(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "ftp"})
 	req := httptest.NewRequest(http.MethodPatch, "/api/storage-connections/5", bytes.NewReader(body))
@@ -175,7 +177,7 @@ func TestUpdateConnection_RejectsUnknownProvider(t *testing.T) {
 // TestStorageConnectionProvider_RejectsNonS3: the provider builder refuses any
 // non-s3 connection rather than silently mishandling it.
 func TestStorageConnectionProvider_RejectsNonS3(t *testing.T) {
-	_, err := storageConnectionProvider(&models.StorageConnection{Provider: "webdav"})
+	_, err := handlers.StorageConnectionProvider(&models.StorageConnection{Provider: "webdav"})
 	if err == nil {
 		t.Fatal("storageConnectionProvider(webdav) err = nil, want an unsupported-provider error")
 	}
@@ -183,7 +185,7 @@ func TestStorageConnectionProvider_RejectsNonS3(t *testing.T) {
 
 func TestTestConnection_InvalidID(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&AppState{Store: fs})
+	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/storage-connections/abc/test", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "abc"})

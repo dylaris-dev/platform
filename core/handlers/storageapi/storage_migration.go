@@ -1,4 +1,4 @@
-package handlers
+package storageapi
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -49,7 +51,7 @@ const CoreStorageDataSetID = "core-storage"
 // endpoint + bucket + prefix at most, never keys. Every label that reaches a
 // manifest, a job record, a log line or a CSV export comes from here or from
 // backupStorageLabel. An empty subPrefix means the Core storage root itself.
-func coreStorageBackendLabel(cfg CoreStorageConfig, subPrefix string) string {
+func coreStorageBackendLabel(cfg handlers.CoreStorageConfig, subPrefix string) string {
 	if cfg.Backend == "s3" {
 		var parts []string
 		if cfg.S3Prefix != "" {
@@ -93,10 +95,10 @@ func backupStorageLabel(bs models.BackupStorage) string {
 // the modpack settings and the backup_storages rows - all of which handlers
 // already owns.
 type StorageDataSetResolver struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewStorageDataSetResolver(state *AppState) *StorageDataSetResolver {
+func NewStorageDataSetResolver(state *handlers.AppState) *StorageDataSetResolver {
 	return &StorageDataSetResolver{state: state}
 }
 
@@ -133,15 +135,15 @@ func (r *StorageDataSetResolver) List(_ context.Context) ([]services.StorageData
 		// switch the shared config, so it is the answer to "move my Core file
 		// storage somewhere else".
 		{ID: CoreStorageDataSetID, Label: "Core file storage (all namespaces)", BackendLabel: coreStorageBackendLabel(cfg, ""), Migratable: true, SupportsTargetConfig: true, Note: combinedCoreStorageNote},
-		{ID: storagemigrate.DataSetLibrary, Label: "Library", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixLibrary), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
-		{ID: storagemigrate.DataSetAttachments, Label: "Ticket attachments", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixAttachments), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
-		{ID: storagemigrate.DataSetTicketBackups, Label: "Ticket backups", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixBackups), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
+		{ID: storagemigrate.DataSetLibrary, Label: "Library", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixLibrary), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
+		{ID: storagemigrate.DataSetAttachments, Label: "Ticket attachments", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixAttachments), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
+		{ID: storagemigrate.DataSetTicketBackups, Label: "Ticket backups", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixBackups), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
 		// Modpacks keep an ad-hoc target: modpack_storage_* is their OWN
 		// settings namespace, so switching it strands nothing else.
 		{ID: storagemigrate.DataSetModpacks, Label: "Modpacks", BackendLabel: r.modpackBackendLabel(), Migratable: true, SupportsTargetConfig: true, Note: modpackOrphanNote},
 		// ...but the modpacks namespace INSIDE Core storage is governed by the
 		// shared config like the three above, so it is a migrate TARGET only.
-		{ID: ModpacksCoreStorageDataSetID, Label: "Modpacks on Core file storage", BackendLabel: coreStorageBackendLabel(cfg, CoreStoragePrefixModpacks), Migratable: true, SupportsTargetConfig: false, Note: modpackOrphanNote + " " + sharedCoreStorageNote},
+		{ID: ModpacksCoreStorageDataSetID, Label: "Modpacks on Core file storage", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixModpacks), Migratable: true, SupportsTargetConfig: false, Note: modpackOrphanNote + " " + sharedCoreStorageNote},
 	}
 
 	storages, err := r.state.Store.ListBackupStorages()
@@ -203,7 +205,7 @@ func (r *StorageDataSetResolver) modpackBackendLabel() string {
 			storagemigrate.SanitizeBackendLabel(strings.TrimSuffix(get("modpack_storage_s3_endpoint"), "/"), get("modpack_storage_s3_bucket"), ""),
 			"/")
 	case "core-storage":
-		return coreStorageBackendLabel(r.state.LoadCoreStorageConfig(), CoreStoragePrefixModpacks)
+		return coreStorageBackendLabel(r.state.LoadCoreStorageConfig(), handlers.CoreStoragePrefixModpacks)
 	default:
 		return "path:" + strings.Join(r.modpackConfiguredPaths(), ",")
 	}
@@ -214,7 +216,7 @@ func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storag
 	cfg := r.state.LoadCoreStorageConfig()
 
 	providerSet := func(subPrefix, label string) (storagemigrate.DataSet, string, error) {
-		prov, err := r.state.buildCoreStorageProvider(subPrefix)
+		prov, err := r.state.BuildCoreStorageProvider(subPrefix)
 		if err != nil {
 			return nil, "", err
 		}
@@ -231,14 +233,14 @@ func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storag
 		// correct for all of them at once.
 		return providerSet("", "Core file storage")
 	case storagemigrate.DataSetLibrary:
-		return providerSet(CoreStoragePrefixLibrary, "Library")
+		return providerSet(handlers.CoreStoragePrefixLibrary, "Library")
 	case storagemigrate.DataSetAttachments:
-		return providerSet(CoreStoragePrefixAttachments, "Ticket attachments")
+		return providerSet(handlers.CoreStoragePrefixAttachments, "Ticket attachments")
 	case storagemigrate.DataSetTicketBackups:
-		return providerSet(CoreStoragePrefixBackups, "Ticket backups")
+		return providerSet(handlers.CoreStoragePrefixBackups, "Ticket backups")
 
 	case storagemigrate.DataSetModpacks:
-		prov, err := modpack.NewProviderFromSettings(r.state.Store.GetSetting, r.state.buildCoreStorageProvider)
+		prov, err := modpack.NewProviderFromSettings(r.state.Store.GetSetting, r.state.BuildCoreStorageProvider)
 		if err != nil {
 			return nil, "", fmt.Errorf("modpack storage: %w", err)
 		}
@@ -248,12 +250,12 @@ func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storag
 		return storagemigrate.NewModpackDataSet(id, "Modpacks", prov, r.state.Store), r.modpackBackendLabel(), nil
 
 	case ModpacksCoreStorageDataSetID:
-		p, err := r.state.buildCoreStorageProvider(CoreStoragePrefixModpacks)
+		p, err := r.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixModpacks)
 		if err != nil {
 			return nil, "", err
 		}
 		return storagemigrate.NewModpackDataSet(id, "Modpacks on Core file storage", modpack.NewCoreStorageProvider(p), r.state.Store),
-			coreStorageBackendLabel(cfg, CoreStoragePrefixModpacks), nil
+			coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixModpacks), nil
 	}
 
 	if storageID, ok := storagemigrate.ParseServerBackupsDataSetID(id); ok {
@@ -292,7 +294,7 @@ func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storag
 // full verify would pass (comparing each file with itself), the switch would
 // succeed and an opted-in deleteSource would then remove the only copy.
 type storageSourceLocation struct {
-	cfg          CoreStorageConfig
+	cfg          handlers.CoreStorageConfig
 	srcSubPrefix string
 	tgtSubPrefix string
 }
@@ -328,7 +330,7 @@ func (r *StorageDataSetResolver) sourceCoreStorageConfigFor(id string) (storageS
 		return storageSourceLocation{
 			cfg:          r.modpackSourceConfig(),
 			srcSubPrefix: r.modpackSourceSubPrefix(),
-			tgtSubPrefix: CoreStoragePrefixModpacks,
+			tgtSubPrefix: handlers.CoreStoragePrefixModpacks,
 		}, nil
 	case storagemigrate.DataSetLibrary, storagemigrate.DataSetAttachments,
 		storagemigrate.DataSetTicketBackups, ModpacksCoreStorageDataSetID:
@@ -358,7 +360,7 @@ func (r *StorageDataSetResolver) modpackSourceSubPrefix() string {
 	provider, _ := r.state.Store.GetSetting("modpack_storage_provider")
 	switch provider {
 	case "s3", "core-storage":
-		return CoreStoragePrefixModpacks
+		return handlers.CoreStoragePrefixModpacks
 	default:
 		return ""
 	}
@@ -367,14 +369,14 @@ func (r *StorageDataSetResolver) modpackSourceSubPrefix() string {
 // modpackSourceConfig renders the modpack_storage_* settings in
 // CoreStorageConfig shape, purely so sourceCoreStorageConfigFor can compare
 // against them. Never persisted, never validated as a Core file storage config.
-func (r *StorageDataSetResolver) modpackSourceConfig() CoreStorageConfig {
+func (r *StorageDataSetResolver) modpackSourceConfig() handlers.CoreStorageConfig {
 	get := func(k string) string {
 		v, _ := r.state.Store.GetSetting(k)
 		return v
 	}
 	switch get("modpack_storage_provider") {
 	case "s3":
-		return CoreStorageConfig{
+		return handlers.CoreStorageConfig{
 			Backend:    "s3",
 			S3Endpoint: get("modpack_storage_s3_endpoint"),
 			S3Bucket:   get("modpack_storage_s3_bucket"),
@@ -389,7 +391,7 @@ func (r *StorageDataSetResolver) modpackSourceConfig() CoreStorageConfig {
 		if len(paths) > 0 {
 			path = strings.TrimSpace(paths[0])
 		}
-		return CoreStorageConfig{Backend: "path", Path: path, PathConfirmed: true}
+		return handlers.CoreStorageConfig{Backend: "path", Path: path, PathConfirmed: true}
 	}
 }
 
@@ -403,7 +405,7 @@ func (r *StorageDataSetResolver) modpackSourceConfig() CoreStorageConfig {
 // target is a Core-storage-SHAPED destination that may nest differently from
 // the source's own backend.
 type coreStorageDataSetLocation struct {
-	cfg       CoreStorageConfig
+	cfg       handlers.CoreStorageConfig
 	subPrefix string
 }
 
@@ -427,13 +429,13 @@ func (r *StorageDataSetResolver) dataSetLocation(id string) (coreStorageDataSetL
 	case CoreStorageDataSetID:
 		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig()}, true
 	case storagemigrate.DataSetLibrary:
-		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixLibrary}, true
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixLibrary}, true
 	case storagemigrate.DataSetAttachments:
-		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixAttachments}, true
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixAttachments}, true
 	case storagemigrate.DataSetTicketBackups:
-		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixBackups}, true
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixBackups}, true
 	case ModpacksCoreStorageDataSetID:
-		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: CoreStoragePrefixModpacks}, true
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixModpacks}, true
 	case storagemigrate.DataSetModpacks:
 		// The modpacks data set follows its OWN settings namespace, which may
 		// point at a local path, an s3 bucket, or back at Core storage - the
@@ -457,7 +459,7 @@ func (r *StorageDataSetResolver) dataSetLocation(id string) (coreStorageDataSetL
 		if err == nil && bs != nil && bs.Provider == "core-storage" {
 			return coreStorageDataSetLocation{
 				cfg:       r.state.LoadCoreStorageConfig(),
-				subPrefix: CoreStoragePrefixServerBackups,
+				subPrefix: handlers.CoreStoragePrefixServerBackups,
 			}, true
 		}
 	}
@@ -499,20 +501,20 @@ func (r *StorageDataSetResolver) EnsureDistinctDataSetLocations(_ context.Contex
 	if !srcOK || !tgtOK {
 		return nil
 	}
-	same, err := sameCoreStorageLocation(src.cfg, tgt.cfg, src.subPrefix, tgt.subPrefix)
+	same, err := handlers.SameCoreStorageLocation(src.cfg, tgt.cfg, src.subPrefix, tgt.subPrefix)
 	if err != nil {
 		return err
 	}
 	if same {
 		return fmt.Errorf("%w: data sets %q and %q are different names for one physical location, so copying between them would rewrite every object onto itself and the verification would compare that location against its own manifest; pick a target that lives somewhere else",
-			ErrTargetSameLocation, sourceID, targetID)
+			handlers.ErrTargetSameLocation, sourceID, targetID)
 	}
 
 	// Containment is only possible on a shared ROOT, so the sub-prefixes are
 	// compared only once the roots are known to match. Passing "" here asks
 	// sameCoreStorageLocation the root-level question with the same
 	// symlink/bind-mount-aware comparator used above.
-	sameRoot, err := sameCoreStorageLocation(src.cfg, tgt.cfg, "", "")
+	sameRoot, err := handlers.SameCoreStorageLocation(src.cfg, tgt.cfg, "", "")
 	if err != nil {
 		return err
 	}
@@ -521,11 +523,11 @@ func (r *StorageDataSetResolver) EnsureDistinctDataSetLocations(_ context.Contex
 	}
 	if subPrefixContains(tgt.subPrefix, src.subPrefix) {
 		return fmt.Errorf("%w: data set %q is stored INSIDE %q, so copying it there would rebase its keys into the other data set's live namespace and overwrite any object whose name collides; there is nothing to move, the objects are already there",
-			ErrTargetNestedLocation, sourceID, targetID)
+			handlers.ErrTargetNestedLocation, sourceID, targetID)
 	}
 	if subPrefixContains(src.subPrefix, tgt.subPrefix) {
 		return fmt.Errorf("%w: data set %q is stored INSIDE %q, so copying the outer one into it would rebase every key into the inner data set's live namespace and overwrite any object whose name collides",
-			ErrTargetNestedLocation, targetID, sourceID)
+			handlers.ErrTargetNestedLocation, targetID, sourceID)
 	}
 	return nil
 }
@@ -564,17 +566,17 @@ func subPrefixContains(outer, inner string) bool {
 // target the credentials come from the connection (decrypted in the store), the
 // backend is s3, and ConnectionID is preserved so a switch persists the
 // reference. For an inline target it is the plain field mapping.
-func (r *StorageDataSetResolver) targetCoreStorageConfig(tc services.StorageTargetConfig) (CoreStorageConfig, error) {
+func (r *StorageDataSetResolver) targetCoreStorageConfig(tc services.StorageTargetConfig) (handlers.CoreStorageConfig, error) {
 	if tc.ConnectionID != 0 {
 		conn, err := r.state.Store.GetStorageConnection(tc.ConnectionID)
 		if err != nil {
-			return CoreStorageConfig{}, fmt.Errorf("target storage connection %d: %w", tc.ConnectionID, err)
+			return handlers.CoreStorageConfig{}, fmt.Errorf("target storage connection %d: %w", tc.ConnectionID, err)
 		}
-		cfg := coreStorageConfigFromConnection(conn)
+		cfg := handlers.CoreStorageConfigFromConnection(conn)
 		cfg.ConnectionID = tc.ConnectionID
 		return cfg, nil
 	}
-	return coreStorageConfigFromTarget(tc), nil
+	return handlers.CoreStorageConfigFromTarget(tc), nil
 }
 
 func (r *StorageDataSetResolver) ResolveTarget(_ context.Context, sourceID string, tc services.StorageTargetConfig) (storagemigrate.DataSet, string, error) {
@@ -586,13 +588,13 @@ func (r *StorageDataSetResolver) ResolveTarget(_ context.Context, sourceID strin
 	if err != nil {
 		return nil, "", err
 	}
-	if err := validateCoreStorageConfig(tgtCfg); err != nil {
+	if err := handlers.ValidateCoreStorageConfig(tgtCfg); err != nil {
 		return nil, "", fmt.Errorf("target storage config: %w", err)
 	}
-	if err := ensureDistinctCoreStorageLocation(loc.cfg, tgtCfg, loc.srcSubPrefix, loc.tgtSubPrefix); err != nil {
+	if err := handlers.EnsureDistinctCoreStorageLocation(loc.cfg, tgtCfg, loc.srcSubPrefix, loc.tgtSubPrefix); err != nil {
 		return nil, "", err
 	}
-	prov, err := buildTargetStorageProvider(tgtCfg, loc.tgtSubPrefix)
+	prov, err := handlers.BuildTargetStorageProvider(tgtCfg, loc.tgtSubPrefix)
 	if err != nil {
 		return nil, "", err
 	}
@@ -620,7 +622,7 @@ func (r *StorageDataSetResolver) SwitchConfig(ctx context.Context, sourceID stri
 	if err != nil {
 		return err
 	}
-	if err := validateCoreStorageConfig(cfg); err != nil {
+	if err := handlers.ValidateCoreStorageConfig(cfg); err != nil {
 		return fmt.Errorf("target storage config: %w", err)
 	}
 	if sourceID == storagemigrate.DataSetModpacks {
@@ -640,18 +642,18 @@ func (r *StorageDataSetResolver) SwitchConfig(ctx context.Context, sourceID stri
 	// exists to prevent - and, unlike the count-only guard this replaced, it
 	// also catches an s3 target with credentials that do not work. The job
 	// surfaces this error with the source left intact and nothing deleted.
-	if err := r.state.checkSharedStorageReachable(ctx, cfg); err != nil {
+	if err := r.state.CheckSharedStorageReachable(ctx, cfg); err != nil {
 		return err
 	}
 	// cfg.S3SecretKey, not a "was a secret submitted" flag: persistCoreStorageConfig
 	// takes the secret VALUE so the only thing it can ever write is the one
 	// handed to it (see its doc comment - a boolean form let a secret-only
 	// rotation silently no-op in an earlier review).
-	return r.state.persistCoreStorageConfig(cfg, cfg.S3SecretKey)
+	return r.state.PersistCoreStorageConfig(cfg, cfg.S3SecretKey)
 }
 
 // switchModpackConfig repoints the modpack_storage_* settings at cfg.
-func (r *StorageDataSetResolver) switchModpackConfig(cfg CoreStorageConfig) error {
+func (r *StorageDataSetResolver) switchModpackConfig(cfg handlers.CoreStorageConfig) error {
 	set := func(k, v string) error {
 		if err := r.state.Store.SetSetting(k, v); err != nil {
 			return fmt.Errorf("save setting %s: %w", k, err)
@@ -661,7 +663,7 @@ func (r *StorageDataSetResolver) switchModpackConfig(cfg CoreStorageConfig) erro
 	// Point (or un-point) modpack storage at a saved connection. Written
 	// unconditionally so an inline switch clears a previously-selected connection
 	// too; buildModpackStorageProvider checks this id before the inline settings.
-	if err := set(keyModpackStorageConnectionID, storageConnIDSetting(cfg.ConnectionID)); err != nil {
+	if err := set(handlers.KeyModpackStorageConnectionID, handlers.StorageConnIDSetting(cfg.ConnectionID)); err != nil {
 		return err
 	}
 	if cfg.Backend == "s3" {
@@ -689,7 +691,7 @@ func (r *StorageDataSetResolver) switchModpackConfig(cfg CoreStorageConfig) erro
 	if err := set("modpack_storage_s3_secret_key", ""); err != nil {
 		return err
 	}
-	pathsJSON, _ := json.Marshal([]string{coreStorageRoot(cfg, CoreStoragePrefixModpacks)})
+	pathsJSON, _ := json.Marshal([]string{handlers.CoreStorageRoot(cfg, handlers.CoreStoragePrefixModpacks)})
 	return set("modpack_storage_paths", string(pathsJSON))
 }
 
@@ -705,7 +707,7 @@ func storageMigrationAuditPayload(req services.StorageMigrationRequest, jobID st
 			// reference instead. Still credential-free.
 			target = fmt.Sprintf("storage-connection:%d", req.TargetConfig.ConnectionID)
 		} else {
-			target = coreStorageBackendLabel(coreStorageConfigFromTarget(*req.TargetConfig), req.DataSet)
+			target = coreStorageBackendLabel(handlers.CoreStorageConfigFromTarget(*req.TargetConfig), req.DataSet)
 		}
 	}
 	return map[string]interface{}{
@@ -726,7 +728,7 @@ func (r *StorageDataSetResolver) backupDeps() backupstorage.Deps {
 		Registry:  r.state.GRPCRegistry,
 		NodeStore: r.state.Store,
 		CoreStorage: func(subPrefix string) (backupstorage.Storage, error) {
-			prov, err := r.state.buildCoreStorageProvider(subPrefix)
+			prov, err := r.state.BuildCoreStorageProvider(subPrefix)
 			if err != nil {
 				return nil, err
 			}
@@ -743,10 +745,10 @@ func (r *StorageDataSetResolver) backupDeps() backupstorage.Deps {
 // (settings.read for reads, settings.write for mutations), matching the
 // db-migration and core-storage precedent exactly.
 type StorageMigrationHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewStorageMigrationHandler(state *AppState) *StorageMigrationHandler {
+func NewStorageMigrationHandler(state *handlers.AppState) *StorageMigrationHandler {
 	return &StorageMigrationHandler{state: state}
 }
 
@@ -754,7 +756,7 @@ func NewStorageMigrationHandler(state *AppState) *StorageMigrationHandler {
 func (h *StorageMigrationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 	sets, err := NewStorageDataSetResolver(h.state).List(r.Context())
 	if err != nil {
-		sendJSONError(w, "Failed to describe storage: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to describe storage: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	type overviewEntry struct {
@@ -768,7 +770,7 @@ func (h *StorageMigrationHandler) Overview(w http.ResponseWriter, r *http.Reques
 		// manifest yet" would tell an operator their last capture is gone.
 		ms, err := h.state.Store.ListStorageManifests(s.ID, 1)
 		if err != nil {
-			sendJSONError(w, "Failed to load manifests for "+s.ID+": "+err.Error(), http.StatusInternalServerError)
+			handlers.SendJSONError(w, "Failed to load manifests for "+s.ID+": "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if len(ms) > 0 {
@@ -782,12 +784,12 @@ func (h *StorageMigrationHandler) Overview(w http.ResponseWriter, r *http.Reques
 // GetJob GET /api/admin/storage/migration - PANEL settings.read.
 func (h *StorageMigrationHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	if h.state.StorageMigration == nil {
-		sendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		handlers.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
 		return
 	}
 	job, ok, err := h.state.StorageMigration.GetJob(r.Context())
 	if err != nil {
-		sendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	resp := map[string]interface{}{"success": true, "hasJob": ok}
@@ -802,18 +804,18 @@ func (h *StorageMigrationHandler) GetJob(w http.ResponseWriter, r *http.Request)
 func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) {
 	var req services.StorageMigrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// Validate BEFORE the service-availability check, so a request that
 	// violates safety invariant 2 is rejected as 400 regardless of whether
 	// Redis happens to be up.
 	if err := req.Validate(); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if h.state.StorageMigration == nil {
-		sendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		handlers.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -823,14 +825,14 @@ func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) 
 	job, err := h.state.StorageMigration.Start(r.Context(), req, actorID, actorName)
 	if err != nil {
 		if errors.Is(err, services.ErrStorageMigrationRunning) {
-			sendJSONError(w, err.Error(), http.StatusConflict)
+			handlers.SendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventStorageMigrationStart, actorID, "", storageMigrationAuditPayload(req, job.ID))
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageMigrationStart, actorID, "", storageMigrationAuditPayload(req, job.ID))
 	if h.state.Events != nil {
 		h.state.Events.Publish(r.Context(), "storagemigration.changed", nil)
 	}
@@ -845,19 +847,19 @@ func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) 
 // Cancel POST /api/admin/storage/migration/cancel - PANEL settings.write.
 func (h *StorageMigrationHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	if h.state.StorageMigration == nil {
-		sendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		handlers.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.state.StorageMigration.Cancel(r.Context()); err != nil {
 		if errors.Is(err, services.ErrNoStorageMigrationJob) {
-			sendJSONError(w, err.Error(), http.StatusNotFound)
+			handlers.SendJSONError(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		sendJSONError(w, err.Error(), http.StatusConflict)
+		handlers.SendJSONError(w, err.Error(), http.StatusConflict)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventStorageMigrationCancel, actorID, "", map[string]interface{}{
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageMigrationCancel, actorID, "", map[string]interface{}{
 		"action": "storage_migration_cancel",
 	})
 	if h.state.Events != nil {
@@ -872,7 +874,7 @@ func (h *StorageMigrationHandler) ListManifests(w http.ResponseWriter, r *http.R
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	ms, err := h.state.Store.ListStorageManifests(r.URL.Query().Get("dataSet"), limit)
 	if err != nil {
-		sendJSONError(w, "Failed to list manifests: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to list manifests: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if ms == nil {
@@ -889,21 +891,21 @@ func (h *StorageMigrationHandler) ListManifests(w http.ResponseWriter, r *http.R
 func (h *StorageMigrationHandler) ExportManifest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
 	m, err := h.state.Store.GetStorageManifest(id)
 	if err != nil {
-		sendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if m == nil {
-		sendJSONError(w, "Manifest not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Manifest not found", http.StatusNotFound)
 		return
 	}
 	entries, err := h.state.Store.ListStorageManifestEntries(id)
 	if err != nil {
-		sendJSONError(w, "Failed to load manifest entries: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load manifest entries: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -953,24 +955,24 @@ func safeFilenamePart(s string) string {
 func (h *StorageMigrationHandler) DeleteManifest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
 	m, err := h.state.Store.GetStorageManifest(id)
 	if err != nil {
-		sendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if m == nil {
-		sendJSONError(w, "Manifest not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Manifest not found", http.StatusNotFound)
 		return
 	}
 	if err := h.state.Store.DeleteStorageManifest(id); err != nil {
-		sendJSONError(w, "Failed to delete manifest: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to delete manifest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventStorageManifestDeleted, actorID, "", map[string]interface{}{
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageManifestDeleted, actorID, "", map[string]interface{}{
 		"action":     "storage_manifest_delete",
 		"manifestId": id,
 	})

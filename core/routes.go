@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers/nodes"
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/stats"
+	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
 	"dylaris-core/handlers/tickets"
 	"dylaris-core/services"
@@ -552,8 +553,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	authzHandler := handlers.NewAuthzHandler()
 	avatarHandler := handlers.NewAvatarHandler()
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
-	coreStorageHandler := handlers.NewCoreStorageHandler(appState)
-	storageConnectionHandler := handlers.NewStorageConnectionHandler(appState)
+	coreStorageHandler := storageapi.NewCoreStorageHandler(appState)
+	storageConnectionHandler := storageapi.NewStorageConnectionHandler(appState)
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// NewWarpService needs EnrollPeerTx, which the store.Store interface
@@ -587,7 +588,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	timezoneHandler := handlers.NewTimezoneHandler(appState)
 	backupHandler := backup.NewBackupHandler(appState)
 	platformBackupHandler := backup.NewPlatformBackupHandler(appState)
-	storageConnectionsHandler := handlers.NewStorageConnectionsHandler(appState)
+	storageConnectionsHandler := storageapi.NewStorageConnectionsHandler(appState)
 	regionsHandler := handlers.NewRegionsHandler(appState)
 	authSettingsHandler := handlers.NewAuthSettingsHandler(appState)
 	registrationHandler := handlers.NewRegistrationHandler(appState)
@@ -631,7 +632,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	plansHandler := handlers.NewPlansHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
-	storageMigrationHandler := handlers.NewStorageMigrationHandler(appState)
+	storageMigrationHandler := storageapi.NewStorageMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := nodes.NewNodeEnrollHandler(appState)
 	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(appState)

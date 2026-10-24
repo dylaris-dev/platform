@@ -1,4 +1,4 @@
-package handlers
+package storageapi
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 )
@@ -35,7 +37,7 @@ func newCoreStorageConnFakeStore(conn *models.StorageConnection, connErr error) 
 }
 
 func validConnection() *models.StorageConnection {
-	cfg, _ := json.Marshal(storageConnectionConfig{Endpoint: "https://s3.example", Region: "eu", Bucket: "conn-bucket"})
+	cfg, _ := json.Marshal(handlers.StorageConnectionConfig{Endpoint: "https://s3.example", Region: "eu", Bucket: "conn-bucket"})
 	return &models.StorageConnection{ID: 5, Name: "nas", Provider: "s3", Config: cfg, AccessKey: "CAK", SecretAccessKey: "CSK"}
 }
 
@@ -47,18 +49,18 @@ func TestSaveConfig_ConnectionValidatesConnectionNotInline(t *testing.T) {
 	// A single online Core so checkSharedStorageReachable's short-circuit
 	// applies; this test is about the merge/validation behaviour, not the
 	// reachability round.
-	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
+	h := NewCoreStorageHandler(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	// backend s3 + a connection, but the inline s3 fields are all blank.
-	body, _ := json.Marshal(CoreStorageConfig{Backend: "s3", ConnectionID: 5})
+	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "s3", ConnectionID: 5})
 	rw := httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
 
 	if rw.Code != http.StatusOK {
 		t.Fatalf("SaveConfig status = %d, want 200 (blank inline must be fine with a connection) (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[keyCoreStorageConnectionID] != "5" {
-		t.Errorf("connection id not persisted, got %q", fs.kv[keyCoreStorageConnectionID])
+	if fs.kv[handlers.KeyCoreStorageConnectionID] != "5" {
+		t.Errorf("connection id not persisted, got %q", fs.kv[handlers.KeyCoreStorageConnectionID])
 	}
 }
 
@@ -67,33 +69,33 @@ func TestSaveConfig_ConnectionValidatesConnectionNotInline(t *testing.T) {
 // merge.
 func TestSaveConfig_BlankBackendWithConnectionStillSaves(t *testing.T) {
 	fs := newCoreStorageConnFakeStore(validConnection(), nil)
-	h := NewCoreStorageHandler(&AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
+	h := NewCoreStorageHandler(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
-	body, _ := json.Marshal(CoreStorageConfig{ConnectionID: 5}) // no Backend
+	body, _ := json.Marshal(handlers.CoreStorageConfig{ConnectionID: 5}) // no Backend
 	rw := httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
 
 	if rw.Code != http.StatusOK {
 		t.Fatalf("SaveConfig status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[keyCoreStorageConnectionID] != "5" {
-		t.Errorf("connection id not persisted with a blank backend, got %q", fs.kv[keyCoreStorageConnectionID])
+	if fs.kv[handlers.KeyCoreStorageConnectionID] != "5" {
+		t.Errorf("connection id not persisted with a blank backend, got %q", fs.kv[handlers.KeyCoreStorageConnectionID])
 	}
 }
 
 func TestSaveConfig_MissingConnectionRejected(t *testing.T) {
 	fs := newCoreStorageConnFakeStore(nil, errors.New("no such row"))
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
-	body, _ := json.Marshal(CoreStorageConfig{Backend: "s3", ConnectionID: 9})
+	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "s3", ConnectionID: 9})
 	rw := httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
 
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("SaveConfig status = %d, want 400 for a missing connection", rw.Code)
 	}
-	if fs.kv[keyCoreStorageConnectionID] != "" {
-		t.Errorf("a broken connection selection was persisted: %q", fs.kv[keyCoreStorageConnectionID])
+	if fs.kv[handlers.KeyCoreStorageConnectionID] != "" {
+		t.Errorf("a broken connection selection was persisted: %q", fs.kv[handlers.KeyCoreStorageConnectionID])
 	}
 }
 
@@ -101,9 +103,9 @@ func TestSaveConfig_ConnectionWithoutSecretRejected(t *testing.T) {
 	conn := validConnection()
 	conn.SecretAccessKey = "" // e.g. secret was never set, or decrypt failed
 	fs := newCoreStorageConnFakeStore(conn, nil)
-	h := NewCoreStorageHandler(&AppState{Store: fs})
+	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
-	body, _ := json.Marshal(CoreStorageConfig{Backend: "s3", ConnectionID: 5})
+	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "s3", ConnectionID: 5})
 	rw := httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
 

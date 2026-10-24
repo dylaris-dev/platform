@@ -1,17 +1,19 @@
-package handlers
+package storageapi
 
 import (
 	"encoding/json"
 	"net/http"
+
+	"dylaris-core/handlers"
 )
 
 // StorageConnectionHandler serves the current connection state of the two core
 // storage backends.
 type StorageConnectionHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewStorageConnectionHandler(state *AppState) *StorageConnectionHandler {
+func NewStorageConnectionHandler(state *handlers.AppState) *StorageConnectionHandler {
 	return &StorageConnectionHandler{state: state}
 }
 

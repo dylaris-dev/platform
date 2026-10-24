@@ -21,7 +21,7 @@ import {
   type TargetConfigForm,
 } from './storageMigration';
 
-// Mirrors core/handlers/storage_migration.go List(): core-storage is the one
+// Mirrors core/handlers/storageapi/storage_migration.go List(): core-storage is the one
 // entry that can switch the shared Core file storage config; library and
 // modpacks@core-storage are namespaces INSIDE that shared config and so
 // cannot switch it on their own (they would strand the others); modpacks owns
