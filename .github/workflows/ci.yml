@@ -36,6 +36,14 @@ permissions:
   contents: read
   packages: write
 
+# GitHub-hosted runners since 2026-10-24, pinned to an Ubuntu release like
+# beam-release.yml. This repository is public, so standard runners are free and
+# have 16 GB: compiling core/handlers' test package alone peaks near 8 GB, and
+# the self-hosted runners on the owner's machines either ran out of memory or
+# took a production node down with them (ms01, 2026-10-22/23/24). It also means
+# CI no longer depends on one desktop being switched on. The comments below that
+# describe a long-lived runner (setup-go cache, per-job Docker config) date from
+# the self-hosted setup.
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: dylaris-dev/platform
@@ -51,7 +59,7 @@ jobs:
   # 1. Tests - always run first, for every module.
   # ----------------------------------------------
   go-tests:
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -82,6 +90,10 @@ jobs:
       # runner change: `du -sh $(go env GOMODCACHE)`.
       #
       # Result across the whole workflow: 20 minutes to 5.
+      #
+      # Measured on the long-lived self-hosted runner. A GitHub-hosted job starts
+      # empty, so the "already on the machine" half no longer holds: re-measure
+      # before switching the cache on or deciding it stays off.
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -228,7 +240,7 @@ jobs:
   #
   # See .github/race.Dockerfile for what a green run here does and does not prove.
   race-tests:
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     # A ceiling, not a target: this normally finishes in well under ten
     # minutes. It exists because the concurrency queue added on 2026-08-28
     # makes a stuck run block every later one, and GitHub's own default is
@@ -304,7 +316,7 @@ jobs:
   # is the rule the race-tests comment above records. That happened on run
   # 31158973711: 6/6 against a real Postgres, 357 statements prepared.
   db-tests:
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -352,7 +364,7 @@ jobs:
           docker run --rm $CG --network "$NET"             -e DYLARIS_TEST_DB_HOST="$PG"             -e DYLARIS_TEST_DB_PORT=5432             -e DYLARIS_TEST_DB_USER=dylaris             -e DYLARIS_TEST_DB_PASSWORD=testpw             -e DYLARIS_TEST_DB_NAME=dylaris_test             "$IMG"
 
   panel-tests:
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -384,7 +396,7 @@ jobs:
   detect-changes:
     needs: [go-tests, race-tests, panel-tests, db-tests]
     if: github.event_name != 'pull_request'
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     outputs:
       core: ${{ steps.filter.outputs.core }}
       node: ${{ steps.filter.outputs.node }}
@@ -533,7 +545,7 @@ jobs:
   build-core:
     needs: [go-tests, race-tests, panel-tests, db-tests, detect-changes]
     if: needs.detect-changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -624,7 +636,7 @@ jobs:
   build-log-shipper:
     needs: [go-tests, race-tests, panel-tests, db-tests, detect-changes]
     if: needs.detect-changes.outputs.log-shipper == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -769,7 +781,7 @@ jobs:
       && needs.detect-changes.outputs.version != ''
       && !contains(needs.*.result, 'failure')
       && !contains(needs.*.result, 'cancelled')
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
