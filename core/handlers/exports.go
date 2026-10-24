@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -121,4 +123,37 @@ func SetSSEMaxStreamAge(d time.Duration) (restore func()) {
 	prev := sseMaxStreamAge
 	sseMaxStreamAge = d
 	return func() { sseMaxStreamAge = prev }
+}
+
+func SendJSONErrorCode(w http.ResponseWriter, message, code string, status int) {
+	sendJSONErrorCode(w, message, code, status)
+}
+
+func SettingOrUnset(st store.Store, key string) (string, error) { return settingOrUnset(st, key) }
+
+func RefuseIfSuspended(w http.ResponseWriter, r *http.Request, state *AppState, srv *models.Server) bool {
+	return refuseIfSuspended(w, r, state, srv)
+}
+
+func RefuseIfServerBusy(w http.ResponseWriter, r *http.Request, state *AppState, srv *models.Server) bool {
+	return refuseIfServerBusy(w, r, state, srv)
+}
+
+func PurgeBackupArchivesForJob(state *AppState, jobID int) { purgeBackupArchivesForJob(state, jobID) }
+
+func CoreStorageConfigFromConnection(conn *models.StorageConnection) CoreStorageConfig {
+	return coreStorageConfigFromConnection(conn)
+}
+
+func AnnotateStalledRestores(ctx context.Context, rdb *redis.Client, connected func(nodeID int) bool, nodeID int, serverUUID string, restores []models.BackupRestore) {
+	annotateStalledRestores(ctx, rdb, connected, nodeID, serverUUID, restores)
+}
+
+func ValidateS3Endpoint(subject, endpoint string) error { return validateS3Endpoint(subject, endpoint) }
+
+// PathIsOnContainerRootFS is the real check behind the root-filesystem seams;
+// a subpackage keeps its own seam variable pointing here so its tests can
+// replace it without touching this package's.
+func PathIsOnContainerRootFS(path string) (onRoot bool, determinable bool) {
+	return pathIsOnContainerRootFS(path)
 }

@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"github.com/gorilla/mux"
 
@@ -75,19 +77,19 @@ type restoreRequest struct {
 // downloaded bundles apart before typing anything.
 func (h *PlatformBackupHandler) InspectBundle(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(maxBundleMemory); err != nil {
-		sendJSONError(w, "Could not read the upload", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Could not read the upload", http.StatusBadRequest)
 		return
 	}
 	file, _, err := r.FormFile("bundle")
 	if err != nil {
-		sendJSONError(w, "No bundle was uploaded", http.StatusBadRequest)
+		handlers.SendJSONError(w, "No bundle was uploaded", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	header, manifest, ierr := services.Inspect(file, r.FormValue("passphrase"))
 	if header == nil {
-		sendJSONError(w, "This is not a Dylaris backup bundle", http.StatusBadRequest)
+		handlers.SendJSONError(w, "This is not a Dylaris backup bundle", http.StatusBadRequest)
 		return
 	}
 	out := map[string]any{
@@ -115,17 +117,17 @@ func (h *PlatformBackupHandler) InspectBundle(w http.ResponseWriter, r *http.Req
 // Multipart: `bundle` is the file, `request` is the JSON above.
 func (h *PlatformBackupHandler) RestoreBundle(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(maxBundleMemory); err != nil {
-		sendJSONError(w, "Could not read the upload", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Could not read the upload", http.StatusBadRequest)
 		return
 	}
 	var req restoreRequest
 	if err := json.Unmarshal([]byte(r.FormValue("request")), &req); err != nil {
-		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	file, _, err := r.FormFile("bundle")
 	if err != nil {
-		sendJSONError(w, "No bundle was uploaded", http.StatusBadRequest)
+		handlers.SendJSONError(w, "No bundle was uploaded", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
@@ -141,36 +143,36 @@ func (h *PlatformBackupHandler) RestoreBundle(w http.ResponseWriter, r *http.Req
 func (h *PlatformBackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	var req restoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid run id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid run id", http.StatusBadRequest)
 		return
 	}
 	run, err := h.state.Store.GetPlatformBackupRun(id)
 	if err != nil || run == nil {
-		sendJSONError(w, "Run not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Run not found", http.StatusNotFound)
 		return
 	}
 	if run.Status != "success" || run.StorageKey == "" {
-		sendJSONError(w, "This run produced no archive", http.StatusConflict)
+		handlers.SendJSONError(w, "This run produced no archive", http.StatusConflict)
 		return
 	}
 	bs, err := services.ResolveJobStorage(h.state.Store, run.StorageID, "")
 	if err != nil {
-		sendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
+		handlers.SendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
 		return
 	}
 	st, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.state).backupDeps())
 	if err != nil {
-		sendJSONError(w, "Could not open the storage", 500)
+		handlers.SendJSONError(w, "Could not open the storage", 500)
 		return
 	}
 	rc, err := st.Get(r.Context(), run.StorageKey)
 	if err != nil {
-		sendJSONError(w, "The archive could not be read", 500)
+		handlers.SendJSONError(w, "The archive could not be read", 500)
 		return
 	}
 	defer rc.Close()
@@ -180,17 +182,17 @@ func (h *PlatformBackupHandler) RestoreRun(w http.ResponseWriter, r *http.Reques
 
 func (h *PlatformBackupHandler) runRestore(w http.ResponseWriter, r *http.Request, src io.Reader, req restoreRequest) {
 	if req.Passphrase == "" {
-		sendJSONError(w, "The backup passphrase is required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "The backup passphrase is required", http.StatusBadRequest)
 		return
 	}
 	if !req.Components.Any() {
-		sendJSONError(w, services.ErrNothingSelected.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, services.ErrNothingSelected.Error(), http.StatusBadRequest)
 		return
 	}
 
 	restorer, cleanup, err := h.restorer(r.Context(), req)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if cleanup != nil {
@@ -230,11 +232,11 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 		ClusterSecret: h.state.ClusterSecret,
 		WorkDir:       h.state.PlatformBackupWorkDir,
 		OpenCoreStorageWriter: func(area string) (services.CoreStorageWriter, error) {
-			prefix := CoreStoragePrefixLibrary
+			prefix := handlers.CoreStoragePrefixLibrary
 			if area == "modpacks" {
-				prefix = CoreStoragePrefixModpacks
+				prefix = handlers.CoreStoragePrefixModpacks
 			}
-			prov, err := h.state.buildCoreStorageProvider(prefix)
+			prov, err := h.state.BuildCoreStorageProvider(prefix)
 			if err != nil {
 				return nil, err
 			}

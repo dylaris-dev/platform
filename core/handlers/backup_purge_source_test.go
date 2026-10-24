@@ -14,21 +14,28 @@ import (
 // single-server delete, the admin node force-delete, the customer's own machine
 // delete and the schedule delete. Three of four with the purge is the same leak.
 //
-// It scans the whole package rather than the four files by name, so a fifth
-// delete path added in a new file is caught rather than quietly joining the
-// leak.
+// It scans the whole package, and the handlers/<domain> subpackages split out
+// of it, rather than the four files by name, so a fifth delete path added in a
+// new file is caught rather than quietly joining the leak. A subpackage calls
+// the purge by its exported name (handlers.PurgeBackupArchivesForJob).
 func TestEveryDeleteThatCascadesBackupsPurgesFirst(t *testing.T) {
-	// call site -> the purge it must be preceded by.
+	// call site -> the purge it must be preceded by. The first letter is left
+	// off so the package's purgeX( and a subpackage's handlers.PurgeX( match.
 	needs := map[string]string{
-		"Store.DeleteServer(":        "purgeBackupArchivesForServers(",
-		"Store.DeleteServersByNode(": "purgeBackupArchivesForServers(",
-		"Store.DeleteBackupJob(":     "purgeBackupArchivesForJob(",
+		"Store.DeleteServer(":        "urgeBackupArchivesForServers(",
+		"Store.DeleteServersByNode(": "urgeBackupArchivesForServers(",
+		"Store.DeleteBackupJob(":     "urgeBackupArchivesForJob(",
 	}
 
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
+	sub, err := filepath.Glob(filepath.Join("*", "*.go"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	files = append(files, sub...)
 	found := map[string]int{}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {

@@ -209,7 +209,7 @@ func containsCall(src, call string) bool { return strings.Contains(src, call) }
 // this, so the check is on the call sites, not on a comment promising it.
 func TestBothBackupProducersTakeTheQuota(t *testing.T) {
 	for _, f := range []struct{ file, path string }{
-		{"the manual/API path", "../handlers/backup.go"},
+		{"the manual/API path", "../handlers/backup/backup.go"},
 		{"the scheduler", "backup_scheduler.go"},
 	} {
 		t.Run(f.file, func(t *testing.T) {

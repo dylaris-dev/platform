@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -38,13 +40,13 @@ var errNotObjectStorage = errors.New("only object storage (S3/R2) can be scanned
 // The prefix rules mirror backupstorage.Open and newStorageProviderForConfig;
 // a mismatch would scan a different folder from the one backups go to.
 func (h *BackupHandler) platformObjectStore(ctx context.Context, bs *models.BackupStorage) (*backupstorage.S3Storage, error) {
-	var cfg CoreStorageConfig
+	var cfg handlers.CoreStorageConfig
 	var sub string
 	switch bs.Provider {
 	case "s3":
 		return backupstorage.NewS3(ctx, bs.Config)
 	case "core-storage":
-		c, err := h.state.effectiveCoreStorageConfig()
+		c, err := h.state.EffectiveCoreStorageConfig()
 		if err != nil {
 			return nil, err
 		}
@@ -60,7 +62,7 @@ func (h *BackupHandler) platformObjectStore(ctx context.Context, bs *models.Back
 		if err != nil || conn == nil {
 			return nil, fmt.Errorf("storage connection %d could not be loaded", cc.ConnectionID)
 		}
-		cfg, sub = coreStorageConfigFromConnection(conn), cc.Prefix
+		cfg, sub = handlers.CoreStorageConfigFromConnection(conn), cc.Prefix
 		if strings.TrimSpace(sub) == "" {
 			sub = backupstorage.CoreStorageSubPrefix
 		}
@@ -106,7 +108,7 @@ func lockStorageMaintenance(id int) (unlock func(), ok bool) {
 func (h *BackupHandler) openMaintenanceTarget(w http.ResponseWriter, r *http.Request) (*models.BackupStorage, *backupstorage.S3Storage, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return nil, nil, false
 	}
 	bs, ok := h.platformStorage(w, id)
@@ -116,10 +118,10 @@ func (h *BackupHandler) openMaintenanceTarget(w http.ResponseWriter, r *http.Req
 	st, err := h.platformObjectStore(r.Context(), bs)
 	if err != nil {
 		if errors.Is(err, errNotObjectStorage) {
-			sendJSONError(w, err.Error(), http.StatusConflict)
+			handlers.SendJSONError(w, err.Error(), http.StatusConflict)
 			return nil, nil, false
 		}
-		sendJSONError(w, "Could not open the storage: "+err.Error(), http.StatusBadGateway)
+		handlers.SendJSONError(w, "Could not open the storage: "+err.Error(), http.StatusBadGateway)
 		return nil, nil, false
 	}
 	return bs, st, true
@@ -168,14 +170,14 @@ func (h *BackupHandler) ScanOrphans(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock, ok := lockStorageMaintenance(bs.ID)
 	if !ok {
-		sendJSONError(w, "A scan or delete of this storage is already running", http.StatusConflict)
+		handlers.SendJSONError(w, "A scan or delete of this storage is already running", http.StatusConflict)
 		return
 	}
 	defer unlock()
 
 	scan, err := services.ScanOrphans(r.Context(), st, h.orphanRefs(), h.orphanLookups(), time.Now())
 	if err != nil {
-		sendJSONError(w, "Scan failed: "+err.Error(), http.StatusBadGateway)
+		handlers.SendJSONError(w, "Scan failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "scan": scan})
@@ -198,15 +200,15 @@ type deleteOrphansRequest struct {
 func (h *BackupHandler) DeleteOrphans(w http.ResponseWriter, r *http.Request) {
 	var req deleteOrphansRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if len(req.Keys) == 0 {
-		sendJSONError(w, "No keys given", http.StatusBadRequest)
+		handlers.SendJSONError(w, "No keys given", http.StatusBadRequest)
 		return
 	}
 	if len(req.Keys) > services.MaxOrphanDeleteKeys {
-		sendJSONError(w, fmt.Sprintf("At most %d keys per request", services.MaxOrphanDeleteKeys), http.StatusBadRequest)
+		handlers.SendJSONError(w, fmt.Sprintf("At most %d keys per request", services.MaxOrphanDeleteKeys), http.StatusBadRequest)
 		return
 	}
 	bs, st, ok := h.openMaintenanceTarget(w, r)
@@ -215,7 +217,7 @@ func (h *BackupHandler) DeleteOrphans(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock, ok := lockStorageMaintenance(bs.ID)
 	if !ok {
-		sendJSONError(w, "A scan or delete of this storage is already running", http.StatusConflict)
+		handlers.SendJSONError(w, "A scan or delete of this storage is already running", http.StatusConflict)
 		return
 	}
 	defer unlock()
@@ -233,7 +235,7 @@ func (h *BackupHandler) DeleteOrphans(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audited whatever happened: a partial run deleted real files.
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventStorageOrphansDeleted, actorID, "", map[string]interface{}{
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageOrphansDeleted, actorID, "", map[string]interface{}{
 		"storageId":   bs.ID,
 		"requested":   len(req.Keys),
 		"includeLive": req.IncludeLive,
@@ -298,14 +300,14 @@ func (h *BackupHandler) plannedLifecycle(bs *models.BackupStorage, st *backupsto
 
 func sendLifecycleError(w http.ResponseWriter, err error) {
 	if errors.Is(err, backupstorage.ErrLifecycleForbidden) {
-		sendJSONErrorCode(w,
+		handlers.SendJSONErrorCode(w,
 			"The credentials of this storage may not read or change the bucket's lifecycle rules. "+
 				"Use a key with bucket administration rights (on R2: an Admin Read & Write token), "+
 				"or set the rules in the provider's dashboard. Backups are not affected.",
 			"lifecycle_forbidden", http.StatusConflict)
 		return
 	}
-	sendJSONError(w, err.Error(), http.StatusBadGateway)
+	handlers.SendJSONError(w, err.Error(), http.StatusBadGateway)
 }
 
 // GetLifecycle GET /api/admin/storage/{id}/lifecycle - the bucket's current
@@ -342,7 +344,7 @@ func (h *BackupHandler) ApplyLifecycle(w http.ResponseWriter, r *http.Request) {
 	// back only what they read.
 	unlock, ok := lockStorageMaintenance(bs.ID)
 	if !ok {
-		sendJSONError(w, "Another maintenance action on this storage is running", http.StatusConflict)
+		handlers.SendJSONError(w, "Another maintenance action on this storage is running", http.StatusConflict)
 		return
 	}
 	defer unlock()
@@ -357,7 +359,7 @@ func (h *BackupHandler) ApplyLifecycle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventStorageLifecycleSet, actorID, "", map[string]interface{}{
+	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageLifecycleSet, actorID, "", map[string]interface{}{
 		"storageId": bs.ID,
 		"bucket":    st.Bucket(),
 		"rules":     len(merged),

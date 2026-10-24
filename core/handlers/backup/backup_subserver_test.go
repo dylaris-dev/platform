@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -76,7 +78,7 @@ func TestCreateJob_RefusesATraversalSubServer(t *testing.T) {
 	for _, sub := range traversalSubServers {
 		t.Run(sub, func(t *testing.T) {
 			fs := &backupSubServerFakeStore{}
-			h := &BackupHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+			h := &BackupHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
 			rw := httptest.NewRecorder()
 			body := `{"name":"nightly","schedule":"manual","subServer":` + quote(sub) + `}`
 			h.CreateJob(rw, backupJobRequest(http.MethodPost, "/api/servers/7/backup-jobs", body, map[string]string{"id": "7"}))
@@ -95,7 +97,7 @@ func TestCreateJob_RefusesATraversalSubServer(t *testing.T) {
 // created with a legitimate name could simply be patched to a traversal one.
 func TestUpdateJob_RefusesATraversalSubServer(t *testing.T) {
 	fs := &backupSubServerFakeStore{}
-	h := &BackupHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	h := &BackupHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
 	rw := httptest.NewRecorder()
 	body := `{"name":"nightly","schedule":"manual","subServer":"../../.."}`
 	h.UpdateJob(rw, backupJobRequest(http.MethodPatch, "/api/backup-jobs/1", body, map[string]string{"jobId": "1"}))
@@ -112,7 +114,7 @@ func TestUpdateJob_RefusesATraversalSubServer(t *testing.T) {
 // must still work, or every multi-world backup job breaks.
 func TestCreateJob_AcceptsAPlainSubServerName(t *testing.T) {
 	fs := &backupSubServerFakeStore{}
-	h := &BackupHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	h := &BackupHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
 	rw := httptest.NewRecorder()
 	body := `{"name":"nightly","schedule":"manual","subServer":"survival-2"}`
 	h.CreateJob(rw, backupJobRequest(http.MethodPost, "/api/servers/7/backup-jobs", body, map[string]string{"id": "7"}))
@@ -129,7 +131,7 @@ func TestCreateJob_AcceptsAPlainSubServerName(t *testing.T) {
 // means "the whole container", which is the default job shape.
 func TestCreateJob_AcceptsAnAbsentSubServer(t *testing.T) {
 	fs := &backupSubServerFakeStore{}
-	h := &BackupHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	h := &BackupHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
 	rw := httptest.NewRecorder()
 	h.CreateJob(rw, backupJobRequest(http.MethodPost, "/api/servers/7/backup-jobs",
 		`{"name":"nightly","schedule":"manual"}`, map[string]string{"id": "7"}))

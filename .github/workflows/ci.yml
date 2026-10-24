@@ -158,7 +158,7 @@ jobs:
       #            tar.TypeRegA); tracked, not a correctness bug.
       #   SA1029 - built-in string context keys; a codebase-wide pattern set by
       #            the auth middleware, a broad refactor tracked separately.
-      #   SA9003 - two pre-existing empty branches in handlers/tickets.go.
+      #   SA9003 - two pre-existing empty branches in handlers/tickets/tickets.go.
       # `go run ...@version` pins the tool and does not modify go.mod/go.sum.
       - name: staticcheck
         working-directory: ${{ matrix.module }}

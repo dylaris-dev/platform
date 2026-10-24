@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"net/http"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -84,7 +86,7 @@ func aboutADayFromNow(t *testing.T, got *time.Time) {
 
 func TestCreatingAPlatformBackupJobArmsIt(t *testing.T) {
 	st := &platformScheduleStore{}
-	h := &PlatformBackupHandler{state: &AppState{Store: st}}
+	h := &PlatformBackupHandler{state: &handlers.AppState{Store: st}}
 	rec := httptest.NewRecorder()
 	h.CreateJob(rec, pbReq(http.MethodPost, `{"name":"daily","schedule":"every 1d","selection":{"database":true}}`, nil))
 	if rec.Code != http.StatusOK {
@@ -94,7 +96,7 @@ func TestCreatingAPlatformBackupJobArmsIt(t *testing.T) {
 
 	// A schedule nothing can parse is refused, not stored to never run.
 	st = &platformScheduleStore{}
-	h = &PlatformBackupHandler{state: &AppState{Store: st}}
+	h = &PlatformBackupHandler{state: &handlers.AppState{Store: st}}
 	rec = httptest.NewRecorder()
 	h.CreateJob(rec, pbReq(http.MethodPost, `{"name":"daily","schedule":"daily","selection":{"database":true}}`, nil))
 	if rec.Code != http.StatusBadRequest || st.created != nil {
@@ -118,7 +120,7 @@ func TestUpdatingAPlatformBackupJobRearmsOnlyWhenTheTimingChanges(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &platformScheduleStore{job: tc.job}
-			h := &PlatformBackupHandler{state: &AppState{Store: st}}
+			h := &PlatformBackupHandler{state: &handlers.AppState{Store: st}}
 			rec := httptest.NewRecorder()
 			h.UpdateJob(rec, pbReq(http.MethodPatch, tc.body, map[string]string{"id": "3"}))
 			if rec.Code != http.StatusOK {
@@ -144,7 +146,7 @@ func TestRunningAPlatformBackupJobByHandRecordsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := &platformScheduleStore{job: dailyJob(nil, true)}
-	h := &PlatformBackupHandler{state: &AppState{
+	h := &PlatformBackupHandler{state: &handlers.AppState{
 		Store:                 st,
 		PlatformDB:            services.PGConn{Name: "dylaris_db"},
 		PlatformBackupWorkDir: filepath.Join(blocker, "work"),

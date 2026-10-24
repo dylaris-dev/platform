@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"github.com/gorilla/mux"
 
@@ -31,10 +33,10 @@ import (
 // platform. settings.read is the capability for looking at configuration; it is
 // not the capability for downloading the installation.
 type PlatformBackupHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewPlatformBackupHandler(state *AppState) *PlatformBackupHandler {
+func NewPlatformBackupHandler(state *handlers.AppState) *PlatformBackupHandler {
 	return &PlatformBackupHandler{state: state}
 }
 
@@ -44,7 +46,7 @@ func NewPlatformBackupHandler(state *AppState) *PlatformBackupHandler {
 func (h *PlatformBackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.state.Store.ListPlatformBackupJobs()
 	if err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "jobs": jobs})
@@ -63,21 +65,21 @@ type platformBackupJobRequest struct {
 func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	var req platformBackupJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		sendJSONError(w, "A name is required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "A name is required", http.StatusBadRequest)
 		return
 	}
 	if err := req.Selection.Validate(); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	schedule := scheduleOrManual(req.Schedule)
 	if !services.ValidBackupSchedule(schedule) {
-		sendJSONError(w, platformScheduleError, http.StatusBadRequest)
+		handlers.SendJSONError(w, platformScheduleError, http.StatusBadRequest)
 		return
 	}
 
@@ -94,7 +96,7 @@ func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request
 	}
 	id, err := h.state.Store.CreatePlatformBackupJob(job)
 	if err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	job.ID = id
@@ -109,7 +111,7 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	}
 	var req platformBackupJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.Name) != "" {
@@ -119,14 +121,14 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	if req.Schedule != "" {
 		job.Schedule = scheduleOrManual(req.Schedule)
 		if !services.ValidBackupSchedule(job.Schedule) {
-			sendJSONError(w, platformScheduleError, http.StatusBadRequest)
+			handlers.SendJSONError(w, platformScheduleError, http.StatusBadRequest)
 			return
 		}
 	}
 	// A selection is replaced wholesale rather than merged: the components are
 	// booleans, and a merge could never express "stop including the library".
 	if err := req.Selection.Validate(); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	job.Selection = req.Selection
@@ -145,7 +147,7 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.state.Store.UpdatePlatformBackupJob(job); err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "job": job})
@@ -162,10 +164,10 @@ func (h *PlatformBackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request
 	}
 	if err := services.DeletePlatformBackupJob(r.Context(), h.state.Store, job.ID, h.DeleteRunArchive); err != nil {
 		if errors.Is(err, services.ErrPlatformBackupRunning) {
-			sendJSONError(w, "A backup of this job is running; try again when it finishes", http.StatusConflict)
+			handlers.SendJSONError(w, "A backup of this job is running; try again when it finishes", http.StatusConflict)
 			return
 		}
-		sendJSONError(w, err.Error(), http.StatusBadGateway)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true})
@@ -184,7 +186,7 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 	}
 	runner, err := h.runner()
 	if err != nil {
-		sendJSONError(w, err.Error(), 500)
+		handlers.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	// Not on the request's context: a closed tab or a proxy timeout cancelled
@@ -245,7 +247,7 @@ func (h *PlatformBackupHandler) ListRuns(w http.ResponseWriter, r *http.Request)
 	}
 	runs, err := h.state.Store.ListPlatformBackupRuns(job.ID, 50)
 	if err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "runs": runs})
@@ -260,31 +262,31 @@ func (h *PlatformBackupHandler) ListRuns(w http.ResponseWriter, r *http.Request)
 func (h *PlatformBackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid run id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid run id", http.StatusBadRequest)
 		return
 	}
 	run, err := h.state.Store.GetPlatformBackupRun(id)
 	if err != nil || run == nil {
-		sendJSONError(w, "Run not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Run not found", http.StatusNotFound)
 		return
 	}
 	if run.Status != "success" || run.StorageKey == "" {
-		sendJSONError(w, "This run produced no archive", http.StatusConflict)
+		handlers.SendJSONError(w, "This run produced no archive", http.StatusConflict)
 		return
 	}
 	bs, err := services.ResolveJobStorage(h.state.Store, run.StorageID, "")
 	if err != nil {
-		sendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
+		handlers.SendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
 		return
 	}
 	store, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.state).backupDeps())
 	if err != nil {
-		sendJSONError(w, "Could not open the storage", 500)
+		handlers.SendJSONError(w, "Could not open the storage", 500)
 		return
 	}
 	rc, err := store.Get(r.Context(), run.StorageKey)
 	if err != nil {
-		sendJSONError(w, "The archive could not be read", 500)
+		handlers.SendJSONError(w, "The archive could not be read", 500)
 		return
 	}
 	defer rc.Close()
@@ -306,7 +308,7 @@ func (h *PlatformBackupHandler) DownloadRun(w http.ResponseWriter, r *http.Reque
 func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
 	targets, err := h.state.Store.ListBackupTargetServers()
 	if err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{
@@ -321,9 +323,9 @@ func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Reque
 // PassphraseStatus GET /api/platform-backups/passphrase - whether one is set,
 // never what it is.
 func (h *PlatformBackupHandler) PassphraseStatus(w http.ResponseWriter, r *http.Request) {
-	v, err := settingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
+	v, err := handlers.SettingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "isSet": v != ""})
@@ -340,29 +342,29 @@ type setPassphraseRequest struct {
 func (h *PlatformBackupHandler) SetPassphrase(w http.ResponseWriter, r *http.Request) {
 	var req setPassphraseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if len(req.Passphrase) < crypto.MinPassphraseLength {
-		sendJSONError(w, fmt.Sprintf("The passphrase must be at least %d characters", crypto.MinPassphraseLength), http.StatusBadRequest)
+		handlers.SendJSONError(w, fmt.Sprintf("The passphrase must be at least %d characters", crypto.MinPassphraseLength), http.StatusBadRequest)
 		return
 	}
-	existing, err := settingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
+	existing, err := handlers.SettingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if existing != "" && !req.Replace {
 		// Refused rather than overwritten, because the consequence is invisible
 		// at the moment of the change and only appears at a restore: every
 		// bundle written under the old passphrase still needs the old one.
-		sendJSONError(w,
+		handlers.SendJSONError(w,
 			"A backup passphrase is already set. Replacing it does not re-encrypt bundles already written - those still need the old passphrase. Send replace: true to confirm.",
 			http.StatusConflict)
 		return
 	}
 	if err := h.state.Store.SetSetting(services.PlatformBackupPassphraseSetting, req.Passphrase); err != nil {
-		sendJSONError(w, "Database error", 500)
+		handlers.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true})
@@ -417,11 +419,11 @@ func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error)
 			return backupstorage.Open(ctx, bs, NewBackupHandler(h.state).backupDeps())
 		},
 		OpenCoreStorage: func(area string) (services.CoreStorageArea, error) {
-			prefix := CoreStoragePrefixLibrary
+			prefix := handlers.CoreStoragePrefixLibrary
 			if area == "modpacks" {
-				prefix = CoreStoragePrefixModpacks
+				prefix = handlers.CoreStoragePrefixModpacks
 			}
-			prov, err := h.state.buildCoreStorageProvider(prefix)
+			prov, err := h.state.BuildCoreStorageProvider(prefix)
 			if err != nil {
 				return nil, err
 			}
@@ -524,12 +526,12 @@ func derefBool(v *bool, fallback bool) bool {
 func (h *PlatformBackupHandler) loadJob(w http.ResponseWriter, r *http.Request) (*models.PlatformBackupJob, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid job id", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid job id", http.StatusBadRequest)
 		return nil, false
 	}
 	job, err := h.state.Store.GetPlatformBackupJob(id)
 	if err != nil || job == nil {
-		sendJSONError(w, "Job not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Job not found", http.StatusNotFound)
 		return nil, false
 	}
 	return job, true

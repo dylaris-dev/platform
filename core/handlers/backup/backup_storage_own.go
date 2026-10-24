@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"database/sql"
@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	backupstorage "dylaris-core/storage/backup"
@@ -46,17 +48,17 @@ func ownBackupStorageAllowed(provider string) bool { return provider == "s3" }
 func (h *BackupHandler) ownStorageFor(w http.ResponseWriter, r *http.Request) (*models.BackupStorage, bool) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return nil, false
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return nil, false
 	}
 	bs, err := h.state.Store.GetBackupStorage(id)
 	if err != nil || bs == nil || bs.OwnerID == nil || *bs.OwnerID != userID {
-		sendJSONError(w, "Backup storage not found", http.StatusNotFound)
+		handlers.SendJSONError(w, "Backup storage not found", http.StatusNotFound)
 		return nil, false
 	}
 	return bs, true
@@ -67,12 +69,12 @@ func (h *BackupHandler) ownStorageFor(w http.ResponseWriter, r *http.Request) (*
 func (h *BackupHandler) ListOwnStorages(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	list, err := h.state.Store.ListBackupStoragesByOwner(userID)
 	if err != nil {
-		sendJSONError(w, "Failed to load your backup storages", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to load your backup storages", http.StatusInternalServerError)
 		return
 	}
 	if list == nil {
@@ -86,24 +88,24 @@ func (h *BackupHandler) ListOwnStorages(w http.ResponseWriter, r *http.Request) 
 func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	var req models.BackupStorage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Name == "" {
-		sendJSONError(w, "name is required", http.StatusBadRequest)
+		handlers.SendJSONError(w, "name is required", http.StatusBadRequest)
 		return
 	}
 	if !ownBackupStorageAllowed(req.Provider) {
-		sendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
 		return
 	}
 	if err := validateBackupStorageEndpoint(req); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Taken from the session, never from the body. A payload-supplied owner is
@@ -115,10 +117,10 @@ func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request)
 	id, err := h.state.Store.CreateBackupStorage(&req)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
-			sendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
+			handlers.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
 			return
 		}
-		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
@@ -132,15 +134,15 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 	}
 	var req models.BackupStorage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if !ownBackupStorageAllowed(req.Provider) {
-		sendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
 		return
 	}
 	if err := validateBackupStorageEndpoint(req); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Identity comes from the row that was just checked, not from the body: an
@@ -155,18 +157,18 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 	// against.
 	merged, merr := mergeBackupStorageSecret(req, existing)
 	if merr != nil {
-		sendJSONError(w, merr.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, merr.Error(), http.StatusBadRequest)
 		return
 	}
 	merged.ID, merged.OwnerID = existing.ID, existing.OwnerID
 	if err := h.state.Store.UpdateBackupStorage(&merged); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
-			sendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
+			handlers.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
 		case errors.Is(err, sql.ErrNoRows):
-			sendJSONError(w, "Backup storage not found", http.StatusNotFound)
+			handlers.SendJSONError(w, "Backup storage not found", http.StatusNotFound)
 		default:
-			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
@@ -186,10 +188,10 @@ func (h *BackupHandler) DeleteOwnStorage(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
-			sendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage and delete the backups stored in it first.", http.StatusConflict)
+			handlers.SendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage and delete the backups stored in it first.", http.StatusConflict)
 			return
 		}
-		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

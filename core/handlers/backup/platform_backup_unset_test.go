@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -65,7 +67,7 @@ func pbReq(method, body string, vars map[string]string) *http.Request {
 // started, and it explained itself as a broken database.
 func TestThePassphraseCanBeSetOnAnInstallationThatHasNone(t *testing.T) {
 	t.Run("status says not set, rather than failing", func(t *testing.T) {
-		h := &PlatformBackupHandler{state: &AppState{Store: &platformBackupUnsetStore{}}}
+		h := &PlatformBackupHandler{state: &handlers.AppState{Store: &platformBackupUnsetStore{}}}
 		rec := httptest.NewRecorder()
 		h.PassphraseStatus(rec, pbReq(http.MethodGet, "", nil))
 		if rec.Code != http.StatusOK {
@@ -85,7 +87,7 @@ func TestThePassphraseCanBeSetOnAnInstallationThatHasNone(t *testing.T) {
 
 	t.Run("the first passphrase can be stored", func(t *testing.T) {
 		st := &platformBackupUnsetStore{}
-		h := &PlatformBackupHandler{state: &AppState{Store: st}}
+		h := &PlatformBackupHandler{state: &handlers.AppState{Store: st}}
 		rec := httptest.NewRecorder()
 		h.SetPassphrase(rec, pbReq(http.MethodPut, `{"passphrase":"a-long-enough-passphrase"}`, nil))
 		if rec.Code != http.StatusOK {
@@ -99,7 +101,7 @@ func TestThePassphraseCanBeSetOnAnInstallationThatHasNone(t *testing.T) {
 	t.Run("a real database fault is still a fault", func(t *testing.T) {
 		// settingOrUnset only forgives the missing row. Anything else has to
 		// keep reaching the caller, or an outage reads as "not configured".
-		v, err := settingOrUnset(&settingFaultStore{}, "any.key")
+		v, err := handlers.SettingOrUnset(&settingFaultStore{}, "any.key")
 		if err == nil {
 			t.Fatalf("a broken read returned %q with no error", v)
 		}
@@ -124,7 +126,7 @@ func TestAFailedPlatformBackupRunAnswersWithAStatus(t *testing.T) {
 	}}
 	// PlatformDB only has to be NAMED for the handler to build a runner; the
 	// run refuses on the missing passphrase long before it dials anything.
-	h := &PlatformBackupHandler{state: &AppState{
+	h := &PlatformBackupHandler{state: &handlers.AppState{
 		Store:      st,
 		PlatformDB: services.PGConn{Name: "dylaris_db"},
 	}}

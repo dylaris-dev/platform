@@ -46,13 +46,6 @@ func (f *nameConflictStore) GetStorageConnection(int) (*models.StorageConnection
 	return &models.StorageConnection{}, nil // no stored secret to rebind; not the path under test
 }
 
-func backupStorageBody() []byte {
-	b, _ := json.Marshal(models.BackupStorage{
-		Name: "taken", Provider: "node-local", Config: []byte(`{"basePath":"/data"}`),
-	})
-	return b
-}
-
 func connectionBody() []byte {
 	b, _ := json.Marshal(storageConnectionRequest{Name: "taken", Provider: "s3", AccessKey: "AKIA"})
 	return b
@@ -68,27 +61,6 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		body     []byte
 		wantCode int
 	}{
-		{
-			name:     "backup storage create, duplicate name",
-			storeErr: store.ErrNameTaken,
-			call:     func(s *AppState, rw http.ResponseWriter, r *http.Request) { NewBackupHandler(s).CreateStorage(rw, r) },
-			method:   http.MethodPost, path: "/api/backup-storages", body: backupStorageBody(),
-			wantCode: http.StatusConflict,
-		},
-		{
-			name:     "backup storage rename, duplicate name",
-			storeErr: store.ErrNameTaken,
-			call:     func(s *AppState, rw http.ResponseWriter, r *http.Request) { NewBackupHandler(s).UpdateStorage(rw, r) },
-			method:   http.MethodPatch, path: "/api/backup-storages/5", body: backupStorageBody(),
-			wantCode: http.StatusConflict,
-		},
-		{
-			name:     "backup storage patch, ghost id",
-			storeErr: sql.ErrNoRows,
-			call:     func(s *AppState, rw http.ResponseWriter, r *http.Request) { NewBackupHandler(s).UpdateStorage(rw, r) },
-			method:   http.MethodPatch, path: "/api/backup-storages/9999", body: backupStorageBody(),
-			wantCode: http.StatusNotFound,
-		},
 		{
 			name:     "storage connection create, duplicate name",
 			storeErr: store.ErrNameTaken,

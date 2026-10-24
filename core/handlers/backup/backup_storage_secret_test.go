@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -131,7 +133,7 @@ func (f *backupSecretFakeStore) UpdateBackupStorage(s *models.BackupStorage) err
 // a settings.read holder does with it.
 func TestListStorages_NeverReturnsTheSecret(t *testing.T) {
 	st := &backupSecretFakeStore{list: []models.BackupStorage{s3Storage("leaked-secret-abc")}}
-	h := &BackupHandler{state: &AppState{Store: st}}
+	h := &BackupHandler{state: &handlers.AppState{Store: st}}
 
 	rec := httptest.NewRecorder()
 	h.ListStorages(rec, httptest.NewRequest(http.MethodGet, "/api/backup-storages", nil))
@@ -150,7 +152,7 @@ func TestListStorages_NeverReturnsTheSecret(t *testing.T) {
 func TestUpdateStorage_BlankSecretKeepsTheStoredOne(t *testing.T) {
 	existing := s3Storage("stored-secret-xyz")
 	st := &backupSecretFakeStore{byID: map[int]*models.BackupStorage{1: &existing}}
-	h := &BackupHandler{state: &AppState{Store: st}}
+	h := &BackupHandler{state: &handlers.AppState{Store: st}}
 
 	// The panel re-submits the redacted config (no secret).
 	blank := s3Storage("")
@@ -256,7 +258,7 @@ func TestValidateBackupStorageEndpoint(t *testing.T) {
 func TestUpdateStorage_RefusesARebindOnTheWire(t *testing.T) {
 	existing := s3StorageAt("https://objects.internal:9000", "backups", "AKIA", "stored-secret-xyz")
 	st := &backupSecretFakeStore{byID: map[int]*models.BackupStorage{1: &existing}}
-	h := &BackupHandler{state: &AppState{Store: st}}
+	h := &BackupHandler{state: &handlers.AppState{Store: st}}
 
 	redirected := s3StorageAt("https://attacker.example", "backups", "AKIA", "")
 	redirected.ID = 1
@@ -279,7 +281,7 @@ func TestUpdateStorage_RefusesARebindOnTheWire(t *testing.T) {
 // the helper.
 func TestCreateStorage_RefusesACredentialedEndpoint(t *testing.T) {
 	st := &backupSecretFakeStore{}
-	h := &BackupHandler{state: &AppState{Store: st}}
+	h := &BackupHandler{state: &handlers.AppState{Store: st}}
 
 	payload, _ := json.Marshal(s3StorageAt("https://AKIA:secret@objects.internal", "backups", "AKIA", "s"))
 	req := httptest.NewRequest(http.MethodPost, "/api/backup-storages", strings.NewReader(string(payload)))

@@ -1,4 +1,4 @@
-package handlers
+package backup
 
 import (
 	"bytes"
@@ -15,10 +15,15 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/pkg/netguard"
 	backupstorage "dylaris-core/storage/backup"
 )
+
+// pathOnContainerRootFS is this package's seam for the root-filesystem check
+// (tests replace it); it points at the same check handlers' core storage uses.
+var pathOnContainerRootFS = handlers.PathIsOnContainerRootFS
 
 // backupStorageProbePayload is the fixed content the round-trip probe writes and
 // reads back. Reading it back and comparing is what turns "writable" into

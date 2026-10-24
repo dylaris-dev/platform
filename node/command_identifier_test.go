@@ -165,7 +165,7 @@ func TestCoreStillNamesTheFlatIdentifiersThisWay(t *testing.T) {
 	uuidKey, subKey := tagOf("ServerUUID"), tagOf("SubServer")
 
 	for _, rel := range []string{
-		filepath.Join("..", "core", "handlers", "backup.go"),
+		filepath.Join("..", "core", "handlers", "backup", "backup.go"),
 		filepath.Join("..", "core", "services", "backup_scheduler.go"),
 	} {
 		src, err := os.ReadFile(rel)
