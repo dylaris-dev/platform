@@ -56,39 +56,6 @@ func TestConsoleStreamEndsAndResumesAfterTheLastLine(t *testing.T) {
 	}
 }
 
-// The live graph was fed the whole buffer on every connect. With streams
-// ending on a timer that would redraw it every few minutes.
-func TestStatsStreamReplaysTheBufferOnlyOnTheFirstConnect(t *testing.T) {
-	shortStreams(t)
-	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid"}}
-	rdb := newServerPowerRedis(t)
-	h := &StatsHandler{state: &AppState{Store: fs, Redis: rdb}}
-	rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: "dylaris:server:srv-uuid:stats:buffer", Values: map[string]any{"data": `{"cpu":1}`}})
-
-	run := func(lastID string) string {
-		req := httptest.NewRequest("GET", "/api/servers/1/stats/stream", nil)
-		req = mux.SetURLVars(req, map[string]string{"id": "1"})
-		if lastID != "" {
-			req.Header.Set("Last-Event-ID", lastID)
-		}
-		rec := httptest.NewRecorder()
-		done := make(chan struct{})
-		go func() { h.StreamStats(rec, req); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Fatal("the stats stream did not end on its own")
-		}
-		return rec.Body.String()
-	}
-	if body := run(""); !strings.Contains(body, `{"cpu":1}`) {
-		t.Fatalf("first connect = %q, want the buffer", body)
-	}
-	if body := run("live"); strings.Contains(body, `{"cpu":1}`) {
-		t.Fatalf("reconnect = %q, replayed the buffer", body)
-	}
-}
-
 // The ticket slides forward when a stream opens, not while it runs. A stream
 // that lived as long as the ticket reconnected with one that had just expired,
 // and the console went dead until a reload.
@@ -130,10 +97,6 @@ func TestStreamsOpenWithTheRetryLine(t *testing.T) {
 	console := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
 	if body := run("console", func(rec *httptest.ResponseRecorder) { console.StreamConsole(rec, req("/api/servers/1/console/stream")) }); !strings.HasPrefix(body, sseRetryLine) {
 		t.Errorf("console stream = %q, want it to open with %q", body, sseRetryLine)
-	}
-	stats := &StatsHandler{state: &AppState{Store: fs, Redis: rdb}}
-	if body := run("stats", func(rec *httptest.ResponseRecorder) { stats.StreamStats(rec, req("/api/servers/1/stats/stream")) }); !strings.HasPrefix(body, sseRetryLine) {
-		t.Errorf("stats stream = %q, want it to open with %q", body, sseRetryLine)
 	}
 	events := NewSystemEventsHandler(&AppState{Store: fs, Redis: rdb})
 	if body := run("events", func(rec *httptest.ResponseRecorder) { events.StreamEvents(rec, req("/api/system/events")) }); !strings.Contains(body, sseRetryLine) {

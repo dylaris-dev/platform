@@ -9,6 +9,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-core/storage"
 	"dylaris-core/storage/modpack"
+	"dylaris-core/store"
 )
 
 // Exported for the handlers/<domain> subpackages (packs, tickets, ...), which
@@ -99,3 +100,25 @@ const (
 	KeyCoreStorageS3AccessKey = keyCoreStorageS3AccessKey
 	KeyCoreStorageS3SecretKey = keyCoreStorageS3SecretKey
 )
+
+const StatsStreamsPerUser = statsStreamsPerUser
+
+func AcquireLiveStream(w http.ResponseWriter, r *http.Request, st store.Store, kind string, max int) (release func(), ok bool) {
+	return acquireLiveStream(w, r, st, kind, max)
+}
+
+func StreamContext(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc) {
+	return streamContext(w, r)
+}
+
+// SSERetryLine opens every SSE stream; exported for the subpackages' tests.
+const SSERetryLine = sseRetryLine
+
+// SetSSEMaxStreamAge changes how long an SSE stream lives before it ends and
+// the client reconnects, and returns the function that restores the previous
+// value. For tests: production never changes it.
+func SetSSEMaxStreamAge(d time.Duration) (restore func()) {
+	prev := sseMaxStreamAge
+	sseMaxStreamAge = d
+	return func() { sseMaxStreamAge = prev }
+}

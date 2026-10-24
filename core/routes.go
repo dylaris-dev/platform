@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/packs"
+	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/tickets"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -571,7 +572,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	placementHandler := handlers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
-	statsHandler := handlers.NewStatsHandler(appState)
+	statsHandler := stats.NewStatsHandler(appState)
 	memberHandler := handlers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := handlers.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
@@ -1466,8 +1467,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	dnsHandler := handlers.NewDNSHandler(appState)
 	trafficLimitHandler := handlers.NewTrafficLimitHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
-	metricsHandler := handlers.NewMetricsHandler(appState)
-	metricsDBHandler := handlers.NewMetricsDBHandler(appState)
+	metricsHandler := stats.NewMetricsHandler(appState)
+	metricsDBHandler := stats.NewMetricsDBHandler(appState)
 
 	// Admin endpoints (PANEL topology.* - global gateway oversight; Phase 4 Task 18)
 	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLinks))).Methods("GET")

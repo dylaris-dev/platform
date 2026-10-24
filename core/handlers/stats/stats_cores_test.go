@@ -1,4 +1,4 @@
-package handlers
+package stats
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -55,7 +57,7 @@ func TestServerCoresShowOnlyWhatIsTheReadersOwn(t *testing.T) {
 		Exclusive bool `json:"exclusive"`
 	}
 	get := func(servers []models.Server, admin bool) reply {
-		h := NewStatsHandler(&AppState{Store: &coresFakeStore{servers: servers}, Redis: rdb})
+		h := NewStatsHandler(&handlers.AppState{Store: &coresFakeStore{servers: servers}, Redis: rdb})
 		req := httptest.NewRequest("GET", "/api/servers/1/stats/cores", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "1"})
 		req = req.WithContext(context.WithValue(req.Context(), "isAdmin", admin))

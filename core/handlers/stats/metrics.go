@@ -1,4 +1,4 @@
-package handlers
+package stats
 
 import (
 	"encoding/csv"
@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/metrics"
 	"dylaris-core/services"
@@ -20,10 +22,12 @@ import (
 // nothing reachable over HTTP can put a number into a record whose whole value
 // is that it was measured.
 type MetricsHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewMetricsHandler(state *AppState) *MetricsHandler { return &MetricsHandler{state: state} }
+func NewMetricsHandler(state *handlers.AppState) *MetricsHandler {
+	return &MetricsHandler{state: state}
+}
 
 // ready reports whether there is a record to read, and writes the reason if not.
 //
@@ -63,7 +67,7 @@ func (h *MetricsHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	}
 	cov, err := metrics.ReadCoverage(r.Context(), handle.Read, handle.Resolution)
 	if err != nil {
-		sendJSONError(w, "Could not read the record: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Could not read the record: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	sendMetricsJSON(w, map[string]any{
@@ -85,7 +89,7 @@ func (h *MetricsHandler) Series(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to, err := windowFrom(q)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -93,11 +97,11 @@ func (h *MetricsHandler) Series(w http.ResponseWriter, r *http.Request) {
 	// a round trip each is the difference between one render and twelve.
 	names := splitCSV(q.Get("metric"))
 	if len(names) == 0 {
-		sendJSONError(w, "Name at least one metric.", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Name at least one metric.", http.StatusBadRequest)
 		return
 	}
 	if len(names) > 24 {
-		sendJSONError(w, "Too many metrics in one request (24 max).", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Too many metrics in one request (24 max).", http.StatusBadRequest)
 		return
 	}
 
@@ -118,7 +122,7 @@ func (h *MetricsHandler) Series(w http.ResponseWriter, r *http.Request) {
 			SplitSubjects: q.Get("split") == "1",
 		})
 		if err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		out = append(out, res...)
@@ -138,12 +142,12 @@ func (h *MetricsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := windowFrom(r.URL.Query())
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	rows, err := metrics.Summary(r.Context(), handle.Read, from, to)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	cov, _ := metrics.ReadCoverage(r.Context(), handle.Read, handle.Resolution)
@@ -166,7 +170,7 @@ func (h *MetricsHandler) Export(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to, err := windowFrom(q)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	names := splitCSV(q.Get("metric"))
@@ -190,7 +194,7 @@ func (h *MetricsHandler) Export(w http.ResponseWriter, r *http.Request) {
 			SplitSubjects: q.Get("split") == "1",
 		})
 		if err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		all = append(all, res...)

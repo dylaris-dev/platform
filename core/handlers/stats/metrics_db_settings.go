@@ -1,9 +1,12 @@
-package handlers
+package stats
 
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/metrics"
 	"dylaris-core/services"
@@ -17,10 +20,10 @@ import (
 // arrives with "and where" attached, and answering the first without the second
 // is what made this configurable only through an environment variable.
 type MetricsDBHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewMetricsDBHandler(state *AppState) *MetricsDBHandler {
+func NewMetricsDBHandler(state *handlers.AppState) *MetricsDBHandler {
 	return &MetricsDBHandler{state: state}
 }
 
@@ -103,11 +106,11 @@ func (h *MetricsDBHandler) Test(w http.ResponseWriter, r *http.Request) {
 	target := req.MetricsDBTarget
 
 	if !target.Configured() {
-		sendJSONError(w, "Enter the database to test first.", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Enter the database to test first.", http.StatusBadRequest)
 		return
 	}
 	if err := target.Validate(); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -169,14 +172,14 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	target := req.MetricsDBTarget
 	if err := target.Validate(); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Recording with nowhere to record is the one combination that cannot be
 	// stored. Switching the feature ON is a request for history, and there is
 	// no fallback database to give it to any more.
 	if req.Enabled && !target.Configured() {
-		sendJSONError(w, "Name the statistics database before switching recording on.",
+		handlers.SendJSONError(w, "Name the statistics database before switching recording on.",
 			http.StatusBadRequest)
 		return
 	}
@@ -189,14 +192,14 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	if target.Configured() {
 		probe = services.ProbeMetricsDB(r.Context(), target)
 		if !probe.Reachable {
-			sendJSONError(w, "Not saved, because the database could not be used: "+probe.Error,
+			handlers.SendJSONError(w, "Not saved, because the database could not be used: "+probe.Error,
 				http.StatusBadGateway)
 			return
 		}
 	}
 
 	if err := services.SaveMetricsDBTarget(h.state.Store, target); err != nil {
-		sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -205,7 +208,7 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// in whatever target is stored - so a switch that landed first would open a
 	// window recording into the OLD database.
 	if err := h.setRecording(r, req.Enabled); err != nil {
-		sendJSONError(w, "The database was saved but the switch was not: "+err.Error(),
+		handlers.SendJSONError(w, "The database was saved but the switch was not: "+err.Error(),
 			http.StatusInternalServerError)
 		return
 	}
@@ -254,7 +257,7 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 // The KEY is unchanged (`feature_metrics_enabled`); only the endpoint that owns
 // writing it moved.
 func (h *MetricsDBHandler) setRecording(r *http.Request, on bool) error {
-	if err := h.state.Store.SetSetting(services.MetricsEnabledSetting, boolStr(on)); err != nil {
+	if err := h.state.Store.SetSetting(services.MetricsEnabledSetting, strconv.FormatBool(on)); err != nil {
 		return err
 	}
 	h.state.FeatureFlags.Invalidate(services.MetricsEnabledSetting)
@@ -268,7 +271,7 @@ func (h *MetricsDBHandler) setRecording(r *http.Request, on bool) error {
 func (h *MetricsDBHandler) decodeAndMerge(w http.ResponseWriter, r *http.Request) (metricsDBRequest, bool) {
 	var req metricsDBRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return metricsDBRequest{}, false
 	}
 	req.MetricsDBTarget = req.MetricsDBTarget.Normalize()
