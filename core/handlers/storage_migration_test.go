@@ -100,7 +100,7 @@ func (f *storageMigrationFakeStore) InsertAuditIdentity(e *models.AuditEventIden
 // still succeeds there) while satisfying the string-prefix check either way.
 func storageMigrationTestRoot(t *testing.T, name string) string {
 	t.Helper()
-	root := filepath.Join("/", "dylaris-storage-migration-test-tmp")
+	root := filepath.Join(posixTestBase(), "dylaris-storage-migration-test-tmp")
 	dir := filepath.ToSlash(filepath.Join(root, t.Name(), name))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", dir, err)

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -188,9 +189,20 @@ func TestCoreStorage_GetConfig_NeverConfigured(t *testing.T) {
 // convention as the "/mnt/shared" literal already used in
 // core_storage_builder_test.go; a real t.TempDir() would fail the "/" check
 // on Windows and was deliberately not used here for that reason.
+// posixTestBase is where the "/"-prefixed test directories live: the drive
+// root on a Windows dev box (see testConnectionProbeDir), the OS temp dir
+// everywhere else. Not "/" on Linux: CI runs on GitHub-hosted runners, which
+// are not root, so nothing can be created at the filesystem root there.
+func posixTestBase() string {
+	if runtime.GOOS == "windows" {
+		return "/"
+	}
+	return os.TempDir()
+}
+
 func testConnectionProbeDir(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join("/", "dylaris-test-tmp")
+	root := filepath.Join(posixTestBase(), "dylaris-test-tmp")
 	dir := filepath.ToSlash(filepath.Join(root, t.Name()))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", dir, err)
