@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/backup"
+	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/tabs"
@@ -620,9 +621,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	tabProxySettingsHandler := tabs.NewTabProxySettingsHandler(appState)
-	usageHandler := handlers.NewUsageHandler(appState)
-	billingHandler := handlers.NewBillingHandler(appState)
-	entitlementHandler := handlers.NewEntitlementHandler(appState)
+	usageHandler := billing.NewUsageHandler(appState)
+	billingHandler := billing.NewBillingHandler(appState)
+	entitlementHandler := billing.NewEntitlementHandler(appState)
 	plansHandler := handlers.NewPlansHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
@@ -1467,7 +1468,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Gateway Endpoints ---
 	gatewayHandler := handlers.NewGatewayHandler(appState)
 	dnsHandler := handlers.NewDNSHandler(appState)
-	trafficLimitHandler := handlers.NewTrafficLimitHandler(appState)
+	trafficLimitHandler := billing.NewTrafficLimitHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 	metricsHandler := stats.NewMetricsHandler(appState)
 	metricsDBHandler := stats.NewMetricsDBHandler(appState)
@@ -1664,7 +1665,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Store-linking (dylaris.com). Gated by StoreEnabled inside each handler.
 	// link/start + status are panel-user authed; link/verify + verify-user are
 	// service-to-service (shared key in X-Store-Key, no panel session).
-	storeHandler := handlers.NewStoreHandler(appState)
+	storeHandler := billing.NewStoreHandler(appState)
 	api.HandleFunc("/store/link/start", authHandler.AuthMiddleware(storeHandler.LinkStart)).Methods("POST")
 	api.HandleFunc("/store/status", authHandler.AuthMiddleware(storeHandler.Status)).Methods("GET")
 	// The tenant's own subscription and the two billing switches. Session-authed

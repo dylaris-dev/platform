@@ -118,44 +118,6 @@ func (f *termsStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error)
 }
 func (f *termsStore) GetPanelRole(int) (*store.PanelRole, error) { return nil, nil }
 
-// plans.write is not an admin capability. Its holder granted themselves BYON
-// and unlimited limits, or lifted their own suspension, on four routes where
-// only the billing status asked whose account it was.
-func TestPlansWriteCannotBeSpentOnTheCallersOwnAccount(t *testing.T) {
-	calls := map[string]func(s *AppState, w http.ResponseWriter, r *http.Request){
-		"entitlement grant": func(s *AppState, w http.ResponseWriter, r *http.Request) { (&EntitlementHandler{state: s}).Grant(w, r) },
-		"entitlement revoke": func(s *AppState, w http.ResponseWriter, r *http.Request) {
-			(&EntitlementHandler{state: s}).Revoke(w, r)
-		},
-		"limit overrides": func(s *AppState, w http.ResponseWriter, r *http.Request) {
-			(&PlansHandler{state: s}).SetUserLimitOverrides(w, r)
-		},
-		"billing overrides": func(s *AppState, w http.ResponseWriter, r *http.Request) {
-			(&BillingHandler{state: s}).SetBillingOverrides(w, r)
-		},
-	}
-	for name, call := range calls {
-		t.Run(name+"/own account", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: staffID}}
-			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
-			rw := httptest.NewRecorder()
-			call(s, rw, staffRequest("POST", map[string]string{"id": staffID}, `{"kind":"byon","days":30}`))
-			if rw.Code != http.StatusForbidden {
-				t.Fatalf("status %d on the caller's own account", rw.Code)
-			}
-		})
-		t.Run(name+"/an admin", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: visAdmin, IsAdmin: true}}
-			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
-			rw := httptest.NewRecorder()
-			call(s, rw, staffRequest("POST", map[string]string{"id": visAdmin}, `{"kind":"byon","days":30}`))
-			if rw.Code != http.StatusForbidden {
-				t.Fatalf("status %d on an admin's account", rw.Code)
-			}
-		})
-	}
-}
-
 // TransferServer asked only where the CALLER may place, and an admin may place
 // on a node of their own: the same move MoveServer refuses, through the other door.
 func TestATransferIsNotOntoTheCallersOwnMachine(t *testing.T) {
@@ -204,5 +166,36 @@ func TestADemoLoginRefusesAnAccountThatGainedStaffRights(t *testing.T) {
 	(&AuthHandler{state: &AppState{Store: st, StoreEnabled: true}, jwtKey: []byte("k")}).DemoLogin(rw, httptest.NewRequest("POST", "/x", nil))
 	if rw.Code != http.StatusNotFound {
 		t.Fatalf("a demo session was issued for a staff account: status %d", rw.Code)
+	}
+}
+
+// plans.write is not an admin capability. Its holder granted themselves BYON
+// and unlimited limits, or lifted their own suspension, on four routes where
+// only the billing status asked whose account it was.
+func TestPlansWriteCannotBeSpentOnTheCallersOwnAccount(t *testing.T) {
+	calls := map[string]func(s *AppState, w http.ResponseWriter, r *http.Request){
+		"limit overrides": func(s *AppState, w http.ResponseWriter, r *http.Request) {
+			(&PlansHandler{state: s}).SetUserLimitOverrides(w, r)
+		},
+	}
+	for name, call := range calls {
+		t.Run(name+"/own account", func(t *testing.T) {
+			st := &termsStore{target: &models.User{ID: staffID}}
+			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
+			rw := httptest.NewRecorder()
+			call(s, rw, staffRequest("POST", map[string]string{"id": staffID}, `{"kind":"byon","days":30}`))
+			if rw.Code != http.StatusForbidden {
+				t.Fatalf("status %d on the caller's own account", rw.Code)
+			}
+		})
+		t.Run(name+"/an admin", func(t *testing.T) {
+			st := &termsStore{target: &models.User{ID: visAdmin, IsAdmin: true}}
+			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
+			rw := httptest.NewRecorder()
+			call(s, rw, staffRequest("POST", map[string]string{"id": visAdmin}, `{"kind":"byon","days":30}`))
+			if rw.Code != http.StatusForbidden {
+				t.Fatalf("status %d on an admin's account", rw.Code)
+			}
+		})
 	}
 }

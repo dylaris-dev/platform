@@ -1,4 +1,4 @@
-package handlers
+package billing
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -195,7 +197,7 @@ func newStoreLinkRedis(t *testing.T) *redis.Client {
 const storeLinkTestKey = "test-shared-key"
 
 func newStoreLinkHandler(fs *storeLinkFakeStore, rdb *redis.Client, withBilling bool) *StoreHandler {
-	state := &AppState{
+	state := &handlers.AppState{
 		Store:          fs,
 		Redis:          rdb,
 		StoreEnabled:   true,
@@ -221,7 +223,7 @@ func storeLinkPost(path string, body map[string]interface{}, storeKey string) *h
 func TestStoreHandler_RequireStoreKeyGate(t *testing.T) {
 	t.Run("store integration disabled returns 404", func(t *testing.T) {
 		fs := &storeLinkFakeStore{}
-		h := &StoreHandler{state: &AppState{Store: fs, StoreEnabled: false}}
+		h := &StoreHandler{state: &handlers.AppState{Store: fs, StoreEnabled: false}}
 		rec := httptest.NewRecorder()
 		h.LinkVerify(rec, storeLinkPost("/api/store/link/verify", map[string]interface{}{"token": "x"}, "anything"))
 		if rec.Code != http.StatusNotFound {

@@ -1,12 +1,8 @@
 package handlers
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
-	"time"
 
-	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -68,70 +64,3 @@ func TestVoiceOverviewListsIdlePortHolders(t *testing.T) {
 		t.Error("relays must encode as [], not null")
 	}
 }
-
-type voicePoolStore struct {
-	store.Store
-	cells []store.RegionUsage
-}
-
-func (f *voicePoolStore) GetTrafficUsageRegions(string, time.Time) ([]store.RegionUsage, error) {
-	return f.cells, nil
-}
-
-func (f *voicePoolStore) GetTrafficLimit(scope, region, kind string) (*models.TrafficLimit, error) {
-	if scope != services.TrafficScopeDefault {
-		return nil, nil
-	}
-	gb := int64(100)
-	return &models.TrafficLimit{IncludedGB: &gb}, nil
-}
-
-// Voice rides in the player pool as a subset: the pool reports it, and its
-// usedGb is the plain sum of bytes, exactly as before voice existed. Bytes are
-// whole GB so a voice share added on top would move usedGb.
-func TestFoldTrafficCellsCarriesVoice(t *testing.T) {
-	fs := &voicePoolStore{cells: []store.RegionUsage{
-		{Region: "eu", Kind: store.TrafficKindEdge, Product: store.TrafficProductBYON, Bytes: 1000 * trafficGB, VoiceBytes: 300 * trafficGB},
-		{Region: "eu", Kind: store.TrafficKindEdge, Product: store.TrafficProductRoute, Bytes: 500 * trafficGB, VoiceBytes: 0},
-	}}
-	h := &BillingHandler{state: &AppState{Store: fs}}
-	one := int64(1)
-	st := h.trafficStatusFor("u1", &store.UserBilling{MaxNodes: &one})
-	if st == nil {
-		t.Fatal("no traffic status")
-	}
-	var edge *trafficPool
-	for i := range st.Pools {
-		if st.Pools[i].Kind == store.TrafficKindEdge {
-			edge = &st.Pools[i]
-		}
-	}
-	if edge == nil {
-		t.Fatalf("no edge pool in %+v", st.Pools)
-	}
-	if edge.VoiceBytes != 300*trafficGB {
-		t.Errorf("voiceBytes = %d, want %d", edge.VoiceBytes, 300*trafficGB)
-	}
-	if edge.UsedGB != 1500 {
-		t.Errorf("usedGb = %d, want 1500 - voice must not be added on top", edge.UsedGB)
-	}
-}
-
-// Core without Redis answers 503, not a nil-pointer panic in the relay lookup.
-func TestVoiceOverviewWithoutRedis(t *testing.T) {
-	rec := httptest.NewRecorder()
-	NewVoiceStatsHandler(&AppState{Store: voiceOverviewStore{}}).GetOverview(rec, httptest.NewRequest(http.MethodGet, "/api/voice/overview", nil))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status %d, want 503", rec.Code)
-	}
-}
-
-type voiceOverviewStore struct{ store.Store }
-
-func (voiceOverviewStore) ListVoicePorts() ([]store.VoicePort, error) { return nil, nil }
-func (voiceOverviewStore) ListVoiceUsage(time.Time) ([]store.VoiceUsageRow, error) {
-	return nil, nil
-}
-
-func (f *voicePoolStore) GetUserDataBillingEnabled(string) (bool, error) { return false, nil }
-func (f *voicePoolStore) GetSetting(string) (string, error)              { return "", nil }

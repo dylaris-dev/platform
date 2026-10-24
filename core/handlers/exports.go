@@ -174,3 +174,27 @@ func SyncCustomTabsModule(state *AppState, enabled bool, audience string) error 
 }
 
 func IsDemoAccount(s *AppState, userID string) bool { return isDemoAccount(s, userID) }
+
+func GuardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
+	return guardAccountTerms(w, r, state, userID)
+}
+
+func ByonCallerID(r *http.Request) string { return byonCallerID(r) }
+
+func ValidatePublicBaseURL(subject, raw string) error { return validatePublicBaseURL(subject, raw) }
+
+func UserRouteScope(userID string) string { return userRouteScope(userID) }
+
+func UsagePeriod(r *http.Request) time.Time { return usagePeriod(r) }
+
+func (s *AppState) ProbeStoreLink(ctx context.Context, uuid string) (bool, string, error) {
+	return s.probeStoreLink(ctx, uuid)
+}
+
+func (s *AppState) StoreAccountSummary(ctx context.Context, uuid string) (map[string]interface{}, error) {
+	return s.storeAccountSummary(ctx, uuid)
+}
+
+func (s *AppState) StoreSetBillingConsent(ctx context.Context, uuid string, traffic, backup *bool) (int, string, error) {
+	return s.storeSetBillingConsent(ctx, uuid, traffic, backup)
+}

@@ -1,8 +1,10 @@
-package handlers
+package billing
 
 import (
 	"testing"
 	"time"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -55,7 +57,7 @@ func TestPurchaseRetiresTheGrantItCovers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &retireStore{}
-			h := &StoreHandler{state: &AppState{Store: fs}}
+			h := &StoreHandler{state: &handlers.AppState{Store: fs}}
 			h.retireGrantsCoveredByPurchase("u1", tt.nodes, tt.setNodes, tt.links, tt.setLinks)
 			if got := fs.cleared[services.EntitlementByon]; got != tt.wantByon {
 				t.Errorf("byon grant retired = %v, want %v", got, tt.wantByon)

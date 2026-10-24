@@ -1,4 +1,4 @@
-package handlers
+package billing
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -21,10 +23,10 @@ import (
 // may use how much, and Core is the ONLY place that number exists - the store
 // used to hold a second copy for the pricing page and the two drifted apart.
 type TrafficLimitHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewTrafficLimitHandler(state *AppState) *TrafficLimitHandler {
+func NewTrafficLimitHandler(state *handlers.AppState) *TrafficLimitHandler {
 	return &TrafficLimitHandler{state: state}
 }
 
@@ -313,15 +315,15 @@ func (h *TrafficLimitHandler) SetDataThrottle(w http.ResponseWriter, r *http.Req
 		Mbit int `json:"mbit"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Mbit < services.DataThrottleMinMbit || req.Mbit > 100000 {
-		sendJSONError(w, fmt.Sprintf("The throttle must be between %d and 100000 Mbit/s", services.DataThrottleMinMbit), http.StatusBadRequest)
+		handlers.SendJSONError(w, fmt.Sprintf("The throttle must be between %d and 100000 Mbit/s", services.DataThrottleMinMbit), http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetSetting(services.DataThrottleSettingKey, strconv.Itoa(req.Mbit)); err != nil {
-		sendJSONError(w, "Failed to save", http.StatusInternalServerError)
+		handlers.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mbit": req.Mbit})

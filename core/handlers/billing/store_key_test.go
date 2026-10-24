@@ -1,10 +1,12 @@
-package handlers
+package billing
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers"
 )
 
 // TestRequireStoreKey pins the store-linking service-to-service trust gate
@@ -85,7 +87,7 @@ func TestRequireStoreKey(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h := &StoreHandler{state: &AppState{StoreEnabled: c.storeEnabled, StoreSharedKey: c.sharedKey}}
+			h := &StoreHandler{state: &handlers.AppState{StoreEnabled: c.storeEnabled, StoreSharedKey: c.sharedKey}}
 			r := httptest.NewRequest("POST", "/api/store/link/verify", nil)
 			if c.setHeader {
 				r.Header.Set("X-Store-Key", c.header)
@@ -119,8 +121,8 @@ func TestRequireStoreKey(t *testing.T) {
 // and a shared per-IP count let anyone with a store account starve them.
 // Everyone without the key still is.
 func TestTheStoreKeySkipsTheRateLimit(t *testing.T) {
-	h := &StoreHandler{state: &AppState{StoreEnabled: true, StoreSharedKey: "secret"}}
-	limited := h.LimitUnlessStoreKey(NewIPRateLimiter(), 2, func(w http.ResponseWriter, _ *http.Request) {
+	h := &StoreHandler{state: &handlers.AppState{StoreEnabled: true, StoreSharedKey: "secret"}}
+	limited := h.LimitUnlessStoreKey(handlers.NewIPRateLimiter(), 2, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	call := func(key string) int {

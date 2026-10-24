@@ -32,6 +32,7 @@ func Generate(coreDir string) (string, error) {
 	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{
 		filepath.Join(coreDir, "handlers"),
 		filepath.Join(coreDir, "handlers", "packs"),
+		filepath.Join(coreDir, "handlers", "billing"),
 		filepath.Join(coreDir, "handlers", "tabs"),
 		filepath.Join(coreDir, "handlers", "backup"),
 		filepath.Join(coreDir, "handlers", "stats"),

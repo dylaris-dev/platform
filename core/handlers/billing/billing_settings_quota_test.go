@@ -1,4 +1,4 @@
-package handlers
+package billing
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"dylaris-core/handlers"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -75,7 +77,7 @@ func (f *billingSettingsFakeStore) BackupBytesByOwner(string) (int64, error) { r
 // key AT ALL. Driven as the panel drives it - read, send back unchanged.
 func TestBillingSettingsRoundTripDoesNotTouchTheBackupAllowance(t *testing.T) {
 	st := &billingSettingsFakeStore{kv: map[string]string{}}
-	h := &BillingHandler{state: &AppState{Store: st}}
+	h := &BillingHandler{state: &handlers.AppState{Store: st}}
 
 	if exceeded, _, _ := services.BackupAllowanceExceeded(st, "u1", true, nil); exceeded {
 		t.Fatal("a fresh install already reports the backup allowance as exceeded")
@@ -110,7 +112,7 @@ func TestBillingSettingsRoundTripDoesNotTouchTheBackupAllowance(t *testing.T) {
 // last defect of this shape stayed alive past its fix.
 func TestBillingSettingsIgnoresALegacyQuotaField(t *testing.T) {
 	st := &billingSettingsFakeStore{kv: map[string]string{}}
-	h := &BillingHandler{state: &AppState{Store: st}}
+	h := &BillingHandler{state: &handlers.AppState{Store: st}}
 	body := billingSettingsBody(map[string]string{"r2QuotaGb": "0"})
 	rec := httptest.NewRecorder()
 	h.SetBillingSettings(rec, httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader(body)))
@@ -136,7 +138,7 @@ func TestBillingSettingsCarryTheBackupAllowances(t *testing.T) {
 		// the bookable amount has somebody to tell.
 		tenants: []store.UserBilling{{UserID: "u1", MaxNodes: &units, BackupBillingEnabled: true}},
 	}
-	h := &BillingHandler{state: &AppState{Store: st}}
+	h := &BillingHandler{state: &handlers.AppState{Store: st}}
 
 	rec := httptest.NewRecorder()
 	h.GetBillingSettings(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
@@ -219,7 +221,7 @@ func TestUserBillingDefaultsDoNotInventAQuotaOfZero(t *testing.T) {
 				kv[services.SettingBackupDefaultUserQuota] = tt.stored
 			}
 			st := &billingSettingsFakeStore{kv: kv}
-			h := &BillingHandler{state: &AppState{Store: st}}
+			h := &BillingHandler{state: &handlers.AppState{Store: st}}
 
 			rec := httptest.NewRecorder()
 			h.GetUserBilling(rec, httptest.NewRequest(http.MethodGet, "/api/admin/users/u1/billing", nil))

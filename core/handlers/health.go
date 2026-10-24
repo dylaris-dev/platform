@@ -266,8 +266,7 @@ func (h *HealthHandler) storefrontComponent(ctx context.Context) healthComponent
 
 	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	defer cancel()
-	sh := NewStoreHandler(h.state)
-	if _, _, err := sh.probeLinkStatus(cctx, healthProbeUUID); err != nil {
+	if _, _, err := h.state.probeStoreLink(cctx, healthProbeUUID); err != nil {
 		comp.Status = "down"
 		comp.Cause = "storefront_unreachable"
 		comp.Detail = "Cannot talk to " + h.state.StoreURL
