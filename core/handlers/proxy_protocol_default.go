@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/store"
 )
 
 // proxyProtocolDefaultSince is the node release that writes the real-IP
@@ -43,12 +44,24 @@ func nodeReleaseAtLeast(ctx context.Context, st *AppState, nodeToken, since stri
 // so the node writes or confirms the setting, including after a config wipe;
 // anything else is refused with 409 and nothing is written. Answers false,
 // false while the switch is off.
-func proxyProtocolInstallGate(w http.ResponseWriter, srv *models.Server, installerType, version string) (keep, refused bool) {
+//
+// In auto mode nothing is refused: forwarding is switched off before an
+// install that cannot be set up for it, and the auto reconcile turns it on
+// again once the new software's status ping shows it expects the header.
+func proxyProtocolInstallGate(w http.ResponseWriter, st *AppState, srv *models.Server, installerType, version string) (keep, refused bool) {
 	if !srv.ProxyProtocol {
 		return false, false
 	}
 	if services.ProxyProtocolDefaultSoftware(installerType, version) {
 		return true, false
+	}
+	if st != nil && st.Store != nil {
+		if mode, err := st.Store.GetServerProxyMode(srv.ID); err == nil && mode == store.ProxyModeAuto {
+			if err := services.ApplyServerProxyProtocol(context.Background(), st.Store, st.Redis, st.Gateway, srv.ID, srv.UUID, false); err == nil {
+				srv.ProxyProtocol = false
+				return false, false
+			}
+		}
 	}
 	sendJSONErrorCode(w, "Real player IP is on for this server, and this install cannot be set up to expect it, so nobody could join. Turn off Real player IP (Routes) first, then install.",
 		"proxy_protocol_on", http.StatusConflict)

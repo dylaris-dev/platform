@@ -235,6 +235,10 @@ type Store interface {
 	SetVoicePermission(scope string, allowed bool) error
 	DeleteVoicePermission(scope string) error
 	ListVoicePermissions() ([]VoicePermission, error)
+	// Real player IP mode per server (proxy_protocol_mode.go).
+	GetServerProxyMode(id int) (string, error)
+	SetServerProxyMode(id int, mode string) error
+	ListProxyAutoServers() ([]ProxyAutoServer, error)
 	// Extra ports per server in direct routing (server_ports.go).
 	ListServerPorts(serverID int) ([]ServerPort, error)
 	ListAllServerPorts(q string) ([]ServerPortRow, error)

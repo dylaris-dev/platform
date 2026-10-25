@@ -4053,6 +4053,16 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/proxy-protocol",
+      "auth": "session",
+      "authorization": "network.read",
+      "description": "the owner's mode, the forwarding applied now, and what the server's status ping showed: \"yes\" (expects a PROXY header), \"no\", or \"unknown\" (not reported yet, or an older node).",
+      "handler": "GatewayHandler.GetServerProxyProtocol",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "PATCH",
       "path": "/api/servers/{id:[0-9]+}/proxy-protocol",
       "auth": "session",
@@ -5553,10 +5563,10 @@
     }
   ],
   "counts": {
-    "total": 558,
+    "total": 559,
     "byAuth": {
       "none": 31,
-      "session": 511,
+      "session": 512,
       "user API key": 10,
       "warp key": 6
     },
@@ -5591,7 +5601,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 90,
+      "servers": 91,
       "settings": 28,
       "setup": 2,
       "share": 1,

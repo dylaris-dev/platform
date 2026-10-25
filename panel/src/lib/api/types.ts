@@ -1276,6 +1276,16 @@ export const getGatewayRouteOptions = (): Promise<GatewayRouteOptions> => fetchA
 export const setServerProxyProtocol = (serverId: number, enabled: boolean): Promise<{ success?: boolean; proxyProtocol?: boolean; message?: string; error?: string; code?: string }> =>
     fetchAPI(`/servers/${serverId}/proxy-protocol`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
+// Real player IP mode per server: auto forwards once the server's status ping
+// shows it expects the header (`detected`), on always, off never. `active` is
+// what the gateway does right now.
+export type ProxyMode = 'auto' | 'on' | 'off';
+export interface ServerProxyState { mode: ProxyMode; active: boolean; detected: 'yes' | 'no' | 'unknown' }
+export const getServerProxyMode = (serverId: number): Promise<{ success?: boolean; error?: string } & Partial<ServerProxyState>> =>
+    fetchAPI(`/servers/${serverId}/proxy-protocol`);
+export const setServerProxyMode = (serverId: number, mode: ProxyMode): Promise<{ success?: boolean; proxyProtocol?: boolean; mode?: ProxyMode; message?: string; error?: string; code?: string }> =>
+    fetchAPI(`/servers/${serverId}/proxy-protocol`, { method: 'PATCH', body: JSON.stringify({ mode }) });
+
 // Voice chat for one server. `allowed` is whether it may be turned ON here;
 // turning it off is never refused (except for a suspended owner).
 export interface ServerVoice {

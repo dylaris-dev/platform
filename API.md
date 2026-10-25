@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **557 routes** in 53 sections: 246 GET, 165 POST, 49 PUT, 39 PATCH, 59 DELETE.
+- **558 routes** in 53 sections: 247 GET, 165 POST, 49 PUT, 39 PATCH, 59 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **369** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **370** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (90)
+- [/api/servers](#apiservers) (91)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -742,6 +742,7 @@ can still show what exists.
 | PUT | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.LinkServerToProxy` | Link a game server to a proxy server |
 | DELETE | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.UnlinkServerFromProxy` | Remove a server's proxy link |
 | GET | `/api/servers/{id:[0-9]+}/proxy-endpoint` | session | `network.read` | - | `ServerHandler.GetProxyEndpoint` | returns the private IP a server holds inside its proxy's overlay network. |
+| GET | `/api/servers/{id:[0-9]+}/proxy-protocol` | session | `network.read` | RequireGatewayEnabled | `GatewayHandler.GetServerProxyProtocol` | the owner's mode, the forwarding applied now, and what the server's status ping showed: "yes" (expects a PROXY header), "no", or "unknown" (not reported yet, or an older node). |
 | PATCH | `/api/servers/{id:[0-9]+}/proxy-protocol` | session | `network.write` | RequireGatewayEnabled | `GatewayHandler.SetServerProxyProtocol` | switches real player IP forwarding (a PROXY v2 header from the gateway) for one server. |
 | POST | `/api/servers/{id:[0-9]+}/rcon` | session | `rcon.exec` | - | `RconHandler.ExecForUser` | panel-side entry. |
 | GET | `/api/servers/{id:[0-9]+}/rcon/config` | session | `config.read` | - | `RconHandler.GetConfig` | returns enabled/port + whether a password is set. |

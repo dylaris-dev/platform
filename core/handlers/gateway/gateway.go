@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/models"
+	"dylaris-core/store"
 
 	"dylaris-core/services"
 
@@ -789,15 +791,25 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
 		return
 	}
-	enabled, ok := decodeProxyProtocolBody(r)
+	mode, ok := decodeProxyModeBody(r)
 	if !ok {
-		handlers.SendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
+		handlers.SendJSONError(w, `Invalid request: expected {"mode": "auto"|"on"|"off"}`, http.StatusBadRequest)
 		return
 	}
+	if mode == store.ProxyModeAuto {
+		h.setServerProxyAuto(w, r, srv)
+		return
+	}
+	enabled := mode == store.ProxyModeOn
 	if h.proxyProtocolOff(w, r, enabled) {
 		return
 	}
 	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return services.RouteBelongsToServer(rt, srv.UUID) }) {
+		return
+	}
+	if err := h.state.Store.SetServerProxyMode(srv.ID, mode); err != nil {
+		log.Printf("proxy-protocol: server %d: mode: %v", srv.ID, err)
+		handlers.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
 		return
 	}
 	if err := services.ApplyServerProxyProtocol(r.Context(), h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, enabled); err != nil {
@@ -820,5 +832,76 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 			log.Printf("proxy-protocol: server %d: recording %s: %v", srv.ID, srv.ActiveSubServer, err)
 		}
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "proxyProtocol": enabled})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "proxyProtocol": enabled, "mode": mode})
+}
+
+// decodeProxyModeBody reads {"mode": "auto"|"on"|"off"}, or the older
+// {"enabled": bool} (true = on, false = off). One of the two is required: an
+// empty body must not read as "switch it off".
+func decodeProxyModeBody(r *http.Request) (string, bool) {
+	var req struct {
+		Mode    *string `json:"mode"`
+		Enabled *bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return "", false
+	}
+	switch {
+	case req.Mode != nil:
+		return *req.Mode, store.ValidProxyMode(*req.Mode)
+	case req.Enabled != nil && *req.Enabled:
+		return store.ProxyModeOn, true
+	case req.Enabled != nil:
+		return store.ProxyModeOff, true
+	}
+	return "", false
+}
+
+// setServerProxyAuto stores "auto" and makes the applied forwarding safe at
+// once: forwarding the server has not shown it expects is switched off now,
+// and the reconcile (services/proxy_protocol_auto.go) turns it on within 20 s
+// once the node reports that it does. Never refused: auto cannot lock anyone
+// out.
+func (h *GatewayHandler) setServerProxyAuto(w http.ResponseWriter, r *http.Request, srv *models.Server) {
+	if err := h.state.Store.SetServerProxyMode(srv.ID, store.ProxyModeAuto); err != nil {
+		log.Printf("proxy-protocol: server %d: mode: %v", srv.ID, err)
+		handlers.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+		return
+	}
+	ready, _ := h.state.Redis.Get(r.Context(), services.ServerProxyReadyKey(srv.UUID)).Result()
+	if srv.ProxyProtocol && ready != "1" {
+		if err := services.ApplyServerProxyProtocol(r.Context(), h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, false); err != nil {
+			log.Printf("proxy-protocol: server %d: auto: %v", srv.ID, err)
+			handlers.SendJSONError(w, "The setting was saved, but forwarding could not be switched off yet. Save again.", http.StatusBadGateway)
+			return
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mode": store.ProxyModeAuto, "proxyProtocol": srv.ProxyProtocol && ready == "1"})
+}
+
+// GetServerProxyProtocol GET /api/servers/{id}/proxy-protocol - the owner's
+// mode, the forwarding applied now, and what the server's status ping showed:
+// "yes" (expects a PROXY header), "no", or "unknown" (not reported yet, or an
+// older node).
+func (h *GatewayHandler) GetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
+	srv, err := h.state.Store.GetServerByID(handlers.MustAtoi(mux.Vars(r)["id"]))
+	if err != nil || srv == nil {
+		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	mode, err := h.state.Store.GetServerProxyMode(srv.ID)
+	if err != nil {
+		handlers.SendJSONError(w, "Failed to read the setting", http.StatusInternalServerError)
+		return
+	}
+	detected := "unknown"
+	if h.state.Redis != nil {
+		switch v, _ := h.state.Redis.Get(r.Context(), services.ServerProxyReadyKey(srv.UUID)).Result(); v {
+		case "1":
+			detected = "yes"
+		case "0":
+			detected = "no"
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mode": mode, "active": srv.ProxyProtocol, "detected": detected})
 }

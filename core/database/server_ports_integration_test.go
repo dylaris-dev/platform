@@ -89,3 +89,61 @@ func TestIntegrationServerPorts(t *testing.T) {
 		t.Fatal("a deleted server's port survived")
 	}
 }
+
+// The mode backfill runs only in the boot that creates the column: a later
+// boot must not turn "auto, and active" (proxy_protocol=true) into "on".
+func TestIntegrationProxyModeBackfillRunsOnce(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st)
+	if err := st.SetServerProxyMode(f.server.ID, "auto"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetServerProxyProtocol(f.server.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyProxyProtocolModeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := st.GetServerProxyMode(f.server.ID); m != "auto" {
+		t.Fatalf("mode after a second boot = %q, want auto", m)
+	}
+	auto, err := st.ListProxyAutoServers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range auto {
+		if a.ID == f.server.ID {
+			found = a.Active
+		}
+	}
+	if !found {
+		t.Fatalf("auto list %+v does not carry the server as active", auto)
+	}
+	if _, err := db.Exec(`UPDATE servers SET proxy_protocol_mode = 'sometimes' WHERE id = $1`, f.server.ID); err == nil {
+		t.Fatal("the CHECK let an unknown mode in")
+	}
+}
+
+// The boot that creates the column keeps every server that had the switch on
+// at "on" and puts every other one on "auto".
+func TestIntegrationProxyModeBackfillKeepsTheSwitch(t *testing.T) {
+	db, st := integrationDB(t)
+	on := newFixture(t, st)
+	off := newFixture(t, st)
+	if err := st.SetServerProxyProtocol(on.server.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE servers DROP COLUMN proxy_protocol_mode`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyProxyProtocolModeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := st.GetServerProxyMode(on.server.ID); m != "on" {
+		t.Fatalf("server with the switch on: mode %q, want on", m)
+	}
+	if m, _ := st.GetServerProxyMode(off.server.ID); m != "auto" {
+		t.Fatalf("server with the switch off: mode %q, want auto", m)
+	}
+}

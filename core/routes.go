@@ -1512,6 +1512,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.CreateServerRoute)))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.DeleteServerRoute))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.SetServerProxyProtocol)))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(appState.RequireGatewayEnabled(gatewayHandler.GetServerProxyProtocol)))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(appState.RequireGatewayEnabled(gatewayHandler.GetServerVoice)))).Methods("GET")
 	// No RequireGatewayEnabled: turning voice off must work with the gateway
 	// off; SetServerVoice gates the enable itself.

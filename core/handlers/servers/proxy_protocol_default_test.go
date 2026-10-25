@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
 
@@ -25,6 +26,14 @@ type proxyDefaultStore struct {
 	ppWrites  []bool
 	ppErr     error
 	activeErr error
+	mode      string // "" reads as "on": the switch these tests turn on by hand
+}
+
+func (f *proxyDefaultStore) GetServerProxyMode(int) (string, error) {
+	if f.mode == "" {
+		return store.ProxyModeOn, nil
+	}
+	return f.mode, nil
 }
 
 func (f *proxyDefaultStore) ListSubServerInstalls(int) ([]models.SubServerInstall, error) {
@@ -305,6 +314,24 @@ func TestInstallWhileOnRefusesSoftwareThatCannotExpectIt(t *testing.T) {
 		if len(queuedInstaller(t, rdb)) != 0 || ps.setupWrites != 0 || len(ps.ppWrites) != 0 {
 			t.Fatalf("%v: something was written after the refusal", inst)
 		}
+	}
+}
+
+// In auto mode the same installs go through: forwarding is switched off first,
+// and the reconcile turns it on again if the new software shows it expects the
+// header.
+func TestInstallInAutoModeSwitchesForwardingOffInsteadOfRefusing(t *testing.T) {
+	h, ps, rdb := newProxyOnTest(t)
+	ps.mode = store.ProxyModeAuto
+	rec := setupWith(h, map[string]string{"type": "fabric", "version": "1.21.4"}, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(ps.ppWrites) == 0 || ps.ppWrites[0] != false {
+		t.Fatalf("column writes %v, want forwarding switched off before the install", ps.ppWrites)
+	}
+	if inst := queuedInstaller(t, rdb); len(inst) != 1 || inst[0]["proxyProtocol"] == true {
+		t.Fatalf("queued %v, want the install without the PROXY request", inst)
 	}
 }
 

@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.6
+
+### Features
+- **Real player IP turns itself on.** Install a PROXY protocol plugin or mod (or set Paper's
+  proxy-protocol) and restart. Route-only keeps its switch for now. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.5
 
 ### Features

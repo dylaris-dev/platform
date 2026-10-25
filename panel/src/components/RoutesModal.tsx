@@ -3,13 +3,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CopyText from '@/components/ui/CopyText';
 import {
-    getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability, setServerProxyProtocol,
+    getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability,
     GatewayRoute, CreateRouteRequest, Server,
 } from '@/lib/api';
 import { Globe, Plus, Trash2, X, Check, AlertTriangle } from 'lucide-react';
 import RouteDomainPicker from '@/components/RouteDomainPicker';
 import ModalPanel from '@/components/ui/ModalPanel';
-import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
+import ServerProxyMode from '@/components/ServerProxyMode';
 import VoiceChatSwitch from '@/components/VoiceChatSwitch';
 import { useAppData } from '@/lib/AppDataContext';
 
@@ -31,10 +31,9 @@ type AvailabilityState =
 
 export default function RoutesModal({ serverId, serverName, server, onClose, onRoutesChanged }: RoutesModalProps) {
     const { featureFlags, refreshServers } = useAppData();
-    const [proxyOn, setProxyOn] = useState(!!server?.proxyProtocol);
     // Hidden until the operator opens the feature, except while it is on: an
     // owner must always be able to turn their own forwarding off.
-    const showProxySwitch = !!featureFlags.proxyProtocol || proxyOn;
+    const showProxySwitch = !!featureFlags.proxyProtocol || !!server?.proxyProtocol;
     const [routes, setRoutes] = useState<GatewayRoute[]>([]);
     const [routesLoading, setRoutesLoading] = useState(false);
     const [newRoute, setNewRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
@@ -193,12 +192,14 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
 
                     {showProxySwitch && (
                         <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5">
-                            <ProxyProtocolSwitch
-                                enabled={proxyOn}
+                            {/* The write routes refuse a member without network.write; the
+                                control shows the answer as its error. */}
+                            <ServerProxyMode
+                                serverId={serverId}
                                 software={server?.installerType}
                                 viaLink={server?.nodeKind === 'byon' || server?.nodeKind === 'external'}
-                                save={next => setServerProxyProtocol(serverId, next)}
-                                onSaved={next => { setProxyOn(next); void refreshServers(); }}
+                                canWrite
+                                onSaved={() => { void refreshServers(); }}
                             />
                         </div>
                     )}

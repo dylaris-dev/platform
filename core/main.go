@@ -635,6 +635,12 @@ func main() {
 	nodeLinks.SetLeader(coreLeader)
 	nodeLinks.Start(bgCtx)
 
+	// Real player IP in auto mode follows what each server's status ping
+	// shows it expects (node proxy_ready.go).
+	services.StartProxyAutoReconcile(bgCtx, pgStore, redisClient, redisGateway, func(ctx context.Context) bool {
+		return appState.FeatureFlags != nil && appState.FeatureFlags.IsProxyProtocolEnabled(ctx)
+	}, coreLeader)
+
 	// Routing migration service for batch redeployment when mode changes
 	appState.RoutingMigration = services.NewRoutingMigrationService(pgStore, appState.Queue, redisClient)
 

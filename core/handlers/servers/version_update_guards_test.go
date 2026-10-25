@@ -20,6 +20,9 @@ type versionGuardStore struct {
 	mods []models.ServerMod
 }
 
+// The real-IP switch as these tests set it by hand: mode "on", which refuses.
+func (f *versionGuardStore) GetServerProxyMode(int) (string, error) { return store.ProxyModeOn, nil }
+
 func (f *versionGuardStore) GetServerByID(int) (*models.Server, error) { s := f.srv; return &s, nil }
 func (f *versionGuardStore) ListServerMods(int, string) ([]models.ServerMod, error) {
 	return f.mods, nil

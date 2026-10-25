@@ -553,7 +553,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// While real player IP is on, what gets installed must expect it too.
-	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, srv, req.Installer.Type, req.Installer.Version)
+	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, h.state, srv, req.Installer.Type, req.Installer.Version)
 	if proxyRefused {
 		return
 	}
@@ -1005,7 +1005,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// While real player IP is on, the reinstalled software must expect it too.
-	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, srv, installerType, buildNumber)
+	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, h.state, srv, installerType, buildNumber)
 	if proxyRefused {
 		return
 	}

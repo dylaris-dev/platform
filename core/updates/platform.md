@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.6
+
+### Features
+- **Real player IP has an Auto mode, the new default.** The player's address is forwarded once the
+  server's own status ping shows it expects it: install any PROXY protocol plugin or mod, restart. `core` `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A server in Auto is never locked out:** forwarding stays off until the server shows it can
+  read the header, and an install that cannot read it no longer needs the switch off first. `core` `node`
+
 ## 2026.10.25.4
 
 ### Features

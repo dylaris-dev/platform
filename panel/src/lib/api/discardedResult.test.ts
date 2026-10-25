@@ -27,6 +27,7 @@ const MUTATING = [
     'setServerAutoMove',
     'sendConsoleCommand',
     'setServerProxyProtocol',
+    'setServerProxyMode',
     'setLinkRouteProxyProtocol',
 ];
 

@@ -590,8 +590,8 @@ var ProxyInstallers = proxyInstallers
 
 const ProxyProtocolDefaultSince = proxyProtocolDefaultSince
 
-func ProxyProtocolInstallGate(w http.ResponseWriter, srv *models.Server, installerType, version string) (keep, refused bool) {
-	return proxyProtocolInstallGate(w, srv, installerType, version)
+func ProxyProtocolInstallGate(w http.ResponseWriter, st *AppState, srv *models.Server, installerType, version string) (keep, refused bool) {
+	return proxyProtocolInstallGate(w, st, srv, installerType, version)
 }
 
 var RamPaddingRefused = ramPaddingRefused

@@ -507,6 +507,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	// is the host's, not Docker's) and removes the DNS-wildcard target the RCON/
 	// tab-proxy paths already dropped. Uses the admin-configurable global container
 	// port (default 25565) so the target stays in sync with MC's listen port.
+	var proxyReady proxyReadyReporter
 	pingOnce := func() (*SLPResponse, error) {
 		addr, err := resolveMCAddr(uuid, getContainerPort())
 		if err != nil {
@@ -516,7 +517,15 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		// header such a server drops the ping. A Redis error or an old Core (no key)
 		// means no header, which is the behaviour before the switch existed.
 		n, err := rdb.Exists(ctx, fmt.Sprintf("dylaris:server:%s:proxy_protocol", uuid)).Result()
-		return PingMinecraftServer(addr, pingTimeout, err == nil && n > 0)
+		// The other way is tried once when that fails: what answered tells
+		// Core whether this server expects the header (proxy_ready.go).
+		resp, withProxy, perr := pingEitherWay(func(proxy bool) (*SLPResponse, error) {
+			return PingMinecraftServer(addr, pingTimeout, proxy)
+		}, err == nil && n > 0)
+		if perr == nil {
+			proxyReady.report(ctx, rdb, uuid, withProxy, time.Now())
+		}
+		return resp, perr
 	}
 
 	// pingNow runs one ping in the background unless one is already out.

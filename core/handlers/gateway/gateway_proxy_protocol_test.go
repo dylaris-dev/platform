@@ -29,6 +29,21 @@ type proxyProtoFakeStore struct {
 	billing  map[string]*store.UserBilling
 	routes   map[string]store.CoreLinkRoute
 	setCalls int
+	modes    map[int]string
+}
+
+func (f *proxyProtoFakeStore) GetServerProxyMode(id int) (string, error) {
+	if m, ok := f.modes[id]; ok {
+		return m, nil
+	}
+	return store.ProxyModeAuto, nil
+}
+func (f *proxyProtoFakeStore) SetServerProxyMode(id int, mode string) error {
+	if f.modes == nil {
+		f.modes = map[int]string{}
+	}
+	f.modes[id] = mode
+	return nil
 }
 
 func (f *proxyProtoFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
@@ -426,5 +441,69 @@ func TestSetLinkRouteProxyProtocol_RefusedWithoutLinkCap(t *testing.T) {
 	}
 	if rec := patchLinkRouteProxyProtocol(h, "owner-1", false, "play.example.com", `{"enabled":true}`); rec.Code != http.StatusOK {
 		t.Fatalf("with the cap: status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Auto never refuses and makes the applied state safe at once: forwarding the
+// server has not shown it expects is switched off on the spot.
+func TestSetServerProxyProtocol_AutoSwitchesOffWhatTheServerDidNotConfirm(t *testing.T) {
+	h, fs, rdb := newProxyProtoHandler(t, false) // even with the platform switch off
+	seedRoute(t, rdb, "a.example.com", "tok-a", capsClientAddr)
+	fs.servers[7].ProxyProtocol = true
+	rec := patchServerProxyProtocol(h, `{"mode":"auto"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if fs.modes[7] != store.ProxyModeAuto || fs.servers[7].ProxyProtocol {
+		t.Fatalf("mode %q active %v, want auto and off", fs.modes[7], fs.servers[7].ProxyProtocol)
+	}
+
+	// Confirmed by the server: auto leaves it on.
+	fs.servers[7].ProxyProtocol = true
+	rdb.Set(context.Background(), services.ServerProxyReadyKey("srv-7"), "1", 0)
+	if rec := patchServerProxyProtocol(h, `{"mode":"auto"}`); rec.Code != http.StatusOK || !fs.servers[7].ProxyProtocol {
+		t.Fatalf("confirmed server switched off: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The old body still works, and stores the matching mode.
+func TestSetServerProxyProtocol_LegacyBodyStoresTheMode(t *testing.T) {
+	h, fs, rdb := newProxyProtoHandler(t, true)
+	seedRoute(t, rdb, "a.example.com", "tok-a", capsClientAddr)
+	if rec := patchServerProxyProtocol(h, `{"enabled":true}`); rec.Code != http.StatusOK || fs.modes[7] != store.ProxyModeOn {
+		t.Fatalf("enabled:true -> %d, mode %q", rec.Code, fs.modes[7])
+	}
+	if rec := patchServerProxyProtocol(h, `{"enabled":false}`); rec.Code != http.StatusOK || fs.modes[7] != store.ProxyModeOff {
+		t.Fatalf("enabled:false -> %d, mode %q", rec.Code, fs.modes[7])
+	}
+	for _, bad := range []string{`{}`, `{"mode":"sometimes"}`, `not json`} {
+		if rec := patchServerProxyProtocol(h, bad); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s -> %d, want 400", bad, rec.Code)
+		}
+	}
+}
+
+func TestGetServerProxyProtocolReportsWhatThePingShowed(t *testing.T) {
+	h, fs, rdb := newProxyProtoHandler(t, true)
+	fs.modes = map[int]string{7: store.ProxyModeAuto}
+	get := func() map[string]interface{} {
+		r := httptest.NewRequest(http.MethodGet, "/api/servers/7/proxy-protocol", nil)
+		r = mux.SetURLVars(r, map[string]string{"id": "7"})
+		rec := httptest.NewRecorder()
+		h.GetServerProxyProtocol(rec, r)
+		var out map[string]interface{}
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+	if got := get(); got["detected"] != "unknown" || got["mode"] != "auto" {
+		t.Fatalf("nothing reported: %v", got)
+	}
+	rdb.Set(context.Background(), services.ServerProxyReadyKey("srv-7"), "1", 0)
+	if got := get(); got["detected"] != "yes" {
+		t.Fatalf("reported 1: %v", got)
+	}
+	rdb.Set(context.Background(), services.ServerProxyReadyKey("srv-7"), "0", 0)
+	if got := get(); got["detected"] != "no" {
+		t.Fatalf("reported 0: %v", got)
 	}
 }

@@ -356,7 +356,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// The update reinstalls the server like a setup does, so it needs the same
 	// answer setup gets: with Real player IP on, a target the node cannot
 	// configure to expect the header would refuse every player.
-	if _, refused := handlers.ProxyProtocolInstallGate(w, srv, loader, req.Minecraft); refused {
+	if _, refused := handlers.ProxyProtocolInstallGate(w, h.state, srv, loader, req.Minecraft); refused {
 		return
 	}
 

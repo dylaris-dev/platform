@@ -62,3 +62,15 @@ export function proxyProtocolEnableMessage(software: string, viaLink: boolean): 
     if (viaLink) parts.push(PROXY_PROTOCOL_LINK);
     return parts.join('\n\n');
 }
+
+/** The status line under the mode control: what forwarding does right now and why. */
+export function proxyModeStatus(mode: 'auto' | 'on' | 'off', active: boolean, detected: 'yes' | 'no' | 'unknown'): string {
+    if (mode === 'off') return 'Off: players reach the server without their IP.';
+    if (mode === 'on') return active
+        ? 'Always on: every connection carries the player IP. The server must stay set up to expect it.'
+        : 'Always on was chosen, but the gateway has not applied it yet. Save again.';
+    if (active) return 'Forwarding: the server showed that it expects the player IP.';
+    if (detected === 'no') return 'Not forwarding: the server does not expect the player IP. Install a PROXY protocol plugin or mod (or turn it on in the config) and restart; it is picked up within a minute.';
+    return 'Not forwarding yet: the server has not been checked. Start it; it is picked up within a minute of starting.';
+}
+

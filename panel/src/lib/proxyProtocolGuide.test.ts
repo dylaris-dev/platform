@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    proxyModeStatus,
     proxyProtocolGuide, proxyProtocolEnableMessage,
     PROXY_PROTOCOL_LINK, PROXY_PROTOCOL_RESTART, PROXY_PROTOCOL_SECURITY,
 } from './proxyProtocolGuide';
@@ -60,3 +61,15 @@ describe('proxyProtocolEnableMessage', () => {
         expect(m).toContain(PROXY_PROTOCOL_LINK);
     });
 });
+
+describe('proxyModeStatus', () => {
+    it('says what forwarding does now, and what to do in auto mode', () => {
+        expect(proxyModeStatus('off', false, 'yes')).toMatch(/^Off/);
+        expect(proxyModeStatus('on', true, 'unknown')).toMatch(/^Always on: every connection/);
+        expect(proxyModeStatus('on', false, 'unknown')).toMatch(/not applied/);
+        expect(proxyModeStatus('auto', true, 'yes')).toMatch(/^Forwarding/);
+        expect(proxyModeStatus('auto', false, 'no')).toMatch(/Install a PROXY protocol plugin/);
+        expect(proxyModeStatus('auto', false, 'unknown')).toMatch(/has not been checked/);
+    });
+});
+
