@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Members with the network write right can manage a server's extra ports** in the panel, not only
+  its owner and administrators. `core` `panel`
+- **The panel's fonts ship with it** instead of being fetched from Google Fonts when the image is
+  built. `panel`
+
 ## 2026.10.25
 
 ### Features

@@ -1333,6 +1333,8 @@ export interface ServerPortsView {
     range: string;
     address: string;
     isAdmin: boolean;
+    /** Whether this caller holds network.write on the server (owner, admin or delegated member). */
+    canWrite: boolean;
 }
 type PortsResult = { success?: boolean; message?: string; error?: string; code?: string };
 export interface CreateServerPortRequest {

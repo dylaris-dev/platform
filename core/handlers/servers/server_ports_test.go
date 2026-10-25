@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/authz"
 	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -305,5 +306,61 @@ func TestRemovingAPortWorksBehindTheGatewayToo(t *testing.T) {
 	}
 	if pc.mr.Exists("dylaris:server:srv-1:ports") {
 		t.Fatal("the node key outlived the last port")
+	}
+}
+
+// portsAuthzStore puts the real resolver in front of the ports endpoints: the
+// server and grant answers come from serverPowerFakeStore, the port tables
+// are empty.
+type portsAuthzStore struct {
+	*serverPowerFakeStore
+}
+
+func (f portsAuthzStore) GetNodeExtraPortRanges() (map[int]string, error) { return nil, nil }
+func (f portsAuthzStore) CountServerPortsByOwner(string) (int, error)     { return 0, nil }
+func (f portsAuthzStore) GetPortPermission(string) (*bool, error)         { return nil, nil }
+func (f portsAuthzStore) GetPortLimit(string) (*store.PortLimit, error)   { return nil, nil }
+
+// The panel offers add/edit/remove to whoever the write routes accept: a
+// member with network.write, not only the owner or an admin.
+func TestGetServerPortsSaysWhetherTheCallerMayWrite(t *testing.T) {
+	roleID := 9
+	for _, c := range []struct {
+		name   string
+		caller string
+		caps   []string
+		want   bool
+	}{
+		{"owner", "u1", nil, true},
+		{"member with network.write", "u3", []string{"network.read", "network.write"}, true},
+		{"member with network.read only", "u3", []string{"network.read"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &serverPowerFakeStore{
+				server:   &models.Server{ID: 1, UUID: "srv-1", OwnerID: "u1", OwnerName: "alice", NodeID: 7},
+				node:     &models.Node{ID: 7, Token: "tok-7"},
+				settings: map[string]string{"routing_mode": "ip_port"},
+			}
+			if c.caps != nil {
+				fs.serverGrant = &store.ServerGrant{UserID: c.caller, ServerRoleID: &roleID}
+				fs.serverRole = &store.ServerRole{ID: roleID, Capabilities: c.caps}
+			}
+			st := portsAuthzStore{fs}
+			h := NewServerHandler(&handlers.AppState{Store: st, Authz: authz.NewResolver(st)})
+			r := httptest.NewRequest("GET", "/x", nil)
+			r = mux.SetURLVars(r, map[string]string{"id": "1"})
+			r = r.WithContext(context.WithValue(context.WithValue(r.Context(), "userID", c.caller), "isAdmin", false))
+			w := httptest.NewRecorder()
+			h.GetServerPorts(w, r)
+			var out struct {
+				Ports struct {
+					CanWrite bool `json:"canWrite"`
+				} `json:"ports"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &out)
+			if w.Code != 200 || out.Ports.CanWrite != c.want {
+				t.Fatalf("status %d canWrite %v, want %v: %s", w.Code, out.Ports.CanWrite, c.want, w.Body.String())
+			}
+		})
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/authz"
 	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -38,6 +39,9 @@ type portsView struct {
 	Range       string             `json:"range"`
 	Address     string             `json:"address"`
 	IsAdmin     bool               `json:"isAdmin"`
+	// CanWrite is whether THIS caller holds network.write on the server, so
+	// the panel offers add/edit/remove to exactly who the routes accept.
+	CanWrite bool `json:"canWrite"`
 }
 
 func (h *ServerHandler) routingMode() string {
@@ -90,6 +94,12 @@ func (h *ServerHandler) GetServerPorts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := portsView{Ports: ports, RoutingMode: h.routingMode(), IsAdmin: handlers.IsAdmin(r)}
+	v.CanWrite = v.IsAdmin
+	if h.state.Authz != nil {
+		if res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), srv.ID); err == nil {
+			v.CanWrite = res.HasCap("network.write")
+		}
+	}
 	v.Allowed = v.IsAdmin
 	if !v.Allowed {
 		v.Allowed, _, _ = services.ResolvePortsAllowed(h.state.Store, srv)

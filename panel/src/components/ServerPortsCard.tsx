@@ -23,7 +23,7 @@ const NOTE_MAX = 200;
  * a button that only opens "not enabled" on every server would be noise on a
  * platform that never turned the feature on.
  */
-export default function ServerPortsCard({ serverId, canWrite }: { serverId: number; canWrite: boolean }) {
+export default function ServerPortsCard({ serverId }: { serverId: number }) {
     const [view, setView] = useState<ServerPortsView | null>(null);
     const [open, setOpen] = useState(false);
 
@@ -52,7 +52,7 @@ export default function ServerPortsCard({ serverId, canWrite }: { serverId: numb
                 <ServerPortsModal
                     serverId={serverId}
                     view={view}
-                    canWrite={canWrite}
+                    canWrite={view.canWrite}
                     reload={load}
                     onClose={() => setOpen(false)}
                 />

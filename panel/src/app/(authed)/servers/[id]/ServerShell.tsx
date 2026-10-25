@@ -1001,15 +1001,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     label={<span className="inline-flex items-center gap-1.5"><Link2 size={11} className="text-(--base-06) shrink-0" aria-hidden="true" />{selectedServer.nodeAddress}:{selectedServer.hostPort}</span>}
                                     className="bg-(--base-03)/50 border border-(--base-04) hover:border-(--base-05) rounded-md px-2.5 py-1 text-xs font-mono text-(--base-07) cursor-copy"
                                 />
-                                {/* Extra ports exist only beside a direct address. A member gets
-                                    the list read-only: the server list carries network.read
-                                    (perms.network) but not network.write, and Core refuses anyway.
-                                    The card hides itself when there is nothing to show. */}
+                                {/* Extra ports exist only beside a direct address. Who may add,
+                                    rename and remove comes from Core (network.write on this
+                                    server), the same check the write routes make. The card
+                                    hides itself when there is nothing to show. */}
                                 {!isDemoView && (
                                     <ServerPortsCard
                                         key={selectedServer.id}
                                         serverId={selectedServer.id}
-                                        canWrite={isOwner || !!user?.isAdmin}
                                     />
                                 )}
                             </div>
