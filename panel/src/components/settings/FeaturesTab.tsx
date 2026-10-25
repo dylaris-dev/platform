@@ -17,6 +17,7 @@ import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import MetricsDatabaseCard from '@/components/settings/MetricsDatabaseCard';
 import VoiceAccessCard from '@/components/settings/VoiceAccessCard';
+import ExtraPortsCard from '@/components/settings/ExtraPortsCard';
 import { SwitchRow } from '@/components/ui/Switch';
 import Segmented from '@/components/ui/Segmented';
 import Checkbox from '@/components/ui/Checkbox';
@@ -518,6 +519,8 @@ export default function FeaturesTab() {
                 </SettingsGroup>
                             </SettingsCard>
                             {!gatewayOff && <VoiceAccessCard />}
+                            {/* Extra ports are direct routing only (ip_port or both). */}
+                            {routingMode !== 'gateway' && <ExtraPortsCard />}
                             <MetricsDatabaseCard />
                         </>
                     )}

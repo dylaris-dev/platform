@@ -1268,6 +1268,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 
 	// Port binding: only in direct port mode (routing_mode != "gateway").
 	// Reuse an already-allocated port if one exists, otherwise allocate a new one.
+	var gameOnly nat.PortMap
 	if getRoutingMode() != "gateway" && dm.portMgr != nil {
 		cPort := config.Docker.ContainerPort
 		if cPort == 0 {
@@ -1297,6 +1298,18 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		}
 		cc.ExposedPorts = nat.PortSet{cPortKey: struct{}{}}
 		log.Printf("Container %s: binding host port %d → container port %d/tcp", containerName, hostP, cPort)
+
+		// Extra ports (voice chat, a map's web view) ride next to the game
+		// binding. gameOnly is what the container falls back to if one of
+		// them is taken on the host: an extra port never keeps a server down.
+		if extras := readExtraPorts(dm.portMgr.rdb, config.UUID, hostP); len(extras) > 0 {
+			gameOnly = hc.PortBindings
+			pm := nat.PortMap{cPortKey: hc.PortBindings[cPortKey]}
+			cc.ExposedPorts = nat.PortSet{cPortKey: struct{}{}}
+			cc.Labels[extraPortsLabel] = addExtraPorts(pm, cc.ExposedPorts, extras)
+			hc.PortBindings = pm
+			log.Printf("Container %s: extra ports %s", containerName, cc.Labels[extraPortsLabel])
+		}
 	}
 
 	nc := serverEndpoints(netID, netName)
@@ -1309,7 +1322,25 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	}
 
 	if autoStart {
-		if err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{}); err != nil {
+		err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{})
+		if err != nil && gameOnly != nil {
+			// Most likely an extra port is held by something else on the
+			// host. Start with the game port alone rather than not at all.
+			log.Printf("Container %s: start with extra ports failed (%v); starting without them", containerName, err)
+			dm.cli.ContainerRemove(dm.ctx, resp.ID, container.RemoveOptions{Force: true})
+			hc.PortBindings = gameOnly
+			exposed := nat.PortSet{}
+			for k := range gameOnly {
+				exposed[k] = struct{}{}
+			}
+			cc.ExposedPorts = exposed
+			delete(cc.Labels, extraPortsLabel)
+			if resp, err = dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName); err != nil {
+				return "", fmt.Errorf("mc container create error: %v", err)
+			}
+			err = dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{})
+		}
+		if err != nil {
 			return "", fmt.Errorf("mc container start error: %v", err)
 		}
 	}
@@ -1488,7 +1519,7 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 		// Core sends ports only when they change, so an absent one means "as
 		// it is". Falling through to the global default instead persisted port
 		// 0 into .node_config.json and could move the server's container port.
-		curHost, curCont := boundPorts(info.HostConfig.PortBindings)
+		curHost, curCont := boundPorts(info.HostConfig.PortBindings, containerLabel(info, extraPortsLabel))
 		payloadHost := config.Docker.HostPort
 		if config.Docker.ContainerPort == 0 {
 			config.Docker.ContainerPort = curCont
@@ -1598,11 +1629,19 @@ func needsRecreate(have, want resourceShape) bool {
 		(have.Cpuset != "" && want.Cpuset == "")
 }
 
-// boundPorts returns the first published host port and the container port it
-// maps to, or 0, 0 for a container that publishes none (gateway routing).
-func boundPorts(pm nat.PortMap) (host, cont int) {
+// boundPorts returns the game port's published host port and the container
+// port it maps to, or 0, 0 for a container that publishes none (gateway
+// routing). extraLabel is the container's extraPortsLabel: those bindings are
+// extra ports, never the game port.
+func boundPorts(pm nat.PortMap, extraLabel string) (host, cont int) {
 	for cPort, bindings := range pm {
+		if cPort.Proto() != "tcp" {
+			continue
+		}
 		for _, b := range bindings {
+			if isExtraBinding(extraLabel, cPort, b.HostPort) {
+				continue
+			}
 			if h, err := strconv.Atoi(b.HostPort); err == nil && h > 0 {
 				return h, cPort.Int()
 			}
@@ -1905,18 +1944,8 @@ func (dm *DockerManager) ExistingHostPortBindings() map[string]int {
 		if err != nil || info.HostConfig == nil {
 			continue
 		}
-		for _, bindings := range info.HostConfig.PortBindings {
-			for _, b := range bindings {
-				port, err := strconv.Atoi(b.HostPort)
-				if err != nil || port <= 0 {
-					continue
-				}
-				out[c.UUID] = port
-				break
-			}
-			if _, ok := out[c.UUID]; ok {
-				break
-			}
+		if port, _ := boundPorts(info.HostConfig.PortBindings, containerLabel(info, extraPortsLabel)); port > 0 {
+			out[c.UUID] = port
 		}
 	}
 	return out

@@ -471,6 +471,10 @@ func main() {
 	})
 	voiceService.Start(bgCtx)
 
+	// Extra ports (direct routing): the node reads each server's bindings
+	// from Redis, which keeps nothing across a restart.
+	services.StartPortsRepublisher(bgCtx, pgStore, redisClient, coreLeader)
+
 	// Long-term metrics — leader-gated and OFF by default
 	// (feature_metrics_enabled). Records what the platform handled over months,
 	// into minute buckets in a statistics database of its own. Nothing leaves

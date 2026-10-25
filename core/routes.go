@@ -242,6 +242,15 @@ var requiredCaps = map[string]string{
 	// Who may turn voice on: policy, so settings. GET is settings.read; the
 	// PUT/DELETE settings.write lives at the RequireCap call.
 	"/api/admin/voice-permissions": "settings.read",
+	// Extra ports (direct routing): reading is a network read, adding,
+	// renaming and removing a network write. The policy is settings.
+	"/api/servers/{id:[0-9]+}/ports":                 "network.read",
+	"/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}": "network.write",
+	"/api/admin/ports":                               "settings.read",
+	"/api/admin/ports/settings":                      "settings.write",
+	"/api/admin/ports/nodes/{id:[0-9]+}/range":       "settings.write",
+	"/api/admin/port-permissions":                    "settings.read",
+	"/api/admin/port-limits":                         "settings.read",
 
 	// Phase 4 Task 12: users + roles + panel-roles + admin 2FA reset (PANEL
 	// users.*/panelroles.*). GET+POST /users share one template -> users.read
@@ -543,6 +552,7 @@ var requiredCaps = map[string]string{
 func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandler, cfg routeCfg) (*mux.Router, *routeExtras) {
 	// Initialize handlers
 	serverHandler := servers.NewServerHandler(appState)
+	portsAdminHandler := servers.NewPortsAdminHandler(appState)
 	nodeHandler := nodes.NewNodeHandler(appState)
 	userHandler := users.NewUserHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
@@ -1509,6 +1519,21 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayHandler.ListVoicePermissions))).Methods("GET")
 	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.SetVoicePermission))).Methods("PUT")
 	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.DeleteVoicePermission))).Methods("DELETE")
+	// Extra ports, direct routing only (the handlers refuse the gateway mode
+	// with a sentence; DELETE is never refused, taking a port away must work).
+	api.HandleFunc("/servers/{id:[0-9]+}/ports", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(serverHandler.GetServerPorts))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/ports", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.CreateServerPort))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/ports/{portId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.UpdateServerPort))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/ports/{portId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(serverHandler.DeleteServerPort))).Methods("DELETE")
+	api.HandleFunc("/admin/ports", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(portsAdminHandler.GetOverview))).Methods("GET")
+	api.HandleFunc("/admin/ports/settings", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.SetSettings))).Methods("PUT")
+	api.HandleFunc("/admin/ports/nodes/{id:[0-9]+}/range", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.SetNodeRange))).Methods("PUT")
+	api.HandleFunc("/admin/port-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(portsAdminHandler.ListPermissions))).Methods("GET")
+	api.HandleFunc("/admin/port-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.SetPermission))).Methods("PUT")
+	api.HandleFunc("/admin/port-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.DeletePermission))).Methods("DELETE")
+	api.HandleFunc("/admin/port-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(portsAdminHandler.ListLimits))).Methods("GET")
+	api.HandleFunc("/admin/port-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.SetLimit))).Methods("PUT")
+	api.HandleFunc("/admin/port-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.DeleteLimit))).Methods("DELETE")
 
 	// Route-only (external origin): a protected address pointed at a server the
 	// user already runs, no managed node. Owner-scoped; create is gateway-gated.

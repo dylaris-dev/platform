@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **544 routes** in 53 sections: 242 GET, 164 POST, 45 PUT, 38 PATCH, 56 DELETE.
+- **557 routes** in 53 sections: 246 GET, 165 POST, 49 PUT, 39 PATCH, 59 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **356** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **23** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **369** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (126)
+- [/api/admin](#apiadmin) (135)
 - [/api/auth](#apiauth) (22)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (86)
+- [/api/servers](#apiservers) (90)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -229,6 +229,15 @@ can still show what exists.
 | GET | `/api/admin/panel-roles/assignments` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelAssignments` | who holds a panel role or a per-user override, all of them at once. |
 | PATCH | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.write` | - | `PanelRolesHandler.UpdatePanelRole` | renames a staff role and replaces its capability set. |
 | DELETE | `/api/admin/panel-roles/{id:[0-9]+}` | session | `panelroles.delete` | - | `PanelRolesHandler.DeletePanelRole` | deletes a staff role. |
+| GET | `/api/admin/port-limits` | session | `settings.read` | - | `PortsAdminHandler.ListLimits` | - |
+| PUT | `/api/admin/port-limits` | session | `settings.write` | - | `PortsAdminHandler.SetLimit` | {scope, maxPorts}; maxPorts null is "no limit", 0 is "none". |
+| DELETE | `/api/admin/port-limits` | session | `settings.write` | - | `PortsAdminHandler.DeleteLimit` | - |
+| GET | `/api/admin/port-permissions` | session | `settings.read` | - | `PortsAdminHandler.ListPermissions` | - |
+| PUT | `/api/admin/port-permissions` | session | `settings.write` | - | `PortsAdminHandler.SetPermission` | {scope, allowed} |
+| DELETE | `/api/admin/port-permissions` | session | `settings.write` | - | `PortsAdminHandler.DeletePermission` | - |
+| GET | `/api/admin/ports` | session | `settings.read` | - | `PortsAdminHandler.GetOverview` | every extra port (searchable), usage per node range, and the feature settings. |
+| PUT | `/api/admin/ports/nodes/{id:[0-9]+}/range` | session | `settings.write` | - | `PortsAdminHandler.SetNodeRange` | {range}; "" goes back to the global range. |
+| PUT | `/api/admin/ports/settings` | session | `settings.write` | - | `PortsAdminHandler.SetSettings` | {enabled?, range?, maxPerUser?}. |
 | GET | `/api/admin/servers` | session | `servers.read` | - | `ServerHandler.GetAdminServers` | returns all DB servers with optional search filter |
 | PATCH | `/api/admin/servers/{id:[0-9]+}/demo` | session | `settings.write` | - | `ServerHandler.SetServerDemo` | PANEL settings.write (RequireCap at the route). |
 | POST | `/api/admin/servers/{id:[0-9]+}/migration/cancel` | session | `servers.write` | RequireGatewayEnabled | `ServerHandler.CancelMigration` | Admin oversight (PANEL servers.write, gateway-gated). |
@@ -725,6 +734,10 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/players/action` | session | `players.manage` | - | `PlayersHandler.Action` | one of a fixed set of player commands. |
 | GET | `/api/servers/{id:[0-9]+}/players/lists` | session | `players.read` | - | `PlayersHandler.GetLists` | bans, whitelist and operators straight out of the active sub-server's JSON files. |
 | GET | `/api/servers/{id:[0-9]+}/players/online` | session | `players.read` | - | `PlayersHandler.GetOnline` | RCON `list`, so the roster needs players.read rather than the right to run any command. |
+| GET | `/api/servers/{id:[0-9]+}/ports` | session | `network.read` | - | `ServerHandler.GetServerPorts` | - |
+| POST | `/api/servers/{id:[0-9]+}/ports` | session | `network.write` | - | `ServerHandler.CreateServerPort` | - |
+| PATCH | `/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}` | session | `network.write` | - | `ServerHandler.UpdateServerPort` | name and note. |
+| DELETE | `/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}` | session | `network.write` | - | `ServerHandler.DeleteServerPort` | Never refused for mode or permission: taking a port away must always work. |
 | POST | `/api/servers/{id:[0-9]+}/power` | session | _in-handler_ | - | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
 | PUT | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.LinkServerToProxy` | Link a game server to a proxy server |
 | DELETE | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.UnlinkServerFromProxy` | Remove a server's proxy link |

@@ -235,6 +235,27 @@ type Store interface {
 	SetVoicePermission(scope string, allowed bool) error
 	DeleteVoicePermission(scope string) error
 	ListVoicePermissions() ([]VoicePermission, error)
+	// Extra ports per server in direct routing (server_ports.go).
+	ListServerPorts(serverID int) ([]ServerPort, error)
+	ListAllServerPorts(q string) ([]ServerPortRow, error)
+	GetServerPort(id int) (*ServerPort, error)
+	CreateServerPort(p ServerPort) (ServerPort, error)
+	FreeServerPort(nodeID int, protocol string, min, max int, skip []int) (int, error)
+	UpdateServerPortMeta(id int, name, note string) error
+	MoveServerPort(id, nodeID, hostPort int) error
+	DeleteServerPort(id int) error
+	CountServerPortsByOwner(ownerID string) (int, error)
+	ListServerIDsWithPorts() ([]int, error)
+	GetPortPermission(scope string) (*bool, error)
+	SetPortPermission(scope string, allowed bool) error
+	DeletePortPermission(scope string) error
+	ListPortPermissions() ([]PortPermission, error)
+	GetPortLimit(scope string) (*PortLimit, error)
+	SetPortLimit(scope string, max *int) error
+	DeletePortLimit(scope string) error
+	ListPortLimits() ([]PortLimit, error)
+	GetNodeExtraPortRanges() (map[int]string, error)
+	SetNodeExtraPortRange(nodeID int, r string) error
 	// UpdateServerNode reassigns a server to a different node. Used by the
 	// auto-move migration flow (later wave) to flip the FK after transport.
 	UpdateServerNode(serverID int, newNodeID int) error

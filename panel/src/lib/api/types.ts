@@ -1309,6 +1309,75 @@ export const setVoicePermission = (scope: string, allowed: boolean): Promise<{ s
 export const deleteVoicePermission = (scope: string): Promise<{ success?: boolean; message?: string; error?: string }> =>
     fetchAPI(`/admin/voice-permissions?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' });
 
+// Extra ports per server (direct routing only). A failure answers
+// {error, code} with a sentence meant for the user.
+export interface ServerPort {
+    id: number;
+    serverId: number;
+    nodeId: number;
+    protocol: 'tcp' | 'udp';
+    hostPort: number;
+    containerPort: number;
+    name: string;
+    note: string;
+    preset?: 'svc' | 'plasmo';
+    createdAt: string;
+}
+export interface ServerPortsView {
+    ports: ServerPort[];
+    allowed: boolean;
+    routingMode: 'ip_port' | 'both' | 'gateway';
+    /** null = no limit, 0 = none. */
+    limit: number | null;
+    used: number;
+    range: string;
+    address: string;
+    isAdmin: boolean;
+}
+type PortsResult = { success?: boolean; message?: string; error?: string; code?: string };
+export interface CreateServerPortRequest {
+    protocol?: 'tcp' | 'udp';
+    containerPort?: number;
+    name?: string;
+    note?: string;
+    preset?: 'svc' | 'plasmo';
+    /** Admin only; omitted = lowest free port of the node's range. */
+    hostPort?: number;
+}
+export const getServerPorts = (serverId: number): Promise<PortsResult & { ports?: ServerPortsView }> =>
+    fetchAPI(`/servers/${serverId}/ports`);
+export const createServerPort = (serverId: number, req: CreateServerPortRequest): Promise<PortsResult & { port?: ServerPort; restartRequired?: boolean }> =>
+    fetchAPI(`/servers/${serverId}/ports`, { method: 'POST', body: JSON.stringify(req) });
+export const updateServerPort = (serverId: number, portId: number, name: string, note: string): Promise<PortsResult> =>
+    fetchAPI(`/servers/${serverId}/ports/${portId}`, { method: 'PATCH', body: JSON.stringify({ name, note }) });
+export const deleteServerPort = (serverId: number, portId: number): Promise<PortsResult & { restartRequired?: boolean }> =>
+    fetchAPI(`/servers/${serverId}/ports/${portId}`, { method: 'DELETE' });
+
+export interface ServerPortRow extends ServerPort { serverUuid: string; serverName: string; ownerId: string; ownerName: string; nodeName: string }
+export interface PortsNodeUsage { nodeId: number; nodeName: string; range: string; ownRange: boolean; gameRange: string; size: number; used: number; percent: number; conflict: boolean }
+/** maxPerUser is "unlimited" or a number as text. */
+export interface PortsSettings { enabled: boolean; range: string; maxPerUser: string }
+export const getPortsOverview = (q = ''): Promise<PortsResult & { ports?: ServerPortRow[]; nodes?: PortsNodeUsage[]; settings?: PortsSettings }> =>
+    fetchAPI(`/admin/ports${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+export const setPortsSettings = (patch: Partial<PortsSettings>): Promise<PortsResult & { settings?: PortsSettings }> =>
+    fetchAPI('/admin/ports/settings', { method: 'PUT', body: JSON.stringify(patch) });
+export const setNodePortRange = (nodeId: number, range: string): Promise<PortsResult> =>
+    fetchAPI(`/admin/ports/nodes/${nodeId}/range`, { method: 'PUT', body: JSON.stringify({ range }) });
+export interface PortPermission { scope: string; allowed: boolean; updatedAt: string }
+export const getPortPermissions = (): Promise<PortsResult & { permissions?: PortPermission[]; global?: boolean }> =>
+    fetchAPI('/admin/port-permissions');
+export const setPortPermission = (scope: string, allowed: boolean): Promise<PortsResult> =>
+    fetchAPI('/admin/port-permissions', { method: 'PUT', body: JSON.stringify({ scope, allowed }) });
+export const deletePortPermission = (scope: string): Promise<PortsResult> =>
+    fetchAPI(`/admin/port-permissions?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' });
+export interface PortLimit { scope: string; maxPorts: number | null; updatedAt: string }
+export const getPortLimits = (): Promise<PortsResult & { limits?: PortLimit[]; global?: string }> =>
+    fetchAPI('/admin/port-limits');
+export const setPortLimit = (scope: string, maxPorts: number | null): Promise<PortsResult> =>
+    fetchAPI('/admin/port-limits', { method: 'PUT', body: JSON.stringify({ scope, maxPorts }) });
+export const deletePortLimit = (scope: string): Promise<PortsResult> =>
+    fetchAPI(`/admin/port-limits?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' });
+
 // Route-only ("via Link") routes: a protected address pointed at a server the
 // user runs on their OWN machine, reached through their own outbound Link tunnel
 // (no managed node, no exposed origin). Owner-scoped.

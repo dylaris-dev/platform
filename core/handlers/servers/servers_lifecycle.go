@@ -1328,6 +1328,9 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	// Voice is re-asserted the same way, but its result is logged inside and
 	// never feeds the RCON restart flag or holds the switch up.
 	h.syncVoiceToSubServer(srv, subName)
+	// Extra ports (direct routing) follow the same rule: before the container
+	// is recreated, never in its way.
+	h.syncPortsToStart(srv, subName)
 	if err := h.state.Store.SetServerRconNeedsRestart(serverID, needsRestart); err != nil {
 		log.Printf("SwitchSubServer: rcon needs-restart for server %d: %v", serverID, err)
 	}
@@ -1708,6 +1711,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		// The voice mod reads its config at boot too. Logged only: voice never
 		// blocks a start and never touches the RCON restart flag.
 		h.syncVoiceToSubServer(srv, srv.ActiveSubServer)
+		h.syncPortsToStart(srv, srv.ActiveSubServer)
 		// A (re)start reloads server.properties, so any pending RCON change is
 		// now live: clear the persisted "restart required" flag that keeps the
 		// panel banner up and the RCON-dependent Players tabs locked. Non-fatal

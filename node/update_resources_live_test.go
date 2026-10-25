@@ -75,10 +75,10 @@ func TestNeedsRecreate(t *testing.T) {
 
 func TestBoundPorts(t *testing.T) {
 	pm := nat.PortMap{"25566/tcp": {{HostIP: "0.0.0.0", HostPort: "25601"}}}
-	if h, c := boundPorts(pm); h != 25601 || c != 25566 {
+	if h, c := boundPorts(pm, ""); h != 25601 || c != 25566 {
 		t.Errorf("boundPorts = %d, %d, want 25601, 25566", h, c)
 	}
-	if h, c := boundPorts(nil); h != 0 || c != 0 {
+	if h, c := boundPorts(nil, ""); h != 0 || c != 0 {
 		t.Errorf("boundPorts(nil) = %d, %d, want 0, 0", h, c)
 	}
 }

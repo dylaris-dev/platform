@@ -564,6 +564,7 @@ These are set by the Node when it launches a container; they are listed for comp
 | `25522` | node | Auto-move pull endpoint (`MIGRATION_PORT`; per-node-secret-HMAC) |
 | `25523` | node | Beam LAN fast-path (`BEAM_LAN_PORT`; pinned-TLS, direct client<->node). Publish on the node's LAN (self-host/BYON) to enable the fast path even when a gateway is present; unpublished simply falls back to relay/public. |
 | `25600-25699` | node | MC server host ports (`PORT_RANGE`; `ip_port`/`both` routing) |
+| your extra port range | node | Extra ports per server, TCP and UDP (Settings, Extra ports; `ip_port`/`both` routing). Must not overlap `PORT_RANGE`. |
 | `5432` | postgres | Database (internal) |
 | `6379` | redis | Cache + queues (internal) |
 

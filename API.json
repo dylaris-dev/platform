@@ -306,6 +306,92 @@
       "external": false
     },
     {
+      "method": "DELETE",
+      "path": "/api/admin/port-limits",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "PortsAdminHandler.DeleteLimit",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/port-limits",
+      "auth": "session",
+      "authorization": "settings.read",
+      "handler": "PortsAdminHandler.ListLimits",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/port-limits",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "{scope, maxPorts}; maxPorts null is \"no limit\", 0 is \"none\".",
+      "handler": "PortsAdminHandler.SetLimit",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/port-permissions",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "PortsAdminHandler.DeletePermission",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/port-permissions",
+      "auth": "session",
+      "authorization": "settings.read",
+      "handler": "PortsAdminHandler.ListPermissions",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/port-permissions",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "{scope, allowed}",
+      "handler": "PortsAdminHandler.SetPermission",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/ports",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "every extra port (searchable), usage per node range, and the feature settings.",
+      "handler": "PortsAdminHandler.GetOverview",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/ports/nodes/{id:[0-9]+}/range",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "{range}; \"\" goes back to the global range.",
+      "handler": "PortsAdminHandler.SetNodeRange",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/ports/settings",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "{enabled?, range?, maxPerUser?}.",
+      "handler": "PortsAdminHandler.SetSettings",
+      "group": "admin",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/admin/servers",
       "auth": "session",
@@ -3889,6 +3975,44 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/ports",
+      "auth": "session",
+      "authorization": "network.read",
+      "handler": "ServerHandler.GetServerPorts",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/servers/{id:[0-9]+}/ports",
+      "auth": "session",
+      "authorization": "network.write",
+      "handler": "ServerHandler.CreateServerPort",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "Never refused for mode or permission: taking a port away must always work.",
+      "handler": "ServerHandler.DeleteServerPort",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "name and note.",
+      "handler": "ServerHandler.UpdateServerPort",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "POST",
       "path": "/api/servers/{id:[0-9]+}/power",
       "auth": "session",
@@ -5429,15 +5553,15 @@
     }
   ],
   "counts": {
-    "total": 545,
+    "total": 558,
     "byAuth": {
       "none": 31,
-      "session": 498,
+      "session": 511,
       "user API key": 10,
       "warp key": 6
     },
     "byGroup": {
-      "admin": 126,
+      "admin": 135,
       "auth": 22,
       "authz": 3,
       "avatar": 1,
@@ -5467,7 +5591,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 86,
+      "servers": 90,
       "settings": 28,
       "setup": 2,
       "share": 1,

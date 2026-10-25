@@ -154,6 +154,9 @@ func (f *serverPowerFakeStore) InsertServerAudit(ev *models.ServerAuditEvent) er
 	return nil
 }
 
+// No extra ports: the start path asks before it recreates the container.
+func (f *serverPowerFakeStore) ListServerPorts(int) ([]store.ServerPort, error) { return nil, nil }
+
 func (f *serverPowerFakeStore) GetSetting(key string) (string, error) {
 	return f.settings[key], nil
 }

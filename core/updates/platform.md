@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25
+
+### Features
+- **Extra ports per server in direct routing.** Users add named TCP or UDP ports (voice chat, a map's
+  web view) from a range you set; you control who may, and how many, under Settings, Extra ports. `core` `node` `panel`
+- **Voice chat without the gateway.** The voice preset publishes Simple Voice Chat or Plasmo Voice on
+  an extra UDP port and writes the mod's address for you. `core` `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Backup retention counts days on the UTC calendar.** With a TZ set, a day of a daylight saving
+  change was 23 or 25 hours long. `core`
+
 ## 2026.10.24.2
 
 ### Features
