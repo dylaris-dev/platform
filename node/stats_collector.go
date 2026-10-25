@@ -578,6 +578,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	var prevCPU *PrevCPUStats
 	var memGuardState memGuard
 	var lastContainerID string
+	var lastNet netSample
 	collectAndPublish := func() {
 		stats, newPrev, err := dm.GetContainerStats(containerName, prevCPU)
 		prevCPU = newPrev
@@ -628,6 +629,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		}
 
 		applyMemGuard(ctx, rdb, uuid, &memGuardState, stats.GuardMemMB, stats.MemLimitMB)
+		lastNet = publishNetTraffic(ctx, rdb, uuid, lastNet, netSample{containerID: stats.ID, rx: stats.NetRx, tx: stats.NetTx, at: time.Now()})
 
 		data, _ := json.Marshal(payload)
 

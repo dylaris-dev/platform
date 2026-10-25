@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.3
+
+### Features
+- **The extra ports overview shows each server's network traffic,** since its start and right now,
+  so a server moving far more than its players explain stands out. `core` `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.2
 
 ### Features

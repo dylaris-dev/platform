@@ -364,3 +364,41 @@ func TestGetServerPortsSaysWhetherTheCallerMayWrite(t *testing.T) {
 		})
 	}
 }
+
+// The overview carries each listed server's traffic as its node counted it,
+// and nothing for a server the node has not reported (an old node).
+func TestPortsOverviewCarriesServerTraffic(t *testing.T) {
+	pc := newPortsCase(t)
+	pc.fs.ports = []store.ServerPort{{ID: 1, ServerID: 1, NodeID: 7, Protocol: "udp", HostPort: 26000, ContainerPort: 24454, Name: "Voice"}}
+	pc.mr.HSet("dylaris:server:srv-1:net", "rx", "2048", "tx", "1024", "rx_bps", "300", "tx_bps", "100", "ts", "1700000000")
+	st := portsOverviewStore{pc.fs}
+	h := NewPortsAdminHandler(&handlers.AppState{Store: st, Redis: pc.rdb})
+	w := httptest.NewRecorder()
+	h.GetOverview(w, httptest.NewRequest("GET", "/x", nil))
+	var out struct {
+		Traffic map[string]struct {
+			Rx, Tx, RxBps, TxBps uint64
+		} `json:"traffic"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if got := out.Traffic["1"]; got.Rx != 2048 || got.Tx != 1024 || got.RxBps != 300 || got.TxBps != 100 {
+		t.Fatalf("traffic = %+v (%s)", out.Traffic, w.Body.String())
+	}
+	if _, ok := out.Traffic["2"]; ok {
+		t.Fatal("a server without a report got numbers")
+	}
+}
+
+// portsOverviewStore adds what the overview reads beyond the server ports.
+type portsOverviewStore struct{ *portsFakeStore }
+
+func (f portsOverviewStore) ListAllServerPorts(string) ([]store.ServerPortRow, error) {
+	out := []store.ServerPortRow{}
+	for _, p := range f.ports {
+		out = append(out, store.ServerPortRow{ServerPort: p, ServerUUID: f.servers[p.ServerID].UUID})
+	}
+	return out, nil
+}
+func (f portsOverviewStore) ListNodes() ([]models.Node, error) { return []models.Node{*f.node}, nil }

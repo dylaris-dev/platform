@@ -1,6 +1,7 @@
 package servers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -105,7 +106,16 @@ func (h *PortsAdminHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 		}
 		usage = append(usage, u)
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ports": rows, "nodes": usage, "settings": settings})
+	traffic := map[int]serverTraffic{}
+	for _, p := range rows {
+		if _, done := traffic[p.ServerID]; done {
+			continue
+		}
+		if t, ok := h.readServerTraffic(r.Context(), p.ServerUUID); ok {
+			traffic[p.ServerID] = t
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ports": rows, "nodes": usage, "settings": settings, "traffic": traffic})
 }
 
 // SetSettings PUT /api/admin/ports/settings - {enabled?, range?, maxPerUser?}.
@@ -284,4 +294,29 @@ func (h *PortsAdminHandler) DeleteLimit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// serverTraffic is a server's whole network traffic as its node last counted
+// it (node/net_traffic.go): every byte of the container, game port and extra
+// ports together. Rx/Tx are since the container started, the rates over the
+// node's last interval. Not per port: that would need NET_ADMIN on the host.
+type serverTraffic struct {
+	Rx    uint64 `json:"rx"`
+	Tx    uint64 `json:"tx"`
+	RxBps uint64 `json:"rxBps"`
+	TxBps uint64 `json:"txBps"`
+	At    int64  `json:"at"`
+}
+
+func (h *PortsAdminHandler) readServerTraffic(ctx context.Context, uuid string) (serverTraffic, bool) {
+	if h.state.Redis == nil || uuid == "" {
+		return serverTraffic{}, false
+	}
+	m, err := h.state.Redis.HGetAll(ctx, "dylaris:server:"+uuid+":net").Result()
+	if err != nil || len(m) == 0 {
+		return serverTraffic{}, false
+	}
+	u := func(k string) uint64 { v, _ := strconv.ParseUint(m[k], 10, 64); return v }
+	at, _ := strconv.ParseInt(m["ts"], 10, 64)
+	return serverTraffic{Rx: u("rx"), Tx: u("tx"), RxBps: u("rx_bps"), TxBps: u("tx_bps"), At: at}, true
 }

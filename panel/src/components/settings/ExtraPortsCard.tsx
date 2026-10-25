@@ -10,9 +10,10 @@ import {
     getPortsOverview, setPortsSettings, setNodePortRange,
     getPortPermissions, setPortPermission, deletePortPermission,
     getPortLimits, setPortLimit, deletePortLimit,
-    type PortsSettings, type PortsNodeUsage, type ServerPortRow, type PortPermission, type PortLimit,
+    type PortsSettings, type PortsNodeUsage, type ServerPortRow, type PortPermission, type PortLimit, type ServerTraffic,
 } from '@/lib/api';
-import { formatMaxPerUser, parseMaxPerUser, portsError } from '@/lib/serverPorts';
+import { formatBitRate, formatMaxPerUser, parseMaxPerUser, portsError } from '@/lib/serverPorts';
+import { formatBytes } from '@/lib/format';
 
 type ScopeKind = 'server' | 'user' | 'role';
 const KIND_LABEL: Record<ScopeKind, string> = { server: 'Server', user: 'User', role: 'Role' };
@@ -31,6 +32,7 @@ function validId(kind: ScopeKind, id: string): boolean {
 export default function ExtraPortsCard() {
     const [rows, setRows] = useState<ServerPortRow[] | null>(null);
     const [nodes, setNodes] = useState<PortsNodeUsage[]>([]);
+    const [traffic, setTraffic] = useState<Record<string, ServerTraffic>>({});
     const [stored, setStored] = useState<PortsSettings | null>(null);
     const [loadError, setLoadError] = useState('');
     const [q, setQ] = useState('');
@@ -45,6 +47,7 @@ export default function ExtraPortsCard() {
         setLoadError('');
         setRows(res.ports ?? []);
         setNodes(res.nodes ?? []);
+        setTraffic(res.traffic ?? {});
         setStored(res.settings);
     }, []);
 
@@ -64,7 +67,7 @@ export default function ExtraPortsCard() {
             <LimitsSection />
             <SettingsCard
                 title="Extra ports in use"
-                description="Usage of each node's range, and every extra port. TCP and UDP each have the whole range."
+                description="Usage of each node's range, and every extra port. TCP and UDP each have the whole range. Traffic is the server's whole network traffic since it started (game port included), as its node counted it."
                 icon={Plug}
             >
                 {loadError ? (
@@ -103,7 +106,7 @@ export default function ExtraPortsCard() {
                                     <table className="w-full text-xs">
                                         <thead>
                                             <tr className="text-left text-(--base-06) border-b border-(--base-03)">
-                                                {['Port', 'Protocol', 'Server', 'Owner', 'Node', 'Name', 'Note'].map(h => (
+                                                {['Port', 'Protocol', 'Server', 'Traffic', 'Owner', 'Node', 'Name', 'Note'].map(h => (
                                                     <th key={h} className="mono-label px-3 py-2 font-normal">{h}</th>
                                                 ))}
                                             </tr>
@@ -114,6 +117,15 @@ export default function ExtraPortsCard() {
                                                     <td className="px-3 py-2 font-mono">{r.hostPort} <span className="text-(--base-06)">-&gt; {r.containerPort}</span></td>
                                                     <td className="px-3 py-2 font-mono">{r.protocol.toUpperCase()}</td>
                                                     <td className="px-3 py-2">{r.serverName} <span className="text-(--base-06)">#{r.serverId}</span></td>
+                                                    <td className="px-3 py-2 font-mono whitespace-nowrap">
+                                                        {traffic[String(r.serverId)] ? (
+                                                            <span title={`Now: in ${formatBitRate(traffic[String(r.serverId)].rxBps)}, out ${formatBitRate(traffic[String(r.serverId)].txBps)}`}>
+                                                                in {formatBytes(traffic[String(r.serverId)].rx)} / out {formatBytes(traffic[String(r.serverId)].tx)}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-(--base-06)" title="The node has not reported it: the server is stopped, or its node is older than 2026.10.25.3.">-</span>
+                                                        )}
+                                                    </td>
                                                     <td className="px-3 py-2">{r.ownerName || r.ownerId}</td>
                                                     <td className="px-3 py-2">{r.nodeName}</td>
                                                     <td className="px-3 py-2">

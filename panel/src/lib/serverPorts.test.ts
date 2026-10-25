@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMaxPerUser, parseHostPort, parseMaxPerUser, portAddress, portUsage, portsError } from './serverPorts';
+import { formatBitRate, formatMaxPerUser, parseHostPort, parseMaxPerUser, portAddress, portUsage, portsError } from './serverPorts';
 
 describe('serverPorts helpers', () => {
     it('builds the address', () => {
@@ -34,5 +34,17 @@ describe('serverPorts helpers', () => {
     it('prefers the sentence Core sent', () => {
         expect(portsError({ error: 'Port taken.' }, 'F')).toBe('Port taken.');
         expect(portsError(null, 'F')).toBe('F');
+    });
+});
+
+describe('formatBitRate', () => {
+    it('reads bytes per second as bits', () => {
+        expect(formatBitRate(0)).toBe('0 bit/s');
+        expect(formatBitRate(100)).toBe('800 bit/s');
+        expect(formatBitRate(1250)).toBe('10 kbit/s');
+        expect(formatBitRate(125_000)).toBe('1.0 Mbit/s');
+        expect(formatBitRate(6_250_000)).toBe('50.0 Mbit/s');
+        expect(formatBitRate(250_000_000)).toBe('2.0 Gbit/s');
+        expect(formatBitRate(-5)).toBe('0 bit/s');
     });
 });

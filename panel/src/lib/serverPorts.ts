@@ -38,3 +38,13 @@ export function parseHostPort(v: string): number | undefined | 'invalid' {
     const n = Number(t);
     return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : 'invalid';
 }
+
+/** A rate in bytes per second as network people read it: bits. */
+export function formatBitRate(bytesPerSec: number): string {
+    const bits = Math.max(0, bytesPerSec) * 8;
+    if (bits >= 1e9) return `${(bits / 1e9).toFixed(1)} Gbit/s`;
+    if (bits >= 1e6) return `${(bits / 1e6).toFixed(1)} Mbit/s`;
+    if (bits >= 1e3) return `${(bits / 1e3).toFixed(0)} kbit/s`;
+    return `${bits.toFixed(0)} bit/s`;
+}
+

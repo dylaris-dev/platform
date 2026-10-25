@@ -1359,7 +1359,9 @@ export interface ServerPortRow extends ServerPort { serverUuid: string; serverNa
 export interface PortsNodeUsage { nodeId: number; nodeName: string; range: string; ownRange: boolean; gameRange: string; size: number; used: number; percent: number; conflict: boolean }
 /** maxPerUser is "unlimited" or a number as text. */
 export interface PortsSettings { enabled: boolean; range: string; maxPerUser: string }
-export const getPortsOverview = (q = ''): Promise<PortsResult & { ports?: ServerPortRow[]; nodes?: PortsNodeUsage[]; settings?: PortsSettings }> =>
+/** A server's whole network traffic as its node last counted it: game port and extra ports together. rx/tx since the container started. */
+export interface ServerTraffic { rx: number; tx: number; rxBps: number; txBps: number; at: number }
+export const getPortsOverview = (q = ''): Promise<PortsResult & { ports?: ServerPortRow[]; nodes?: PortsNodeUsage[]; settings?: PortsSettings; traffic?: Record<string, ServerTraffic> }> =>
     fetchAPI(`/admin/ports${q ? `?q=${encodeURIComponent(q)}` : ''}`);
 export const setPortsSettings = (patch: Partial<PortsSettings>): Promise<PortsResult & { settings?: PortsSettings }> =>
     fetchAPI('/admin/ports/settings', { method: 'PUT', body: JSON.stringify(patch) });

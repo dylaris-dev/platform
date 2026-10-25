@@ -1756,6 +1756,8 @@ type ContainerStats struct {
 	// ID is the container the numbers came from. The name stays when a
 	// container is recreated; the id does not.
 	ID string
+	// NetRx/NetTx are the container's network bytes since it started.
+	NetRx, NetTx uint64
 }
 
 // PrevCPUStats stores previous CPU counters for accurate delta calculation.
@@ -1831,7 +1833,10 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 		memUsage = 0
 	}
 
+	netRx, netTx := sumNetworks(stats.Networks)
 	return &ContainerStats{
+		NetRx:      netRx,
+		NetTx:      netTx,
 		CPUPercent: cpuPercent,
 		MemUsedMB:  int64(memUsage) / (1024 * 1024),
 		MemLimitMB: int64(stats.MemoryStats.Limit) / (1024 * 1024),
