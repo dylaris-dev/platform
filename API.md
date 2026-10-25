@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **558 routes** in 53 sections: 247 GET, 165 POST, 49 PUT, 39 PATCH, 59 DELETE.
+- **560 routes** in 53 sections: 248 GET, 165 POST, 50 PUT, 39 PATCH, 59 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **370** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **118** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **370** declare a capability at the route and **21** enforce authorization inside the handler. Of the rest, **120** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -151,7 +151,7 @@ can still show what exists.
 - [/api/disk](#apidisk) (4)
 - [/api/external](#apiexternal) (10)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (20)
+- [/api/gateway](#apigateway) (21)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
@@ -189,7 +189,7 @@ can still show what exists.
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (2)
 - [/api/voice](#apivoice) (1)
-- [/api/warp](#apiwarp) (21)
+- [/api/warp](#apiwarp) (22)
 - [/healthz](#healthz) (1)
 - [/mirror/library](#mirrorlibrary) (1)
 - [/mirror/{rest:.*}](#mirrorrest) (1)
@@ -465,6 +465,7 @@ can still show what exists.
 | POST | `/api/gateway/link-routes` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
 | DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _no capability_ | - | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
 | PATCH | `/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.SetLinkRouteProxyProtocol` | switches real player IP forwarding on one route-only entry. |
+| PUT | `/api/gateway/link-routes/{domain:[^/]+}/voice` | session | _no capability_ | - | `GatewayHandler.SetLinkRouteVoice` | body {"enabled": bool, "target_port": int}. |
 | GET | `/api/gateway/links` | session | `topology.read` | - | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
 | GET | `/api/gateway/logs` | session | `topology.read` | - | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
 | GET | `/api/gateway/route-options` | session | _no capability_ | - | `SettingsHandler.GetGatewayRouteOptions` | Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself. |
@@ -990,6 +991,7 @@ can still show what exists.
 | GET | `/api/warp/link/edges` | warp key | _no capability_ | Limit | `WarpHandler.LinkEdges` | every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published. |
 | POST | `/api/warp/link/heartbeat` | warp key | _no capability_ | Limit | `WarpHandler.LinkHeartbeat` | a route-only link says it is running. |
 | POST | `/api/warp/link/stats` | warp key | _no capability_ | Limit | `WarpHandler.LinkStats` | one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:<link id>:stats. |
+| GET | `/api/warp/link/voice` | warp key | _no capability_ | Limit | `WarpHandler.LinkVoice` | the voice ports of this link's routes, and Core's clock: the relay refuses a REG more than 60 s off its own, and a customer's machine is the one that drifts. |
 | GET | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
 | POST | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
 | DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |

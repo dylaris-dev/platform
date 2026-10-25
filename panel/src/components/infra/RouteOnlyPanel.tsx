@@ -17,6 +17,7 @@ import { linkState } from '@/lib/linkState';
 import LinkBadge from '@/components/infra/LinkBadge';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
+import LinkRouteVoiceSwitch from '@/components/infra/LinkRouteVoiceSwitch';
 import { useAppData } from '@/lib/AppDataContext';
 
 // Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
@@ -505,6 +506,12 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                         onSaved={next => setRoutes(prev => prev.map(r => r.domain === rt.domain ? { ...r, proxy_protocol: next } : r))}
                                     />
                                 )}
+                                <LinkRouteVoiceSwitch
+                                    domain={rt.domain}
+                                    voice={rt.voice}
+                                    allowed={!!rt.voice_allowed}
+                                    onSaved={v => setRoutes(prev => prev.map(r => r.domain === rt.domain ? { ...r, voice: v } : r))}
+                                />
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
                                 {editing === rt.domain ? (

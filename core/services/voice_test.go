@@ -341,3 +341,5 @@ func TestReconcilePublishesTheReReadRow(t *testing.T) {
 		t.Fatalf("published %s, want the re-read host", got)
 	}
 }
+
+func (f *voiceFakeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return nil, nil }

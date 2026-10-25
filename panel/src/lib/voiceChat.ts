@@ -11,6 +11,7 @@ const VOICE_ERRORS: Record<string, string> = {
     voice_mod_missing: 'Install Simple Voice Chat or Plasmo Voice, start the server once, then try again.',
     voice_mod_ambiguous: 'Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.',
     voice_pool_full: 'Every voice port in this region is taken. Ask an admin.',
+    link_without_voice: "This route's link has not reported that it can carry voice chat. Make sure it is running and up to date (watchtower updates it nightly), then try again.",
 };
 
 export function voiceErrorMessage(code: string | undefined, fallback: string): string {
@@ -26,4 +27,26 @@ export function voiceAddress(v: { host: string; port: number }): string {
  *  owner must always be able to turn it off again. */
 export function showVoiceSwitch(allowed: boolean, enabled: boolean): boolean {
     return allowed || enabled;
+}
+
+/** What a route-only owner sets in their voice mod's config by hand: Core
+ *  cannot write files on their machine. Mirrors what Core writes for a hosted
+ *  server (handlers/voice_config.go): the mod listens on targetPort, and
+ *  tells clients to connect to domain:port. */
+export function linkRouteVoiceConfig(domain: string, port: number, targetPort: number): { svc: string; plasmo: string } {
+    return {
+        svc: `port=${targetPort}
+voice_host=${domain}:${port}`,
+        plasmo: `[host]
+port = ${targetPort}
+
+[host.public]
+ip = "${domain}"
+port = ${port}`,
+    };
+}
+
+/** A voice port is 1-65535; anything else is refused before the request. */
+export function validVoicePort(n: number): boolean {
+    return Number.isInteger(n) && n >= 1 && n <= 65535;
 }

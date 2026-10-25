@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { showVoiceSwitch, voiceAddress, voiceErrorMessage } from './voiceChat';
+import { linkRouteVoiceConfig, showVoiceSwitch, validVoicePort, voiceAddress, voiceErrorMessage } from './voiceChat';
 
 /** Every 409 code Core's enable can answer, read from the handler rather than
  *  restated, so a new refusal without a panel sentence turns this red. */
@@ -54,5 +54,26 @@ describe('showVoiceSwitch', () => {
 
     it('stays visible while voice is on, so it can always be turned off', () => {
         expect(showVoiceSwitch(false, true)).toBe(true);
+    });
+});
+
+describe('linkRouteVoiceConfig', () => {
+    it('names the mod port and the public address, as Core writes for a hosted server', () => {
+        const c = linkRouteVoiceConfig('a.eu.dylaris.com', 26003, 24454);
+        expect(c.svc).toBe('port=24454\nvoice_host=a.eu.dylaris.com:26003');
+        expect(c.plasmo).toBe('[host]\nport = 24454\n\n[host.public]\nip = "a.eu.dylaris.com"\nport = 26003');
+    });
+});
+
+describe('validVoicePort', () => {
+    it('accepts 1-65535 integers only', () => {
+        expect(validVoicePort(24454)).toBe(true);
+        expect([0, 65536, 1.5, NaN, -1].some(validVoicePort)).toBe(false);
+    });
+});
+
+describe('voiceErrorMessage for route-only', () => {
+    it('explains an old link', () => {
+        expect(voiceErrorMessage('link_without_voice', 'x')).toContain('up to date');
     });
 });

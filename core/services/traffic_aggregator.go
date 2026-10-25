@@ -287,6 +287,18 @@ func (a *TrafficAggregator) subjectOwners() (map[string]string, error) {
 		}
 		owners[trafficOwnerSubjectPrefix+r.OwnerID] = r.OwnerID
 	}
+	// A route-only voice port meters under a subject of its own (see
+	// LinkRouteVoiceSubject). A released port's last bytes go unbilled, as for
+	// a server's.
+	voice, err := a.store.ListLinkRouteVoice()
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range voice {
+		if v.OwnerID != "" {
+			owners[LinkRouteVoiceSubject(v.OwnerID, v.Domain)] = v.OwnerID
+		}
+	}
 	return owners, nil
 }
 

@@ -2117,6 +2117,16 @@
       "external": false
     },
     {
+      "method": "PUT",
+      "path": "/api/gateway/link-routes/{domain:[^/]+}/voice",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "body {\"enabled\": bool, \"target_port\": int}.",
+      "handler": "GatewayHandler.SetLinkRouteVoice",
+      "group": "gateway",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/gateway/links",
       "auth": "session",
@@ -5483,6 +5493,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/warp/link/voice",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "the voice ports of this link's routes, and Core's clock: the relay refuses a REG more than 60 s off its own, and a customer's machine is the one that drifts.",
+      "handler": "WarpHandler.LinkVoice",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/warp/node-keys",
       "auth": "session",
       "authorization": "no capability",
@@ -5563,12 +5583,12 @@
     }
   ],
   "counts": {
-    "total": 559,
+    "total": 561,
     "byAuth": {
       "none": 31,
-      "session": 512,
+      "session": 513,
       "user API key": 10,
-      "warp key": 6
+      "warp key": 7
     },
     "byGroup": {
       "admin": 135,
@@ -5582,7 +5602,7 @@
       "disk": 4,
       "external": 10,
       "files": 10,
-      "gateway": 20,
+      "gateway": 21,
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,
@@ -5622,7 +5642,7 @@
       "users": 7,
       "versions": 2,
       "voice": 1,
-      "warp": 21
+      "warp": 22
     },
     "external": 10
   }

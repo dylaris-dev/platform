@@ -1117,6 +1117,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkEdges))).Methods("GET")
 	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkHeartbeat))).Methods("POST")
 	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkStats))).Methods("POST")
+	api.HandleFunc("/warp/link/voice", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkVoice))).Methods("GET")
 	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(warpHandler.RevokeLinkKit)).Methods("DELETE")
 	api.HandleFunc("/warp/link-kits/{linkID}/roll", authHandler.AuthMiddleware(warpHandler.RollLinkKit)).Methods("POST")
 	// BYON node warp keys (tenant self-service; BYON + gateway gated inside the
@@ -1557,6 +1558,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gatewayHandler.ListLinkRoutes)).Methods("GET")
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/proxy-protocol", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.SetLinkRouteProxyProtocol))).Methods("PATCH")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/voice", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteVoice)).Methods("PUT")
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
 
 	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)

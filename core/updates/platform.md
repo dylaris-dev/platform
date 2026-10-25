@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.7
+
+### Features
+- **Voice chat on route-only addresses.** A route gets a voice port from the same per-region pool
+  as servers; the customer's link fetches it from Core and carries the UDP. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.6
 
 ### Features

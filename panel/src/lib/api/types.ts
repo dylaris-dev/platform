@@ -1409,7 +1409,12 @@ export interface LinkRoute {
     core_owned?: boolean;
     owner_id?: string;
     proxy_protocol?: boolean;
+    /** Voice chat port of this route; target_port is the mod's port on the target host. */
+    voice?: LinkRouteVoice;
+    /** Whether the owner may turn voice on (the switch also shows while it is on). */
+    voice_allowed?: boolean;
 }
+export interface LinkRouteVoice { enabled: boolean; port?: number; target_port?: number }
 export interface CreateLinkRouteRequest extends CreateRouteRequest {
     linkId: string;    // the Link kit's id (warp key node_id)
     targetHost: string; // the LOCAL target the Link dials (LAN / loopback allowed)
@@ -1421,6 +1426,8 @@ export const deleteLinkRoute = (domain: string) =>
     fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 export const setLinkRouteProxyProtocol = (domain: string, enabled: boolean): Promise<{ success?: boolean; proxyProtocol?: boolean; message?: string; error?: string; code?: string }> =>
     fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/proxy-protocol`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+export const setLinkRouteVoice = (domain: string, enabled: boolean, targetPort: number): Promise<{ success?: boolean; voice?: LinkRouteVoice; message?: string; error?: string; code?: string }> =>
+    fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/voice`, { method: 'PUT', body: JSON.stringify({ enabled, target_port: targetPort }) });
 
 // Link kits: a key + auto link identity bound to the account. The customer runs
 // one container, the link, with the key to expose a LOCAL server through the

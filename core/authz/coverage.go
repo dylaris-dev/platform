@@ -74,6 +74,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/warp/link/edges":     true,
 	"/api/warp/link/heartbeat": true,
 	"/api/warp/link/stats":     true,
+	"/api/warp/link/voice":     true,
 
 	// Store service-to-service calls (shared X-Store-Key header, NOT a panel
 	// session): requireStoreKey is the boundary, same category as warp's API key.
@@ -212,6 +213,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/gateway/link-routes":                               true, // authed; in-handler owner filter
 	"/api/gateway/link-routes/{domain:.+}":                   true, // authed; in-handler owner filter
 	"/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol": true, // authed; in-handler owner filter, same as the delete
+	"/api/gateway/link-routes/{domain:[^/]+}/voice":          true, // authed; in-handler owner filter, same as the delete
 
 	// Warp route-only link kits: tenant self-service, BYON-gated + owner-filtered in-handler.
 	"/api/warp/link-kits":               true, // authed; in-handler owner filter

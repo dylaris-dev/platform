@@ -50,6 +50,9 @@ func (s *PostgresStore) allocateVoicePortOnce(p VoicePort, min, max int) (VoiceP
 		return VoicePort{}, err
 	}
 	defer tx.Rollback()
+	if err := lockVoicePool(tx, p.Region); err != nil {
+		return VoicePort{}, err
+	}
 
 	var region string
 	err = tx.QueryRow(`SELECT region FROM voice_ports WHERE server_id = $1 FOR UPDATE`, p.ServerID).Scan(&region)
@@ -65,14 +68,7 @@ func (s *PostgresStore) allocateVoicePortOnce(p VoicePort, min, max int) (VoiceP
 				return VoicePort{}, err
 			}
 		}
-		var port int
-		err := tx.QueryRow(`
-			SELECT g FROM generate_series($2::int, $3::int) g
-			WHERE g NOT IN (SELECT port FROM voice_ports WHERE region = $1)
-			ORDER BY g LIMIT 1`, p.Region, min, max).Scan(&port)
-		if errors.Is(err, sql.ErrNoRows) {
-			return VoicePort{}, ErrVoicePoolFull
-		}
+		port, err := freeVoicePort(tx, p.Region, min, max)
 		if err != nil {
 			return VoicePort{}, err
 		}
@@ -91,6 +87,27 @@ func (s *PostgresStore) allocateVoicePortOnce(p VoicePort, min, max int) (VoiceP
 		return VoicePort{}, fmt.Errorf("read back voice port: %w", err)
 	}
 	return got, tx.Commit()
+}
+
+// lockVoicePool serialises allocations in one region across voice_ports and
+// link_route_voice: each table's UNIQUE (region, port) cannot see the other's.
+func lockVoicePool(tx *sql.Tx, region string) error {
+	_, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('voice-pool:' || $1))`, region)
+	return err
+}
+
+// freeVoicePort is the lowest port in [min, max] neither table holds in region.
+func freeVoicePort(tx *sql.Tx, region string, min, max int) (int, error) {
+	var port int
+	err := tx.QueryRow(`
+		SELECT g FROM generate_series($2::int, $3::int) g
+		WHERE g NOT IN (SELECT port FROM voice_ports WHERE region = $1)
+		  AND g NOT IN (SELECT port FROM link_route_voice WHERE region = $1)
+		ORDER BY g LIMIT 1`, region, min, max).Scan(&port)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrVoicePoolFull
+	}
+	return port, err
 }
 
 const voicePortSelect = `

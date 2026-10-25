@@ -2,10 +2,13 @@ package gateway
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,7 +141,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 // knownLinkCaps is every capability a link may announce. The edge reads
 // online_link:<token> to decide whether a link understands a stream type, so
 // only these names may ever reach that key.
-var knownLinkCaps = []string{handlers.LinkCapClientAddr}
+var knownLinkCaps = []string{handlers.LinkCapClientAddr, linkCapVoice}
 
 // linkPresenceValue is what a heartbeat writes into online_link:<token>: the
 // capabilities the link announced as {"caps":[...]}, or "1" when it announced
@@ -310,4 +313,47 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// linkVoiceRoute is one voice port as the link carries it: register for it at
+// the edges of Domain with Key, forward to Target.
+type linkVoiceRoute struct {
+	Domain  string `json:"domain"`
+	Subject string `json:"subject"`
+	Port    int    `json:"port"`
+	Key     string `json:"key"`
+	Target  string `json:"target"`
+}
+
+// LinkVoice GET /api/warp/link/voice - the voice ports of this link's routes,
+// and Core's clock: the relay refuses a REG more than 60 s off its own, and a
+// customer's machine is the one that drifts. An empty list tells the link to
+// stop: a route whose voice was turned off or whose link changed is no longer
+// listed here.
+func (h *WarpHandler) LinkVoice(w http.ResponseWriter, r *http.Request) {
+	key, token, ok, _ := h.routeOnlyKey(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.state.Store.ListLinkRouteVoice()
+	if err != nil {
+		log.Printf("route-only link %s: reading voice ports failed: %v", key.NodeID, err)
+		handlers.SendJSONError(w, "Voice ports unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	out := make([]linkVoiceRoute, 0)
+	for _, v := range rows {
+		if v.LinkToken != token || v.OwnerID != key.OwnerID {
+			continue
+		}
+		out = append(out, linkVoiceRoute{
+			Domain:  v.Domain,
+			Subject: services.LinkRouteVoiceSubject(v.OwnerID, v.Domain),
+			Port:    v.Port,
+			Key:     hex.EncodeToString(v.UplinkKey),
+			Target:  net.JoinHostPort(v.TargetHost, strconv.Itoa(v.TargetPort)),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"now_ms": time.Now().UnixMilli(), "routes": out})
 }

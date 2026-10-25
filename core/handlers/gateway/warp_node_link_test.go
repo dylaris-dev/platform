@@ -40,7 +40,11 @@ type nodeLinkFakeStore struct {
 	billingLookups int
 	binds          [][2]int
 	bindErr        error
+
+	voice []store.LinkRouteVoice
 }
+
+func (f *nodeLinkFakeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return f.voice, nil }
 
 func (f *nodeLinkFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
 func (f *nodeLinkFakeStore) GetUserBilling(string) (*store.UserBilling, error) {

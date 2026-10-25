@@ -12,6 +12,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/services"
+	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
 )
@@ -350,12 +351,24 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 	// not a description of the route. LinkID is what the UI needs instead.
 	type linkRoute struct {
 		services.PublicRoute
-		LinkID string `json:"link_id,omitempty"`
+		LinkID       string             `json:"link_id,omitempty"`
+		Voice        linkRouteVoiceView `json:"voice"`
+		VoiceAllowed bool               `json:"voice_allowed"`
 	}
+	voice := map[string]*store.LinkRouteVoice{}
+	if rows, err := h.state.Store.ListLinkRouteVoice(); err == nil {
+		for i := range rows {
+			voice[rows[i].Domain] = &rows[i]
+		}
+	} else {
+		log.Printf("voice: list route voice ports: %v", err)
+	}
+	allowed := h.linkRouteVoiceAllowed(userID)
 	out := make([]linkRoute, 0)
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
 		if rt.CoreOwned && rt.OwnerID == userID {
-			out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID]})
+			out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID],
+				Voice: newLinkRouteVoiceView(voice[rt.Domain]), VoiceAllowed: allowed})
 		}
 	}
 	json.NewEncoder(w).Encode(out)

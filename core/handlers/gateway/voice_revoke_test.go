@@ -164,3 +164,5 @@ func TestALateWriteBackDoesNotUndoAReEnable(t *testing.T) {
 		})
 	}
 }
+
+func (f *voiceRevokeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return nil, nil }

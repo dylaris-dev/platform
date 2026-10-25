@@ -230,6 +230,11 @@ type Store interface {
 	UpdateVoicePortMod(serverID int, region string, port int, mod string, internalPort int, host string) (bool, error)
 	DeleteVoicePort(serverID int) error
 	ListVoicePorts() ([]VoicePort, error)
+	// Voice chat port per route-only domain, same pool. See AllocateLinkRouteVoice.
+	AllocateLinkRouteVoice(domain, region string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error)
+	GetLinkRouteVoice(domain string) (*LinkRouteVoice, error)
+	DeleteLinkRouteVoice(domain string) (bool, error)
+	ListLinkRouteVoice() ([]LinkRouteVoice, error)
 	// Voice chat permission per scope (server:, user:, role:). nil = no row.
 	GetVoicePermission(scope string) (*bool, error)
 	SetVoicePermission(scope string, allowed bool) error

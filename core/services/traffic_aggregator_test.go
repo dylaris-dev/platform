@@ -24,6 +24,7 @@ type trafficFakeStore struct {
 
 	routes    []store.CoreLinkRoute
 	routesErr error
+	voice     []store.LinkRouteVoice
 
 	backupBytes    map[string]int64
 	backupBytesErr error
@@ -1121,4 +1122,28 @@ func (f *trafficFakeStore) GetUserDataBillingEnabled(userID string) (bool, error
 func (f *trafficFakeStore) InsertNotification(n *models.Notification) (int64, error) {
 	f.notifications = append(f.notifications, n.Title)
 	return 1, nil
+}
+
+func (f *trafficFakeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return f.voice, nil }
+
+// A route-only voice port meters under its own subject (LinkRouteVoiceSubject);
+// those bytes are the route owner's route-only traffic like any other.
+func TestTrafficAggregator_RouteVoiceBilledToTheRouteOwner(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{},
+		routes: []store.CoreLinkRoute{{Domain: "a.eu.dylaris.com", OwnerID: "tenant-r"}},
+		voice:  []store.LinkRouteVoice{{Domain: "a.eu.dylaris.com", OwnerID: "tenant-r"}},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	subject := LinkRouteVoiceSubject("tenant-r", "a.eu.dylaris.com")
+	mustHSet(t, rdb, "dylaris:traffic:edge:"+subject, map[string]interface{}{"vrx:eu-central": 400, "vtx:eu-central": 600})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].tenant != "tenant-r" || fs.addUsageCalls[0].edge != 1000 {
+		t.Fatalf("want one row tenant-r / 1000, got %+v", fs.addUsageCalls)
+	}
+	if got := trafficProductOf(subject); got != store.TrafficProductRoute {
+		t.Errorf("product of %q = %q, want %q", subject, got, store.TrafficProductRoute)
+	}
 }

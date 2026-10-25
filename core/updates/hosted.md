@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.7
+
+### Features
+- **Voice chat on route-only.** Turn on Voice chat on a route, put the lines the panel shows into
+  your voice mod's config and restart. Your link updates itself overnight; until then the switch says so.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.6
 
 ### Features

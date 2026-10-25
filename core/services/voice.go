@@ -172,18 +172,27 @@ func VoiceRouteFor(routes []GatewayRoute, edges []GatewayEdgeInfo, serverUUID st
 	}
 	sort.Strings(domains)
 	for _, d := range domains {
-		for _, e := range edges {
-			if e.Status != "online" || e.Region == "" || !strings.HasPrefix(e.Wildcard, "*.") {
-				continue
-			}
-			suffix := strings.ToLower(e.Wildcard[1:]) // ".eu.dylaris.com"
-			label, found := strings.CutSuffix(d, suffix)
-			if found && label != "" && !strings.Contains(label, ".") {
-				return d, e.Region, true
-			}
+		if region, ok := VoiceRegionFor(d, edges); ok {
+			return d, region, true
 		}
 	}
 	return "", "", false
+}
+
+// VoiceRegionFor is the relay region behind one domain, by the rule above.
+func VoiceRegionFor(domain string, edges []GatewayEdgeInfo) (region string, ok bool) {
+	d := strings.ToLower(domain)
+	for _, e := range edges {
+		if e.Status != "online" || e.Region == "" || !strings.HasPrefix(e.Wildcard, "*.") {
+			continue
+		}
+		suffix := strings.ToLower(e.Wildcard[1:]) // ".eu.dylaris.com"
+		label, found := strings.CutSuffix(d, suffix)
+		if found && label != "" && !strings.Contains(label, ".") {
+			return e.Region, true
+		}
+	}
+	return "", false
 }
 
 // VoiceService keeps Redis in step with the voice_ports table. Core is the
@@ -301,6 +310,10 @@ func (v *VoiceService) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	if err := v.reconcileLinkRoutes(ctx, keep); err != nil {
+		return err
+	}
+
 	pipe := v.redis.Pipeline()
 	for _, k := range append(portKeys, serverKeys...) {
 		if !keep[k] {
@@ -319,6 +332,49 @@ func (v *VoiceService) Reconcile(ctx context.Context) error {
 	if pipe.Len() > 0 {
 		if _, err := pipe.Exec(ctx); err != nil {
 			return fmt.Errorf("sweep voice orphans: %w", err)
+		}
+	}
+	return nil
+}
+
+// reconcileLinkRoutes is the server loop above for route-only ports: revoke
+// what is no longer allowed, re-read, republish, and mark what to keep.
+func (v *VoiceService) reconcileLinkRoutes(ctx context.Context, keep map[string]bool) error {
+	rows, err := v.store.ListLinkRouteVoice()
+	if err != nil {
+		return fmt.Errorf("list route voice ports: %w", err)
+	}
+	for _, rv := range rows {
+		// Same gate as the servers' revoked: no revoke wired, no revocation.
+		allowed, by, err := true, "", error(nil)
+		if v.revoke != nil {
+			allowed, by, err = ResolveVoiceAllowed(v.store, &models.Server{OwnerID: rv.OwnerID})
+		}
+		if err == nil && !allowed {
+			if _, err := v.store.DeleteLinkRouteVoice(rv.Domain); err != nil {
+				log.Printf("[voice] reconcile: route %s: disable failed: %v", rv.Domain, err)
+			} else {
+				log.Printf("voice: route %s disabled, not allowed (%s)", rv.Domain, by)
+				continue
+			}
+		} else if err != nil {
+			log.Printf("[voice] reconcile: route %s: permission check: %v", rv.Domain, err)
+		}
+		cur, err := v.store.GetLinkRouteVoice(rv.Domain)
+		if err != nil {
+			log.Printf("[voice] reconcile: route %s: re-read before publish: %v", rv.Domain, err)
+			keep[VoicePortKey(rv.Region, rv.Port)] = true
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		keep[VoicePortKey(cur.Region, cur.Port)] = true
+		if cur.Region != rv.Region || cur.Port != rv.Port {
+			continue
+		}
+		if err := PublishLinkRouteVoice(ctx, v.redis, *cur); err != nil {
+			return err
 		}
 	}
 	return nil
