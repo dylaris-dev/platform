@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -135,33 +136,67 @@ func revokedSessionKey(id string) string { return "dylaris:auth:revoked:" + id }
 // revokeSession ends one session for good: the id stays on the list until no
 // copy of it can still be alive, which with sliding is the absolute cap, not
 // the token's own expiry.
-func revokeSession(ctx context.Context, rdb *redis.Client, c *Claims) error {
-	if rdb == nil || c.ID == "" {
+//
+// Postgres holds the list; Redis is its fast path. Redis alone runs without
+// persistence here, so a restart of it brought every individually signed-out
+// session back to life for the rest of its lifetime.
+func revokeSession(ctx context.Context, st any, rdb *redis.Client, c *Claims) error {
+	if c.ID == "" {
 		return nil
 	}
-	ttl := time.Until(loginTime(c).Add(sessionMaxAge))
+	until := loginTime(c).Add(sessionMaxAge)
+	ttl := time.Until(until)
 	if ttl <= 0 {
+		return nil
+	}
+	if rs, ok := st.(revokedSessionStore); ok {
+		if err := rs.RevokeSession(c.ID, until); err != nil {
+			return fmt.Errorf("record the sign-out: %w", err)
+		}
+	}
+	if rdb == nil {
 		return nil
 	}
 	return rdb.Set(ctx, revokedSessionKey(c.ID), "1", ttl).Err()
 }
 
-// sessionRevoked fails OPEN: Redis being unreachable must not sign the whole
-// platform out. What it costs is that a signed-out copy works until Redis is
-// back; "sign out everywhere" (the session epoch, in Postgres) does not depend
-// on this.
-func sessionRevoked(ctx context.Context, rdb *redis.Client, id string) bool {
-	if rdb == nil || id == "" {
+// revokedSessionStore is the durable half of the sign-out list. An interface
+// here rather than a store.Store method so a test fake that does not implement
+// it simply has no durable list.
+type revokedSessionStore interface {
+	RevokeSession(id string, expiresAt time.Time) error
+	IsSessionRevoked(id string) (bool, error)
+}
+
+// sessionRevoked asks Redis first and Postgres when Redis does not say
+// "revoked" (a miss after a Redis restart, or Redis down). It fails OPEN only
+// when both cannot answer: an outage of both must not sign the whole platform
+// out. "Sign out everywhere" (the session epoch) does not depend on this.
+func sessionRevoked(ctx context.Context, st any, rdb *redis.Client, id string) bool {
+	if id == "" {
 		return false
 	}
-	// Bounded: this runs on every request, and go-redis would otherwise spend
-	// seconds on dial and retries against a Redis that is gone.
-	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-	defer cancel()
-	n, err := rdb.Exists(ctx, revokedSessionKey(id)).Result()
+	if rdb != nil {
+		// Bounded: this runs on every request, and go-redis would otherwise
+		// spend seconds on dial and retries against a Redis that is gone.
+		rctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		n, err := rdb.Exists(rctx, revokedSessionKey(id)).Result()
+		cancel()
+		if err == nil && n > 0 {
+			return true
+		}
+		if err != nil {
+			log.Printf("auth: session revocation check in Redis failed, asking Postgres: %v", err)
+		}
+	}
+	rs, ok := st.(revokedSessionStore)
+	if !ok {
+		return false
+	}
+	revoked, err := rs.IsSessionRevoked(id)
 	if err != nil {
 		log.Printf("auth: session revocation check failed, letting it through: %v", err)
 		return false
 	}
-	return n > 0
+	return revoked
 }

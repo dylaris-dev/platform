@@ -95,7 +95,7 @@ func (h *AuthHandler) ParseTabProxyTicket(tokenString string) (*Claims, error) {
 	}
 	// A ticket from before tickets carried the session has no id and lapses
 	// within its five minutes.
-	if h.state != nil && sessionRevoked(context.Background(), h.state.Redis, claims.ID) {
+	if h.state != nil && sessionRevoked(context.Background(), h.state.Store, h.state.Redis, claims.ID) {
 		return nil, errors.New("session ended")
 	}
 	return claims, nil
@@ -306,7 +306,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					w.Header().Set("Cache-Control", "no-store")
 					// Checked before the slide: a stream reconnecting every few
 					// minutes kept a signed-out session's ticket alive for good.
-					if sessionRevoked(r.Context(), h.state.Redis, ticketSID) {
+					if sessionRevoked(r.Context(), h.state.Store, h.state.Redis, ticketSID) {
 						h.state.Redis.Del(r.Context(), key)
 						sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 						return
@@ -422,7 +422,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Signed out on this device. Same answer as a dead token: to the panel
 		// both mean "sign in again".
 		withSessionID(claims, tokenString)
-		if sessionRevoked(r.Context(), h.state.Redis, claims.ID) {
+		if sessionRevoked(r.Context(), h.state.Store, h.state.Redis, claims.ID) {
 			if cookieAuth {
 				clearSessionCookie(w, r)
 			}
@@ -1175,7 +1175,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 			return h.jwtKey, nil
 		}, jwt.WithValidMethods([]string{"HS256"})); err == nil && t.Valid && claims.Purpose == "" {
 			withSessionID(claims, tok)
-			if err := revokeSession(r.Context(), h.state.Redis, claims); err != nil {
+			if err := revokeSession(r.Context(), h.state.Store, h.state.Redis, claims); err != nil {
 				log.Printf("auth: could not end the session of %s on sign-out: %v", claims.Username, err)
 			}
 		}

@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Signing out survives a Redis restart.** The sign-out list is kept in Postgres too; before, a
+  restart of the unpersisted Redis brought every signed-out session back. `core`
+- **A server's network rules apply right after it starts,** not at the next 15 s round, so a
+  new server no longer runs unfiltered for those seconds. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.8
 
 ### Features

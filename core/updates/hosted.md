@@ -11,6 +11,20 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Signing out of the panel now stays signed out,** even across a restart on our side.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.8
 
 ### Features
