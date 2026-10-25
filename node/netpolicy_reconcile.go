@@ -336,9 +336,25 @@ func startNetPolicyReconciler(ctx context.Context, dm *DockerManager, rdb *redis
 				return
 			case <-t.C:
 				dm.reconcileNetPolicy(ctx, rdb, nodeToken)
+			case <-dm.netPolicyKick:
+				dm.reconcileNetPolicy(ctx, rdb, nodeToken)
 			}
 		}
 	}()
+}
+
+// kickNetPolicy asks for a round now instead of at the next tick. A server
+// that just started carries no rules until then, and the tick is
+// netPolicyInterval: up to 15 s in which a tenant reaches the metadata service
+// and Core's ports. Non-blocking: one pending kick covers any number of starts,
+// and a node that runs no reconciler (external, BYON) just leaves it pending.
+// ponytail: still a window of one round (about a second); closing it fully
+// needs the installer's network-holder start for game containers.
+func (dm *DockerManager) kickNetPolicy() {
+	select {
+	case dm.netPolicyKick <- struct{}{}:
+	default:
+	}
 }
 
 // egressPolicy works out the shared network's subnet, the Redis address a

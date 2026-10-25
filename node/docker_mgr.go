@@ -55,6 +55,9 @@ type DockerManager struct {
 	netPolicyImage string
 	netPolicy      netPolicyState
 	netPolicySrc   policySource
+	// netPolicyKick wakes the reconciler for a container that just started,
+	// see kickNetPolicy.
+	netPolicyKick chan struct{}
 
 	// Whether a Link on this host currently holds no Docker address, so the
 	// warning in linkAddrs is written once per transition rather than every
@@ -83,6 +86,7 @@ func NewDockerManager(storageMgr *StorageManager) (*DockerManager, error) {
 		ctx:           context.Background(),
 		storageMgr:    storageMgr,
 		hostPathCache: make(map[string]string),
+		netPolicyKick: make(chan struct{}, 1),
 	}
 
 	baseDir, _ := os.Getwd()
@@ -1134,6 +1138,9 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 			}
 			err = dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
 		}
+		if err == nil {
+			dm.kickNetPolicy()
+		}
 		return err
 	case "stop":
 		timeout := 30
@@ -1343,6 +1350,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		if err != nil {
 			return "", fmt.Errorf("mc container start error: %v", err)
 		}
+		dm.kickNetPolicy()
 	}
 
 	// Confirm the container actually landed on a network. Docker accepts an
