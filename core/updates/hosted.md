@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.5
+
+### Features
+- **Voice chat for everyone.** Install Simple Voice Chat or Plasmo Voice, start the server once,
+  then turn on Voice chat under Routes; no port to open. Not on route-only locations.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.24.2
 
 ### Features
