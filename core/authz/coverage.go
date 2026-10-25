@@ -75,6 +75,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/warp/link/heartbeat": true,
 	"/api/warp/link/stats":     true,
 	"/api/warp/link/voice":     true,
+	"/api/warp/link/targets":   true,
 
 	// Store service-to-service calls (shared X-Store-Key header, NOT a panel
 	// session): requireStoreKey is the boundary, same category as warp's API key.

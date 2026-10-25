@@ -78,3 +78,24 @@ func TestSetLinkRouteVoiceRefusesABadBody(t *testing.T) {
 		}
 	}
 }
+
+// LinkTargets lists only this link's routes of this key's owner: the link
+// dials nothing else, so another link's or another owner's target must not
+// appear, and an empty list must be [] for the link's decoder.
+func TestLinkTargetsListsOnlyThisLinksRoutes(t *testing.T) {
+	h, fs, key, token := routeOnlyKit(t)
+	fs.routes = []store.CoreLinkRoute{
+		{Domain: "a.eu.dylaris.com", OwnerID: "owner-1", LinkToken: token, TargetHost: "127.0.0.1", TargetPort: 25565},
+		{Domain: "b.eu.dylaris.com", OwnerID: "owner-1", LinkToken: "other-link", TargetHost: "127.0.0.1", TargetPort: 25566},
+		{Domain: "c.eu.dylaris.com", OwnerID: "owner-2", LinkToken: token, TargetHost: "10.0.0.5", TargetPort: 25567},
+	}
+	rec := callAs(h.LinkTargets, http.MethodGet, "/api/warp/link/targets", "", key)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"targets":["127.0.0.1:25565"]}` {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	fs.routes = nil
+	rec = callAs(h.LinkTargets, http.MethodGet, "/api/warp/link/targets", "", key)
+	if !strings.Contains(rec.Body.String(), `"targets":[]`) {
+		t.Fatalf("empty list body %s", rec.Body.String())
+	}
+}

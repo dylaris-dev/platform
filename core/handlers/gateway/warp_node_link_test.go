@@ -41,8 +41,11 @@ type nodeLinkFakeStore struct {
 	binds          [][2]int
 	bindErr        error
 
-	voice []store.LinkRouteVoice
+	voice  []store.LinkRouteVoice
+	routes []store.CoreLinkRoute
 }
+
+func (f *nodeLinkFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return f.routes, nil }
 
 func (f *nodeLinkFakeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return f.voice, nil }
 

@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **A route-only link can learn the exact targets of its routes** (`GET /api/warp/link/targets`), so
+  an updated link dials only those host:port pairs. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.9
 
 ### Features

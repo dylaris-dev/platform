@@ -357,3 +357,31 @@ func (h *WarpHandler) LinkVoice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"now_ms": time.Now().UnixMilli(), "routes": out})
 }
+
+// LinkTargets GET /api/warp/link/targets - the host:port pairs this link's
+// routes point at. The link then dials only these (gateway/link
+// core_targets.go): the edge names the target in every stream header, and
+// without a list a compromised edge could make a host-networked route-only
+// link dial any port on its customer's machine. Only this link's routes, of
+// this key's owner, the same filter LinkVoice uses.
+func (h *WarpHandler) LinkTargets(w http.ResponseWriter, r *http.Request) {
+	key, token, ok, _ := h.routeOnlyKey(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.state.Store.ListCoreLinkRoutes()
+	if err != nil {
+		log.Printf("route-only link %s: reading routes failed: %v", key.NodeID, err)
+		handlers.SendJSONError(w, "Routes unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	out := make([]string, 0)
+	for _, rt := range rows {
+		if rt.LinkToken != token || rt.OwnerID != key.OwnerID {
+			continue
+		}
+		out = append(out, net.JoinHostPort(rt.TargetHost, strconv.Itoa(rt.TargetPort)))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"targets": out})
+}

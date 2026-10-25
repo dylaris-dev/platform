@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Your link only connects to the server addresses of your routes.** Before, it would connect to
+  any port on the target host it was allowed. It updates itself overnight; nothing to do.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.9
 
 ### Features

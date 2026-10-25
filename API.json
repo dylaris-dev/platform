@@ -5493,6 +5493,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/warp/link/targets",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "the host:port pairs this link's routes point at.",
+      "handler": "WarpHandler.LinkTargets",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/warp/link/voice",
       "auth": "warp key",
       "authorization": "no capability",
@@ -5583,12 +5593,12 @@
     }
   ],
   "counts": {
-    "total": 561,
+    "total": 562,
     "byAuth": {
       "none": 31,
       "session": 513,
       "user API key": 10,
-      "warp key": 7
+      "warp key": 8
     },
     "byGroup": {
       "admin": 135,
@@ -5642,7 +5652,7 @@
       "users": 7,
       "versions": 2,
       "voice": 1,
-      "warp": 22
+      "warp": 23
     },
     "external": 10
   }

@@ -171,6 +171,7 @@ var maintenanceExemptMachinePaths = map[string]bool{
 	"/api/warp/link/heartbeat": true,
 	"/api/warp/link/stats":     true,
 	"/api/warp/link/voice":     true,
+	"/api/warp/link/targets":   true,
 }
 
 // shouldBlockForMaintenance returns true when the request must be rejected
