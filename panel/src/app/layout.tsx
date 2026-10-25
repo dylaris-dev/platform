@@ -3,29 +3,34 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { CONTRAST_BOOTSTRAP } from "@/lib/contrastMode";
 
-import { Syne, Instrument_Sans, DM_Mono, VT323 } from "next/font/google";
+// Self-hosted (src/app/fonts, see its README): next/font/google fetched the
+// files at build time and a failed fetch broke the image build.
+import localFont from "next/font/local";
 
-const syne = Syne({
-  subsets: ["latin"],
-  weight: ["700", "800"],
+const syne = localFont({
+  src: "./fonts/Syne-Variable.woff2",
+  weight: "700 800",
   variable: "--font-display",
 });
 
-const instrumentSans = Instrument_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+const instrumentSans = localFont({
+  src: "./fonts/InstrumentSans-Variable.woff2",
+  weight: "400 600",
   variable: "--font-body",
 });
 
-const dmMono = DM_Mono({
-  subsets: ["latin"],
-  weight: ["300", "400", "500"],
+const dmMono = localFont({
+  src: [
+    { path: "./fonts/DMMono-300.woff2", weight: "300", style: "normal" },
+    { path: "./fonts/DMMono-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/DMMono-500.woff2", weight: "500", style: "normal" },
+  ],
   variable: "--font-mono",
 });
 
-const vt323 = VT323({
+const vt323 = localFont({
+  src: "./fonts/VT323-400.woff2",
   weight: "400",
-  subsets: ["latin"],
   variable: "--font-logo",
 });
 
