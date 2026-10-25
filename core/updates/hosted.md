@@ -16,6 +16,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - **Voice chat on route-only.** Turn on Voice chat on a route, put the lines the panel shows into
   your voice mod's config and restart. Your link updates itself overnight; until then the switch says so.
+- **Keep your machine's status private.** Under Configuration, Display, Edge MOTD "Auto, without host status" shows
+  players "Server Offline" instead of "Node Offline" when your node is down.
 
 ### Breaking
 - Nothing.

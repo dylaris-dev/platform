@@ -13,6 +13,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - **Voice chat on route-only addresses.** A route gets a voice port from the same per-region pool
   as servers; the customer's link fetches it from Core and carries the UDP. `core` `panel`
+- **Edge MOTD "Auto, without host status".** Like Auto, but an unreachable host shows a neutral
+  "Server Offline" instead of "Node Offline". Needs the 2026.10.25 edge. `core` `panel`
 
 ### Breaking
 - Nothing.

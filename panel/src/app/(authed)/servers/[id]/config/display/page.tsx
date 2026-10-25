@@ -440,10 +440,17 @@ export default function ServerConfigDisplayPage() {
                         className="input-field text-sm"
                     >
                         <option value="auto">Auto (built-in status notice)</option>
+                        <option value="private">Auto, without host status</option>
                         <option value="custom">Custom (your own message)</option>
                         <option value="off">Off (no message, vanilla)</option>
                     </select>
                 </div>
+
+                {edgeMotdMode === 'private' && (
+                    <p className="text-xs text-(--base-06)">
+                        Like Auto, but when the host is unreachable players see &quot;Server Offline&quot; instead of being told the host is offline.
+                    </p>
+                )}
 
                 {edgeMotdMode === 'custom' && (
                     <div className="flex flex-col gap-[5px]">

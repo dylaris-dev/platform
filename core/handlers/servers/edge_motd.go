@@ -24,11 +24,13 @@ const edgeMotdPublishTTL = 60 * time.Second
 // rendered by the edge as an MC MOTD / disconnect message).
 const maxEdgeMotdTextLen = 256
 
-// validEdgeMotdMode reports whether mode is one of the three supported modes:
-// auto (built-in notice), custom (operator text), off (vanilla).
+// validEdgeMotdMode reports whether mode is one of the supported modes: auto
+// (built-in notice), private (built-in, but a neutral "Server Offline" instead
+// of telling players the host is offline), custom (operator text), off
+// (vanilla). An edge older than private reads it as auto.
 func validEdgeMotdMode(mode string) bool {
 	switch mode {
-	case "auto", "custom", "off":
+	case "auto", "private", "custom", "off":
 		return true
 	}
 	return false

@@ -1054,7 +1054,7 @@ export const cancelMigration = (serverId: number) =>
 
 // Per-server edge transitional-MOTD config (what players see via the gateway
 // edge while the server is down/starting/migrating).
-export type EdgeMotdMode = 'auto' | 'custom' | 'off';
+export type EdgeMotdMode = 'auto' | 'private' | 'custom' | 'off';
 export const getEdgeMotd = (serverId: number): Promise<{ success: boolean; mode?: EdgeMotdMode; customText?: string; message?: string }> =>
     fetchAPI(`/servers/${serverId}/edge-motd`);
 export const setEdgeMotd = (serverId: number, mode: EdgeMotdMode, customText: string) =>

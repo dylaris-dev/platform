@@ -13,6 +13,7 @@ func TestValidEdgeMotdMode(t *testing.T) {
 		{"auto", true},
 		{"custom", true},
 		{"off", true},
+		{"private", true},
 		{"", false},
 		{"AUTO", false},
 		{"disabled", false},
