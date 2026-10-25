@@ -520,12 +520,13 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// compromised left the attacker's session alive for the rest of
 			// its 24 hours.
 			//
-			// An EMPTY claim is allowed through on purpose. Tokens minted
-			// before this shipped carry none, and refusing them would log the
-			// whole platform out on deploy; they age out within 24 hours on
-			// their own. The demo-account session is unbound for the same
-			// reason and has nothing to invalidate.
-			if claims.PwdFp != "" && claims.PwdFp != passwordFingerprint(sessionKey(user)) {
+			// The comparison is exact, an EMPTY claim included. It used to let
+			// an empty claim through for tokens minted before fingerprints
+			// existed, and those aged out long ago - but the exception meant a
+			// token signed by hand with the key, carrying just a username,
+			// passed as that user. An account with no password at all has an
+			// empty fingerprint on both sides and still matches.
+			if claims.ExpiresAt == nil || claims.PwdFp != passwordFingerprint(sessionKey(user)) {
 				sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 				return
 			}
@@ -613,7 +614,17 @@ func (h *AuthHandler) IsAdminToken(r *http.Request) bool {
 	if err != nil || !token.Valid {
 		return false
 	}
-	return claims.IsAdmin
+	// Same shape AuthMiddleware demands of a session (hasSessionShape); the
+	// maintenance bypass must not be cheaper to forge than a session.
+	return claims.IsAdmin && hasSessionShape(claims)
+}
+
+// hasSessionShape reports whether a token carries what every session and
+// 2fa_setup token Core mints carries: an expiry and a password fingerprint.
+// Without them a token is one somebody signed by hand with the key, which an
+// HS256 verifier (the beam relay, until 2026.10.25.8) also held.
+func hasSessionShape(c *Claims) bool {
+	return c.ExpiresAt != nil && c.PwdFp != ""
 }
 
 // invalidLoginMessage is returned for BOTH an unknown username and a wrong
@@ -686,6 +697,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 				Username:         user.Username,
 				IsAdmin:          user.IsAdmin,
 				Purpose:          "2fa_setup",
+				PwdFp:            passwordFingerprint(sessionKey(user)),
 				RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(setupExp)},
 			}
 			tok := jwt.NewWithClaims(jwt.SigningMethodHS256, setupClaims)

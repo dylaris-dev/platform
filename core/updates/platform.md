@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.8
+
+### Features
+- Nothing.
+
+### Breaking
+- **Beam tickets have a key of their own, `BEAM_JWT_SECRET`.** Give the same new value to Core, the
+  gateway beam relay and cluster nodes; unset falls back to `JWT_SECRET` with a warning. `core`
+
+### Security
+- **A token signed with the session key alone is no longer a session.** Core demands the password
+  fingerprint and an expiry every login issues; before, a key holder could sign in as any admin. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.7
 
 ### Features

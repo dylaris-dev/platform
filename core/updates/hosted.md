@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.8
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Panel sign-ins were hardened and re-keyed.** Everyone is signed out once and signs in again;
+  nothing to do on your machine.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.7
 
 ### Features

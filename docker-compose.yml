@@ -30,6 +30,10 @@ services:
       # Core renders this into the page config AND the CSP's connect-src.
       PANEL_API_URL: "${PANEL_API_URL:-}"
       JWT_SECRET: "${JWT_SECRET}"
+      # Signs beam tickets. Its own value, not JWT_SECRET: the beam relay and
+      # cluster nodes hold this key, and an HS256 verifier can also sign.
+      # Unset falls back to JWT_SECRET (Core logs a warning).
+      BEAM_JWT_SECRET: "${BEAM_JWT_SECRET:-}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       # The gateway Hub's internal URL, so the panel's DNS form can be forwarded
       # to it. Core stores no DNS credential itself - the Hub owns that row and
@@ -211,11 +215,10 @@ services:
       NODE_EXTERNAL: "${NODE_EXTERNAL:-}"
       STORAGE_PATHS: "${STORAGE_PATHS:-}"
       DYLARIS_CPUSET_CPUS: "${DYLARIS_CPUSET_CPUS:-}"
-      # Beam ticket secret. Core signs beam tickets with JWT_SECRET; the node
-      # validates them (node/main.go StartBeamServer). Must equal Core's JWT_SECRET
-      # or EVERY beam transfer is rejected - including the 25523 LAN fast-path
-      # published below. Wired to JWT_SECRET so the two cannot silently diverge.
-      BEAM_JWT_SECRET: "${JWT_SECRET}"
+      # Beam ticket key, the fallback check after the per-node proof
+      # (node/main.go StartBeamServer). Must equal Core's BEAM_JWT_SECRET. Never
+      # JWT_SECRET: whoever holds an HS256 key can sign panel sessions with it.
+      BEAM_JWT_SECRET: "${BEAM_JWT_SECRET:-}"
     volumes:
       # The Node drives the host Docker daemon to launch MC server containers.
       - /var/run/docker.sock:/var/run/docker.sock

@@ -19,6 +19,12 @@ type Config struct {
 	APIPort     string
 	FrontendURL string
 	JWTSecret   string
+	// BeamJWTSecret signs beam tickets (env BEAM_JWT_SECRET). The beam relay
+	// and cluster nodes verify those tickets with an HS256 key, which can also
+	// sign, so they must not hold the panel's session key: a relay holding
+	// JWT_SECRET could mint an admin session. Empty falls back to JWT_SECRET,
+	// the old shared setup, with a warning at boot.
+	BeamJWTSecret string
 
 	// AdminSecret is the optional RAM-only break-glass secret. When non-empty,
 	// creating an admin via /setup requires this exact value in every mode
@@ -248,6 +254,7 @@ func LoadConfig() (Config, error) {
 		APIPort:        getEnv("API_PORT", "25500"),
 		FrontendURL:    frontendURL,
 		JWTSecret:      getSecret("JWT_SECRET", "change-this-secret"),
+		BeamJWTSecret:  getSecret("BEAM_JWT_SECRET", ""),
 		AdminSecret:    getSecret("ADMIN_SECRET", ""),
 		SetupEnabled:   setupEnabled,
 		ClusterSecret:  getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
@@ -305,6 +312,13 @@ func LoadConfig() (Config, error) {
 	// the derived Warp leader key and inter-service auth.
 	if cfg.JWTSecret == "" || cfg.JWTSecret == "change-this-secret" {
 		return cfg, fmt.Errorf("JWT_SECRET is unset or still the default placeholder — set a strong random value")
+	}
+	switch {
+	case cfg.BeamJWTSecret == "":
+		log.Printf("config: BEAM_JWT_SECRET is unset, beam tickets are signed with JWT_SECRET; the beam relay then holds the panel session key. Set a separate BEAM_JWT_SECRET and give the relay that one.")
+		cfg.BeamJWTSecret = cfg.JWTSecret
+	case cfg.BeamJWTSecret == cfg.JWTSecret:
+		log.Printf("config: BEAM_JWT_SECRET equals JWT_SECRET; the beam relay then holds the panel session key. Give it a value of its own.")
 	}
 	if cfg.ClusterSecret == "" || cfg.ClusterSecret == "dylaris-cluster-secret" {
 		return cfg, fmt.Errorf("CLUSTER_SECRET is unset or still the default placeholder — set a strong random value")

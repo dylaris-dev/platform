@@ -181,9 +181,13 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
 - **`BEAM_JWT_SECRET` is an optional fallback.** A node verifies a Beam ticket
   first by a proof derived from its own per-node secret, which is the only key a
   BYON node has, so BYON nodes leave it unset. When it is set it must equal Core's
-  `JWT_SECRET`, and it is only tried when the per-node proof fails (a ticket
-  minted before Core could load that node's secret). The compose files wire it to
-  `${JWT_SECRET}` so the two cannot silently diverge.
+  `BEAM_JWT_SECRET`, and it is only tried when the per-node proof fails (a ticket
+  minted before Core could load that node's secret).
+- **`BEAM_JWT_SECRET` is its own key, never `JWT_SECRET`.** Core signs beam
+  tickets with it; the gateway beam relay and cluster nodes verify with it. They
+  are HS256 keys, so whoever holds one can also sign: with the panel's
+  `JWT_SECRET` that would be any panel session. Unset, Core falls back to
+  `JWT_SECRET` and logs a warning at boot.
 - **`FRONTEND_URL` must be externally reachable.** An internal Docker-only hostname
   makes every emailed verify/reset link unreachable outside the Docker network.
 - **The Node needs the Docker socket.** Treat any host running a Node as trusted;
@@ -386,7 +390,8 @@ secrets:
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `JWT_SECRET` | `change-this-secret` (rejected) | **Yes** | Signing key for panel auth tokens and Beam tickets. Must be a strong random value — boot fails on empty/placeholder. |
+| `JWT_SECRET` | `change-this-secret` (rejected) | **Yes** | Signing key for panel auth tokens. Must be a strong random value — boot fails on empty/placeholder. Hand it to no other service. |
+| `BEAM_JWT_SECRET` | *(empty: falls back to `JWT_SECRET`, with a warning)* | Recommended | Signing key for Beam tickets, shared with the gateway beam relay and cluster nodes. A value of its own; never `JWT_SECRET`. |
 | `CLUSTER_SECRET` | `dylaris-cluster-secret` (rejected) | **Yes** | Shared secret authenticating Core ↔ Node ↔ Link ↔ Warp and deriving service keys. Same value across the whole cluster. Boot fails on empty/placeholder. |
 | `GATEWAY_HUB_URL` | *(empty)* | No | The gateway Hub's internal base URL (e.g. `http://hub:25530`), which lets the panel's DNS form reach it. Core stores **no** DNS credential of its own: the Hub owns that row and is the only writer of records. Empty means no gateway, and the panel's DNS card says so instead of offering a form that cannot work. The Hub must share this `CLUSTER_SECRET` — that is what authenticates the hop. |
 | `DB_USER` | `postgres` | **Yes** | Postgres user. |
@@ -459,7 +464,7 @@ which ones and that they belong on the hub service instead (see the
 | `BEAM_LAN_FASTPATH` | `true` (on unless `false`) | No | Toggles the Beam LAN fast-path TLS listener on `:25523` (pinned-TLS, direct client ↔ node). Set `false` to disable; any other value leaves it on. |
 | `BEAM_LAN_PORT` | `25523` | No | Port for that LAN fast-path listener. Change it together with the `ports:` publication in the compose file, and never publish the plain overlay port `25521` instead. |
 | `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
-| `BEAM_JWT_SECRET` | *(empty: tickets are verified by the per-node proof only)* | No | Optional fallback key. A Beam ticket is verified first by a proof derived from this node's own secret; this fleet key is only tried when that fails, for a ticket minted before Core could load the node's secret. When set it must equal Core's `JWT_SECRET` and the gateway beam-relay's `BEAM_JWT_SECRET`. BYON nodes leave it unset. |
+| `BEAM_JWT_SECRET` | *(empty: tickets are verified by the per-node proof only)* | No | Optional fallback key. A Beam ticket is verified first by a proof derived from this node's own secret; this fleet key is only tried when that fails, for a ticket minted before Core could load the node's secret. When set it must equal Core's `BEAM_JWT_SECRET` and the gateway beam-relay's (never Core's `JWT_SECRET`). BYON nodes leave it unset. |
 | `MC_RUN_AS` | `1000` | No | uid/gid the Minecraft containers run as (the `dylaris` user in the images). Set it to keep server data that is already owned by another uid; `0` restores the old root behaviour. A non-numeric value is logged and ignored. |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
 | `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). **Each path must belong to exactly one node** - see below. |

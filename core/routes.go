@@ -30,6 +30,7 @@ import (
 // *config.Config) so this file's dependency surface stays small and testable.
 type routeCfg struct {
 	JWTSecret          string
+	BeamJWTSecret      string
 	Region             string
 	CoreID             string
 	TabProxyHostSuffix string
@@ -595,7 +596,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	statsHandler := stats.NewStatsHandler(appState)
 	memberHandler := handlers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
-	beamHandler := beam.NewBeamHandler(appState, cfg.JWTSecret, cfg.ClusterSecret)
+	beamHandler := beam.NewBeamHandler(appState, cfg.BeamJWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
 	timezoneHandler := handlers.NewTimezoneHandler(appState)
 	backupHandler := backup.NewBackupHandler(appState)

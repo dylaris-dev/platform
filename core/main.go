@@ -726,6 +726,7 @@ func main() {
 	root, extras := buildAPIRouter(appState, authHandler, routeCfg{
 		Panel:              panel,
 		JWTSecret:          cfg.JWTSecret,
+		BeamJWTSecret:      cfg.BeamJWTSecret,
 		Region:             cfg.Region,
 		CoreID:             cfg.CoreID,
 		TabProxyHostSuffix: cfg.TabProxyHostSuffix,

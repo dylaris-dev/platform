@@ -62,11 +62,19 @@ func TestIssueToken_NonAdmin(t *testing.T) {
 
 func TestIsAdminToken(t *testing.T) {
 	h := newTestAuthHandler()
-	adminTok, err := h.IssueToken("admin-user", true, "")
+	// Real accounts have a password hash, and the bypass now demands the
+	// fingerprint a session carries (hasSessionShape).
+	const hash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+	adminTok, err := h.IssueToken("admin-user", true, hash)
 	if err != nil {
 		t.Fatalf("IssueToken(admin): %v", err)
 	}
-	userTok, err := h.IssueToken("regular-user", false, "")
+	forged, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{Username: "admin-user", IsAdmin: true,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))}}).SignedString(h.jwtKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userTok, err := h.IssueToken("regular-user", false, hash)
 	if err != nil {
 		t.Fatalf("IssueToken(user): %v", err)
 	}
@@ -89,6 +97,11 @@ func TestIsAdminToken(t *testing.T) {
 		{"admin token via query param", func() *http.Request {
 			return httptest.NewRequest(http.MethodGet, "/x?token="+adminTok, nil)
 		}, true},
+		{"hand-signed admin claim without a fingerprint", func() *http.Request {
+			r := httptest.NewRequest(http.MethodGet, "/x", nil)
+			r.Header.Set("Authorization", "Bearer "+forged)
+			return r
+		}, false},
 		{"no token at all", func() *http.Request {
 			return httptest.NewRequest(http.MethodGet, "/x", nil)
 		}, false},

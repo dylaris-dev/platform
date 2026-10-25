@@ -247,3 +247,28 @@ func TestValidateStoreSharedKey(t *testing.T) {
 		t.Error("a 32-character key was refused")
 	}
 }
+
+// Beam tickets get their own key so the beam relay never holds the panel's
+// session key; unset keeps the old shared behaviour for existing installs.
+func TestLoadConfig_BeamTicketKey(t *testing.T) {
+	t.Setenv("JWT_SECRET", "a-real-random-jwt-secret-value")
+	t.Setenv("CLUSTER_SECRET", "a-real-random-cluster-secret-value")
+
+	t.Setenv("BEAM_JWT_SECRET", "")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BeamJWTSecret != cfg.JWTSecret {
+		t.Fatalf("unset BEAM_JWT_SECRET = %q, want the JWT_SECRET fallback", cfg.BeamJWTSecret)
+	}
+
+	t.Setenv("BEAM_JWT_SECRET", "a-separate-beam-ticket-key")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BeamJWTSecret != "a-separate-beam-ticket-key" || cfg.JWTSecret == cfg.BeamJWTSecret {
+		t.Fatalf("BEAM_JWT_SECRET not used on its own: %q", cfg.BeamJWTSecret)
+	}
+}

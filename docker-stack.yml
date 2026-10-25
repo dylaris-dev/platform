@@ -38,6 +38,10 @@ services:
       # Core renders this into the page config AND the CSP's connect-src.
       PANEL_API_URL: "${PANEL_API_URL:-}"
       JWT_SECRET: "${JWT_SECRET}"
+      # Signs beam tickets. Its own value, not JWT_SECRET: the beam relay and
+      # cluster nodes hold this key, and an HS256 verifier can also sign.
+      # Unset falls back to JWT_SECRET (Core logs a warning).
+      BEAM_JWT_SECRET: "${BEAM_JWT_SECRET:-}"
       CLUSTER_SECRET: "${CLUSTER_SECRET}"
       # The gateway Hub's internal URL, so the panel's DNS form can be forwarded
       # to it. Core stores no DNS credential itself - the Hub owns that row and
@@ -296,12 +300,11 @@ services:
       # Comma-separated hosts the Node may download Core-minted pack mrpacks
       # from, e.g. app.example.com
       MODPACK_MIRROR_HOSTS: "${MODPACK_MIRROR_HOSTS:-}"
-      # Beam ticket secret. The node validates beam tickets Core signed with
-      # JWT_SECRET (node/main.go StartBeamServer). Required even in this Swarm
-      # topology, where transfers arrive via the gateway beam-relay over the
-      # overlay (25523 stays UNPUBLISHED, see below). Empty = all beam transfers
-      # rejected. Must equal Core's JWT_SECRET AND the gateway relay's BEAM_JWT_SECRET.
-      BEAM_JWT_SECRET: "${JWT_SECRET}"
+      # Beam ticket key, the fallback check after the per-node proof
+      # (node/main.go StartBeamServer). Must equal Core's BEAM_JWT_SECRET AND the
+      # gateway relay's. Never JWT_SECRET: whoever holds an HS256 key can sign
+      # panel sessions with it.
+      BEAM_JWT_SECRET: "${BEAM_JWT_SECRET:-}"
       # Same reason as the core block above: forwarded so the stack environment
       # actually reaches the container. GRPC_TLS_ENABLED must match Core's setting.
       GRPC_TLS_ENABLED: "${GRPC_TLS_ENABLED:-true}"
