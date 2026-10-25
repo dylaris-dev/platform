@@ -6,6 +6,7 @@ import {
   listCustomDomains,
   issueCustomDomainToken,
   verifyCustomDomainTXT,
+  addCustomDomain,
   type CustomDomain,
 } from '@/lib/api/customDomains';
 import { getGatewayRouteOptions } from '@/lib/api/types';
@@ -45,7 +46,7 @@ export function describeClaim(
       // Two records, two jobs: the TXT record below proves the domain is yours,
       // the CNAME brings players to us. Pointing at us alone proves nothing
       // about WHICH account the domain belongs to.
-      const proof = 'Publish the TXT record below to prove you own this domain. We check every 30 minutes.';
+      const proof = 'Publish the TXT record below to prove you own this domain. We check it on our own every 30 minutes, or press check now; a domain is never blocked for not having it yet.';
       let body = `${proof} Players reach it once the domain points at us.`;
       // An empty target list has two causes and they need different sentences.
       // The operator may genuinely have configured no CNAME label - then the
@@ -101,6 +102,10 @@ export function CustomDomainsPanel() {
   const [copied, setCopied] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cnameLookupFailed, setCnameLookupFailed] = useState(false);
+  const [customEnabled, setCustomEnabled] = useState(false);
+  const [newDomain, setNewDomain] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -136,6 +141,7 @@ export function CustomDomainsPanel() {
           return;
         }
         setCnameLookupFailed(false);
+        setCustomEnabled(!!o?.customDomainsEnabled);
         setCnameTargets(cnameTargetsFor(o?.cnameTarget || '', o?.hosterDomains || []));
       })
       .catch(() => setCnameLookupFailed(true));
@@ -181,6 +187,22 @@ export function CustomDomainsPanel() {
     }
   };
 
+  const add = async () => {
+    const domain = newDomain.trim().toLowerCase();
+    if (!domain) return;
+    setAdding(true);
+    setAddError('');
+    try {
+      await addCustomDomain(domain);
+      setNewDomain('');
+      await load();
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : 'Could not add the domain.');
+    } finally {
+      setAdding(false);
+    }
+  };
+
   const copy = (value: string) => {
     navigator.clipboard.writeText(value).then(() => {
       setCopied(value);
@@ -205,7 +227,9 @@ export function CustomDomainsPanel() {
       </div>
     );
   }
-  if (domains.length === 0) return null;
+  // Hidden for an account that uses only our addresses on a platform with own
+  // domains off; once they are on, the add form is the way in.
+  if (domains.length === 0 && !customEnabled) return null;
 
   return (
     <div className="space-y-3 rounded-md border border-(--base-03) bg-(--base-01) p-4">
@@ -213,6 +237,31 @@ export function CustomDomainsPanel() {
         <Globe size={15} className="text-(--accent-light)" />
         Your own domains
       </div>
+
+      {customEnabled ? (
+        <form
+          className="flex flex-col gap-[5px]"
+          onSubmit={e => { e.preventDefault(); add(); }}
+        >
+          <label htmlFor="custom-domain-add" className="input-label">Add a domain</label>
+          <div className="flex items-center gap-2">
+            <input
+              id="custom-domain-add"
+              type="text"
+              value={newDomain}
+              onChange={e => setNewDomain(e.target.value)}
+              placeholder="play.example.com"
+              className="input-field text-sm flex-1"
+              disabled={adding}
+            />
+            <button type="submit" className="btn btn-primary btn-sm" disabled={adding || !newDomain.trim()}>
+              {adding ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+          <p className="text-xs text-(--base-06)">You get a TXT record to publish. Once we find it you can create routes on the domain; nothing runs out meanwhile.</p>
+          {addError ? <p className="text-xs text-(--warning)" role="alert">{addError}</p> : null}
+        </form>
+      ) : null}
 
       <ul className="space-y-3">
         {domains.map((d) => {

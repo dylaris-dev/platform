@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26
+
+### Features
+- **Your own domain.** Under My infrastructure, Protected addresses, add it, publish the TXT record
+  shown and press check; once found, create a route on it and point it at us with a CNAME.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.25.10
 
 ### Features

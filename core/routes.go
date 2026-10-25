@@ -1550,6 +1550,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// (user, domain) so nobody can lock a competitor's domain out globally.
 	customDomainHandler := gateway.NewCustomDomainHandler(appState, services.NewNetResolver())
 	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(customDomainHandler.List)).Methods("GET")
+	api.HandleFunc("/gateway/custom-domains", authLimiter.Limit(30, authHandler.AuthMiddleware(customDomainHandler.Add))).Methods("POST")
 	api.HandleFunc("/gateway/custom-domains/{domain:.+}/txt-token",
 		authHandler.AuthMiddleware(customDomainHandler.IssueTXTToken)).Methods("POST")
 	// Rate-limited: it triggers an outbound DNS lookup and is the way back from a

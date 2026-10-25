@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -132,6 +133,11 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 		handlers.SendJSONError(w, "Request a verification token for this domain first", http.StatusBadRequest)
 		return
 	}
+	if wait := h.verifyCooldown(r.Context(), userID, domain); wait > 0 {
+		handlers.SendJSONErrorCode(w, fmt.Sprintf("You checked this domain a moment ago. Try again in %s.", roundUpMinutes(wait)),
+			"verify_cooldown", http.StatusTooManyRequests)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -149,4 +155,101 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 		"success": true,
 		"message": "Ownership verified. You can add routes on " + domain + ".",
 	})
+}
+
+// verifyCheckCooldown spaces out manual checks of one domain. A check only
+// looks the record up: nothing counts a miss, so no number of clicks can block
+// a domain, and the verifier still checks pending claims on its own.
+const verifyCheckCooldown = 5 * time.Minute
+
+// verifyCooldown claims this (user, domain)'s check slot and returns how long
+// is left when it was already taken. No Redis means no cooldown.
+func (h *CustomDomainHandler) verifyCooldown(ctx context.Context, userID, domain string) time.Duration {
+	if h.state.Redis == nil {
+		return 0
+	}
+	key := "dylaris:custom-domain:check:" + userID + ":" + domain
+	ok, err := h.state.Redis.SetNX(ctx, key, "1", verifyCheckCooldown).Result()
+	if err != nil || ok {
+		return 0
+	}
+	ttl, err := h.state.Redis.TTL(ctx, key).Result()
+	if err != nil || ttl <= 0 {
+		return 0
+	}
+	return ttl
+}
+
+func roundUpMinutes(d time.Duration) string {
+	m := int((d + time.Minute - 1) / time.Minute)
+	if m <= 1 {
+		return "a minute"
+	}
+	return fmt.Sprintf("%d minutes", m)
+}
+
+// maxClaimsPerUser bounds how many domains one account may add, the
+// per-account custom domain allowance the docs state.
+const maxClaimsPerUser = 50
+
+// Add POST /api/gateway/custom-domains - body {"domain": "play.example.com"}.
+//
+// The first step for a domain of the customer's own: it records the claim
+// (no deadline, see store.RequestCustomDomainClaim) and returns the TXT
+// record to publish. Routes on it are refused until that record is found
+// (customDomainGate), so adding a domain is never a way to serve it.
+func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("userID").(string)
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		handlers.SendJSONError(w, `Invalid request: expected {"domain": "play.example.com"}`, http.StatusBadRequest)
+		return
+	}
+	domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(req.Domain), "."))
+	raw, _ := h.state.Store.GetSetting("gateway_hoster_domains")
+	var hosters []handlers.HosterDomain
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &hosters)
+	}
+	enabled, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
+	if enabled != "true" && !handlers.IsAdmin(r) {
+		handlers.SendJSONErrorCode(w, "Your own domains are not enabled on this platform.", "custom_domains_off", http.StatusConflict)
+		return
+	}
+	if _, _, err := resolveBroughtDomain(domain, hosters, true, nil); err != nil {
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	claims, err := h.state.Store.ListCustomDomainClaimsByUser(userID)
+	if err != nil {
+		handlers.SendJSONError(w, "Could not load your custom domains", http.StatusInternalServerError)
+		return
+	}
+	known := false
+	for _, c := range claims {
+		known = known || c.Domain == domain
+	}
+	if !known && len(claims) >= maxClaimsPerUser {
+		handlers.SendJSONErrorCode(w, fmt.Sprintf("You can add up to %d domains.", maxClaimsPerUser), "too_many_domains", http.StatusConflict)
+		return
+	}
+	claim, err := h.state.Store.RequestCustomDomainClaim(userID, domain)
+	if err != nil || claim == nil {
+		handlers.SendJSONError(w, "Could not add the domain", http.StatusInternalServerError)
+		return
+	}
+	if claim.TXTToken == "" && claim.State != store.ClaimVerified {
+		token, terr := services.NewTXTToken()
+		if terr == nil {
+			terr = h.state.Store.SetCustomDomainTXTToken(claim.ID, token)
+		}
+		if terr != nil {
+			handlers.SendJSONError(w, "Could not generate a verification token", http.StatusInternalServerError)
+			return
+		}
+		claim.TXTToken = token
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "domain": viewOf(*claim)})
 }

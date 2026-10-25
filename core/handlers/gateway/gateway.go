@@ -617,9 +617,11 @@ func resolveBroughtDomain(dom string, hosters []handlers.HosterDomain, customEna
 	if len(labels) < 2 || len(labels) > 4 {
 		return "", false, fmt.Errorf("custom domain may have at most two subdomain levels")
 	}
-	if blocked[labels[0]] {
-		return "", false, fmt.Errorf("leftmost label %q is reserved", labels[0])
-	}
+	// No reserved-label check here. The list keeps names like admin.<our
+	// domain> off our hoster domains; on a domain the customer has to prove
+	// they own, "play" or "mc" impersonates nobody, and refusing it turned away
+	// the most common name a server has.
+	_ = blocked
 	for _, h := range hosters {
 		if dom == h.Domain || strings.HasSuffix(dom, "."+h.Domain) {
 			return "", false, fmt.Errorf("custom domain may not be a subdomain of a hoster domain (%s) — use the subdomain picker instead", h.Domain)

@@ -48,6 +48,18 @@ export const listCustomDomains = async (): Promise<CustomDomain[]> => {
   return data.domains ?? [];
 };
 
+/** Adds a domain of the customer's own and returns the TXT record to publish. */
+export const addCustomDomain = async (domain: string): Promise<CustomDomain> => {
+  const res = await fetch(`${API_URL}/gateway/custom-domains`, {
+    method: 'POST',
+    headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain }),
+  });
+  const data = await handleResponse(res);
+  if (!data?.success) throw new Error(data?.message || 'Could not add the domain.');
+  return data.domain;
+};
+
 /** Mints (or returns) the TXT record that proves ownership. */
 export const issueCustomDomainToken = async (domain: string): Promise<CustomDomain> => {
   const res = await fetch(

@@ -129,11 +129,14 @@ func TestResolveRouteDomain(t *testing.T) {
 		}
 	})
 
-	t.Run("reserved-label refusal on the custom-domain path (leftmost label)", func(t *testing.T) {
+	// A domain the customer has to prove they own impersonates nobody, so the
+	// reserved list does not reach it: refusing it turned away play.<their
+	// domain>, the most common name a server has.
+	t.Run("reserved labels do not apply to a custom domain", func(t *testing.T) {
 		h := newGatewayDomainHandler(map[string]string{"gateway_custom_domains_enabled": "true"})
-		_, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "admin.example.com", 25565), false)
-		if err == nil || !strings.Contains(err.Error(), "reserved") {
-			t.Fatalf("err = %v, want a 'reserved' error for the default-blocklisted 'admin' leftmost label", err)
+		got, _, err := h.resolveRouteDomain(routeDomainReq("", "", "", "play.example.com", 25565), false)
+		if err != nil || got != "play.example.com" {
+			t.Fatalf("got %q err %v, want play.example.com accepted", got, err)
 		}
 	})
 
@@ -374,8 +377,6 @@ func TestResolveRouteDomain_AdminMayUseReservedPrefixes(t *testing.T) {
 		want string
 	}{
 		{"hoster subdomain", routeDomainReq("", "admin", "dylaris.com", "", 25565), "admin.dylaris.com"},
-		{"custom domain", routeDomainReq("", "", "", "play.example.com", 25565), "play.example.com"},
-		{"raw domain", routeDomainReq("mc.example.com", "", "", "", 25565), "mc.example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, _, err := h.resolveRouteDomain(tc.req, false); err == nil {

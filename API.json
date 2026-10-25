@@ -2028,6 +2028,16 @@
     },
     {
       "method": "POST",
+      "path": "/api/gateway/custom-domains",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "body {\"domain\": \"play.example.com\"}.",
+      "handler": "CustomDomainHandler.Add",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "POST",
       "path": "/api/gateway/custom-domains/{domain:.+}/txt-token",
       "auth": "session",
       "authorization": "checked in handler",
@@ -5593,10 +5603,10 @@
     }
   ],
   "counts": {
-    "total": 562,
+    "total": 563,
     "byAuth": {
       "none": 31,
-      "session": 513,
+      "session": 514,
       "user API key": 10,
       "warp key": 8
     },
@@ -5612,7 +5622,7 @@
       "disk": 4,
       "external": 10,
       "files": 10,
-      "gateway": 21,
+      "gateway": 22,
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,

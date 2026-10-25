@@ -528,8 +528,8 @@ function MyNodesInner() {
                         entitlementKnown={entitlementKnown}
                         suspended={suspended}
                     />
-                    {/* Renders nothing until the account actually has a claim, so a
-                        tenant who only uses our subdomains never sees it. */}
+                    {/* Renders nothing while own domains are off and the account has
+                        no claim; with them on it carries the add-a-domain form. */}
                     <CustomDomainsPanel />
                 </div>
             ) : (

@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26
+
+### Features
+- **Add an own domain without a route.** "Your own domains" takes a domain, shows its TXT record
+  and checks it on request (at most every 5 minutes); routes on it work once it is proven. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Reserved labels no longer refuse an own domain.** `play.` or `mc.` on a customer's proven
+  domain impersonates nobody; the list still guards the hoster domains. `core`
+
 ## 2026.10.25.10
 
 ### Features
