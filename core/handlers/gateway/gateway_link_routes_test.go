@@ -80,10 +80,11 @@ func (f *linkRouteFakeStore) GetSetting(key string) (string, error) {
 
 // The custom-domain claim pair. A domain a tenant brought themselves now
 // reaches the ownership gate whichever request field carried it, so these are
-// on the path of any test that routes one - unclaimed and armed without
-// complaint, which is the "nothing stands in the way" fixture.
+// on the path of any test that routes one - already proven, which is the
+// "nothing stands in the way" fixture now that ownership comes first
+// (customDomainGate refuses an unproven domain; custom_domain_gate_test.go).
 func (f *linkRouteFakeStore) GetCustomDomainClaim(userID, domain string) (*store.CustomDomainClaim, error) {
-	return nil, store.ErrNoClaim
+	return &store.CustomDomainClaim{UserID: userID, Domain: domain, State: store.ClaimVerified}, nil
 }
 
 func (f *linkRouteFakeStore) StartCustomDomainClaim(userID, domain string, deadline time.Time) (*store.CustomDomainClaim, error) {

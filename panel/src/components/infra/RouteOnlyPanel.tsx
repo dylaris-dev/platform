@@ -211,9 +211,9 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             const req = routeSubmitRequest(editing, domainReq, targetPort);
             const res = await createLinkRoute({ ...req, linkId, targetHost: targetHost.trim() });
             if (!res.success) throw new Error((res as { message?: string }).message || `Failed to ${editing ? 'save' : 'create'} route`);
-            // On a custom domain the route is accepted but provisional: a four-hour
-            // clock is now running and missing it deletes the route. Core says so in
-            // ownershipNotice, and a fixed "Route created" would hide it.
+            // Core refuses an unproven custom domain with the TXT record to
+            // publish (the error above), so ownershipNotice is empty today; it
+            // is still shown if a Core ever sends one.
             const notice = (res as { ownershipNotice?: string }).ownershipNotice;
             const what = editing ? 'Route updated' : 'Route created';
             flashToast(notice ? `${what}. ${notice}` : what);

@@ -510,6 +510,7 @@ type Store interface {
 	// Custom-domain ownership proof. Keyed on (user, domain) so a block can
 	// never be global - see database/db_custom_domains.go.
 	GetCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)
+	RequestCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)
 	StartCustomDomainClaim(userID, domain string, deadline time.Time) (*CustomDomainClaim, error)
 	MarkCustomDomainVerified(id int) error
 	FailCustomDomainClaim(id int) (string, error)

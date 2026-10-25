@@ -92,6 +92,21 @@ func (s *PostgresStore) StartCustomDomainClaim(userID, domain string, deadline t
 	return s.GetCustomDomainClaim(userID, domain)
 }
 
+// RequestCustomDomainClaim makes sure a (user, domain) claim exists without
+// starting a deadline: a pending claim with no deadline is checked by the
+// verifier on every pass and verified when the record appears, but never
+// failed, so nothing runs out while the customer sets up DNS and no strike is
+// counted. An existing claim is returned as it is.
+func (s *PostgresStore) RequestCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error) {
+	if _, err := s.db.Exec(`
+		INSERT INTO custom_domain_claims (user_id, domain, state, deadline_at, updated_at)
+		VALUES ($1, $2, 'pending', NULL, NOW())
+		ON CONFLICT (user_id, domain) DO NOTHING`, userID, domain); err != nil {
+		return nil, err
+	}
+	return s.GetCustomDomainClaim(userID, domain)
+}
+
 // MarkCustomDomainVerified records a proven claim and clears the deadline. The
 // attempt counter is reset too: the domain is proven, so an older miss should
 // not count toward a future permanent block.

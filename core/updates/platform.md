@@ -19,6 +19,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Security
 - **Signing out survives a Redis restart.** The sign-out list is kept in Postgres too; before, a
   restart of the unpersisted Redis brought every signed-out session back. `core`
+- **A custom domain is proven before its route goes live.** It used to be routed at once with four
+  hours to add the TXT record, so a CNAME left pointing at us served whoever claimed it. `core` `panel`
 - **A server's network rules apply right after it starts,** not at the next 15 s round, so a
   new server no longer runs unfiltered for those seconds. `node`
 

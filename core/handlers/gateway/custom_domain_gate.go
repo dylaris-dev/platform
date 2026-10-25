@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,8 +18,17 @@ import (
 // customDomainGate decides whether this caller may point `domain` at us.
 //
 // Returns a non-nil error to refuse, with a message meant for the customer.
-// It only READS: arming the grant is armCustomDomainClaim, called after the
-// route actually exists.
+//
+// OWNERSHIP FIRST, then the route. It used to let an unproven domain through
+// and arm a four-hour window afterwards, so the route was LIVE before anything
+// was proven: a domain that already pointed at us (a CNAME left behind by its
+// last user) served whoever claimed it for up to four hours, and a claim that
+// failed to store left the route up with nothing ever checking it. Now a
+// domain without a verified claim gets a claim with no deadline (nothing runs
+// out while the customer sets up DNS, no strike is counted, and the verifier
+// proves it as soon as the record appears), the record is checked right here
+// so a customer who has just published it is not sent round again, and
+// otherwise the answer says what to publish.
 //
 // ADMINS ARE EXEMPT ENTIRELY - not "checked and usually passing", but never
 // checked. The proof exists to stop a tenant from claiming a domain they do not
@@ -47,7 +58,44 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 			"To unblock it, add the TXT record shown under Custom domains in your panel",
 			domain, claim.Attempts)
 	}
-	return nil
+	if claim != nil && claim.State == store.ClaimVerified {
+		return nil
+	}
+
+	claim, err = h.state.Store.RequestCustomDomainClaim(userID, domain)
+	if err != nil || claim == nil {
+		return fmt.Errorf("could not start the ownership check for %s", domain)
+	}
+	if claim.TXTToken == "" {
+		token, terr := services.NewTXTToken()
+		if terr == nil {
+			terr = h.state.Store.SetCustomDomainTXTToken(claim.ID, token)
+		}
+		if terr != nil {
+			log.Printf("custom-domain: could not mint the token for %s (user %s): %v", domain, userID, terr)
+			return fmt.Errorf("could not start the ownership check for %s", domain)
+		}
+		claim.TXTToken = token
+	}
+	res := h.txtResolver
+	if res == nil {
+		res = services.NewNetResolver()
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if services.CheckTXTToken(ctx, res, domain, claim.TXTToken) {
+		if err := h.state.Store.MarkCustomDomainVerified(claim.ID); err != nil {
+			return fmt.Errorf("could not record the ownership of %s", domain)
+		}
+		return nil
+	}
+	return errors.New(customDomainProveFirst(services.TXTVerifyPrefix+domain, claim.TXTToken))
+}
+
+// customDomainProveFirst is the refusal for a domain not proven yet.
+func customDomainProveFirst(txtName, txtValue string) string {
+	return fmt.Sprintf("Prove you own this domain first: add a TXT record %s with the value %s, "+
+		"then create the route again. DNS changes can take a few minutes to show.", txtName, txtValue)
 }
 
 // armCustomDomainClaim starts the four-hour grant and returns the instruction

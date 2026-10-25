@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -62,10 +63,12 @@ func TestCustomDomainDeadlineHint(t *testing.T) {
 // claimFakeStore records what the gate does to the claim table.
 type claimFakeStore struct {
 	store.Store
-	settings map[string]string
-	claim    *store.CustomDomainClaim
-	started  []string
-	tokens   []string
+	settings  map[string]string
+	claim     *store.CustomDomainClaim
+	started   []string
+	tokens    []string
+	requested []string
+	verified  int
 }
 
 func (f *claimFakeStore) SetCustomDomainTXTToken(_ int, token string) error {
@@ -80,6 +83,22 @@ func (f *claimFakeStore) GetCustomDomainClaim(_, _ string) (*store.CustomDomainC
 		return nil, store.ErrNoClaim
 	}
 	return f.claim, nil
+}
+
+func (f *claimFakeStore) RequestCustomDomainClaim(_, domain string) (*store.CustomDomainClaim, error) {
+	if f.claim == nil {
+		f.requested = append(f.requested, domain)
+		f.claim = &store.CustomDomainClaim{ID: 7, Domain: domain, State: store.ClaimPending}
+	}
+	return f.claim, nil
+}
+
+func (f *claimFakeStore) MarkCustomDomainVerified(int) error {
+	f.verified++
+	if f.claim != nil {
+		f.claim.State = store.ClaimVerified
+	}
+	return nil
 }
 
 func (f *claimFakeStore) StartCustomDomainClaim(_, domain string, _ time.Time) (*store.CustomDomainClaim, error) {
@@ -108,13 +127,45 @@ func TestCustomDomainGateDoesNotArmTheClaim(t *testing.T) {
 		"gateway_hoster_domains": `[{"domain":"eu.dylaris.com","validation":"alphanumeric"}]`,
 	}
 
-	t.Run("the check writes nothing", func(t *testing.T) {
+	// Ownership first: an unproven domain gets no route, so a CNAME left
+	// pointing at us cannot be served to whoever claims it. The claim it starts
+	// has NO deadline (no Start, no strike) and carries the token to publish.
+	t.Run("an unproven domain is refused with the record to publish", func(t *testing.T) {
 		fs := &claimFakeStore{settings: settings}
-		if err := claimHandler(fs).customDomainGate(userRequest(), "u1", "mc.example.com", true); err != nil {
-			t.Fatalf("gate refused a fresh domain: %v", err)
+		h := claimHandler(fs)
+		h.txtResolver = noTXT{}
+		err := h.customDomainGate(userRequest(), "u1", "mc.example.com", true)
+		if err == nil {
+			t.Fatal("a domain nobody has proven was let through to a live route")
 		}
 		if len(fs.started) != 0 {
-			t.Errorf("the check armed %v; a request that is refused further down would leave that claim behind", fs.started)
+			t.Errorf("the check started a deadline %v; nothing may run out before a route exists", fs.started)
+		}
+		if len(fs.requested) != 1 || len(fs.tokens) != 1 || !strings.Contains(err.Error(), fs.tokens[0]) {
+			t.Fatalf("requested %v tokens %v, refusal %q: it must name the token to publish", fs.requested, fs.tokens, err)
+		}
+	})
+
+	t.Run("a record already published proves it on the spot", func(t *testing.T) {
+		fs := &claimFakeStore{settings: settings,
+			claim: &store.CustomDomainClaim{ID: 7, Domain: "mc.example.com", State: store.ClaimPending, TXTToken: "dylaris-verify=abc"}}
+		h := claimHandler(fs)
+		h.txtResolver = txtResolver{}
+		if err := h.customDomainGate(userRequest(), "u1", "mc.example.com", true); err != nil {
+			t.Fatalf("a proven domain was refused: %v", err)
+		}
+		if fs.verified != 1 {
+			t.Fatalf("the proof was not recorded (verified=%d)", fs.verified)
+		}
+	})
+
+	t.Run("a verified claim passes without a lookup", func(t *testing.T) {
+		fs := &claimFakeStore{settings: settings,
+			claim: &store.CustomDomainClaim{ID: 7, Domain: "mc.example.com", State: store.ClaimVerified}}
+		h := claimHandler(fs)
+		h.txtResolver = noTXT{}
+		if err := h.customDomainGate(userRequest(), "u1", "mc.example.com", true); err != nil {
+			t.Fatalf("a verified domain was refused: %v", err)
 		}
 	})
 
@@ -156,3 +207,8 @@ func TestCustomDomainGateDoesNotArmTheClaim(t *testing.T) {
 		}
 	})
 }
+
+// noTXT answers every TXT lookup with nothing published.
+type noTXT struct{ services.DomainResolver }
+
+func (noTXT) LookupTXT(context.Context, string) ([]string, error) { return nil, nil }

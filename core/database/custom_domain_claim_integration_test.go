@@ -231,3 +231,34 @@ func TestIntegrationAVerifiedClaimIsRecheckedAndLapses(t *testing.T) {
 		}
 	})
 }
+
+// Ownership first: a route on a custom domain waits for the proof, and the
+// claim it starts has no deadline, so nothing can fail it and no strike counts
+// while the customer sets up DNS. A claim that already exists keeps its state.
+func TestIntegrationARequestedClaimHasNoDeadlineAndCannotFail(t *testing.T) {
+	_, st := integrationDB(t)
+	user := "claim-req-" + time.Now().Format("150405.000000000")
+
+	c, err := st.RequestCustomDomainClaim(user, "first.example.test")
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if c.State != store.ClaimPending || c.DeadlineAt != nil {
+		t.Fatalf("claim %+v, want pending with no deadline", c)
+	}
+	if _, err := st.FailCustomDomainClaim(c.ID); !errors.Is(err, store.ErrNoClaim) {
+		t.Fatalf("a claim without a deadline could be failed: err %v", err)
+	}
+
+	v, err := st.StartCustomDomainClaim(user, "proven.example.test", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkCustomDomainVerified(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.RequestCustomDomainClaim(user, "proven.example.test")
+	if err != nil || again.State != store.ClaimVerified {
+		t.Fatalf("requesting a proven domain changed it: %+v err %v", again, err)
+	}
+}

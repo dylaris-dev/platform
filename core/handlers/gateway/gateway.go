@@ -22,6 +22,9 @@ import (
 
 type GatewayHandler struct {
 	state *handlers.AppState
+	// txtResolver looks up a custom domain's ownership record; nil means the
+	// real DNS (services.NewNetResolver). A field so tests answer it.
+	txtResolver services.DomainResolver
 }
 
 func NewGatewayHandler(state *handlers.AppState) *GatewayHandler {

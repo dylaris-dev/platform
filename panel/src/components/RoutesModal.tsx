@@ -38,10 +38,8 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
     const [routesLoading, setRoutesLoading] = useState(false);
     const [newRoute, setNewRoute] = useState<CreateRouteRequest>({ targetPort: 25565 });
     const [routeError, setRouteError] = useState('');
-    // A route on an unproven custom domain is accepted but provisional: a
-    // four-hour clock starts and missing it deletes the route. Core returns the
-    // instruction; without showing it the customer's first sign is the route
-    // being gone.
+    // Core refuses an unproven custom domain with the TXT record to publish,
+    // so the notice is empty today; it is still shown if a Core sends one.
     const [routeNotice, setRouteNotice] = useState('');
     const [routeCreating, setRouteCreating] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<GatewayRoute | null>(null);
