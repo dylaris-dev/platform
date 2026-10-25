@@ -253,3 +253,39 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "domain": viewOf(*claim)})
 }
+
+// Delete DELETE /api/gateway/custom-domains/{domain} - removes the caller's
+// claim on a domain. Refused while a route of theirs still uses it: the claim
+// is what keeps that route checked, and removing it first would leave a
+// route nobody re-verifies.
+func (h *CustomDomainHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("userID").(string)
+	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
+	owned, err := services.OwnedServerUUIDs(h.state.Store, userID)
+	if err != nil {
+		handlers.SendJSONError(w, "Could not check your routes", http.StatusInternalServerError)
+		return
+	}
+	routes, err := services.ReadRoutesFromRedis(r.Context(), h.state.Redis)
+	if err != nil {
+		// Not knowing the routes is not "there are none".
+		handlers.SendJSONError(w, "Could not check your routes", http.StatusServiceUnavailable)
+		return
+	}
+	for _, rt := range routes {
+		if strings.EqualFold(rt.Domain, domain) && services.RouteHeldBy(rt, userID, owned) {
+			handlers.SendJSONErrorCode(w, "Delete the routes on "+domain+" first.", "domain_in_use", http.StatusConflict)
+			return
+		}
+	}
+	found, err := h.state.Store.DeleteCustomDomainClaim(userID, domain)
+	if err != nil {
+		handlers.SendJSONError(w, "Could not remove the domain", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		handlers.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}

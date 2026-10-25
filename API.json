@@ -2057,6 +2057,16 @@
       "external": false
     },
     {
+      "method": "DELETE",
+      "path": "/api/gateway/custom-domains/{domain:[^/]+}",
+      "auth": "session",
+      "authorization": "checked in handler",
+      "description": "removes the caller's claim on a domain.",
+      "handler": "CustomDomainHandler.Delete",
+      "group": "gateway",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/gateway/dns-check",
       "auth": "session",
@@ -5603,10 +5613,10 @@
     }
   ],
   "counts": {
-    "total": 563,
+    "total": 564,
     "byAuth": {
       "none": 31,
-      "session": 514,
+      "session": 515,
       "user API key": 10,
       "warp key": 8
     },
@@ -5622,7 +5632,7 @@
       "disk": 4,
       "external": 10,
       "files": 10,
-      "gateway": 22,
+      "gateway": 23,
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,

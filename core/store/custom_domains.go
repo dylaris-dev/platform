@@ -107,6 +107,18 @@ func (s *PostgresStore) RequestCustomDomainClaim(userID, domain string) (*Custom
 	return s.GetCustomDomainClaim(userID, domain)
 }
 
+// DeleteCustomDomainClaim removes one user's claim on one domain and reports
+// whether there was one. Blocks are per (user, domain) and, with no strikes
+// counted any more, protect nothing that removing the row gives away.
+func (s *PostgresStore) DeleteCustomDomainClaim(userID, domain string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM custom_domain_claims WHERE user_id = $1 AND domain = $2`, userID, domain)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // MarkCustomDomainVerified records a proven claim and clears the deadline. The
 // attempt counter is reset too: the domain is proven, so an older miss should
 // not count toward a future permanent block.

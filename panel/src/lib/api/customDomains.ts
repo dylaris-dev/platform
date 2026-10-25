@@ -60,6 +60,16 @@ export const addCustomDomain = async (domain: string): Promise<CustomDomain> => 
   return data.domain;
 };
 
+/** Removes a domain; Core refuses it while a route still uses it. */
+export const removeCustomDomain = async (domain: string): Promise<void> => {
+  const res = await fetch(`${API_URL}/gateway/custom-domains/${encodeURIComponent(domain)}`, {
+    method: 'DELETE',
+    headers: getAuthHeader(),
+  });
+  const data = await handleResponse(res);
+  if (!data?.success) throw new Error(data?.message || 'Could not remove the domain.');
+};
+
 /** Mints (or returns) the TXT record that proves ownership. */
 export const issueCustomDomainToken = async (domain: string): Promise<CustomDomain> => {
   const res = await fetch(

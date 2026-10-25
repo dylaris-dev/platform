@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **562 routes** in 53 sections: 249 GET, 166 POST, 50 PUT, 39 PATCH, 59 DELETE.
+- **563 routes** in 53 sections: 249 GET, 166 POST, 50 PUT, 39 PATCH, 60 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **370** declare a capability at the route and **22** enforce authorization inside the handler. Of the rest, **121** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **370** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **121** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -151,7 +151,7 @@ can still show what exists.
 - [/api/disk](#apidisk) (4)
 - [/api/external](#apiexternal) (10)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (22)
+- [/api/gateway](#apigateway) (23)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
@@ -459,6 +459,7 @@ can still show what exists.
 | POST | `/api/gateway/custom-domains` | session | _in-handler_ | Limit | `CustomDomainHandler.Add` | body {"domain": "play.example.com"}. |
 | POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | - | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record that proves ownership. |
 | POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit | `CustomDomainHandler.VerifyTXT` | Checks the published record now instead of at the next pass, and on success verifies the claim - from pending, out of a block, or out of a run of missed re-checks. |
+| DELETE | `/api/gateway/custom-domains/{domain:[^/]+}` | session | _in-handler_ | - | `CustomDomainHandler.Delete` | removes the caller's claim on a domain. |
 | GET | `/api/gateway/dns-check` | session | `topology.read` | - | `DNSHandler.CheckDNS` | computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe. |
 | GET | `/api/gateway/edges` | session | `topology.read` | - | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
 | GET | `/api/gateway/errors` | session | `topology.read` | - | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |

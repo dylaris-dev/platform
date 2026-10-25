@@ -11,6 +11,20 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.2
+
+### Features
+- **Remove a domain from Your own domains** with the bin icon, once no route uses it.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26
 
 ### Features

@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
-import { Globe, ShieldCheck, Clock, AlertTriangle, Check, Copy } from 'lucide-react';
+import { Globe, ShieldCheck, Clock, AlertTriangle, Check, Copy, Trash2 } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import {
   listCustomDomains,
   issueCustomDomainToken,
   verifyCustomDomainTXT,
   addCustomDomain,
+  removeCustomDomain,
   type CustomDomain,
 } from '@/lib/api/customDomains';
 import { getGatewayRouteOptions } from '@/lib/api/types';
@@ -203,6 +205,26 @@ export function CustomDomainsPanel() {
     }
   };
 
+  const remove = async (domain: string) => {
+    const ok = await confirmDialog({
+      title: `Remove ${domain}?`,
+      message: 'It leaves your own domains. Adding it again later gives it a new TXT record to publish.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy(domain);
+    setNote(null);
+    try {
+      await removeCustomDomain(domain);
+      await load();
+    } catch (e) {
+      setNote({ domain, ok: false, text: e instanceof Error ? e.message : 'Could not remove the domain.' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const copy = (value: string) => {
     navigator.clipboard.writeText(value).then(() => {
       setCopied(value);
@@ -281,6 +303,16 @@ export function CustomDomainsPanel() {
                   {info.title}
                 </span>
                 {left ? <span className="text-xs text-(--base-06)">{left}</span> : null}
+                <button
+                  type="button"
+                  onClick={() => remove(d.domain)}
+                  disabled={busy === d.domain}
+                  title="Remove"
+                  aria-label={`Remove ${d.domain}`}
+                  className="ml-auto p-1.5 text-(--base-06) hover:text-(--error-light) focus-visible:text-(--error-light) transition-colors disabled:opacity-40"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
               <p className="mt-1 text-xs text-(--base-06)">{info.body}</p>
 

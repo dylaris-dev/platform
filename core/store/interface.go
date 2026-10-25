@@ -511,6 +511,7 @@ type Store interface {
 	// never be global - see database/db_custom_domains.go.
 	GetCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)
 	RequestCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)
+	DeleteCustomDomainClaim(userID, domain string) (bool, error)
 	StartCustomDomainClaim(userID, domain string, deadline time.Time) (*CustomDomainClaim, error)
 	MarkCustomDomainVerified(id int) error
 	FailCustomDomainClaim(id int) (string, error)

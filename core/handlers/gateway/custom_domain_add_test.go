@@ -13,6 +13,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/handlers"
+	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -124,5 +126,42 @@ func TestManualCheckHasACooldownAndNeverBlocks(t *testing.T) {
 	mr.FastForward(verifyCheckCooldown)
 	if code := verify(); code != http.StatusConflict {
 		t.Fatalf("after the cooldown: status %d, want a real check (409)", code)
+	}
+}
+
+func (f *addFakeStore) ListServersByOwner(string) ([]models.Server, error) { return nil, nil }
+func (f *addFakeStore) DeleteCustomDomainClaim(_, domain string) (bool, error) {
+	_, ok := f.claims[domain]
+	delete(f.claims, domain)
+	return ok, nil
+}
+
+// A domain can be removed again, but not while a route of the account still
+// uses it: the claim is what keeps that route re-checked.
+func TestRemovingADomain(t *testing.T) {
+	rdb := newLinkRouteRedis(t)
+	fs := &addFakeStore{settings: map[string]string{}, claims: map[string]*store.CustomDomainClaim{
+		"play.example.com": {ID: 1, Domain: "play.example.com", State: store.ClaimVerified},
+		"mc.example.com":   {ID: 2, Domain: "mc.example.com", State: store.ClaimPending},
+	}}
+	seedLinkRoute(t, rdb, "play.example.com", services.GatewayRoute{CoreOwned: true, OwnerID: "u1"})
+	h := NewCustomDomainHandler(&handlers.AppState{Store: fs, Redis: rdb}, noTXT{})
+	del := func(domain string) int {
+		r := httptest.NewRequest(http.MethodDelete, "/api/gateway/custom-domains/"+domain, nil)
+		r = mux.SetURLVars(r, map[string]string{"domain": domain})
+		//lint:ignore SA1029 the handlers read plain string keys.
+		r = r.WithContext(context.WithValue(r.Context(), "userID", "u1"))
+		rec := httptest.NewRecorder()
+		h.Delete(rec, r)
+		return rec.Code
+	}
+	if code := del("play.example.com"); code != http.StatusConflict || fs.claims["play.example.com"] == nil {
+		t.Fatalf("a domain with a route was removed: status %d", code)
+	}
+	if code := del("mc.example.com"); code != http.StatusOK || fs.claims["mc.example.com"] != nil {
+		t.Fatalf("removing an unused domain: status %d", code)
+	}
+	if code := del("nope.example.com"); code != http.StatusNotFound {
+		t.Fatalf("unknown domain: status %d", code)
 	}
 }

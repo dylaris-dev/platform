@@ -8,6 +8,20 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.2
+
+### Features
+- **An own domain can be removed again** from Your own domains, once no route uses it. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26
 
 ### Features

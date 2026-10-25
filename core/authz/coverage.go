@@ -284,6 +284,7 @@ var InHandlerAuthzRoutes = map[string]bool{
 	// rows. A capability would be the wrong shape here - there is no such thing
 	// as reading "someone else's" claim to gate.
 	"/api/gateway/custom-domains":                        true,
+	"/api/gateway/custom-domains/{domain:[^/]+}":         true,
 	"/api/gateway/custom-domains/{domain:.+}/txt-token":  true,
 	"/api/gateway/custom-domains/{domain:.+}/verify-txt": true,
 
