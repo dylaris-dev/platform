@@ -34,6 +34,25 @@ func TestAddRetention(t *testing.T) {
 	}
 }
 
+// A day is 24 hours on the day a local zone leaves DST, too: in Europe/Berlin
+// that day is 25 hours long, and a retention measured on the wall clock ran an
+// hour past its deadline (seen at 02:08 CEST on 2026-10-25).
+func TestAddRetentionIgnoresTheLocalDSTChange(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	for _, at := range []time.Time{
+		time.Date(2026, 10, 24, 12, 0, 0, 0, berlin), // the next day is 25h long
+		time.Date(2026, 3, 28, 12, 0, 0, 0, berlin),  // the next day is 23h long
+	} {
+		got, ok := AddRetention(at, "1d")
+		if !ok || got.Sub(at) != 24*time.Hour {
+			t.Errorf("AddRetention(%v, 1d) = %v, %v later; want 24h", at, got, got.Sub(at))
+		}
+	}
+}
+
 func TestValidRetentionSpec(t *testing.T) {
 	for _, s := range []string{"3d", "2w", "3m", "10d"} {
 		if !ValidRetentionSpec(s) {
