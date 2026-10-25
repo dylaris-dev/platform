@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path"
 	"strconv"
@@ -114,6 +115,15 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	if err := h.state.Store.SetServerModDisabled(target.ID, serverID, !enable); err != nil {
 		if errors.Is(err, store.ErrServerModNotFound) {
 			handlers.SendJSONError(w, "Mod not found", http.StatusNotFound)
+			return
+		}
+		// The jar moved and the row did not: every later toggle would then
+		// copy from where the jar no longer is and fail for good. Move it
+		// back so file and row agree again, and a retry starts clean.
+		log.Printf("mods: server %d mod %d: saving disabled=%v failed after the move: %v", serverID, target.ID, !enable, err)
+		if h.nodeFileOp(srv, &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: dst, DstPath: src}}) == nil &&
+			h.nodeFileOp(srv, &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: dst}}) == nil {
+			handlers.SendJSONError(w, "The setting could not be saved, so the mod was left as it was. Try again.", http.StatusInternalServerError)
 			return
 		}
 		handlers.SendJSONError(w, "The jar moved, but the setting could not be saved", http.StatusInternalServerError)

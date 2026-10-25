@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -62,6 +63,7 @@ type modEnableStore struct {
 	srv      models.Server
 	mod      models.ServerMod
 	disabled []bool // every SetServerModDisabled call
+	saveErr  error  // returned by SetServerModDisabled when set
 }
 
 func (f *modEnableStore) GetServerByID(int) (*models.Server, error) { s := f.srv; return &s, nil }
@@ -69,6 +71,9 @@ func (f *modEnableStore) ListServerMods(int, string) ([]models.ServerMod, error)
 	return []models.ServerMod{f.mod}, nil
 }
 func (f *modEnableStore) SetServerModDisabled(id, serverID int, d bool) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
 	f.disabled = append(f.disabled, d)
 	f.mod.Disabled = d
 	return nil
@@ -126,5 +131,35 @@ func TestSwitchingAModOffAndOnMovesItsJar(t *testing.T) {
 	}
 	if len(fs.disabled) != 0 {
 		t.Fatalf("stored %v after a failed move", fs.disabled)
+	}
+}
+
+// The database failing between the move and the save used to leave the jar in
+// .disabled with the row saying "on", and every later toggle failed copying
+// from where the jar no longer was. The jar goes back instead.
+func TestAFailedSaveMovesTheJarBack(t *testing.T) {
+	fs := &modEnableStore{
+		srv:     models.Server{ID: 5, UUID: "srv-5", NodeID: 7, ActiveSubServer: "main", InstallerType: "fabric"},
+		mod:     models.ServerMod{ID: 9, ServerID: 5, FileName: "lithium.jar", TargetDir: "mods", Status: models.ServerModInstalled},
+		saveErr: errors.New("database is down"),
+	}
+	reg := nodegrpc.NewRegistry()
+	node := &fileOpNode{}
+	node.conn = reg.Register(7, "tok", node)
+	h := NewServerModsHandler(&handlers.AppState{Store: fs, GRPCRegistry: reg})
+	req := httptest.NewRequest("PUT", "/api/servers/5/mods/9/enabled", strings.NewReader(`{"enabled":false}`))
+	req = mux.SetURLVars(req, map[string]string{"id": "5", "modId": "9"})
+	rec := httptest.NewRecorder()
+	h.SetEnabled(rec, req)
+	if rec.Code != 500 || !strings.Contains(rec.Body.String(), "left as it was") {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	want := []string{
+		"mkdir main/mods/.disabled",
+		"copy main/mods/lithium.jar -> main/mods/.disabled/lithium.jar", "rm main/mods/lithium.jar",
+		"copy main/mods/.disabled/lithium.jar -> main/mods/lithium.jar", "rm main/mods/.disabled/lithium.jar",
+	}
+	if strings.Join(node.ops, "|") != strings.Join(want, "|") {
+		t.Fatalf("ops = %v, want %v", node.ops, want)
 	}
 }

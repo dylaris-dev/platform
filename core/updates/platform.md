@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.25.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **The health page flags an edge that runs no voice relay** while servers have voice on. It
+  counted relays per region, so one dead relay of two still read as healthy. `core`
+- **A server that starts without its voice mod gives its voice port back,** instead of holding
+  it for good; turning voice on again takes a new port. `core`
+- **A mod switch can no longer get stuck** when saving fails after the jar moved: the jar is put
+  back, so the next try works. `core`
+
 ## 2026.10.25.3
 
 ### Features
