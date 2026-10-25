@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/store"
 )
 
 // syncVoiceToSubServer re-asserts a server's voice port into the voice mod
@@ -35,6 +37,13 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 
 	rh := handlers.NewRconHandler(h.state)
 	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, subServer)
+	if errors.Is(err, handlers.ErrVoiceModMissing) {
+		// The sub-server about to run has no voice mod (removed, or a switch
+		// to one without it): the port would be held for nothing, forever.
+		// Released like a disable; turning voice on again takes a new one.
+		h.releaseVoicePort(srv, *vp)
+		return false
+	}
 	if err != nil {
 		log.Printf("voice sync for server %d (%s): %v", srv.ID, subServer, err)
 		return false
@@ -77,4 +86,22 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 		return false
 	}
 	return true
+}
+
+// releaseVoicePort drops the server's voice row and its relay mapping. The
+// mod's config is not written back: there is no mod to read it.
+func (h *ServerHandler) releaseVoicePort(srv *models.Server, vp store.VoicePort) {
+	if err := h.state.Store.DeleteVoicePort(srv.ID); err != nil {
+		log.Printf("voice sync for server %d: releasing port %d: %v", srv.ID, vp.Port, err)
+		return
+	}
+	log.Printf("voice: server %d has no voice mod any more, released %s port %d", srv.ID, vp.Region, vp.Port)
+	if h.state.Redis == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := services.UnpublishVoice(ctx, h.state.Redis, vp); err != nil {
+		log.Printf("voice sync for server %d: %v", srv.ID, err)
+	}
 }

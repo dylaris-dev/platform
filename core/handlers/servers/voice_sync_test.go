@@ -1,10 +1,12 @@
 package servers
 
 import (
+	"context"
 	"testing"
 
 	"dylaris-core/handlers"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -89,5 +91,37 @@ func TestSyncVoiceWritesTheDetectedModsMerge(t *testing.T) {
 				t.Fatalf("stored mod %q, want %q", fs.mod, c.mod)
 			}
 		})
+	}
+}
+
+// voiceReleaseStore records the release a missing voice mod triggers.
+type voiceReleaseStore struct {
+	voiceRaceStore
+	deleted int
+}
+
+func (f *voiceReleaseStore) DeleteVoicePort(int) error { f.deleted++; return nil }
+
+// A sub-server that starts without the voice mod (removed, or a switch to one
+// that never had it) gives its port back instead of holding it forever.
+func TestSyncVoiceReleasesThePortWhenTheModIsGone(t *testing.T) {
+	row := store.VoicePort{ServerID: 7, ServerUUID: "srv-7", Region: "eu", Port: 26000, Host: "a.eu.dylaris.com", UplinkKey: make([]byte, 32)}
+	fs := &voiceReleaseStore{voiceRaceStore: voiceRaceStore{row: row, current: &row}}
+	// The node answers 404 for every voice config path: no mod installed.
+	st, mr, _ := voiceNodeState(t, fs, "not/a/voice/config.txt", "svc_before.properties")
+	if err := services.PublishVoice(context.Background(), st.Redis, row); err != nil {
+		t.Fatal(err)
+	}
+	if NewServerHandler(st).syncVoiceToSubServer(&models.Server{ID: 7, UUID: "srv-7", NodeID: 7}, "survival") {
+		t.Fatal("a sync without the mod reported success")
+	}
+	if fs.deleted != 1 {
+		t.Fatalf("DeleteVoicePort called %d times, want 1", fs.deleted)
+	}
+	if fs.updates != 0 || fs.allocs != 0 {
+		t.Fatalf("updates %d allocs %d: a release must not also refresh the row", fs.updates, fs.allocs)
+	}
+	if len(mr.Keys()) != 0 {
+		t.Fatalf("relay mapping left behind: %v", mr.Keys())
 	}
 }

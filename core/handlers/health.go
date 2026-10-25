@@ -569,8 +569,34 @@ func (h *HealthHandler) voiceComponent(ctx context.Context) healthComponent {
 		comp.Status, comp.Detail, comp.Reason = "degraded", "Voice ports unreadable", err.Error()
 		return comp
 	}
-	comp.Status, comp.Detail, comp.Reason, comp.Items = voiceVerdict(buildVoiceOverview("", relays, ports, nil).Regions)
+	regions := buildVoiceOverview("", relays, ports, nil).Regions
+	missing := relaylessEdges(services.GetEdgesFromRedis(cctx, h.state.Redis), relays)
+	for i := range regions {
+		regions[i].EdgesWithoutRelay = missing[regions[i].Region]
+	}
+	comp.Status, comp.Detail, comp.Reason, comp.Items = voiceVerdict(regions)
 	return comp
+}
+
+// relaylessEdges counts, per region, the online edges with no live voice relay
+// on the same address. A voice_host resolves to every edge of its region, so a
+// player whose client picks such an edge hears nothing while the region still
+// counts "relays > 0".
+func relaylessEdges(edges []services.GatewayEdgeInfo, relays []services.VoiceRelay) map[string]int {
+	have := map[string]bool{}
+	for _, rl := range relays {
+		have[rl.Region+"|"+rl.IP] = true
+	}
+	out := map[string]int{}
+	for _, e := range edges {
+		if e.Region == "" || (e.Status != "" && e.Status != "online") {
+			continue
+		}
+		if !have[e.Region+"|"+e.IP] {
+			out[e.Region]++
+		}
+	}
+	return out
 }
 
 // voiceVerdict rates each region: down when servers hold voice ports and no
@@ -600,6 +626,9 @@ func voiceVerdict(regions []VoiceRegionStat) (status, detail, reason string, ite
 		case r.Relays == 0 && r.PortsUsed > 0:
 			it.Status = "down"
 			reasons = append(reasons, fmt.Sprintf("%s: %d server(s) have voice on and no relay runs there", r.Region, r.PortsUsed))
+		case r.EdgesWithoutRelay > 0 && r.PortsUsed > 0:
+			it.Status = "degraded"
+			reasons = append(reasons, fmt.Sprintf("%s: %d edge(s) run no voice relay; players reaching voice through them hear nothing", r.Region, r.EdgesWithoutRelay))
 		case pct >= voicePoolWarnPct:
 			it.Status = "degraded"
 			reasons = append(reasons, fmt.Sprintf("%s: the voice port pool is %d%% full", r.Region, pct))

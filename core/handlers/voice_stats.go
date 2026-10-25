@@ -37,6 +37,9 @@ type VoiceRegionStat struct {
 	PortsTotal int    `json:"portsTotal"`
 	RxBytes    int64  `json:"rxBytes"`
 	TxBytes    int64  `json:"txBytes"`
+	// EdgesWithoutRelay counts the region's online edges no live relay runs
+	// on. Only the health check fills it.
+	EdgesWithoutRelay int `json:"edgesWithoutRelay,omitempty"`
 }
 
 // VoiceServerStat is one server in one region. Port and Mod are empty for a
