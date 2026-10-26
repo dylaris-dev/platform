@@ -1,6 +1,12 @@
-FROM eclipse-temurin:8-jre-alpine
+# eclipse-temurin publishes its 8 alpine JRE for amd64 only; Liberica's
+# alpine JRE has arm64 (same musl base, same apk). amd64 keeps the image it
+# always had. TARGETARCH is set by buildx per platform.
+FROM eclipse-temurin:8-jre-alpine AS base-amd64
+FROM bellsoft/liberica-openjre-alpine:8 AS base-arm64
+FROM base-${TARGETARCH}
+ARG TARGETARCH
 RUN apk add --no-cache ca-certificates tzdata libstdc++
-COPY log-shipper-linux /usr/local/bin/log-shipper
+COPY log-shipper-linux-${TARGETARCH} /usr/local/bin/log-shipper
 RUN chmod +x /usr/local/bin/log-shipper && mkdir -p /data
 
 # The server runs as uid 1000, NOT root, and the uid is the platform's own

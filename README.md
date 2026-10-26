@@ -301,6 +301,7 @@ The single-host `docker-compose.yml` declares the four services below (the struc
 Notable details:
 
 - **`node` needs the Docker socket** (`/var/run/docker.sock`) — that is how it launches Minecraft containers on its host. Treat any host running a Node as trusted.
+- **`node` and the four game images (`platform-mc-java25/21/17/8`) are published for `linux/amd64` and `linux/arm64`** under the same tags, so a node runs on a 64-bit ARM machine (a Raspberry Pi 4/5, an ARM server) with the same compose file; Docker pulls the matching architecture. There is no separate ARM tag. `core` stays amd64. On arm64 the Java 17 and 8 images use Liberica's Alpine JRE, because eclipse-temurin publishes those two for amd64 only; amd64 keeps eclipse-temurin.
 - **`redis`/Valkey runs in-memory** (`--save "" --appendonly no`) — it is used as a coordination bus, not the source of truth (Postgres is). Losing it loses transient queue state, not your servers.
 - **`redis` is capped** at `--maxmemory 512mb --maxmemory-policy volatile-lru` in `docker-compose.yml`. Only keys with a TTL (the metadata caches, the one thing that grows with use) can be evicted, so the node command streams, consumer groups and ACL users never are, and a full instance drops a stale cache entry instead of refusing writes such as queueing a node command.
 - **`timescaledb` has a healthcheck** (single-host) so Core waits for the DB to accept connections on first boot.

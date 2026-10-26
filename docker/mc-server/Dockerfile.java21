@@ -1,6 +1,7 @@
 FROM eclipse-temurin:21-jre-alpine
+ARG TARGETARCH
 RUN apk add --no-cache ca-certificates tzdata libstdc++
-COPY log-shipper-linux /usr/local/bin/log-shipper
+COPY log-shipper-linux-${TARGETARCH} /usr/local/bin/log-shipper
 RUN chmod +x /usr/local/bin/log-shipper && mkdir -p /data
 
 # The server runs as uid 1000, NOT root, and the uid is the platform's own

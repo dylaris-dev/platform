@@ -631,6 +631,7 @@ jobs:
       release_version: ${{ needs.detect-changes.outputs.version }}
       entry_path: ./node/
       extra_build_args: "INSTALL_QUOTA=1"
+      platforms: linux/amd64,linux/arm64
     secrets: inherit
 
   build-log-shipper:
@@ -686,6 +687,11 @@ jobs:
             echo "TAG_SHA=dev-sha-${SHA}" >> $GITHUB_OUTPUT
           fi
 
+      # The game images run on the customer's node, which can be ARM. Emulation
+      # only runs each image's apk add; the log-shipper is cross-compiled above.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up a buildx builder
         # Its own BuildKit container, not the host daemon's image store. With the
         # default docker driver a build re-tagged :latest in the runner host's
@@ -715,6 +721,7 @@ jobs:
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java25
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java25:${{ steps.tags.outputs.TAG_PRIMARY }}
@@ -725,6 +732,7 @@ jobs:
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java21
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java21:${{ steps.tags.outputs.TAG_PRIMARY }}
@@ -735,6 +743,7 @@ jobs:
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java17
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java17:${{ steps.tags.outputs.TAG_PRIMARY }}
@@ -745,6 +754,7 @@ jobs:
         with:
           context: docker/mc-server
           file: docker/mc-server/Dockerfile.java8
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mc-java8:${{ steps.tags.outputs.TAG_PRIMARY }}

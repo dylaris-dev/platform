@@ -11,7 +11,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.10.26.4
 
 ### Features
-- Nothing.
+- **Nodes run on 64-bit ARM.** The node and the game images are published for arm64 under the
+  same tags, so a Raspberry Pi 4/5 or an ARM server works with the same compose file. `node`
 
 ### Breaking
 - Nothing.

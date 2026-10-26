@@ -57,7 +57,10 @@ RUN mkdir -p /panel
 FROM ${PANEL_STAGE} AS panel
 
 # --- Build Stage ---
-FROM golang:1.26.10-alpine AS builder
+# On the build machine's own platform: Go cross-compiles, so the node's arm64
+# image needs no emulated compiler. TARGETARCH is set by buildx per platform.
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS builder
+ARG TARGETARCH
 
 # Install git (important for go mod download with some libs)
 RUN apk add --no-cache git
@@ -101,7 +104,7 @@ ARG RELEASE_VERSION=""
 RUN echo "Building from: ${ENTRY_PATH} (tags: ${BUILD_TAGS:-none}, release: ${RELEASE_VERSION:-unstamped})" && \
     LD="-s -w"; \
     if [ -n "${RELEASE_VERSION}" ]; then LD="${LD} -X main.releaseVersion=${RELEASE_VERSION}"; fi && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags="${BUILD_TAGS}" -ldflags="${LD}" -o /app/binary ${ENTRY_PATH} && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -tags="${BUILD_TAGS}" -ldflags="${LD}" -o /app/binary ${ENTRY_PATH} && \
     chmod +x /app/binary
 
 # --- Run Stage ---

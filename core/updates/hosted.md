@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.4
+
+### Features
+- **Bring your own node on ARM.** The node kit now runs on a 64-bit Raspberry Pi 4/5 or an ARM
+  server, with the same setup as on x86. Nothing to change on an existing machine. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26.3
 
 ### Features

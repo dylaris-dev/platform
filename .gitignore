@@ -17,7 +17,7 @@ docker-compose.local.yml
 
 # build_shipper.sh output: a 9MB Linux ELF staged into the MC image build
 # context. Generated, never committed (see /dylaris-core above for why).
-docker/mc-server/log-shipper-linux
+docker/mc-server/log-shipper-linux*
 
 # Go & Build (Binaries excluded, but allow dist!)
 *.exe
