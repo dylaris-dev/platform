@@ -12,7 +12,7 @@
 
 set -Eeuo pipefail
 
-INSTALLER_VERSION="0.1.1"
+INSTALLER_VERSION="0.1.2"
 PROJECT="dylaris"
 IMAGE_CORE="ghcr.io/dylaris-dev/platform-core"
 IMAGE_NODE="ghcr.io/dylaris-dev/platform-node"
@@ -493,6 +493,12 @@ write_compose() {
     (( sw )) || return 0
     echo "    secrets:"; local n; for n in "$@"; do echo "      - ${n,,}"; done
   }
+  # No DNS search domain inside the containers. They inherit the host's, and
+  # on a network whose domain has a wildcard record, "timescaledb" briefly
+  # resolved to timescaledb.<domain> - a public address - while the database
+  # container restarted during its first start and Docker's DNS did not know
+  # it. Seen on a home network; the connection then went to a stranger.
+  nosearch() { echo '    dns_search: "."'; }
   manager() { (( sw )) && printf '    deploy:\n      placement:\n        constraints: [node.role == manager]\n'; return 0; }
   {
     echo "# Written by the DYLARIS installer $INSTALLER_VERSION. Values come from .env."
@@ -500,6 +506,7 @@ write_compose() {
     echo "services:"
     echo "  core:"
     echo "    image: $IMAGE_CORE:$IMAGE_TAG"
+    nosearch
     if (( sw )); then
       manager
     else
@@ -553,6 +560,7 @@ EOF
     fi
     echo "  node:"
     echo "    image: $IMAGE_NODE:$IMAGE_TAG"
+    nosearch
     if (( sw )); then
       printf '    deploy:\n      mode: global\n'
     else
@@ -670,14 +678,24 @@ start_stack() {
   run compose pull -q
   run compose up -d
   (( DRY_RUN )) && return
-  info "Waiting for Core to answer (the first start creates the database, up to 3 minutes)..."
-  local i
-  for i in $(seq 1 90); do
-    curl -fsS -o /dev/null http://127.0.0.1:25500/healthz 2>/dev/null && { ok "Core is up"; return; }
-    sleep 2
-  done
+  wait_core && return
   compose logs --tail 40 core | sed -E 's/(PASSWORD|SECRET)=[^ ]+/\1=***/g' || true
   die "Core did not become healthy. The log above shows why; fix it and run: docker compose -f $OUT_DIR/docker-compose.yml up -d"
+}
+
+# The first start creates the database; a Raspberry Pi 3 takes about four
+# minutes for it. Ten minutes before giving up, with a dot every 10 seconds.
+wait_core() {
+  info "Waiting for Core to answer (the first start sets up the database; on a small machine that takes minutes)..."
+  local i
+  for i in $(seq 1 300); do
+    curl -fsS -o /dev/null http://127.0.0.1:25500/healthz 2>/dev/null && { printf '
+'; ok "Core is up"; return 0; }
+    (( i % 5 == 0 )) && printf '.'
+    sleep 2
+  done
+  printf '
+'; return 1
 }
 
 create_admin() {
@@ -779,11 +797,7 @@ swarm_install() {
   done
   run sh -c "cd '$OUT_DIR' && set -a && . ./.env && set +a && ${DOCKER[*]} stack deploy -c docker-stack.yml $PROJECT"
   (( DRY_RUN )) && return
-  info "Waiting for Core to answer..."
-  local i; for i in $(seq 1 90); do
-    curl -fsS -o /dev/null http://127.0.0.1:25500/healthz 2>/dev/null && { ok "Core is up"; break; }
-    sleep 2
-  done
+  wait_core || warn "Core does not answer yet; check: docker service logs ${PROJECT}_core"
   create_admin
   verify
   say "  Add a machine: on it run ${B}bash install.sh add-node${N}; it needs this manager's address and"
