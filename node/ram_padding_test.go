@@ -172,3 +172,26 @@ func TestBothCreatePathsStampThePadding(t *testing.T) {
 		t.Errorf("padding taken from the config at %d create sites, want 2", n)
 	}
 }
+
+// A restart recovers the booked RAM from the label, so a host that created
+// the container without a memory limit (no memory cgroup, Raspberry Pi OS by
+// default) no longer reads it as 0 and starts Java with -Xmx0M.
+func TestRAMFromContainer(t *testing.T) {
+	const mib = 1024 * 1024
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+		mem    int64
+		want   int
+	}{
+		{"label wins", map[string]string{ramLabel: "384", ramPaddingLabel: "512"}, 896 * mib, 384},
+		{"label on a host without memory limits", map[string]string{ramLabel: "384"}, 0, 384},
+		{"older container: limit minus padding", map[string]string{ramPaddingLabel: "512"}, 2560 * mib, 2048},
+		{"older container without a limit", nil, 0, 0},
+		{"unusable label falls back", map[string]string{ramLabel: "x"}, 1536 * mib, 1024},
+	} {
+		if got := ramFromContainer(tc.labels, tc.mem); got != tc.want {
+			t.Errorf("%s: ramFromContainer = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}

@@ -349,8 +349,15 @@ func tzEnv(tz string) []string {
 
 // ramPaddingLabel records the padding a container was created with, so a
 // restart or resource change can subtract it from the memory limit again.
+//
+// ramLabel records the booked RAM itself. The memory limit is not enough to
+// recover it: a host whose kernel has no memory cgroup (Raspberry Pi OS until
+// cgroup_enable=memory is set) creates the container with no limit at all,
+// and limit minus padding came out as 0 - every restart then started Java
+// with -Xmx0M and the server crash-looped.
 const (
 	ramPaddingLabel     = "dylaris.ram_padding_mb"
+	ramLabel            = "dylaris.ram_mb"
 	defaultRAMPaddingMB = 512
 )
 
@@ -369,6 +376,17 @@ func ramPaddingFromLabels(labels map[string]string) int {
 		return v
 	}
 	return defaultRAMPaddingMB
+}
+
+// ramFromContainer is the booked RAM of an existing container: its label, else
+// (a container from before the label) the memory limit minus the padding.
+// 0 when neither says anything, which buildStartCommand reads as "no heap
+// flags" rather than as a heap of zero.
+func ramFromContainer(labels map[string]string, memoryBytes int64) int {
+	if v, err := strconv.Atoi(labels[ramLabel]); err == nil && v > 0 {
+		return v
+	}
+	return max(int(memoryBytes/(1024*1024))-ramPaddingFromLabels(labels), 0)
 }
 
 // The project moved from ghcr.io/bartis-dev/dylaris-* to ghcr.io/dylaris-dev/*
@@ -984,6 +1002,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		Labels: map[string]string{
 			ownerLabel:      nodeIdentity(nodeSecretDir),
 			ramPaddingLabel: strconv.Itoa(config.Docker.ramPadding()),
+			ramLabel:        strconv.Itoa(config.Docker.RAM),
 		},
 	}
 
@@ -1232,6 +1251,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		Labels: map[string]string{
 			ownerLabel:      nodeIdentity(nodeSecretDir),
 			ramPaddingLabel: strconv.Itoa(config.Docker.ramPadding()),
+			ramLabel:        strconv.Itoa(config.Docker.RAM),
 		},
 	}
 
@@ -1440,10 +1460,7 @@ func (dm *DockerManager) RestartContainerInZone(uuid, tz string) error {
 	// Restore resource limits
 	padding := ramPaddingFromLabels(info.Config.Labels)
 	config.Docker.RAMPaddingMB = &padding
-	config.Docker.RAM = int(info.HostConfig.Memory/(1024*1024)) - padding
-	if config.Docker.RAM < 0 {
-		config.Docker.RAM = 0
-	}
+	config.Docker.RAM = ramFromContainer(info.Config.Labels, info.HostConfig.Memory)
 	config.Docker.CPULimit = float64(info.HostConfig.NanoCPUs) / 1e9
 	config.Docker.CpusetCpus = info.HostConfig.CpusetCpus
 	config.Docker.Timezone = tz

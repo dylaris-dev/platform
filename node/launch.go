@@ -215,7 +215,13 @@ func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string, jav
 	if isJava8 {
 		extraJvmFlags = stripJava8IncompatibleFlags(extraJvmFlags)
 	}
-	heapMB := jvmHeapMB(memMB)
+	// No booked RAM known (see ramFromContainer): leave the heap to the JVM's
+	// own default rather than start it with -Xmx0M, which it refuses.
+	heap := []string{}
+	if memMB > 0 {
+		heapMB := jvmHeapMB(memMB)
+		heap = []string{fmt.Sprintf("-Xms%dM", heapMB), fmt.Sprintf("-Xmx%dM", heapMB)}
+	}
 	parts := []string{"java"}
 	add := func(s string) {
 		if s = strings.TrimSpace(s); s != "" {
@@ -229,14 +235,14 @@ func buildStartCommand(subServerDir string, memMB int, extraJvmFlags string, jav
 	switch lf.Mode {
 	case launchJar:
 		add(extraJvmFlags)
-		parts = append(parts, fmt.Sprintf("-Xms%dM", heapMB), fmt.Sprintf("-Xmx%dM", heapMB))
+		parts = append(parts, heap...)
 		parts = append(parts, "-jar", lf.Jar, "nogui")
 	case launchArgfile:
 		add(extraJvmFlags)
 		if lf.UserJvmArgs {
 			add("@user_jvm_args.txt")
 		}
-		parts = append(parts, fmt.Sprintf("-Xms%dM", heapMB), fmt.Sprintf("-Xmx%dM", heapMB))
+		parts = append(parts, heap...)
 		parts = append(parts, "@"+lf.ArgsFile, "nogui")
 	default:
 		return "", fmt.Errorf("no runnable server found in %s", subServerDir)

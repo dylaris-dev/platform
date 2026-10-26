@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **A server on a host without memory control restarts again.** On Raspberry Pi OS (no memory
+  cgroup) a restart started Java with no heap and the server crash-looped. See the Pi notes in the docs. `node`
+
 ## 2026.10.26.4
 
 ### Features

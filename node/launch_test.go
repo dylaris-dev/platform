@@ -141,6 +141,19 @@ func TestSubServerType(t *testing.T) {
 }
 
 func TestBuildStartCommand(t *testing.T) {
+	t.Run("no booked RAM leaves the heap to the JVM", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "paper-1.8.8.jar"), []byte("x"), 0644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		cmd, err := buildStartCommand(dir, 0, "", "ghcr.io/example/mc-java8:latest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "java -jar paper-1.8.8.jar nogui"; cmd != want {
+			t.Fatalf("got %q want %q", cmd, want)
+		}
+	})
 	t.Run("jar form puts platform Xmx last before -jar", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "paper-1.20.1.jar"), []byte("x"), 0644); err != nil {

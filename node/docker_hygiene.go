@@ -71,6 +71,12 @@ func (dm *DockerManager) startDockerHygiene(ctx context.Context) {
 	infoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	if info, err := dm.cli.Info(infoCtx); err == nil {
 		daemonLogDriver.Store(info.LoggingDriver)
+		// Docker then creates every server with no memory limit and says so
+		// only in its own daemon log: the booked RAM is not enforced.
+		if !info.MemoryLimit {
+			log.Printf("WARNING: this host has no memory cgroup, so server RAM limits are NOT enforced. " +
+				"On Raspberry Pi OS add 'cgroup_enable=memory' to /boot/firmware/cmdline.txt and reboot.")
+		}
 	}
 	cancel()
 
