@@ -220,7 +220,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 What it asks, in order: one machine (Compose) or several (Swarm); generate
-files only or also start; a bundled PostgreSQL (TimescaleDB) or an existing one
+files only or also start; automatic updates (Watchtower updates Core and the
+node every night at 04:00 and never touches the database, Valkey or game
+servers; in a Swarm, run `install.sh update` instead); a bundled PostgreSQL (TimescaleDB) or an existing one
 (connection and rights are tested, and an admin login can be used once to
 create the database and user without being stored); a bundled Valkey or an
 existing Redis 7+/Valkey (login, version and ACL management are tested); the
@@ -240,6 +242,10 @@ anything.
 | `--check` / `--dry-run` | only check the machine / show plan and files, change nothing |
 | `--config FILE` | answers from `KEY=VALUE` lines, for unattended installs |
 | `--output-dir DIR` | where the files go (default `/opt/dylaris`) |
+
+There is one installer release, `installer-latest`, always the newest; no
+version numbers. `install.sh --version` prints the date and commit it was
+built from.
 
 Files land in `/opt/dylaris`: `.env` (secrets, mode 600), `docker-compose.yml`
 or `docker-stack.yml`, and `valkey-acl/users.acl`. A rerun keeps existing

@@ -1,11 +1,13 @@
 name: Installer release
 
-# Publishes installer/install.sh and install.ps1 with SHA256SUMS as
-#   installer-v<version>   one release per version (kept)
-#   installer-latest       moved to the newest version; the documented download
-# Neither is ever marked as the repository's latest release: the Beam client's
-# stable channel reads releases/latest, and an installer release there would
-# hand it a manifest-less release.
+# One release, always the newest installer: tag installer-latest with
+# install.sh, install.ps1 and SHA256SUMS, replaced on every change. There are
+# no version numbers; the published install.sh carries the date and commit it
+# was built from (install.sh --version), so a support question can still say
+# which one ran.
+#
+# Never marked as the repository's latest release: the Beam client's stable
+# channel reads releases/latest.
 
 on:
   push:
@@ -31,34 +33,23 @@ jobs:
       - name: shellcheck
         run: docker run --rm -v "$PWD/installer:/mnt" koalaman/shellcheck:stable -S warning install.sh
 
-      - name: Syntax and self-test
+      - name: Stamp and check
         run: |
+          STAMP="$(date -u +%Y-%m-%d) ($(git rev-parse --short HEAD))"
+          sed -i "s/^INSTALLER_VERSION=\"dev\"$/INSTALLER_VERSION=\"$STAMP\"/" installer/install.sh
+          grep -q "^INSTALLER_VERSION=\"$STAMP\"$" installer/install.sh
           bash -n installer/install.sh
           bash installer/install.sh --version
           bash installer/install.sh --help >/dev/null
-
-      - name: Version and checksums
-        id: v
-        run: |
-          V=$(sed -n 's/^INSTALLER_VERSION="\(.*\)"$/\1/p' installer/install.sh)
-          [ -n "$V" ] || { echo "no INSTALLER_VERSION"; exit 1; }
-          echo "version=$V" >> "$GITHUB_OUTPUT"
           cd installer && sha256sum install.sh install.ps1 > SHA256SUMS && cat SHA256SUMS
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          V: ${{ steps.v.outputs.version }}
         run: |
           cd installer
-          # A published version is never changed: its checksums are what users
-          # verified against. A change without a version bump publishes nothing.
-          if gh release view "installer-v$V" >/dev/null 2>&1; then
-            echo "::warning::installer-v$V is already published; bump INSTALLER_VERSION in install.sh to release this change."
-            exit 0
-          fi
-          gh release create "installer-v$V" install.sh install.ps1 SHA256SUMS \
-            --title "Installer $V" --notes "DYLARIS platform installer $V. See the README, section Installer." --latest=false
           gh release delete installer-latest --yes --cleanup-tag 2>/dev/null || true
           gh release create installer-latest install.sh install.ps1 SHA256SUMS \
-            --title "Installer (latest: $V)" --notes "Always the newest installer, currently $V." --latest=false --target "$GITHUB_SHA"
+            --title "Installer" \
+            --notes "The DYLARIS platform installer, always the newest. See the README, section Installer." \
+            --latest=false --target "$GITHUB_SHA"

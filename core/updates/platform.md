@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.11
+
+### Features
+- **The installer can keep DYLARIS up to date by itself.** It asks for nightly automatic updates
+  of Core and the node (Watchtower); there is now one installer download, always the newest.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26.10
 
 ### Features

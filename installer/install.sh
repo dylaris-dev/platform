@@ -12,13 +12,16 @@
 
 set -Eeuo pipefail
 
-INSTALLER_VERSION="0.1.4"
+# Stamped by the release workflow with the date and commit it was built from;
+# "dev" means a copy straight from the repository.
+INSTALLER_VERSION="dev"
 PROJECT="dylaris"
 IMAGE_CORE="ghcr.io/dylaris-dev/platform-core"
 IMAGE_NODE="ghcr.io/dylaris-dev/platform-node"
 IMAGE_TAG="latest"
 IMAGE_PG="timescale/timescaledb:latest-pg16"
 IMAGE_VALKEY="valkey/valkey:8-alpine"
+IMAGE_WATCHTOWER="nickfedor/watchtower:1.23.0"
 PROBE_PG="postgres:16-alpine"
 
 CMD="install"
@@ -138,6 +141,13 @@ docker_cmd() {
 
 gen_secret() { od -An -tx1 -N32 /dev/urandom | tr -d ' \n'; }
 mask() { local s=$1; printf '%s...(%d chars)' "${s:0:4}" "${#s}"; }
+
+host_tz() {
+  local tz=""
+  command -v timedatectl >/dev/null && tz=$(timedatectl show -p Timezone --value 2>/dev/null)
+  [[ -z $tz && -r /etc/timezone ]] && tz=$(cat /etc/timezone)
+  printf '%s' "${tz:-UTC}"
+}
 
 json_escape() { local s=$1; s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; printf '%s' "$s"; }
 
@@ -295,6 +305,15 @@ interview() {
   menu mode "Generate the files only, or also start DYLARIS?" \
     "start|Generate and start" \
     "files|Generate the files only (start them yourself later)"
+  if [[ ${A[topology]} == swarm ]]; then
+    # Watchtower updates containers, not Swarm services.
+    A[updates]=manual
+    info "Updates in a Swarm: run 'bash install.sh update' on the manager (for example from cron)."
+  else
+    menu updates "Keep DYLARIS up to date automatically?" \
+      "auto|Yes, every night at 04:00 (Watchtower; touches only Core and the node, never your data or game servers)" \
+      "manual|No, I update by hand with: bash install.sh update"
+  fi
 
   step "3. Database (PostgreSQL)"
   menu db "Which PostgreSQL?" \
@@ -499,6 +518,8 @@ write_compose() {
   # container restarted during its first start and Docker's DNS did not know
   # it. Seen on a home network; the connection then went to a stranger.
   nosearch() { echo '    dns_search: "."'; }
+  # Watchtower only touches containers with this label: Core and the node.
+  autoupdate() { [[ ${A[updates]:-manual} == auto ]] && printf '    labels:\n      com.centurylinklabs.watchtower.enable: "true"\n'; return 0; }
   manager() { (( sw )) && printf '    deploy:\n      placement:\n        constraints: [node.role == manager]\n'; return 0; }
   {
     echo "# Written by the DYLARIS installer $INSTALLER_VERSION. Values come from .env."
@@ -511,6 +532,7 @@ write_compose() {
       manager
     else
       echo "    restart: unless-stopped"
+      autoupdate
       if (( pg || vk )); then
         echo "    depends_on:"
         (( pg )) && printf '      timescaledb:\n        condition: service_healthy\n'
@@ -565,6 +587,7 @@ EOF
       printf '    deploy:\n      mode: global\n'
     else
       echo "    restart: unless-stopped"
+      autoupdate
       (( vk )) && echo "    depends_on: [redis]"
     fi
     echo "    environment:"
@@ -624,6 +647,22 @@ EOF
       echo "    volumes:"
       if (( sw )); then echo "      - $OUT_DIR/valkey-acl:/data"; else echo "      - ./valkey-acl:/data"; fi
       echo "    networks: [dylaris_net]"
+    fi
+    if (( ! sw )) && [[ ${A[updates]:-manual} == auto ]]; then
+      cat <<EOF
+  # Nightly updates of Core and the node (labelled above). Remove this service
+  # to update by hand with: bash install.sh update
+  watchtower:
+    image: $IMAGE_WATCHTOWER
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_SCHEDULE: "0 0 4 * * *"
+      TZ: "$(host_tz)"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+EOF
     fi
     echo "volumes:"
     echo "  dylaris_data:"
@@ -760,7 +799,12 @@ summary_done() {
   say "  Data:       Docker volumes ${PROJECT}_dylaris_data, ${PROJECT}_core_data$( [[ ${A[db]} == bundled ]] && echo ", ${PROJECT}_timescaledb_data")"
   say "  Firewall:   open 25500/25443 (panel) and 25600-25699 (Minecraft servers, direct routing); keep 25501 private."
   say "  Backups:    set a backup target in the panel (Settings > Backups) before people play."
-  say "  Update:     bash install.sh update     Remove: bash install.sh uninstall"
+  if [[ ${A[updates]:-} == auto ]]; then
+    say "  Updates:    automatic, every night at 04:00 ($(host_tz)); by hand: bash install.sh update"
+  else
+    say "  Update:     bash install.sh update"
+  fi
+  say "  Remove:     bash install.sh uninstall"
 }
 
 plan_and_confirm() {
@@ -770,6 +814,7 @@ plan_and_confirm() {
   say "  - Topology: ${A[topology]}; PostgreSQL: ${A[db]}; Valkey: ${A[redis]}; panel: ${A[frontend]} (${A[tls]})"
   [[ ${A[mode]} == start ]] && say "  - Pull the images and start: core, node$( [[ ${A[db]} == bundled ]] && echo ', timescaledb')$( [[ ${A[redis]} == bundled ]] && echo ', redis')"
   [[ ${A[admin]:-} == now ]] && say "  - Create the administrator ${A[admin_user]}"
+  [[ ${A[updates]:-} == auto ]] && say "  - Nightly automatic updates at 04:00 ($(host_tz)) with Watchtower"
   existing_env && say "  - ${Y}An installation exists in $OUT_DIR: its secrets and data are kept${N}"
   say ""
   (( DRY_RUN )) && { info "Dry run: nothing is changed."; return; }
