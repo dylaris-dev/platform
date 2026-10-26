@@ -270,12 +270,13 @@ Compose v2 required).
 git clone https://github.com/dylaris-dev/platform.git
 cd platform
 
-# 1. Configure secrets - at minimum set JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD.
+# 1. Configure secrets - set JWT_SECRET, BEAM_JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD.
 #    For every option with its explanation, run `cp .env.example .env` and edit
 #    that instead. Core refuses to boot if JWT_SECRET or CLUSTER_SECRET is empty
 #    or left at its placeholder default - set strong random values, e.g.:
 cat > .env <<EOF
 JWT_SECRET=$(openssl rand -hex 32)
+BEAM_JWT_SECRET=$(openssl rand -hex 32)
 CLUSTER_SECRET=$(openssl rand -hex 32)
 DB_USER=dylaris
 DB_PASSWORD=$(openssl rand -hex 24)
@@ -295,7 +296,7 @@ docker compose up -d
 
 That's it: Core (which also serves the panel), a Node, TimescaleDB and Valkey are now running. Create your first server from the Panel.
 
-> **Production note:** put Core behind a reverse proxy with TLS and point it at `core:25500`. Core serves the panel and the API on that one host, so there is nothing else to configure - leave `PANEL_API_URL` empty. Set `DB_SSLMODE=require` if the database is remote.
+> **Production note:** use HTTPS, either at a reverse proxy pointing to private `core:25500` or through Core's optional native TLS listener (see below; the installer offers both). Keep direct HTTP private. Core serves the panel and the API together, so leave `PANEL_API_URL` empty. Set `DB_SSLMODE=require` if the database is remote.
 
 ## Deployment
 
@@ -369,7 +370,7 @@ Notable details:
 - **`redis`/Valkey runs in-memory** (`--save "" --appendonly no`) — it is used as a coordination bus, not the source of truth (Postgres is). Losing it loses transient queue state, not your servers.
 - **`redis` is capped** at `--maxmemory 512mb --maxmemory-policy volatile-lru` in `docker-compose.yml`. Only keys with a TTL (the metadata caches, the one thing that grows with use) can be evicted, so the node command streams, consumer groups and ACL users never are, and a full instance drops a stale cache entry instead of refusing writes such as queueing a node command.
 - **`timescaledb` has a healthcheck** (single-host) so Core waits for the DB to accept connections on first boot.
-- **The panel is served by Core**, compiled into the binary, so the pages and `/api` share an origin and there is nothing to point at anything. `PANEL_API_URL` is only for the split-hostname layout; Core renders it into the page at request time, so it takes effect on restart without a rebuild.
+- **The panel is served by Core**, compiled into the binary, so the pages and `/api` share an origin. Leave `PANEL_API_URL` unset or empty. A separate API hostname is unsupported for browser sessions because the host-only session cookie does not cross that split.
 - **Swarm defaults to an external/managed Postgres** (set `DB_HOST`/`DB_PORT`/`DB_SSLMODE` on `core`). The bundled single-replica DB is an opt-in commented block: uncomment it (and the `timescaledb_data` volume), label the DB host so its node-local volume stays put (`dylaris.db=true`), and leave `DB_HOST` unset so it falls back to `timescaledb`. For real HA, use a managed/replicated PostgreSQL.
 
 ## Configuration reference
@@ -599,7 +600,12 @@ its per-node secret. To pair a machine as a NEW node, delete `.node_id`,
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `PANEL_API_URL` | *(same origin — leave it empty)* | No | **Browser-reachable** Core API base URL, **including the `/api` path**. Empty is correct for every deployment: Core serves the panel, so the API is same-origin and is found without being told. A value here moves the API to a second origin, which a BROWSER cannot follow — the session is a host-only cookie — so Core warns at boot when it sees one. Runtime, not build-time: Core injects it into each page it serves. |
+| `PANEL_API_URL` | *(same origin - leave it empty)* | No | API base URL override, including `/api`. Leave it unset or empty for the shipped panel, which uses `/api` on its own origin. A different origin is unsupported for browser sessions because their host-only cookie does not cross the split; Core warns about it at boot. Runtime, not build-time. |
+| `PANEL_TLS` | `off` | No | Additional native HTTPS listener: `self-signed` generates a local certificate, `files` loads the mounted certificate and key. HTTP stays active for internal clients and health checks; restrict its reachability. |
+| `PANEL_TLS_PORT` | `25443` | No | Native HTTPS port. Publish it when native TLS is enabled. |
+| `PANEL_TLS_HOSTS` | *(empty)* | With self-signed TLS | Comma-separated DNS names/IPs for the generated certificate. Clients must explicitly trust a self-signed certificate. |
+| `PANEL_TLS_CERT_FILE` | *(empty)* | With `PANEL_TLS=files` | Mounted PEM certificate path. |
+| `PANEL_TLS_KEY_FILE` | *(empty)* | With `PANEL_TLS=files` | Mounted private-key path; keep it private and read-only. |
 
 The panel resolves its API URL in two steps: `window.__DYLARIS_CONFIG__.apiUrl` if Core injected one, else the same origin the page came from (`/api`). Core writes the runtime value into every HTML response as a nonced inline script directly after `<head>`, so it is set before the bundle runs. There is no `/config.js` file to mount or edit, and no build-time variable — a value baked into the bundle could not be corrected without rebuilding it:
 
@@ -626,7 +632,8 @@ These are set by the Node when it launches a container; they are listed for comp
 
 | Port | Service | Purpose |
 |---|---|---|
-| `25500` | core | REST API (`API_PORT`) |
+| `25500` | core | Panel + REST API over HTTP (`API_PORT`; keep private behind public HTTPS) |
+| `25443` | core | Optional native panel/API HTTPS (`PANEL_TLS_PORT`) |
 | `25501` | core | gRPC node mesh / Cluster-Sync (`DYLARIS_GRPC_PORT`) |
 | ~~`25510`~~ | *(retired)* | The panel is served by Core on `25500`. |
 | `25520` | node | SFTP (`SFTP_PORT`; file access = `sftp`/`both`) |
@@ -667,17 +674,34 @@ warp.example.com.   A    <ip>     ; Warp leader (UDP 25599), external/home nodes
 
 ## Reverse proxy and TLS
 
-Keep Core, the Panel, Nodes, Postgres and Redis on a private network and put **one reverse proxy** in front for public TLS. Two layouts:
+Keep Nodes, Postgres, Redis and Core's HTTP listener private. Serve the panel
+and API over HTTPS on one origin, using a reverse proxy or Core's native TLS.
 
 **Same-origin (the default, and now the shape of the software).** Point the host at `core:25500`. Core serves the panel and the API together, so the browser only ever talks to one origin: no `PANEL_API_URL`, no path rule, and **no CORS** to configure.
 
 **A second hostname for the API is not a supported layout any more.** The session is a host-only cookie, so a browser cannot carry it across two names: the panel would load and then answer 401 to everything. Core warns at boot if `PANEL_API_URL` names another origin. There is one host, and `/api` lives on it.
 
-TLS is terminated at the proxy (Let's Encrypt). Core and the Panel speak plain HTTP behind it. For a remote database set `DB_SSLMODE=require` (or `verify-full`).
+**Native TLS without a proxy:** set `PANEL_TLS=self-signed` and
+`PANEL_TLS_HOSTS` to the names/IPs clients use, or `PANEL_TLS=files` with mounted
+`PANEL_TLS_CERT_FILE` and `PANEL_TLS_KEY_FILE`. Publish `25443` (or
+`PANEL_TLS_PORT`) and set `FRONTEND_URL` to the resulting HTTPS URL. A
+self-signed certificate requires explicit client trust; it is not publicly
+trusted. Core still listens on HTTP `25500` for health checks/internal clients,
+so firewall that port rather than exposing an unencrypted alternative. The
+installer writes the required configuration; the repository's manual compose
+files need these variables, port and certificate mounts added explicitly.
+
+**With a reverse proxy:** terminate TLS there (for example Let's Encrypt) and
+forward to private `core:25500`. Core's native TLS can remain off. For a remote
+database set `DB_SSLMODE=require` (or `verify-full`).
 
 ### Nginx Proxy Manager (the reference production setup)
 
-Add a **Proxy Host** for `panel.example.com` → `core:25500`, request a Let's Encrypt cert, and that is the whole configuration: Core serves the pages and the API on that one host, so there is no second upstream and no `/api` custom location. Enable **Websockets support** on the host: the Panel uses Server-Sent Events (system events, live console) which must not be buffered or short-timed out. Add these to the host's *Advanced* tab (applies to the SSE endpoints under `/api`):
+Add a **Proxy Host** for `panel.example.com` to `core:25500` and request a
+Let's Encrypt certificate. Core serves pages and API on that host; there is no
+second upstream. Enable **Websockets support** if needed by applications, and
+add the following to the host's *Advanced* tab for Server-Sent Events (system
+events, live console). A WebSocket toggle alone does not disable SSE buffering:
 
 ```nginx
 location /api/ {
