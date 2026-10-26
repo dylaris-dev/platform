@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -90,6 +91,24 @@ type netEgress struct {
 const platformPortLow, platformPortHigh = 25500, 25599
 
 func netPolicyRulesetWith(allow []string, eg *netEgress) string {
+	return netPolicyRulesetFor(allow, nil, eg)
+}
+
+// publishedPort is a container port Docker publishes on the host.
+type publishedPort struct {
+	proto string // "tcp" or "udp"
+	port  uint16 // the container side
+}
+
+// netPolicyRulesetFor adds the published ports to the ingress allowlist.
+//
+// In direct routing players connect straight to the published game port (and
+// an extra port such as a voice port), from any address: what Docker publishes
+// is public by intent. Before this, only the node, the Link and linked proxies
+// could reach a server, which is right behind the gateway - where nothing is
+// published - and locked every player out of a self-hosted platform in direct
+// routing (found on a fresh install from the installer).
+func netPolicyRulesetFor(allow []string, public []publishedPort, eg *netEgress) string {
 	var b strings.Builder
 	b.WriteString("table inet " + netPolicyTable + "\n")
 	b.WriteString("delete table inet " + netPolicyTable + "\n")
@@ -111,6 +130,20 @@ func netPolicyRulesetWith(allow []string, eg *netEgress) string {
 			b.WriteString("    ip saddr " + a + " accept\n")
 		} else {
 			b.WriteString("    ip6 saddr " + a + " accept\n")
+		}
+	}
+	for _, proto := range []string{"tcp", "udp"} {
+		seen := map[uint16]bool{}
+		var ports []string
+		for _, p := range public {
+			if p.proto == proto && p.port != 0 && !seen[p.port] {
+				seen[p.port] = true
+				ports = append(ports, strconv.Itoa(int(p.port)))
+			}
+		}
+		if len(ports) > 0 {
+			sort.Strings(ports)
+			b.WriteString("    " + proto + " dport { " + strings.Join(ports, ", ") + " } accept\n")
 		}
 	}
 	b.WriteString("  }\n")
@@ -291,11 +324,11 @@ func shortUUID(u string) string {
 // The helper is the node's OWN image, which is already on every host that runs
 // a node - so this pulls nothing and adds no image to publish. It carries
 // nftables for exactly this (see the Dockerfile).
-func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName string, allow []string, eg *netEgress) error {
+func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName string, allow []string, public []publishedPort, eg *netEgress) error {
 	if dm.netPolicyImage == "" {
 		return fmt.Errorf("no helper image resolved")
 	}
-	script := netPolicyRulesetWith(allow, eg)
+	script := netPolicyRulesetFor(allow, public, eg)
 	cfg := &container.Config{
 		Image: dm.netPolicyImage,
 		// The ruleset travels in the command, not on stdin: attaching a stream to

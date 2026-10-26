@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.10
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Players reach servers in direct routing again on platform nodes.** The per-server network rules
+  let only the node and the Link in; they now also let in the ports Docker publishes. `node`
+
 ## 2026.10.26.9
 
 ### Features

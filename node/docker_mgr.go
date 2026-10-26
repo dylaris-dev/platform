@@ -793,7 +793,7 @@ func (dm *DockerManager) installerNetwork(ctx context.Context, egress func() (*n
 		return "", nc, none
 	}
 	applyCtx, cancel := context.WithTimeout(ctx, netPolicyApplyTimeout)
-	err = dm.applyNetPolicy(applyCtx, resp.ID, nil, eg)
+	err = dm.applyNetPolicy(applyCtx, resp.ID, nil, nil, eg)
 	cancel()
 	if err != nil {
 		release()
@@ -1889,6 +1889,9 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 type MCContainer struct {
 	UUID          string
 	ContainerName string
+	// Published is what Docker publishes on the host for it; the network
+	// policy lets anyone reach exactly these (direct routing).
+	Published []publishedPort
 }
 
 // ListRunningMCContainers returns all running containers with the mc_ prefix.
@@ -1911,7 +1914,13 @@ func (dm *DockerManager) ListRunningMCContainers() ([]MCContainer, error) {
 					break
 				}
 				uuid := strings.TrimPrefix(clean, "mc_")
-				result = append(result, MCContainer{UUID: uuid, ContainerName: clean})
+				mc := MCContainer{UUID: uuid, ContainerName: clean}
+				for _, p := range c.Ports {
+					if p.PublicPort != 0 {
+						mc.Published = append(mc.Published, publishedPort{proto: p.Type, port: p.PrivatePort})
+					}
+				}
+				result = append(result, mc)
 				break
 			}
 		}

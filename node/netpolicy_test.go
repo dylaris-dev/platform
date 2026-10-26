@@ -419,3 +419,24 @@ func TestLinkContainerAddrs(t *testing.T) {
 		})
 	}
 }
+
+// Direct routing: what Docker publishes for the container is public by intent
+// - the game port and extra ports such as a voice port - so players reach it
+// from anywhere. Everything else stays limited to the infrastructure.
+func TestNetPolicyRulesetOpensPublishedPorts(t *testing.T) {
+	rs := netPolicyRulesetFor([]string{"10.20.0.5"}, []publishedPort{
+		{proto: "tcp", port: 25565}, {proto: "udp", port: 24454}, {proto: "tcp", port: 25565}, {proto: "sctp", port: 9},
+	}, nil)
+	for _, want := range []string{"tcp dport { 25565 } accept", "udp dport { 24454 } accept", "ip saddr 10.20.0.5 accept"} {
+		if !strings.Contains(rs, want) {
+			t.Errorf("ruleset lacks %q:\n%s", want, rs)
+		}
+	}
+	if strings.Contains(rs, "sctp") || strings.Count(rs, "25565") != 1 {
+		t.Errorf("unknown protocol kept or port repeated:\n%s", rs)
+	}
+	// Gateway routing publishes nothing, and then nothing changes.
+	if netPolicyRulesetFor([]string{"10.20.0.5"}, nil, nil) != netPolicyRulesetWith([]string{"10.20.0.5"}, nil) {
+		t.Error("no published ports changed the ruleset")
+	}
+}

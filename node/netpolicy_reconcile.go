@@ -301,7 +301,7 @@ func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Clie
 		allow = append(allow, dm.peerAddrs(policy[c.UUID])...)
 
 		applyCtx, cancel := context.WithTimeout(ctx, netPolicyApplyTimeout)
-		aerr := dm.applyNetPolicy(applyCtx, c.ContainerName, allow, eg)
+		aerr := dm.applyNetPolicy(applyCtx, c.ContainerName, allow, c.Published, eg)
 		cancel()
 		if aerr != nil {
 			failed[c.UUID] = aerr
