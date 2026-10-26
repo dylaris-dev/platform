@@ -890,6 +890,9 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 	netMode, nc, releaseNet := dm.installerNetwork(ctx, dm.egressPolicy)
 	defer releaseNet()
 	hc.NetworkMode = netMode
+	if netMode.IsContainer() {
+		hc.DNSSearch = nil // shares the holder's resolver, which has no search domain
+	}
 	resp, err := dm.cli.ContainerCreate(ctx, cc, hc, nc, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("installer container create: %w", err)
@@ -2195,6 +2198,15 @@ func hardenTenantContainer(hc *container.HostConfig) {
 	hc.LogConfig = currentLogConfig()
 	hc.SecurityOpt = append(hc.SecurityOpt, "no-new-privileges:true")
 	hc.CapDrop = []string{"ALL"}
+	// No DNS search domain: the container resolves "redis" and "core" on the
+	// server network, and when such a name fails (the container landed on the
+	// wrong network, or a service is restarting) the host's search domain
+	// turned it into redis.<domain>. On a network whose domain has a wildcard
+	// record that is a stranger's public address, and the log-shipper dialled
+	// it with its Redis login - seen on a self-hosted install. A container that
+	// shares another's network namespace cannot take DNS options; the caller
+	// clears this for those (see the installer path).
+	hc.DNSSearch = []string{"."}
 	opts := "rw,exec,nosuid,nodev,size=" + tenantTmpfsSize
 	home := opts + ",uid=" + strconv.Itoa(mcUser()) + ",gid=" + strconv.Itoa(mcUser()) + ",mode=0700"
 	hc.Tmpfs = map[string]string{

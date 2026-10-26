@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.9
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **Game servers no longer look names up in the host's DNS domain.** On a network whose domain
+  answers every name, a failed lookup of the platform's Redis went to a stranger's address. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26.6
 
 ### Features

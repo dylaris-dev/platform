@@ -44,6 +44,10 @@ func TestEgressRulesBlockThePlatformButNotTheGamePort(t *testing.T) {
 func TestATenantContainerHoldsNoPrivilegeAndBoundedScratch(t *testing.T) {
 	hc := &container.HostConfig{}
 	hardenTenantContainer(hc)
+	// No search domain: a failed lookup of "redis" must not become redis.<domain>.
+	if len(hc.DNSSearch) != 1 || hc.DNSSearch[0] != "." {
+		t.Errorf("DNSSearch = %v, want [.]", hc.DNSSearch)
+	}
 	if len(hc.CapDrop) != 1 || hc.CapDrop[0] != "ALL" {
 		t.Errorf("CapDrop = %v, want ALL", hc.CapDrop)
 	}

@@ -12,7 +12,7 @@
 
 set -Eeuo pipefail
 
-INSTALLER_VERSION="0.1.3"
+INSTALLER_VERSION="0.1.4"
 PROJECT="dylaris"
 IMAGE_CORE="ghcr.io/dylaris-dev/platform-core"
 IMAGE_NODE="ghcr.io/dylaris-dev/platform-node"
@@ -570,6 +570,10 @@ EOF
     echo "    environment:"
     sec CLUSTER_SECRET; sec BEAM_JWT_SECRET
     echo '      CORE_GRPC_ADDR: "core:25501"'
+    # The exact server network, or the node takes "the first *_dylaris_net",
+    # which on a machine with an older install can be that install's: the game
+    # containers then cannot resolve redis or core at all.
+    echo "      NODE_DOCKER_NETWORK: \"${PROJECT}_dylaris_net\""
     if (( sw )); then echo '      NODE_HOSTNAME: "{{.Node.Hostname}}"'; else echo '      NODE_HOSTNAME: "${NODE_HOSTNAME}"'; fi
     secrets_of CLUSTER_SECRET BEAM_JWT_SECRET
     cat <<'EOF'
