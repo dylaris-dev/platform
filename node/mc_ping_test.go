@@ -104,14 +104,30 @@ func firstBytes(t *testing.T, n int, proxyLocal bool) []byte {
 	return <-got
 }
 
-func TestPingProxyLocalHeader(t *testing.T) {
-	want := []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A, 0x20, 0x00, 0x00, 0x00}
-	if got := firstBytes(t, 16, true); !bytes.Equal(got, want) {
-		t.Errorf("with proxyLocal first 16 bytes = % x, want % x", got, want)
+// The ping names its own connection in a PROXY command: Velocity drops a header
+// without a source address, which is what LOCAL is.
+func TestPingProxyHeader(t *testing.T) {
+	got := firstBytes(t, 28, true)
+	if !bytes.Equal(got[:12], proxyV2Signature) || !bytes.Equal(got[12:16], []byte{0x21, 0x11, 0x00, 12}) {
+		t.Fatalf("header start = % x, want signature + PROXY TCP4 len 12", got[:16])
+	}
+	if !bytes.Equal(got[16:20], []byte{127, 0, 0, 1}) || !bytes.Equal(got[20:24], []byte{127, 0, 0, 1}) {
+		t.Errorf("addresses = % x, want both ends 127.0.0.1", got[16:24])
 	}
 	// Without it the first byte is the handshake packet length (VarInt), not 0x0D.
-	got := firstBytes(t, 1, false)
-	if len(got) != 1 || got[0] == 0x0D || got[0] == 0 {
-		t.Errorf("without proxyLocal first byte = % x, want a handshake length", got)
+	first := firstBytes(t, 1, false)
+	if len(first) != 1 || first[0] == 0x0D || first[0] == 0 {
+		t.Errorf("without proxyLocal first byte = % x, want a handshake length", first)
+	}
+}
+
+func TestProxyV2Header(t *testing.T) {
+	v6 := proxyV2Header(&net.TCPAddr{IP: net.ParseIP("fd00::1"), Port: 40000}, &net.TCPAddr{IP: net.ParseIP("fd00::2"), Port: 25565})
+	if len(v6) != 16+36 || !bytes.Equal(v6[12:16], []byte{0x21, 0x21, 0x00, 36}) ||
+		!bytes.Equal(v6[48:], []byte{0x9C, 0x40, 0x63, 0xDD}) {
+		t.Errorf("v6 header = % x", v6)
+	}
+	if got := proxyV2Header(&net.UnixAddr{Name: "x"}, &net.UnixAddr{Name: "y"}); !bytes.Equal(got, proxyV2Local) {
+		t.Errorf("non-TCP addresses = % x, want LOCAL", got)
 	}
 }

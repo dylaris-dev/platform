@@ -25,6 +25,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+
+	"dylaris-pkg/validate"
 )
 
 type DockerManager struct {
@@ -701,14 +703,19 @@ func (dm *DockerManager) findExistingGlobalNetwork() (id, name string, found boo
 // Keyed by the network's REAL name, which carries the compose/stack prefix on
 // most deployments. Keying it "dylaris_net" there names no network and Docker
 // creates the container with no endpoint at all - see ensureGlobalNetwork.
-func serverEndpoints(globalNetID, globalNetName string) *network.NetworkingConfig {
+//
+// alias is an extra DNS name on that network, validate.ServerHostname for a
+// game container; "" adds none.
+func serverEndpoints(globalNetID, globalNetName, alias string) *network.NetworkingConfig {
 	if globalNetName == "" {
 		globalNetName = "dylaris_net"
 	}
+	ep := &network.EndpointSettings{NetworkID: globalNetID}
+	if alias != "" {
+		ep.Aliases = []string{alias}
+	}
 	return &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			globalNetName: {NetworkID: globalNetID},
-		},
+		EndpointsConfig: map[string]*network.EndpointSettings{globalNetName: ep},
 	}
 }
 
@@ -734,7 +741,7 @@ func (dm *DockerManager) installerNetwork(ctx context.Context, egress func() (*n
 		log.Printf("installer: no shared network, running on the default bridge: %v", err)
 		return "", nil, none
 	}
-	nc := serverEndpoints(netID, netName)
+	nc := serverEndpoints(netID, netName, "")
 	if dm.netPolicyImage == "" {
 		return "", nc, none
 	}
@@ -994,7 +1001,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	applyIOWeight(hc)
 	hardenTenantContainer(hc)
 
-	nc := serverEndpoints(netID, netName)
+	nc := serverEndpoints(netID, netName, validate.ServerHostname(config.UUID))
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
@@ -1319,7 +1326,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		}
 	}
 
-	nc := serverEndpoints(netID, netName)
+	nc := serverEndpoints(netID, netName, validate.ServerHostname(config.UUID))
 
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 

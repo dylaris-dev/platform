@@ -1,6 +1,9 @@
 package validate
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestUsername(t *testing.T) {
 	cases := []struct {
@@ -253,5 +256,21 @@ func TestLocationName(t *testing.T) {
 	}
 	if len("twenty-chars-exactly") != 20 {
 		t.Fatal("the boundary case is not actually 20 characters")
+	}
+}
+
+func TestServerHostname(t *testing.T) {
+	cases := []struct{ uuid, want string }{
+		{"befa5934-e5f8-4bb0-b35d-df8da14fc003_d59de1665a", "mc-befa5934-e5f8-4bb0-b35d-df8da14fc003-d59de1665a"},
+		{"Owner_ABC12345", "mc-owner-abc12345"},
+		{"abcdefgh_", ""},             // a label may not end in '-'
+		{strings.Repeat("a", 61), ""}, // 64 bytes with the prefix
+		{strings.Repeat("a", 60), "mc-" + strings.Repeat("a", 60)},
+		{"../etc/passwd", ""},
+	}
+	for _, c := range cases {
+		if got := ServerHostname(c.uuid); got != c.want {
+			t.Errorf("ServerHostname(%q) = %q, want %q", c.uuid, got, c.want)
+		}
 	}
 }

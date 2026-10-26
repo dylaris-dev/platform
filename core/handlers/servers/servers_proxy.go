@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
 )
@@ -147,7 +148,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 		ProxyID    int    `json:"proxyId"`
 		ProxyUUID  string `json:"proxyUuid"`
 		IP         string `json:"ip"`
-		Hostname   string `json:"hostname"` // container name = stable DNS in overlay
+		Hostname   string `json:"hostname"` // stable DNS name on the shared network
 	}
 
 	resolveIP := func(containerUUID, proxyUUID string) string {
@@ -185,7 +186,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 				ProxyID:    srv.ID,
 				ProxyUUID:  srv.UUID,
 				IP:         resolveIP(child.UUID, srv.UUID),
-				Hostname:   fmt.Sprintf("mc_%s", child.UUID),
+				Hostname:   proxyBackendHostname(child.UUID),
 			})
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -213,10 +214,20 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 				ProxyID:    proxy.ID,
 				ProxyUUID:  proxy.UUID,
 				IP:         resolveIP(srv.UUID, proxy.UUID),
-				Hostname:   fmt.Sprintf("mc_%s", srv.UUID),
+				Hostname:   proxyBackendHostname(srv.UUID),
 			},
 		},
 	})
+}
+
+// proxyBackendHostname is the address a proxy config names a backend by: the
+// alias the node registers (validate.ServerHostname), which Velocity can parse;
+// a UUID too long for a DNS label falls back to the container name.
+func proxyBackendHostname(uuid string) string {
+	if h := validate.ServerHostname(uuid); h != "" {
+		return h
+	}
+	return "mc_" + uuid
 }
 
 // UnlinkServerFromProxy: Remove a server's proxy link

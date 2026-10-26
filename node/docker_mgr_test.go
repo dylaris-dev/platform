@@ -69,3 +69,15 @@ func TestLinkContainerCount(t *testing.T) {
 		})
 	}
 }
+
+// A game container is reachable by a hostname a proxy can parse; the
+// installer gets no alias.
+func TestServerEndpointsAlias(t *testing.T) {
+	ep := serverEndpoints("id", "dylaris_net", "mc-a-b").EndpointsConfig["dylaris_net"]
+	if ep == nil || len(ep.Aliases) != 1 || ep.Aliases[0] != "mc-a-b" || ep.NetworkID != "id" {
+		t.Fatalf("endpoint = %+v", ep)
+	}
+	if ep := serverEndpoints("id", "", "").EndpointsConfig["dylaris_net"]; ep == nil || ep.Aliases != nil {
+		t.Fatalf("no alias wanted, endpoint = %+v", ep)
+	}
+}

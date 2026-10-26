@@ -18,15 +18,43 @@ type SLPResponse struct {
 	Version    string `json:"version"`
 }
 
-// proxyV2Local is the HAProxy PROXY protocol v2 header with command LOCAL, AF_UNSPEC and
-// no address block: 12-byte signature, version 2 + LOCAL (0x20), UNSPEC (0x00), length 0.
-// A backend with proxy-protocol on rejects a connection that does not start with a PROXY
-// header, and LOCAL tells it "health check, no client address" (spec section 2.2).
-var proxyV2Local = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A, 0x20, 0x00, 0x00, 0x00}
+// proxyV2Signature opens every HAProxy PROXY protocol v2 header.
+var proxyV2Signature = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
+
+// proxyV2Local is the v2 header with command LOCAL, AF_UNSPEC and no address block
+// (spec section 2.2, "health check, no client address").
+var proxyV2Local = append(append([]byte{}, proxyV2Signature...), 0x20, 0x00, 0x00, 0x00)
+
+// proxyV2Header is the header the ping sends to a server that expects PROXY protocol.
+// It is a PROXY command naming the node's own end of the connection, not LOCAL:
+// Velocity reads the source address of every header it gets and drops a connection
+// whose header carries none (MinecraftConnection.channelRead builds an
+// InetSocketAddress from it), so a LOCAL ping never reached a Velocity proxy and
+// every such proxy sat on "starting" until readinessBound. Paper and BungeeCord
+// accept either. LOCAL stays for an address that is not TCP, which a "tcp" dial
+// does not produce.
+func proxyV2Header(local, remote net.Addr) []byte {
+	src, ok1 := local.(*net.TCPAddr)
+	dst, ok2 := remote.(*net.TCPAddr)
+	if !ok1 || !ok2 {
+		return proxyV2Local
+	}
+	h := append([]byte{}, proxyV2Signature...)
+	if s4, d4 := src.IP.To4(), dst.IP.To4(); s4 != nil && d4 != nil {
+		h = append(h, 0x21, 0x11, 0x00, 12)
+		h = append(h, s4...)
+		h = append(h, d4...)
+	} else {
+		h = append(h, 0x21, 0x21, 0x00, 36)
+		h = append(h, src.IP.To16()...)
+		h = append(h, dst.IP.To16()...)
+	}
+	return binary.BigEndian.AppendUint16(binary.BigEndian.AppendUint16(h, uint16(src.Port)), uint16(dst.Port))
+}
 
 // PingMinecraftServer performs an SLP (Server List Ping) on the given address.
 // address should be host:port (e.g. "mc_<uuid>:25565"). proxyLocal prefixes a PROXY v2
-// LOCAL header, needed when the server expects PROXY protocol from the gateway.
+// header (proxyV2Header), needed when the server expects PROXY protocol from the gateway.
 func PingMinecraftServer(address string, timeout time.Duration, proxyLocal bool) (*SLPResponse, error) {
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
@@ -36,7 +64,7 @@ func PingMinecraftServer(address string, timeout time.Duration, proxyLocal bool)
 	conn.SetDeadline(time.Now().Add(timeout))
 
 	if proxyLocal {
-		if _, err := conn.Write(proxyV2Local); err != nil {
+		if _, err := conn.Write(proxyV2Header(conn.LocalAddr(), conn.RemoteAddr())); err != nil {
 			return nil, fmt.Errorf("send proxy header: %v", err)
 		}
 	}

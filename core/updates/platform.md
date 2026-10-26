@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Velocity proxies start with their backends.** The backend address shown on a proxy is now
+  `mc-<uuid>`; Velocity refused the old `mc_<uuid>` and would not start. Restart a backend once. `node` `core` `panel`
+- **A Velocity proxy with real player IP no longer waits 5 minutes on "starting".** The node's
+  status check sent a header Velocity drops. `node`
+
 ## 2026.10.26.2
 
 ### Features

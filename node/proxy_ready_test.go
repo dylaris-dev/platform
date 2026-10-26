@@ -37,13 +37,16 @@ func fakeSLP(t *testing.T, expectProxy bool) string {
 				if _, err := io.ReadFull(c, first); err != nil {
 					return
 				}
-				gotProxy := first[0] == proxyV2Local[0]
+				gotProxy := first[0] == proxyV2Signature[0]
 				if gotProxy != expectProxy {
 					return
 				}
 				if gotProxy {
-					rest := make([]byte, len(proxyV2Local)-1)
-					if _, err := io.ReadFull(c, rest); err != nil || !bytes.Equal(append(first, rest...), proxyV2Local) {
+					head := make([]byte, 15)
+					if _, err := io.ReadFull(c, head); err != nil || !bytes.Equal(append(first, head[:11]...), proxyV2Signature) {
+						return
+					}
+					if _, err := io.ReadFull(c, make([]byte, int(head[13])<<8|int(head[14]))); err != nil {
 						return
 					}
 					first = nil

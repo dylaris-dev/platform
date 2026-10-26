@@ -218,3 +218,22 @@ func ResourceBounds(ramMB int, cpu float64, diskMB int64, hostCPU float64) strin
 	}
 	return ""
 }
+
+// ServerHostname is the name a proxy on the same node reaches a server
+// container by: a network alias the node gives every game container beside
+// its container name. The container name mc_<uuid> resolves too, but the
+// underscore makes it an invalid hostname, and Velocity parses its backend
+// addresses as a URI - java.net.URI has no host for one, so the proxy refuses
+// to start. Core shows this name and the node registers it, so both read it
+// from here. "" when the UUID cannot form a DNS label of at most 63 bytes;
+// such a server is reached by its container name only.
+func ServerHostname(uuid string) string {
+	if !IsServerUUID(uuid) {
+		return ""
+	}
+	name := "mc-" + strings.ToLower(strings.ReplaceAll(uuid, "_", "-"))
+	if len(name) > 63 || strings.HasSuffix(name, "-") {
+		return ""
+	}
+	return name
+}
