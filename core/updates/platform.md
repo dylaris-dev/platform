@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.8
+
+### Features
+- **Core runs on 64-bit ARM too**, so the whole platform installs on a Raspberry Pi 4/5 or an ARM
+  server. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26.7
 
 ### Features

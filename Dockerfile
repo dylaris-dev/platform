@@ -12,7 +12,9 @@
 ARG PANEL_STAGE=panel-none
 
 # --- Panel Stage: the static export Core serves ---
-FROM node:22-alpine AS panel-build
+# The panel is a static export: the same files for every platform, so it is
+# built once on the build machine rather than under emulation per platform.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS panel-build
 WORKDIR /app
 
 # Same workspace dance as the old panel/Dockerfile, and the lockfile is
@@ -50,7 +52,7 @@ RUN npm run build
 RUN mkdir -p /panel && cp -a out/. /panel/
 
 # --- Panel Stage (none): an empty directory for every non-Core build ---
-FROM alpine:latest AS panel-none
+FROM --platform=$BUILDPLATFORM alpine:latest AS panel-none
 RUN mkdir -p /panel
 
 # The indirection that makes the choice a build arg.

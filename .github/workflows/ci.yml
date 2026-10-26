@@ -582,6 +582,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Self-hosters run Core on a Raspberry Pi too, so it is built for arm64
+      # as well. Only the run stage's apk add is emulated: the panel export is
+      # built once on the runner (it is the same files for every platform) and
+      # Go cross-compiles.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up a buildx builder
         # Its own BuildKit container, not the host daemon's image store. With the
         # default docker driver a build re-tagged :latest in the runner host's
@@ -607,6 +614,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-core:${{ steps.tags.outputs.TAG_PRIMARY }}

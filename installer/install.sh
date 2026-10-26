@@ -12,7 +12,7 @@
 
 set -Eeuo pipefail
 
-INSTALLER_VERSION="0.1.0"
+INSTALLER_VERSION="0.1.1"
 PROJECT="dylaris"
 IMAGE_CORE="ghcr.io/dylaris-dev/platform-core"
 IMAGE_NODE="ghcr.io/dylaris-dev/platform-node"
@@ -568,11 +568,21 @@ EOF
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - dylaris_data:/app/dylaris_data
-    ports:
+EOF
+    # Host mode in a stack, so each machine's node owns its own ports instead
+    # of the routing mesh; Compose knows only the short form.
+    if (( sw )); then
+      printf '    ports:
       - {target: 25520, published: 25520, mode: host}
       - {target: 25523, published: 25523, mode: host}
-    networks: [dylaris_net]
-EOF
+'
+    else
+      printf '    ports:
+      - "25520:25520"
+      - "25523:25523"
+'
+    fi
+    echo "    networks: [dylaris_net]"
     if (( pg )); then
       echo "  timescaledb:"
       echo "    image: $IMAGE_PG"

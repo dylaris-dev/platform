@@ -38,7 +38,7 @@ on:
         default: ""
       # Comma-separated buildx platforms. The node is built for arm64 too: it
       # runs on the customer's machine (BYON), which can be a Raspberry Pi or
-      # an ARM server. Core runs on our own amd64 hosts and stays amd64.
+      # an ARM server. Core builds in its own job (ci.yml build-core), for both platforms too.
       platforms:
         required: false
         type: string
