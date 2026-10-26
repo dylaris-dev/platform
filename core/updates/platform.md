@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- **Accounts that bought nothing are no longer metered.** Admins and hand-made accounts read
+  as 0 GB included: "90 % used" at 0 bytes, and beam slowed at the first byte. `core`
+
 ## 2026.10.26.3
 
 ### Features

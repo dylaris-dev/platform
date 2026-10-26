@@ -16,22 +16,51 @@ func TestJudgeDataTraffic(t *testing.T) {
 		name      string
 		used      int64
 		included  *int64
-		units     int64
+		units     *int64
 		consent   bool
 		warn, thr bool
 	}{
-		{"no allowance", 500 * gb, nil, 1, false, false, false},
-		{"below 90 %", 89 * gb, inc(100), 1, false, false, false},
-		{"at 90 %", 90 * gb, inc(100), 1, false, true, false},
-		{"at 100 %", 100 * gb, inc(100), 1, false, true, true},
-		{"units multiply", 150 * gb, inc(100), 2, false, false, false},
-		{"consent bills instead", 500 * gb, inc(100), 1, true, false, false},
-		{"zero allowance", 1, inc(0), 1, false, true, true},
+		{"no allowance", 500 * gb, nil, inc(1), false, false, false},
+		{"below 90 %", 89 * gb, inc(100), inc(1), false, false, false},
+		{"at 90 %", 90 * gb, inc(100), inc(1), false, true, false},
+		{"at 100 %", 100 * gb, inc(100), inc(1), false, true, true},
+		{"units multiply", 150 * gb, inc(100), inc(2), false, false, false},
+		{"consent bills instead", 500 * gb, inc(100), inc(1), true, false, false},
+		{"zero allowance", 1, inc(0), inc(1), false, true, true},
+		{"zero units", 1, inc(100), inc(0), false, true, true},
+		{"unmetered account", 500 * gb, inc(100), nil, false, false, false},
 	}
 	for _, c := range cases {
 		v := JudgeDataTraffic(c.used, c.included, c.units, c.consent)
 		if v.Warn != c.warn || v.Throttled != c.thr {
 			t.Errorf("%s: warn %v throttled %v, want %v %v", c.name, v.Warn, v.Throttled, c.warn, c.thr)
+		}
+	}
+}
+
+// An account that never bought or was granted anything is not metered; one
+// cap of either kind makes it a customer, and a live grant counts as one unit.
+func TestTrafficUnits(t *testing.T) {
+	now := time.Now()
+	n := func(v int64) *int64 { return &v }
+	later := now.Add(time.Hour)
+	earlier := now.Add(-time.Hour)
+	cases := []struct {
+		name string
+		b    *store.UserBilling
+		want *int64
+	}{
+		{"no billing row", nil, nil},
+		{"nothing bought (admin, hand-made account)", &store.UserBilling{}, nil},
+		{"route-only customer", &store.UserBilling{MaxLinks: n(1)}, n(1)},
+		{"both products", &store.UserBilling{MaxNodes: n(2), MaxLinks: n(1)}, n(3)},
+		{"live BYON grant", &store.UserBilling{ManualByonExpiresAt: &later}, n(1)},
+		{"expired grant", &store.UserBilling{ManualByonExpiresAt: &earlier}, nil},
+	}
+	for _, c := range cases {
+		got := TrafficUnits(c.b, now)
+		if (got == nil) != (c.want == nil) || (got != nil && *got != *c.want) {
+			t.Errorf("%s: units %v, want %v", c.name, deref(got), deref(c.want))
 		}
 	}
 }

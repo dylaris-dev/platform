@@ -141,26 +141,6 @@ func trafficWarnLevel(usedGB int64, includedGB *int64) int {
 	}
 }
 
-// trafficUnits is how many countable products the tenant holds, which is how
-// many times the per-unit allowance is granted.
-//
-// nil and 0 both count as none, and for once that is not the limits convention
-// speaking - it is that this is a QUANTITY rather than a cap. A cap of 0 means
-// "none allowed" (see services.Exceeds and the Limits section of CLAUDE.md);
-// zero units bought means the same thing here for a different reason, and the
-// store clears the override rather than writing 0 anyway. An admin granting a
-// node allowance is not the same as a customer buying one.
-func trafficUnits(b *store.UserBilling) int64 {
-	var n int64
-	if b.MaxNodes != nil && *b.MaxNodes > 0 {
-		n += *b.MaxNodes
-	}
-	if b.MaxLinks != nil && *b.MaxLinks > 0 {
-		n += *b.MaxLinks
-	}
-	return n
-}
-
 // trafficStatusFor builds the tenant's pools from this month's usage and the
 // limits configured in the panel.
 //
@@ -186,7 +166,7 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 	if err != nil {
 		return nil
 	}
-	units := trafficUnits(b)
+	units := services.TrafficUnits(b, now)
 
 	out := &myTrafficStatus{BillingEnabled: b.TrafficBillingEnabled}
 	limited := false
@@ -197,9 +177,9 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 		}
 		usedGB := c.bytes / trafficGB
 		p := trafficPool{Kind: c.kind, Region: c.region, UsedGB: usedGB, ByProductBytes: c.byProduct, VoiceBytes: c.voice}
-		if lim.IncludedGB != nil {
+		if lim.IncludedGB != nil && units != nil {
 			limited = true
-			total := *lim.IncludedGB * units
+			total := *lim.IncludedGB * *units
 			p.IncludedGB = &total
 			if total > 0 {
 				p.Pct = int(usedGB * 100 / total)

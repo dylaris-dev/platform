@@ -61,14 +61,15 @@ type DataThrottleVerdict struct {
 }
 
 // JudgeDataTraffic is the pure decision: no allowance means nothing to judge,
-// consent means billed rather than throttled.
-func JudgeDataTraffic(usedBytes int64, includedGB *int64, units int64, consent bool) DataThrottleVerdict {
+// consent means billed rather than throttled. units nil is an account that is
+// not metered at all (TrafficUnits).
+func JudgeDataTraffic(usedBytes int64, includedGB *int64, units *int64, consent bool) DataThrottleVerdict {
 	v := DataThrottleVerdict{UsedGB: usedBytes / 1_000_000_000, Consent: consent}
-	if includedGB == nil {
+	if includedGB == nil || units == nil {
 		return v
 	}
 	v.Limited = true
-	total := *includedGB * units
+	total := *includedGB * *units
 	v.IncludedGB = total
 	if consent {
 		return v
@@ -80,19 +81,34 @@ func JudgeDataTraffic(usedBytes int64, includedGB *int64, units int64, consent b
 }
 
 // TrafficUnits is how many units the allowance is multiplied by: the nodes and
-// route-only locations bought.
-func TrafficUnits(b *store.UserBilling) int64 {
-	var n int64
+// route-only locations bought, or one per live manual grant (grantedCap).
+//
+// nil means the account has no node cap and no link cap at all - nothing was
+// ever bought or granted, which is an administrator or a hand-made account,
+// not a customer. Such an account is not metered. It used to count as zero
+// units, so its allowance was 0 GB: the panel warned "90 % used" at 0 bytes
+// and the data throttle slowed it at the first byte. A lapsed customer never
+// reads as nil: the store never clears both caps (a subscription that holds
+// nothing is cancelled down the suspend path and keeps its last numbers, see
+// purchasedEntitlement in the website's coreclient.go), and a store zero for
+// one product is stored as nil for that one only.
+func TrafficUnits(b *store.UserBilling, now time.Time) *int64 {
 	if b == nil {
-		return 0
+		return nil
 	}
-	if b.MaxNodes != nil && *b.MaxNodes > 0 {
-		n += *b.MaxNodes
+	nodes := grantedCap(b.MaxNodes, b.ManualByonExpiresAt, now)
+	links := grantedCap(b.MaxLinks, b.ManualRouteExpiresAt, now)
+	if nodes == nil && links == nil {
+		return nil
 	}
-	if b.MaxLinks != nil && *b.MaxLinks > 0 {
-		n += *b.MaxLinks
+	var n int64
+	if nodes != nil && *nodes > 0 {
+		n += *nodes
 	}
-	return n
+	if links != nil && *links > 0 {
+		n += *links
+	}
+	return &n
 }
 
 // DataTrafficVerdictFor reads one tenant's data usage, allowance and consent.
@@ -117,7 +133,7 @@ func DataTrafficVerdictFor(st store.Store, userID string, now time.Time) (DataTh
 	if err != nil {
 		return DataThrottleVerdict{}, err
 	}
-	return JudgeDataTraffic(used, lim.IncludedGB, TrafficUnits(b), consent), nil
+	return JudgeDataTraffic(used, lim.IncludedGB, TrafficUnits(b, now), consent), nil
 }
 
 // evaluateDataThrottle runs after a tick's usage is written: throttles the
