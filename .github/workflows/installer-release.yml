@@ -1,0 +1,64 @@
+name: Installer release
+
+# Publishes installer/install.sh and install.ps1 with SHA256SUMS as
+#   installer-v<version>   one release per version (kept)
+#   installer-latest       moved to the newest version; the documented download
+# Neither is ever marked as the repository's latest release: the Beam client's
+# stable channel reads releases/latest, and an installer release there would
+# hand it a manifest-less release.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - '.github/workflows/installer-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: shellcheck
+        run: docker run --rm -v "$PWD/installer:/mnt" koalaman/shellcheck:stable -S warning install.sh
+
+      - name: Syntax and self-test
+        run: |
+          bash -n installer/install.sh
+          bash installer/install.sh --version
+          bash installer/install.sh --help >/dev/null
+
+      - name: Version and checksums
+        id: v
+        run: |
+          V=$(sed -n 's/^INSTALLER_VERSION="\(.*\)"$/\1/p' installer/install.sh)
+          [ -n "$V" ] || { echo "no INSTALLER_VERSION"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          cd installer && sha256sum install.sh install.ps1 > SHA256SUMS && cat SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          cd installer
+          # A published version is never changed: its checksums are what users
+          # verified against. A change without a version bump publishes nothing.
+          if gh release view "installer-v$V" >/dev/null 2>&1; then
+            echo "::warning::installer-v$V is already published; bump INSTALLER_VERSION in install.sh to release this change."
+            exit 0
+          fi
+          gh release create "installer-v$V" install.sh install.ps1 SHA256SUMS \
+            --title "Installer $V" --notes "DYLARIS platform installer $V. See the README, section Installer." --latest=false
+          gh release delete installer-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create installer-latest install.sh install.ps1 SHA256SUMS \
+            --title "Installer (latest: $V)" --notes "Always the newest installer, currently $V." --latest=false --target "$GITHUB_SHA"

@@ -77,6 +77,11 @@ services:
       # from this block is silently ignored no matter what the operator sets.
       # Break-glass admin creation via /setup. RAM-only, never persisted.
       ADMIN_SECRET: "${ADMIN_SECRET:-}"
+      # Optional HTTPS from Core itself on 25443 (off | self-signed | files),
+      # for an install without a reverse proxy. PANEL_TLS_HOSTS: the names/IPs
+      # the self-signed certificate covers. The plain listener stays on 25500.
+      PANEL_TLS: "${PANEL_TLS:-off}"
+      PANEL_TLS_HOSTS: "${PANEL_TLS_HOSTS:-}"
       # Which proxies' X-Forwarded-For Core believes, for rate limiting and the
       # audit log. Empty trusts the private ranges, which is right for the
       # reference reverse-proxy-on-the-same-Docker-network layout.
@@ -158,6 +163,7 @@ services:
     ports:
       - "25500:25500"   # REST API
       - "25501:25501"   # gRPC node mesh (Cluster-Sync)
+      - "25443:25443"   # panel HTTPS, answers only when PANEL_TLS is set
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:25500/healthz"]
       interval: 30s

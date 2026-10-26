@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.7
+
+### Features
+- **An installer for Linux and Windows.** One script checks the machine, installs Docker if needed,
+  asks a few questions and starts DYLARIS; see the README, section Installer. `core`
+- **The panel over HTTPS without a reverse proxy.** `PANEL_TLS=self-signed` (or your own files) makes
+  Core serve it on 25443 as well; 25500 stays as it is. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26.6
 
 ### Features

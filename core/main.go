@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 	"dylaris-core/metrics"
 	"dylaris-core/models"
 	"dylaris-core/panelfs"
+	"dylaris-core/paneltls"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
@@ -1067,6 +1069,34 @@ func main() {
 		}
 	}()
 
+	// Optional HTTPS for a self-host without a reverse proxy, beside the plain
+	// listener (see paneltls). A configuration error stops Core: an operator
+	// who asked for HTTPS must not silently get none.
+	tlsSettings, err := paneltls.FromEnv(os.Getenv, "dylaris_data")
+	if err != nil {
+		log.Fatalf("Panel TLS: %v", err)
+	}
+	var tlsSrv *http.Server
+	if tlsSettings.Mode != paneltls.Off {
+		cert, fingerprint, err := tlsSettings.Certificate(time.Now())
+		if err != nil {
+			log.Fatalf("Panel TLS: %v", err)
+		}
+		tlsSrv = &http.Server{
+			Addr:              ":" + tlsSettings.Port,
+			Handler:           srv.Handler,
+			TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+			ReadHeaderTimeout: srv.ReadHeaderTimeout,
+			IdleTimeout:       srv.IdleTimeout,
+		}
+		log.Printf("Panel HTTPS on :%s (%s certificate, SHA-256 %s)", tlsSettings.Port, tlsSettings.Mode, fingerprint)
+		go func() {
+			if err := tlsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Core HTTPS listener crashed: %v", err)
+			}
+		}()
+	}
+
 	// Graceful shutdown: mirrors node/main.go's signal handling. Rolling
 	// deploys (docker-stack.yml start-first, 2 core replicas) SIGTERM the
 	// outgoing task while the new one is already serving; without this the
@@ -1090,6 +1120,11 @@ func main() {
 	//  5. Close Redis last.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+	if tlsSrv != nil {
+		if err := tlsSrv.Shutdown(shutdownCtx); err != nil {
+			tlsSrv.Close()
+		}
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		// Shutdown waits for active connections and gives up when the context
 		// expires; it does not hang up on the stragglers. Close does, and

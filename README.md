@@ -198,9 +198,61 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
   single-use `NODE_ENROLL_TOKEN` that binds it to its tenant. Already-paired
   nodes reconnect normally.
 
+## Installer
+
+The quickest way to a running platform. One script asks a handful of
+questions, checks the machine, installs Docker if it is missing, writes the
+files and starts everything. Linux (Debian, Ubuntu, 64-bit Raspberry Pi OS;
+amd64 and arm64):
+
+```bash
+curl -fsSLO https://github.com/dylaris-dev/platform/releases/download/installer-latest/install.sh
+curl -fsSLO https://github.com/dylaris-dev/platform/releases/download/installer-latest/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS && sudo bash install.sh
+```
+
+Windows 10/11, in an elevated PowerShell (sets up WSL2 with Ubuntu, then runs
+the same installer inside it):
+
+```powershell
+Invoke-WebRequest https://github.com/dylaris-dev/platform/releases/download/installer-latest/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+What it asks, in order: one machine (Compose) or several (Swarm); generate
+files only or also start; a bundled PostgreSQL (TimescaleDB) or an existing one
+(connection and rights are tested, and an admin login can be used once to
+create the database and user without being stored); a bundled Valkey or an
+existing Redis 7+/Valkey (login, version and ACL management are tested); the
+panel address and how it is reached (HTTPS with a self-signed certificate made
+by Core, your own certificate files, your own reverse proxy, or plain HTTP in a
+private network); the secrets (generated, can be regenerated before you
+confirm); and the first administrator. It shows the full plan before changing
+anything.
+
+| Command | Does |
+|---|---|
+| `install.sh` | the interview above (default) |
+| `install.sh add-node` | joins this machine to the DYLARIS Swarm as a node |
+| `install.sh update` | pulls new images and restarts, keeping secrets and data |
+| `install.sh uninstall` | removes the containers, keeps data; `--purge` deletes data too |
+| `install.sh diagnostics` | writes a report with secrets masked |
+| `--check` / `--dry-run` | only check the machine / show plan and files, change nothing |
+| `--config FILE` | answers from `KEY=VALUE` lines, for unattended installs |
+| `--output-dir DIR` | where the files go (default `/opt/dylaris`) |
+
+Files land in `/opt/dylaris`: `.env` (secrets, mode 600), `docker-compose.yml`
+or `docker-stack.yml`, and `valkey-acl/users.acl`. A rerun keeps existing
+secrets and volumes. In a Swarm the secrets are Docker secrets, read through
+the `*_FILE` variables. A further machine joins with `add-node`: without the
+managed gateway, several machines are only supported as a Swarm, because a
+lone node would need Valkey reachable over the network. The Gateway is a
+managed DYLARIS service and is not installed by this script.
+
 ## Quick start (single host)
 
-Everything on one machine (Docker + Docker Compose v2 required).
+By hand instead of the installer. Everything on one machine (Docker + Docker
+Compose v2 required).
 
 ```bash
 git clone https://github.com/dylaris-dev/platform.git
