@@ -249,6 +249,12 @@ managed gateway, several machines are only supported as a Swarm, because a
 lone node would need Valkey reachable over the network. The Gateway is a
 managed DYLARIS service and is not installed by this script.
 
+After installing: extra ports (voice chat and the like) need a range first,
+set under Settings, Extra ports (for example `25700-25799`, outside
+`PORT_RANGE`), opened for TCP and UDP. The voice preset writes the node's
+public IP as the voice address; for players on the local network only, add the
+port without the preset and set the mod's address to the node's local address.
+
 ## Quick start (single host)
 
 By hand instead of the installer. Everything on one machine (Docker + Docker
