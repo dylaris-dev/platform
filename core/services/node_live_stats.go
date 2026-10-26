@@ -53,6 +53,7 @@ func EnrichNodesWithLiveStats(ctx context.Context, st NodeServerCounter, rdb *re
 		nodes[i].NetPolicy = hb.NetPolicy
 		nodes[i].NetPolicyServers = hb.NetPolicyServers
 		nodes[i].NetPolicyNotice = hb.NetPolicyNotice
+		nodes[i].NoMemoryLimit = hb.NoMemoryLimit
 	}
 	return seen
 }

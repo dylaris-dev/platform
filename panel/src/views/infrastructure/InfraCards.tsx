@@ -22,6 +22,7 @@ import {
   type SharedStorageConflict,
 } from '@/lib/sharedStorage';
 import { timeAgo } from '@/lib/time';
+import { NO_MEMORY_LIMIT_MESSAGE } from '@/lib/memoryLimit';
 import { nodeConnectivity, dotFor } from '@/lib/connectivity';
 import { nodeLabel } from '@/lib/nodeLabel';
 import { isAttention, type FlatServiceError, type ServiceErrorEntry } from '@/lib/serviceErrors';
@@ -100,6 +101,8 @@ export interface NodeInfo {
   // node too. That topology cannot work - node identity lives in the first
   // storage path - and it destroys a server on the next migration.
   sharedStorage?: SharedStorageConflict[];
+  // The host's Docker cannot enforce a server's RAM limit (no memory cgroup).
+  noMemoryLimit?: boolean;
 }
 
 export interface ServerInfo {
@@ -352,6 +355,13 @@ export function NodeCard({
             identity is stored there, so the nodes overwrite each other.
           </p>
         </div>
+      )}
+
+      {node.noMemoryLimit && (
+        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] text-(--warning-light) leading-snug">
+          <AlertTriangle size={11} className="mt-px shrink-0" />
+          <span>{NO_MEMORY_LIMIT_MESSAGE}</span>
+        </p>
       )}
 
       {/* MC host-port range — these are the ports the host firewall must open,

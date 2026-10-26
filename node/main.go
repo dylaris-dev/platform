@@ -1075,6 +1075,10 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 			data["netPolicyNotice"] = n
 		}
 	}
+	// Only when true: an older Core ignores it, and absent reads as "fine".
+	if daemonNoMemoryLimit.Load() {
+		data["noMemoryLimit"] = true
+	}
 	// Which release this IMAGE was built from. Core cannot see it any other way,
 	// and without it the panel assumes the node moved whenever Core did - so an
 	// operator who updates Core and leaves the nodes alone is told the node's

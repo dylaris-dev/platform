@@ -24,6 +24,11 @@ const (
 // start. Empty until known.
 var daemonLogDriver atomic.Value
 
+// daemonNoMemoryLimit is set when the Docker daemon cannot apply memory
+// limits (no memory cgroup), read once at start like the log driver. The
+// heartbeat carries it to the panel so the owner sees it without reading logs.
+var daemonNoMemoryLimit atomic.Bool
+
 // boundedLogConfig caps a container's own log where the driver takes a size.
 // Docker's default json-file grows without limit; any other driver may refuse
 // these options and the container would not be created, so it is left alone.
@@ -73,6 +78,7 @@ func (dm *DockerManager) startDockerHygiene(ctx context.Context) {
 		daemonLogDriver.Store(info.LoggingDriver)
 		// Docker then creates every server with no memory limit and says so
 		// only in its own daemon log: the booked RAM is not enforced.
+		daemonNoMemoryLimit.Store(!info.MemoryLimit)
 		if !info.MemoryLimit {
 			log.Printf("WARNING: this host has no memory cgroup, so server RAM limits are NOT enforced. " +
 				"On Raspberry Pi OS add 'cgroup_enable=memory' to /boot/firmware/cmdline.txt and reboot.")

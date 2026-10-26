@@ -29,6 +29,7 @@ import { SkeletonCard } from '@/components/Skeleton';
 import { resolveInfraTab, showInfraTabBar, infraAvailability, type InfraTab } from '@/lib/infraTab';
 import { PendingAdmission, ResetPairingButton } from '@/components/infra/MachinePairing';
 import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded, SecretField, usageLabel } from '@/components/infra/DeployKit';
+import { NO_MEMORY_LIMIT_MESSAGE } from '@/lib/memoryLimit';
 import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
@@ -81,6 +82,8 @@ interface OwnNode {
      * can see on its own host and stays 1 while that Link reaches no edge.
      */
     linkOnline?: boolean;
+    /** The machine's Docker cannot enforce a server's RAM limit. */
+    noMemoryLimit?: boolean;
 }
 
 const NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
@@ -708,6 +711,12 @@ function MyNodesInner() {
                                                         {n.status}
                                                         {typeof n.serverCount === 'number' && ` · ${n.serverCount} server${n.serverCount === 1 ? '' : 's'}`}
                                                     </div>
+                                                    {n.noMemoryLimit && (
+                                                        <p className="mt-1 flex items-start gap-1.5 text-xs text-(--warning-light)">
+                                                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                                            <span>{NO_MEMORY_LIMIT_MESSAGE}</span>
+                                                        </p>
+                                                    )}
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-1 shrink-0">

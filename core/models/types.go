@@ -368,6 +368,10 @@ type Node struct {
 	NetPolicy        *bool  `json:"netPolicy,omitempty"`
 	NetPolicyServers int    `json:"netPolicyServers,omitempty"`
 	NetPolicyNotice  string `json:"netPolicyNotice,omitempty"`
+	// NoMemoryLimit: this node's Docker cannot enforce a server's RAM limit (no
+	// memory cgroup, Raspberry Pi OS by default), so a server can take the
+	// whole machine. False also for a node too old to say.
+	NoMemoryLimit bool `json:"noMemoryLimit,omitempty"`
 	// SharedStorage is non-empty when this node found one of its storage paths
 	// mounted into another node as well. That topology cannot work - node
 	// identity itself lives in the first storage path - and it destroys a server

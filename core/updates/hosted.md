@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.26.6
+
+### Features
+- **The panel says when a machine cannot limit RAM.** A node on a host without memory control
+  (Raspberry Pi OS by default) shows a warning with the one-line fix. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.26.5
 
 ### Features

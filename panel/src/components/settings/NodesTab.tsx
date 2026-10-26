@@ -41,6 +41,7 @@ import {
 import HelpTip from '@/components/ui/HelpTip';
 import ExternalMachines from '@/components/settings/ExternalMachines';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { NO_MEMORY_LIMIT_MESSAGE, NO_MEMORY_LIMIT_SHORT } from '@/lib/memoryLimit';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node deploy ENV for
 // an already-enrolled node (see WarpTab's mint+reveal pattern). The Link's own
@@ -691,6 +692,12 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         <span className="badge badge-accent" title="External / home node — forces gateway+beam">external</span>
                     )}
                     <NetPolicyBadge node={node} />
+                    {node.noMemoryLimit && (
+                        <span className="badge badge-warning inline-flex items-center gap-1" title={NO_MEMORY_LIMIT_MESSAGE}>
+                            <AlertTriangle size={11} />
+                            {NO_MEMORY_LIMIT_SHORT}
+                        </span>
+                    )}
                     {node.needsConfiguration && (
                         <span
                             className="badge badge-warning inline-flex items-center gap-1"

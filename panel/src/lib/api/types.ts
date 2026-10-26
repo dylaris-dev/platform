@@ -74,6 +74,8 @@ export interface Node {
     netPolicy?: boolean;
     netPolicyServers?: number;
     netPolicyNotice?: string;
+    /** The host's Docker cannot enforce a server's RAM limit. Absent = fine or not reported. */
+    noMemoryLimit?: boolean;
     serverCount?: number;
     // Placement (persisted)
     cpuOvercommitRatio?: number;

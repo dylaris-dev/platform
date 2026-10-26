@@ -48,3 +48,23 @@ func TestLinkCountIsUnknownWithoutAHeartbeat(t *testing.T) {
 		}
 	}
 }
+
+// A node whose Docker cannot enforce memory limits says so in its heartbeat,
+// and the panel gets it; a node that says nothing (older, or fine) does not.
+func TestNoMemoryLimitReachesThePanel(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	mr.Set("dylaris:discovery:n-pi", `{"cpuUsage":1,"noMemoryLimit":true}`)
+	mr.Set("dylaris:discovery:n-old", `{"cpuUsage":1}`)
+
+	nodes := []models.Node{{Token: "n-pi"}, {Token: "n-old"}}
+	EnrichNodesWithLiveStats(t.Context(), nil, rdb, nodes)
+
+	if raw, _ := json.Marshal(nodes[0]); !strings.Contains(string(raw), `"noMemoryLimit":true`) {
+		t.Errorf("the flag did not reach the node: %s", raw)
+	}
+	if raw, _ := json.Marshal(nodes[1]); strings.Contains(string(raw), "noMemoryLimit") {
+		t.Errorf("a silent node is flagged: %s", raw)
+	}
+}
