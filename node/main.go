@@ -1674,7 +1674,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// and stops the server the user just asked for.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 		dm.PullContainerImage(cmd.Config.UUID)
-		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone); err != nil {
+		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone, cmd.Config.Docker.RAM); err != nil {
 			log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
 		} else {
 			log.Printf("Server %s started", cmd.Config.UUID)
@@ -1709,7 +1709,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
 		time.Sleep(2 * time.Second)
 		// Recreate container (more reliable than ContainerStart on exited container)
-		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone); err != nil {
+		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone, cmd.Config.Docker.RAM); err != nil {
 			log.Printf("Failed to restart server %s: %v", cmd.Config.UUID, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		} else {

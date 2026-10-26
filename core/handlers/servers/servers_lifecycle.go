@@ -1741,7 +1741,10 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 			"uuid": srv.UUID,
 			// A start or restart rebuilds the container, which is where a
 			// changed server zone reaches its TZ. Stop and kill ignore it.
-			"docker": map[string]interface{}{"timezone": srv.Timezone},
+			// The booked RAM rides along so the node sizes the heap from it
+			// rather than from the container, which on a host without a
+			// memory cgroup carries no limit to read it back from.
+			"docker": map[string]interface{}{"timezone": srv.Timezone, "ram": srv.Memory},
 		}
 		if err := h.state.Queue.SendCommand(context.Background(), node.Token, req.Action, configPayload, nil); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)

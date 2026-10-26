@@ -1409,7 +1409,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 // removes the old container, and creates + starts a fresh one with identical settings.
 // This is more reliable than ContainerStart on an exited container.
 func (dm *DockerManager) RestartContainer(uuid string) error {
-	return dm.RestartContainerInZone(uuid, "")
+	return dm.RestartContainerInZone(uuid, "", 0)
 }
 
 // rememberTimezone writes the zone into the saved config, which the reconciler
@@ -1440,7 +1440,9 @@ func (dm *DockerManager) rememberTimezone(uuid, tz string) {
 // RestartContainerInZone is RestartContainer with the container's TZ set to
 // tz; "" keeps the one it has. A start or restart from the panel carries the
 // server's current zone, which is how a zone change reaches the container.
-func (dm *DockerManager) RestartContainerInZone(uuid, tz string) error {
+// ramMB is the booked RAM from Core's command; 0 (an older Core, or a restart
+// the node starts itself) falls back to what the container carries.
+func (dm *DockerManager) RestartContainerInZone(uuid, tz string, ramMB int) error {
 	containerName := fmt.Sprintf("mc_%s", uuid)
 	if tz != "" {
 		dm.rememberTimezone(uuid, tz)
@@ -1461,6 +1463,9 @@ func (dm *DockerManager) RestartContainerInZone(uuid, tz string) error {
 	padding := ramPaddingFromLabels(info.Config.Labels)
 	config.Docker.RAMPaddingMB = &padding
 	config.Docker.RAM = ramFromContainer(info.Config.Labels, info.HostConfig.Memory)
+	if ramMB > 0 {
+		config.Docker.RAM = ramMB
+	}
 	config.Docker.CPULimit = float64(info.HostConfig.NanoCPUs) / 1e9
 	config.Docker.CpusetCpus = info.HostConfig.CpusetCpus
 	config.Docker.Timezone = tz
