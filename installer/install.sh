@@ -12,7 +12,7 @@
 
 set -Eeuo pipefail
 
-INSTALLER_VERSION="0.1.2"
+INSTALLER_VERSION="0.1.3"
 PROJECT="dylaris"
 IMAGE_CORE="ghcr.io/dylaris-dev/platform-core"
 IMAGE_NODE="ghcr.io/dylaris-dev/platform-node"
@@ -711,12 +711,10 @@ create_admin() {
     http://127.0.0.1:25500/api/setup/admin <<<"$body" 2>/dev/null) || true
   if [[ $code == 200 || $code == 201 ]]; then
     ok "Administrator ${A[admin_user]} created"
-    ADMIN_TOKEN=$(grep -o '"token":"[^"]*"' "$out" | head -1 | cut -d'"' -f4)
   else
     warn "Could not create the administrator (HTTP $code): $(head -c 300 "$out"). Open ${A[frontend]}/setup instead."
   fi
   rm -f "$out"
-  A[admin_password]=""
 }
 
 ADMIN_TOKEN=""
@@ -727,9 +725,19 @@ verify() {
   if [[ ${A[tls]} == self-signed || ${A[tls]} == files ]]; then
     curl -fsSk -o /dev/null https://127.0.0.1:25443/healthz && ok "Panel HTTPS answers on 25443" || warn "Panel HTTPS does not answer on 25443"
   fi
+  # Signed in the way a person would, so the check proves the login works too.
+  if [[ ${A[admin]:-} == now && -n ${A[admin_password]:-} ]]; then
+    local body; body=$(printf '{"username":"%s","password":"%s"}' "$(json_escape "${A[admin_user]}")" "$(json_escape "${A[admin_password]}")")
+    ADMIN_TOKEN=$(curl -fsS -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:25500/api/auth/login <<<"$body" 2>/dev/null |
+      grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4) || true
+    A[admin_password]=""
+    if [[ -n $ADMIN_TOKEN ]]; then ok "Signed in as ${A[admin_user]}"; else warn "Could not sign in as ${A[admin_user]} to check the node."; fi
+  fi
   if [[ -n $ADMIN_TOKEN ]]; then
     local i nodes=""
-    for i in $(seq 1 30); do
+    # The node connects after Core is up, and on a small machine that takes a
+    # while after Core's own first start: three minutes before calling it.
+    for i in $(seq 1 60); do
       nodes=$(curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:25500/api/nodes 2>/dev/null || true)
       grep -q '"status":"online"' <<<"$nodes" && { ok "The node is online"; break; }
       sleep 3
