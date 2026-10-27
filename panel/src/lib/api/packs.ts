@@ -41,6 +41,7 @@ export interface BuildContentEntry {
     prettyName: string;
     contentType: string;
     source: string;
+    modrinthVersionNumber?: string;
     targetPath: string;
     modrinthProjectId: string;
     linked: boolean;
@@ -146,11 +147,25 @@ export interface PackAuditEvent {
 export const getPackAudit = (packId?: number) =>
     get<PackAuditEvent[]>(packId ? `/packs/${packId}/audit` : '/me/pack-audit', [], 'events');
 export const getPack = (id: number) => get<Pack | null>(`/packs/${id}`, null, 'pack');
+export interface PackPermissions { canEdit: boolean; canDelete: boolean; isOwner: boolean }
+export async function getPackDetails(id: number): Promise<{ pack: Pack | null; permissions: PackPermissions }> {
+    const empty = { pack: null, permissions: { canEdit: false, canDelete: false, isOwner: false } };
+    try {
+        const res = await fetch(`${API_URL}/packs/${id}`, { headers: getAuthHeader() });
+        const data = await handleResponse(res) as any;
+        if (data?.success === false || !data?.pack) return empty;
+        return { pack: data.pack, permissions: {
+            canEdit: data.permissions?.canEdit === true,
+            canDelete: data.permissions?.canDelete === true,
+            isOwner: data.permissions?.isOwner === true,
+        } };
+    } catch (err) { handleError(err); return empty; }
+}
 export const updatePack = (id: number, input: Partial<Pack>) => send(`/packs/${id}`, 'PATCH', input);
 export const deletePack = (id: number) => send(`/packs/${id}`, 'DELETE');
 
 export const listBuilds = (packId: number) => get<PackBuild[]>(`/packs/${packId}/builds`, [], 'builds');
-export const createBuild = (packId: number, input: { versionString: string; minecraft?: string; loader?: string; loaderVersion?: string; changelog?: string }) => send(`/packs/${packId}/builds`, 'POST', input);
+export const createBuild = (packId: number, input: { versionString: string; minecraft?: string; loader?: string; loaderVersion?: string; changelog?: string; sourceBuildId?: number }) => send(`/packs/${packId}/builds`, 'POST', input);
 export const updateBuild = (packId: number, buildId: number, input: Partial<PackBuild>) => send(`/packs/${packId}/builds/${buildId}`, 'PATCH', input);
 export const deleteBuild = (packId: number, buildId: number) => send(`/packs/${packId}/builds/${buildId}`, 'DELETE');
 
@@ -159,12 +174,14 @@ export const addModrinthContent = (packId: number, buildId: number, input: { pro
 export const removeContent = (packId: number, buildId: number, modversionId: number) => send(`/packs/${packId}/builds/${buildId}/content/${modversionId}`, 'DELETE');
 export const setContentSide = (packId: number, buildId: number, modversionId: number, side: string) => send(`/packs/${packId}/builds/${buildId}/content/${modversionId}/side`, 'PATCH', { side });
 
-export async function uploadContent(packId: number, buildId: number, file: File, side: string, contentType: string) {
+export async function uploadContent(packId: number, buildId: number, file: File, side: string, contentType: string, options?: { targetPath?: string; archive?: boolean }) {
     try {
         const fd = new FormData();
         fd.append('file', file);
         fd.append('side', side);
         fd.append('contentType', contentType);
+        if (options?.targetPath) fd.append('targetPath', options.targetPath);
+        if (options?.archive) fd.append('archive', 'true');
         const res = await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/content/upload`, {
             method: 'POST',
             headers: getAuthHeader(), // no Content-Type: browser sets multipart boundary

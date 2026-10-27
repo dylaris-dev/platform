@@ -240,7 +240,13 @@ func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
+	caller, _ := r.Context().Value("userID").(string)
+	_, canEdit := h.packAccess(r, packID, packEdit)
+	_, canDelete := h.packAccess(r, packID, packDelete)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "pack": p,
+		"permissions": map[string]bool{"isOwner": p.OwnerID == caller, "canEdit": canEdit, "canDelete": canDelete},
+	})
 }
 
 // Update PATCH /api/packs/{id} - edits a modpack the caller owns.
@@ -289,11 +295,20 @@ func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 type buildRequest struct {
+	SourceBuildID int    `json:"sourceBuildId"`
 	VersionString string `json:"versionString"`
 	Minecraft     string `json:"minecraft"`
 	Loader        string `json:"loader"`
 	LoaderVersion string `json:"loaderVersion"`
 	Changelog     string `json:"changelog"`
+}
+
+type buildPatchRequest struct {
+	VersionString *string `json:"versionString"`
+	Minecraft     *string `json:"minecraft"`
+	Loader        *string `json:"loader"`
+	LoaderVersion *string `json:"loaderVersion"`
+	Changelog     *string `json:"changelog"`
 }
 
 // ListBuilds GET /api/packs/{id}/builds - the builds of one modpack.
@@ -382,7 +397,25 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		Changelog:     req.Changelog,
 		Channel:       models.ChannelDraft,
 	}
-	id, err := h.state.Store.CreatePackBuild(b)
+	if req.SourceBuildID != 0 {
+		source, err := h.state.Store.GetPackBuild(req.SourceBuildID)
+		if err != nil || source == nil || source.PackID != packID {
+			handlers.SendJSONError(w, "Source build not found", http.StatusNotFound)
+			return
+		}
+		if source.Minecraft != b.Minecraft || source.Loader != b.Loader {
+			handlers.SendJSONError(w, "Copying requires the same Minecraft version and loader; use Minecraft migration for another environment", http.StatusUnprocessableEntity)
+			return
+		}
+		b.MinJava, b.MinMemory = source.MinJava, source.MinMemory
+	}
+	var id int
+	var err error
+	if req.SourceBuildID != 0 {
+		id, err = h.state.Store.ClonePackBuild(r.Context(), b, req.SourceBuildID)
+	} else {
+		id, err = h.state.Store.CreatePackBuild(b)
+	}
 	if err != nil {
 		handlers.SendJSONError(w, "Failed to create build (version may exist)", http.StatusConflict)
 		return
@@ -411,10 +444,31 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Build is published and frozen", http.StatusConflict)
 		return
 	}
-	var req buildRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var patch buildPatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
+	}
+	// PATCH must distinguish an omitted setting from intentionally clearing it.
+	req := buildRequest{VersionString: b.VersionString, Minecraft: b.Minecraft, Loader: b.Loader, LoaderVersion: b.LoaderVersion, Changelog: b.Changelog}
+	if patch.VersionString != nil {
+		req.VersionString = *patch.VersionString
+		if strings.TrimSpace(req.VersionString) == "" {
+			handlers.SendJSONError(w, "versionString is required", http.StatusBadRequest)
+			return
+		}
+	}
+	if patch.Minecraft != nil {
+		req.Minecraft = *patch.Minecraft
+	}
+	if patch.Loader != nil {
+		req.Loader = *patch.Loader
+	}
+	if patch.LoaderVersion != nil {
+		req.LoaderVersion = *patch.LoaderVersion
+	}
+	if patch.Changelog != nil {
+		req.Changelog = *patch.Changelog
 	}
 	// The version string is part of the derived directory: a rename moves
 	// where the next render lands and strands the objects of the old one.

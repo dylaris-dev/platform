@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.27
+
+### Features
+- **A clearer modpack workspace.** Packs, builds and installed mods now have separate
+  columns, project icons and build details in the managed panel. No customer-side update is needed.
+- Create builds on a dedicated page with compatible version choices, independent draft
+  copies and collaborator rights under Access. No customer-side update is needed.
+
+### Breaking
+- Nothing.
+
+### Security
+- The managed panel validates modpack compatibility and config destinations more strictly.
+  No customer-side update is needed.
+
+### Fixes
+- Config/KubeJS uploads preserve folder paths, exports retain client/server sides,
+  and partial build edits keep existing settings. No customer-side update is needed.
+
 ## 2026.10.26.9
 
 ### Features

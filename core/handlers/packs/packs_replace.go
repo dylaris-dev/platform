@@ -58,7 +58,7 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 		handlers.SendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
-	if err := h.swapModversionToModrinth(r.Context(), owner, mv, req.VersionID); err != nil {
+	if err := h.swapModversionToModrinth(r.Context(), owner, build, mv, req.VersionID); err != nil {
 		handlers.SendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -72,10 +72,23 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 // modversion refs, then delete the old object (safe-cutover ordering). Shared by
 // ReplaceWithModrinth and UpdateMods. Sets modrinth_latest_version_id to the
 // aligned version and stamps modrinth_last_checked so "update available" clears.
-func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID string, mv *models.Modversion, versionID string) error {
+func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID string, build *models.PackBuild, mv *models.Modversion, versionID string) error {
 	v, err := services.FetchModrinthVersion(versionID)
 	if err != nil {
 		return fmt.Errorf("modrinth version lookup failed: %w", err)
+	}
+	kind := models.ContentTypeMod
+	if strings.HasPrefix(mv.TargetPath, "resourcepacks/") {
+		kind = models.ContentTypeResourcepack
+	}
+	if strings.HasPrefix(mv.TargetPath, "shaderpacks/") {
+		kind = models.ContentTypeShaderpack
+	}
+	if mv.ModrinthProjectID != "" && mv.ModrinthProjectID != v.ProjectID {
+		return fmt.Errorf("the selected version belongs to another Modrinth project")
+	}
+	if err := validateModrinthContent(build, v, kind); err != nil {
+		return err
 	}
 	file := v.PrimaryFile()
 	if file.URL == "" {

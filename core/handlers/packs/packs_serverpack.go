@@ -167,6 +167,7 @@ func streamModrinthContent(ctx context.Context, zw *zip.Writer, e models.BuildCo
 type packSizeBudget struct {
 	used  int64
 	limit int64
+	paths packOutputPaths
 }
 
 // countingWriter passes writes through and records how many bytes have gone to
@@ -226,6 +227,12 @@ func cleanupTemp(f *os.File) {
 // the entry. The per-entry LimitReader guards a source that under-declares its
 // size, so a lying zip header cannot smuggle more than the cap.
 func copyPackEntry(zw *zip.Writer, name string, src io.Reader, entryCap int64, total *packSizeBudget) error {
+	if total.paths == nil {
+		total.paths = packOutputPaths{}
+	}
+	if err := total.paths.add(name); err != nil {
+		return err
+	}
 	fw, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: time.Now()})
 	if err != nil {
 		return err

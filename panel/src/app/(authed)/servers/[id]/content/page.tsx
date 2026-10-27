@@ -31,6 +31,7 @@ import { installQueue, planConfirm, planRefused, updateQueue } from '@/lib/modIn
 import { MOD_LOADERS_FOR, PLUGIN_LOADERS, buildMismatch, loaderName, modFitKnown } from '@/lib/modFit';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
+import ProjectIcon from '@/components/modpacks/ProjectIcon';
 import { UnmanagedJars } from '@/components/mods/UnmanagedJars';
 import { isMcVersion } from '@/lib/validation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -1489,14 +1490,7 @@ export default function ServerContentPage() {
                             )}
                             {visibleInstalled.map(m => (
                                 <article key={m.id} className={`card p-3 flex items-start gap-3 ${m.disabled ? 'opacity-70' : ''}`}>
-                                    {installedSides.get(m.modrinthProjectId)?.icon_url ? (
-                                        // eslint-disable-next-line @next/next/no-img-element
-                                        <img src={installedSides.get(m.modrinthProjectId)!.icon_url} alt="" className="w-10 h-10 rounded-md shrink-0" />
-                                    ) : (
-                                        <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                                            <Box size={16} className="text-(--accent-light)" />
-                                        </div>
-                                    )}
+                                    <ProjectIcon url={installedSides.get(m.modrinthProjectId)?.icon_url} name={m.title || m.fileName} className="w-10 h-10" />
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span className="text-sm font-medium text-(--base-09) truncate">{m.title || m.fileName}</span>

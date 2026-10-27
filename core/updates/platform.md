@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.27
+
+### Features
+- **Modpacks have their own workspace.** Browse packs and builds beside installed content,
+  with project icons, search, build details and recent activity. `core` `panel`
+- **Create builds on a dedicated page.** Choose compatible Minecraft/loader versions,
+  start empty or copy a build without sharing mutable config records. `core` `panel`
+- **Manage modpack access from Access.** Grant read, edit/publish and delete rights
+  separately, for individual packs or all your packs. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Modpack additions validate project/version compatibility; config uploads and exports
+  reject unsafe paths and conflicting output files. `core`
+
+### Fixes
+- Folder-aware config/KubeJS uploads preserve relative paths and export environment sides.
+  Partial build edits retain omitted settings, and deleting content requires delete access. `core` `panel`
+
 ## 2026.10.26.11
 
 ### Features

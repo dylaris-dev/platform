@@ -35,6 +35,11 @@ type uploadError struct {
 
 func upErr(status int, msg string) *uploadError { return &uploadError{status: status, msg: msg} }
 
+type uploadContentOptions struct {
+	targetPath string
+	archive    bool
+}
+
 // storeUploadedContent turns a multipart upload into a stored content zip and
 // returns its metadata. It splits by the largest case:
 //
@@ -51,14 +56,19 @@ func (h *PacksHandler) storeUploadedContent(
 	f multipart.File,
 	hdr *multipart.FileHeader,
 	fileName, contentType, userID, slug string,
+	options ...uploadContentOptions,
 ) (storedUpload, *uploadError) {
 	lower := strings.ToLower(fileName)
+	opt := uploadContentOptions{targetPath: targetPathFor(contentType, fileName)}
+	if len(options) > 0 {
+		opt = options[0]
+	}
 
-	if strings.HasSuffix(lower, ".zip") && contentType == models.ContentTypeMod {
+	if strings.HasSuffix(lower, ".zip") && (contentType == models.ContentTypeMod || opt.archive) {
 		return h.streamStoredZip(ctx, prov, f, hdr.Size, userID, slug)
 	}
 
-	return h.streamWrappedUpload(ctx, prov, f, fileName, contentType, userID, slug)
+	return h.streamWrappedUpload(ctx, prov, f, opt.targetPath, userID, slug)
 }
 
 // streamWrappedUpload wraps a raw .jar or a single config/resourcepack file into
@@ -71,7 +81,7 @@ func (h *PacksHandler) streamWrappedUpload(
 	ctx context.Context,
 	prov modpack.ModpackStorageProvider,
 	f multipart.File,
-	fileName, contentType, userID, slug string,
+	targetPath, userID, slug string,
 ) (storedUpload, *uploadError) {
 	tmp, err := os.CreateTemp("", "dylaris-pack-*")
 	if err != nil {
@@ -83,10 +93,11 @@ func (h *PacksHandler) streamWrappedUpload(
 	outMD5, out1 := md5.New(), sha1.New()
 	src := io.TeeReader(f, io.MultiWriter(in1, in5))
 	dst := &countingWriter{w: io.MultiWriter(tmp, outMD5, out1)}
-	if strings.HasSuffix(strings.ToLower(fileName), ".jar") {
-		err = modpack.WriteJarContentZip(dst, fileName, src)
+	jarName := strings.TrimPrefix(targetPath, "mods/")
+	if jarName != targetPath && !strings.Contains(jarName, "/") && strings.HasSuffix(strings.ToLower(jarName), ".jar") {
+		err = modpack.WriteJarContentZip(dst, jarName, src)
 	} else {
-		err = modpack.WriteContentZip(dst, targetPathFor(contentType, fileName), src)
+		err = modpack.WriteContentZip(dst, targetPath, src)
 	}
 	if err != nil {
 		return storedUpload{}, upErr(http.StatusInternalServerError, "Failed to wrap file")

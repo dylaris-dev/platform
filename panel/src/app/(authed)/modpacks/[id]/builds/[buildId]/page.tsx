@@ -1,43 +1,38 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import Link from 'next/link';
 import {
-    Package, ArrowLeft, Trash2, Search,
-    CircleCheck, CircleAlert, Box, Upload, Lock,
+    ArrowLeft, Trash2, Search,
+    Upload, Lock,
     Download, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText, Copy,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listBuilds, listContent, addModrinthContent, removeContent, setContentSide,
-    uploadContent, getPack, modrinthTypeToContentType, type Pack, type PackBuild, type BuildContentEntry,
+    getPackDetails, modrinthTypeToContentType, type Pack, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
 import { publishModrinth, replaceWithModrinth, updateMods, mrpackDownloadUrl } from '@/lib/api/packsPublish';
 import BuildMigrationPanel from '@/components/mods/BuildMigrationPanel';
 import { createShareLink, listShareLinks, revokeShareLink, publicShareUrl, type ShareLink, type ShareLinkKind } from '@/lib/api/packsShare';
 import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
-import { SkeletonHeader, SkeletonList, SkeletonText, Skeleton } from '@/components/Skeleton';
+import { SkeletonHeader, SkeletonList } from '@/components/Skeleton';
 import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
 import ConfigEditorModal from '@/components/modpacks/ConfigEditorModal';
+import UploadContentModal from '@/components/modpacks/UploadContentModal';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDate } from '@/lib/time';
+import { WorkspaceDetails } from '@/components/modpacks/PackWorkspace';
+import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
+import { packContentGroup } from '@/lib/packWorkspace';
+import styles from '@/components/modpacks/workspace.module.css';
 
-// Build content editor. Two panels:
-//   left:  the build's content list (mods / resource-packs / plugins), with a
-//          per-row side selector (client/server/both) and a source chip
-//          (green Modrinth = linked, yellow Upload = local file). Remove inline.
-//   right: Modrinth search filtered to the build's loader + MC version, plus a
-//          direct file upload. Frozen builds are read-only.
-//
-// Header actions: Export .mrpack (auth-blob download), Publish to Modrinth dialog.
-// Per-row action: Replace with Modrinth dialog.
-// Badge: Modrinth chip when build.modrinthPublished.
-
+// Build editing keeps the pack/build navigation mounted in the workspace.
 const SIDES: BuildContentEntry['side'][] = ['both', 'client', 'server'];
 
 // A linked entry has an update available when Modrinth's cached latest version
@@ -242,6 +237,7 @@ function ReplaceDialog({ entry, build, packId, disabled, isFrozen, onClose, onRe
                     <ModrinthVersionBrowser
                         loader={build.loader || undefined}
                         mcVersion={build.minecraft || undefined}
+                        projectType={entry.contentType === 'resourcepack' ? 'resourcepack' : entry.contentType === 'shaderpack' ? 'shader' : 'mod'}
                         disabled={disabled}
                         disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
                         onPick={(projectId, versionId) => {
@@ -309,6 +305,7 @@ function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, o
                     <ModrinthVersionBrowser
                         loader={build.loader || undefined}
                         mcVersion={build.minecraft || undefined}
+                        projectType={entry.contentType === 'resourcepack' ? 'resourcepack' : entry.contentType === 'shaderpack' ? 'shader' : 'mod'}
                         disabled={disabled}
                         disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
                         onPick={(projectId, versionId) => {
@@ -348,15 +345,20 @@ export default function BuildContentEditorPage() {
     const [loading, setLoading] = useState(true);
 
     // Upload state
-    const fileInputRef = useRef<HTMLInputElement | null>(null);
-    const [uploading, setUploading] = useState(false);
-    const [uploadType, setUploadType] = useState<'mod' | 'resourcepack' | 'shaderpack' | 'config'>('mod');
+    const [uploadOpen, setUploadOpen] = useState(false);
+    const [canEdit, setCanEdit] = useState(false);
+    const [canDelete, setCanDelete] = useState(false);
+    const [addingContent, setAddingContent] = useState(false);
 
     // Modrinth search state
     const [modrinthType, setModrinthType] = useState<'mod' | 'resourcepack' | 'shader'>('mod');
 
     // Export state
     const [exporting, setExporting] = useState(false);
+    const [activeTab, setActiveTab] = useState<'mods' | 'resources' | 'configs' | 'tools'>('mods');
+    const [browsing, setBrowsing] = useState(false);
+    const [query, setQuery] = useState('');
+    const projectMetadata = useProjectMetadata(content.map(entry => entry.modrinthProjectId));
 
     // Dialog state
     const [publishDialogOpen, setPublishDialogOpen] = useState(false);
@@ -375,12 +377,14 @@ export default function BuildContentEditorPage() {
 
     const refresh = useCallback(async () => {
         const [p, bs, list, sl] = await Promise.all([
-            getPack(packId),
+            getPackDetails(packId),
             listBuilds(packId),
             listContent(packId, buildId),
             listShareLinks(packId, buildId).catch(() => ({ success: false, links: [] as ShareLink[] })),
         ]);
-        setPack(p);
+        setPack(p.pack);
+        setCanEdit(p.permissions.canEdit);
+        setCanDelete(p.permissions.canDelete);
         setBuild(bs.find(b => b.id === buildId) || null);
         setContent(list);
         setShareLinks(sl.links || []);
@@ -388,6 +392,10 @@ export default function BuildContentEditorPage() {
     }, [packId, buildId]);
 
     useEffect(() => { refresh(); }, [refresh]);
+
+    useEffect(() => {
+        if (build?.loader === 'vanilla' && modrinthType === 'mod') setModrinthType('resourcepack');
+    }, [build?.loader, modrinthType]);
 
     useEffect(() => {
         const unsubC = systemEvents.on('pack_content.changed', (evt) => {
@@ -399,23 +407,10 @@ export default function BuildContentEditorPage() {
     }, [buildId, refresh]);
 
     const isFrozen = !!build?.frozen;
-    const disabled = modpacksDisabled || isFrozen;
+    const disabled = modpacksDisabled || isFrozen || !canEdit;
+    const deleteDisabled = modpacksDisabled || isFrozen || !canDelete;
+    const editDisabledReason = isFrozen ? 'Build is frozen' : modpacksDisabled ? 'Modpack authoring is disabled' : 'You do not have edit access to this pack';
     const hasAnyUpdate = content.some(hasUpdateAvailable);
-
-    const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        if (!file) return;
-        setUploading(true);
-        const res = await uploadContent(packId, buildId, file, 'both', uploadType);
-        setUploading(false);
-        if (res.success) {
-            showToast(`Uploaded ${file.name}`, true);
-            refresh();
-        } else {
-            showToast(res.message || 'Upload failed', false);
-        }
-    };
 
     const handleSetSide = async (entry: BuildContentEntry, side: string) => {
         const res = await setContentSide(packId, buildId, entry.id, side);
@@ -429,7 +424,7 @@ export default function BuildContentEditorPage() {
     const handleRemove = async (entry: BuildContentEntry) => {
         const res = await removeContent(packId, buildId, entry.id);
         if (res.success) {
-            showToast(`Removed ${entry.prettyName || entry.modSlug}`, true);
+            showToast(`Removed ${contentName(entry)}`, true);
             refresh();
         } else {
             showToast(res.message || 'Remove failed', false);
@@ -508,176 +503,36 @@ export default function BuildContentEditorPage() {
         } catch { showToast('Revoke failed', false); }
     };
 
-    if (loading) return (
-        <main className="flex-1 flex flex-col overflow-hidden">
-            <header className="shrink-0 p-6 pb-3 max-w-6xl">
-                <SkeletonText width="w-32" className="mb-3" />
-                <div className="flex items-start gap-3">
-                    <Skeleton className="w-10 h-10 rounded-md shrink-0" />
-                    <div className="flex-1">
-                        <SkeletonHeader />
-                    </div>
-                </div>
-            </header>
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 px-6 pb-6 max-w-6xl w-full overflow-hidden">
-                <section className="card p-4 flex flex-col overflow-hidden">
-                    <SkeletonText width="w-32" className="mb-3 h-4" />
-                    <SkeletonList rows={4} />
-                </section>
-                <section className="card p-4 flex flex-col overflow-hidden">
-                    <SkeletonText width="w-32" className="mb-3 h-4" />
-                    <Skeleton className="h-9 w-full rounded mb-3" />
-                    <SkeletonList rows={5} />
-                </section>
+    const contentName = (entry: BuildContentEntry) => projectMetadata.projects[entry.modrinthProjectId]?.title || entry.prettyName || entry.modSlug;
+    const groups = { mods: content.filter(entry => packContentGroup(entry.contentType) === 'mods'), resources: content.filter(entry => packContentGroup(entry.contentType) === 'resources'), configs: content.filter(entry => packContentGroup(entry.contentType) === 'configs') };
+    const visibleContent = activeTab === 'tools' ? [] : groups[activeTab].filter(entry => `${contentName(entry)} ${entry.prettyName} ${entry.modSlug} ${entry.targetPath}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => contentName(a).localeCompare(contentName(b)));
+    if (loading) return <div className={styles.editor}><SkeletonHeader /><SkeletonList rows={8} /></div>;
+    if (!build || !pack) return <div className="p-6 text-sm text-(--base-06)">Build not found. <Link href={`/modpacks/${packId}`} className="text-(--accent-light)">Back to pack</Link></div>;
+    return <div className={styles.editor}>
+        <WorkspaceDetails>
+            <div className="flex items-center justify-between gap-2 mb-4"><span className="mono-label text-(--base-06)">Build details</span>{isFrozen && <Lock size={13} aria-label="Frozen" />}</div>
+            <h2 className="text-xl font-mono text-(--base-09) mb-4 break-all">{build.versionString}</h2>
+            <dl className={styles.metadata}><div><dt>Minecraft</dt><dd>{build.minecraft || 'Unspecified'}</dd></div><div><dt>Loader</dt><dd>{build.loader || 'Vanilla'}</dd></div><div><dt>Loader build</dt><dd>{build.loaderVersion || 'None'}</dd></div><div><dt>Mods / plugins</dt><dd>{groups.mods.length}</dd></div><div><dt>Resource / shader packs</dt><dd>{groups.resources.length}</dd></div><div><dt>Config files / bundles</dt><dd>{groups.configs.length}</dd></div><div><dt>Channel</dt><dd>{build.channel}</dd></div><div><dt>Modrinth</dt><dd>{build.modrinthPublished ? 'Published' : 'Not published'}</dd></div></dl>
+            <div className="flex flex-col gap-2 mt-5">
+                <button onClick={handleExport} disabled={exporting} className="btn btn-secondary btn-sm"><Download size={12} /> {exporting ? 'Exporting...' : 'Export .mrpack'}</button>
+                <button onClick={() => setPublishDialogOpen(true)} disabled={modpacksDisabled || !canEdit} className="btn btn-primary btn-sm disabled:opacity-40"><Share2 size={12} /> Publish</button>
+                {canEdit && !modpacksDisabled && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-secondary btn-sm">Create another build</Link>}
             </div>
-        </main>
-    );
-    if (!build) {
-        return (
-            <main className="flex-1 flex flex-col items-center justify-center p-6 text-(--base-06) gap-3">
-                <p className="text-sm">Build not found.</p>
-                <Link href={`/modpacks/${packId}`} className="btn btn-secondary btn-sm">
-                    <ArrowLeft size={12} />
-                    Back
-                </Link>
-            </main>
-        );
-    }
-
-    return (
-        <main className="flex-1 flex flex-col overflow-hidden">
-            <header className="shrink-0 p-6 pb-3 max-w-6xl">
-                <Link href={`/modpacks/${packId}`} className="text-xs text-(--base-06) hover:text-(--base-09) inline-flex items-center gap-1 mb-3">
-                    <ArrowLeft size={11} />
-                    Back to pack
-                </Link>
-                {modpacksDisabled && (
-                    <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
-                        <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
-                        <div className="text-xs text-(--base-09)">
-                            Modpack authoring is disabled by the platform admin.
-                            Existing packs remain readable and downloadable.
-                        </div>
-                    </div>
-                )}
-                <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                        <Package size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                        <h1 className="text-lg font-display font-bold text-(--base-09) inline-flex items-center gap-2 flex-wrap">
-                            Build Content
-                            <span className="font-mono text-sm text-(--base-07) font-normal">
-                                {build.versionString}
-                            </span>
-                            {isFrozen && (
-                                <Lock size={14} className="text-(--accent-light)" aria-label="Frozen" />
-                            )}
-                            {/* Piece 4: Modrinth published badge */}
-                            {build.modrinthPublished && (
-                                <Badge variant="success" icon={<CircleCheck size={10} />}>Modrinth</Badge>
-                            )}
-                        </h1>
-                        <p className="text-xs text-(--base-06)">
-                            Search filtered to <code className="font-mono">{build.loader || 'any loader'}</code> ·{' '}
-                            <code className="font-mono">MC {build.minecraft || 'any'}</code>
-                        </p>
-                        {isFrozen && (
-                            <p className="text-xs text-(--base-06) italic mt-1">
-                                This build is frozen — it was persisted on first publish/export.
-                                Create a new build to change its content list.
-                            </p>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {/* Update all — only shown when at least one linked entry has a newer Modrinth version cached */}
-                        {hasAnyUpdate && (
-                            <button
-                                type="button"
-                                onClick={handleUpdateAll}
-                                disabled={disabled || updatingAll}
-                                title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Upgrade all mods with an available update'}
-                                className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                {updatingAll
-                                    ? <Loader2 size={12} className="animate-spin" />
-                                    : <ArrowUpCircle size={12} />
-                                }
-                                {updatingAll ? 'Updating…' : 'Update all'}
-                            </button>
-                        )}
-
-                        {/* Piece 3: Export .mrpack */}
-                        <button
-                            type="button"
-                            onClick={handleExport}
-                            disabled={exporting || !pack}
-                            title="Export .mrpack"
-                            className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                            {exporting
-                                ? <Loader2 size={12} className="animate-spin" />
-                                : <Download size={12} />
-                            }
-                            {exporting ? 'Exporting…' : 'Export'}
-                        </button>
-
-                        {/* Piece 1: Publish to Modrinth */}
-                        <button
-                            type="button"
-                            onClick={() => setPublishDialogOpen(true)}
-                            disabled={modpacksDisabled}
-                            title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Publish to Modrinth'}
-                            className="btn btn-primary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                            <Share2 size={12} />
-                            Publish
-                        </button>
-
-                        <select
-                            value={uploadType}
-                            onChange={e => setUploadType(e.target.value as typeof uploadType)}
-                            className="input-field py-1.5 text-xs w-auto"
-                            disabled={disabled || uploading}
-                            title="Content type for the uploaded file"
-                        >
-                            <option value="mod">Mod</option>
-                            <option value="resourcepack">Resource pack</option>
-                            <option value="shaderpack">Shader pack</option>
-                            <option value="config">Config</option>
-                        </select>
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            className="hidden"
-                            onChange={handleUpload}
-                        />
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                            disabled={disabled || uploading}
-                            title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Upload a local file'}
-                        >
-                            <Upload size={12} />
-                            {uploading ? 'Uploading…' : 'Upload'}
-                        </button>
-                    </div>
-                </div>
-            </header>
-
-            {build.minecraft && build.loader && (
-                <BuildMigrationPanel
-                    packId={packId}
-                    build={build}
-                    content={content}
-                    disabled={modpacksDisabled}
-                    disabledReason="Modpack authoring is disabled"
-                    showToast={showToast}
-                />
-            )}
-
-            {(featureFlags.shareLinks || shareLinks.length > 0) && (
-                <section className="card p-4 mx-6 mb-4 max-w-6xl">
+        </WorkspaceDetails>
+        <header className="flex items-center justify-between gap-3 flex-wrap shrink-0"><div><h2 className="text-base font-medium text-(--base-09)">{browsing ? 'Add from Modrinth' : `Build ${build.versionString}`}</h2><p className="text-xs text-(--base-06) mt-1">{groups.mods.length} mods / plugins · {groups.configs.length} configs · MC {build.minecraft} · {build.loader}</p></div><div className={styles.tools}>
+            {hasAnyUpdate && <button onClick={handleUpdateAll} disabled={disabled || updatingAll} className="btn btn-secondary btn-sm"><ArrowUpCircle size={12} /> {updatingAll ? 'Updating...' : 'Update all'}</button>}
+            <button onClick={() => setUploadOpen(true)} disabled={disabled} title={disabled ? editDisabledReason : 'Upload files or folders'} className="btn btn-secondary btn-sm disabled:opacity-40"><Upload size={12} /> Upload</button>
+            <button onClick={() => setBrowsing(value => !value)} disabled={disabled && !browsing} className="btn btn-primary btn-sm disabled:opacity-40">{browsing ? <ArrowLeft size={12} /> : <Search size={12} />}{browsing ? 'Installed' : 'Add content'}</button>
+        </div></header>
+        {isFrozen && <p className="text-xs text-(--base-06) bg-(--base-02) p-3 rounded-md">This build is frozen. Create a copy to change its content.</p>}
+        {browsing ? <section className={styles.searchPanel} aria-label="Add from Modrinth"><label className="flex items-center gap-3 text-xs text-(--base-06) mb-3">Project type<select value={modrinthType} onChange={event => setModrinthType(event.target.value as typeof modrinthType)} className="input-field text-xs w-auto"><option value="mod" disabled={build.loader === 'vanilla'}>Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select></label>
+            <ModrinthVersionBrowser loader={build.loader || undefined} mcVersion={build.minecraft || undefined} projectType={modrinthType} installedProjectIds={new Set(content.map(entry => entry.modrinthProjectId).filter(Boolean))} disabled={disabled || addingContent} disabledTitle={addingContent ? 'Adding content...' : editDisabledReason} onPick={async (projectId, versionId, hit) => { if (disabled || addingContent) return; setAddingContent(true); const contentType = modrinthTypeToContentType(hit.project_type); const result = await addModrinthContent(packId, buildId, { projectId, versionId, contentType, resolveDeps: contentType === 'mod' }); setAddingContent(false); if (result.success) { showToast(`Added ${hit.title}`); refresh(); } else showToast(result.message || 'Add failed', false); }} />
+        </section> : <>
+            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Tools & sharing', null]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
+            {activeTab === 'tools' ? <div className={styles.rows}>
+                {build.minecraft && build.loader && <div className="mb-4"><BuildMigrationPanel packId={packId} build={build} content={content} disabled={modpacksDisabled || !canEdit} disabledReason={editDisabledReason} showToast={showToast} compact /></div>}
+                            {(featureFlags.shareLinks || shareLinks.length > 0) && (
+                <section className="card p-4 mb-4">
                     <header className="flex items-center gap-2 mb-3">
                         <Share2 size={14} className="text-(--accent-light)" />
                         <h2 className="text-sm font-medium text-(--base-09)">Share links</h2>
@@ -709,7 +564,7 @@ export default function BuildContentEditorPage() {
                             <button
                                 type="button"
                                 onClick={handleCreateShareLink}
-                                disabled={creatingShare}
+                                disabled={creatingShare || !canEdit || modpacksDisabled}
                                 className="btn btn-primary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 {creatingShare ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />}
@@ -752,6 +607,7 @@ export default function BuildContentEditorPage() {
                                             <button
                                                 type="button"
                                                 onClick={() => handleRevokeShareLink(link.id)}
+                                                disabled={!canEdit}
                                                 title="Revoke link"
                                                 className="btn btn-secondary btn-sm text-(--error-light)"
                                             >
@@ -766,136 +622,29 @@ export default function BuildContentEditorPage() {
                 </section>
             )}
 
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 px-6 pb-6 max-w-6xl w-full overflow-hidden">
-                {/* Current content */}
-                <section className="card p-4 flex flex-col overflow-hidden">
-                    <header className="flex items-center gap-2 mb-3 shrink-0">
-                        <Box size={14} className="text-(--accent-light)" />
-                        <h2 className="text-sm font-medium text-(--base-09)">In this build ({content.length})</h2>
-                    </header>
-                    <div className="flex-1 overflow-y-auto space-y-2">
-                        {content.length === 0 ? (
-                            <p className="text-xs text-(--base-06) text-center py-8">No content yet. Add some from the search panel →</p>
-                        ) : (
-                            content.map(entry => (
-                                <article key={entry.id} className="flex items-center gap-2 p-2 rounded-md border border-(--base-04)">
-                                    <Box size={14} className="text-(--accent-light) shrink-0" />
-                                    <div className="min-w-0 flex-1">
-                                        <div className="text-sm font-medium text-(--base-09) truncate">{entry.prettyName || entry.modSlug}</div>
-                                        <div className="text-[10px] font-mono text-(--base-06) truncate">
-                                            {entry.version || entry.contentType}
-                                        </div>
-                                    </div>
-                                    <Badge variant={entry.linked ? 'success' : 'warning'} className="shrink-0">
-                                        {entry.linked ? 'Modrinth' : 'Upload'}
-                                    </Badge>
-                                    {/* Content-type chip — only shown for non-mod types to avoid noise on the common case */}
-                                    {entry.contentType && entry.contentType !== 'mod' && (
-                                        <Badge variant="neutral" className="shrink-0">{entry.contentType}</Badge>
-                                    )}
-                                    {/* Auto-update: badge shown once the cron has cached a newer Modrinth version */}
-                                    {hasUpdateAvailable(entry) && (
-                                        <Badge variant="accent" className="shrink-0">Update available</Badge>
-                                    )}
-                                    {/* Piece 2: Replace with Modrinth — only for non-linked (uploaded) entries */}
-                                    {!entry.linked && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setReplaceEntry(entry)}
-                                            disabled={disabled}
-                                            title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Replace with a Modrinth version'}
-                                            className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--accent-light) transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                                        >
-                                            <Replace size={12} />
-                                        </button>
-                                    )}
-                                    {/* Auto-update: Upgrade — only for linked entries with an update available */}
-                                    {hasUpdateAvailable(entry) && !disabled && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setUpgradeEntry(entry)}
-                                            title="Upgrade to the latest Modrinth version"
-                                            className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--accent-light) transition-colors shrink-0"
-                                        >
-                                            <ArrowUpCircle size={12} />
-                                        </button>
-                                    )}
-                                    {/* In-panel config text editor — config content only */}
-                                    {entry.contentType === 'config' && !disabled && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setEditing({ modversionId: entry.id, title: entry.prettyName || entry.modSlug })}
-                                            title="Edit config text"
-                                            className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--accent-light) transition-colors shrink-0"
-                                        >
-                                            <FileText size={12} />
-                                        </button>
-                                    )}
-                                    <select
-                                        value={entry.side}
-                                        onChange={e => handleSetSide(entry, e.target.value)}
-                                        className="input-field input-mono py-1 text-[11px] w-24 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                                        disabled={disabled}
-                                        title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Set side'}
-                                    >
-                                        {SIDES.map(s => <option key={s} value={s}>{s}</option>)}
-                                    </select>
-                                    <button
-                                        onClick={() => handleRemove(entry)}
-                                        className="btn btn-secondary btn-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                                        title={disabled ? (isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled') : 'Remove'}
-                                        disabled={disabled}
-                                    >
-                                        <Trash2 size={11} className="text-(--error-light)" />
-                                    </button>
-                                </article>
-                            ))
-                        )}
-                    </div>
-                </section>
 
-                {/* Modrinth search */}
-                <section className="card p-4 flex flex-col overflow-hidden">
-                    <header className="flex items-center gap-2 mb-3 shrink-0">
-                        <Search size={14} className="text-(--accent-light)" />
-                        <h2 className="text-sm font-medium text-(--base-09)">Add from Modrinth</h2>
-                        <select
-                            value={modrinthType}
-                            onChange={e => setModrinthType(e.target.value as typeof modrinthType)}
-                            className="input-field py-1.5 text-xs w-auto ml-auto"
-                            disabled={disabled}
-                            title="Project type to search for"
-                        >
-                            <option value="mod">Mods</option>
-                            <option value="resourcepack">Resource packs</option>
-                            <option value="shader">Shaders</option>
-                        </select>
-                    </header>
-                    <ModrinthVersionBrowser
-                        loader={build.loader || undefined}
-                        mcVersion={build.minecraft || undefined}
-                        projectType={modrinthType}
-                        installedProjectIds={new Set(content.map(c => c.modrinthProjectId).filter(Boolean) as string[])}
-                        disabled={disabled}
-                        disabledTitle={isFrozen ? 'Build is frozen' : 'Modpack authoring is disabled'}
-                        onPick={(projectId, versionId, hit) => {
-                            if (disabled) return;
-                            const contentType = modrinthTypeToContentType(hit.project_type);
-                            addModrinthContent(packId, buildId, { projectId, versionId, contentType, resolveDeps: contentType === 'mod' })
-                                .then(res => {
-                                    if (res.success) {
-                                        showToast(`Added ${hit.title}`, true);
-                                        refresh();
-                                    } else {
-                                        showToast(res.message || 'Add failed', false);
-                                    }
-                                });
-                        }}
-                    />
+            </div> : <>
+                <input className="input-field w-full text-sm" aria-label="Search installed content" placeholder="Search installed content..." value={query} onChange={event => setQuery(event.target.value)} />
+                {projectMetadata.error && <p className="text-xs text-(--base-06)">Some project icons could not be loaded. <button className="text-(--accent-light)" onClick={projectMetadata.retry}>Retry icons</button></p>}
+                <div className="flex justify-between text-[10px] uppercase tracking-wider text-(--base-06)"><span>Installed · {visibleContent.length}</span><span>Environment / actions</span></div>
+                <section className={styles.rows} aria-label="Installed content">
+                    {visibleContent.length === 0 && <p className="text-sm text-(--base-06) text-center py-12">{query ? 'No matching content.' : 'No content in this category yet.'}</p>}
+                    {visibleContent.map(entry => <article key={entry.id} className={styles.row}>
+                        <ProjectIcon name={contentName(entry)} contentType={entry.contentType} url={projectMetadata.projects[entry.modrinthProjectId]?.icon_url} />
+                        <div className="min-w-0 flex-1"><h3 className="text-xs font-medium text-(--base-09) truncate" title={contentName(entry)}>{contentName(entry)}</h3><p className="text-[10px] text-(--base-06) font-mono truncate" title={entry.targetPath}>{entry.contentType === 'config' ? entry.targetPath : `${entry.modrinthVersionNumber || entry.version} · ${entry.linked ? 'Modrinth' : 'Upload'}`}</p></div>
+                        <div className={`${styles.rowActions} flex items-center gap-1 shrink-0`}>
+                            {entry.contentType === 'config' && entry.targetPath && !entry.targetPath.toLowerCase().endsWith('.zip') && !disabled && <button onClick={() => setEditing({ modversionId: entry.id, title: contentName(entry) })} aria-label={`Edit ${contentName(entry)}`} title="Edit config text" className="btn btn-ghost btn-sm"><FileText size={13} /></button>}
+                            {!entry.linked && entry.contentType !== 'config' && <button onClick={() => setReplaceEntry(entry)} disabled={disabled} aria-label={`Link ${contentName(entry)} to Modrinth`} title="Replace with Modrinth" className="btn btn-ghost btn-sm"><Replace size={13} /></button>}
+                            {hasUpdateAvailable(entry) && <button onClick={() => setUpgradeEntry(entry)} disabled={disabled} title="Update available" aria-label={`Update ${contentName(entry)}`} className="btn btn-ghost btn-sm text-(--accent-light)"><ArrowUpCircle size={13} /></button>}
+                            <select className="input-field text-[11px] py-1 w-20" aria-label={`Environment for ${contentName(entry)}`} value={entry.side} disabled={disabled} onChange={event => handleSetSide(entry, event.target.value)}>{SIDES.map(side => <option key={side} value={side}>{side}</option>)}</select>
+                            <button onClick={() => handleRemove(entry)} disabled={deleteDisabled} title={deleteDisabled ? 'Delete access is required; frozen builds cannot be changed' : 'Remove content'} aria-label={`Remove ${contentName(entry)}`} className="btn btn-ghost btn-sm disabled:opacity-30"><Trash2 size={12} className="text-(--error-light)" /></button>
+                        </div>
+                    </article>)}
                 </section>
-            </div>
-
-            {/* Piece 1: Publish dialog */}
+            </>}
+        </>}
+                    {/* Piece 1: Publish dialog */}
+            {uploadOpen && <UploadContentModal packId={packId} buildId={buildId} onClose={() => { setUploadOpen(false); refresh(); }} onUploaded={count => { setUploadOpen(false); showToast(`Uploaded ${count} file${count === 1 ? '' : 's'}.`); refresh(); }} />}
             {publishDialogOpen && (
                 <PublishDialog
                     build={build}
@@ -949,6 +698,6 @@ export default function BuildContentEditorPage() {
                 />
             )}
 
-        </main>
-    );
+
+    </div>;
 }

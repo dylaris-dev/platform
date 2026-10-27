@@ -3,6 +3,7 @@ package packs
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,11 +106,50 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
+	if req.Side == "" {
+		req.Side = models.SideBoth
+	}
+	if req.ContentType == "" {
+		req.ContentType = models.ContentTypeMod
+	}
+	if !validContentSide(req.Side) {
+		handlers.SendJSONError(w, "Invalid side", http.StatusBadRequest)
+		return
+	}
 
 	v, err := services.FetchModrinthVersion(req.VersionID)
 	if err != nil {
 		handlers.SendJSONError(w, "Modrinth version lookup failed", http.StatusBadGateway)
 		return
+	}
+	if req.ProjectID != "" && req.ProjectID != v.ProjectID {
+		handlers.SendJSONError(w, "Version does not belong to the selected Modrinth project", http.StatusBadRequest)
+		return
+	}
+	if err := validateModrinthContent(b, v, req.ContentType); err != nil {
+		handlers.SendJSONError(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	existing, err := h.state.Store.ListBuildContent(b.ID)
+	if err != nil {
+		handlers.SendJSONError(w, "Failed to read existing build content", http.StatusInternalServerError)
+		return
+	}
+	have := map[string]bool{v.ProjectID: true}
+	projectSides := map[string]uint8{}
+	for _, entry := range existing {
+		if entry.ModrinthProjectID != "" {
+			projectSides[entry.ModrinthProjectID] |= contentSideMask(entry.Side)
+		}
+		if contentSideMask(entry.Side)&contentSideMask(req.Side) != 0 && (entry.ModrinthProjectID == v.ProjectID || strings.EqualFold(entry.TargetPath, targetPathFor(req.ContentType, v.PrimaryFile().Filename))) {
+			handlers.SendJSONError(w, "This build already contains that project or target path. Update or remove its existing entry first.", http.StatusConflict)
+			return
+		}
+	}
+	for project, sides := range projectSides {
+		if sides&contentSideMask(req.Side) == contentSideMask(req.Side) {
+			have[project] = true
+		}
 	}
 	if err := h.addModrinthVersion(owner, b, v, req.Side, req.ContentType); err != nil {
 		handlers.SendJSONError(w, "Failed to add mod", http.StatusInternalServerError)
@@ -119,7 +159,6 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 	added := 1
 	resp := map[string]interface{}{"success": true}
 	if req.ResolveDeps {
-		have := map[string]bool{v.ProjectID: true}
 		deps, unresolved, err := services.ResolveModrinthDependencies(v, b.Minecraft, b.Loader, have)
 		if err != nil {
 			log.Printf("packs: dependencies of %s for build %d not resolved: %v", v.ID, b.ID, err)
@@ -130,8 +169,10 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 			resp["unresolved"] = unresolved
 		}
 		for _, d := range deps {
-			if err := h.addModrinthVersion(owner, b, d.Version, models.SideBoth, models.ContentTypeMod); err == nil {
+			if err := h.addModrinthVersion(owner, b, d.Version, req.Side, models.ContentTypeMod); err == nil {
 				added++
+			} else {
+				resp["warning"] = "Some required dependencies could not be added. Review the build's content before exporting."
 			}
 		}
 	}
@@ -146,6 +187,12 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v *services.ModrinthVersion, side, contentType string) error {
 	if contentType == "" {
 		contentType = models.ContentTypeMod
+	}
+	if err := validateModrinthContent(b, v, contentType); err != nil {
+		return err
+	}
+	if side != "" && !validContentSide(side) {
+		return fmt.Errorf("invalid content side")
 	}
 	slug := handlers.Slugify(v.ProjectSlugOrID())
 	modID, err := h.state.Store.UpsertMod(&models.Mod{
@@ -190,9 +237,18 @@ func validateStoredModZip(ra io.ReaderAt, size int64) error {
 	if err != nil {
 		return fmt.Errorf("zip is unreadable or malformed")
 	}
+	seen := packOutputPaths{}
 	for _, f := range zr.File {
 		if modpack.IsUnsafeEntryPath(f.Name) {
 			return fmt.Errorf("zip contains unsafe entry paths")
+		}
+		if !f.FileInfo().IsDir() && !validContentTarget(f.Name) {
+			return fmt.Errorf("zip contains invalid entry paths")
+		}
+		if !f.FileInfo().IsDir() {
+			if err := seen.add(f.Name); err != nil {
+				return err
+			}
 		}
 		if f.UncompressedSize64 > maxServerPackEntryBytes {
 			return fmt.Errorf("zip entry exceeds the size cap")
@@ -236,6 +292,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Upload too large or malformed", http.StatusBadRequest)
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 	f, hdr, err := r.FormFile("file")
 	if err != nil {
 		handlers.SendJSONError(w, "file field required", http.StatusBadRequest)
@@ -250,12 +307,43 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = models.ContentTypeMod
 	}
+	if !validContentSide(side) || !validContentType(contentType) {
+		handlers.SendJSONError(w, "Invalid content type or side", http.StatusBadRequest)
+		return
+	}
 	// Sanitize the client-supplied filename: normalize backslashes, take the
 	// base name, and reject traversal so it cannot escape the zip/target path.
 	fileName := path.Base(strings.ReplaceAll(hdr.Filename, `\`, "/"))
 	if fileName == "." || fileName == "/" || fileName == "" || strings.Contains(fileName, "..") {
 		handlers.SendJSONError(w, "Invalid file name", http.StatusBadRequest)
 		return
+	}
+	targetPath := r.FormValue("targetPath")
+	archive := r.FormValue("archive") == "true"
+	if targetPath != "" && !validContentTarget(targetPath) || archive && (targetPath != "" || !strings.HasSuffix(strings.ToLower(fileName), ".zip")) {
+		handlers.SendJSONError(w, "Invalid target path or archive options", http.StatusBadRequest)
+		return
+	}
+	if targetPath == "" {
+		targetPath = targetPathFor(contentType, fileName)
+	}
+	if !validContentTarget(targetPath) {
+		handlers.SendJSONError(w, "Invalid target path", http.StatusBadRequest)
+		return
+	}
+	isBundle := archive || contentType == models.ContentTypeMod && strings.HasSuffix(strings.ToLower(fileName), ".zip")
+	if !isBundle {
+		entries, err := h.state.Store.ListBuildContent(b.ID)
+		if err != nil {
+			handlers.SendJSONError(w, "Failed to check existing content", http.StatusInternalServerError)
+			return
+		}
+		for _, entry := range entries {
+			if strings.EqualFold(entry.TargetPath, targetPath) && contentSideMask(entry.Side)&contentSideMask(side) != 0 {
+				handlers.SendJSONError(w, "This build already contains that target path. Edit or remove the existing entry first.", http.StatusConflict)
+				return
+			}
+		}
 	}
 
 	prov, err := h.state.BuildModpackStorageProvider()
@@ -264,8 +352,17 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := handlers.Slugify(strings.TrimSuffix(fileName, ".jar"))
+	if contentType == models.ContentTypeConfig || contentType == models.ContentTypeOther || targetPath != targetPathFor(contentType, fileName) {
+		// Equal basenames in config/defaultconfigs/KubeJS must not overwrite
+		// each other's owner-scoped catalog metadata.
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%d/%d/%s/%s", b.PackID, b.ID, contentType, targetPath)))
+		if len(slug) > 100 {
+			slug = slug[:100]
+		}
+		slug = fmt.Sprintf("%s-%x", slug, sum[:8])
+	}
 
-	meta, herr := h.storeUploadedContent(r.Context(), prov, f, hdr, fileName, contentType, owner, slug)
+	meta, herr := h.storeUploadedContent(r.Context(), prov, f, hdr, fileName, contentType, owner, slug, uploadContentOptions{targetPath: targetPath, archive: archive})
 	if herr != nil {
 		handlers.SendJSONError(w, herr.msg, herr.status)
 		return
@@ -291,17 +388,19 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		SHA1:       innerSha1,
 		SHA512:     innerSha512,
 		Source:     models.SourceUpload,
-		TargetPath: targetPathFor(contentType, fileName),
+		TargetPath: targetPath,
 	}
 	// Auto-link: does this jar's sha1 match a Modrinth project?
-	if innerSha1 != "" {
+	if innerSha1 != "" && !archive && (contentType == models.ContentTypeMod || contentType == models.ContentTypeResourcepack || contentType == models.ContentTypeShaderpack) {
 		if v := services.ModrinthByHash(innerSha1); v != nil {
-			mv.Source = models.SourceModrinth
-			mv.ModrinthProjectID = v.ProjectID
-			mv.ModrinthVersionID = v.ID
-			mv.ModrinthVersionNumber = v.VersionNum
-			mv.ModrinthGameVersions = strings.Join(v.GameVersions, ",")
-			mv.ModrinthDownloadURL = v.PrimaryFile().URL
+			if validateModrinthContent(b, v, contentType) == nil {
+				mv.Source = models.SourceModrinth
+				mv.ModrinthProjectID = v.ProjectID
+				mv.ModrinthVersionID = v.ID
+				mv.ModrinthVersionNumber = v.VersionNum
+				mv.ModrinthGameVersions = strings.Join(v.GameVersions, ",")
+				mv.ModrinthDownloadURL = v.PrimaryFile().URL
+			}
 		}
 	}
 	mvID, err := h.state.Store.CreateModversion(mv)
@@ -321,7 +420,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 // RemoveContent DELETE /api/packs/{id}/builds/{buildId}/content/{modversionId}
 // - detaches one entry from a build. A frozen build is refused.
 func (h *PacksHandler) RemoveContent(w http.ResponseWriter, r *http.Request) {
-	b, _, ok := h.loadBuild(r, packEdit)
+	b, _, ok := h.loadBuild(r, packDelete)
 	if !ok || b.Frozen {
 		handlers.SendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
 		return

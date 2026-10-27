@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2, Users } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import { createPack, deletePack, type Pack, listPacksOverview, type SharedPack } from '@/lib/api/packs';
@@ -22,6 +24,7 @@ import ModalPanel from '@/components/ui/ModalPanel';
 
 export default function PacksListPage() {
     const { featureFlags, user } = useAppData();
+    const searchParams = useSearchParams();
     const modpacksDisabled = !featureFlags.modpacks;
     // A pack with nowhere to store its archives can be created and then does
     // nothing: every upload answers 424. That failure used to arrive after the
@@ -41,6 +44,8 @@ export default function PacksListPage() {
     const [collabOpen, setCollabOpen] = useState(false);
     const [deletePrompt, setDeletePrompt] = useState<Pack | null>(null);
 
+    const metadata = useProjectMetadata([...packs, ...shared].map(pack => pack.modrinthProjectId));
+    useEffect(() => { if (searchParams.get('create') === '1' && !cannotAuthor) setCreating({ internalName: '', slug: '', summary: '', ownerId: '' }); }, [searchParams, cannotAuthor]);
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
@@ -89,7 +94,7 @@ export default function PacksListPage() {
     };
 
     return (
-        <main className="flex-1 overflow-y-auto p-6 max-w-5xl">
+        <main className="flex-1 min-h-0 overflow-y-auto p-5">
             <header className="flex items-center gap-3 mb-4">
                 <Package size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">My Modpacks</h1>
@@ -170,7 +175,7 @@ export default function PacksListPage() {
                         <Link key={p.id} href={`/modpacks/${p.id}`} className="card p-4 hover:border-(--accent-border) transition-colors group">
                             <div className="flex items-start gap-3">
                                 <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                                    <Package size={18} className="text-(--accent-light)" />
+                                    <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} className="w-10 h-10" />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.internalName}</div>
@@ -206,7 +211,7 @@ export default function PacksListPage() {
                             <Link key={p.id} href={`/modpacks/${p.id}`} className="card p-4 hover:border-(--accent-border) transition-colors group">
                                 <div className="flex items-start gap-3">
                                     <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                                        <Package size={18} className="text-(--accent-light)" />
+                                        <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} className="w-10 h-10" />
                                     </div>
                                     <div className="min-w-0 flex-1">
                                         <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.internalName}</div>

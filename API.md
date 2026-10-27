@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **563 routes** in 53 sections: 249 GET, 166 POST, 50 PUT, 39 PATCH, 60 DELETE.
+- **564 routes** in 53 sections: 250 GET, 166 POST, 50 PUT, 39 PATCH, 60 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **370** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **121** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **370** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **122** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -187,7 +187,7 @@ can still show what exists.
 - [/api/traffic-limits](#apitraffic-limits) (5)
 - [/api/updates](#apiupdates) (1)
 - [/api/users](#apiusers) (7)
-- [/api/versions](#apiversions) (2)
+- [/api/versions](#apiversions) (3)
 - [/api/voice](#apivoice) (1)
 - [/api/warp](#apiwarp) (23)
 - [/healthz](#healthz) (1)
@@ -968,6 +968,7 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/versions` | session | _no capability_ | - | `VersionHandler.GetVersions` | the available versions for one server software, chosen with ?software=. |
+| GET | `/api/versions/loaders` | session | _no capability_ | Limit | `VersionHandler.GetLoaderVersions` | returns exact compatible loader builds, not Minecraft lines. |
 | GET | `/api/versions/software` | **none** | _public_ | - | `VersionHandler.GetSoftwareList` | (public) |
 
 ## /api/voice

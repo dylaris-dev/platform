@@ -23,12 +23,12 @@ function rightsText(c: { canCreate: boolean; canEdit: boolean; canDelete: boolea
  * publish through the owner's Modrinth token and never see it. The lower part
  * lists the invites the reader HOLDS, with "Leave".
  */
-export default function PackCollaboratorsModal({ packs, onClose }: { packs: Pack[]; onClose: () => void }) {
+export default function PackCollaboratorsModal({ packs, initialPackId, onClose }: { packs: Pack[]; initialPackId?: number; onClose: () => void }) {
     const [given, setGiven] = useState<PackCollaborator[] | null>(null);
     const [held, setHeld] = useState<PackCollaborator[]>([]);
     const [username, setUsername] = useState('');
-    const [allPacks, setAllPacks] = useState(true);
-    const [chosen, setChosen] = useState<Set<number>>(new Set());
+    const [allPacks, setAllPacks] = useState(initialPackId === undefined);
+    const [chosen, setChosen] = useState<Set<number>>(() => new Set(initialPackId === undefined ? [] : [initialPackId]));
     const [rights, setRights] = useState({ canCreate: false, canEdit: true, canDelete: false });
     const [inviting, runInvite] = useBusy();
 
@@ -86,6 +86,7 @@ export default function PackCollaboratorsModal({ packs, onClose }: { packs: Pack
                         <p className="text-xs text-(--base-06)">
                             Collaborators work on your packs and publish through your Modrinth token; they never see the
                             token. Every change they make is recorded in the pack&apos;s activity.
+                            {' '}Every invite includes read access. Leave the rights below off for a read-only collaborator.
                         </p>
                         <div>
                             <label className="input-label" htmlFor="collab-user">Username</label>

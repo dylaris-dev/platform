@@ -28,3 +28,43 @@ export function isImportedServer(server: { installerType?: string; minecraftVers
     const hasKnownLoader = isKnownLoader(server.installerType || '');
     return !hasVersion || !hasKnownLoader;
 }
+
+export const PACK_LOADERS = ['vanilla', 'fabric', 'forge', 'neoforge', 'quilt'] as const;
+export type PackLoader = typeof PACK_LOADERS[number];
+
+export function nextPackBuildLabel(existing: string[]): string {
+    const versions = existing.map(label => /^(\d+)\.(\d+)\.(\d+)$/.exec(label))
+        .filter((match): match is RegExpExecArray => match !== null)
+        .map(match => match.slice(1).map(Number))
+        .filter(parts => parts.every(Number.isSafeInteger));
+    versions.sort((a, b) => b[0] - a[0] || b[1] - a[1] || b[2] - a[2]);
+    const latest = versions[0];
+    return latest && Number.isSafeInteger(latest[2] + 1) ? `${latest[0]}.${latest[1]}.${latest[2] + 1}` : '0.1.0';
+}
+
+export interface PackLoaderVersion {
+    version: string;
+    stable: boolean;
+    recommended?: boolean;
+}
+
+/** Preserve a valid selection; otherwise prefer the provider's recommended stable build. */
+export function preferredPackLoaderVersion(versions: PackLoaderVersion[], selected = ''): string {
+    if (versions.some(v => v.version === selected)) return selected;
+    return versions.find(v => v.recommended && v.stable)?.version
+        || versions.find(v => v.stable)?.version
+        || versions[0]?.version || '';
+}
+
+export function packBuildMetadataError(
+    input: { minecraft: string; loader: string; loaderVersion: string },
+    minecraftVersions: string[],
+    loaderVersions: PackLoaderVersion[],
+): string | null {
+    if (!minecraftVersions.includes(input.minecraft)) return 'Select an available Minecraft version.';
+    if (!PACK_LOADERS.some(loader => loader === input.loader)) return 'Select a supported loader.';
+    if (input.loader !== 'vanilla' && !loaderVersions.some(v => v.version === input.loaderVersion)) {
+        return 'Select a compatible loader version.';
+    }
+    return null;
+}

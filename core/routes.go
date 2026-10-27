@@ -1483,6 +1483,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/sftp-credentials", authHandler.AuthMiddleware(appState.Authz.RequireCap("sftp.access")(serverHandler.GetSftpCredentials))).Methods("GET")
 
 	api.HandleFunc("/versions/software", versionHandler.GetSoftwareList).Methods("GET")
+	loaderVersionLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/versions/loaders", loaderVersionLimiter.Limit(120, authHandler.AuthMiddleware(versionHandler.GetLoaderVersions))).Methods("GET")
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")
 
 	// --- Gateway Endpoints ---

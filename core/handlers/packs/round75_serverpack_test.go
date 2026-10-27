@@ -310,7 +310,10 @@ func TestServerPackRequestDoesNotWaitForTheWholeRender(t *testing.T) {
 // different order between requests; that must not be a new render.
 func TestServerPackKeyIgnoresTheRowOrder(t *testing.T) {
 	h, st, prov, pack, build := serverPackFixture(t)
-	second := uploadEntry("uploads/test.zip")
+	if err := prov.Put(context.Background(), "uploads/other.zip", zipBytes(t, map[string]string{"zz/other": "another artifact"})); err != nil {
+		t.Fatal(err)
+	}
+	second := uploadEntry("uploads/other.zip")
 	second.TargetPath = "zz/other"
 	ab := []models.BuildContentEntry{st.content[0], second}
 	ba := []models.BuildContentEntry{second, st.content[0]}

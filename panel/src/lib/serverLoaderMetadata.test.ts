@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isImportedServer, isKnownLoader, LOADER_OPTIONS } from './serverLoaderMetadata';
+import { isImportedServer, isKnownLoader, LOADER_OPTIONS, nextPackBuildLabel, packBuildMetadataError, preferredPackLoaderVersion } from './serverLoaderMetadata';
 
 describe('isKnownLoader', () => {
     it('accepts every declared LOADER_OPTIONS entry', () => {
@@ -42,5 +42,31 @@ describe('isImportedServer', () => {
     it('is case-insensitive on installerType and tolerates whitespace-only version', () => {
         expect(isImportedServer({ installerType: 'PAPER', minecraftVersion: '1.20.4' })).toBe(false);
         expect(isImportedServer({ installerType: 'paper', minecraftVersion: '   ' })).toBe(true);
+    });
+});
+
+describe('pack build metadata', () => {
+    it('suggests the next patch without changing a pack to a different release line', () => {
+        expect(nextPackBuildLabel([])).toBe('0.1.0');
+        expect(nextPackBuildLabel(['1.2.9', '1.2.10', '0.1.99', 'custom'])).toBe('1.2.11');
+    });
+
+    it('prefers the recommended stable loader while preserving an explicitly selected valid version', () => {
+        const versions = [{ version: '48.0.1-beta', stable: false }, { version: '47.4.28', stable: true, recommended: true }, { version: '47.3.0', stable: true }];
+        expect(preferredPackLoaderVersion(versions)).toBe('47.4.28');
+        expect(preferredPackLoaderVersion(versions, '47.3.0')).toBe('47.3.0');
+        expect(preferredPackLoaderVersion(versions, 'wrong')).toBe('47.4.28');
+    });
+
+    it('rejects stale loader selections and unsupported Minecraft releases before create', () => {
+        const input = { minecraft: '1.20.1', loader: 'forge', loaderVersion: '47.4.28' };
+        expect(packBuildMetadataError(input, ['1.20.1'], [{ version: '47.4.28', stable: true }])).toBeNull();
+        expect(packBuildMetadataError(input, ['1.21.1'], [{ version: '47.4.28', stable: true }])).toContain('Minecraft');
+        expect(packBuildMetadataError(input, ['1.20.1'], [{ version: '52.0.0', stable: true }])).toContain('compatible loader');
+    });
+
+    it('allows Vanilla without a loader dependency but rejects unknown loader names', () => {
+        expect(packBuildMetadataError({ minecraft: '1.20.1', loader: 'vanilla', loaderVersion: '' }, ['1.20.1'], [])).toBeNull();
+        expect(packBuildMetadataError({ minecraft: '1.20.1', loader: 'forg', loaderVersion: '47.4.28' }, ['1.20.1'], [])).toContain('supported loader');
     });
 });

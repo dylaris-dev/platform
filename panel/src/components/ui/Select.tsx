@@ -66,6 +66,8 @@ export default function Select({
     }, []);
 
     const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+        // Close the open menu without also dismissing its enclosing dialog.
+        if (e.key === 'Escape' && state.open) e.stopPropagation();
         // In the filter field a space is a character, not "open/commit".
         if (searchable && e.key === ' ' && e.target instanceof HTMLInputElement) return;
         if (['ArrowDown', 'ArrowUp', 'Enter', ' ', 'Escape'].includes(e.key)) {

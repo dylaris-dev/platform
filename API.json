@@ -5363,6 +5363,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/versions/loaders",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "returns exact compatible loader builds, not Minecraft lines.",
+      "handler": "VersionHandler.GetLoaderVersions",
+      "group": "versions",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/versions/software",
       "auth": "none",
       "authorization": "public",
@@ -5613,10 +5623,10 @@
     }
   ],
   "counts": {
-    "total": 564,
+    "total": 565,
     "byAuth": {
       "none": 31,
-      "session": 515,
+      "session": 516,
       "user API key": 10,
       "warp key": 8
     },
@@ -5670,7 +5680,7 @@
       "traffic-limits": 5,
       "updates": 1,
       "users": 7,
-      "versions": 2,
+      "versions": 3,
       "voice": 1,
       "warp": 23
     },

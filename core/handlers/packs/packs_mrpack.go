@@ -78,6 +78,7 @@ func isMrpackFilesEntry(e models.BuildContentEntry) bool {
 // assume anything about, and an exported .mrpack is a file that leaves here.
 func buildMrpackIndex(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) (mrpackIndexOut, error) {
 	files := make([]mrpackFileOut, 0, len(content))
+	seen := packOutputPaths{}
 	for _, e := range content {
 		if !isMrpackFilesEntry(e) {
 			// Non-linked content is embedded via overrides/ in writeMrpackZip.
@@ -85,6 +86,9 @@ func buildMrpackIndex(pack *models.Pack, build *models.PackBuild, content []mode
 		}
 		if e.TargetPath == "" || modpack.IsUnsafeEntryPath(e.TargetPath) {
 			return mrpackIndexOut{}, fmt.Errorf("modrinth content %q has an invalid target path", e.ModSlug)
+		}
+		if err := seen.addForSide(e.TargetPath, e.Side); err != nil {
+			return mrpackIndexOut{}, err
 		}
 		files = append(files, mrpackFileOut{
 			Path:      e.TargetPath,
@@ -147,7 +151,7 @@ func modrinthCDNURL(e models.BuildContentEntry) string {
 // map[string][]byte means a bomb split across many small files within one
 // stored zip fails the moment the aggregate crosses the cap, instead of
 // only being caught after the whole entry was already buffered in RAM.
-func (h *PacksHandler) overrideEntriesFromStoredZip(ctx context.Context, zw *zip.Writer, prov modpack.ModpackStorageProvider, e models.BuildContentEntry, total *int64) error {
+func (h *PacksHandler) overrideEntriesFromStoredZip(ctx context.Context, zw *zip.Writer, prov modpack.ModpackStorageProvider, e models.BuildContentEntry, total *int64, seen packOutputPaths) error {
 	if e.StorageKey == "" {
 		return nil
 	}
@@ -166,7 +170,17 @@ func (h *PacksHandler) overrideEntriesFromStoredZip(ctx context.Context, zw *zip
 		if f.UncompressedSize64 > maxServerPackEntryBytes {
 			return fmt.Errorf("override %q entry %q exceeds the size cap", e.StorageKey, f.Name)
 		}
-		ew, err := zw.CreateHeader(&zip.FileHeader{Name: "overrides/" + f.Name, Method: zip.Deflate, Modified: time.Now()})
+		if err := seen.addForSide(f.Name, e.Side); err != nil {
+			return err
+		}
+		prefix := "overrides/"
+		if e.Side == models.SideClient {
+			prefix = "client-overrides/"
+		}
+		if e.Side == models.SideServer {
+			prefix = "server-overrides/"
+		}
+		ew, err := zw.CreateHeader(&zip.FileHeader{Name: prefix + f.Name, Method: zip.Deflate, Modified: time.Now()})
 		if err != nil {
 			return err
 		}
@@ -221,6 +235,19 @@ func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack 
 	// renderServerPack's running cap; overrideEntriesFromStoredZip checks it
 	// incrementally per file instead of after fully materializing an entry.
 	var total int64
+	seen := packOutputPaths{}
+	for _, file := range idx.Files {
+		side := models.SideBoth
+		if file.Env["client"] == "unsupported" {
+			side = models.SideServer
+		}
+		if file.Env["server"] == "unsupported" {
+			side = models.SideClient
+		}
+		if err := seen.addForSide(file.Path, side); err != nil {
+			return err
+		}
+	}
 	for _, e := range content {
 		if isMrpackFilesEntry(e) {
 			continue // already a files[] reference
@@ -228,7 +255,7 @@ func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack 
 		if prov == nil {
 			continue // no storage configured; skip embedding
 		}
-		if err := h.overrideEntriesFromStoredZip(ctx, zw, prov, e, &total); err != nil {
+		if err := h.overrideEntriesFromStoredZip(ctx, zw, prov, e, &total, seen); err != nil {
 			return err
 		}
 	}

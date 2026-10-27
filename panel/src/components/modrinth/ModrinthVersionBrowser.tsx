@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Package, Search, RefreshCw, AlertTriangle, Plus } from 'lucide-react';
 import {
-    searchModrinth, getModrinthVersions,
+    searchModrinth, getModrinthVersionsOrThrow,
     type ModrinthSearchHit, type ModrinthVersion,
 } from '@/lib/api/modrinth';
 import { envLabel, envParam, matchesEnv, type EnvFilter } from '@/lib/modSide';
@@ -61,25 +61,34 @@ export default function ModrinthVersionBrowser({
     const [searchHits, setSearchHits] = useState<ModrinthSearchHit[]>([]);
     const [searching, setSearching] = useState(false);
     const [searchError, setSearchError] = useState(false);
+    const [searchRetry, setSearchRetry] = useState(0);
 
     const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
     const [versions, setVersions] = useState<ModrinthVersion[]>([]);
     const [versionsLoading, setVersionsLoading] = useState(false);
+    const [versionsError, setVersionsError] = useState('');
+    const [versionRetry, setVersionRetry] = useState(0);
+    const [visibleVersions, setVisibleVersions] = useState(6);
 
     // Debounced search — re-runs when query, loader, or mcVersion changes.
     useEffect(() => {
+        let live = true;
+        setSearching(true);
+        setExpandedSlug(null);
+        setVersions([]);
         const t = setTimeout(async () => {
             setSearching(true);
             setSearchError(false);
             const res = await searchModrinth({
                 query: query.trim() || undefined,
-                loaders: loader ? [loader] : undefined,
+                loaders: isMod && loader && loader !== 'vanilla' ? [loader] : undefined,
                 versions: mcVersion ? [mcVersion] : undefined,
                 projectType: projectType as Parameters<typeof searchModrinth>[0]['projectType'],
                 side,
                 limit: 20,
                 index: 'relevance',
             });
+            if (!live) return;
             if (res === null) {
                 setSearchError(true);
                 setSearchHits([]);
@@ -89,24 +98,24 @@ export default function ModrinthVersionBrowser({
             }
             setSearching(false);
         }, 350);
-        return () => clearTimeout(t);
-    }, [query, loader, mcVersion, projectType, isMod, side, env]);
+        return () => { live = false; clearTimeout(t); };
+    }, [query, loader, mcVersion, projectType, isMod, side, env, searchRetry]);
 
-    const handleExpand = async (hit: ModrinthSearchHit) => {
-        if (expandedSlug === hit.slug) {
-            setExpandedSlug(null);
-            setVersions([]);
-            return;
-        }
-        setExpandedSlug(hit.slug);
+    useEffect(() => {
+        let live = true;
+        setVersions([]);
+        setVersionsError('');
+        setVisibleVersions(6);
+        if (!expandedSlug) { setVersionsLoading(false); return () => { live = false; }; }
         setVersionsLoading(true);
-        const v = await getModrinthVersions(hit.slug, {
-            loaders: loader ? [loader] : undefined,
+        getModrinthVersionsOrThrow(expandedSlug, {
+            loaders: isMod && loader && loader !== 'vanilla' ? [loader] : undefined,
             versions: mcVersion ? [mcVersion] : undefined,
-        });
-        setVersions(v);
-        setVersionsLoading(false);
-    };
+        }).then(result => { if (live) setVersions(result); })
+            .catch(error => { if (live) setVersionsError(error instanceof Error ? error.message : 'Could not load versions.'); })
+            .finally(() => { if (live) setVersionsLoading(false); });
+        return () => { live = false; };
+    }, [expandedSlug, loader, mcVersion, isMod, versionRetry]);
 
     return (
         <div className="flex flex-col h-full">
@@ -117,7 +126,7 @@ export default function ModrinthVersionBrowser({
                     type="text"
                     value={query}
                     onChange={e => setQuery(e.target.value)}
-                    placeholder="Search mods…"
+                    placeholder={projectType === 'mod' ? 'Search mods...' : projectType === 'resourcepack' ? 'Search resource packs...' : 'Search shaders...'}
                     className="input-field input-icon-left w-full"
                 />
             </div>
@@ -131,15 +140,16 @@ export default function ModrinthVersionBrowser({
             {/* Results */}
             <div className="flex-1 overflow-y-auto space-y-1.5">
                 {searching ? (
-                    <p className="text-xs text-(--base-06) text-center py-6 flex items-center justify-center gap-1.5">
+                    <p role="status" className="text-xs text-(--base-06) text-center py-6 flex items-center justify-center gap-1.5">
                         <RefreshCw size={11} className="animate-spin" />
                         Searching…
                     </p>
                 ) : searchError ? (
-                    <p className="text-xs text-(--base-06) text-center py-6 flex items-center justify-center gap-1.5">
+                    <div role="alert" className="text-xs text-(--base-06) text-center py-6 flex items-center justify-center gap-1.5 flex-wrap">
                         <AlertTriangle size={11} className="text-(--warning-light)" />
                         Search failed. Check your connection.
-                    </p>
+                        <button onClick={() => setSearchRetry(v => v + 1)} className="btn btn-secondary btn-sm">Retry</button>
+                    </div>
                 ) : searchHits.length === 0 ? (
                     <p className="text-xs text-(--base-06) text-center py-6">
                         {side ? 'No matches with this Environment filter. Turn it off to see more.' : 'No matches.'}
@@ -148,7 +158,8 @@ export default function ModrinthVersionBrowser({
                     searchHits.map(hit => (
                         <div key={hit.project_id}>
                             <button
-                                onClick={() => handleExpand(hit)}
+                                onClick={() => setExpandedSlug(current => current === hit.slug ? null : hit.slug)}
+                                aria-expanded={expandedSlug === hit.slug}
                                 className="w-full flex items-center gap-2 p-2 rounded-md border border-(--base-04) hover:border-(--accent-border) text-left transition-colors"
                             >
                                 {hit.icon_url ? (
@@ -178,13 +189,15 @@ export default function ModrinthVersionBrowser({
                                             <RefreshCw size={10} className="animate-spin" />
                                             Loading versions…
                                         </p>
+                                    ) : versionsError ? (
+                                        <div role="alert" className="text-xs text-(--error-light) py-1 space-y-2"><p>{versionsError}</p><button onClick={() => setVersionRetry(v => v + 1)} className="btn btn-secondary btn-sm">Retry versions</button></div>
                                     ) : versions.length === 0 ? (
                                         <p className="text-xs text-(--base-06) py-1">
                                             <AlertTriangle size={10} className="inline mr-1 text-(--warning-light)" />
                                             No versions match this filter.
                                         </p>
                                     ) : (
-                                        versions.slice(0, 6).map(v => (
+                                        versions.slice(0, visibleVersions).map(v => (
                                             <button
                                                 key={v.id}
                                                 onClick={() => onPick(hit.project_id, v.id, hit, v)}
@@ -202,6 +215,7 @@ export default function ModrinthVersionBrowser({
                                             </button>
                                         ))
                                     )}
+                                    {!versionsLoading && !versionsError && versions.length > visibleVersions && <button onClick={() => setVisibleVersions(count => count + 12)} className="btn btn-secondary btn-sm">Show more versions ({versions.length - visibleVersions} remaining)</button>}
                                 </div>
                             )}
                         </div>

@@ -56,7 +56,9 @@ export default function BuildMigrationPanel({
     disabled,
     disabledReason,
     showToast,
+    compact = false,
 }: {
+    compact?: boolean;
     packId: number;
     build: { id: number; minecraft: string; loader: string; versionString: string };
     content: BuildContentEntry[];
@@ -71,7 +73,7 @@ export default function BuildMigrationPanel({
     const unlinked = content.filter(e => !e.linked).length;
 
     return (
-        <section className="card mx-6 mb-4 max-w-6xl overflow-hidden">
+        <section className={compact ? "card overflow-hidden" : "card mx-6 mb-4 max-w-6xl overflow-hidden"}>
             <button
                 type="button"
                 onClick={() => setOpen(o => !o)}

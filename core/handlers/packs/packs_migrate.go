@@ -65,9 +65,21 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 		return
 	}
+	if bad := validateBuildKeyComponents(req.Minecraft, source.Loader, strings.TrimSpace(req.LoaderVersion)); bad != "" {
+		handlers.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
+		return
+	}
 	if source.Loader == "" {
 		handlers.SendJSONError(w, "This build has no loader set, so its content cannot be resolved against another Minecraft version", http.StatusUnprocessableEntity)
 		return
+	}
+	if strings.TrimSpace(req.LoaderVersion) == "" && source.Loader != "vanilla" {
+		version, err := handlers.NewVersionHandler(h.state).PreferredLoaderVersion(r.Context(), source.Loader, req.Minecraft)
+		if err != nil {
+			handlers.SendJSONError(w, "Could not resolve the target loader version: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		req.LoaderVersion = version
 	}
 
 	content, err := h.state.Store.ListBuildContent(source.ID)
@@ -92,9 +104,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// LoaderVersion is deliberately allowed to stay empty: the render path
-	// resolves an empty loader version to latest-stable for the target
-	// Minecraft version, which is what a migration wants.
+	// Pin the resolved loader so this build exports a reproducible dependency.
 	target := &models.PackBuild{
 		PackID:        source.PackID,
 		VersionString: req.VersionString,

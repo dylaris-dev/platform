@@ -953,6 +953,7 @@ type Store interface {
 	AddPackAudit(ownerID string, packID int, packName, actorID, action string, detail map[string]any) error
 	ListPackAudit(ownerID string, packID, limit int) ([]PackAuditEvent, error)
 	CreatePackBuild(b *models.PackBuild) (int, error)
+	ClonePackBuild(ctx context.Context, b *models.PackBuild, sourceID int) (int, error)
 	UpdatePackBuild(b *models.PackBuild) error
 	DeletePackBuild(id, packID int) error
 	GetPackBuild(id int) (*models.PackBuild, error)

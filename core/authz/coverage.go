@@ -244,7 +244,8 @@ var ExemptRoutes = map[string]bool{
 	"/api/store/billing-consent": true, // authed; the caller's OWN account only
 
 	// Versions: read for any authed user (software list itself is PUBLIC above).
-	"/api/versions": true, // authed; version info
+	"/api/versions":         true, // authed; version info
+	"/api/versions/loaders": true, // authed; public upstream loader metadata, no tenant data
 
 	// Tickets: user-facing subsystem (Phase 4 Task 15) - the owner/watcher/support
 	// ACL matrix in tickets.go (canSeeTicket/canReply/canMutate) or, for DELETE,

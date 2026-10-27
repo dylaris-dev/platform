@@ -358,11 +358,12 @@ var softwareTypes = map[string]string{
 // ==========================================
 
 type VersionHandler struct {
-	state *AppState
+	state      *AppState
+	loaderHTTP *http.Client
 }
 
 func NewVersionHandler(state *AppState) *VersionHandler {
-	return &VersionHandler{state: state}
+	return &VersionHandler{state: state, loaderHTTP: &http.Client{Timeout: 15 * time.Second}}
 }
 
 // GetVersions GET /api/versions - the available versions for one server

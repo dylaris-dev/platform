@@ -163,15 +163,25 @@ export async function getModrinthVersions(
     filter?: { loaders?: string[]; versions?: string[] },
 ): Promise<ModrinthVersion[]> {
     try {
-        const q = new URLSearchParams();
-        if (filter?.loaders?.length) q.set('loaders', filter.loaders.join(','));
-        if (filter?.versions?.length) q.set('versions', filter.versions.join(','));
-        const qs = q.toString();
-        const url = `${API_URL}/modrinth/project/${encodeURIComponent(slug)}/versions${qs ? `?${qs}` : ''}`;
-        const res = await fetchRetryingRateLimit(url, { headers: getAuthHeader() });
-        if (!res.ok) return [];
-        return res.json();
+        return await getModrinthVersionsOrThrow(slug, filter);
     } catch { return []; }
+}
+
+/** Interactive pickers must distinguish a failed lookup from no compatible versions. */
+export async function getModrinthVersionsOrThrow(
+    slug: string,
+    filter?: { loaders?: string[]; versions?: string[] },
+): Promise<ModrinthVersion[]> {
+    const q = new URLSearchParams();
+    if (filter?.loaders?.length) q.set('loaders', filter.loaders.join(','));
+    if (filter?.versions?.length) q.set('versions', filter.versions.join(','));
+    const qs = q.toString();
+    const url = `${API_URL}/modrinth/project/${encodeURIComponent(slug)}/versions${qs ? `?${qs}` : ''}`;
+    const res = await fetchRetryingRateLimit(url, { headers: getAuthHeader() });
+    if (!res.ok) throw new Error(`Could not load versions (${res.status}).`);
+    const versions = await res.json();
+    if (!Array.isArray(versions)) throw new Error('The version service returned an invalid response.');
+    return versions;
 }
 
 // --- Bulk lookups (Update all) ---

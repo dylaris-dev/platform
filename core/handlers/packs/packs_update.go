@@ -99,7 +99,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 			results = append(results, updateModsResult{ModversionID: j.mvID, Error: "content not found"})
 			continue
 		}
-		if err := h.swapModversionToModrinth(r.Context(), owner, mv, j.target); err != nil {
+		if err := h.swapModversionToModrinth(r.Context(), owner, build, mv, j.target); err != nil {
 			results = append(results, updateModsResult{ModversionID: j.mvID, Error: err.Error()})
 			continue
 		}
