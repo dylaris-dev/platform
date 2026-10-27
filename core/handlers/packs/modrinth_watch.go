@@ -178,7 +178,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		watch.Title = project.Title
-		watch.Projects = append(watch.Projects, models.ModrinthWatchProject{ProjectID: req.ProjectID, Title: project.Title})
+		watch.Projects = append(watch.Projects, models.ModrinthWatchProject{ProjectID: req.ProjectID, Title: project.Title, ContentType: project.ProjectType})
 	}
 	if len(watch.Projects) == 0 || len(watch.Projects) > 512 {
 		handlers.SendJSONError(w, "An alert needs between 1 and 512 linked mods", 422)

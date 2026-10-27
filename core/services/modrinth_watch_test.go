@@ -45,3 +45,12 @@ func TestWatchTargetsRotateBoundedWindow(t *testing.T) {
 		t.Fatalf("starved targets: %d/%d", len(seen), len(releases))
 	}
 }
+
+func TestWatchPreservesProjectContentType(t *testing.T) {
+	for _, kind := range []string{"", "mod", "resourcepack", "shaderpack"} {
+		item := watchCompatItem(models.ModrinthWatchProject{ProjectID: "project", Title: "Project", ContentType: kind})
+		if item.ContentType != kind || item.ProjectID != "project" {
+			t.Fatalf("watch lost project metadata: %+v", item)
+		}
+	}
+}

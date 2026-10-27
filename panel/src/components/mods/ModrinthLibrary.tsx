@@ -229,6 +229,7 @@ export function ModrinthWatchDialog({
                         Also notify for every new stable Minecraft release published from now on.
                     </label>
                     <p className="text-xs text-(--base-06)">
+                        Loader filters apply to mods; resource/shader packs are checked by Minecraft version only.
                         Notifications stay in the panel inbox until you delete them. Local mods, configs and gameplay
                         require manual review. This does not notify for individual mod build updates.
                     </p>
@@ -334,7 +335,7 @@ export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; bui
                                 <div className="flex-1">
                                     <h4 className="text-sm font-medium">{w.title}</h4>
                                     <p className="text-xs text-(--base-06)">
-                                        {w.loader} · {w.projects.length} linked mods · {w.unlinked} local mods to review
+                                        {w.loader} · {w.projects.length} linked projects · {w.unlinked} local mods to review
                                     </p>
                                 </div>
                                 <button

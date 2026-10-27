@@ -84,7 +84,7 @@ func (c *ModrinthWatchChecker) RunOnce(ctx context.Context) error {
 		targets := WatchTargets(w, releases)
 		items := make([]CompatItem, 0, len(w.Projects))
 		for _, p := range w.Projects {
-			items = append(items, CompatItem{Key: p.ProjectID, ProjectID: p.ProjectID, Title: p.Title, Side: CompatSideBoth})
+			items = append(items, watchCompatItem(p))
 		}
 		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		matrix, checkErr := BuildMatrix(checkCtx, CompatRequest{Items: items, Loader: w.Loader, Current: w.Current, Targets: targets, Cache: c.Cache})
@@ -109,6 +109,10 @@ func (c *ModrinthWatchChecker) RunOnce(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func watchCompatItem(p models.ModrinthWatchProject) CompatItem {
+	return CompatItem{Key: p.ProjectID, ProjectID: p.ProjectID, Title: p.Title, ContentType: p.ContentType, Side: CompatSideBoth}
 }
 
 // Ignore snapshots and already delivered releases. Each run is bounded; older

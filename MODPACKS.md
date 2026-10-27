@@ -108,6 +108,7 @@ lists saved projects and active checks; a build's **Version alerts** tab also
 offers pack-level checks using a fixed snapshot of that build's linked mods.
 
 Choose a loader and stable Minecraft targets, future stable releases, or both.
+Resource/shader project alerts use Minecraft compatibility without a mod-loader tag.
 Checks run daily, with an hourly retry after upstream errors. An initial check
 usually starts within a minute. A notification appears only when all linked mods
 support the target, once per watched Minecraft release, not for each mod build.

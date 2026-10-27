@@ -400,11 +400,12 @@ func FetchProjects(ctx context.Context, ids []string) (map[string]ModrinthProjec
 // ModrinthProjectMeta is the subset of a Modrinth project object this feature
 // needs.
 type ModrinthProjectMeta struct {
-	ID         string `json:"id"`
-	Slug       string `json:"slug"`
-	Title      string `json:"title"`
-	ClientSide string `json:"client_side"`
-	ServerSide string `json:"server_side"`
+	ProjectType string `json:"project_type"`
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	ClientSide  string `json:"client_side"`
+	ServerSide  string `json:"server_side"`
 }
 
 // SideFromModrinth maps Modrinth's per-project support declaration onto a side

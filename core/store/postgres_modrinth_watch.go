@@ -161,7 +161,7 @@ func (s *PostgresStore) CompleteModrinthWatch(ctx context.Context, w models.Modr
 		if runes := []rune(title); len(runes) > 200 {
 			title = string(runes[:200])
 		}
-		body := fmt.Sprintf("%d Modrinth mods are available on %s for Minecraft %s. %d local mods need manual review. Availability does not verify dependencies, configs or gameplay.", len(w.Projects), w.Loader, v.Minecraft, w.Unlinked)
+		body := fmt.Sprintf("%d Modrinth projects are available for Minecraft %s. Mod loader: %s (not applied to resource/shader packs). %d local mods need manual review. Availability does not verify dependencies, configs or gameplay.", len(w.Projects), v.Minecraft, w.Loader, w.Unlinked)
 		link := "/modpacks/guide?section=favorites"
 		if w.BuildID != nil {
 			link = fmt.Sprintf("/modpacks/%d/builds/%d", w.PackID, *w.BuildID)

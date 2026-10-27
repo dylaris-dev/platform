@@ -8,8 +8,9 @@ type ModrinthFavorite struct {
 }
 
 type ModrinthWatchProject struct {
-	ProjectID string `json:"projectId"`
-	Title     string `json:"title"`
+	ContentType string `json:"contentType,omitempty"`
+	ProjectID   string `json:"projectId"`
+	Title       string `json:"title"`
 }
 
 type ModrinthWatchVersion struct {
