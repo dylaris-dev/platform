@@ -28,7 +28,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Fixes
 - Modrinth project creation sends required empty arrays and creates drafts as required by
   the upstream API. Resource availability checks do not require a mod-loader tag. `core`
-- Creating a file in the shared browser now uses the selected folder instead of the root. `panel`
+- Creating a file uses the selected folder instead of the root; copying and renaming
+  pack folders also preserve nested empty directories. `panel`
 
 ## 2026.10.27.2
 

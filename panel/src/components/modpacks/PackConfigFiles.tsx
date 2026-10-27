@@ -169,11 +169,7 @@ export default function PackConfigFiles({
                     if (!clean(source) || within(clean(target), clean(source)))
                         throw new Error('Choose a different destination outside the source folder.');
                     const rows = (await entries()).filter((e) => within(e.targetPath, clean(source)));
-                    if (!rows.length) {
-                        await folder(target);
-                        await folder(source, true);
-                        return;
-                    }
+                    if (!rows.length) await folder(target);
                     for (const e of rows)
                         await copy(e.targetPath, clean(target) + e.targetPath.slice(clean(source).length));
                     await copyFolders(source, target);
@@ -184,10 +180,7 @@ export default function PackConfigFiles({
                     if (!clean(source) || within(clean(target), clean(source)))
                         throw new Error('Choose a different destination outside the source folder.');
                     const rows = (await entries()).filter((e) => within(e.targetPath, clean(source)));
-                    if (!rows.length) {
-                        await folder(target);
-                        return;
-                    }
+                    if (!rows.length) await folder(target);
                     for (const e of rows)
                         await copy(e.targetPath, clean(target) + e.targetPath.slice(clean(source).length));
                     await copyFolders(source, target);
