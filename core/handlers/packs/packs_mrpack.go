@@ -403,7 +403,7 @@ func mrpackInputsFingerprint(pack *models.Pack, build *models.PackBuild, content
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// ExportMrpack streams the .mrpack for a build (self-distributed download).
+// ExportMrpack downloads a build: .mrpack by default, or server content ZIP with ?kind=server.
 func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	p, ok := h.ownsPack(r, packID)
@@ -420,6 +420,15 @@ func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 	content, err := h.state.Store.ListBuildContent(buildID)
 	if err != nil {
 		handlers.SendJSONError(w, "Failed to load content", http.StatusInternalServerError)
+		return
+	}
+	switch r.URL.Query().Get("kind") {
+	case "server":
+		h.exportServerPack(w, r, p, build, content)
+		return
+	case "", "client":
+	default:
+		handlers.SendJSONError(w, "Unknown download kind", http.StatusBadRequest)
 		return
 	}
 	data, err := h.renderMrpack(r.Context(), p, build, content)

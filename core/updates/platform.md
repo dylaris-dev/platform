@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.27.2
+
+### Features
+- **More room for modpack authoring.** Wider build/details columns, a searchable sidebar
+  with owned and invited packs, and expandable mod cards matching Server Content. `panel`
+- **Choose Client and Server independently.** Filter and sort installed content by
+  environment, inspect full project descriptions and open Modrinth in a new tab. `panel`
+- **Download a client or server build directly.** Separate guides explain .mrpack import,
+  panel installation and manual Windows/Linux loader setup. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The modpack sidebar now shares the Servers width/collapse control and aligns with
+  navbar branding. Server exports retain pack read access and exclude client-only files. `core` `panel`
+
 ## 2026.10.27
 
 ### Features

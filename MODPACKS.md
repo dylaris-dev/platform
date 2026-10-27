@@ -30,7 +30,10 @@ DYLARIS permissions, not invitations to Modrinth's separate team system.
 The left sidebar lists owned and shared packs with project artwork and their
 latest release, or latest build if no release exists. These labels describe
 build history, not a running deployment. Local packs without upstream artwork
-use a package icon. A separate build column stays visible while editing.
+use a package icon. **My modpacks** and **Invited / collaborating** have separate
+sections and a shared search field. The sidebar uses the same width and collapse
+control as Servers, aligned with the navbar branding. A wider build column stays
+visible while editing.
 
 Installed content is grouped into **Mods**, **Resources**, and **Configs &
 scripts**, with search and project artwork on the installed rows. Missing or
@@ -39,6 +42,16 @@ Modrinth browser in the main workspace. **Tools & sharing** contains Minecraft
 migration and download links. Build environment, counts and export/publish
 actions stay in the right sidebar. Owners and administrators see recent
 activity there and can open the complete audit history separately.
+
+Installed and search cards use the Server Content visual style. Expand a card
+for its project description, switch between short/full sanitized Markdown, or
+open the project on Modrinth in a new tab. Direct uploads show local metadata;
+link an uploaded mod to Modrinth to obtain its upstream description.
+
+**Client** and **Server** independently select where each entry is installed.
+At least one must stay selected. The environment filters distinguish client-only,
+server-only and shared entries; sorting supports name, environment and updates.
+Filtering changes the view only, not the build or its exported content.
 
 ## Build creation
 
@@ -81,9 +94,35 @@ edit the existing content before uploading a replacement at the same target.
 client-only or server-only overrides according to their selected side. Server
 ZIP exports exclude client-only entries. Frozen builds remain immutable.
 
+The build details sidebar has **Download client .mrpack** and **Download server
+ZIP**. Each opens an installation guide before the download. The client archive
+is imported into Modrinth App as a new instance. For DYLARIS server setup choose
+**My modpacks** as the installation method and select the pack/build directly.
+Manual ZIP installation requires Java, the matching Minecraft server and loader;
+these are not bundled. The guide includes version-specific Java advice and
+Windows/Linux launch examples for Fabric, Forge and NeoForge. Legacy Forge
+releases use their own installed JAR instead of modern generated launch scripts.
+Review the Minecraft EULA yourself before accepting it.
+
+Both downloads require pack read access. The server download uses
+`GET /api/packs/{id}/builds/{buildId}/export?kind=server`; the default or
+`kind=client` retains the existing .mrpack format. Server rendering reuses the
+bounded, cached share renderer without creating a public link or requiring share
+links to be enabled. A busy render returns 503 with Retry-After rather than
+streaming an unfinished ZIP. Retry after a minute; large first renders can take
+longer. Downloading does not publish or freeze a draft.
+
 Verification for the 2026-10-27 changes used a separate local database and an
 existing private Packwiz template: Minecraft 1.20.1, Forge 47.4.28, 119 mods,
 one resource pack and 72 configuration/KubeJS files. All 120 linked entries
 exported, and all local configuration bytes matched the source. Tests also
 covered read/edit/delete grants, revocation, incompatible content and traversal.
 No external Modrinth publication or real-user invitation was used for testing.
+
+The workspace refinement was checked in a real isolated browser at 1100, 1440
+and 1920 pixels, including read-only collaboration, search, descriptions,
+environment saves/restoration and both download dialogs. The 355,989,306-byte
+server ZIP contained exactly 176 server/shared paths; all 16 client-only paths
+were excluded. All included linked JAR hashes and 72 configuration/script bytes
+matched their pinned source. The download validation passed 185 assertions.
+This verifies the archive, not a Minecraft boot or a launcher import.

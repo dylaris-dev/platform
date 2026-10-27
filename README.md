@@ -78,7 +78,8 @@ what any serious panel needs.
 - **Modpack-as-a-server** — deploy a `.mrpack` modpack directly as a runnable server.
 - **Modpack authoring and collaboration** - a persistent pack/build workspace,
   guided Minecraft/loader builds and safe draft copies, installed project icons,
-  Modrinth content, config/KubeJS uploads and separate collaborator rights under Access. See [the authoring guide](MODPACKS.md).
+  expandable Modrinth details, client/server controls, guided client/server downloads,
+  config/KubeJS uploads and separate collaborator rights under Access. See [the authoring guide](MODPACKS.md).
 - **Modrinth integration** — in-panel mod browser, install mods into a server, plus a modpack **builder + publisher** (publish your own modpacks to Modrinth).
 - **Sub-servers** — several installs on one server slot, switched from the panel. Keep a vanilla world, a modded world and next season's pack side by side without a second slot.
 - **Spark profiler** — start/stop profiling and capture results from the panel, so a lagging world is diagnosed where it runs.

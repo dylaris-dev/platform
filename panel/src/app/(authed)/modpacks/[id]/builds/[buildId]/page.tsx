@@ -6,17 +6,16 @@ import Link from 'next/link';
 import {
     ArrowLeft, Trash2, Search,
     Upload, Lock,
-    Download, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText, Copy,
+    ExternalLink, ChevronDown, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText, Copy,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listBuilds, listContent, addModrinthContent, removeContent, setContentSide,
     getPackDetails, modrinthTypeToContentType, type Pack, type PackBuild, type BuildContentEntry,
 } from '@/lib/api/packs';
-import { publishModrinth, replaceWithModrinth, updateMods, mrpackDownloadUrl } from '@/lib/api/packsPublish';
+import { publishModrinth, replaceWithModrinth, updateMods } from '@/lib/api/packsPublish';
 import BuildMigrationPanel from '@/components/mods/BuildMigrationPanel';
 import { createShareLink, listShareLinks, revokeShareLink, publicShareUrl, type ShareLink, type ShareLinkKind } from '@/lib/api/packsShare';
-import { getAuthHeader } from '@/lib/api/core';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList } from '@/components/Skeleton';
 import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
@@ -30,10 +29,14 @@ import { fmtDate } from '@/lib/time';
 import { WorkspaceDetails } from '@/components/modpacks/PackWorkspace';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import { packContentGroup } from '@/lib/packWorkspace';
+import { filterPackContent, type PackContentSort, type PackEnvironmentFilter as EnvironmentFilterValue } from '@/lib/packContent';
+import { PackEnvironmentSelector, PackEnvironmentFilter } from '@/components/modpacks/PackEnvironmentControls';
+import ModProjectDetails from '@/components/mods/ModProjectDetails';
+import PackDownloadDialog from '@/components/modpacks/PackDownloadDialog';
 import styles from '@/components/modpacks/workspace.module.css';
 
 // Build editing keeps the pack/build navigation mounted in the workspace.
-const SIDES: BuildContentEntry['side'][] = ['both', 'client', 'server'];
+
 
 // A linked entry has an update available when Modrinth's cached latest version
 // differs from what's currently installed. modrinthLatestVersionId is only
@@ -354,7 +357,10 @@ export default function BuildContentEditorPage() {
     const [modrinthType, setModrinthType] = useState<'mod' | 'resourcepack' | 'shader'>('mod');
 
     // Export state
-    const [exporting, setExporting] = useState(false);
+    const [downloadKind, setDownloadKind] = useState<'client' | 'server' | null>(null);
+    const [expandedEntry, setExpandedEntry] = useState<number | null>(null);
+    const [environment, setEnvironment] = useState<EnvironmentFilterValue>('all');
+    const [sort, setSort] = useState<PackContentSort>('name');
     const [activeTab, setActiveTab] = useState<'mods' | 'resources' | 'configs' | 'tools'>('mods');
     const [browsing, setBrowsing] = useState(false);
     const [query, setQuery] = useState('');
@@ -415,7 +421,7 @@ export default function BuildContentEditorPage() {
     const handleSetSide = async (entry: BuildContentEntry, side: string) => {
         const res = await setContentSide(packId, buildId, entry.id, side);
         if (res.success) {
-            refresh();
+            await refresh();
         } else {
             showToast(res.message || 'Failed to set side', false);
         }
@@ -449,35 +455,6 @@ export default function BuildContentEditorPage() {
         refresh();
     };
 
-    // Auth-blob mrpack download — cannot use a bare <a href> because the route
-    // requires an Authorization header that a plain anchor cannot send.
-    const handleExport = async () => {
-        if (!build || !pack) return;
-        setExporting(true);
-        try {
-            const res = await fetch(mrpackDownloadUrl(packId, buildId), {
-                headers: getAuthHeader(),
-            });
-            if (!res.ok) {
-                showToast(`Export failed: ${res.status}`, false);
-                return;
-            }
-            const blob = await res.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = blobUrl;
-            a.download = `${pack.internalSlug}-${build.versionString}.mrpack`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(blobUrl);
-        } catch {
-            showToast('Export failed.', false);
-        } finally {
-            setExporting(false);
-        }
-    };
-
     const handleCreateShareLink = async () => {
         setCreatingShare(true);
         try {
@@ -505,7 +482,7 @@ export default function BuildContentEditorPage() {
 
     const contentName = (entry: BuildContentEntry) => projectMetadata.projects[entry.modrinthProjectId]?.title || entry.prettyName || entry.modSlug;
     const groups = { mods: content.filter(entry => packContentGroup(entry.contentType) === 'mods'), resources: content.filter(entry => packContentGroup(entry.contentType) === 'resources'), configs: content.filter(entry => packContentGroup(entry.contentType) === 'configs') };
-    const visibleContent = activeTab === 'tools' ? [] : groups[activeTab].filter(entry => `${contentName(entry)} ${entry.prettyName} ${entry.modSlug} ${entry.targetPath}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => contentName(a).localeCompare(contentName(b)));
+    const visibleContent = activeTab === 'tools' ? [] : filterPackContent(groups[activeTab], query, environment, sort, contentName);
     if (loading) return <div className={styles.editor}><SkeletonHeader /><SkeletonList rows={8} /></div>;
     if (!build || !pack) return <div className="p-6 text-sm text-(--base-06)">Build not found. <Link href={`/modpacks/${packId}`} className="text-(--accent-light)">Back to pack</Link></div>;
     return <div className={styles.editor}>
@@ -514,7 +491,8 @@ export default function BuildContentEditorPage() {
             <h2 className="text-xl font-mono text-(--base-09) mb-4 break-all">{build.versionString}</h2>
             <dl className={styles.metadata}><div><dt>Minecraft</dt><dd>{build.minecraft || 'Unspecified'}</dd></div><div><dt>Loader</dt><dd>{build.loader || 'Vanilla'}</dd></div><div><dt>Loader build</dt><dd>{build.loaderVersion || 'None'}</dd></div><div><dt>Mods / plugins</dt><dd>{groups.mods.length}</dd></div><div><dt>Resource / shader packs</dt><dd>{groups.resources.length}</dd></div><div><dt>Config files / bundles</dt><dd>{groups.configs.length}</dd></div><div><dt>Channel</dt><dd>{build.channel}</dd></div><div><dt>Modrinth</dt><dd>{build.modrinthPublished ? 'Published' : 'Not published'}</dd></div></dl>
             <div className="flex flex-col gap-2 mt-5">
-                <button onClick={handleExport} disabled={exporting} className="btn btn-secondary btn-sm"><Download size={12} /> {exporting ? 'Exporting...' : 'Export .mrpack'}</button>
+                <button onClick={() => setDownloadKind('client')} className="btn btn-secondary btn-sm">Download client .mrpack</button>
+                <button onClick={() => setDownloadKind('server')} className="btn btn-secondary btn-sm">Download server ZIP</button>
                 <button onClick={() => setPublishDialogOpen(true)} disabled={modpacksDisabled || !canEdit} className="btn btn-primary btn-sm disabled:opacity-40"><Share2 size={12} /> Publish</button>
                 {canEdit && !modpacksDisabled && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-secondary btn-sm">Create another build</Link>}
             </div>
@@ -528,7 +506,7 @@ export default function BuildContentEditorPage() {
         {browsing ? <section className={styles.searchPanel} aria-label="Add from Modrinth"><label className="flex items-center gap-3 text-xs text-(--base-06) mb-3">Project type<select value={modrinthType} onChange={event => setModrinthType(event.target.value as typeof modrinthType)} className="input-field text-xs w-auto"><option value="mod" disabled={build.loader === 'vanilla'}>Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select></label>
             <ModrinthVersionBrowser loader={build.loader || undefined} mcVersion={build.minecraft || undefined} projectType={modrinthType} installedProjectIds={new Set(content.map(entry => entry.modrinthProjectId).filter(Boolean))} disabled={disabled || addingContent} disabledTitle={addingContent ? 'Adding content...' : editDisabledReason} onPick={async (projectId, versionId, hit) => { if (disabled || addingContent) return; setAddingContent(true); const contentType = modrinthTypeToContentType(hit.project_type); const result = await addModrinthContent(packId, buildId, { projectId, versionId, contentType, resolveDeps: contentType === 'mod' }); setAddingContent(false); if (result.success) { showToast(`Added ${hit.title}`); refresh(); } else showToast(result.message || 'Add failed', false); }} />
         </section> : <>
-            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Tools & sharing', null]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
+            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Tools & sharing', null]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setExpandedEntry(null); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
             {activeTab === 'tools' ? <div className={styles.rows}>
                 {build.minecraft && build.loader && <div className="mb-4"><BuildMigrationPanel packId={packId} build={build} content={content} disabled={modpacksDisabled || !canEdit} disabledReason={editDisabledReason} showToast={showToast} compact /></div>}
                             {(featureFlags.shareLinks || shareLinks.length > 0) && (
@@ -625,25 +603,41 @@ export default function BuildContentEditorPage() {
 
             </div> : <>
                 <input className="input-field w-full text-sm" aria-label="Search installed content" placeholder="Search installed content..." value={query} onChange={event => setQuery(event.target.value)} />
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <PackEnvironmentFilter value={environment} onChange={setEnvironment} />
+                    <label className="flex items-center gap-2 text-xs text-(--base-06)">Sort<select aria-label="Sort installed content" className="input-field text-xs w-auto" value={sort} onChange={event => setSort(event.target.value as PackContentSort)}><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="environment">Environment</option><option value="updates">Updates first</option></select></label>
+                </div>
                 {projectMetadata.error && <p className="text-xs text-(--base-06)">Some project icons could not be loaded. <button className="text-(--accent-light)" onClick={projectMetadata.retry}>Retry icons</button></p>}
                 <div className="flex justify-between text-[10px] uppercase tracking-wider text-(--base-06)"><span>Installed · {visibleContent.length}</span><span>Environment / actions</span></div>
                 <section className={styles.rows} aria-label="Installed content">
                     {visibleContent.length === 0 && <p className="text-sm text-(--base-06) text-center py-12">{query ? 'No matching content.' : 'No content in this category yet.'}</p>}
-                    {visibleContent.map(entry => <article key={entry.id} className={styles.row}>
-                        <ProjectIcon name={contentName(entry)} contentType={entry.contentType} url={projectMetadata.projects[entry.modrinthProjectId]?.icon_url} />
-                        <div className="min-w-0 flex-1"><h3 className="text-xs font-medium text-(--base-09) truncate" title={contentName(entry)}>{contentName(entry)}</h3><p className="text-[10px] text-(--base-06) font-mono truncate" title={entry.targetPath}>{entry.contentType === 'config' ? entry.targetPath : `${entry.modrinthVersionNumber || entry.version} · ${entry.linked ? 'Modrinth' : 'Upload'}`}</p></div>
-                        <div className={`${styles.rowActions} flex items-center gap-1 shrink-0`}>
-                            {entry.contentType === 'config' && entry.targetPath && !entry.targetPath.toLowerCase().endsWith('.zip') && !disabled && <button onClick={() => setEditing({ modversionId: entry.id, title: contentName(entry) })} aria-label={`Edit ${contentName(entry)}`} title="Edit config text" className="btn btn-ghost btn-sm"><FileText size={13} /></button>}
-                            {!entry.linked && entry.contentType !== 'config' && <button onClick={() => setReplaceEntry(entry)} disabled={disabled} aria-label={`Link ${contentName(entry)} to Modrinth`} title="Replace with Modrinth" className="btn btn-ghost btn-sm"><Replace size={13} /></button>}
-                            {hasUpdateAvailable(entry) && <button onClick={() => setUpgradeEntry(entry)} disabled={disabled} title="Update available" aria-label={`Update ${contentName(entry)}`} className="btn btn-ghost btn-sm text-(--accent-light)"><ArrowUpCircle size={13} /></button>}
-                            <select className="input-field text-[11px] py-1 w-20" aria-label={`Environment for ${contentName(entry)}`} value={entry.side} disabled={disabled} onChange={event => handleSetSide(entry, event.target.value)}>{SIDES.map(side => <option key={side} value={side}>{side}</option>)}</select>
-                            <button onClick={() => handleRemove(entry)} disabled={deleteDisabled} title={deleteDisabled ? 'Delete access is required; frozen builds cannot be changed' : 'Remove content'} aria-label={`Remove ${contentName(entry)}`} className="btn btn-ghost btn-sm disabled:opacity-30"><Trash2 size={12} className="text-(--error-light)" /></button>
+                    {visibleContent.map(entry => <article key={entry.id} className="card p-3 mb-2.5">
+                        <div className="flex items-start gap-3">
+                            <ProjectIcon name={contentName(entry)} contentType={entry.contentType} url={projectMetadata.projects[entry.modrinthProjectId]?.icon_url} className="w-11 h-11" />
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-start gap-2">
+                                    <button onClick={() => setExpandedEntry(value => value === entry.id ? null : entry.id)} aria-expanded={expandedEntry === entry.id} aria-label={`Details for ${contentName(entry)}`} className="min-w-0 flex-1 flex gap-2 items-center text-left text-sm font-medium text-(--base-09) hover:text-(--accent-light)"><span className="truncate" title={contentName(entry)}>{contentName(entry)}</span><ChevronDown size={13} className={`shrink-0 ${expandedEntry === entry.id ? 'rotate-180' : ''}`} /></button>
+                                    {entry.modrinthProjectId && <a href={`https://modrinth.com/project/${encodeURIComponent(entry.modrinthProjectId)}`} target="_blank" rel="noopener noreferrer" title="Open on Modrinth" aria-label={`Open ${contentName(entry)} on Modrinth`} className="btn btn-ghost btn-sm"><ExternalLink size={13} /></a>}
+                                    <button onClick={() => handleRemove(entry)} disabled={deleteDisabled} title={deleteDisabled ? 'Delete access is required; frozen builds cannot be changed' : 'Remove content'} aria-label={`Remove ${contentName(entry)}`} className="btn btn-ghost btn-sm disabled:opacity-30"><Trash2 size={13} className="text-(--error-light)" /></button>
+                                </div>
+                                <p className="text-[11px] text-(--base-06) font-mono truncate mt-1" title={entry.targetPath}>{entry.contentType === 'config' ? entry.targetPath : `${entry.modrinthVersionNumber || entry.version} · ${entry.linked ? 'Modrinth' : 'Upload'}`}</p>
+                                <div className="flex items-center gap-2 flex-wrap mt-3">
+                                    <PackEnvironmentSelector value={entry.side} disabled={disabled} name={contentName(entry)} onChange={side => handleSetSide(entry, side)} />
+                                    {entry.contentType === 'config' && entry.targetPath && !entry.targetPath.toLowerCase().endsWith('.zip') && !disabled && <button onClick={() => setEditing({ modversionId: entry.id, title: contentName(entry) })} aria-label={`Edit ${contentName(entry)}`} title="Edit config text" className="btn btn-secondary btn-sm"><FileText size={13} /> Edit</button>}
+                                    {!entry.linked && entry.contentType !== 'config' && <button onClick={() => setReplaceEntry(entry)} disabled={disabled} aria-label={`Link ${contentName(entry)} to Modrinth`} title="Replace with Modrinth" className="btn btn-secondary btn-sm"><Replace size={13} /> Link</button>}
+                                    {hasUpdateAvailable(entry) && <button onClick={() => setUpgradeEntry(entry)} disabled={disabled} title="Update available" aria-label={`Update ${contentName(entry)}`} className="btn btn-secondary btn-sm text-(--accent-light)"><ArrowUpCircle size={13} /> Update</button>}
+                                </div>
+                            </div>
                         </div>
+                        {expandedEntry === entry.id && <div className="mt-4 pt-4 border-t border-(--base-03)">
+                            {entry.modrinthProjectId ? <ModProjectDetails projectId={entry.modrinthProjectId} /> : <div className="text-xs text-(--base-06) space-y-2"><p>This file was uploaded directly. {entry.contentType !== 'config' ? 'Link it to Modrinth to show the project description and available versions.' : 'Use Edit to inspect or change this configuration file.'}</p><dl className={styles.metadata}><div><dt>Path</dt><dd>{entry.targetPath || entry.modSlug}</dd></div><div><dt>Version</dt><dd>{entry.version}</dd></div><div><dt>Type</dt><dd>{entry.contentType}</dd></div><div><dt>Environment</dt><dd>{entry.side}</dd></div></dl></div>}
+                        </div>}
                     </article>)}
                 </section>
             </>}
         </>}
                     {/* Piece 1: Publish dialog */}
+            {downloadKind && <PackDownloadDialog pack={pack} build={build} kind={downloadKind} onClose={() => setDownloadKind(null)} />}
             {uploadOpen && <UploadContentModal packId={packId} buildId={buildId} onClose={() => { setUploadOpen(false); refresh(); }} onUploaded={count => { setUploadOpen(false); showToast(`Uploaded ${count} file${count === 1 ? '' : 's'}.`); refresh(); }} />}
             {publishDialogOpen && (
                 <PublishDialog

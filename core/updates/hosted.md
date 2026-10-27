@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.27.2
+
+### Features
+- **A roomier modpack workspace.** Search your own and invited packs, expand mod details,
+  and choose/filter Client and Server with separate controls. No customer-side update is needed.
+- **Guided build downloads.** Download a client .mrpack or server ZIP with installation
+  instructions for the launcher, panel or a manual Windows/Linux server. No customer-side update is needed.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Modpack navigation aligns with the panel sidebar and uses the same collapse behavior.
+  No customer-side update is needed.
+
 ## 2026.10.27
 
 ### Features

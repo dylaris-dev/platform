@@ -1,13 +1,15 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { Package, Search, RefreshCw, AlertTriangle, Plus } from 'lucide-react';
+import { Search, RefreshCw, AlertTriangle, Plus, ExternalLink, ChevronDown } from 'lucide-react';
 import {
     searchModrinth, getModrinthVersionsOrThrow,
     type ModrinthSearchHit, type ModrinthVersion,
 } from '@/lib/api/modrinth';
 import { envLabel, envParam, matchesEnv, type EnvFilter } from '@/lib/modSide';
 import { EnvironmentFilter, EnvTag } from '@/components/mods/EnvironmentFilter';
+import ProjectIcon from '@/components/modpacks/ProjectIcon';
+import ModProjectDetails from '@/components/mods/ModProjectDetails';
 
 interface ModrinthVersionBrowserProps {
     /** Loader filter passed to Modrinth search (e.g. "fabric", "forge"). */
@@ -156,22 +158,17 @@ export default function ModrinthVersionBrowser({
                     </p>
                 ) : (
                     searchHits.map(hit => (
-                        <div key={hit.project_id}>
+                        <article key={hit.project_id} className="card p-3">
+                            <div className="flex items-start gap-3">
                             <button
                                 onClick={() => setExpandedSlug(current => current === hit.slug ? null : hit.slug)}
                                 aria-expanded={expandedSlug === hit.slug}
-                                className="w-full flex items-center gap-2 p-2 rounded-md border border-(--base-04) hover:border-(--accent-border) text-left transition-colors"
+                                className="min-w-0 flex-1 flex items-start gap-3 text-left rounded-md hover:bg-(--base-02) transition-colors"
                             >
-                                {hit.icon_url ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={hit.icon_url} alt="" className="w-8 h-8 rounded-sm shrink-0" />
-                                ) : (
-                                    <div className="w-8 h-8 rounded-sm bg-(--base-03) flex items-center justify-center shrink-0">
-                                        <Package size={12} className="text-(--base-05)" />
-                                    </div>
-                                )}
+                                <ProjectIcon url={hit.icon_url} name={hit.title} className="w-11 h-11" />
                                 <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-(--base-09) truncate">{hit.title}</div>
+                                    <p className="text-xs text-(--base-06) mt-1 line-clamp-2">{hit.description}</p>
                                     <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-1.5 min-w-0">
                                         <span className="truncate">by {hit.author} · {hit.downloads.toLocaleString()}</span>
                                         {isMod && envLabel(hit) && <EnvTag label={envLabel(hit)!} />}
@@ -180,10 +177,15 @@ export default function ModrinthVersionBrowser({
                                 {installedSet.has(hit.project_id) && (
                                     <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm shrink-0">added</span>
                                 )}
+                                <ChevronDown size={14} className={`shrink-0 mt-1 text-(--base-06) ${expandedSlug === hit.slug ? 'rotate-180' : ''}`} />
                             </button>
+                            <a href={`https://modrinth.com/project/${encodeURIComponent(hit.project_id)}`} target="_blank" rel="noopener noreferrer" aria-label={`Open ${hit.title} on Modrinth`} title="Open on Modrinth" className="btn btn-ghost btn-sm"><ExternalLink size={14} /></a>
+                            </div>
 
                             {expandedSlug === hit.slug && (
-                                <div className="ml-10 mt-1 mb-2 space-y-1">
+                                <div className="mt-4 pt-4 border-t border-(--base-03) space-y-3">
+                                    <ModProjectDetails projectId={hit.project_id} />
+                                    <h3 className="input-label mt-4">Compatible versions</h3>
                                     {versionsLoading ? (
                                         <p className="text-xs text-(--base-06) py-1 flex items-center gap-1">
                                             <RefreshCw size={10} className="animate-spin" />
@@ -218,7 +220,7 @@ export default function ModrinthVersionBrowser({
                                     {!versionsLoading && !versionsError && versions.length > visibleVersions && <button onClick={() => setVisibleVersions(count => count + 12)} className="btn btn-secondary btn-sm">Show more versions ({versions.length - visibleVersions} remaining)</button>}
                                 </div>
                             )}
-                        </div>
+                        </article>
                     ))
                 )}
             </div>

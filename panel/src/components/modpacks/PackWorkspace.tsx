@@ -4,12 +4,13 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Plus, Users, History, RefreshCw } from 'lucide-react';
+import { Plus, Users, History, RefreshCw, Package, Search, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronRight } from 'lucide-react';
 import { getPackDetails, listBuilds, listPacksOverview, type Pack, type PackBuild, type PackPermissions, type PacksOverview } from '@/lib/api/packs';
 import { routeIdFrom } from '@/lib/routeParams';
 import { currentPackBuild, packBuildStatus } from '@/lib/packWorkspace';
 import { systemEvents } from '@/lib/systemEvents';
 import { useAppData } from '@/lib/AppDataContext';
+import { useSidebarCollapse } from '@/lib/SidebarCollapse';
 import { fmtDate } from '@/lib/time';
 import { SkeletonList } from '@/components/Skeleton';
 import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal';
@@ -30,6 +31,9 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
     const buildId = Number(routeIdFrom(pathname, 'builds')) || 0;
     const creating = pathname.endsWith('/builds/new');
     const { featureFlags, user } = useAppData();
+    const { collapsed, toggle, width } = useSidebarCollapse();
+    const [search, setSearch] = useState('');
+    const [folded, setFolded] = useState<Record<string, boolean>>({});
     const [overview, setOverview] = useState<PacksOverview>({ packs: [], shared: [], createOn: [] });
     const [summaries, setSummaries] = useState<Record<number, PackBuild[]>>({});
     const [pack, setPack] = useState<Pack | null>(null);
@@ -67,13 +71,26 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
     const canAudit = permissions.isOwner || user?.isAdmin;
     return <WorkspaceContext.Provider value={{ pack, builds, permissions, loading, refresh, detailsRoot }}>
         <div className={styles.workspace}>
-            <aside className={styles.packs} aria-label="Modpacks">
-                <div className="flex items-center justify-between px-4 pt-4 pb-2"><Link href="/modpacks" className="mono-label text-(--base-06)">Modpacks</Link><Link href="/modpacks?create=1" className="btn btn-secondary btn-sm" aria-label="New pack"><Plus size={13} /></Link></div>
-                <nav className={styles.packList}>{allPacks.map(p => { const current = currentPackBuild(summaries[p.id] || []); return <Link key={p.id} href={`/modpacks/${p.id}`} className={styles.packLink} aria-current={packId === p.id ? 'page' : undefined}>
-                    <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} />
-                    <span className="min-w-0"><span className="text-xs font-medium text-(--base-09) block truncate" title={p.internalName}>{p.internalName}</span><span className="text-[10px] text-(--base-06) block mt-1">{current ? `${current.versionString} · ${current.channel === 'release' ? 'Release' : 'Latest'}` : 'No builds'}</span></span>
-                </Link>; })}{allPacks.length === 0 && <p className="text-xs text-(--base-06) p-2">Create a pack to start authoring.</p>}</nav>
-                <div className={`${styles.packFooter} p-3 border-t border-(--base-03) space-y-1`}><button onClick={() => setCollaborators(true)} className="btn btn-ghost btn-sm w-full justify-start"><Users size={13} /> Collaborators</button><button onClick={() => setActivity(true)} className="btn btn-ghost btn-sm w-full justify-start"><History size={13} /> Activity</button></div>
+            <aside className={`${styles.packs} ${width}`} aria-label="Modpacks">
+                <div className={`flex gap-1 p-2 ${collapsed ? 'flex-col' : 'items-center'}`}>
+                    <Link href="/modpacks" title="Modpacks" className={`btn btn-secondary btn-sm ${collapsed ? 'justify-center' : 'flex-1 justify-start'}`}><Package size={15} />{!collapsed && 'Modpacks'}</Link>
+                    {!collapsed && <Link href="/modpacks?create=1" className="btn btn-secondary btn-sm" aria-label="New pack"><Plus size={14} /></Link>}
+                    <button onClick={toggle} className="btn btn-ghost btn-sm" aria-label={collapsed ? 'Expand modpack sidebar' : 'Collapse modpack sidebar'}>{collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}</button>
+                </div>
+                {!collapsed && <div className="relative mx-3 mb-3"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-06)" /><input aria-label="Search modpacks" placeholder="Search modpacks..." className="input-field input-icon-left w-full text-xs" value={search} onChange={event => setSearch(event.target.value)} /></div>}
+                <nav className={styles.packList}>{([{ key: 'own', label: 'My modpacks', packs: overview.packs }, { key: 'invited', label: 'Invited / collaborating', packs: overview.shared }] as const).map(group => {
+                    const matches = group.packs.filter(p => !search.trim() || `${p.internalName} ${p.summary}`.toLowerCase().includes(search.trim().toLowerCase()));
+                    const open = !!search.trim() || !folded[group.key];
+                    return <section key={group.key} aria-label={group.label} className="mb-4">
+                        {!collapsed && <button onClick={() => setFolded(previous => ({ ...previous, [group.key]: !previous[group.key] }))} aria-expanded={open} className="flex items-center gap-2 w-full px-1 py-2 text-[11px] uppercase tracking-wider text-(--base-06)">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}<span className="flex-1 text-left">{group.label}</span><span>{matches.length}</span></button>}
+                        {(collapsed || open) && matches.map(p => { const current = currentPackBuild(summaries[p.id] || []); return <Link key={p.id} href={`/modpacks/${p.id}`} title={p.internalName} className={`${styles.packLink} ${collapsed ? '!p-1 justify-center' : ''}`} aria-current={packId === p.id ? 'page' : undefined}>
+                            <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} />
+                            {!collapsed && <span className="min-w-0"><span className="text-sm font-medium text-(--base-09) block truncate">{p.internalName}</span><span className="text-[11px] text-(--base-06) block mt-1">{current ? `${current.versionString} · ${current.channel === 'release' ? 'Release' : 'Latest'}` : 'No builds'}</span></span>}
+                        </Link>; })}
+                        {!collapsed && open && matches.length === 0 && <p className="text-xs text-(--base-06) px-2 py-3">{search ? 'No matching modpacks.' : group.key === 'own' ? 'Create your first modpack.' : 'Packs shared with you appear here.'}</p>}
+                    </section>;
+                })}</nav>
+                <div className={`${styles.packFooter} p-2 border-t border-(--base-03) space-y-1`}><button onClick={() => setCollaborators(true)} title="Collaborators" className="btn btn-ghost btn-sm w-full justify-start"><Users size={14} />{!collapsed && 'Collaborators'}</button><button onClick={() => setActivity(true)} title="Activity" className="btn btn-ghost btn-sm w-full justify-start"><History size={14} />{!collapsed && 'Activity'}</button></div>
             </aside>
             <div className={styles.body}>
                 {packId > 0 && <header className={styles.heading}><ProjectIcon name={pack?.internalName || 'Modpack'} url={metadata.projects[pack?.modrinthProjectId || '']?.icon_url} className="w-11 h-11" /><div className="min-w-0 flex-1"><p className="mono-label text-(--base-06)">Modpack workspace</p><h1 className="font-display text-lg font-semibold text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1><p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div><div className={styles.tools}>{permissions.isOwner && <button onClick={() => setCollaborators(true)} className="btn btn-secondary btn-sm" title="Manage modpack access"><Users size={13} /><span className="hidden xl:inline">Collaborators</span></button>}<button onClick={refresh} className="btn btn-secondary btn-sm" aria-label="Refresh pack"><RefreshCw size={13} /></button>{pack && permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-primary btn-sm"><Plus size={13} /> New build</Link>}</div></header>}
