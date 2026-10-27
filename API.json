@@ -3296,7 +3296,7 @@
       "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export",
       "auth": "session",
       "authorization": "modpack.read",
-      "description": "streams the .mrpack for a build (self-distributed download).",
+      "description": "downloads a build: .mrpack by default, or server content ZIP with ?kind=server.",
       "handler": "PacksHandler.ExportMrpack",
       "group": "packs",
       "external": false
