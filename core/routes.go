@@ -485,6 +485,8 @@ var requiredCaps = map[string]string{
 	"/api/packs/{id:[0-9]+}/audit":                                                                  "modpack.read",
 	"/api/packs/{id:[0-9]+}":                                                                        "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds":                                                                 "modpack.read",
+	"/api/packs/{id:[0-9]+}/recommended":                                                            "modpack.write",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork":                                           "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}":                                                "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content":                                        "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders":                                        "modpack.read",
@@ -970,6 +972,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.deleted", packsHandler.DeleteBuild)))))).Methods("DELETE")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListContent)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Folders)))).Methods("GET")
+	forkLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/packs/{id:[0-9]+}/recommended", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetRecommended))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.Authz.RequireCap("modpack.read")(forkLimiter.Limit(3, appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ForkBuild))))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_created", packsHandler.Folders)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_deleted", packsHandler.Folders)))))).Methods("DELETE")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.added", packsHandler.AddModrinth)))))).Methods("POST")

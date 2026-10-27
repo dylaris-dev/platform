@@ -2,6 +2,9 @@ import { API_URL, getAuthHeader, handleResponse } from './core';
 
 export type Favorite = { projectId: string; title: string };
 export type AvailabilityWatch = {
+	 followPack?: boolean;
+	 checkedBuildId?: number;
+	 checkedBuildVersion?: string;
     id: number;
     packId?: number;
     buildId?: number;

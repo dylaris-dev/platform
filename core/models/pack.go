@@ -48,6 +48,7 @@ type ModrinthPAT struct {
 // Pack is a modpack, with its own Modrinth identity so it can be published there
 // under its own name and link.
 type Pack struct {
+	RecommendedBuildID  *int      `json:"recommendedBuildId,omitempty"`
 	ID                  int       `json:"id"`
 	OwnerID             string    `json:"ownerId"`
 	InternalName        string    `json:"internalName"`
@@ -58,6 +59,25 @@ type Pack struct {
 	ModrinthVisibility  string    `json:"modrinthVisibility"`
 	CreatedAt           time.Time `json:"createdAt"`
 	UpdatedAt           time.Time `json:"updatedAt"`
+}
+
+// RecommendedPackBuild never promotes a draft implicitly. An explicit choice
+// takes precedence over release chronology, including a deliberately chosen draft.
+func RecommendedPackBuild(p *Pack, builds []PackBuild) *PackBuild {
+	var latest *PackBuild
+	for i := range builds {
+		b := &builds[i]
+		if b.PackID != p.ID {
+			continue
+		}
+		if p.RecommendedBuildID != nil && b.ID == *p.RecommendedBuildID {
+			return b
+		}
+		if b.Channel == ChannelRelease && (latest == nil || b.CreatedAt.After(latest.CreatedAt) || b.CreatedAt.Equal(latest.CreatedAt) && b.ID > latest.ID) {
+			latest = b
+		}
+	}
+	return latest
 }
 
 // PackBuild is one version of a pack. MC + loader live here (not on the pack)
@@ -129,6 +149,18 @@ type BuildContentEntry struct {
 	// Linked is true when this entry resolves to a Modrinth project (clean
 	// files[] reference + auto-update). false => manual upload (Modrinth warn).
 	Linked bool `json:"linked"`
+}
+
+// PackFork is an internal, already-authorized snapshot. Uploaded objects have
+// been copied to target-owned keys before the atomic metadata transaction.
+type PackFork struct {
+	SourcePackID  int
+	SourceBuildID int
+	Target        *Pack
+	Build         *PackBuild
+	CatalogSuffix string
+	Content       []BuildContentEntry
+	Folders       []string
 }
 
 // Share link kinds (tokenized build download links).

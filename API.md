@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **573 routes** in 53 sections: 253 GET, 168 POST, 51 PUT, 39 PATCH, 63 DELETE.
+- **575 routes** in 53 sections: 253 GET, 169 POST, 51 PUT, 40 PATCH, 63 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **373** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **375** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -162,7 +162,7 @@ can still show what exists.
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (5)
-- [/api/packs](#apipacks) (27)
+- [/api/packs](#apipacks) (29)
 - [/api/placement](#apiplacement) (3)
 - [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
@@ -645,12 +645,14 @@ can still show what exists.
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.Folders` | stores empty authoring directories as metadata; file paths already imply their parent directories. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Folders` | stores empty authoring directories as metadata; file paths already imply their parent directories. |
 | DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Folders` | stores empty authoring directories as metadata; file paths already imply their parent directories. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork` | session | `modpack.read` | Limit, RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ForkBuild` | copies an authorized build into a new or empty writable pack. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.MigrateBuild` | - |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | the share links issued for one build. |
 | DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | AllowReadOnlyWhenDisabled, Audited | `PacksHandler.RevokeShareLink` | revokes one share link. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
+| PATCH | `/api/packs/{id:[0-9]+}/recommended` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetRecommended` | changes guidance and alert input; it does not publish, freeze a build or modify a running server installation. |
 
 ## /api/placement
 

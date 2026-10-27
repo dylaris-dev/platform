@@ -967,6 +967,9 @@ type Store interface {
 	DeletePackBuild(id, packID int) error
 	GetPackBuild(id int) (*models.PackBuild, error)
 	ListPackBuilds(packID int) ([]models.PackBuild, error)
+	SetPackRecommended(context.Context, int, int) error
+	ForkPackBuild(context.Context, *models.PackFork) (int, int, error)
+	UnreferencedPackForkUploads(context.Context, string, []string) ([]string, error)
 
 	// --- Share links (tokenized build download links) ---
 	CreateShareLink(l *models.ShareLink) (int, error)

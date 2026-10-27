@@ -3393,6 +3393,16 @@
     },
     {
       "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "copies an authorized build into a new or empty writable pack.",
+      "handler": "PacksHandler.ForkBuild",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
       "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate",
       "auth": "session",
       "authorization": "modpack.write",
@@ -3447,6 +3457,16 @@
       "authorization": "modpack.write",
       "description": "upgrades Modrinth-linked mods in a DRAFT build to a newer version.",
       "handler": "PacksHandler.UpdateMods",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/packs/{id:[0-9]+}/recommended",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "changes guidance and alert input; it does not publish, freeze a build or modify a running server installation.",
+      "handler": "PacksHandler.SetRecommended",
       "group": "packs",
       "external": false
     },
@@ -5713,10 +5733,10 @@
     }
   ],
   "counts": {
-    "total": 574,
+    "total": 576,
     "byAuth": {
       "none": 31,
-      "session": 525,
+      "session": 527,
       "user API key": 10,
       "warp key": 8
     },
@@ -5745,7 +5765,7 @@
       "modules": 6,
       "nodes": 14,
       "notifications": 5,
-      "packs": 27,
+      "packs": 29,
       "placement": 3,
       "platform-backups": 13,
       "regions": 1,

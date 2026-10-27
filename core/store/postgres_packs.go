@@ -10,12 +10,12 @@ import (
 var errPackNotFound = errors.New("pack not found")
 
 const packCols = `id, owner_id, internal_name, internal_slug, summary,
-	modrinth_project_id, modrinth_project_name, modrinth_visibility, created_at, updated_at`
+	modrinth_project_id, modrinth_project_name, modrinth_visibility, created_at, updated_at, recommended_build_id`
 
 func scanPack(row interface{ Scan(...interface{}) error }) (*models.Pack, error) {
 	var p models.Pack
 	if err := row.Scan(&p.ID, &p.OwnerID, &p.InternalName, &p.InternalSlug, &p.Summary,
-		&p.ModrinthProjectID, &p.ModrinthProjectName, &p.ModrinthVisibility, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.ModrinthProjectID, &p.ModrinthProjectName, &p.ModrinthVisibility, &p.CreatedAt, &p.UpdatedAt, &p.RecommendedBuildID); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -108,11 +108,16 @@ func (s *PostgresStore) CreatePackBuild(b *models.PackBuild) (int, error) {
 }
 
 func (s *PostgresStore) UpdatePackBuild(b *models.PackBuild) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var publishedAt interface{}
 	if b.PublishedAt != nil {
 		publishedAt = *b.PublishedAt
 	}
-	_, err := s.db.Exec(`UPDATE pack_builds SET
+	_, err = tx.Exec(`UPDATE pack_builds SET
 		version_string=$1, minecraft=$2, loader=$3, loader_version=$4, min_java=$5, min_memory=$6,
 		changelog=$7, channel=$8, frozen=$9,
 		modrinth_published=$10, modrinth_version_id=$11, mrpack_storage_key=$12, mrpack_sha256=$13, published_at=$14
@@ -120,12 +125,28 @@ func (s *PostgresStore) UpdatePackBuild(b *models.PackBuild) error {
 		b.VersionString, b.Minecraft, b.Loader, b.LoaderVersion, b.MinJava, b.MinMemory,
 		b.Changelog, b.Channel, b.Frozen,
 		b.ModrinthPublished, b.ModrinthVersionID, b.MrpackStorageKey, b.MrpackSHA256, publishedAt, b.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE modrinth_watches SET next_check=LEAST(next_check,NOW()) WHERE pack_id=$1 AND ($2='release' OR EXISTS(SELECT 1 FROM packs WHERE id=$1 AND recommended_build_id=$3))`, b.PackID, b.Channel, b.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *PostgresStore) DeletePackBuild(id, packID int) error {
-	_, err := s.db.Exec(`DELETE FROM pack_builds WHERE id=$1 AND pack_id=$2`, id, packID)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM pack_builds WHERE id=$1 AND pack_id=$2`, id, packID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE modrinth_watches SET next_check=LEAST(next_check,NOW()) WHERE pack_id=$1`, packID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *PostgresStore) GetPackBuild(id int) (*models.PackBuild, error) {

@@ -53,29 +53,21 @@ func (c *ModrinthWatchChecker) RunOnce(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if w.BuildID != nil {
-			pack, err := c.Store.GetPack(w.PackID)
+		if w.BuildID != nil || w.FollowPack {
+			allowed, err := watchPackReadable(c.Store, w)
 			if err != nil {
 				return err
 			}
-			allowed := pack != nil && pack.OwnerID == w.UserID
-			if pack != nil && !allowed {
-				user, err := c.Store.GetUserByID(w.UserID)
-				if err != nil {
+			if !allowed {
+				if err = c.Store.DeleteModrinthWatch(ctx, w.ID, w.UserID); err != nil {
 					return err
 				}
-				if user != nil && user.IsAdmin {
-					allowed = true
-				} else {
-					rights, err := c.Store.PackRightsFor(pack.OwnerID, w.UserID, pack.ID)
-					if err != nil {
-						return err
-					}
-					allowed = rights.Found
-				}
+				continue
 			}
-			if !allowed {
-				if err := c.Store.DeleteModrinthWatch(ctx, w.ID, w.UserID); err != nil {
+		}
+		if w.FollowPack {
+			if sourceErr := RefreshPackWatchSource(c.Store, &w); sourceErr != nil {
+				if err := c.Store.CompleteModrinthWatch(ctx, w, nil, sourceErr.Error()); err != nil {
 					return err
 				}
 				continue
@@ -104,6 +96,34 @@ func (c *ModrinthWatchChecker) RunOnce(ctx context.Context) error {
 				}
 			}
 		}
+		if w.BuildID != nil || w.FollowPack {
+			allowed, err := watchPackReadable(c.Store, w)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				if err = c.Store.DeleteModrinthWatch(ctx, w.ID, w.UserID); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if w.FollowPack {
+			current := w
+			if sourceErr := RefreshPackWatchSource(c.Store, &current); sourceErr != nil {
+				if err := c.Store.CompleteModrinthWatch(ctx, current, nil, sourceErr.Error()); err != nil {
+					return err
+				}
+				continue
+			}
+			if !sameWatchSource(w, current) {
+				continue
+			}
+			w.Title = current.Title
+			w.Unlinked = current.Unlinked
+			w.CheckedBuildVersion = current.CheckedBuildVersion
+			w.Projects = current.Projects
+		}
 		if err := c.Store.CompleteModrinthWatch(ctx, w, versions, failure); err != nil {
 			return fmt.Errorf("save watch result: %w", err)
 		}
@@ -111,7 +131,61 @@ func (c *ModrinthWatchChecker) RunOnce(ctx context.Context) error {
 	return nil
 }
 
+// RefreshPackWatchSource captures the current recommendation at check time.
+// Delivery rechecks its ID, so changing recommendations during an upstream
+// lookup leaves the job due instead of announcing an obsolete source.
+func RefreshPackWatchSource(st store.Store, w *models.ModrinthWatch) error {
+	p, err := st.GetPack(w.PackID)
+	if err != nil || p == nil {
+		return fmt.Errorf("Could not read the pack recommendation. Retrying in one hour.")
+	}
+	builds, err := st.ListPackBuilds(p.ID)
+	if err != nil {
+		return fmt.Errorf("Could not read released builds. Retrying in one hour.")
+	}
+	b := models.RecommendedPackBuild(p, builds)
+	w.Projects = []models.ModrinthWatchProject{}
+	w.Unlinked = 0
+	w.CheckedBuildID = 0
+	w.CheckedBuildVersion = ""
+	w.Title = p.InternalName
+	if b == nil {
+		return fmt.Errorf("No Recommended build or release yet. Choose a recommendation or publish a release.")
+	}
+	w.CheckedBuildID = b.ID
+	w.CheckedBuildVersion = b.VersionString
+	w.Title = p.InternalName + " / " + b.VersionString
+	rows, err := st.ListBuildContent(b.ID)
+	if err != nil {
+		return fmt.Errorf("Could not read the recommended build. Retrying in one hour.")
+	}
+	seen := map[string]bool{}
+	for _, e := range rows {
+		if e.ContentType != models.ContentTypeMod {
+			continue
+		}
+		if e.ModrinthProjectID == "" {
+			w.Unlinked++
+			continue
+		}
+		if !seen[e.ModrinthProjectID] {
+			w.Projects = append(w.Projects, models.ModrinthWatchProject{ProjectID: e.ModrinthProjectID, Title: e.PrettyName})
+			seen[e.ModrinthProjectID] = true
+		}
+	}
+	if len(w.Projects) == 0 {
+		return fmt.Errorf("The recommended build has no linked mods to check; local content needs manual review.")
+	}
+	if len(w.Projects) > 512 {
+		return fmt.Errorf("The recommended build exceeds the 512 linked-mod alert limit.")
+	}
+	return nil
+}
+
 func watchCompatItem(p models.ModrinthWatchProject) CompatItem {
+	if p.ContentType == "shader" {
+		p.ContentType = models.ContentTypeShaderpack
+	}
 	return CompatItem{Key: p.ProjectID, ProjectID: p.ProjectID, Title: p.Title, ContentType: p.ContentType, Side: CompatSideBoth}
 }
 
@@ -147,4 +221,42 @@ func WatchTargets(w models.ModrinthWatch, releases []string) []string {
 		out = append(out[offset:], out[:offset]...)[:32]
 	}
 	return out
+}
+
+func watchPackReadable(st store.Store, w models.ModrinthWatch) (bool, error) {
+	p, err := st.GetPack(w.PackID)
+	if err != nil {
+		return false, err
+	}
+	if p == nil {
+		return false, nil
+	}
+	if p.OwnerID == w.UserID {
+		return true, nil
+	}
+	user, err := st.GetUserByID(w.UserID)
+	if err != nil {
+		return false, err
+	}
+	if user != nil && user.IsAdmin {
+		return true, nil
+	}
+	rights, err := st.PackRightsFor(p.OwnerID, w.UserID, p.ID)
+	return rights.Found, err
+}
+
+func sameWatchSource(a, b models.ModrinthWatch) bool {
+	if a.CheckedBuildID != b.CheckedBuildID || len(a.Projects) != len(b.Projects) {
+		return false
+	}
+	ids := map[string]bool{}
+	for _, project := range a.Projects {
+		ids[project.ProjectID] = true
+	}
+	for _, project := range b.Projects {
+		if !ids[project.ProjectID] {
+			return false
+		}
+	}
+	return true
 }

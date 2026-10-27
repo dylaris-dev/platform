@@ -10,5 +10,8 @@ func applyPackFoldersSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("pack folders schema: %w", err)
 	}
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS modversions_storage_key_idx ON modversions(storage_key)`); err != nil {
+		return fmt.Errorf("pack upload references index: %w", err)
+	}
 	return nil
 }

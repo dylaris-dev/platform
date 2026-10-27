@@ -47,9 +47,13 @@ func TestWatchTargetsRotateBoundedWindow(t *testing.T) {
 }
 
 func TestWatchPreservesProjectContentType(t *testing.T) {
-	for _, kind := range []string{"", "mod", "resourcepack", "shaderpack"} {
+	for _, kind := range []string{"", "mod", "resourcepack", "shaderpack", "shader"} {
 		item := watchCompatItem(models.ModrinthWatchProject{ProjectID: "project", Title: "Project", ContentType: kind})
-		if item.ContentType != kind || item.ProjectID != "project" {
+		expected := kind
+		if kind == "shader" {
+			expected = "shaderpack"
+		}
+		if item.ContentType != expected || item.ProjectID != "project" {
 			t.Fatalf("watch lost project metadata: %+v", item)
 		}
 	}

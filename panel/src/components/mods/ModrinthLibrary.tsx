@@ -186,7 +186,8 @@ export function ModrinthWatchDialog({
                 <div className="modal-body space-y-4">
                     <p className="text-sm text-(--base-07)">
                         Check daily and notify once per Minecraft release. Specific targets finish after notification.
-                        Future-release alerts stay active. Pack alerts use a snapshot of this build&apos;s linked mods.
+                        Future-release alerts stay active. Pack alerts follow its Recommended build, or the newest
+                        release when no recommendation is set. New drafts are never selected automatically.
                     </p>
                     <label className="input-label">
                         Target loader
@@ -284,9 +285,7 @@ export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; bui
     return (
         <div className="space-y-5">
             <div className="flex justify-between items-center">
-                <h2 className="text-lg font-medium">
-                    {packId ? 'Build version alerts' : 'Favorites & version alerts'}
-                </h2>
+                <h2 className="text-lg font-medium">{packId ? 'Pack version alerts' : 'Favorites & version alerts'}</h2>
                 <button
                     className="btn btn-secondary btn-sm"
                     onClick={() => {
@@ -328,14 +327,21 @@ export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; bui
             <section className="space-y-3">
                 <h3 className="font-medium">Active daily checks</h3>
                 {watches
-                    .filter((w) => !packId || (w.packId === packId && w.buildId === buildId))
+                    .filter((w) => !packId || (w.packId === packId && (w.followPack || w.buildId === buildId)))
                     .map((w) => (
                         <article className="card p-4 space-y-2" key={w.id}>
                             <div className="flex gap-3 items-start">
                                 <div className="flex-1">
                                     <h4 className="text-sm font-medium">{w.title}</h4>
+                                    {w.followPack && (
+                                        <p className="text-xs text-(--base-06)">
+                                            Follows Recommended / newest release · Last selected source:{' '}
+                                            {w.checkedBuildVersion || 'Waiting for a recommendation or release'}
+                                        </p>
+                                    )}
                                     <p className="text-xs text-(--base-06)">
-                                        {w.loader} · {w.projects.length} linked projects · {w.unlinked} local mods to review
+                                        {w.loader} · {w.projects.length} linked projects · {w.unlinked} local mods to
+                                        review
                                     </p>
                                 </div>
                                 <button
@@ -386,7 +392,7 @@ export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; bui
                             ))}
                         </article>
                     ))}
-                {!watches.some((w) => !packId || (w.packId === packId && w.buildId === buildId)) && (
+                {!watches.some((w) => !packId || (w.packId === packId && (w.followPack || w.buildId === buildId))) && (
                     <p className="text-sm text-(--base-06)">
                         No active alerts. Completed single-version checks are removed automatically.
                     </p>

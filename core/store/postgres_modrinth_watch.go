@@ -116,6 +116,9 @@ func (s *PostgresStore) CreateModrinthWatch(ctx context.Context, w *models.Modri
 	if count >= 100 {
 		return fmt.Errorf("watch limit reached (100)")
 	}
+	if w.FollowPack {
+		w.BuildID = nil
+	}
 	copy := *w
 	copy.ID = 0
 	copy.LastChecked = nil
@@ -124,7 +127,11 @@ func (s *PostgresStore) CreateModrinthWatch(ctx context.Context, w *models.Modri
 	if err != nil {
 		return err
 	}
-	if err = tx.QueryRowContext(ctx, `INSERT INTO modrinth_watches(user_id,build_id,spec) VALUES($1,$2,$3) RETURNING id`, w.UserID, w.BuildID, spec).Scan(&w.ID); err != nil {
+	var packID any
+	if w.FollowPack {
+		packID = w.PackID
+	}
+	if err = tx.QueryRowContext(ctx, `INSERT INTO modrinth_watches(user_id,build_id,spec,pack_id) VALUES($1,$2,$3,$4) RETURNING id`, w.UserID, w.BuildID, spec, packID).Scan(&w.ID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -144,6 +151,15 @@ func (s *PostgresStore) CompleteModrinthWatch(ctx context.Context, w models.Modr
 		return nil
 	} else if err != nil {
 		return err
+	}
+	if w.FollowPack {
+		var selected sql.NullInt64
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(recommended_build_id,(SELECT id FROM pack_builds WHERE pack_id=p.id AND channel='release' ORDER BY created_at DESC,id DESC LIMIT 1)) FROM packs p WHERE p.id=$1`, w.PackID).Scan(&selected); err != nil {
+			return err
+		}
+		if int(selected.Int64) != w.CheckedBuildID {
+			return nil
+		}
 	}
 	delivered := []string{}
 	if err = json.Unmarshal(raw, &delivered); err != nil {
@@ -165,6 +181,9 @@ func (s *PostgresStore) CompleteModrinthWatch(ctx context.Context, w models.Modr
 		link := "/modpacks/guide?section=favorites"
 		if w.BuildID != nil {
 			link = fmt.Sprintf("/modpacks/%d/builds/%d", w.PackID, *w.BuildID)
+		}
+		if w.FollowPack && w.CheckedBuildID > 0 {
+			link = fmt.Sprintf("/modpacks/%d/builds/%d", w.PackID, w.CheckedBuildID)
 		}
 		key := fmt.Sprintf("modrinth-watch:%d:%s:%s", w.ID, w.Loader, v.Minecraft)
 		if _, err = tx.ExecContext(ctx, `INSERT INTO notifications(user_id,type,title,body,link,dedupe_key) VALUES($1,'modrinth_available',$2,$3,$4,$5) ON CONFLICT DO NOTHING`, w.UserID, title, body, link, key); err != nil {
@@ -196,7 +215,18 @@ func (s *PostgresStore) CompleteModrinthWatch(ctx context.Context, w models.Modr
 		if failure != "" {
 			delay = time.Hour
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE modrinth_watches SET delivered=$2,result=$3,last_error=$4,last_checked=NOW(),next_check=$5 WHERE id=$1`, w.ID, notified, result, strings.TrimSpace(failure), time.Now().Add(delay))
+		copy := w
+		copy.ID = 0
+		copy.LastChecked = nil
+		copy.NextCheck = time.Time{}
+		copy.Delivered = nil
+		copy.Versions = nil
+		copy.LastError = ""
+		spec, marshalErr := json.Marshal(copy)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE modrinth_watches SET delivered=$2,result=$3,last_error=$4,last_checked=NOW(),next_check=$5,spec=$6 WHERE id=$1`, w.ID, notified, result, strings.TrimSpace(failure), time.Now().Add(delay), spec)
 		if err != nil {
 			return err
 		}

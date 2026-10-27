@@ -14,10 +14,10 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.10.27.3
 
 ### Features
-- **Build and migrate packs in one place.** The guided New build page checks another
-  Minecraft version or loader, and configs use the familiar file browser/editor.
+- **Fork, build and migrate packs.** Copy a build into a new or empty pack, edit configs
+  in the file browser, and preview another Minecraft version or loader.
 - **Favorites and daily availability alerts.** Choose Minecraft releases and a loader for
-  a mod or build; messages remain in the panel inbox until you delete them.
+  a mod or pack. Pack alerts follow Recommended or the newest release; messages stay until deleted.
 - Click panel feedback to copy it, with longer display times and a paused countdown on
   hover. Uploaded Modrinth versions can open directly in the app.
 
@@ -28,8 +28,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Fixes
-- Fixed a missing-field error when creating a Modrinth project. No customer-side update
-  is required for this release.
+- Fixed Modrinth project creation and the draft publish channel selection.
+  No customer-side update is required for this release.
 
 ## 2026.10.27.2
 

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
     ArrowLeft, Trash2, Search,
     Upload, Lock,
@@ -34,6 +35,8 @@ import { filterPackContent, type PackContentSort, type PackEnvironmentFilter as 
 import { PackEnvironmentSelector, PackEnvironmentFilter } from '@/components/modpacks/PackEnvironmentControls';
 import ModProjectDetails from '@/components/mods/ModProjectDetails';
 import PackDownloadDialog from '@/components/modpacks/PackDownloadDialog';
+import ForkBuildDialog from '@/components/modpacks/ForkBuildDialog';
+import PackRecommendation from '@/components/modpacks/PackRecommendation';
 import styles from '@/components/modpacks/workspace.module.css';
 
 // Build editing keeps the pack/build navigation mounted in the workspace.
@@ -59,7 +62,7 @@ interface PublishDialogProps {
 
 function PublishDialog({ build, onClose, onPublished, showToast, packId }: PublishDialogProps) {
     const [channel, setChannel] = useState<'beta' | 'release'>(
-        (build.channel as 'beta' | 'release') || 'beta',
+        build.channel === 'release' ? 'release' : 'beta',
     );
     const [busy, setBusy] = useState(false);
     const [warnings, setWarnings] = useState<string[]>([]);
@@ -345,6 +348,7 @@ export default function BuildContentEditorPage() {
 
     const [pack, setPack] = useState<Pack | null>(null);
     const [build, setBuild] = useState<PackBuild | null>(null);
+    const [builds,setBuilds]=useState<PackBuild[]>([]);
     const [content, setContent] = useState<BuildContentEntry[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -359,6 +363,8 @@ export default function BuildContentEditorPage() {
 
     // Export state
     const [watchOpen,setWatchOpen]=useState(false);
+    const [forkOpen,setForkOpen]=useState(false);
+    const router=useRouter();
     const [downloadKind, setDownloadKind] = useState<'client' | 'server' | null>(null);
     const [expandedEntry, setExpandedEntry] = useState<number | null>(null);
     const [environment, setEnvironment] = useState<EnvironmentFilterValue>('all');
@@ -394,6 +400,7 @@ export default function BuildContentEditorPage() {
         setCanEdit(p.permissions.canEdit);
         setCanDelete(p.permissions.canDelete);
         setBuild(bs.find(b => b.id === buildId) || null);
+        setBuilds(bs);
         setContent(list);
         setShareLinks(sl.links || []);
         setLoading(false);
@@ -493,6 +500,7 @@ export default function BuildContentEditorPage() {
             <h2 className="text-xl font-mono text-(--base-09) mb-4 break-all">{build.versionString}</h2>
             <dl className={styles.metadata}><div><dt>Minecraft</dt><dd>{build.minecraft || 'Unspecified'}</dd></div><div><dt>Loader</dt><dd>{build.loader || 'Vanilla'}</dd></div><div><dt>Loader build</dt><dd>{build.loaderVersion || 'None'}</dd></div><div><dt>Mods / plugins</dt><dd>{groups.mods.length}</dd></div><div><dt>Resource / shader packs</dt><dd>{groups.resources.length}</dd></div><div><dt>Config files / bundles</dt><dd>{groups.configs.length}</dd></div><div><dt>Channel</dt><dd>{build.channel}</dd></div><div><dt>Modrinth</dt><dd>{build.modrinthPublished ? 'Published' : 'Not published'}</dd></div></dl>
             <div className="flex flex-col gap-2 mt-5">
+                <button onClick={()=>setForkOpen(true)} disabled={modpacksDisabled} className="btn btn-secondary btn-sm">Fork build into another pack</button>
                 <button onClick={() => setWatchOpen(true)} className="btn btn-secondary btn-sm">Minecraft version alerts</button>
                 <button onClick={() => setDownloadKind('client')} className="btn btn-secondary btn-sm">Download client .mrpack</button>
                 <button onClick={() => setDownloadKind('server')} className="btn btn-secondary btn-sm">Download server ZIP</button>
@@ -500,6 +508,7 @@ export default function BuildContentEditorPage() {
                 {canEdit && !modpacksDisabled && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-secondary btn-sm">Create another build</Link>}
             </div>
         </WorkspaceDetails>
+        <WorkspaceDetails><PackRecommendation pack={pack} builds={builds} canEdit={canEdit&&!modpacksDisabled} onChanged={refresh}/></WorkspaceDetails>
         <header className="flex items-center justify-between gap-3 flex-wrap shrink-0"><div><h2 className="text-base font-medium text-(--base-09)">{browsing ? 'Add from Modrinth' : `Build ${build.versionString}`}</h2><p className="text-xs text-(--base-06) mt-1">{groups.mods.length} mods / plugins · {groups.configs.length} configs · MC {build.minecraft} · {build.loader}</p></div><div className={styles.tools}>
             {hasAnyUpdate && <button onClick={handleUpdateAll} disabled={disabled || updatingAll} className="btn btn-secondary btn-sm"><ArrowUpCircle size={12} /> {updatingAll ? 'Updating...' : 'Update all'}</button>}
             <button onClick={() => setUploadOpen(true)} disabled={disabled} title={disabled ? editDisabledReason : 'Upload files or folders'} className="btn btn-secondary btn-sm disabled:opacity-40"><Upload size={12} /> Upload</button>
@@ -510,7 +519,7 @@ export default function BuildContentEditorPage() {
             <ModrinthVersionBrowser loader={build.loader || undefined} mcVersion={build.minecraft || undefined} projectType={modrinthType} installedProjectIds={new Set(content.map(entry => entry.modrinthProjectId).filter(Boolean))} disabled={disabled || addingContent} disabledTitle={addingContent ? 'Adding content...' : editDisabledReason} onPick={async (projectId, versionId, hit) => { if (disabled || addingContent) return; setAddingContent(true); const contentType = modrinthTypeToContentType(hit.project_type); const result = await addModrinthContent(packId, buildId, { projectId, versionId, contentType, resolveDeps: contentType === 'mod' }); setAddingContent(false); if (result.success) { showToast(`Added ${hit.title}`); refresh(); } else showToast(result.message || 'Add failed', false); }} />
         </section> : <>
             <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Sharing', null], ['alerts', 'Version alerts', null]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setExpandedEntry(null); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
-            {activeTab === 'configs' ? <PackConfigFiles packId={packId} buildId={buildId} canEdit={!disabled} canDelete={!deleteDisabled} onChanged={refresh}/> : activeTab === 'alerts' ? <div className={styles.rows}><div className="mb-4"><button className="btn btn-primary btn-sm" onClick={()=>setWatchOpen(true)}>Create alert for this build</button></div><ModrinthLibraryPanel packId={packId} buildId={buildId}/></div> : activeTab === 'tools' ? <div className={styles.rows}>
+            {activeTab === 'configs' ? <PackConfigFiles packId={packId} buildId={buildId} canEdit={!disabled} canDelete={!deleteDisabled} onChanged={refresh}/> : activeTab === 'alerts' ? <div className={styles.rows}><div className="mb-4"><button className="btn btn-primary btn-sm" onClick={()=>setWatchOpen(true)}>Create alert for this pack</button></div><ModrinthLibraryPanel packId={packId} buildId={buildId}/></div> : activeTab === 'tools' ? <div className={styles.rows}>
                 <p className="text-xs text-(--base-06) mb-4">Share links grant access to this build without a panel account. Use the download buttons for private downloads, Publish for Modrinth, and New build for Minecraft or loader changes.</p>
                             {!featureFlags.shareLinks && shareLinks.length === 0 && <div className="card p-4 text-sm text-(--base-06)">Public share links are disabled by the administrator. Use the private client/server download buttons in Build details.</div>}
                 {(featureFlags.shareLinks || shareLinks.length > 0) && (
@@ -641,7 +650,8 @@ export default function BuildContentEditorPage() {
             </>}
         </>}
                     {/* Piece 1: Publish dialog */}
-            {watchOpen && <ModrinthWatchDialog packId={packId} buildId={buildId} title={`${pack.internalName} / ${build.versionString}`} loader={build.loader} onClose={()=>setWatchOpen(false)}/>}
+            {watchOpen && <ModrinthWatchDialog packId={packId} buildId={buildId} title={pack.internalName} loader={build.loader} onClose={()=>setWatchOpen(false)}/>}
+            {forkOpen && <ForkBuildDialog pack={pack} build={build} onClose={()=>setForkOpen(false)} onCreated={(target,copied)=>{setForkOpen(false);router.push(`/modpacks/${target.id}/builds/${copied.id}`);}}/>}
             {downloadKind && <PackDownloadDialog pack={pack} build={build} kind={downloadKind} onClose={() => setDownloadKind(null)} />}
             {uploadOpen && <UploadContentModal packId={packId} buildId={buildId} onClose={() => { setUploadOpen(false); refresh(); }} onUploaded={count => { setUploadOpen(false); showToast(`Uploaded ${count} file${count === 1 ? '' : 's'}.`); refresh(); }} />}
             {publishDialogOpen && (

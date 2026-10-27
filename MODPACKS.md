@@ -76,6 +76,34 @@ Metadata failures have a retry action. No compatible loader build is a real
 empty state, not a reason to guess a version. Vanilla builds do not use a mod
 loader; use a compatible mod loader for mods.
 
+## Recommendations and forks
+
+**Recommended build** in Build details explicitly selects the pack's player-facing
+recommendation. **Automatic: newest release** instead selects the newest release
+channel build. New drafts do not change this source automatically. Without a
+recommendation or release, pack alerts wait. Explicitly recommending an editable
+draft is allowed and clearly labelled; its current mod list is then checked.
+Recommendation does not freeze, publish or update installed/running servers.
+
+**Fork build into another pack** copies all pinned content, paths, environments,
+configuration bytes and empty folders into an independent draft. Choose a new
+pack owned by your account or an existing writable pack with no builds. Source
+read access and target authoring rights are required, including normal global
+authoring ceilings. Existing target settings remain unchanged. New packs do not
+inherit the source's Modrinth binding, credentials, share links or collaborators.
+
+Uploaded objects and catalog/version records are copied to the target owner.
+Deleting or editing the source therefore does not invalidate the fork. Storage
+copying is streamed and verified, then metadata commits atomically. Concurrent
+copies cannot both populate the same empty target. Failed copies clean up only
+their unreferenced staged objects; an ambiguous database commit retains files
+until the outcome can be verified. Limits are 2000 entries, 1 GB per uploaded
+object and 2 GB of uploaded objects per fork; linked Modrinth references do not
+require copying the JARs. Large copies can take a while and can be cancelled.
+An abrupt Core crash can leave private, unreferenced staging objects; clean them
+only with reference-aware storage maintenance. These bounds are per operation,
+not a new account-wide storage quota.
+
 ## Modrinth and local files
 
 Search Modrinth from a build and choose a compatible version. Core checks the
@@ -105,7 +133,10 @@ download. Empty folders are metadata and enter exports when they contain files.
 Star or watch a Modrinth project from installed content or search, in Modpacks
 or Server Content. Favorites belong to the signed-in user. **Favorites & alerts**
 lists saved projects and active checks; a build's **Version alerts** tab also
-offers pack-level checks using a fixed snapshot of that build's linked mods.
+offers pack-level checks following the current Recommended build or newest release.
+The linked mod list is resolved again for each check; deleting an old source
+build does not remove the pack alert. The checked build/version is shown in the
+job and notification. A source change during lookup is retried before delivery.
 
 Choose a loader and stable Minecraft targets, future stable releases, or both.
 Resource/shader project alerts use Minecraft compatibility without a mod-loader tag.
@@ -113,6 +144,8 @@ Checks run daily, with an hourly retry after upstream errors. An initial check
 usually starts within a minute. A notification appears only when all linked mods
 support the target, once per watched Minecraft release, not for each mod build.
 Specific jobs finish after all requested targets notify; future jobs persist.
+Previously notified Minecraft versions remain delivered when the recommendation
+changes, avoiding repeated messages for ordinary pack/mod updates.
 Local/unlinked mods, dependencies, configs and gameplay need manual validation.
 Removing pack access cancels its watch. Existing messages stay in the bell inbox
 when read and are removed only by manual deletion. Mobile delivery is not implemented.
@@ -152,6 +185,7 @@ official `modrinth://version/<id>` protocol. The app must be installed, and its
 account must be allowed to access that version; visibility/moderation still apply.
 Private DYLARIS drafts use manual `.mrpack` import instead of a public share link.
 Modrinth project creation submits required empty arrays and a draft project.
+The publish dialog defaults drafts to Beta and submits that displayed channel.
 
 Both downloads require pack read access. The server download uses
 `GET /api/packs/{id}/builds/{buildId}/export?kind=server`; the default or
@@ -186,3 +220,14 @@ Minecraft 1.21.1 / NeoForge 21.1.265, explicitly omitting nine unavailable items
 The source retained its pinned versions, paths, sides and hashes. The publish
 request is covered by a multipart contract test; external publication, native
 launcher import and a Minecraft boot are not claimed as tested.
+
+Recommendation/fork checks also used the actual local API and browser. The same
+pack alert followed sources containing 119, 110 and two linked mods, waited when
+the recommended draft was deleted, and resumed on the restored recommendation
+without repeating its delivered Minecraft version. New-pack, existing-empty-pack
+and cross-owner forks retained all 192 entries and 72 config bytes. Source-owner
+writes to a private foreign fork were denied, target-owner edits worked, and a
+temporary source pack was deleted without damaging its copy. The browser fork
+dialog and recommendation selector, including reload persistence, were exercised.
+An authenticated fork client export retained 120 pinned references and all 72
+config bytes, denied an outsider, and did not persist or freeze the draft.

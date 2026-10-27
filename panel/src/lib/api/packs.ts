@@ -4,6 +4,7 @@
 import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/core';
 
 export interface Pack {
+	recommendedBuildId?: number;
     id: number;
     ownerId: string;
     internalName: string;
@@ -14,6 +15,14 @@ export interface Pack {
     modrinthVisibility: string;
     createdAt: string;
     updatedAt: string;
+}
+
+export const setRecommendedBuild = (packId:number,buildId:number)=>send(`/packs/${packId}/recommended`,'PATCH',{buildId});
+export async function forkPackBuild(packId:number,buildId:number,body:{targetPackId?:number;name?:string;slug?:string;versionString?:string},signal?:AbortSignal):Promise<{success:boolean;message?:string;pack?:Pack;build?:PackBuild}>{
+    try {
+        const response=await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/fork`,{method:'POST',headers:{...getAuthHeader(),'Content-Type':'application/json'},body:JSON.stringify(body),signal});
+        return await handleResponse(response) as any;
+    } catch(error){if(signal?.aborted)return{success:false,message:'Copy cancelled.'};return handleError(error) as any;}
 }
 
 export interface PackBuild {

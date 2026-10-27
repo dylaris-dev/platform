@@ -38,7 +38,7 @@ export default function PackGuide() {
                     ],
                     [
                         '6. Favorites and daily alerts',
-                        'Star Modrinth projects in Server Content or this builder. Use the bell to choose target Minecraft releases and loader. Build alerts capture a fixed set of linked mods. Specific targets finish after one notification; future-release checks stay active. Reading never deletes the inbox message.',
+                        'Star Modrinth projects in Server Content or this builder. Use the bell to choose target Minecraft releases and loader. Pack alerts follow Recommended build, or the newest release when automatic. New drafts never replace that source automatically. Specific targets finish after one notification; future checks stay active. Reading never deletes the inbox message.',
                     ],
                     [
                         '7. Test a client and server',
@@ -47,6 +47,10 @@ export default function PackGuide() {
                     [
                         '8. Publish or share',
                         'Publish uploads through the owner’s stored Modrinth token. Modrinth controls moderation and visibility. After publication, Install in Modrinth App opens that exact uploaded version. Sharing creates separate revocable links, subject to the administrator’s feature setting.',
+                    ],
+                    [
+                        'Recommendations and forks',
+                        'Choose Recommended build in Build details, or use Automatic: newest release. This does not freeze, publish or update running servers. Fork build copies mods, resources, configs and folders into a new pack or an existing writable pack with no builds. Uploaded files and records become independent; source publication bindings and access grants are not copied.',
                     ],
                     [
                         'Where the bytes live',

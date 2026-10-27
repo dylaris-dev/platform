@@ -7,11 +7,14 @@ export function newestPackBuild(builds: PackBuild[]): PackBuild | undefined {
     })[0];
 }
 
-export function currentPackBuild(builds: PackBuild[]): PackBuild | undefined {
+export function currentPackBuild(builds: PackBuild[],recommendedBuildId?:number): PackBuild | undefined {
+    const recommended=builds.find(build=>build.id===recommendedBuildId);
+    if(recommended)return recommended;
     return newestPackBuild(builds.filter(build => build.channel === 'release')) || newestPackBuild(builds);
 }
 
-export function packBuildStatus(build: PackBuild, builds: PackBuild[]): string {
+export function packBuildStatus(build: PackBuild, builds: PackBuild[],recommendedBuildId?:number): string {
+    if(build.id===recommendedBuildId)return 'Recommended';
     if (currentPackBuild(builds)?.id === build.id) return build.channel === 'release' ? 'Latest release' : 'Latest build';
     if (build.channel === 'release') return 'Release';
     if (build.channel === 'beta') return 'Beta';

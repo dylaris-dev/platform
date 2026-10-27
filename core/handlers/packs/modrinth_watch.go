@@ -74,7 +74,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 		}
 		visible := []models.ModrinthWatch{}
 		for _, row := range rows {
-			if row.BuildID != nil {
+			if row.BuildID != nil || row.FollowPack {
 				if _, ok := h.packAccess(r, row.PackID, packRead); !ok {
 					continue
 				}
@@ -129,39 +129,23 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 	if len(releases) > 0 {
 		watch.Current = releases[0]
 	}
-	if req.BuildID > 0 {
+	if req.PackID > 0 {
 		pack, ok := h.packAccess(r, req.PackID, packRead)
 		if !ok {
 			handlers.SendJSONError(w, "Forbidden", 403)
 			return
 		}
-		build, err := h.state.Store.GetPackBuild(req.BuildID)
-		if err != nil || build == nil || build.PackID != pack.ID {
-			handlers.SendJSONError(w, "Build not found", 404)
-			return
+		if req.BuildID > 0 {
+			build, err := h.state.Store.GetPackBuild(req.BuildID)
+			if err != nil || build == nil || build.PackID != pack.ID {
+				handlers.SendJSONError(w, "Build not found", 404)
+				return
+			}
 		}
-		watch.BuildID = &build.ID
 		watch.PackID = pack.ID
-		watch.Title = pack.InternalName + " / " + build.VersionString
-		content, err := h.state.Store.ListBuildContent(build.ID)
-		if err != nil {
-			handlers.SendJSONError(w, "Could not load source mods", 500)
-			return
-		}
-		seen := map[string]bool{}
-		for _, e := range content {
-			if e.ContentType != models.ContentTypeMod {
-				continue
-			}
-			if e.ModrinthProjectID == "" {
-				watch.Unlinked++
-				continue
-			}
-			if !seen[e.ModrinthProjectID] {
-				watch.Projects = append(watch.Projects, models.ModrinthWatchProject{ProjectID: e.ModrinthProjectID, Title: e.PrettyName})
-				seen[e.ModrinthProjectID] = true
-			}
-		}
+		watch.FollowPack = true
+		// Missing recommendations are a waiting state, not a draft fallback.
+		_ = services.RefreshPackWatchSource(h.state.Store, &watch)
 	} else {
 		if !modrinthIDPattern.MatchString(req.ProjectID) {
 			handlers.SendJSONError(w, "Valid projectId required", 400)
@@ -180,7 +164,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 		watch.Title = project.Title
 		watch.Projects = append(watch.Projects, models.ModrinthWatchProject{ProjectID: req.ProjectID, Title: project.Title, ContentType: project.ProjectType})
 	}
-	if len(watch.Projects) == 0 || len(watch.Projects) > 512 {
+	if !watch.FollowPack && len(watch.Projects) == 0 || len(watch.Projects) > 512 {
 		handlers.SendJSONError(w, "An alert needs between 1 and 512 linked mods", 422)
 		return
 	}
