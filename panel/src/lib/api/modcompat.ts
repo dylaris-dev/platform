@@ -71,10 +71,11 @@ export async function getBuildCompat(
     buildId: number,
     mode: CompatMode,
     mc?: string,
+    loader?: string,
 ): Promise<CompatResponse> {
     try {
         const res = await fetch(
-            `${API_URL}/packs/${packId}/builds/${buildId}/compat?${compatQuery(mode, mc)}`,
+            `${API_URL}/packs/${packId}/builds/${buildId}/compat?${compatQuery(mode, mc)}${loader ? `&loader=${encodeURIComponent(loader)}` : ''}`,
             { headers: getAuthHeader() },
         );
         const data = await res.json();
@@ -109,7 +110,7 @@ export interface MigratedItem {
 export interface MigrateResponse {
     success: boolean;
     message?: string;
-    build?: { id: number; versionString: string; minecraft: string };
+    build?: import('./packs').PackBuild;
     migrated?: MigratedItem[];
     uploads?: MigratedItem[];
     unavailable?: MigratedItem[];
@@ -119,7 +120,7 @@ export interface MigrateResponse {
 export async function migrateBuild(
     packId: number,
     buildId: number,
-    input: { minecraft: string; versionString: string; loaderVersion?: string; dropUnavailable?: boolean; changelog?: string },
+    input: { minecraft: string; versionString: string; loader?: string; loaderVersion?: string; dropUnavailable?: boolean; changelog?: string },
 ): Promise<MigrateResponse> {
     try {
         const res = await fetch(`${API_URL}/packs/${packId}/builds/${buildId}/migrate`, {

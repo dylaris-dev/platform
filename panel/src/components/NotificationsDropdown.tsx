@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { Bell, AlertTriangle, ExternalLink, Inbox, CheckCheck } from 'lucide-react';
+import { Bell, AlertTriangle, ExternalLink, Inbox, CheckCheck, Trash2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { API_URL, getGatewayBandwidthOverview } from '@/lib/api';
 import { shouldWarnBeamRelayMissing } from '@/lib/beamRelayNotice';
 import { listNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, Notification as InboxNotification } from '@/lib/api/notifications';
+import { deleteNotification } from '@/lib/api/notifications';
+import { toast } from '@/components/ui/Toast';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,7 +130,7 @@ export default function NotificationsDropdown() {
     }, []);
 
     const refreshInbox = useCallback(async () => {
-        const res = await listNotifications(false, 20);
+        const res = await listNotifications(false, 200);
         if (res.success) setInbox(res.notifications || []);
     }, []);
 
@@ -281,15 +283,15 @@ export default function NotificationsDropdown() {
                                         </div>
                                     </div>
                                 );
-                                return n.link ? (
-                                    <Link key={n.id} href={n.link} onClick={() => handleClickItem(n)}>
+                                return <div key={n.id} className="flex items-center">{n.link ? (
+                                    <Link className="min-w-0 flex-1" href={n.link} onClick={() => handleClickItem(n)}>
                                         {content}
                                     </Link>
                                 ) : (
-                                    <button key={n.id} type="button" onClick={() => handleClickItem(n)} className="w-full text-left">
+                                    <button type="button" onClick={() => handleClickItem(n)} className="min-w-0 flex-1 text-left">
                                         {content}
                                     </button>
-                                );
+                                )}<button className="btn btn-ghost btn-sm mr-2 shrink-0" aria-label={`Delete notification ${n.title}`} title="Delete notification" onClick={async()=>{try{const result=await deleteNotification(n.id);if((result as {success?:boolean})?.success===false)throw new Error('Delete failed');setInbox(prev=>prev.filter(item=>item.id!==n.id));if(!n.readAt)setUnread(value=>Math.max(0,value-1));}catch{toast('Could not delete notification.',false);}}}><Trash2 size={13}/></button></div>;
                             })}
                         </div>
                     ) : (!isAdmin || !hasChecks) ? (

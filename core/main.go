@@ -611,6 +611,8 @@ func main() {
 	modpackUpdateChecker := services.NewModpackUpdateChecker(pgStore, appState.FeatureFlags)
 	modpackUpdateChecker.SetLeader(coreLeader)
 	modpackUpdateChecker.Start(bgCtx)
+	modrinthWatchChecker := &services.ModrinthWatchChecker{Store: pgStore, Cache: appState.AvailabilityCache(), Leader: coreLeader}
+	modrinthWatchChecker.Start(bgCtx)
 
 	// Fallback cleanup if TimescaleDB retention policy is not active.
 	// Leader-gated so under multi-Core only one instance

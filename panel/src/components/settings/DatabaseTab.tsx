@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -51,10 +53,10 @@ export default function DatabaseTab() {
     const [converting, setConverting] = useState(false);
     const [confirmConvert, setConfirmConvert] = useState(false);
 
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
     const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
+        notifyToast(msg, ok);
+
     };
 
     const load = useCallback(async () => {
@@ -371,13 +373,7 @@ export default function DatabaseTab() {
                 </div>
             )}
 
-            {toast && (
-                <div className={`fixed bottom-4 right-4 px-4 py-3 rounded-md shadow-lg text-sm font-medium ${toast.ok ? 'bg-(--success-ghost) text-(--success-light)' : 'bg-(--error-ghost) text-(--error-light)'}`}>
-                    <span className="inline-flex items-center gap-2">
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}{toast.msg}
-                    </span>
-                </div>
-            )}
+
         </div>
     );
 }

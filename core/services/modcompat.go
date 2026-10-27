@@ -69,6 +69,7 @@ const (
 // (a modversion id for a pack, a server-mod id for a server) and is echoed back
 // untouched so the caller can map results onto its own rows.
 type CompatItem struct {
+	ContentType          string `json:"contentType,omitempty"`
 	Key                  string `json:"key"`
 	ProjectID            string `json:"projectId"`
 	Title                string `json:"title"`
@@ -486,6 +487,15 @@ func BuildMatrix(ctx context.Context, req CompatRequest) (*CompatMatrix, error) 
 	}
 
 	ids := uniqueProjectIDs(linked)
+	modItems := []CompatItem{}
+	universalItems := []CompatItem{}
+	for _, it := range linked {
+		if it.ContentType == "resourcepack" || it.ContentType == "shaderpack" {
+			universalItems = append(universalItems, it)
+		} else {
+			modItems = append(modItems, it)
+		}
+	}
 
 	// One baseline pass tells us which projects the search index can answer for
 	// at all. A project missing here is archived / unlisted / withdrawn, and
@@ -506,9 +516,18 @@ func BuildMatrix(ctx context.Context, req CompatRequest) (*CompatMatrix, error) 
 	lineOrder := []string{}
 
 	for _, mc := range req.Targets {
-		avail, err := availabilityFor(ctx, req.Cache, ids, mc, req.Loader)
+		avail, err := availabilityFor(ctx, req.Cache, uniqueProjectIDs(modItems), mc, req.Loader)
 		if err != nil {
 			return nil, err
+		}
+		if len(universalItems) > 0 {
+			universal, err := availabilityFor(ctx, req.Cache, uniqueProjectIDs(universalItems), mc, "")
+			if err != nil {
+				return nil, err
+			}
+			for id, found := range universal {
+				avail[id] = found
+			}
 		}
 		row := buildVersionRow(mc, linked, avail, searchable)
 

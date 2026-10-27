@@ -82,3 +82,8 @@ export function getCopyName(name: string, isDir: boolean, existingFiles: FileEnt
     if (!existingNames.has(candidate)) return candidate;
   }
 }
+/** Creating uses the currently open folder; copy/rename use the source parent. */
+export function fileActionDestination(currentPath: string, oldPath: string, name: string, creating: boolean): string {
+  const parent = creating ? currentPath.replace(/\/+$/, '') : oldPath.slice(0, Math.max(0, oldPath.lastIndexOf('/')));
+  return parent ? `${parent}/${name}` : name;
+}

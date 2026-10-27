@@ -20,6 +20,7 @@ import (
 // the new version is being compared against.
 
 type migrateBuildRequest struct {
+	Loader        string `json:"loader"`
 	Minecraft     string `json:"minecraft"`
 	VersionString string `json:"versionString"`
 	LoaderVersion string `json:"loaderVersion"`
@@ -50,12 +51,19 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Minecraft = strings.TrimSpace(req.Minecraft)
+	if req.Loader == "" {
+		req.Loader = source.Loader
+	}
+	if req.Loader != "fabric" && req.Loader != "forge" && req.Loader != "neoforge" && req.Loader != "quilt" && req.Loader != "vanilla" {
+		handlers.SendJSONError(w, "Unsupported target loader", 400)
+		return
+	}
 	req.VersionString = strings.TrimSpace(req.VersionString)
 	if req.Minecraft == "" || req.VersionString == "" {
 		handlers.SendJSONError(w, "minecraft and versionString are required", http.StatusBadRequest)
 		return
 	}
-	if req.Minecraft == source.Minecraft {
+	if req.Minecraft == source.Minecraft && req.Loader == source.Loader {
 		handlers.SendJSONError(w, "The target Minecraft version is the one this build already uses", http.StatusBadRequest)
 		return
 	}
@@ -65,7 +73,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 		return
 	}
-	if bad := validateBuildKeyComponents(req.Minecraft, source.Loader, strings.TrimSpace(req.LoaderVersion)); bad != "" {
+	if bad := validateBuildKeyComponents(req.Minecraft, req.Loader, strings.TrimSpace(req.LoaderVersion)); bad != "" {
 		handlers.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
 		return
 	}
@@ -73,8 +81,8 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "This build has no loader set, so its content cannot be resolved against another Minecraft version", http.StatusUnprocessableEntity)
 		return
 	}
-	if strings.TrimSpace(req.LoaderVersion) == "" && source.Loader != "vanilla" {
-		version, err := handlers.NewVersionHandler(h.state).PreferredLoaderVersion(r.Context(), source.Loader, req.Minecraft)
+	if strings.TrimSpace(req.LoaderVersion) == "" && req.Loader != "vanilla" {
+		version, err := handlers.NewVersionHandler(h.state).PreferredLoaderVersion(r.Context(), req.Loader, req.Minecraft)
 		if err != nil {
 			handlers.SendJSONError(w, "Could not resolve the target loader version: "+err.Error(), http.StatusBadGateway)
 			return
@@ -88,7 +96,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved, unavailable, uploads, err := h.resolveMigrationTargets(content, source.Loader, req.Minecraft)
+	resolved, unavailable, uploads, err := h.resolveMigrationTargets(content, req.Loader, req.Minecraft)
 	if err != nil {
 		handlers.SendJSONError(w, "Could not resolve target versions from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
@@ -109,12 +117,13 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		PackID:        source.PackID,
 		VersionString: req.VersionString,
 		Minecraft:     req.Minecraft,
-		Loader:        source.Loader,
+		Loader:        req.Loader,
 		LoaderVersion: strings.TrimSpace(req.LoaderVersion),
-		MinJava:       source.MinJava,
-		MinMemory:     source.MinMemory,
-		Changelog:     req.Changelog,
-		Channel:       models.ChannelDraft,
+		// A source Java minimum may be wrong for the new Minecraft release.
+		MinJava:   "",
+		MinMemory: source.MinMemory,
+		Changelog: req.Changelog,
+		Channel:   models.ChannelDraft,
 	}
 	newID, err := h.state.Store.CreatePackBuild(target)
 	if err != nil {
@@ -194,7 +203,7 @@ func (h *PacksHandler) resolveMigrationTargets(content []models.BuildContentEntr
 	byHash := map[string]services.ModrinthVersion{}
 	hashes := make([]string, 0, len(linked))
 	for _, e := range linked {
-		if e.SHA1 != "" {
+		if e.SHA1 != "" && e.ContentType != models.ContentTypeResourcepack && e.ContentType != models.ContentTypeShaderpack {
 			hashes = append(hashes, e.SHA1)
 		}
 	}
@@ -219,7 +228,16 @@ func (h *PacksHandler) resolveMigrationTargets(content []models.BuildContentEntr
 			continue
 		}
 		// Fallback for an entry whose stored hash Modrinth cannot place.
-		v, e := services.LatestProjectVersionFor(entry.ModrinthProjectID, targetMC, loader)
+		var v *services.ModrinthVersion
+		var e error
+		if entry.ContentType == models.ContentTypeResourcepack || entry.ContentType == models.ContentTypeShaderpack {
+			v, e = services.LatestProjectContentVersionFor(entry.ModrinthProjectID, targetMC)
+		} else {
+			v, e = services.LatestProjectVersionFor(entry.ModrinthProjectID, targetMC, loader)
+		}
+		if e != nil {
+			return nil, nil, nil, fmt.Errorf("resolve project %s: %w", entry.ModrinthProjectID, e)
+		}
 		if e == nil && v != nil {
 			resolved = append(resolved, resolvedMigration{entry: entry, version: v})
 			continue

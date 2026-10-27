@@ -30,6 +30,9 @@ export interface FileBrowserAdapter {
 }
 
 export interface FileBrowserProps {
+  rootLabel?: string;
+  allowReadOnlyDownloads?: boolean;
+  notify?: (message: string, ok: boolean) => void;
   currentServerPath: string;
   serverUuid?: string;
   adapter: FileBrowserAdapter;

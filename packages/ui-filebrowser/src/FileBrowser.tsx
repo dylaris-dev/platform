@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspens
 import JSZip from 'jszip';
 import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import type { FileEntry, FileBrowserProps } from './types';
-import { formatBytes, validFilenameRegex, INVALID_NAME_MESSAGE, compareNames, getCopyName, getTruncatedPath, isOpenableFile, isGzipName, findMatches, OPEN_MAX_BYTES } from './utils';
+import { formatBytes, validFilenameRegex, INVALID_NAME_MESSAGE, compareNames, getCopyName, getTruncatedPath, isOpenableFile, isGzipName, findMatches, OPEN_MAX_BYTES, fileActionDestination } from './utils';
 import { useDelayedFlag } from './useDelayedFlag';
 import { beamConnectionModeMeta } from './connectionMode';
 import Toast from './Toast';
@@ -18,7 +18,7 @@ const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
 type PopupMode = 'create' | 'copy' | 'rename' | null;
 type UploadPopupView = 'select' | 'progress' | 'conflict';
 
-const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter, readOnly = false, connectionMode }) => {
+const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter, readOnly = false, connectionMode, notify, rootLabel = 'servers', allowReadOnlyDownloads = false }) => {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [currentPath, setCurrentPath] = useState(currentServerPath);
   const [error, setError] = useState('');
@@ -27,7 +27,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   // folder switches stay silent instead of flashing the indicator.
   const showLoading = useDelayedFlag(loading, 350);
   const [toastMessage, setToastMessage] = useState<{ message: string; type: 'error' | 'info' } | null>(null);
-  
+
   const [globalSearchTerm, setGlobalSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<FileEntry[]>([]);
@@ -143,7 +143,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     setLoading(false);
     return result.success;
   };
-  
+
   // --- Selective Download Helpers ---
   const openSelectiveDownload = async (folder: FileEntry) => {
     setSelectiveDownloadTarget(folder);
@@ -211,7 +211,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       }
     } catch (err) {
       console.error('Selective download failed:', err);
-      setToastMessage({ message: 'Download failed.', type: 'error' });
+      showToast('Download failed.', 'error');
     }
     setDownloadProgress(null);
     setSelectiveDownloading(false);
@@ -259,7 +259,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       setSelected(new Set());
     } catch (err) {
       console.error('Zip download failed:', err);
-      setToastMessage({ message: 'Download failed.', type: 'error' });
+      showToast('Download failed.', 'error');
     }
     setDownloadProgress(null);
   };
@@ -316,7 +316,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       document.body.style.overflow = previous;
     };
   }, [showEditPopup]);
-  
+
    useEffect(() => {
     const handleDragEnter = (e: DragEvent) => {
         e.preventDefault();
@@ -348,7 +348,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         window.removeEventListener('dragover', handleDragOver);
     };
   }, []);
-  
+
   const closeAllPopups = useCallback(() => {
     setShowEditPopup(false);
     // Same reset as closeEditPopup, or the next file opened in edit mode.
@@ -370,7 +370,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [closeAllPopups]);
-  
+
     // Cap depth + result count so a broad global search can't fan out into an
     // unbounded client-driven crawl of the whole tree.
     const handleRecursiveSearch = useCallback(async (path: string, term: string, depth = 0): Promise<FileEntry[]> => {
@@ -432,7 +432,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     }
     const oldPath = currentPath ? `${currentPath}/${editingFile}` : editingFile;
     const newPath = currentPath ? `${currentPath}/${tempFileName}` : tempFileName;
-    
+
     const result = await adapter.renameFile(oldPath, newPath, serverUuid);
     if(result.success){
         setEditingFile(tempFileName);
@@ -445,6 +445,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
 
   const showToast = (message: string, type: 'error' | 'info' = 'info') => {
+    if (notify) { notify(message, type !== 'error'); return; }
     setToastMessage({ message, type });
     setTimeout(() => {
       setToastMessage(null);
@@ -455,7 +456,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   // nothing except surface this toast. Returns true when the action was blocked.
   const blockReadOnly = (): boolean => {
     if (readOnly) {
-      showToast('Read-only demo. Changes are disabled here.', 'info');
+      showToast('Read-only access. Changes are disabled here.', 'info');
       return true;
     }
     return false;
@@ -509,7 +510,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       fetchFiles(parentPath);
     }
   };
-  
+
   const closeEditPopup = () => {
       setShowEditPopup(false);
       setFileIsReadOnly(false);
@@ -538,7 +539,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       setLoading(false);
     }
   };
-  
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       setSearchTerm(e.target.value);
   }
@@ -610,7 +611,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     setPopupError('');
     let result;
     const oldPath = actionTarget ? (actionTarget.path || (currentPath ? `${currentPath}/${actionTarget.name}` : actionTarget.name)) : '';
-    const newPath = oldPath.substring(0, oldPath.lastIndexOf('/') + 1) + newName;
+    const newPath = fileActionDestination(currentPath, oldPath, newName, popupMode === 'create');
 
     switch (popupMode) {
       case 'create': result = await adapter.createFile(newPath, newFileType === 'folder', serverUuid); break;
@@ -640,7 +641,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       setFilesToUpload(Array.from(e.target.files));
     }
   };
-  
+
   const startUploadProcess = async () => {
     if (!filesToUpload || filesToUpload.length === 0) {
       setPopupError("Please select files or a folder.");
@@ -649,7 +650,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     setPopupError('');
     const firstItem = filesToUpload[0];
     const isFolder = firstItem.webkitGetAsEntry?.()?.isDirectory || (firstItem.webkitRelativePath && firstItem.webkitRelativePath.includes('/'));
-    
+
     // For folders we must keep the original entries (webkitGetAsEntry /
     // createReader only work on the live drop items). For single files we
     // materialize the File NOW: getAsFile() on a DataTransferItem is only
@@ -716,20 +717,20 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     setUploadPopupView('progress');
     setUploadStatus('Preparing upload...');
     setUploadProgress(0);
-    
+
     const filesToFileList = (files: File[]): FileList => {
       const dataTransfer = new DataTransfer();
       files.forEach(file => dataTransfer.items.add(file));
       return dataTransfer.files;
     };
-    
+
     try {
       let filesToActuallyUpload: File[];
 
       if (isFolder) {
         setUploadStatus(`Zipping ${finalName}...`);
         const zip = new JSZip();
-        
+
         const traverseFileTree = async (entry: any, currentZipFolder: any): Promise<void> => {
           if (entry.isFile) {
             const file = await new Promise<File>(resolve => entry.file(resolve));
@@ -747,7 +748,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             await Promise.all(directoryEntries.map((dirEntry: any) => traverseFileTree(dirEntry, newFolder)));
           }
         };
-        
+
         if (items[0].webkitRelativePath) { 
             const topLevelFolder = items[0].webkitRelativePath.split('/')[0];
             const rootZipFolder = (strategy === 'merge') ? zip : zip.folder(finalName);
@@ -757,7 +758,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                 const pathInZip = (strategy === 'merge')
                     ? file.webkitRelativePath.substring(topLevelFolder.length + 1)
                     : file.webkitRelativePath.substring(topLevelFolder.length + 1); 
-                
+
                 if (pathInZip) {
                     rootZipFolder!.file(pathInZip, file);
                 }
@@ -765,7 +766,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         } else {
             const entry = items[0].webkitGetAsEntry();
             const rootZipFolder = (strategy === 'merge') ? zip : zip.folder(finalName);
-            
+
             const dirReader = entry.createReader();
             let allEntries: any[] = [];
             let readResults: any[] = await new Promise(res => dirReader.readEntries(res));
@@ -775,7 +776,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             }
             await Promise.all(allEntries.map((dirEntry: any) => traverseFileTree(dirEntry, rootZipFolder)));
         }
-        
+
         const content = await zip.generateAsync({ type: "blob" }, (metadata: { percent: number }) => {
           setUploadProgress(Math.round(metadata.percent));
         });
@@ -831,17 +832,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       default: return '';
     }
   };
-  
+
   const sortedFiles = useMemo(() => {
     const filesToDisplay = globalSearchTerm ? searchResults : files;
-    
+
     return [...filesToDisplay].sort((a, b) => {
         if (a.is_dir && !b.is_dir) return -1;
         if (!a.is_dir && b.is_dir) return 1;
         return compareNames(a.name, b.name);
     });
   }, [files, globalSearchTerm, searchResults]);
-  
+
   const renderFileRepresentation = (file: FileEntry) => {
     if (file.is_dir) {
       return <Folder size={36} className="mr-3 text-(--primary-light)" />;
@@ -853,7 +854,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
     return <FileIcon size={36} className="mr-3 text-(--primary-light)" />;
   }
-  
+
 
   return (
     <div className="p-6 card">
@@ -866,7 +867,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         .animate-toast { animation: slide-in-and-fade-out 3s ease-in-out forwards; }
       `}</style>
       <div className="flex items-center gap-3 mb-4">
-        <div className="flex-1 min-w-0"><Breadcrumbs currentPath={currentPath} onNavigate={fetchFiles} /></div>
+        <div className="flex-1 min-w-0"><Breadcrumbs currentPath={currentPath} onNavigate={fetchFiles} rootLabel={rootLabel} /></div>
         {connectionMode && (
           <span
             title={beamConnectionModeMeta(connectionMode).description}
@@ -904,7 +905,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
           )}
         </div>
       </div>
-      
+
       {isSearching && <p className="text-center text-xl text-(--warning)">Searching...</p>}
       {showLoading && !showUploadPopup && <p className="text-center text-xl text-(--warning)">Loading...</p>}
       {error && <p className="text-(--error) text-center text-xl mb-4">{error}</p>}
@@ -973,13 +974,13 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               </button>
               <button title="Download" disabled={picking || !!downloadProgress} onClick={async (e) => {
                 e.stopPropagation();
-                if (blockReadOnly()) return;
+                if (readOnly && !allowReadOnlyDownloads && blockReadOnly()) return;
                 // Single-flight: ignore clicks while a download is already
                 // running so a double-click can't launch overlapping downloads.
                 if (downloadProgress) return;
                 if (downloadLimit > 0 && file.size > downloadLimit) {
                   const limitStr = downloadLimit >= 1024 * 1024 * 1024 ? `${(downloadLimit / (1024 * 1024 * 1024)).toFixed(1)} GB` : `${Math.round(downloadLimit / (1024 * 1024))} MB`;
-                  setToastMessage({ message: `File size exceeds download limit of ${limitStr}.`, type: 'error' }); return;
+                  showToast(`File size exceeds download limit of ${limitStr}.`, 'error'); return;
                 }
                 if (file.is_dir) {
                   openSelectiveDownload(file);
@@ -992,7 +993,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                     );
                   } catch (err) {
                     console.error('Download failed:', err);
-                    setToastMessage({ message: 'Download failed.', type: 'error' });
+                    showToast('Download failed.', 'error');
                   }
                   setDownloadProgress(null);
                 }
@@ -1064,10 +1065,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               <h2 className="modal-title">Upload</h2>
             </div>
             <div className="modal-body">
-            
+
             {uploadPopupView === 'select' && (
               <>
-                <p className="text-sm mb-4 text-(--base-08)">Upload to: <span className="font-mono text-(--accent-light)">/{currentPath || 'servers'}</span></p>
+                <p className="text-sm mb-4 text-(--base-08)">Upload to: <span className="font-mono text-(--accent-light)">/{currentPath || rootLabel}</span></p>
                 <div 
                   onDragOver={handleDragOver} 
                   onDragLeave={handleDragLeave} 
@@ -1077,7 +1078,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                     <input type="file" multiple ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                     {/* @ts-ignore */}
                     <input type="file" ref={folderInputRef} onChange={handleFileSelect} className="hidden" multiple webkitdirectory="" directory="" />
-                    
+
                     <div className="text-center">
                         <p className="text-sm text-(--base-07) mb-4">Drag & Drop files or a folder here</p>
                         <div className="flex justify-center gap-3">
@@ -1103,7 +1104,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                     </div>
                   </div>
                 )}
-                
+
                 {popupError && <p className="text-(--error-light) text-sm mt-3">{popupError}</p>}
 
                 <div className="flex justify-end gap-2 mt-6">
@@ -1114,7 +1115,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                 </div>
               </>
             )}
-            
+
             {uploadPopupView === 'progress' && (
               <div className="mt-4">
                  <p className="text-center text-sm text-(--base-08) mb-2">{uploadStatus}</p>
@@ -1161,7 +1162,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                     </div>
                 </div>
             )}
-            
+
             </div>
           </div>
         </div>
@@ -1229,7 +1230,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             )}
             <div className="modal-footer">
               {fileIsReadOnly ? (
-                 <span className="text-sm text-(--base-07) mr-auto self-center">Compressed file, read-only.</span>
+                 <span className="text-sm text-(--base-07) mr-auto self-center">Read-only file.</span>
               ) : !isEditingEnabled ? (
                  <button onClick={() => { if (blockReadOnly()) return; setIsEditingEnabled(true); }} className="btn btn-secondary px-4 py-2 text-sm">Edit</button>
               ) : (
@@ -1245,7 +1246,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
           </div>
         </div>
       )}
-      
+
       {/* Selective Download Popup */}
       {selectiveDownloadTarget && (
         <SelectiveDownloadModal

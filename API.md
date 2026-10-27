@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **564 routes** in 53 sections: 250 GET, 166 POST, 50 PUT, 39 PATCH, 60 DELETE.
+- **573 routes** in 53 sections: 253 GET, 168 POST, 51 PUT, 39 PATCH, 63 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **370** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **122** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **373** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -157,12 +157,12 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (36)
+- [/api/me](#apime) (41)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
-- [/api/notifications](#apinotifications) (4)
-- [/api/packs](#apipacks) (24)
+- [/api/notifications](#apinotifications) (5)
+- [/api/packs](#apipacks) (27)
 - [/api/placement](#apiplacement) (3)
 - [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
@@ -534,9 +534,14 @@ can still show what exists.
 | POST | `/api/me/backup-storages/{id:[0-9]+}/test` | session | `backupstorage.write` | - | `BackupHandler.TestOwnStorage` | the same round trip the admin path runs, against the caller's own storage only. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
 | GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
+| GET | `/api/me/modrinth-favorites` | session | _no capability_ | - | `PacksHandler.Favorites` | is the authenticated caller's own public Modrinth bookmarks. |
+| PUT | `/api/me/modrinth-favorites` | session | _no capability_ | Limit | `PacksHandler.Favorites` | is the authenticated caller's own public Modrinth bookmarks. |
 | GET | `/api/me/modrinth-pat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `ModrinthPATHandler.Status` | returns whether the user has a PAT configured + (if so) the username + last_validated timestamp. |
 | PUT | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Set` | accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores. |
 | DELETE | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Clear` | wipes the PAT entirely. |
+| GET | `/api/me/modrinth-watches` | session | _no capability_ | - | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |
+| POST | `/api/me/modrinth-watches` | session | _no capability_ | Limit | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |
+| DELETE | `/api/me/modrinth-watches/{id:[0-9]+}` | session | _no capability_ | - | `PacksHandler.DeleteWatch` | removes only a watch belonging to the signed-in caller. |
 | DELETE | `/api/me/nodes/{id:[0-9]+}` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.DeleteMyNode` | removes the caller's own machine. |
 | POST | `/api/me/nodes/{id:[0-9]+}/admit` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.AdmitMyNode` | {fingerprint} - let this machine back in with the key its owner read off the machine's own log. |
 | GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
@@ -612,6 +617,7 @@ can still show what exists.
 | GET | `/api/notifications` | session | _no capability_ | - | `NotificationsHandler.List` | the caller's own notifications plus the unread count. |
 | POST | `/api/notifications/read-all` | session | _no capability_ | - | `NotificationsHandler.MarkAllRead` | marks every one of the caller's notifications read. |
 | GET | `/api/notifications/unread-count` | session | _no capability_ | - | `NotificationsHandler.UnreadCount` | cheap polling endpoint for the bell badge. |
+| DELETE | `/api/notifications/{id:[0-9]+}` | session | _no capability_ | - | `NotificationsHandler.Delete` | removes one inbox notification belonging to the caller. |
 | POST | `/api/notifications/{id:[0-9]+}/read` | session | _no capability_ | - | `NotificationsHandler.MarkRead` | marks one notification read. |
 
 ## /api/packs
@@ -636,6 +642,9 @@ can still show what exists.
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetContentText` | returns the UTF-8 text of a single stored content entry (e.g. a config file) so the panel can edit it in place. |
 | PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the content zip at the same key and re-hashing. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ExportMrpack` | downloads a build: .mrpack by default, or server content ZIP with ?kind=server. |
+| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.Folders` | stores empty authoring directories as metadata; file paths already imply their parent directories. |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Folders` | stores empty authoring directories as metadata; file paths already imply their parent directories. |
+| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Folders` | stores empty authoring directories as metadata; file paths already imply their parent directories. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.MigrateBuild` | - |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |

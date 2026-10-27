@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Store, ExternalLink, CircleCheck, CircleAlert, Loader2 } from 'lucide-react';
@@ -19,11 +21,11 @@ export default function StoreConnectPage() {
     const [summary, setSummary] = useState<StoreAccountSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [redirecting, setRedirecting] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
 
     const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 4000);
+        notifyToast(msg, ok);
+
     }, []);
 
     const refresh = useCallback(async () => {
@@ -108,11 +110,7 @@ export default function StoreConnectPage() {
                 ? <StoreAccountCard summary={summary} onChanged={refresh} onError={m => showToast(m, false)} />
                 : <SkeletonCard />)}
 
-            {toast && (
-                <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2.5 rounded-md text-sm shadow-lg ${toast.ok ? 'bg-(--success) text-white' : 'bg-(--error) text-white'}`}>
-                    {toast.ok ? <CircleCheck size={16} /> : <CircleAlert size={16} />} {toast.msg}
-                </div>
-            )}
+
         </div>
     );
 }

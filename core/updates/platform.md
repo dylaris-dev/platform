@@ -8,6 +8,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.27.3
+
+### Features
+- **Guided modpack authoring.** Open All builds and the how-to guide, edit configs in the
+  shared file browser, and check another Minecraft version or loader in New build. `core` `panel`
+- **Favorite mods and watch Minecraft availability.** Daily alerts report once per Minecraft
+  release; specific jobs finish automatically and inbox messages stay until deleted. `core` `panel`
+- **Copy feedback with one click.** Panel toasts stay longer, show a countdown outline and
+  pause on hover. Published builds can open their exact version in Modrinth App. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Availability alerts, favorites and folder operations are scoped to the caller and pack
+  permissions; alert delivery is deduplicated transactionally across Core replicas. `core`
+
+### Fixes
+- Modrinth project creation sends required empty arrays and creates drafts as required by
+  the upstream API. Resource availability checks do not require a mod-loader tag. `core`
+- Creating a file in the shared browser now uses the selected folder instead of the root. `panel`
+
 ## 2026.10.27.2
 
 ### Features

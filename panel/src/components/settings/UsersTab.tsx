@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, setUserEmail, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
@@ -110,7 +112,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     const [routeMode, setRouteMode] = useState<RouteMode>('default');
     const [routeMax, setRouteMax] = useState(5);
     const [routeSaving, setRouteSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
     const [resetting2FA, setResetting2FA] = useState(false);
 
     const [editEmail, setEditEmail] = useState('');
@@ -230,8 +232,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
     };
 
     const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
+        notifyToast(msg, ok);
+
     };
 
     useEffect(() => {
@@ -967,14 +969,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
             )}
 
             {/* Toast */}
-            {toast && (
-                <div className="fixed bottom-6 right-6 z-50">
-                    <div className="flex items-center gap-2 px-4 py-2.5 rounded-md bg-(--base-02) border border-(--base-04) shadow-lg">
-                        {toast.ok ? <CircleCheck size={14} className="text-(--success-light)" /> : <CircleAlert size={14} className="text-(--error-light)" />}
-                        <span className="text-sm text-(--base-09)">{toast.msg}</span>
-                    </div>
-                </div>
-            )}
+
 
             {/* Username history modal */}
             {historyUser && (
@@ -1072,7 +1067,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
     const [quota, setQuota] = useState(''); // '' = use platform default
     const [savingStatus, setSavingStatus] = useState(false);
     const [savingOverrides, setSavingOverrides] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
 
     // An operator's node and link ceilings over the purchase (null follows it).
     // The traffic fields below are warn-only ('' = leave unset, no limit).
@@ -1136,7 +1131,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
         void loadTrafficLimits();
     }, [user.id]);
 
-    const show = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3000); };
+    const show = (msg: string, ok: boolean) => { notifyToast(msg, ok);  };
 
     // The traffic scope this dialog writes. Deleting the row is what hands the
     // question back to the platform default, so "no override" has to stay
@@ -1427,9 +1422,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 </div>
                                 <p className="text-xs text-(--base-05)">Empty falls back to the platform default. 0 means this user may store none - it is not a way to switch the quota off.</p>
                                 <div className="flex items-center justify-end gap-3">
-                                    {toast && (
-                                        <span className={`text-sm ${toast.ok ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{toast.msg}</span>
-                                    )}
+
                                     <button
                                         type="button"
                                         onClick={saveOverrides}

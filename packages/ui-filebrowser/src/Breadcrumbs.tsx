@@ -1,15 +1,16 @@
 import React from 'react';
 
 export interface BreadcrumbsProps {
+  rootLabel?: string;
   currentPath: string;
   onNavigate: (path: string) => void;
 }
 
 // Path breadcrumb trail. The implicit root crumb is "servers" (empty path);
 // every segment before the last is a button that navigates to that path.
-const Breadcrumbs: React.FC<BreadcrumbsProps> = ({ currentPath, onNavigate }) => {
+const Breadcrumbs: React.FC<BreadcrumbsProps> = ({ currentPath, onNavigate, rootLabel = 'servers' }) => {
   const pathSegments = currentPath.split('/').filter((p: string) => p);
-  const breadcrumbs = [{ name: 'servers', path: '' }];
+  const breadcrumbs = [{ name: rootLabel, path: '' }];
   let cumulativePath = '';
   for (const segment of pathSegments) {
     cumulativePath = cumulativePath ? `${cumulativePath}/${segment}` : segment;

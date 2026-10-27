@@ -11,6 +11,11 @@ export interface Notification {
     createdAt: string;
 }
 
+export async function deleteNotification(id:number){
+    const response=await fetch(`${API_URL}/notifications/${id}`,{method:'DELETE',headers:getAuthHeader()});
+    return handleResponse(response);
+}
+
 export async function listNotifications(unreadOnly = false, limit = 50) {
     try {
         const params = new URLSearchParams();

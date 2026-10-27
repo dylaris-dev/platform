@@ -1,5 +1,7 @@
 'use client';
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Plus, Network, Trash2, Server, Circle, Shield } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
@@ -20,7 +22,7 @@ export default function WarpTab() {
 
     const [regions, setRegions] = useState<WarpRegionView[]>([]);
     const [loading, setLoading] = useState(true);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
 
     const [newRegion, setNewRegion] = useState({ region: '', subnet: '' });
     const [addingRegion, setAddingRegion] = useState(false);
@@ -34,7 +36,7 @@ export default function WarpTab() {
     const [fwLoaded, setFwLoaded] = useState(false);
     const [savingFw, setSavingFw] = useState(false);
 
-    const showToast = (msg: string, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
+    const showToast = (msg: string, ok = true) => { notifyToast(msg, ok);  };
 
     const load = useCallback(async () => {
         try {
@@ -244,7 +246,7 @@ export default function WarpTab() {
                 </button>
             </div>
 
-            {toast && <div className={`fixed bottom-4 right-4 px-4 py-2 rounded-md text-sm font-medium ${toast.ok ? 'bg-(--success)/20 text-(--success-light) border border-(--success)/40' : 'bg-(--error)/20 text-(--error-light) border border-(--error)/40'}`}>{toast.msg}</div>}
+
         </div>
     );
 }

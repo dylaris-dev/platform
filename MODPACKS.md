@@ -38,8 +38,10 @@ visible while editing.
 Installed content is grouped into **Mods**, **Resources**, and **Configs &
 scripts**, with search and project artwork on the installed rows. Missing or
 broken artwork falls back to a content-type icon. **Add content** opens the
-Modrinth browser in the main workspace. **Tools & sharing** contains Minecraft
-migration and download links. Build environment, counts and export/publish
+Modrinth browser in the main workspace. **Sharing** contains expiring share links;
+**Version alerts** manages daily availability checks. **All builds** returns to
+the pack overview, and the sidebar includes a full authoring guide.
+Build environment, counts and export/publish
 actions stay in the right sidebar. Owners and administrators see recent
 activity there and can open the complete audit history separately.
 
@@ -56,11 +58,15 @@ Filtering changes the view only, not the build or its exported content.
 ## Build creation
 
 **New build** is a dedicated page. Choose an empty draft or copy an existing
-build, then select Minecraft, loader and compatible loader version. Copying
-requires the same Minecraft version and loader; use Minecraft migration for a
-different environment. A copy retains exact artifact versions and environment
+build, then select Minecraft, loader and compatible loader version. A copy with
+the same Minecraft version and loader retains exact artifact versions and environment
 sides in independent content records. Config edits and removals in the copy do
 not rewrite the source. Creation and content copying are one database transaction.
+Changing Minecraft or loader in New build switches to migration: the availability
+preview names missing/unverifiable projects, and leaving them out requires explicit
+confirmation. This creates an independent draft, resolves compatible upstream
+versions and copies local configs without converting them. Partial copy failures
+are reported for review. Add a description/changelog to record the reason.
 Available metadata is fetched through Core; compatible recommended/stable loader
 builds are selected when possible. The proposed pack version starts at `0.1.0`
 or the next patch and remains editable. Re-selecting the same Minecraft/loader
@@ -88,6 +94,42 @@ Uploads retain their build-specific file/catalog identity. Overlapping output
 paths are rejected instead of silently overwriting another entry. Remove or
 edit the existing content before uploading a replacement at the same target.
 
+**Configs & scripts** also uses the same file browser/editor as server files.
+Create, copy, rename, edit and delete text files or folders in shared, client-only
+or server-only scope. Edit and delete permissions are checked independently.
+Editing is limited to 1 MB; binary files and legacy bundles use the full build
+download. Empty folders are metadata and enter exports when they contain files.
+
+## Favorites and Minecraft availability alerts
+
+Star or watch a Modrinth project from installed content or search, in Modpacks
+or Server Content. Favorites belong to the signed-in user. **Favorites & alerts**
+lists saved projects and active checks; a build's **Version alerts** tab also
+offers pack-level checks using a fixed snapshot of that build's linked mods.
+
+Choose a loader and stable Minecraft targets, future stable releases, or both.
+Checks run daily, with an hourly retry after upstream errors. An initial check
+usually starts within a minute. A notification appears only when all linked mods
+support the target, once per watched Minecraft release, not for each mod build.
+Specific jobs finish after all requested targets notify; future jobs persist.
+Local/unlinked mods, dependencies, configs and gameplay need manual validation.
+Removing pack access cancels its watch. Existing messages stay in the bell inbox
+when read and are removed only by manual deletion. Mobile delivery is not implemented.
+
+## Storage and backups
+
+The configured artifact provider stores uploaded ZIP/config objects below
+`packs/<owner>/mods/<artifact>/<hash>.zip`. Persisted `.mrpack` and cached server
+archives live under an opaque, HMAC-derived `modpacks/` namespace. These paths
+are download credentials and must not be published in logs or screenshots.
+PostgreSQL holds build metadata, access grants, favorite/watch state and empty
+folders. Back up both PostgreSQL and the configured local/S3 artifact provider.
+
+Ordinary client exports are rendered without persisting or freezing the draft.
+Publishing persists and freezes the artifact before calling Modrinth; an upstream
+failure can therefore leave a frozen build that can be retried. Installing a
+draft as a server may persist its cached snapshot without freezing it.
+
 ## Export and verification
 
 `.mrpack` exports retain Modrinth references and embed local files under shared,
@@ -103,6 +145,12 @@ these are not bundled. The guide includes version-specific Java advice and
 Windows/Linux launch examples for Fabric, Forge and NeoForge. Legacy Forge
 releases use their own installed JAR instead of modern generated launch scripts.
 Review the Minecraft EULA yourself before accepting it.
+
+For a build with an uploaded Modrinth version, **Open in Modrinth App** uses the
+official `modrinth://version/<id>` protocol. The app must be installed, and its
+account must be allowed to access that version; visibility/moderation still apply.
+Private DYLARIS drafts use manual `.mrpack` import instead of a public share link.
+Modrinth project creation submits required empty arrays and a draft project.
 
 Both downloads require pack read access. The server download uses
 `GET /api/packs/{id}/builds/{buildId}/export?kind=server`; the default or
@@ -126,3 +174,14 @@ server ZIP contained exactly 176 server/shared paths; all 16 client-only paths
 were excluded. All included linked JAR hashes and 72 configuration/script bytes
 matched their pinned source. The download validation passed 185 assertions.
 This verifies the archive, not a Minecraft boot or a launcher import.
+
+The subsequent authoring expansion was verified against a fresh PostgreSQL schema
+and the isolated Core. Tests cover concurrent exactly-once inbox delivery,
+cross-user isolation, manual deletion and job completion. Browser checks exercised
+file creation/edit/save/copy/rename/delete, the guide, All builds, alert creation
+and deletion, and clipboard/hover/countdown behavior using an isolated clipboard.
+A real migration produced 111 linked items and 72 byte-identical configs on
+Minecraft 1.21.1 / NeoForge 21.1.265, explicitly omitting nine unavailable items.
+The source retained its pinned versions, paths, sides and hashes. The publish
+request is covered by a multipart contract test; external publication, native
+launcher import and a Minecraft boot are not claimed as tested.

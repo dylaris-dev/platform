@@ -36,6 +36,7 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		items = append(items, services.CompatItem{
+			ContentType:          e.ContentType,
 			Key:                  strconv.Itoa(e.ID),
 			ProjectID:            e.ModrinthProjectID,
 			Title:                e.PrettyName,
@@ -47,14 +48,25 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mode, specific := handlers.CompatQuery(r)
+	loader := r.URL.Query().Get("loader")
+	if loader == "" {
+		loader = build.Loader
+	}
+	if loader != "fabric" && loader != "forge" && loader != "neoforge" && loader != "quilt" && loader != "vanilla" {
+		handlers.SendJSONError(w, "Unsupported target loader", 400)
+		return
+	}
 	targets, err := handlers.ResolveTargets(r.Context(), build.Minecraft, mode, specific)
 	if err != nil {
 		handlers.SendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+	if mode == services.CompatModeSpecific && specific == build.Minecraft {
+		targets = []string{specific}
+	}
 	matrix, err := services.BuildMatrix(r.Context(), services.CompatRequest{
 		Items:   items,
-		Loader:  build.Loader,
+		Loader:  loader,
 		Current: build.Minecraft,
 		Mode:    mode,
 		Targets: targets,

@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import React, { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -125,7 +127,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     const [powerCooldownUntil, setPowerCooldownUntil] = useState<Record<number, number>>({});
     const [killCooldown, setKillCooldown] = useState(false);
     const [showKillConfirm, setShowKillConfirm] = useState(false);
-    const [powerError, setPowerError] = useState<string>('');
+
 
     // Brief "copied" feedback for the owner-id click-to-copy in the info bar.
     const [ownerCopied, setOwnerCopied] = useState(false);
@@ -141,11 +143,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     }, [serverId]);
 
     // Auto-clear power error after a few seconds so it doesn't stick on screen.
-    useEffect(() => {
-        if (!powerError) return;
-        const t = setTimeout(() => setPowerError(''), 4500);
-        return () => clearTimeout(t);
-    }, [powerError]);
+
 
     const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
     const [showRoutesModal, setShowRoutesModal] = useState(false);
@@ -667,7 +665,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             // surface the message so the user knows why nothing happened.
             if (res && (res.success === false || res.error)) {
                 clearPending();
-                setPowerError(res.error || res.message || 'Action rejected');
+                notifyToast(res.error || res.message || 'Action rejected', false);
                 // Re-fetch cooldown: a 429 means we missed the install
                 // window's start (different tab finished setup, etc.).
                 try {
@@ -693,7 +691,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         try {
             const res: any = await cancelMigration(selectedServer.id);
             if (res && (res.success === false || res.error)) {
-                setPowerError(res.error || res.message || 'Could not cancel the migration');
+                notifyToast(res.error || res.message || 'Could not cancel the migration', false);
             }
         } catch { /* network error — the move continues; admin can retry */ }
         setCancellingMigration(false);
@@ -1614,12 +1612,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
 
             {/* Floating toast for power-action rejections (cooldown 429s,
                 permission errors, etc.). Auto-dismisses after a few seconds. */}
-            {powerError && (
-                <div className="fixed bottom-6 right-6 z-50 flex items-start gap-2.5 px-4 py-3 rounded-md bg-(--error-ghost) border border-(--error)/30 text-(--error-light) text-sm shadow-lg max-w-sm">
-                    <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                    <span>{powerError}</span>
-                </div>
-            )}
+
         </main>
     );
 }

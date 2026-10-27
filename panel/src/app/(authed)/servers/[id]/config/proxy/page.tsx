@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import { useCallback, useEffect, useState, lazy, Suspense } from 'react';
 
 import { AlertTriangle, Network, Copy, Info } from 'lucide-react';
@@ -38,12 +40,12 @@ export default function ServerConfigProxyPage() {
     const [notFound, setNotFound] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
     const showToast = useCallback((msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3500);
+        notifyToast(msg, ok);
+
     }, []);
 
     const reload = useCallback(async () => {
@@ -221,11 +223,7 @@ export default function ServerConfigProxyPage() {
                 </div>
             </div>
 
-            {toast && (
-                <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-md text-sm shadow-lg max-w-sm border ${toast.ok ? 'bg-(--success-ghost) border-(--success)/30 text-(--success-light)' : 'bg-(--error-ghost) border-(--error)/30 text-(--error-light)'}`}>
-                    {toast.msg}
-                </div>
-            )}
+
         </div>
     );
 }

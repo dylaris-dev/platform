@@ -26,6 +26,7 @@ export interface PackBuild {
     channel: string;
     frozen: boolean;
     modrinthPublished: boolean;
+    modrinthVersionId?: string;
     // Storage key of the rendered .mrpack once persisted (beta/release publish).
     // Empty on drafts — those are still installable, Core renders on the fly.
     mrpackStorageKey: string;

@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     getGatewayRoutes, deleteGatewayRoute, triggerGatewaySync,
@@ -31,9 +33,9 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
     const [search, setSearch] = useState('');
     const [deleteModal, setDeleteModal] = useState<GatewayRoute | null>(null);
     const [deleting, setDeleting] = useState(false);
-    const [toasts, setToasts] = useState<Toast[]>([]);
+
     const [copied, setCopied] = useState<string | null>(null);
-    const toastCounter = useRef(0);
+
 
     const [bulkOpen, setBulkOpen] = useState(false);
     const [bulkSuffixes, setBulkSuffixes] = useState<RouteSuffix[]>([]);
@@ -42,9 +44,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
     const [bulkConfirmCountdown, setBulkConfirmCountdown] = useState(0);
 
     const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
-        const id = ++toastCounter.current;
-        setToasts(prev => [...prev, { id, message, type }]);
-        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+        notifyToast(message, type !== 'error');
     }, []);
 
     const fetchRoutes = useCallback(async () => {
@@ -407,22 +407,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
             )}
 
             {/* Toasts */}
-            {toasts.length > 0 && (
-                <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
-                    {toasts.map(toast => (
-                        <div
-                            key={toast.id}
-                            className={`px-4 py-2.5 rounded-(--radius-lg) text-sm font-medium shadow-lg border ${
-                                toast.type === 'success'
-                                    ? 'bg-(--base-02) border-(--success-light)/30 text-(--success-light)'
-                                    : 'bg-(--base-02) border-(--error-light)/30 text-(--error-light)'
-                            }`}
-                        >
-                            {toast.message}
-                        </div>
-                    ))}
-                </div>
-            )}
+
         </div>
     );
 }

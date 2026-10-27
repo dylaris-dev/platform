@@ -8,6 +8,7 @@ import {
 } from '@/lib/api/modrinth';
 import { envLabel, envParam, matchesEnv, type EnvFilter } from '@/lib/modSide';
 import { EnvironmentFilter, EnvTag } from '@/components/mods/EnvironmentFilter';
+import { ModrinthProjectActions } from '@/components/mods/ModrinthLibrary';
 import ProjectIcon from '@/components/modpacks/ProjectIcon';
 import ModProjectDetails from '@/components/mods/ModProjectDetails';
 
@@ -179,7 +180,7 @@ export default function ModrinthVersionBrowser({
                                 )}
                                 <ChevronDown size={14} className={`shrink-0 mt-1 text-(--base-06) ${expandedSlug === hit.slug ? 'rotate-180' : ''}`} />
                             </button>
-                            <a href={`https://modrinth.com/project/${encodeURIComponent(hit.project_id)}`} target="_blank" rel="noopener noreferrer" aria-label={`Open ${hit.title} on Modrinth`} title="Open on Modrinth" className="btn btn-ghost btn-sm"><ExternalLink size={14} /></a>
+                            <ModrinthProjectActions projectId={hit.project_id} title={hit.title} loader={loader}/><a href={`https://modrinth.com/project/${encodeURIComponent(hit.project_id)}`} target="_blank" rel="noopener noreferrer" aria-label={`Open ${hit.title} on Modrinth`} title="Open on Modrinth" className="btn btn-ghost btn-sm"><ExternalLink size={14} /></a>
                             </div>
 
                             {expandedSlug === hit.slug && (

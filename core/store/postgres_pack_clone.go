@@ -65,6 +65,9 @@ func (s *PostgresStore) ClonePackBuild(ctx context.Context, b *models.PackBuild,
 			return 0, fmt.Errorf("attach copied build content: %w", err)
 		}
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO pack_build_folders(build_id,path)SELECT $1,path FROM pack_build_folders WHERE build_id=$2`, id, source); err != nil {
+		return 0, fmt.Errorf("copy build folders: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit build copy: %w", err)
 	}

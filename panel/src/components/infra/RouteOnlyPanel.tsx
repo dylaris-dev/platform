@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, Pencil, X, RefreshCw } from 'lucide-react';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
@@ -77,7 +79,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     const [targetPort, setTargetPort] = useState(25565);
     const [creating, setCreating] = useState(false);
     const [error, setError] = useState('');
-    const [toast, setToast] = useState('');
+
 
     // The domain of the route being edited, or null while creating a new one.
     //
@@ -117,8 +119,8 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
     }, [allowed, load]);
 
     const flashToast = (msg: string) => {
-        setToast(msg);
-        setTimeout(() => setToast(''), 3000);
+        notifyToast(msg);
+
     };
 
     const mint = async () => {
@@ -311,9 +313,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                         ))}
                     </div>
                 )}
-                {toast && (
-                    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-md bg-(--success) text-white text-sm shadow-lg">{toast}</div>
-                )}
+
             </div>
         );
     }
@@ -572,9 +572,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             </aside>
             </div>
 
-            {toast && (
-                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-md bg-(--success) text-white text-sm shadow-lg">{toast}</div>
-            )}
+
         </div>
     );
 }

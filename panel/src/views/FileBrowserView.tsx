@@ -6,6 +6,7 @@ import type { BeamConnectionMode } from '@dylaris/ui-filebrowser';
 import { createBeamAdapter, isWails, syncSessionWithWails, connectWailsToServer, getWailsConnectionMode } from '@/lib/adapters';
 import { useDevMode, devLog } from '@/lib/devLog';
 import DebugLogPanel from '@/components/DebugLogPanel';
+import { toast } from '@/components/ui/Toast';
 
 interface FileBrowserViewProps {
   currentServerPath: string;
@@ -62,6 +63,7 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
           adapter={adapter}
           readOnly={readOnly}
           connectionMode={connectionMode}
+          notify={toast}
         />
       </div>
       {devMode && (

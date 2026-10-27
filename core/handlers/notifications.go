@@ -100,6 +100,26 @@ func (h *NotificationsHandler) MarkAllRead(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// Delete removes one inbox notification belonging to the caller. Reading and
+// dismissal are independent, so an availability alert remains until removed.
+func (h *NotificationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	user, _ := r.Context().Value("userID").(string)
+	if user == "" {
+		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+	if err != nil || id <= 0 {
+		sendJSONError(w, "Invalid id", 400)
+		return
+	}
+	if err = h.state.Store.DeleteNotification(id, user); err != nil {
+		sendJSONError(w, "Delete failed", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
 // ── Emitter helper used by other handlers ────────────────────────────
 
 // EmitTicketNotification creates one notification row per recipient. Callers

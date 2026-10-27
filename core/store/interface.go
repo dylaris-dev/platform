@@ -708,6 +708,15 @@ type Store interface {
 	CountUnreadNotifications(userID string) (int, error)
 	MarkNotificationRead(id int64, userID string) error
 	MarkAllNotificationsRead(userID string) error
+	DeleteNotification(id int64, userID string) error
+	ListPackFolders(ctx context.Context, buildID int) ([]string, error)
+	SetPackFolder(ctx context.Context, buildID int, path string, remove bool) error
+	ListModrinthFavorites(ctx context.Context, userID string) ([]models.ModrinthFavorite, error)
+	SetModrinthFavorite(ctx context.Context, userID string, favorite models.ModrinthFavorite, remove bool) error
+	ListModrinthWatches(ctx context.Context, userID string, due bool) ([]models.ModrinthWatch, error)
+	CreateModrinthWatch(ctx context.Context, watch *models.ModrinthWatch) error
+	DeleteModrinthWatch(ctx context.Context, id int64, userID string) error
+	CompleteModrinthWatch(ctx context.Context, watch models.ModrinthWatch, versions []models.ModrinthWatchVersion, failure string) error
 
 	// Auto-close support
 	ListResolvedTicketsOlderThan(cutoff time.Time) ([]int, error)

@@ -8,6 +8,7 @@ import { logout, updateProfile as apiUpdateProfile } from '@/lib/api';
 import { getSetupStatus } from '@/lib/api/setup';
 import Navbar from '@/components/Navbar';
 import { SidebarCollapseProvider, useSidebarCollapse } from '@/lib/SidebarCollapse';
+import { ModrinthLibraryProvider } from '@/components/mods/ModrinthLibrary';
 import { useLayout } from '@/lib/useBreakpoint';
 import NotificationsDropdown from '@/components/NotificationsDropdown';
 import UpdatesBell from '@/components/UpdatesBell';
@@ -113,6 +114,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
 
     return (
         <SidebarCollapseProvider>
+        <ModrinthLibraryProvider>
         {/* min-w-[1024px] is a deliberate floor, not an oversight. Below it the
             file browser, the console, the routes table and the module strip stop
             being usable at any font size, and a horizontal scrollbar is the
@@ -304,6 +306,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 />
             )}
         </div>
+        </ModrinthLibraryProvider>
         </SidebarCollapseProvider>
     );
 }

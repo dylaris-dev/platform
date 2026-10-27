@@ -335,6 +335,12 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyPackCollaboratorsSchema(db); err != nil {
 		return err
 	}
+	if err := applyModrinthWatchSchema(db); err != nil {
+		return err
+	}
+	if err := applyPackFoldersSchema(db); err != nil {
+		return err
+	}
 
 	if err := applyDataBillingSchema(db); err != nil {
 		return err

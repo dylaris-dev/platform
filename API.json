@@ -2516,6 +2516,26 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/me/modrinth-favorites",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "is the authenticated caller's own public Modrinth bookmarks.",
+      "handler": "PacksHandler.Favorites",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/modrinth-favorites",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "is the authenticated caller's own public Modrinth bookmarks.",
+      "handler": "PacksHandler.Favorites",
+      "group": "me",
+      "external": false
+    },
+    {
       "method": "DELETE",
       "path": "/api/me/modrinth-pat",
       "auth": "session",
@@ -2542,6 +2562,36 @@
       "authorization": "modpack.write",
       "description": "accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores.",
       "handler": "ModrinthPATHandler.Set",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/modrinth-watches",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "lists or creates a daily, user-owned release availability alert.",
+      "handler": "PacksHandler.Watches",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/modrinth-watches",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "lists or creates a daily, user-owned release availability alert.",
+      "handler": "PacksHandler.Watches",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/me/modrinth-watches/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "removes only a watch belonging to the signed-in caller.",
+      "handler": "PacksHandler.DeleteWatch",
       "group": "me",
       "external": false
     },
@@ -3113,6 +3163,16 @@
       "external": false
     },
     {
+      "method": "DELETE",
+      "path": "/api/notifications/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "removes one inbox notification belonging to the caller.",
+      "handler": "NotificationsHandler.Delete",
+      "group": "notifications",
+      "external": false
+    },
+    {
       "method": "POST",
       "path": "/api/notifications/{id:[0-9]+}/read",
       "auth": "session",
@@ -3298,6 +3358,36 @@
       "authorization": "modpack.read",
       "description": "downloads a build: .mrpack by default, or server content ZIP with ?kind=server.",
       "handler": "PacksHandler.ExportMrpack",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders",
+      "auth": "session",
+      "authorization": "modpack.delete",
+      "description": "stores empty authoring directories as metadata; file paths already imply their parent directories.",
+      "handler": "PacksHandler.Folders",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "stores empty authoring directories as metadata; file paths already imply their parent directories.",
+      "handler": "PacksHandler.Folders",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "stores empty authoring directories as metadata; file paths already imply their parent directories.",
+      "handler": "PacksHandler.Folders",
       "group": "packs",
       "external": false
     },
@@ -5623,10 +5713,10 @@
     }
   ],
   "counts": {
-    "total": 565,
+    "total": 574,
     "byAuth": {
       "none": 31,
-      "session": 516,
+      "session": 525,
       "user API key": 10,
       "warp key": 8
     },
@@ -5649,13 +5739,13 @@
       "infrastructure": 3,
       "library": 6,
       "maintenance": 1,
-      "me": 36,
+      "me": 41,
       "mirror": 2,
       "modrinth": 9,
       "modules": 6,
       "nodes": 14,
-      "notifications": 4,
-      "packs": 24,
+      "notifications": 5,
+      "packs": 27,
       "placement": 3,
       "platform-backups": 13,
       "regions": 1,

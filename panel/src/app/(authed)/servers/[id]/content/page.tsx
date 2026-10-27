@@ -31,6 +31,7 @@ import { installQueue, planConfirm, planRefused, updateQueue } from '@/lib/modIn
 import { MOD_LOADERS_FOR, PLUGIN_LOADERS, buildMismatch, loaderName, modFitKnown } from '@/lib/modFit';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
+import { ModrinthProjectActions } from '@/components/mods/ModrinthLibrary';
 import ProjectIcon from '@/components/modpacks/ProjectIcon';
 import { UnmanagedJars } from '@/components/mods/UnmanagedJars';
 import { isMcVersion } from '@/lib/validation';
@@ -1606,7 +1607,7 @@ export default function ServerContentPage() {
                                             {/* A fixed name: aria-pressed already says whether it is on. */}
                                             <span className="sr-only">Pause updates</span>
                                         </button>}
-                                        <a
+                                        <ModrinthProjectActions projectId={m.modrinthProjectId} title={m.title || m.fileName}/><a
                                             href={`https://modrinth.com/project/${m.modrinthProjectSlug || m.modrinthProjectId}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -1663,6 +1664,7 @@ function ModListRow({
     // <button>, so the row itself is a div with button semantics (role +
     // keyboard handling) and the action button stops propagation.
     const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+        if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             onOpen();
@@ -1715,7 +1717,7 @@ function ModListRow({
                 )}
             </div>
 
-            <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className="flex flex-col items-end gap-1.5 shrink-0"><div className="flex" onClick={event=>event.stopPropagation()}><ModrinthProjectActions projectId={hit.project_id} title={hit.title}/></div>
                 {status === 'up-to-date' && (
                     <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm">installed</span>
                 )}

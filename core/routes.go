@@ -487,6 +487,7 @@ var requiredCaps = map[string]string{
 	"/api/packs/{id:[0-9]+}/builds":                                                                 "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}":                                                "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content":                                        "modpack.read",
+	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders":                                        "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth":                               "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload":                                 "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}":                  "modpack.delete",
@@ -968,6 +969,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.updated", packsHandler.UpdateBuild)))))).Methods("PATCH")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.deleted", packsHandler.DeleteBuild)))))).Methods("DELETE")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListContent)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Folders)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_created", packsHandler.Folders)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_deleted", packsHandler.Folders)))))).Methods("DELETE")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.added", packsHandler.AddModrinth)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.uploaded", packsHandler.UploadContent)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.removed", packsHandler.RemoveContent)))))).Methods("DELETE")
@@ -1326,6 +1330,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/notifications/unread-count", authHandler.AuthMiddleware(notificationsHandler.UnreadCount)).Methods("GET")
 	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(notificationsHandler.MarkRead)).Methods("POST")
 	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(notificationsHandler.MarkAllRead)).Methods("POST")
+	api.HandleFunc("/notifications/{id:[0-9]+}", authHandler.AuthMiddleware(notificationsHandler.Delete)).Methods("DELETE")
+	favoriteLimiter := handlers.NewIPRateLimiter()
+	watchLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/me/modrinth-favorites", authHandler.AuthMiddleware(packsHandler.Favorites)).Methods("GET")
+	api.HandleFunc("/me/modrinth-favorites", authHandler.AuthMiddleware(favoriteLimiter.Limit(30, packsHandler.Favorites))).Methods("PUT")
+	api.HandleFunc("/me/modrinth-watches", authHandler.AuthMiddleware(packsHandler.Watches)).Methods("GET")
+	api.HandleFunc("/me/modrinth-watches", authHandler.AuthMiddleware(watchLimiter.Limit(10, packsHandler.Watches))).Methods("POST")
+	api.HandleFunc("/me/modrinth-watches/{id:[0-9]+}", authHandler.AuthMiddleware(packsHandler.DeleteWatch)).Methods("DELETE")
 
 	// --- Server audit ---
 	// View is server.audit.read: owner + admin via the resolver short-circuits,

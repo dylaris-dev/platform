@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import React, { useCallback, useEffect, useState } from 'react';
 import {
     Database, ArrowRightCircle, ShieldAlert, Download, Trash2, Loader2,
@@ -23,11 +25,11 @@ import { fmtDateTime } from '@/lib/time';
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
     const [loading, setLoading] = useState(true);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
 
     const flash = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 3000);
+        notifyToast(msg, ok);
+
     };
 
     const reload = async () => {
@@ -79,16 +81,7 @@ export default function TicketDBTab() {
 
             <BackupCard onChanged={reload} flash={flash} />
 
-            {toast && (
-                <div className={`fixed bottom-4 right-4 px-4 py-3 rounded-md shadow-lg text-sm font-medium ${
-                    toast.ok ? 'bg-(--success-ghost) text-(--success-light)' : 'bg-(--error-ghost) text-(--error-light)'
-                }`}>
-                    <span className="inline-flex items-center gap-2">
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        {toast.msg}
-                    </span>
-                </div>
-            )}
+
         </SettingsPage>
     );
 }

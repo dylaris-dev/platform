@@ -1,16 +1,31 @@
-"use client";
+'use client';
 
 import { useEffect, useState } from 'react';
 import { Copy, Loader2, RefreshCw } from 'lucide-react';
 import Select from '@/components/ui/Select';
 import { createBuild, listContent, type PackBuild } from '@/lib/api/packs';
+import { getBuildCompat, migrateBuild, type CompatMatrix } from '@/lib/api/modcompat';
 import { getPackMinecraftVersions, getPackLoaderVersions } from '@/lib/api/packMetadata';
-import { PACK_LOADERS, preferredPackLoaderVersion, packBuildMetadataError, nextPackBuildLabel, type PackLoaderVersion } from '@/lib/serverLoaderMetadata';
+import {
+    PACK_LOADERS,
+    preferredPackLoaderVersion,
+    packBuildMetadataError,
+    nextPackBuildLabel,
+    type PackLoaderVersion,
+} from '@/lib/serverLoaderMetadata';
 import { compareVersionsDesc } from '@/views/setup/VersionPicker';
 import { WorkspaceDetails } from '@/components/modpacks/PackWorkspace';
 import styles from './workspace.module.css';
+import ProjectIcon, { useProjectMetadata } from './ProjectIcon';
 
-export default function CreateBuildForm({ packId, previous, builds, existingVersions, onClose, onCreated }: {
+export default function CreateBuildForm({
+    packId,
+    previous,
+    builds,
+    existingVersions,
+    onClose,
+    onCreated,
+}: {
     packId: number;
     previous?: PackBuild;
     builds: PackBuild[];
@@ -20,7 +35,9 @@ export default function CreateBuildForm({ packId, previous, builds, existingVers
 }) {
     const [versionString, setVersionString] = useState(() => nextPackBuildLabel(existingVersions));
     const [minecraft, setMinecraft] = useState(previous?.minecraft || '');
-    const [loader, setLoader] = useState(previous && PACK_LOADERS.some(v => v === previous.loader) ? previous.loader : 'fabric');
+    const [loader, setLoader] = useState(
+        previous && PACK_LOADERS.some((v) => v === previous.loader) ? previous.loader : 'fabric',
+    );
     const [loaderVersion, setLoaderVersion] = useState(previous?.loaderVersion || '');
     const [minecraftVersions, setMinecraftVersions] = useState<string[]>([]);
     const [loaderVersions, setLoaderVersions] = useState<PackLoaderVersion[]>([]);
@@ -33,23 +50,81 @@ export default function CreateBuildForm({ packId, previous, builds, existingVers
     const [saving, setSaving] = useState(false);
     const [sourceId, setSourceId] = useState(previous ? String(previous.id) : '');
     const [sourceCount, setSourceCount] = useState<number | null>(null);
-    const source = builds.find(build => String(build.id) === sourceId);
+    const [changelog, setChangelog] = useState('');
+    const [compat, setCompat] = useState<CompatMatrix | null>(null);
+    const [checking, setChecking] = useState(false);
+    const [compatError, setCompatError] = useState('');
+    const [dropMissing, setDropMissing] = useState(false);
+    const source = builds.find((build) => String(build.id) === sourceId);
     const copyCompatible = !source || (source.minecraft === minecraft && source.loader === loader);
-    useEffect(() => { let live = true; setSourceCount(null); if (sourceId) listContent(packId, Number(sourceId)).then(entries => { if (live) setSourceCount(entries.length); }); return () => { live = false; }; }, [packId, sourceId]);
+    const migrating = !!source && !copyCompatible;
+    const verdict =
+        compat?.lines.flatMap((line) => line.versions).find((v) => v.minecraft === minecraft) ||
+        (compat?.checked === 0 ? { minecraft, missing: [] } : undefined);
+    const missing = verdict?.missing || [];
+    const metadata = useProjectMetadata(missing.map((item) => item.projectId));
+    const canCreate = !migrating || (!checking && !compatError && !!verdict && (missing.length === 0 || dropMissing));
+    useEffect(() => {
+        let live = true;
+        setCompat(null);
+        setDropMissing(false);
+        setCompatError('');
+        if (!source || copyCompatible || !minecraft) {
+            setChecking(false);
+            return;
+        }
+        setChecking(true);
+        const timer = setTimeout(() => {
+            getBuildCompat(packId, source.id, 'specific', minecraft, loader)
+                .then((result) => {
+                    if (!live) return;
+                    if (!result.success || !result.matrix)
+                        setCompatError(result.message || 'Availability check failed.');
+                    else setCompat(result.matrix);
+                })
+                .catch(() => {
+                    if (live) setCompatError('Availability check failed.');
+                })
+                .finally(() => {
+                    if (live) setChecking(false);
+                });
+        }, 350);
+        return () => {
+            live = false;
+            clearTimeout(timer);
+        };
+    }, [packId, source?.id, copyCompatible, minecraft, loader, retry]);
+    useEffect(() => {
+        let live = true;
+        setSourceCount(null);
+        if (sourceId)
+            listContent(packId, Number(sourceId)).then((entries) => {
+                if (live) setSourceCount(entries.length);
+            });
+        return () => {
+            live = false;
+        };
+    }, [packId, sourceId]);
 
     useEffect(() => {
         const controller = new AbortController();
         setLoadingMinecraft(true);
         setMinecraftError('');
-        getPackMinecraftVersions(controller.signal).then(versions => {
-            if (controller.signal.aborted) return;
-            const sorted = versions.sort(compareVersionsDesc);
-            setMinecraftVersions(sorted);
-            setMinecraft(current => sorted.includes(current) ? current : sorted[0] || '');
-            if (!sorted.length) setMinecraftError('No Minecraft releases are available.');
-        }).catch(error => {
-            if (!controller.signal.aborted) setMinecraftError(error instanceof Error ? error.message : 'Could not load Minecraft versions.');
-        }).finally(() => { if (!controller.signal.aborted) setLoadingMinecraft(false); });
+        getPackMinecraftVersions(controller.signal)
+            .then((versions) => {
+                if (controller.signal.aborted) return;
+                const sorted = versions.sort(compareVersionsDesc);
+                setMinecraftVersions(sorted);
+                setMinecraft((current) => (sorted.includes(current) ? current : sorted[0] || ''));
+                if (!sorted.length) setMinecraftError('No Minecraft releases are available.');
+            })
+            .catch((error) => {
+                if (!controller.signal.aborted)
+                    setMinecraftError(error instanceof Error ? error.message : 'Could not load Minecraft versions.');
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setLoadingMinecraft(false);
+            });
         return () => controller.abort();
     }, [retry]);
 
@@ -63,30 +138,59 @@ export default function CreateBuildForm({ packId, previous, builds, existingVers
             return () => controller.abort();
         }
         setLoadingLoader(true);
-        getPackLoaderVersions(loader, minecraft, controller.signal).then(versions => {
-            if (controller.signal.aborted) return;
-            setLoaderVersions(versions);
-            setLoaderVersion(current => preferredPackLoaderVersion(versions, current));
-        }).catch(error => {
-            if (!controller.signal.aborted) setLoaderError(error instanceof Error ? error.message : 'Could not load loader versions.');
-        }).finally(() => { if (!controller.signal.aborted) setLoadingLoader(false); });
+        getPackLoaderVersions(loader, minecraft, controller.signal)
+            .then((versions) => {
+                if (controller.signal.aborted) return;
+                setLoaderVersions(versions);
+                setLoaderVersion((current) => preferredPackLoaderVersion(versions, current));
+            })
+            .catch((error) => {
+                if (!controller.signal.aborted)
+                    setLoaderError(error instanceof Error ? error.message : 'Could not load loader versions.');
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setLoadingLoader(false);
+            });
         return () => controller.abort();
     }, [minecraft, loader, retry]);
 
-    const metadataError = packBuildMetadataError({ minecraft, loader, loaderVersion }, minecraftVersions, loaderVersions);
+    const metadataError = packBuildMetadataError(
+        { minecraft, loader, loaderVersion },
+        minecraftVersions,
+        loaderVersions,
+    );
     const busy = loadingMinecraft || loadingLoader;
     const submit = async () => {
-        if (!copyCompatible || saving || busy || minecraftError || loaderError || metadataError || !versionString.trim()) return;
+        if (!canCreate || saving || busy || minecraftError || loaderError || metadataError || !versionString.trim())
+            return;
         setSaving(true);
         setSubmitError('');
-        const result = await createBuild(packId, {
-            versionString: versionString.trim(), minecraft, loader,
-            loaderVersion: loader === 'vanilla' ? undefined : loaderVersion,
-            sourceBuildId: sourceId ? Number(sourceId) : undefined,
-        });
+        const result =
+            migrating && source
+                ? await migrateBuild(packId, source.id, {
+                      versionString: versionString.trim(),
+                      minecraft,
+                      loader,
+                      loaderVersion,
+                      dropUnavailable: dropMissing,
+                      changelog,
+                  })
+                : await createBuild(packId, {
+                      versionString: versionString.trim(),
+                      minecraft,
+                      loader,
+                      loaderVersion: loader === 'vanilla' ? undefined : loaderVersion,
+                      sourceBuildId: sourceId ? Number(sourceId) : undefined,
+                      changelog,
+                  });
         setSaving(false);
-        if (result.success && result.build) onCreated(result.build);
-        else setSubmitError(result.message || 'Could not create this build.');
+        if (result.success && result.build) {
+            if ('failed' in result && Array.isArray(result.failed) && result.failed.length)
+                setSubmitError(
+                    `Build created with ${result.failed.length} failed content copies. Open it from All builds to review before using it.`,
+                );
+            else onCreated(result.build);
+        } else setSubmitError(result.message || 'Could not create this build.');
     };
 
     return (
@@ -94,50 +198,284 @@ export default function CreateBuildForm({ packId, previous, builds, existingVers
             <h2 className="text-lg font-display font-semibold text-(--base-09)">Create a build</h2>
             <div className="space-y-5 mt-5">
                 <div>
-                    <label className="input-label" htmlFor="pack-build-source">Start with</label>
-                    <Select id="pack-build-source" value={sourceId} disabled={saving} onChange={value => {
-                        setSourceId(value);
-                        const selected = builds.find(build => String(build.id) === value);
-                        if (selected) { setMinecraft(selected.minecraft); setLoader(selected.loader); setLoaderVersion(selected.loaderVersion); }
-                    }} options={[{ value: '', label: 'Empty build' }, ...builds.map(build => ({ value: String(build.id), label: `Copy ${build.versionString}` }))]} />
-                    <p className="text-xs text-(--base-06) mt-2">Copy a build to keep its exact mod versions and independent config files, or start empty.</p>
+                    <label className="input-label" htmlFor="pack-build-source">
+                        Start with
+                    </label>
+                    <Select
+                        id="pack-build-source"
+                        value={sourceId}
+                        disabled={saving}
+                        onChange={(value) => {
+                            setSourceId(value);
+                            const selected = builds.find((build) => String(build.id) === value);
+                            if (selected) {
+                                setMinecraft(selected.minecraft);
+                                setLoader(selected.loader);
+                                setLoaderVersion(selected.loaderVersion);
+                            }
+                        }}
+                        options={[
+                            { value: '', label: 'Empty build' },
+                            ...builds.map((build) => ({
+                                value: String(build.id),
+                                label: `Copy ${build.versionString}`,
+                            })),
+                        ]}
+                    />
+                    <p className="text-xs text-(--base-06) mt-2">
+                        Copy a build unchanged, or choose another Minecraft version/loader to check Modrinth
+                        availability and create a migrated draft. The source stays unchanged.
+                    </p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <p className="text-xs text-(--base-06)">Choose a Minecraft release and loader. Compatible loader builds are fetched automatically; the recommended stable build is selected when available.</p>
+                    <p className="text-xs text-(--base-06)">
+                        Choose a Minecraft release and loader. Compatible loader builds are fetched automatically; the
+                        recommended stable build is selected when available.
+                    </p>
                     <div>
-                        <label htmlFor="pack-build-version" className="input-label">Pack version (editable)</label>
-                        <input id="pack-build-version" value={versionString} onChange={e => setVersionString(e.target.value)} disabled={saving} placeholder="0.1.0" className="input-field input-mono w-full" />
+                        <label htmlFor="pack-build-version" className="input-label">
+                            Pack version (editable)
+                        </label>
+                        <input
+                            id="pack-build-version"
+                            value={versionString}
+                            onChange={(e) => setVersionString(e.target.value)}
+                            disabled={saving}
+                            placeholder="0.1.0"
+                            className="input-field input-mono w-full"
+                        />
                     </div>
                     <div>
-                        <label htmlFor="pack-build-minecraft" className="input-label">Minecraft</label>
-                        <Select id="pack-build-minecraft" value={minecraft} onChange={value => { if (value === minecraft) return; setMinecraft(value); setLoaderVersion(''); }} options={minecraftVersions.map(value => ({ value, label: value }))} searchable disabled={saving || loadingMinecraft} placeholder={loadingMinecraft ? 'Loading Minecraft versions...' : 'Select Minecraft version'} />
+                        <label htmlFor="pack-build-minecraft" className="input-label">
+                            Minecraft
+                        </label>
+                        <Select
+                            id="pack-build-minecraft"
+                            value={minecraft}
+                            onChange={(value) => {
+                                if (value === minecraft) return;
+                                setMinecraft(value);
+                                setLoaderVersion('');
+                            }}
+                            options={minecraftVersions.map((value) => ({ value, label: value }))}
+                            searchable
+                            disabled={saving || loadingMinecraft}
+                            placeholder={
+                                loadingMinecraft ? 'Loading Minecraft versions...' : 'Select Minecraft version'
+                            }
+                        />
                     </div>
                     <div>
-                        <label htmlFor="pack-build-loader" className="input-label">Loader</label>
-                        <Select id="pack-build-loader" value={loader} onChange={value => { if (value === loader) return; setLoader(value); setLoaderVersion(''); }} options={PACK_LOADERS.map(value => ({ value, label: value === 'vanilla' ? 'Vanilla (no mod loader)' : value === 'neoforge' ? 'NeoForge' : value[0].toUpperCase() + value.slice(1) }))} disabled={saving} />
+                        <label htmlFor="pack-build-loader" className="input-label">
+                            Loader
+                        </label>
+                        <Select
+                            id="pack-build-loader"
+                            value={loader}
+                            onChange={(value) => {
+                                if (value === loader) return;
+                                setLoader(value);
+                                setLoaderVersion('');
+                            }}
+                            options={PACK_LOADERS.map((value) => ({
+                                value,
+                                label:
+                                    value === 'vanilla'
+                                        ? 'Vanilla (no mod loader)'
+                                        : value === 'neoforge'
+                                          ? 'NeoForge'
+                                          : value[0].toUpperCase() + value.slice(1),
+                            }))}
+                            disabled={saving}
+                        />
                     </div>
                     {loader !== 'vanilla' && (
                         <div>
-                            <label htmlFor="pack-build-loader-version" className="input-label">Loader version</label>
-                            <Select id="pack-build-loader-version" value={loaderVersion} onChange={setLoaderVersion} options={loaderVersions.map(v => ({ value: v.version, label: `${v.version}${v.recommended ? ' (recommended)' : v.stable ? '' : ' (pre-release)'}` }))} searchable disabled={saving || busy || !minecraft} placeholder={loadingLoader ? 'Loading compatible loader versions...' : 'Select loader version'} />
-                            {!busy && !loaderError && minecraft && loaderVersions.length === 0 && <p className="text-xs text-(--warning-light) mt-2">No compatible {loader} builds for Minecraft {minecraft}. Choose another Minecraft version or loader.</p>}
+                            <label htmlFor="pack-build-loader-version" className="input-label">
+                                Loader version
+                            </label>
+                            <Select
+                                id="pack-build-loader-version"
+                                value={loaderVersion}
+                                onChange={setLoaderVersion}
+                                options={loaderVersions.map((v) => ({
+                                    value: v.version,
+                                    label: `${v.version}${v.recommended ? ' (recommended)' : v.stable ? '' : ' (pre-release)'}`,
+                                }))}
+                                searchable
+                                disabled={saving || busy || !minecraft}
+                                placeholder={
+                                    loadingLoader ? 'Loading compatible loader versions...' : 'Select loader version'
+                                }
+                            />
+                            {!busy && !loaderError && minecraft && loaderVersions.length === 0 && (
+                                <p className="text-xs text-(--warning-light) mt-2">
+                                    No compatible {loader} builds for Minecraft {minecraft}. Choose another Minecraft
+                                    version or loader.
+                                </p>
+                            )}
                         </div>
                     )}
-                    {!copyCompatible && <p role="alert" className="text-xs text-(--warning-light) md:col-span-2">Copying requires the same Minecraft version and loader. Select an empty build, or use the source build’s Minecraft migration tool.</p>}
-                    {busy && <p role="status" className="text-xs text-(--base-06) flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Loading version metadata...</p>}
-                    {(minecraftError || loaderError) && <div role="alert" className="text-xs text-(--error-light) space-y-2"><p>{minecraftError || loaderError}</p><button onClick={() => setRetry(v => v + 1)} className="btn btn-secondary btn-sm"><RefreshCw size={12} /> Retry</button></div>}
-                    {submitError && <p role="alert" className="text-xs text-(--error-light)">{submitError}</p>}
+                    {migrating && (
+                        <section className="card p-4 space-y-3 md:col-span-2">
+                            <h3 className="font-medium text-sm">
+                                Target availability: MC {minecraft} / {loader}
+                            </h3>
+                            {checking ? (
+                                <p role="status" className="text-xs">
+                                    Checking compatible Modrinth versions...
+                                </p>
+                            ) : compatError ? (
+                                <p role="alert" className="text-xs text-(--error-light)">
+                                    {compatError}
+                                    <button
+                                        onClick={() => setRetry((n) => n + 1)}
+                                        className="btn btn-secondary btn-sm ml-2"
+                                    >
+                                        Retry check
+                                    </button>
+                                </p>
+                            ) : (
+                                verdict && (
+                                    <>
+                                        <p className="text-sm">
+                                            {(compat?.checked || 0) - missing.length}/{compat?.checked} linked items
+                                            available · {missing.length} missing · {compat?.unlinked || 0} local mods
+                                            unchecked
+                                        </p>
+                                        {missing.length > 0 && (
+                                            <>
+                                                <ul className="max-h-48 overflow-auto text-xs space-y-2">
+                                                    {missing.map((m) => (
+                                                        <li key={m.key} className="flex items-center gap-2">
+                                                            <ProjectIcon
+                                                                name={m.title}
+                                                                url={metadata.projects[m.projectId]?.icon_url}
+                                                                className="w-7 h-7 shrink-0"
+                                                            />
+                                                            <span>
+                                                                {metadata.projects[m.projectId]?.title || m.title} (
+                                                                {m.reason === 'unresolvable'
+                                                                    ? 'could not be verified'
+                                                                    : 'no compatible version'}
+                                                                )
+                                                            </span>
+                                                            <a
+                                                                href={`https://modrinth.com/project/${encodeURIComponent(m.projectId)}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="ml-auto text-(--accent-light)"
+                                                            >
+                                                                View project
+                                                            </a>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                                <label className="flex items-start gap-2 text-xs">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={dropMissing}
+                                                        onChange={(e) => setDropMissing(e.target.checked)}
+                                                    />
+                                                    Create the new draft without these {missing.length} unavailable
+                                                    items. Keep the source unchanged.
+                                                </label>
+                                            </>
+                                        )}
+                                        <p className="text-xs text-(--warning-light)">
+                                            Local configs/scripts are copied, not converted. Review loader-specific
+                                            files, dependencies and gameplay on the new build.
+                                        </p>
+                                    </>
+                                )
+                            )}
+                        </section>
+                    )}
+                    {busy && (
+                        <p role="status" className="text-xs text-(--base-06) flex items-center gap-2">
+                            <Loader2 size={13} className="animate-spin" /> Loading version metadata...
+                        </p>
+                    )}
+                    {(minecraftError || loaderError) && (
+                        <div role="alert" className="text-xs text-(--error-light) space-y-2">
+                            <p>{minecraftError || loaderError}</p>
+                            <button onClick={() => setRetry((v) => v + 1)} className="btn btn-secondary btn-sm">
+                                <RefreshCw size={12} /> Retry
+                            </button>
+                        </div>
+                    )}
+                    {submitError && (
+                        <p role="alert" className="text-xs text-(--error-light)">
+                            {submitError}
+                        </p>
+                    )}
                 </div>
-                {source && <p className="text-xs text-(--base-06) bg-(--base-02) p-3 rounded-md flex gap-2"><Copy size={14} className="shrink-0" /> {sourceCount === null ? 'Loading source content...' : `Copying ${sourceCount} content entries from ${source.versionString}. Changes to this draft do not modify the source.`}</p>}
+                <label className="input-label block">
+                    Description / changelog
+                    <textarea
+                        aria-label="Build description"
+                        value={changelog}
+                        disabled={saving}
+                        onChange={(event) => setChangelog(event.target.value)}
+                        rows={3}
+                        className="input-field w-full mt-2"
+                        placeholder="What changes in this build?"
+                    />
+                </label>
+                {source && (
+                    <p className="text-xs text-(--base-06) bg-(--base-02) p-3 rounded-md flex gap-2">
+                        <Copy size={14} className="shrink-0" />{' '}
+                        {sourceCount === null
+                            ? 'Loading source content...'
+                            : `Copying ${sourceCount} content entries from ${source.versionString}. Changes to this draft do not modify the source.`}
+                    </p>
+                )}
                 <div className="flex justify-end gap-2 pt-5 border-t border-(--base-03)">
-                    <button onClick={onClose} disabled={saving} className="btn btn-secondary">Cancel</button>
-                    <button onClick={submit} disabled={!copyCompatible || saving || busy || !!minecraftError || !!loaderError || !!metadataError || !versionString.trim()} className="btn btn-primary disabled:opacity-40">{saving ? 'Creating...' : 'Create build'}</button>
+                    <button onClick={onClose} disabled={saving} className="btn btn-secondary">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={submit}
+                        disabled={
+                            !canCreate ||
+                            saving ||
+                            busy ||
+                            !!minecraftError ||
+                            !!loaderError ||
+                            !!metadataError ||
+                            !versionString.trim()
+                        }
+                        className="btn btn-primary disabled:opacity-40"
+                    >
+                        {saving ? 'Creating...' : migrating ? 'Create migrated build' : 'Create build'}
+                    </button>
                 </div>
             </div>
             <WorkspaceDetails>
                 <p className="mono-label text-(--base-06) mb-4">Build preview</p>
                 <h2 className="text-xl font-mono text-(--base-09) mb-3 break-all">{versionString || 'New draft'}</h2>
-                <dl className={styles.metadata}><div><dt>Minecraft</dt><dd>{minecraft || 'Select version'}</dd></div><div><dt>Loader</dt><dd>{loader}</dd></div><div><dt>Loader build</dt><dd>{loaderVersion || 'None'}</dd></div><div><dt>Source</dt><dd>{source?.versionString || 'Empty build'}</dd></div><div><dt>Content entries</dt><dd>{sourceId ? sourceCount ?? 'Loading...' : 0}</dd></div></dl>
+                <dl className={styles.metadata}>
+                    <div>
+                        <dt>Minecraft</dt>
+                        <dd>{minecraft || 'Select version'}</dd>
+                    </div>
+                    <div>
+                        <dt>Loader</dt>
+                        <dd>{loader}</dd>
+                    </div>
+                    <div>
+                        <dt>Loader build</dt>
+                        <dd>{loaderVersion || 'None'}</dd>
+                    </div>
+                    <div>
+                        <dt>Source</dt>
+                        <dd>{source?.versionString || 'Empty build'}</dd>
+                    </div>
+                    <div>
+                        <dt>Content entries</dt>
+                        <dd>{sourceId ? (sourceCount ?? 'Loading...') : 0}</dd>
+                    </div>
+                </dl>
             </WorkspaceDetails>
         </div>
     );

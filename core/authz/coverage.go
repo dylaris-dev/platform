@@ -265,10 +265,14 @@ var ExemptRoutes = map[string]bool{
 	"/api/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download": true, // authed; in-handler ACL
 
 	// Notifications: in-app inbox, scoped to the caller's own userID in-handler.
-	"/api/notifications":                  true, // authed; own inbox
-	"/api/notifications/unread-count":     true, // authed; own inbox
-	"/api/notifications/{id:[0-9]+}/read": true, // authed; own inbox
-	"/api/notifications/read-all":         true, // authed; own inbox
+	"/api/notifications":                   true, // authed; own inbox
+	"/api/notifications/unread-count":      true, // authed; own inbox
+	"/api/notifications/{id:[0-9]+}/read":  true, // authed; own inbox
+	"/api/notifications/read-all":          true, // authed; own inbox
+	"/api/notifications/{id:[0-9]+}":       true, // authed; own inbox deletion
+	"/api/me/modrinth-favorites":           true, // authed; own public project bookmarks
+	"/api/me/modrinth-watches":             true, // authed; own alerts, source pack read ACL in handler
+	"/api/me/modrinth-watches/{id:[0-9]+}": true, // authed; own alert deletion
 
 	// In-panel update feed: admin-only, gated in-handler via IsAdmin.
 	"/api/updates": true, // authed; admin-only in-handler (IsAdmin)

@@ -53,7 +53,7 @@ type CreateProjectRequest struct {
 	IsDraft         bool     `json:"is_draft"`     // true → not published, requires explicit publish
 	Categories      []string `json:"categories"`   // optional
 	AdditionalCats  []string `json:"additional_categories,omitempty"`
-	InitialVersions []string `json:"initial_versions,omitempty"`
+	InitialVersions []string `json:"initial_versions"`
 }
 
 type ProjectResponse struct {
@@ -64,6 +64,14 @@ type ProjectResponse struct {
 // CreateProject creates a modpack project on Modrinth. The plaintext PAT
 // authorises; project ownership lands on the PAT's user.
 func (c *ModrinthClient) CreateProject(ctx context.Context, req CreateProjectRequest) (*ProjectResponse, error) {
+	// The v2 endpoint requires an array even when versions are uploaded later.
+	if req.InitialVersions == nil {
+		req.InitialVersions = []string{}
+	}
+	if req.Categories == nil {
+		req.Categories = []string{}
+	}
+	req.IsDraft = true
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err

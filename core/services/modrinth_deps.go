@@ -246,6 +246,34 @@ func LatestProjectVersionFor(projectID, mc, loader string) (*modrinthVersion, er
 	return latestFitting(context.Background(), projectID, mc, loader)
 }
 
+// Resources and shaders have a Minecraft version but no mod-loader constraint.
+func LatestProjectContentVersionFor(projectID, mc string) (*modrinthVersion, error) {
+	if strings.TrimSpace(mc) == "" {
+		return nil, errFitUnknown
+	}
+	list, err := fetchProjectVersions(context.Background(), projectID, nil, []string{mc})
+	if err != nil {
+		return nil, err
+	}
+	var best *modrinthVersion
+	for i := range list {
+		v := &list[i]
+		matches := false
+		for _, game := range v.GameVersions {
+			if game == mc {
+				matches = true
+			}
+		}
+		if !matches {
+			continue
+		}
+		if best == nil || channelRank(v.VersionType) < channelRank(best.VersionType) || channelRank(v.VersionType) == channelRank(best.VersionType) && v.DatePub > best.DatePub {
+			best = v
+		}
+	}
+	return best, nil
+}
+
 var errFitUnknown = errors.New("modrinth: a loader and a Minecraft version are needed to pick a version")
 
 func latestFitting(ctx context.Context, projectID, mc, loader string) (*modrinthVersion, error) {

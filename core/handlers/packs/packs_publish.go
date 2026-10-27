@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"dylaris-core/handlers"
@@ -56,10 +57,17 @@ func (h *PacksHandler) createModrinthProject(r *http.Request, mc *services.Modri
 		body = title + " — published from Dylaris"
 	}
 	slug := pack.InternalSlug
+	description := strings.TrimSpace(pack.Summary)
+	if len([]rune(description)) < 3 {
+		description = title + " modpack"
+	}
+	if text := []rune(description); len(text) > 255 {
+		description = string(text[:255])
+	}
 	return mc.CreateProject(r.Context(), services.CreateProjectRequest{
 		Slug:        slug,
 		Title:       title,
-		Description: pack.Summary,
+		Description: description,
 		Body:        body,
 		ProjectType: "modpack",
 		ClientSide:  "required",

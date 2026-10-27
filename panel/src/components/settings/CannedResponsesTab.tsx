@@ -1,5 +1,7 @@
 "use client";
 
+import { toast as notifyToast } from '@/components/ui/Toast';
+
 import React, { useEffect, useState } from 'react';
 import { MessageSquareQuote, Plus, Pencil, Trash2, X, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
 import {
@@ -30,12 +32,12 @@ export default function CannedResponsesTab() {
     const [form, setForm] = useState<FormState>(emptyForm);
     const [busy, setBusy] = useState(false);
     const [deleting, setDeleting] = useState<number | null>(null);
-    const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
     const [error, setError] = useState('');
 
     const showToast = (msg: string, ok = true) => {
-        setToast({ msg, ok });
-        setTimeout(() => setToast(null), 2800);
+        notifyToast(msg, ok);
+
     };
 
     const load = async () => {
@@ -215,16 +217,7 @@ export default function CannedResponsesTab() {
                 </div>
             )}
 
-            {toast && (
-                <div className={`fixed bottom-4 right-4 px-4 py-3 rounded-md shadow-lg text-sm font-medium ${
-                    toast.ok ? 'bg-(--success-ghost) text-(--success-light)' : 'bg-(--error-ghost) text-(--error-light)'
-                }`}>
-                    <span className="inline-flex items-center gap-2">
-                        {toast.ok ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
-                        {toast.msg}
-                    </span>
-                </div>
-            )}
+
         </SettingsPage>
     );
 }

@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { CircleAlert, CircleCheck } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { CircleAlert, CircleCheck, Copy, X } from 'lucide-react';
 
 /**
  * One toast host for the whole panel.
@@ -22,7 +22,7 @@ import { CircleAlert, CircleCheck } from 'lucide-react';
 export interface ToastOptions {
     /** false renders the error treatment. Defaults to true. */
     ok?: boolean;
-    /** Milliseconds before it dismisses itself. Defaults to 3500. */
+    /** Milliseconds before dismissal. At least 8 seconds, or 14 for errors. */
     durationMs?: number;
 }
 
@@ -50,7 +50,7 @@ export function toast(message: string, ok: boolean = true, opts: ToastOptions = 
         id: nextId++,
         message,
         ok: opts.ok ?? ok,
-        durationMs: opts.durationMs ?? 3500,
+        durationMs: Math.max(opts.durationMs ?? 0, (opts.ok ?? ok) ? 8000 : 14000),
     });
 }
 
@@ -59,7 +59,7 @@ export function ToastRoot() {
     const [items, setItems] = useState<ToastItem[]>([]);
 
     useEffect(() => {
-        publish = (t: ToastItem) => setItems(prev => [...prev, t]);
+        publish = (t: ToastItem) => setItems((prev) => [...prev, t]);
         return () => {
             publish = null;
         };
@@ -74,11 +74,11 @@ export function ToastRoot() {
         // interrupting a screen reader mid-sentence for "Saved" is worse than
         // waiting for the pause.
         <div className="toast-container" role="status" aria-live="polite">
-            {items.map(item => (
+            {items.map((item) => (
                 <ToastCard
                     key={item.id}
                     item={item}
-                    onDismiss={() => setItems(prev => prev.filter(i => i.id !== item.id))}
+                    onDismiss={() => setItems((prev) => prev.filter((i) => i.id !== item.id))}
                 />
             ))}
         </div>
@@ -86,30 +86,96 @@ export function ToastRoot() {
 }
 
 function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
+    const [hovered, setHovered] = useState(false);
+    const [focused, setFocused] = useState(false);
+    const paused = hovered || focused;
+    const [restart, setRestart] = useState(0);
+    const [copied, setCopied] = useState(false);
+    const [copyError, setCopyError] = useState(false);
+    const dismiss = useRef(onDismiss);
+    dismiss.current = onDismiss;
     useEffect(() => {
-        const t = setTimeout(onDismiss, item.durationMs);
+        if (paused) return;
+        const t = setTimeout(() => dismiss.current(), item.durationMs);
         return () => clearTimeout(t);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [item.id, item.durationMs]);
+    }, [item.id, item.durationMs, paused, restart]);
+    const restartTimer = () => setRestart((value) => value + 1);
+    const copy = async () => {
+        try {
+            await navigator.clipboard.writeText(item.message);
+            setCopied(true);
+            setCopyError(false);
+        } catch {
+            setCopyError(true);
+        }
+    };
 
     return (
-        <button
-            type="button"
-            onClick={onDismiss}
-            className="toast toast-dismissable"
-            // Out of the tab order, but NOT aria-hidden. It used to be both,
-            // and the message lives inside it - so the live region wrapping it
-            // had no accessible content and announced nothing at all, while the
-            // comment claimed the text was covered by exactly that region.
-            tabIndex={-1}
+        <div
+            className="toast toast-dismissable toast-copyable"
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => {
+                setHovered(false);
+                restartTimer();
+            }}
+            onFocusCapture={(event) => {
+                if ((event.target as HTMLElement).matches(':focus-visible')) setFocused(true);
+            }}
+            onBlurCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) {
+                    setFocused(false);
+                    restartTimer();
+                }
+            }}
         >
-            <div className={`toast-bar ${item.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
-            {item.ok ? (
-                <CircleCheck size={14} className="text-(--success-light) shrink-0" />
-            ) : (
-                <CircleAlert size={14} className="text-(--error-light) shrink-0" />
-            )}
-            <span className="text-sm text-(--base-09) text-left">{item.message}</span>
-        </button>
+            <svg className="toast-timer" aria-hidden="true">
+                <rect
+                    key={restart}
+                    x="1"
+                    y="1"
+                    width="calc(100% - 2px)"
+                    height="calc(100% - 2px)"
+                    rx="12"
+                    pathLength="1"
+                    style={{
+                        animationDuration: `${item.durationMs}ms`,
+                        animationPlayState: paused ? 'paused' : 'running',
+                        stroke: item.ok ? 'var(--success-light)' : 'var(--error-light)',
+                    }}
+                />
+            </svg>
+            <button
+                type="button"
+                onClick={copy}
+                className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+                title="Click to copy message"
+            >
+                <div className={`toast-bar ${item.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
+                {item.ok ? (
+                    <CircleCheck size={14} className="text-(--success-light) shrink-0" />
+                ) : (
+                    <CircleAlert size={14} className="text-(--error-light) shrink-0" />
+                )}
+                <span className="min-w-0">
+                    <span className="text-sm text-(--base-09) block break-words">{item.message}</span>
+                    <span className="text-[10px] text-(--base-06) block mt-1">
+                        {copyError
+                            ? 'Copy unavailable. Select and copy the message manually.'
+                            : copied
+                              ? 'Copied to clipboard'
+                              : 'Click to copy'}{' '}
+                        <Copy size={10} className="inline" />
+                    </span>
+                </span>
+            </button>
+            <button
+                type="button"
+                onClick={onDismiss}
+                className="btn btn-ghost btn-sm shrink-0"
+                aria-label="Dismiss message"
+            >
+                <X size={13} />
+            </button>
+        </div>
     );
 }
