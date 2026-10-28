@@ -76,14 +76,14 @@ func (s *PostgresStore) ListPacksByOwner(ownerID string) ([]models.Pack, error) 
 
 const buildCols = `id, pack_id, version_string, minecraft, loader, loader_version,
 	min_java, min_memory, changelog, channel, frozen,
-	modrinth_published, modrinth_version_id, mrpack_storage_key, mrpack_sha256, created_at, published_at`
+	modrinth_published, modrinth_version_id, mrpack_storage_key, mrpack_sha256, created_at, published_at, imported_from`
 
 func scanBuild(row interface{ Scan(...interface{}) error }) (*models.PackBuild, error) {
 	var b models.PackBuild
 	var publishedAt sql.NullTime
 	if err := row.Scan(&b.ID, &b.PackID, &b.VersionString, &b.Minecraft, &b.Loader, &b.LoaderVersion,
 		&b.MinJava, &b.MinMemory, &b.Changelog, &b.Channel, &b.Frozen,
-		&b.ModrinthPublished, &b.ModrinthVersionID, &b.MrpackStorageKey, &b.MrpackSHA256, &b.CreatedAt, &publishedAt); err != nil {
+		&b.ModrinthPublished, &b.ModrinthVersionID, &b.MrpackStorageKey, &b.MrpackSHA256, &b.CreatedAt, &publishedAt, &b.ImportedFrom); err != nil {
 		return nil, err
 	}
 	if publishedAt.Valid {
@@ -100,9 +100,9 @@ func (s *PostgresStore) CreatePackBuild(b *models.PackBuild) (int, error) {
 	}
 	var id int
 	err := s.db.QueryRow(`INSERT INTO pack_builds
-		(pack_id, version_string, minecraft, loader, loader_version, min_java, min_memory, changelog, channel)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-		b.PackID, b.VersionString, b.Minecraft, b.Loader, b.LoaderVersion, b.MinJava, b.MinMemory, b.Changelog, ch,
+		(pack_id, version_string, minecraft, loader, loader_version, min_java, min_memory, changelog, channel, imported_from)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+		b.PackID, b.VersionString, b.Minecraft, b.Loader, b.LoaderVersion, b.MinJava, b.MinMemory, b.Changelog, ch, b.ImportedFrom,
 	).Scan(&id)
 	return id, err
 }

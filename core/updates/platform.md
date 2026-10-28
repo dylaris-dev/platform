@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.8
+
+### Features
+- **Import from Modrinth.** Your existing Modrinth modpacks appear in the panel; importing one
+  turns every version into a read-only build you can copy into new builds. `core` `panel`
+- Sync from Modrinth imports versions published since; projects can be hidden from the list. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.28.7
 
 ### Features

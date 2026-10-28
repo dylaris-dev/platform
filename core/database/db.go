@@ -341,6 +341,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := applyPackFoldersSchema(db); err != nil {
 		return err
 	}
+	if err := applyModrinthImportSchema(db); err != nil {
+		return err
+	}
 
 	if err := applyDataBillingSchema(db); err != nil {
 		return err

@@ -15,6 +15,7 @@ import { SkeletonList } from '@/components/Skeleton';
 import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal';
 import PackActivity from '@/components/modpacks/PackActivity';
 import PackRecommendation from '@/components/modpacks/PackRecommendation';
+import ModrinthSyncDialog from '@/components/modpacks/ModrinthSyncDialog';
 import HelpTourButton from '@/components/help/HelpTourButton';
 import { ModrinthWatchDialog } from '@/components/mods/ModrinthLibrary';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
@@ -37,6 +38,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
     const [detailsOpen, setDetailsOpen] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [watchOpen, setWatchOpen] = useState(false);
+    const [syncOpen, setSyncOpen] = useState(false);
     useEffect(() => { setDetailsOpen(false); setWatchOpen(false); }, [pathname]);
     const { featureFlags, user } = useAppData();
     const { collapsed, toggle, width } = useSidebarCollapse();
@@ -125,6 +127,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                         <div className={`${styles.tools} ml-auto`}>
                             {builds.length > 0 && <button onClick={() => setWatchOpen(true)} aria-haspopup="dialog" aria-expanded={watchOpen} className={`btn btn-sm ${alertsSelected || watchOpen ? 'btn-primary' : 'btn-secondary'}`}><Bell size={14} />Pack version alerts</button>}
                             {pack.modrinthProjectId && permissions.canEdit && <Link href={`/modpacks/${packId}/modrinth`} className="btn btn-secondary btn-sm"><Globe size={14} />Modrinth page</Link>}
+                            {pack.modrinthProjectId && permissions.canEdit && featureFlags.modpacks && <button onClick={() => setSyncOpen(true)} className="btn btn-secondary btn-sm" title="Import Modrinth versions this pack does not have yet"><RefreshCw size={14} />Sync from Modrinth</button>}
                             {permissions.isOwner && <button onClick={() => setCollaborators(true)} className="btn btn-secondary btn-sm"><Users size={14} />Collaborators</button>}
                             {permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} aria-current={creating ? 'page' : undefined} className="btn btn-primary btn-sm"><Plus size={14} />New build</Link>}
                         </div>
@@ -140,6 +143,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
             </div>
         </div>
         {collaborators && <PackCollaboratorsModal packs={overview.packs} initialPackId={permissions.isOwner ? packId || undefined : undefined} onClose={() => { setCollaborators(false); refreshOverview(); refresh(); }} />}
+        {syncOpen && pack && <ModrinthSyncDialog packId={pack.id} title={pack.internalName} onClose={imported => { setSyncOpen(false); if (imported) void refresh(); }} />}
         {watchOpen && pack && <ModrinthWatchDialog packId={pack.id} title={pack.internalName} loader={alertSource?.loader} onClose={() => setWatchOpen(false)} />}
         {activity && <div className="modal-overlay" onClick={() => setActivity(false)}><ModalPanel onClose={() => setActivity(false)} className="modal-panel max-w-2xl" onClick={event => event.stopPropagation()}><div className="modal-header flex items-center justify-between gap-3"><h2 className="modal-title">Modpack activity</h2><button onClick={() => setActivity(false)} className="btn btn-secondary btn-sm">Close</button></div><div className="modal-body">{!packId || canAudit ? <PackActivity packId={packId || undefined} showPack={!packId} /> : <p className="text-sm text-(--base-06)">Only the owner and administrators can view this pack&apos;s activity.</p>}</div></ModalPanel></div>}
     </WorkspaceContext.Provider>;

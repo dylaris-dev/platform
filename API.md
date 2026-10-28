@@ -133,10 +133,10 @@ can still show what exists.
 
 ## At a glance
 
-- **579 routes** in 53 sections: 254 GET, 171 POST, 51 PUT, 41 PATCH, 63 DELETE.
+- **584 routes** in 53 sections: 256 GET, 173 POST, 52 PUT, 41 PATCH, 63 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **379** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **32** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **384** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **35** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -157,12 +157,12 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (41)
+- [/api/me](#apime) (44)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (5)
-- [/api/packs](#apipacks) (33)
+- [/api/packs](#apipacks) (35)
 - [/api/placement](#apiplacement) (3)
 - [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
@@ -542,6 +542,9 @@ can still show what exists.
 | GET | `/api/me/modrinth-watches` | session | _no capability_ | - | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |
 | POST | `/api/me/modrinth-watches` | session | _no capability_ | Limit | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |
 | DELETE | `/api/me/modrinth-watches/{id:[0-9]+}` | session | _no capability_ | - | `PacksHandler.DeleteWatch` | removes only a watch belonging to the signed-in caller. |
+| GET | `/api/me/modrinth/projects` | session | `modpack.read` | RequireModpacksEnabled | `PacksHandler.ListModrinthProjects` | - |
+| PUT | `/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden` | session | `modpack.read` | RequireModpacksEnabled | `PacksHandler.SetModrinthProjectHidden` | - |
+| POST | `/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportModrinthProject` | creates (or finds) the caller's pack for a project they are a member of. |
 | DELETE | `/api/me/nodes/{id:[0-9]+}` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.DeleteMyNode` | removes the caller's own machine. |
 | POST | `/api/me/nodes/{id:[0-9]+}/admit` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.AdmitMyNode` | {fingerprint} - let this machine back in with the key its owner read off the machine's own log. |
 | GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
@@ -656,6 +659,8 @@ can still show what exists.
 | PATCH | `/api/packs/{id:[0-9]+}/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.EditModrinthPage` | - |
 | POST | `/api/packs/{id:[0-9]+}/modrinth/icon` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UploadModrinthIcon` | (multipart "icon") |
 | POST | `/api/packs/{id:[0-9]+}/modrinth/submit` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.SubmitModrinthReview` | - |
+| GET | `/api/packs/{id:[0-9]+}/modrinth/versions` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ListModrinthVersions` | the project's versions and which of them this pack already has (for import and sync). |
+| POST | `/api/packs/{id:[0-9]+}/modrinth/versions/{versionId:[A-Za-z0-9]+}/import` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportModrinthVersion` | - |
 | PATCH | `/api/packs/{id:[0-9]+}/recommended` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetRecommended` | changes guidance and alert input; it does not publish, freeze a build or modify a running server installation. |
 
 ## /api/placement

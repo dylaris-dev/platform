@@ -252,6 +252,32 @@ members can see it. Versions published before 2026.10.28.6 went up unlisted and
 are missing from that list: open the version by its direct link on Modrinth and
 change its visibility there.
 
+### Import from Modrinth
+
+**Import from Modrinth** on the Modpacks page lists every modpack project your
+Modrinth account is a member of (your own connected token decides), drafts
+included. Hide projects you do not want to see; hiding is per user. **Import**
+creates a pack bound to the project; then each Modrinth version becomes a
+read-only build marked **Imported from Modrinth**, oldest first, with its full
+content:
+
+- Files the manifest downloads from Modrinth become linked entries, with the
+  client/server side from the manifest. A file whose checksum differs from
+  that Modrinth version's file is not linked; it is downloaded and kept as an
+  upload instead.
+- Other downloads are fetched only from the hosts Modrinth allows in packs
+  (the same list the node installs from), checked against their checksum, and
+  kept as uploads. Anything else is skipped and listed.
+- Every file in `overrides/`, `client-overrides/` and `server-overrides/` becomes
+  a config/script entry on both, client or server side.
+- The version's own `.mrpack` is kept as the build's artifact, so downloads and
+  server installs use exactly what Modrinth has.
+
+A version that cannot be imported is reported and removed again; the others
+continue. With more than 20 missing versions the panel offers the newest 10 or
+all of them. **Sync from Modrinth** on a pack imports versions published since.
+**New build** on an imported build creates an editable draft as usual.
+
 ### Modrinth page
 
 Once a build is published, the pack overview shows **Modrinth page**. It edits

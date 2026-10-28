@@ -40,6 +40,8 @@ export interface PackBuild {
     // Empty on drafts — those are still installable, Core renders on the fly.
     mrpackStorageKey: string;
     createdAt: string;
+    /** "modrinth" for a version imported from the pack's Modrinth project. */
+    importedFrom?: string;
 }
 
 export interface BuildContentEntry {
@@ -246,3 +248,25 @@ export async function uploadModrinthIcon(packId: number, file: File): Promise<Mo
         return handleResponse(res) as any;
     } catch (err) { return handleError(err) as any; }
 }
+
+// --- Importing existing Modrinth modpacks ---
+
+export interface ModrinthImportProject {
+    id: string; slug: string; title: string; description: string; status: string;
+    icon_url: string | null; versions: string[];
+    hidden: boolean; packId?: number;
+}
+export interface ModrinthImportVersion { id: string; versionNumber: string; versionType: string; gameVersions: string[]; loaders: string[]; datePublished: string; buildId?: number }
+export interface ImportVersionResult { success: boolean; message?: string; buildId?: number; linked?: number; uploaded?: number; warnings?: string[]; existing?: boolean }
+
+export async function listModrinthImportProjects(): Promise<{ success: boolean; message?: string; projects?: ModrinthImportProject[] }> {
+    try { return handleResponse(await fetch(`${API_URL}/me/modrinth/projects`, { headers: getAuthHeader() })) as any; }
+    catch (err) { return handleError(err) as any; }
+}
+export const setModrinthProjectHidden = (projectId: string, hidden: boolean) => send(`/me/modrinth/projects/${encodeURIComponent(projectId)}/hidden`, 'PUT', { hidden });
+export const importModrinthProject = (projectId: string): Promise<{ success: boolean; message?: string; pack?: Pack; existing?: boolean }> => send(`/me/modrinth/projects/${encodeURIComponent(projectId)}/import`, 'POST');
+export async function listModrinthPackVersions(packId: number): Promise<{ success: boolean; message?: string; versions?: ModrinthImportVersion[] }> {
+    try { return handleResponse(await fetch(`${API_URL}/packs/${packId}/modrinth/versions`, { headers: getAuthHeader() })) as any; }
+    catch (err) { return handleError(err) as any; }
+}
+export const importModrinthPackVersion = (packId: number, versionId: string): Promise<ImportVersionResult> => send(`/packs/${packId}/modrinth/versions/${encodeURIComponent(versionId)}/import`, 'POST');

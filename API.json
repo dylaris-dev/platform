@@ -2596,6 +2596,34 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/me/modrinth/projects",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "handler": "PacksHandler.ListModrinthProjects",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "handler": "PacksHandler.SetModrinthProjectHidden",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "creates (or finds) the caller's pack for a project they are a member of.",
+      "handler": "PacksHandler.ImportModrinthProject",
+      "group": "me",
+      "external": false
+    },
+    {
       "method": "DELETE",
       "path": "/api/me/nodes/{id:[0-9]+}",
       "auth": "session",
@@ -3494,6 +3522,25 @@
       "auth": "session",
       "authorization": "modpack.write",
       "handler": "PacksHandler.SubmitModrinthReview",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/modrinth/versions",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "the project's versions and which of them this pack already has (for import and sync).",
+      "handler": "PacksHandler.ListModrinthVersions",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/modrinth/versions/{versionId:[A-Za-z0-9]+}/import",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "handler": "PacksHandler.ImportModrinthVersion",
       "group": "packs",
       "external": false
     },
@@ -5770,10 +5817,10 @@
     }
   ],
   "counts": {
-    "total": 580,
+    "total": 585,
     "byAuth": {
       "none": 31,
-      "session": 531,
+      "session": 536,
       "user API key": 10,
       "warp key": 8
     },
@@ -5796,13 +5843,13 @@
       "infrastructure": 3,
       "library": 6,
       "maintenance": 1,
-      "me": 41,
+      "me": 44,
       "mirror": 2,
       "modrinth": 9,
       "modules": 6,
       "nodes": 14,
       "notifications": 5,
-      "packs": 33,
+      "packs": 35,
       "placement": 3,
       "platform-backups": 13,
       "regions": 1,

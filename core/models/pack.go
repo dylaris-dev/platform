@@ -100,6 +100,9 @@ type PackBuild struct {
 	MrpackSHA256      string     `json:"mrpackSha256"`
 	CreatedAt         time.Time  `json:"createdAt"`
 	PublishedAt       *time.Time `json:"publishedAt,omitempty"`
+	// ImportedFrom names where a build came from when this panel did not
+	// create it: "modrinth" for a version imported from its Modrinth project.
+	ImportedFrom string `json:"importedFrom,omitempty"`
 }
 
 // Mod is an owner-scoped content catalog entry (a mod, or a resourcepack, shader

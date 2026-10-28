@@ -477,7 +477,12 @@ var requiredCaps = map[string]string{
 	// each RequireCap call. GET /api/modrinth/* (the external proxy) and GET
 	// /api/library + GET /api/library/download stay authed-exempt and are
 	// deliberately NOT listed here (see the route registration comments).
-	"/api/me/modrinth-pat":                                                                          "modpack.read",
+	"/api/me/modrinth-pat":                                                     "modpack.read",
+	"/api/me/modrinth/projects":                                                "modpack.read",
+	"/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden":                "modpack.read",
+	"/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import":                "modpack.write",
+	"/api/packs/{id:[0-9]+}/modrinth/versions":                                 "modpack.write",
+	"/api/packs/{id:[0-9]+}/modrinth/versions/{versionId:[A-Za-z0-9]+}/import": "modpack.write",
 	"/api/me/packs":                                                                                 "modpack.read",
 	"/api/me/pack-collaborators":                                                                    "modpack.read",
 	"/api/me/pack-collaborators/{cid:[0-9]+}":                                                       "modpack.write",
@@ -987,6 +992,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetContentText)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.text_edited", packsHandler.SetContentText)))))).Methods("PUT")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.published", packsHandler.PublishModrinth)))))).Methods("POST")
+	// Importing existing Modrinth modpacks: the caller's projects, hiding, import.
+	api.HandleFunc("/me/modrinth/projects", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(packsHandler.ListModrinthProjects)))).Methods("GET")
+	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(packsHandler.SetModrinthProjectHidden)))).Methods("PUT")
+	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportModrinthProject))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/versions", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ListModrinthVersions))))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/versions/{versionId:[A-Za-z0-9]+}/import", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportModrinthVersion))))).Methods("POST")
 	// The pack's Modrinth project page: read, edit, icon, submit for review.
 	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.GetModrinthPage))))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.page_edited", packsHandler.EditModrinthPage)))))).Methods("PATCH")

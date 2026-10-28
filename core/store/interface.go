@@ -943,6 +943,8 @@ type Store interface {
 	// row entirely so a revoked PAT can't accidentally be re-used.
 	SetModrinthPAT(userID string, ciphertext, modrinthUsername string) error
 	GetModrinthPAT(userID string) (*models.ModrinthPAT, error)
+	HiddenModrinthProjects(userID string) ([]string, error)
+	SetModrinthProjectHidden(userID, projectID string, hidden bool) error
 	ClearModrinthPAT(userID string) error
 
 	// --- Packs (the pack builder) ---

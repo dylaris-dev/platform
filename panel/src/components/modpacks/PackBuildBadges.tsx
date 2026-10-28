@@ -10,6 +10,7 @@ export default function PackBuildBadges({ build, builds, recommendedBuildId }: {
         {recommended && <Badge variant="accent" icon={<Star size={10}/>}>Recommended</Badge>}
         {latestRelease && <Badge variant="success">Latest release</Badge>}
         {!recommended&&!latestRelease && <Badge variant="neutral">{packBuildStatus(build,builds,recommendedBuildId)}</Badge>}
+        {build.importedFrom==='modrinth' && <Badge variant="neutral">Imported from Modrinth</Badge>}
         {(build.frozen||build.modrinthPublished)&&<Lock size={11} className="text-(--base-06)" aria-label="Read-only"/>}
     </span>;
 }
