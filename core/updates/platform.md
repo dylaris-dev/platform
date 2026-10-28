@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Published modpack versions now appear in the Modrinth project's version list. They were
+  uploaded unlisted, which Modrinth hides from that list even for the owner. `core`
+
 ## 2026.10.28.5
 
 ### Features

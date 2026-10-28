@@ -191,17 +191,17 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Channel → Modrinth version_type + release status.
-	//   beta    → version_type=beta,    status=unlisted (never surfaces publicly)
-	//   release → version_type=release, status=listed (unless pack visibility=unlisted)
+	// Channel → Modrinth version_type. Every version is uploaded "listed": an
+	// unlisted one never shows in the project's version list, not even to its
+	// owner, which read as "publish did nothing" (owner report 2026-10-28; every
+	// pack defaults to modrinth_visibility=unlisted, so releases were hidden
+	// too). Privacy before launch comes from the draft project, which only its
+	// members see until it is submitted for review; beta stays marked beta.
 	versionType := "beta"
 	if channel == models.ChannelRelease {
 		versionType = "release"
 	}
 	status := "listed"
-	if channel == models.ChannelBeta || pack.ModrinthVisibility == "unlisted" {
-		status = "unlisted"
-	}
 	filename := fmt.Sprintf("%s-%s.mrpack", pack.InternalSlug, build.VersionString)
 	created, err := mc.UploadVersion(r.Context(), services.CreateVersionRequest{
 		Name:          build.VersionString,

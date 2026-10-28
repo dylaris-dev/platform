@@ -246,6 +246,11 @@ account must be allowed to access that version; visibility/moderation still appl
 Private DYLARIS drafts use manual `.mrpack` import instead of a public share link.
 Modrinth project creation submits required empty arrays and a draft project.
 The publish dialog defaults drafts to Beta and submits that displayed channel.
+Every version is uploaded as a listed version (Beta or Release), so it appears in
+the project's version list; until the project passes Modrinth review, only its
+members can see it. Versions published before 2026.10.28.6 went up unlisted and
+are missing from that list: open the version by its direct link on Modrinth and
+change its visibility there.
 
 Both downloads require pack read access. The server download uses
 `GET /api/packs/{id}/builds/{buildId}/export?kind=server`; the default or

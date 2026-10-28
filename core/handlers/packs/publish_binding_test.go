@@ -104,13 +104,20 @@ func TestPublishUsesStoredOrNewProjectAndOwnerPAT(t *testing.T) {
 				case "/v2/version":
 					uploads++
 					var data struct {
-						ProjectID string `json:"project_id"`
+						ProjectID   string `json:"project_id"`
+						Status      string `json:"status"`
+						VersionType string `json:"version_type"`
 					}
 					if err := json.Unmarshal([]byte(r.FormValue("data")), &data); err != nil {
 						return nil, err
 					}
 					if data.ProjectID != tc.want {
 						t.Errorf("publication target=%q want stored/server-assigned %q", data.ProjectID, tc.want)
+					}
+					// An unlisted version never shows in the project's version list,
+					// not even to its owner; the draft project is what keeps it private.
+					if data.Status != "listed" || data.VersionType != "beta" {
+						t.Errorf("version status=%q type=%q, want listed beta", data.Status, data.VersionType)
 					}
 					response = `{"id":"uploaded-version"}`
 				default:
