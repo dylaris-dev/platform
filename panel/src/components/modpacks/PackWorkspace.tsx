@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Plus, Users, History, RefreshCw, Package, Search, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronRight, BookOpen, Star, Bell, Layers, PanelRight, X } from 'lucide-react';
+import { Plus, Users, History, RefreshCw, Package, Search, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronRight, BookOpen, Star, Bell, Layers, PanelRight, X, Globe } from 'lucide-react';
 import { getPackDetails, listBuilds, listPacksOverview, type Pack, type PackBuild, type PackPermissions, type PacksOverview } from '@/lib/api/packs';
 import { routeIdFrom } from '@/lib/routeParams';
 import { currentPackBuild, newestPackBuild, packBuildStatus } from '@/lib/packWorkspace';
@@ -33,6 +33,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
     const creating = pathname.endsWith('/builds/new');
     const allBuilds = pathname === `/modpacks/${packId}` || pathname === `/modpacks/${packId}/`;
     const alertsSelected = pathname === `/modpacks/${packId}/alerts`;
+    const modrinthSelected = pathname === `/modpacks/${packId}/modrinth`;
     const [detailsOpen, setDetailsOpen] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [watchOpen, setWatchOpen] = useState(false);
@@ -110,7 +111,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                         <ProjectIcon name={pack?.internalName || 'Modpack'} url={metadata.projects[pack?.modrinthProjectId || '']?.icon_url} className="w-11 h-11" />
                         <div className="min-w-0 flex-1"><p className="mono-label text-(--base-06)">Modpack workspace</p><h1 className="font-display text-lg font-semibold text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1><p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div>
                         <div className={styles.tools}>
-                            {(buildId > 0 || creating) && <Link href={`/modpacks/${packId}`} className="btn btn-secondary btn-sm"><Layers size={13}/>All builds</Link>}
+                            {(buildId > 0 || creating || modrinthSelected) && <Link href={`/modpacks/${packId}`} className="btn btn-secondary btn-sm"><Layers size={13}/>All builds</Link>}
                             <button onClick={async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }} disabled={refreshing} className="btn btn-ghost btn-sm"><RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />{refreshing ? 'Refreshing...' : 'Refresh'}</button>
                             {canAudit && <button onClick={() => setActivity(true)} className="btn btn-ghost btn-sm"><History size={13} />Activity</button>}
                             {buildId > 0 && permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-primary btn-sm"><Plus size={13} />New build</Link>}
@@ -123,6 +124,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                         {builds.length > 0 && <div className={styles.recommendation}><PackRecommendation pack={pack} builds={builds} canEdit={permissions.canEdit && featureFlags.modpacks} onChanged={refresh} /></div>}
                         <div className={`${styles.tools} ml-auto`}>
                             {builds.length > 0 && <button onClick={() => setWatchOpen(true)} aria-haspopup="dialog" aria-expanded={watchOpen} className={`btn btn-sm ${alertsSelected || watchOpen ? 'btn-primary' : 'btn-secondary'}`}><Bell size={14} />Pack version alerts</button>}
+                            {pack.modrinthProjectId && permissions.canEdit && <Link href={`/modpacks/${packId}/modrinth`} className="btn btn-secondary btn-sm"><Globe size={14} />Modrinth page</Link>}
                             {permissions.isOwner && <button onClick={() => setCollaborators(true)} className="btn btn-secondary btn-sm"><Users size={14} />Collaborators</button>}
                             {permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} aria-current={creating ? 'page' : undefined} className="btn btn-primary btn-sm"><Plus size={14} />New build</Link>}
                         </div>

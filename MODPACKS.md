@@ -252,6 +252,26 @@ members can see it. Versions published before 2026.10.28.6 went up unlisted and
 are missing from that list: open the version by its direct link on Modrinth and
 change its visibility there.
 
+### Modrinth page
+
+Once a build is published, the pack overview shows **Modrinth page**. It edits
+the project as modrinth.com's settings do - name, summary, Markdown
+description, tags, source/issue/wiki/Discord links, license, icon and the
+environment of every uploaded version - through the pack owner's token, for
+anyone with edit access. Only changed fields are sent. The summary is mirrored
+into the local pack.
+
+The right column shows the project status, a moderator message, and
+Modrinth's own publishing checklist (`GET /v3/project/{id}/validate`): required
+items block **Submit for review**, suggestions do not. Submitting sets the
+project to review (`status: processing`); Modrinth checks the same list again.
+Gallery images, featured images and content disclosures (for example
+AI-generated content) stay on modrinth.com.
+
+Each newly uploaded version gets the environment of the project's earlier
+versions, or client and server for the first one; a v2 upload cannot set it,
+and Modrinth blocks review while it is unknown.
+
 Both downloads require pack read access. The server download uses
 `GET /api/packs/{id}/builds/{buildId}/export?kind=server`; the default or
 `kind=client` retains the existing .mrpack format. Server rendering reuses the

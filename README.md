@@ -80,6 +80,8 @@ what any serious panel needs.
   guided Minecraft/loader builds and safe draft copies, installed project icons,
   expandable Modrinth details, client/server controls, guided client/server downloads,
   config/KubeJS file editing and separate collaborator rights under Access.
+  Each published pack has a Modrinth page in the panel: texts, tags, links, license,
+  icon and environment, Modrinth's publishing checklist and Submit for review.
   New build previews Minecraft/loader migrations; user-owned favorites and daily
   alerts follow the Recommended build or latest release. Fork a build into a new
   or empty pack with independent uploaded files. Build editors expose content categories,

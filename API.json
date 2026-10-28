@@ -3461,6 +3461,43 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/packs/{id:[0-9]+}/modrinth",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "handler": "PacksHandler.GetModrinthPage",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/packs/{id:[0-9]+}/modrinth",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "handler": "PacksHandler.EditModrinthPage",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/modrinth/icon",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "description": "(multipart \"icon\")",
+      "handler": "PacksHandler.UploadModrinthIcon",
+      "group": "packs",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/packs/{id:[0-9]+}/modrinth/submit",
+      "auth": "session",
+      "authorization": "modpack.write",
+      "handler": "PacksHandler.SubmitModrinthReview",
+      "group": "packs",
+      "external": false
+    },
+    {
       "method": "PATCH",
       "path": "/api/packs/{id:[0-9]+}/recommended",
       "auth": "session",
@@ -5733,10 +5770,10 @@
     }
   ],
   "counts": {
-    "total": 576,
+    "total": 580,
     "byAuth": {
       "none": 31,
-      "session": 527,
+      "session": 531,
       "user API key": 10,
       "warp key": 8
     },
@@ -5765,7 +5802,7 @@
       "modules": 6,
       "nodes": 14,
       "notifications": 5,
-      "packs": 29,
+      "packs": 33,
       "placement": 3,
       "platform-backups": 13,
       "regions": 1,

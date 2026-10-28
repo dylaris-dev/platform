@@ -85,9 +85,26 @@ func TestPublishUsesStoredOrNewProjectAndOwnerPAT(t *testing.T) {
 			old := http.DefaultTransport
 			t.Cleanup(func() { http.DefaultTransport = old })
 			creates, uploads := 0, 0
+			envSet := ""
 			http.DefaultTransport = modrinthAddTransport(func(r *http.Request) (*http.Response, error) {
-				if r.URL.Host != "api.modrinth.com" || r.Method != http.MethodPost {
+				if r.URL.Host != "api.modrinth.com" {
 					return nil, fmt.Errorf("unexpected request outside mocked Modrinth publish")
+				}
+				// After the upload: read the project, then set the new version's environment.
+				if r.Method == http.MethodGet && r.URL.Path == "/v2/project/"+tc.want {
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"` + tc.want + `","versions":["uploaded-version"]}`))}, nil
+				}
+				if r.Method == http.MethodPatch && r.URL.Path == "/v3/version/uploaded-version" {
+					b, _ := io.ReadAll(r.Body)
+					var env struct {
+						Environment string `json:"environment"`
+					}
+					_ = json.Unmarshal(b, &env)
+					envSet = env.Environment
+					return &http.Response{StatusCode: 204, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+				}
+				if r.Method != http.MethodPost {
+					return nil, fmt.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 				}
 				if r.Header.Get("Authorization") != "test-owner-pat" {
 					t.Error("publish did not use the owner's credential")
@@ -131,6 +148,9 @@ func TestPublishUsesStoredOrNewProjectAndOwnerPAT(t *testing.T) {
 			h.PublishModrinth(w, r)
 			if w.Code != 200 || uploads != 1 || pat.loadedFor != cleanupOwner {
 				t.Fatalf("status=%d uploads=%d credential owner=%q body=%s", w.Code, uploads, pat.loadedFor, w.Body.String())
+			}
+			if envSet != "client_and_server" {
+				t.Fatalf("first version environment = %q, want client_and_server (Modrinth blocks review on unknown)", envSet)
 			}
 			if tc.bound == "" && creates != 1 || tc.bound != "" && creates != 0 {
 				t.Fatalf("project creates=%d for binding %q", creates, tc.bound)

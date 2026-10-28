@@ -486,6 +486,9 @@ var requiredCaps = map[string]string{
 	"/api/packs/{id:[0-9]+}":                                                                        "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds":                                                                 "modpack.read",
 	"/api/packs/{id:[0-9]+}/recommended":                                                            "modpack.write",
+	"/api/packs/{id:[0-9]+}/modrinth":                                                               "modpack.write",
+	"/api/packs/{id:[0-9]+}/modrinth/icon":                                                          "modpack.write",
+	"/api/packs/{id:[0-9]+}/modrinth/submit":                                                        "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork":                                           "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}":                                                "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content":                                        "modpack.read",
@@ -984,6 +987,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetContentText)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.text_edited", packsHandler.SetContentText)))))).Methods("PUT")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.published", packsHandler.PublishModrinth)))))).Methods("POST")
+	// The pack's Modrinth project page: read, edit, icon, submit for review.
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.GetModrinthPage))))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.page_edited", packsHandler.EditModrinthPage)))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/icon", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.icon_changed", packsHandler.UploadModrinthIcon)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/submit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.submitted", packsHandler.SubmitModrinthReview)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.replaced", packsHandler.ReplaceWithModrinth)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.updated", packsHandler.UpdateMods)))))).Methods("POST")

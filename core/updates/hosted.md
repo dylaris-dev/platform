@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.7
+
+### Features
+- **Modrinth page for each pack.** Edit the pack's Modrinth texts, tags, links, license, icon
+  and environment in the panel, see Modrinth's checklist and submit the pack for review.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Published versions get an environment, so Modrinth no longer blocks the review for it.
+
 ## 2026.10.28.6
 
 ### Features

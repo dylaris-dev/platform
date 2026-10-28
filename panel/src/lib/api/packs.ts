@@ -210,3 +210,39 @@ export const modrinthTypeToContentType = (projectType: string): string => {
         default: return 'mod';
     }
 };
+
+// --- The pack's Modrinth project page (edited through the owner's token) ---
+
+export interface ModrinthNag { kind: string; severity: 'required' | 'warning' | 'suggestion' | string; details?: Record<string, unknown> }
+export interface ModrinthProjectPage {
+    id: string; slug: string; title: string; description: string; body: string;
+    status: string; requested_status: string | null;
+    categories: string[]; additional_categories: string[];
+    icon_url: string | null; source_url: string | null; issues_url: string | null; wiki_url: string | null; discord_url: string | null;
+    versions: string[];
+    license: { id: string; url: string | null };
+    moderator_message: { message: string; body: string | null } | null;
+}
+export interface ModrinthPageResult { success: boolean; message?: string; project?: ModrinthProjectPage; nags?: ModrinthNag[]; environment?: string }
+export interface ModrinthPageEdit {
+    title?: string; description?: string; body?: string;
+    categories?: string[]; additionalCategories?: string[];
+    licenseId?: string; licenseUrl?: string;
+    sourceUrl?: string; issuesUrl?: string; wikiUrl?: string; discordUrl?: string;
+    environment?: string;
+}
+
+export async function getModrinthPage(packId: number): Promise<ModrinthPageResult> {
+    try { return handleResponse(await fetch(`${API_URL}/packs/${packId}/modrinth`, { headers: getAuthHeader() })) as any; }
+    catch (err) { return handleError(err) as any; }
+}
+export const editModrinthPage = (packId: number, edit: ModrinthPageEdit): Promise<ModrinthPageResult> => send(`/packs/${packId}/modrinth`, 'PATCH', edit);
+export const submitModrinthReview = (packId: number): Promise<ModrinthPageResult> => send(`/packs/${packId}/modrinth/submit`, 'POST');
+export async function uploadModrinthIcon(packId: number, file: File): Promise<ModrinthPageResult> {
+    try {
+        const fd = new FormData();
+        fd.append('icon', file);
+        const res = await fetch(`${API_URL}/packs/${packId}/modrinth/icon`, { method: 'POST', headers: getAuthHeader(), body: fd });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
+}

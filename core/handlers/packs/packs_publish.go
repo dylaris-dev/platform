@@ -3,6 +3,7 @@ package packs
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -229,13 +230,25 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Modrinth's checklist blocks review while a version's environment is
+	// unknown, and a v2 upload cannot set it.
+	message := "Published as " + username + "/" + pack.InternalSlug + " (" + channel + ")"
+	page, err := mc.GetProjectPage(r.Context(), projectID)
+	if err == nil {
+		err = setUploadedVersionEnvironment(r.Context(), mc, page.Versions, created.ID)
+	}
+	if err != nil {
+		log.Printf("packs: environment of modrinth version %s not set: %v", created.ID, err)
+		message += ". Set its environment on the pack's Modrinth page."
+	}
+
 	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": pack.OwnerID})
 	json.NewEncoder(w).Encode(publishModrinthResponse{
 		Success:           true,
 		ModrinthProjectID: projectID,
 		ModrinthVersionID: created.ID,
-		Message:           "Published as " + username + "/" + pack.InternalSlug + " (" + channel + ")",
+		Message:           message,
 		Warnings:          warnPaths,
 	})
 }

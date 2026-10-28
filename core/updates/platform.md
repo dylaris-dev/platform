@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.7
+
+### Features
+- **Modrinth page for each pack.** Edit name, summary, description, tags, links, license, icon
+  and environment in the panel, see Modrinth's publishing checklist and submit for review. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Published versions get an environment (client and server by default). Modrinth blocked
+  review while it was unknown, and an upload could not set it. `core`
+
 ## 2026.10.28.6
 
 ### Features

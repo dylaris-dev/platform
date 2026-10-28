@@ -133,10 +133,10 @@ can still show what exists.
 
 ## At a glance
 
-- **575 routes** in 53 sections: 253 GET, 169 POST, 51 PUT, 40 PATCH, 63 DELETE.
+- **579 routes** in 53 sections: 254 GET, 171 POST, 51 PUT, 41 PATCH, 63 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **375** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **29** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **379** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **32** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -162,7 +162,7 @@ can still show what exists.
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (5)
-- [/api/packs](#apipacks) (29)
+- [/api/packs](#apipacks) (33)
 - [/api/placement](#apiplacement) (3)
 - [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
@@ -652,6 +652,10 @@ can still show what exists.
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | the share links issued for one build. |
 | DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | AllowReadOnlyWhenDisabled, Audited | `PacksHandler.RevokeShareLink` | revokes one share link. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
+| GET | `/api/packs/{id:[0-9]+}/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.GetModrinthPage` | - |
+| PATCH | `/api/packs/{id:[0-9]+}/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.EditModrinthPage` | - |
+| POST | `/api/packs/{id:[0-9]+}/modrinth/icon` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UploadModrinthIcon` | (multipart "icon") |
+| POST | `/api/packs/{id:[0-9]+}/modrinth/submit` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.SubmitModrinthReview` | - |
 | PATCH | `/api/packs/{id:[0-9]+}/recommended` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.SetRecommended` | changes guidance and alert input; it does not publish, freeze a build or modify a running server installation. |
 
 ## /api/placement
