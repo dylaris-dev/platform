@@ -216,7 +216,7 @@ export function getModrinthVersionsByIds(ids: string[]): Promise<ModrinthVersion
     return ids.length ? bulkGet<ModrinthVersion>('/modrinth/versions', ids) : Promise.resolve([]);
 }
 
-export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title' | 'icon_url' | 'client_side' | 'server_side'>;
+export type ModrinthProjectName = Pick<ModrinthProject, 'id' | 'slug' | 'title' | 'icon_url' | 'client_side' | 'server_side'> & Partial<Pick<ModrinthProject, 'categories' | 'additional_categories'>>;
 
 /** Project names by id (Core slims these to id, slug, title, icon, type, client_side, server_side). */
 export function getModrinthProjectsByIds(ids: string[]): Promise<ModrinthProjectName[]> {

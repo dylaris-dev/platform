@@ -24,6 +24,7 @@ import (
 )
 
 const ModrinthAPIBase = "https://api.modrinth.com/v2"
+const ModrinthAllRightsReserved = "LicenseRef-All-Rights-Reserved"
 
 type ModrinthClient struct {
 	httpClient *http.Client
@@ -49,7 +50,7 @@ type CreateProjectRequest struct {
 	ProjectType     string   `json:"project_type"` // "modpack"
 	ClientSide      string   `json:"client_side"`  // "required"|"optional"|"unsupported"
 	ServerSide      string   `json:"server_side"`  // same
-	License         string   `json:"license_id"`   // SPDX slug; "arr" for all-rights-reserved
+	License         string   `json:"license_id"`   // SPDX expression or LicenseRef identifier
 	IsDraft         bool     `json:"is_draft"`     // true → not published, requires explicit publish
 	Categories      []string `json:"categories"`   // optional
 	AdditionalCats  []string `json:"additional_categories,omitempty"`
@@ -64,6 +65,10 @@ type ProjectResponse struct {
 // CreateProject creates a modpack project on Modrinth. The plaintext PAT
 // authorises; project ownership lands on the PAT's user.
 func (c *ModrinthClient) CreateProject(ctx context.Context, req CreateProjectRequest) (*ProjectResponse, error) {
+	// The historical "arr" shorthand is not accepted by the SPDX parser.
+	if strings.TrimSpace(req.License) == "" || strings.EqualFold(req.License, "arr") {
+		req.License = ModrinthAllRightsReserved
+	}
 	// The v2 endpoint requires an array even when versions are uploaded later.
 	if req.InitialVersions == nil {
 		req.InitialVersions = []string{}

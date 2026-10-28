@@ -54,6 +54,10 @@ describe('visibleCategoriesFor', () => {
     it('is empty for an empty input', () => {
         expect(visibleCategoriesFor([], 'mod')).toEqual([]);
     });
+    it('keeps resource and shader vocabularies separate from mod tags', () => {
+        expect(visibleCategoriesFor(REAL_SHAPE, 'resourcepack').map(c => c.name)).toEqual(['8x', '16x', '32x', '48x', '64x']);
+        expect(visibleCategoriesFor(REAL_SHAPE, 'shader').map(c => c.name)).toEqual(['vanilla-like']);
+    });
 });
 
 describe('categoryLabel', () => {

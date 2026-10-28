@@ -72,7 +72,7 @@ func (h *PacksHandler) createModrinthProject(r *http.Request, mc *services.Modri
 		ProjectType: "modpack",
 		ClientSide:  "required",
 		ServerSide:  "required",
-		License:     "arr",
+		License:     services.ModrinthAllRightsReserved,
 		IsDraft:     pack.ModrinthVisibility == "listed",
 		Categories:  []string{},
 	})

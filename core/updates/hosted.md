@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.2
+
+### Features
+- **More room for modpack content.** Categories, compatible Install/Remove actions and
+  Load more sit in the build editor. All builds returns to version selection.
+- Recommended and latest-release badges have distinct colors; the Delete build trigger
+  is neutral and final deletion still requires confirmation.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Modpack publication uses a valid license identifier. Feedback pauses without restarting,
+  lasts 35% less time and fades after halfway; hovering restores full visibility.
+
 ## 2026.10.28
 
 ### Features

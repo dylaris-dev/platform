@@ -183,7 +183,7 @@ func TestBulkIDRoutes(t *testing.T) {
 }
 
 func TestSlimProjectsKeepsClientSide(t *testing.T) {
-	in := []byte(`[{"id":"P1","slug":"sodium","title":"Sodium","client_side":"required","server_side":"unsupported","body":"long text","gallery":[]}]`)
+	in := []byte(`[{"id":"P1","slug":"sodium","title":"Sodium","client_side":"required","server_side":"unsupported","categories":["optimization"],"additional_categories":["utility"],"body":"long text","gallery":[]}]`)
 	var out []map[string]interface{}
 	if err := json.Unmarshal(slimProjects(in), &out); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -193,6 +193,9 @@ func TestSlimProjectsKeepsClientSide(t *testing.T) {
 	}
 	if _, ok := out[0]["body"]; ok {
 		t.Errorf("slim kept body: %v", out)
+	}
+	if len(out[0]["categories"].([]interface{})) != 1 || len(out[0]["additional_categories"].([]interface{})) != 1 {
+		t.Fatal("slim metadata dropped content categories")
 	}
 }
 

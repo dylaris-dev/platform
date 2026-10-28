@@ -26,7 +26,7 @@ export default function PackGuide() {
                     ],
                     [
                         '3. Add mods and resources',
-                        'Use Add content to search Modrinth and expand project details. Choose a compatible version. Required dependencies are resolved where possible; inspect warnings. Client and Server choose where each item is installed. At least one must remain selected.',
+                        'Use Add content to search Modrinth, filter categories and expand project details. Install chooses the latest compatible stable version when available; expand Versions for manual selection. Installed projects show Installed and Remove. Load more fetches another page of results. Required dependencies are resolved where possible; inspect warnings. Client and Server choose where each item is installed. At least one must remain selected.',
                     ],
                     [
                         '4. Edit files',

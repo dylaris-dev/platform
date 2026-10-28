@@ -35,10 +35,41 @@ func TestProjectCreationSendsRequiredEmptyArraysAndDraft(t *testing.T) {
 		if string(payload["is_draft"]) != "true" {
 			t.Fatal("Modrinth requires new projects to be drafts")
 		}
+		if string(payload["license_id"]) != `"LicenseRef-All-Rights-Reserved"` {
+			t.Fatalf("invalid all-rights-reserved identifier: %s", payload["license_id"])
+		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"project-id","slug":"test"}`))}, nil
 	})}
 	project, err := client.CreateProject(context.Background(), CreateProjectRequest{Slug: "test", Title: "Test", ProjectType: "modpack"})
 	if err != nil || project.ID != "project-id" {
 		t.Fatalf("create: %v %v", project, err)
+	}
+}
+
+func TestProjectLicenseNormalizationPreservesExplicitLicenses(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"arr", ModrinthAllRightsReserved}, {"ARR", ModrinthAllRightsReserved},
+		{ModrinthAllRightsReserved, ModrinthAllRightsReserved}, {"MIT", "MIT"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			client := NewModrinthClient("test-token")
+			client.httpClient = &http.Client{Transport: publishingContractTransport(func(r *http.Request) (*http.Response, error) {
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
+					t.Fatal(err)
+				}
+				defer r.MultipartForm.RemoveAll()
+				var body CreateProjectRequest
+				if err := json.Unmarshal([]byte(r.FormValue("data")), &body); err != nil {
+					t.Fatal(err)
+				}
+				if body.License != tc.want {
+					t.Fatalf("license=%q want=%q", body.License, tc.want)
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"project-id"}`))}, nil
+			})}
+			if _, err := client.CreateProject(context.Background(), CreateProjectRequest{License: tc.input}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

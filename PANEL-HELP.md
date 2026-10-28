@@ -12,6 +12,11 @@ BYON, route-only, Server Content, custom tabs, modpack authoring and favorites.
 Next/Back and the example tabs switch the preview area without leaving the real
 page, navigating away from unsaved work or activating a live control.
 
+Build editors show content filters instead of a persistent version column.
+Use **All builds** in the pack header to change versions. Category controls match
+Server Content; Install resolves a compatible version, while Installed/Remove
+reflect this build and its permissions. See [modpack authoring](MODPACKS.md).
+
 ## Safety and boundaries
 
 The tour component only renders curated example data. It does not import an API

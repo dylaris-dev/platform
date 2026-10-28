@@ -16,7 +16,7 @@ export default function DeleteBuildButton({ packId, build, onDeleted }: {
     const [busy, setBusy] = useState(false);
     const protectedBuild = build.frozen || build.modrinthPublished;
     return <>
-        <button className="btn btn-danger btn-sm" onClick={() => { setConfirmation(''); setOpen(true); }} aria-label={`Delete build ${build.versionString}`}><Trash2 size={13} />Delete build</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => { setConfirmation(''); setOpen(true); }} aria-label={`Delete build ${build.versionString}`}><Trash2 size={13} />Delete build</button>
         {open && <div className="modal-overlay" onClick={() => { if (!busy) setOpen(false); }}>
             <ModalPanel onClose={() => setOpen(false)} dismissible={!busy} className="modal-panel max-w-lg" onClick={event => event.stopPropagation()}>
                 <div className="modal-header"><h2 className="modal-title">Delete build {build.versionString}?</h2></div>

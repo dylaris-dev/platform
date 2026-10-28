@@ -185,7 +185,7 @@ func slimProjects(body []byte) []byte {
 	out := make([]map[string]json.RawMessage, 0, len(list))
 	for _, p := range list {
 		slim := map[string]json.RawMessage{}
-		for _, k := range []string{"id", "slug", "title", "icon_url", "project_type", "client_side", "server_side"} {
+		for _, k := range []string{"id", "slug", "title", "icon_url", "project_type", "client_side", "server_side", "categories", "additional_categories"} {
 			if v, ok := p[k]; ok {
 				slim[k] = v
 			}

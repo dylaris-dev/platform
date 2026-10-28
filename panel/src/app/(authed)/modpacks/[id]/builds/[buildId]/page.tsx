@@ -28,7 +28,7 @@ import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDate } from '@/lib/time';
-import { WorkspaceDetails } from '@/components/modpacks/PackWorkspace';
+import { WorkspaceDetails, usePackWorkspace } from '@/components/modpacks/PackWorkspace';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import { packContentGroup } from '@/lib/packWorkspace';
 import { filterPackContent, type PackContentSort, type PackEnvironmentFilter as EnvironmentFilterValue } from '@/lib/packContent';
@@ -38,6 +38,11 @@ import PackDownloadDialog from '@/components/modpacks/PackDownloadDialog';
 import ForkBuildDialog from '@/components/modpacks/ForkBuildDialog';
 import DeleteBuildButton from '@/components/modpacks/DeleteBuildButton';
 import styles from '@/components/modpacks/workspace.module.css';
+import { getModrinthCategories, type ModrinthCategory } from '@/lib/api/modrinth';
+import { categoryLabel } from '@/lib/modrinthCategories';
+import ContentCategories from '@/components/mods/ContentCategories';
+import PackBuildBadges from '@/components/modpacks/PackBuildBadges';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 // Build editing keeps the pack/build navigation mounted in the workspace.
 
@@ -341,6 +346,7 @@ function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, o
 export default function BuildContentEditorPage() {
     const paramId = useRouteId('modpacks');
     const paramBuildId = useRouteId('builds');
+    const workspace = usePackWorkspace();
     const packId = Number(paramId);
     const buildId = Number(paramBuildId);
     const { featureFlags } = useAppData();
@@ -371,6 +377,11 @@ export default function BuildContentEditorPage() {
     const [activeTab, setActiveTab] = useState<'mods' | 'resources' | 'configs' | 'tools'>('mods');
     const [browsing, setBrowsing] = useState(false);
     const [query, setQuery] = useState('');
+    const [categories, setCategories] = useState<ModrinthCategory[]>([]);
+    const [categoriesLoading, setCategoriesLoading] = useState(true);
+    const [category, setCategory] = useState<string | null>(null);
+    useEffect(() => { let live=true; getModrinthCategories().then(result=>{if(live){setCategories(result);setCategoriesLoading(false);}}); return()=>{live=false;}; }, []);
+
     const projectMetadata = useProjectMetadata(content.map(entry => entry.modrinthProjectId));
 
     // Dialog state
@@ -490,13 +501,13 @@ export default function BuildContentEditorPage() {
 
     const contentName = (entry: BuildContentEntry) => projectMetadata.projects[entry.modrinthProjectId]?.title || entry.prettyName || entry.modSlug;
     const groups = { mods: content.filter(entry => packContentGroup(entry.contentType) === 'mods'), resources: content.filter(entry => packContentGroup(entry.contentType) === 'resources'), configs: content.filter(entry => packContentGroup(entry.contentType) === 'configs') };
-    const visibleContent = activeTab === 'tools' ? [] : filterPackContent(groups[activeTab], query, environment, sort, contentName);
+    const visibleContent = activeTab === 'tools' ? [] : filterPackContent(groups[activeTab], query, environment, sort, contentName).filter(entry => !category || [...(projectMetadata.projects[entry.modrinthProjectId]?.categories || []), ...(projectMetadata.projects[entry.modrinthProjectId]?.additional_categories || [])].includes(category));
     if (loading) return <div className={styles.editor}><SkeletonHeader /><SkeletonList rows={8} /></div>;
     if (!build || !pack) return <div className="p-6 text-sm text-(--base-06)">Build not found. <Link href={`/modpacks/${packId}`} className="text-(--accent-light)">Back to pack</Link></div>;
     return <div className={styles.editor}>
         <WorkspaceDetails>
             <div className="flex items-center justify-between gap-2 mb-4"><span className="mono-label text-(--base-06)">Build details</span>{isFrozen && <Lock size={13} aria-label="Frozen" />}</div>
-            <h2 className="text-xl font-mono text-(--base-09) mb-4 break-all">{build.versionString}</h2>
+            <h2 className="text-xl font-mono text-(--base-09) mb-3 break-all">{build.versionString}</h2><div className="mb-4"><PackBuildBadges build={build} builds={workspace.builds} recommendedBuildId={workspace.pack?.recommendedBuildId}/></div>
             <dl className={styles.metadata}><div><dt>Minecraft</dt><dd>{build.minecraft || 'Unspecified'}</dd></div><div><dt>Loader</dt><dd>{build.loader || 'Vanilla'}</dd></div><div><dt>Loader build</dt><dd>{build.loaderVersion || 'None'}</dd></div><div><dt>Mods / plugins</dt><dd>{groups.mods.length}</dd></div><div><dt>Resource / shader packs</dt><dd>{groups.resources.length}</dd></div><div><dt>Config files / bundles</dt><dd>{groups.configs.length}</dd></div><div><dt>Channel</dt><dd>{build.channel}</dd></div><div><dt>Modrinth</dt><dd>{build.modrinthPublished ? 'Published' : 'Not published'}</dd></div></dl>
             <div className="flex flex-col gap-2 mt-5">
                 <button onClick={()=>setForkOpen(true)} disabled={modpacksDisabled} className="btn btn-secondary btn-sm">Fork build into another pack</button>
@@ -511,13 +522,33 @@ export default function BuildContentEditorPage() {
         <header className="flex items-center justify-between gap-3 flex-wrap shrink-0"><div><h2 className="text-base font-medium text-(--base-09)">{browsing ? 'Add from Modrinth' : `Build ${build.versionString}`}</h2><p className="text-xs text-(--base-06) mt-1">{groups.mods.length} mods / plugins · {groups.configs.length} configs · MC {build.minecraft} · {build.loader}</p></div><div className={styles.tools}>
             {hasAnyUpdate && <button onClick={handleUpdateAll} disabled={disabled || updatingAll} className="btn btn-secondary btn-sm"><ArrowUpCircle size={12} /> {updatingAll ? 'Updating...' : 'Update all'}</button>}
             <button onClick={() => setUploadOpen(true)} disabled={disabled} title={disabled ? editDisabledReason : 'Upload files or folders'} className="btn btn-secondary btn-sm disabled:opacity-40"><Upload size={12} /> Upload</button>
-            <button onClick={() => setBrowsing(value => !value)} disabled={disabled && !browsing} className="btn btn-primary btn-sm disabled:opacity-40">{browsing ? <ArrowLeft size={12} /> : <Search size={12} />}{browsing ? 'Installed' : 'Add content'}</button>
+            <button onClick={() => setBrowsing(value => !value)} className="btn btn-primary btn-sm">{browsing ? <ArrowLeft size={12} /> : <Search size={12} />}{browsing ? 'Installed' : disabled ? 'Browse content' : 'Add content'}</button>
         </div></header>
         {isFrozen && <p className="text-xs text-(--base-06) bg-(--base-02) p-3 rounded-md">This build is frozen. Create a copy to change its content.</p>}
         {browsing ? <section className={styles.searchPanel} aria-label="Add from Modrinth"><label className="flex items-center gap-3 text-xs text-(--base-06) mb-3">Project type<select value={modrinthType} onChange={event => setModrinthType(event.target.value as typeof modrinthType)} className="input-field text-xs w-auto"><option value="mod" disabled={build.loader === 'vanilla'}>Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select></label>
-            <ModrinthVersionBrowser loader={build.loader || undefined} mcVersion={build.minecraft || undefined} projectType={modrinthType} installedProjectIds={new Set(content.map(entry => entry.modrinthProjectId).filter(Boolean))} disabled={disabled || addingContent} disabledTitle={addingContent ? 'Adding content...' : editDisabledReason} onPick={async (projectId, versionId, hit) => { if (disabled || addingContent) return; setAddingContent(true); const contentType = modrinthTypeToContentType(hit.project_type); const result = await addModrinthContent(packId, buildId, { projectId, versionId, contentType, resolveDeps: contentType === 'mod' }); setAddingContent(false); if (result.success) { showToast(`Added ${hit.title}`); refresh(); } else showToast(result.message || 'Add failed', false); }} />
+            <ModrinthVersionBrowser withFilters loader={build.loader || undefined} mcVersion={build.minecraft || undefined} projectType={modrinthType} installedProjectIds={new Set(content.map(entry => entry.modrinthProjectId).filter(Boolean))} disabled={disabled || addingContent} removeDisabled={deleteDisabled || addingContent} disabledTitle={addingContent ? 'Adding content...' : editDisabledReason}
+                onRemove={async projectId => {
+                    if(deleteDisabled)throw new Error('Delete access is required.');
+                    const entries=content.filter(entry=>entry.modrinthProjectId===projectId);
+                    if(!entries.length)return;
+                    if(!await confirmDialog({title:`Remove ${contentName(entries[0])}?`,message:`Remove ${entries.length} content entry/entries from this build. Dependencies and other builds remain unchanged.`,confirmLabel:'Remove'}))return;
+                    try {
+                        for(const entry of entries){const result=await removeContent(packId,buildId,entry.id);if(!result.success)throw new Error(result.message||'Remove failed.');}
+                        showToast(`Removed ${contentName(entries[0])}`);
+                    } finally {await refresh();}
+                }}
+                onPick={async (projectId, versionId, hit) => {
+                    if(disabled || addingContent)throw new Error(editDisabledReason);
+                    setAddingContent(true);
+                    try {
+                        const contentType=modrinthTypeToContentType(hit.project_type);
+                        const result=await addModrinthContent(packId,buildId,{projectId,versionId,contentType,resolveDeps:contentType==='mod'});
+                        if(!result.success)throw new Error(result.message||'Add failed.');
+                        await refresh(); const warning=result.warning || (result.unresolved?.length ? `${result.unresolved.length} required dependencies need manual review.` : null); showToast(warning ? `Added ${hit.title}. ${warning}` : `Added ${hit.title}`, !warning);
+                    } finally {setAddingContent(false);}
+                }} />
         </section> : <>
-            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Sharing', null]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setExpandedEntry(null); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
+            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Sharing', null]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setCategory(null); setExpandedEntry(null); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
             {activeTab === 'configs' ? <PackConfigFiles packId={packId} buildId={buildId} canEdit={!disabled} canDelete={!deleteDisabled} onChanged={refresh}/> : activeTab === 'tools' ? <div className={styles.rows}>
                 <p className="text-xs text-(--base-06) mb-4">Share links grant access to this build without a panel account. Use the download buttons for private downloads, Publish for Modrinth, and New build for Minecraft or loader changes.</p>
                             {!featureFlags.shareLinks && shareLinks.length === 0 && <div className="card p-4 text-sm text-(--base-06)">Public share links are disabled by the administrator. Use the private client/server download buttons in Build details.</div>}
@@ -614,13 +645,18 @@ export default function BuildContentEditorPage() {
             )}
 
 
-            </div> : <>
+            </div> : <div className={styles.contentGrid}>
+                <aside className={styles.contentFilters} aria-label="Installed filters">
+                    <section><h3 className="input-label mb-2">Environment</h3><div className="[&_button]:w-full [&_button]:justify-start"><PackEnvironmentFilter value={environment} onChange={setEnvironment}/></div></section>
+                    <ContentCategories categories={categories} projectType={activeTab==='resources'?['resourcepack','shader']:'mod'} value={category} onChange={setCategory} loading={categoriesLoading}/>
+                    <p className="text-xs text-(--base-06)">Categories come from Modrinth metadata. Local, unlinked uploads are visible under All categories.</p>
+                </aside>
+                <div className={styles.contentMain}>
                 <input className="input-field w-full text-sm" aria-label="Search installed content" placeholder="Search installed content..." value={query} onChange={event => setQuery(event.target.value)} />
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <PackEnvironmentFilter value={environment} onChange={setEnvironment} />
                     <label className="flex items-center gap-2 text-xs text-(--base-06)">Sort<select aria-label="Sort installed content" className="input-field text-xs w-auto" value={sort} onChange={event => setSort(event.target.value as PackContentSort)}><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="environment">Environment</option><option value="updates">Updates first</option></select></label>
                 </div>
-                {projectMetadata.error && <p className="text-xs text-(--base-06)">Some project icons could not be loaded. <button className="text-(--accent-light)" onClick={projectMetadata.retry}>Retry icons</button></p>}
+                {projectMetadata.error && <p className="text-xs text-(--base-06)">Some project metadata could not be loaded. <button className="text-(--accent-light)" onClick={projectMetadata.retry}>Retry metadata</button></p>}
                 <div className="flex justify-between text-[10px] uppercase tracking-wider text-(--base-06)"><span>Installed · {visibleContent.length}</span><span>Environment / actions</span></div>
                 <section className={styles.rows} aria-label="Installed content">
                     {visibleContent.length === 0 && <p className="text-sm text-(--base-06) text-center py-12">{query ? 'No matching content.' : 'No content in this category yet.'}</p>}
@@ -634,6 +670,7 @@ export default function BuildContentEditorPage() {
                                     <ModrinthProjectActions projectId={entry.modrinthProjectId} title={contentName(entry)} loader={build.loader}/><button onClick={() => handleRemove(entry)} disabled={deleteDisabled} title={deleteDisabled ? 'Delete access is required; frozen builds cannot be changed' : 'Remove content'} aria-label={`Remove ${contentName(entry)}`} className="btn btn-ghost btn-sm disabled:opacity-30"><Trash2 size={13} className="text-(--error-light)" /></button>
                                 </div>
                                 <p className="text-[11px] text-(--base-06) font-mono truncate mt-1" title={entry.targetPath}>{entry.contentType === 'config' ? entry.targetPath : `${entry.modrinthVersionNumber || entry.version} · ${entry.linked ? 'Modrinth' : 'Upload'}`}</p>
+                                {!!projectMetadata.projects[entry.modrinthProjectId]?.categories?.length && <p className="text-[10px] text-(--base-06) mt-2">{projectMetadata.projects[entry.modrinthProjectId]?.categories?.map(categoryLabel).join(' · ')}</p>}
                                 <div className="flex items-center gap-2 flex-wrap mt-3">
                                     <PackEnvironmentSelector value={entry.side} disabled={disabled} name={contentName(entry)} onChange={side => handleSetSide(entry, side)} />
                                     {entry.contentType === 'config' && entry.targetPath && !entry.targetPath.toLowerCase().endsWith('.zip') && !disabled && <button onClick={() => setEditing({ modversionId: entry.id, title: contentName(entry) })} aria-label={`Edit ${contentName(entry)}`} title="Edit config text" className="btn btn-secondary btn-sm"><FileText size={13} /> Edit</button>}
@@ -646,8 +683,8 @@ export default function BuildContentEditorPage() {
                             {entry.modrinthProjectId ? <ModProjectDetails projectId={entry.modrinthProjectId} /> : <div className="text-xs text-(--base-06) space-y-2"><p>This file was uploaded directly. {entry.contentType !== 'config' ? 'Link it to Modrinth to show the project description and available versions.' : 'Use Edit to inspect or change this configuration file.'}</p><dl className={styles.metadata}><div><dt>Path</dt><dd>{entry.targetPath || entry.modSlug}</dd></div><div><dt>Version</dt><dd>{entry.version}</dd></div><div><dt>Type</dt><dd>{entry.contentType}</dd></div><div><dt>Environment</dt><dd>{entry.side}</dd></div></dl></div>}
                         </div>}
                     </article>)}
-                </section>
-            </>}
+                </section></div>
+            </div>}
         </>}
                     {/* Piece 1: Publish dialog */}
             {forkOpen && <ForkBuildDialog pack={pack} build={build} onClose={()=>setForkOpen(false)} onCreated={(target,copied)=>{setForkOpen(false);router.push(`/modpacks/${target.id}/builds/${copied.id}`);}}/>}

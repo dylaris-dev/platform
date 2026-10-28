@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 
 import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw, Lock, LockOpen, Power, PowerOff } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
+import ContentCategories from '@/components/mods/ContentCategories';
 import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
 import { ModDescription } from '@/components/mods/ModDescription';
 import { systemEvents } from '@/lib/systemEvents';
@@ -1064,51 +1065,7 @@ export default function ServerContentPage() {
                         {isModServer && !advanced && (
                             <ServerSideFilter value={env} onChange={setEnv} />
                         )}
-                        <div>
-                            <label className="input-label">Categories</label>
-                            {/* One bordered button per category. The old flush 0.5-gap
-                                stack of borderless rows read as a single block of text
-                                rather than as a list of controls. */}
-                            <div className="mt-2 flex flex-col gap-1.5">
-                                {categoriesLoading ? (
-                                    <div className="space-y-1.5 py-1">
-                                        {[0, 1, 2, 3, 4, 5].map(i => <SkeletonText key={i} width="w-full" className="h-6" />)}
-                                    </div>
-                                ) : visibleCategories.length === 0 ? (
-                                    <p className="text-xs text-(--base-06) italic">No categories for this server type.</p>
-                                ) : (
-                                    visibleCategories.map(cat => {
-                                        const on = selectedCategory === cat.name;
-                                        return (
-                                            <button
-                                                key={cat.name}
-                                                type="button"
-                                                aria-pressed={on}
-                                                onClick={() => setSelectedCategory(on ? null : cat.name)}
-                                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[13px] capitalize transition-colors ${
-                                                    on
-                                                        ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
-                                                        : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:bg-(--base-03) hover:border-(--base-04) hover:text-(--base-09)'
-                                                }`}
-                                            >
-                                                {/* The icon is an SVG from Modrinth's API. It used to be
-                                                    inserted as raw HTML on the panel's origin, which put
-                                                    whatever that response held - a style block, a form, a
-                                                    full-page link - into the panel. Used as a mask it is an
-                                                    image: it cannot run, style or link anything, and it still
-                                                    takes the text colour the way the inline SVG did. */}
-                                                <span
-                                                    className="shrink-0 w-4 h-4 bg-current"
-                                                    aria-hidden="true"
-                                                    style={categoryIconMask(cat.icon)}
-                                                />
-                                                <span className="truncate">{categoryLabel(cat.name)}</span>
-                                            </button>
-                                        );
-                                    })
-                                )}
-                            </div>
-                        </div>
+                        <ContentCategories categories={categories} projectType={browseProjectType} value={selectedCategory} onChange={setSelectedCategory} loading={categoriesLoading}/>
 
                         {/* Advanced toggle - gates the loader / MC-version filters below.
                             Turning it off resets both back to the server's stored values. */}
@@ -1757,23 +1714,4 @@ function BucketTag({ sides }: { sides?: ModSides | null }) {
     const b = sides ? serverBucket(sides) : null;
     if (!sides || !b) return null;
     return <EnvTag label={serverBucketLabel(b)} title={serverBucketTitle(sides) ?? undefined} warning={b === 'client_only'} />;
-}
-
-// categoryIconMask turns an SVG string into a CSS mask: an image the browser
-// draws, never markup it parses into the page.
-function categoryIconMask(svg: string): CSSProperties {
-    // An SVG loaded as an image renders nothing without its namespace, and
-    // Modrinth serves most category icons without one (written for inline use).
-    if (!/xmlns\s*=/.test(svg)) svg = svg.replace(/<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
-    const url = `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
-    return {
-        maskImage: url,
-        WebkitMaskImage: url,
-        maskSize: 'contain',
-        WebkitMaskSize: 'contain',
-        maskRepeat: 'no-repeat',
-        WebkitMaskRepeat: 'no-repeat',
-        maskPosition: 'center',
-        WebkitMaskPosition: 'center',
-    };
 }

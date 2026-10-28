@@ -16,7 +16,7 @@ import type { ModrinthCategory } from '@/lib/api/modrinth';
  */
 export function visibleCategoriesFor(
     categories: ModrinthCategory[],
-    browseProjectType: 'mod' | 'plugin',
+    browseProjectType: 'mod' | 'plugin' | 'resourcepack' | 'shader' | 'datapack',
 ): ModrinthCategory[] {
     const wanted = browseProjectType === 'plugin' ? 'mod' : browseProjectType;
     const seen = new Set<string>();

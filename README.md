@@ -82,7 +82,9 @@ what any serious panel needs.
   config/KubeJS file editing and separate collaborator rights under Access.
   New build previews Minecraft/loader migrations; user-owned favorites and daily
   alerts follow the Recommended build or latest release. Fork a build into a new
-  or empty pack with independent uploaded files. See [the authoring guide](MODPACKS.md).
+  or empty pack with independent uploaded files. Build editors expose content categories,
+  compatible quick installs, Installed/Remove actions and paginated Modrinth search.
+  See [the authoring guide](MODPACKS.md).
 - **Personal favorites and guided help** - save content across servers and packs,
   manage daily availability alerts and explore safe examples for creation, BYON,
   route-only and authoring without making real changes. See [panel help](PANEL-HELP.md).

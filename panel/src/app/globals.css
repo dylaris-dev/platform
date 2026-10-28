@@ -770,10 +770,8 @@ input[type="number"] {
   align-self: stretch;
   flex-shrink: 0;
 }
-/* The card is clickable to dismiss early. It is not focusable: the message is
-   already announced through the live region, and a control that appears in the
-   tab order for three seconds and then vanishes moves focus out from under
-   whoever was typing. */
+/* The shared toast card contains separate copy and dismiss controls.
+   Hover or keyboard focus pauses its remaining lifetime. */
 .toast-dismissable {
   text-align: left;
   animation: toast-in 0.16s ease-out;
@@ -1195,8 +1193,8 @@ input[type="number"] {
   text-underline-offset: 2px;
 }
 
-.toast-copyable { position:relative; max-width:min(640px,calc(100vw - 40px)); }
+.toast-copyable { position:relative; max-width:min(640px,calc(100vw - 40px)); transition:opacity .18s linear; animation:none; }
 .toast-timer { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
-.toast-timer rect { fill:none; stroke-width:2px; stroke-dasharray:1; stroke-dashoffset:0; animation:toast-countdown linear forwards; }
-@keyframes toast-countdown { to { stroke-dashoffset:1; } }
-@media(prefers-reduced-motion:reduce) { .toast-timer rect { animation:none; } }
+.toast-timer rect { fill:none; stroke-width:2px; stroke-dasharray:1; stroke-dashoffset:0; transition:stroke-dashoffset 40ms linear; }
+
+@media(prefers-reduced-motion:reduce) { .toast-copyable,.toast-timer rect { transition:none; } .toast-copyable { opacity:1!important; } .toast-timer { display:none; } }

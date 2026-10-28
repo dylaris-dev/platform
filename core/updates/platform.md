@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.2
+
+### Features
+- **A focused modpack content editor.** Build navigation gives way to shared Server Content
+  categories, compatible Install/Remove controls and paginated Modrinth results. `panel`
+- Recommended and latest-release badges have distinct colors; the Delete build trigger
+  is neutral and final deletion still requires confirmation. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- New Modrinth projects use the valid all-rights-reserved SPDX expression instead of `arr`.
+  Toasts pause without resetting, run 35% shorter and fade after halfway. `core` `panel`
+
 ## 2026.10.28
 
 ### Features

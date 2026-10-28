@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { CircleAlert, CircleCheck, Copy, X } from 'lucide-react';
+import { advanceToastClock, toastDuration, toastOpacity } from './toastTiming';
 
 /**
  * One toast host for the whole panel.
@@ -22,7 +23,7 @@ import { CircleAlert, CircleCheck, Copy, X } from 'lucide-react';
 export interface ToastOptions {
     /** false renders the error treatment. Defaults to true. */
     ok?: boolean;
-    /** Milliseconds before dismissal. At least 8 seconds, or 14 for errors. */
+    /** Requested lifetime before the global 35% reduction; legacy minimums still apply. */
     durationMs?: number;
 }
 
@@ -50,7 +51,7 @@ export function toast(message: string, ok: boolean = true, opts: ToastOptions = 
         id: nextId++,
         message,
         ok: opts.ok ?? ok,
-        durationMs: Math.max(opts.durationMs ?? 0, (opts.ok ?? ok) ? 8000 : 14000),
+        durationMs: toastDuration(opts.ok ?? ok, opts.durationMs),
     });
 }
 
@@ -86,20 +87,36 @@ export function ToastRoot() {
 }
 
 function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
-    const [hovered, setHovered] = useState(false);
-    const [focused, setFocused] = useState(false);
-    const paused = hovered || focused;
-    const [restart, setRestart] = useState(0);
+    const flags = useRef({ hovered: false, focused: false });
+    const clock = useRef({ elapsed: 0, at: performance.now(), paused: false });
+    const [elapsed, setElapsed] = useState(0);
+    const [paused, setPaused] = useState(false);
+    const [leaving, setLeaving] = useState(false);
     const [copied, setCopied] = useState(false);
     const [copyError, setCopyError] = useState(false);
     const dismiss = useRef(onDismiss);
     dismiss.current = onDismiss;
+    const pause = (kind: 'hovered' | 'focused', value: boolean) => {
+        flags.current[kind] = value;
+        const next = flags.current.hovered || flags.current.focused;
+        clock.current = advanceToastClock(clock.current, performance.now(), item.durationMs, next);
+        setElapsed(clock.current.elapsed);
+        setPaused(next);
+    };
     useEffect(() => {
-        if (paused) return;
-        const t = setTimeout(() => dismiss.current(), item.durationMs);
-        return () => clearTimeout(t);
-    }, [item.id, item.durationMs, paused, restart]);
-    const restartTimer = () => setRestart((value) => value + 1);
+        const timer = setInterval(() => {
+            clock.current = advanceToastClock(clock.current, performance.now(), item.durationMs);
+            setElapsed(clock.current.elapsed);
+        }, 40);
+        return () => clearInterval(timer);
+    }, [item.durationMs]);
+    const expired = elapsed >= item.durationMs;
+    useEffect(() => {
+        if (!expired || paused) { setLeaving(false); return; }
+        setLeaving(true);
+        const timer = setTimeout(() => dismiss.current(), 200);
+        return () => clearTimeout(timer);
+    }, [expired, paused]);
     const copy = async () => {
         try {
             await navigator.clipboard.writeText(item.message);
@@ -113,24 +130,20 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
     return (
         <div
             className="toast toast-dismissable toast-copyable"
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => {
-                setHovered(false);
-                restartTimer();
-            }}
+            data-duration-ms={item.durationMs}
+            data-elapsed-ms={Math.round(elapsed)}
+            style={{ opacity: paused ? 1 : leaving ? 0 : toastOpacity(elapsed, item.durationMs) }}
+            onMouseEnter={() => pause('hovered', true)}
+            onMouseLeave={() => pause('hovered', false)}
             onFocusCapture={(event) => {
-                if ((event.target as HTMLElement).matches(':focus-visible')) setFocused(true);
+                if ((event.target as HTMLElement).matches(':focus-visible')) pause('focused', true);
             }}
             onBlurCapture={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) {
-                    setFocused(false);
-                    restartTimer();
-                }
+                if (!event.currentTarget.contains(event.relatedTarget)) pause('focused', false);
             }}
         >
             <svg className="toast-timer" aria-hidden="true">
                 <rect
-                    key={restart}
                     x="1"
                     y="1"
                     width="calc(100% - 2px)"
@@ -138,8 +151,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
                     rx="12"
                     pathLength="1"
                     style={{
-                        animationDuration: `${item.durationMs}ms`,
-                        animationPlayState: paused ? 'paused' : 'running',
+                        strokeDashoffset: elapsed / item.durationMs,
                         stroke: item.ok ? 'var(--success-light)' : 'var(--error-light)',
                     }}
                 />

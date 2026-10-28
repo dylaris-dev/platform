@@ -32,8 +32,9 @@ latest release, or latest build if no release exists. These labels describe
 build history, not a running deployment. Local packs without upstream artwork
 use a package icon. **My modpacks** and **Invited / collaborating** have separate
 sections and a shared search field. The sidebar uses the same width and collapse
-control as Servers, aligned with the navbar branding. A wider build column stays
-visible while editing.
+control as Servers, aligned with the navbar branding. Build navigation appears in
+the pack overview. Inside a build it gives way to content filters; **All builds**
+in the header returns to version selection.
 
 Installed content is grouped into **Mods**, **Resources**, and **Configs &
 scripts**, with search and project artwork on the installed rows. Missing or
@@ -47,7 +48,9 @@ the pack overview; the active overview/build is highlighted and the button
 contains no build count. The sidebar includes a full authoring guide.
 Build environment, counts and export/publish
 actions stay in the right sidebar. At narrower widths it opens through
-**Build details** so the wider build list does not squeeze the editor.
+**Build details** to preserve content space. Recommended uses a purple star badge;
+the newest release uses green. Both badges appear when the same build has both roles.
+The Delete build trigger is neutral; the final destructive confirmation stays explicit.
 Owners and administrators open pack-wide **Activity** from the header; it no
 longer competes with the build actions in the details sidebar.
 
@@ -60,6 +63,36 @@ link an uploaded mod to Modrinth to obtain its upstream description.
 At least one must stay selected. The environment filters distinguish client-only,
 server-only and shared entries; sorting supports name, environment and updates.
 Filtering changes the view only, not the build or its exported content.
+
+## Content browser and feedback
+
+Installed content and **Add content** share the Server Content category control.
+Filter mods by environment and category; resource searches use resource/shader
+categories. Categories on installed rows come from linked Modrinth metadata;
+unlinked uploads remain visible under All categories. Search and manual version
+selection remain available. **Install** selects the latest compatible stable
+release, or a compatible beta/alpha if no stable release exists, using the build's
+Minecraft version and loader. It never blindly installs the search result's latest
+version. Required dependency warnings still require review. Installed projects
+show **Installed** and a permission-checked **Remove** action; removing confirms
+all matching entries in this build. Read-only or frozen builds can browse without
+receiving write rights. Vanilla builds cannot install loader-specific mods.
+
+Results load in pages of 20 through **Load more**; query changes discard stale
+responses. Both installed and browse lists have their own scroll containers so
+the last entry and pagination remain reachable. Filtering never changes exports.
+
+Panel feedback stays copyable. Default success/error lifetimes are 5.2/9.1 seconds,
+35% shorter than the previous defaults. Opacity starts declining halfway through.
+Hover and keyboard focus restore full visibility and pause the outline and
+remaining lifetime together; leaving resumes the remainder without resetting it.
+A final short fade dismisses the card. Reduced motion disables the animated
+outline and fading while preserving expiration and pause behavior.
+
+New Modrinth projects use `LicenseRef-All-Rights-Reserved`, preserving the existing
+all-rights-reserved intent with a valid SPDX expression. Legacy `arr` input is
+normalized at the API-client boundary; explicitly supplied other licenses remain
+unchanged. External moderation/token requirements still apply.
 
 ## Build creation
 
