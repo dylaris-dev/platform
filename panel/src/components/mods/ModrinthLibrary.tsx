@@ -9,6 +9,8 @@ import Select from '@/components/ui/Select';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { toast } from '@/components/ui/Toast';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
+import GuardedLink from '@/components/GuardedLink';
+import { usePathname } from 'next/navigation';
 
 type Library = {
     favorites: Favorite[];
@@ -60,10 +62,12 @@ export function ModrinthProjectActions({
     projectId,
     title,
     loader,
+    showAlert = true,
 }: {
     projectId: string;
     title: string;
     loader?: string;
+    showAlert?: boolean;
 }) {
     const library = useContext(Context);
     const [watch, setWatch] = useState(false);
@@ -76,7 +80,7 @@ export function ModrinthProjectActions({
                 aria-label={`${favorite ? 'Unfavorite' : 'Favorite'} ${title}`}
                 aria-pressed={favorite}
                 disabled={saving}
-                title={library.ready ? 'Save this project as a favorite' : 'Reload favorites'}
+                title={library.ready ? (favorite ? 'Remove from your personal favorites' : 'Save to your personal favorites; this does not create an alert') : 'Reload favorites'}
                 onClick={async () => {
                     setSaving(true);
                     try {
@@ -90,14 +94,14 @@ export function ModrinthProjectActions({
             >
                 <Star size={14} fill={favorite ? 'currentColor' : 'none'} />
             </button>
-            <button
+            {showAlert && <button
                 aria-label={`Version alerts for ${title}`}
                 title="Notify when a Minecraft version is supported"
                 onClick={() => setWatch(true)}
                 className="btn btn-ghost btn-sm"
             >
                 <Bell size={14} />
-            </button>
+            </button>}
             {watch && (
                 <ModrinthWatchDialog project={{ projectId, title }} loader={loader} onClose={() => setWatch(false)} />
             )}
@@ -122,6 +126,7 @@ export function ModrinthWatchDialog({
     onClose: () => void;
     onSaved?: () => void;
 }) {
+    const pathname = usePathname();
     const [versions, setVersions] = useState<string[]>([]);
     const [selected, setSelected] = useState<string[]>([]);
     const [future, setFuture] = useState(false);
@@ -184,6 +189,7 @@ export function ModrinthWatchDialog({
                     <p className="text-xs text-(--base-06) mt-2">{project?.title || title}</p>
                 </div>
                 <div className="modal-body space-y-4">
+                    {packId && (pathname === `/modpacks/${packId}/alerts` ? <button onClick={onClose} className="btn btn-secondary btn-sm">Back to existing pack alerts</button> : <GuardedLink href={`/modpacks/${packId}/alerts`} className="btn btn-secondary btn-sm">Manage existing pack alerts</GuardedLink>)}
                     <p className="text-sm text-(--base-07)">
                         Check daily and notify once per Minecraft release. Specific targets finish after notification.
                         Future-release alerts stay active. Pack alerts follow its Recommended build, or the newest
@@ -262,6 +268,7 @@ export function ModrinthWatchDialog({
 
 export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; buildId?: number }) {
     const library = useContext(Context);
+    const [favoriteQuery, setFavoriteQuery] = useState('');
     const metadata = useProjectMetadata(library?.favorites.map((f) => f.projectId) || []);
     const [watches, setWatches] = useState<AvailabilityWatch[]>([]);
     const [error, setError] = useState('');
@@ -299,7 +306,10 @@ export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; bui
             {!packId && (
                 <section className="card p-4 space-y-3">
                     <h3 className="font-medium">Favorite mods</h3>
-                    {library?.favorites.map((f) => (
+                    <p className="text-xs text-(--base-06)">Saved mods, resources and shaders from every server and modpack. Star to bookmark; use Version alert to subscribe.</p>
+                    <input aria-label="Search saved projects" className="input-field w-full" placeholder="Search saved projects..." value={favoriteQuery} onChange={event => setFavoriteQuery(event.target.value)} />
+                    {!library?.ready && <p role="status" className="text-sm text-(--base-06)">Favorites are not loaded yet. Use Refresh to retry.</p>}
+                    {library?.favorites.filter(f => f.title.toLowerCase().includes(favoriteQuery.trim().toLowerCase())).map((f) => (
                         <div key={f.projectId} className="flex items-center gap-2">
                             <ProjectIcon name={f.title} url={metadata.projects[f.projectId]?.icon_url} />
                             <a
@@ -314,7 +324,7 @@ export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; bui
                                 <Bell size={13} />
                                 Version alert
                             </button>
-                            <ModrinthProjectActions projectId={f.projectId} title={f.title} />
+                            <ModrinthProjectActions projectId={f.projectId} title={f.title} showAlert={false} />
                         </div>
                     ))}
                     {library?.favorites.length === 0 && (
@@ -322,6 +332,7 @@ export function ModrinthLibraryPanel({ packId, buildId }: { packId?: number; bui
                             Star projects in Modpacks or Server Content to save them here.
                         </p>
                     )}
+                    {library?.ready && !!library.favorites.length && !library.favorites.some(f => f.title.toLowerCase().includes(favoriteQuery.trim().toLowerCase())) && <p className="text-sm text-(--base-06)">No saved projects match your search.</p>}
                 </section>
             )}
             <section className="space-y-3">

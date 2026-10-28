@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28
+
+### Features
+- **Clearer modpack navigation.** Pack-wide recommendations and alerts sit beside
+  Collaborators and New build; the wider build list highlights the current view.
+- **A personal Favorites area and guided help.** Explore example workflows for server
+  creation, BYON, route-only, content and modpacks without creating or buying anything.
+
+### Breaking
+- Nothing.
+
+### Security
+- Frozen and published builds require version-name confirmation before local deletion.
+  Existing server files and versions on Modrinth remain; your normal delete rights still apply.
+
+### Fixes
+- Published builds cannot be edited or republished. Build details can open on demand
+  in narrower windows, leaving more room for content.
+
 ## 2026.10.27.3
 
 ### Features

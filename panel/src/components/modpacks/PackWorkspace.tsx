@@ -4,10 +4,10 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Plus, Users, History, RefreshCw, Package, Search, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronRight, BookOpen, Star } from 'lucide-react';
+import { Plus, Users, History, RefreshCw, Package, Search, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronRight, BookOpen, Star, Bell, Layers, PanelRight, X } from 'lucide-react';
 import { getPackDetails, listBuilds, listPacksOverview, type Pack, type PackBuild, type PackPermissions, type PacksOverview } from '@/lib/api/packs';
 import { routeIdFrom } from '@/lib/routeParams';
-import { currentPackBuild, packBuildStatus } from '@/lib/packWorkspace';
+import { currentPackBuild, newestPackBuild, packBuildStatus } from '@/lib/packWorkspace';
 import { systemEvents } from '@/lib/systemEvents';
 import { useAppData } from '@/lib/AppDataContext';
 import { useSidebarCollapse } from '@/lib/SidebarCollapse';
@@ -15,6 +15,9 @@ import { fmtDate } from '@/lib/time';
 import { SkeletonList } from '@/components/Skeleton';
 import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal';
 import PackActivity from '@/components/modpacks/PackActivity';
+import PackRecommendation from '@/components/modpacks/PackRecommendation';
+import HelpTourButton from '@/components/help/HelpTourButton';
+import { ModrinthWatchDialog } from '@/components/mods/ModrinthLibrary';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { Badge } from '@/components/ui/Badge';
@@ -30,6 +33,12 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
     const packId = Number(routeIdFrom(pathname, 'modpacks')) || 0;
     const buildId = Number(routeIdFrom(pathname, 'builds')) || 0;
     const creating = pathname.endsWith('/builds/new');
+    const allBuilds = pathname === `/modpacks/${packId}` || pathname === `/modpacks/${packId}/`;
+    const alertsSelected = pathname === `/modpacks/${packId}/alerts`;
+    const [detailsOpen, setDetailsOpen] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [watchOpen, setWatchOpen] = useState(false);
+    useEffect(() => { setDetailsOpen(false); setWatchOpen(false); }, [pathname]);
     const { featureFlags, user } = useAppData();
     const { collapsed, toggle, width } = useSidebarCollapse();
     const [search, setSearch] = useState('');
@@ -69,6 +78,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
     }, [overview]);
     useEffect(() => { const dispose = ['packs.changed', 'pack_builds.changed'].map(event => systemEvents.on(event, () => { refreshOverview(); refresh(); })); return () => dispose.forEach(fn => fn()); }, [refresh, refreshOverview]);
     const canAudit = permissions.isOwner || user?.isAdmin;
+    const alertSource = builds.find(build => build.id === pack?.recommendedBuildId) || newestPackBuild(builds.filter(build => build.channel === 'release'));
     return <WorkspaceContext.Provider value={{ pack, builds, permissions, loading, refresh, detailsRoot }}>
         <div className={styles.workspace}>
             <aside className={`${styles.packs} ${width}`} aria-label="Modpacks">
@@ -90,19 +100,40 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                         {!collapsed && open && matches.length === 0 && <p className="text-xs text-(--base-06) px-2 py-3">{search ? 'No matching modpacks.' : group.key === 'own' ? 'Create your first modpack.' : 'Packs shared with you appear here.'}</p>}
                     </section>;
                 })}</nav>
-                <div className={`${styles.packFooter} p-2 border-t border-(--base-03) space-y-1`}><Link href="/modpacks/guide" title="Modpack how-to" className="btn btn-ghost btn-sm w-full justify-start"><BookOpen size={14}/>{!collapsed && 'How to build a pack'}</Link><Link href="/modpacks/favorites" title="Favorites and version alerts" className="btn btn-ghost btn-sm w-full justify-start"><Star size={14}/>{!collapsed && 'Favorites & alerts'}</Link><button onClick={() => setCollaborators(true)} title="Collaborators" className="btn btn-ghost btn-sm w-full justify-start"><Users size={14} />{!collapsed && 'Collaborators'}</button><button onClick={() => setActivity(true)} title="Activity" className="btn btn-ghost btn-sm w-full justify-start"><History size={14} />{!collapsed && 'Activity'}</button></div>
+                <div className={`${styles.packFooter} p-2 border-t border-(--base-03) space-y-1`}><Link href="/modpacks/guide" title="Modpack how-to" className="btn btn-ghost btn-sm w-full justify-start"><BookOpen size={14}/>{!collapsed && 'How to build a pack'}</Link><Link href="/favorites" title="Favorites and version alerts" className="btn btn-ghost btn-sm w-full justify-start"><Star size={14}/>{!collapsed && 'Favorites & alerts'}</Link><button onClick={() => setCollaborators(true)} title="Collaborators" className="btn btn-ghost btn-sm w-full justify-start"><Users size={14} />{!collapsed && 'Collaborators'}</button><button onClick={() => setActivity(true)} title="Activity" className="btn btn-ghost btn-sm w-full justify-start"><History size={14} />{!collapsed && 'Activity'}</button></div>
             </aside>
             <div className={styles.body}>
-                {packId > 0 && <header className={styles.heading}><ProjectIcon name={pack?.internalName || 'Modpack'} url={metadata.projects[pack?.modrinthProjectId || '']?.icon_url} className="w-11 h-11" /><div className="min-w-0 flex-1"><p className="mono-label text-(--base-06)">Modpack workspace</p><h1 className="font-display text-lg font-semibold text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1><p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div><div className={styles.tools}>{permissions.isOwner && <button onClick={() => setCollaborators(true)} className="btn btn-secondary btn-sm" title="Manage modpack access"><Users size={13} /><span className="hidden xl:inline">Collaborators</span></button>}<button onClick={refresh} className="btn btn-secondary btn-sm" aria-label="Refresh pack"><RefreshCw size={13} /></button>{pack && permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-primary btn-sm"><Plus size={13} /> New build</Link>}</div></header>}
+                {packId > 0 && <>
+                    <header className={styles.heading}>
+                        <ProjectIcon name={pack?.internalName || 'Modpack'} url={metadata.projects[pack?.modrinthProjectId || '']?.icon_url} className="w-11 h-11" />
+                        <div className="min-w-0 flex-1"><p className="mono-label text-(--base-06)">Modpack workspace</p><h1 className="font-display text-lg font-semibold text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1><p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div>
+                        <div className={styles.tools}>
+                            <button onClick={async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }} disabled={refreshing} className="btn btn-ghost btn-sm"><RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />{refreshing ? 'Refreshing...' : 'Refresh'}</button>
+                            {canAudit && <button onClick={() => setActivity(true)} className="btn btn-ghost btn-sm"><History size={13} />Activity</button>}
+                            <HelpTourButton topic="modpacks" />
+                            {pack && (buildId > 0 || creating || allBuilds) && <button onClick={() => setDetailsOpen(value => !value)} aria-expanded={detailsOpen} aria-controls="pack-details" className={`btn btn-secondary btn-sm ${styles.detailsToggle}`}><PanelRight size={14} />{buildId || creating ? 'Build details' : 'Pack details'}</button>}
+                        </div>
+                    </header>
+                    {pack && <div className={styles.packToolbar} aria-label="Pack actions">
+                        <div className={styles.recommendation}><PackRecommendation pack={pack} builds={builds} canEdit={permissions.canEdit && featureFlags.modpacks} onChanged={refresh} /></div>
+                        <div className={`${styles.tools} ml-auto`}>
+                            <button onClick={() => setWatchOpen(true)} aria-haspopup="dialog" aria-expanded={watchOpen} className={`btn btn-sm ${alertsSelected || watchOpen ? 'btn-primary' : 'btn-secondary'}`}><Bell size={14} />Pack version alerts</button>
+                            {permissions.isOwner && <button onClick={() => setCollaborators(true)} className="btn btn-secondary btn-sm"><Users size={14} />Collaborators</button>}
+                            {permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} aria-current={creating ? 'page' : undefined} className="btn btn-primary btn-sm"><Plus size={14} />New build</Link>}
+                        </div>
+                    </div>}
+                </>}
                 {packId > 0 && !featureFlags.modpacks && <p className="text-xs text-(--warning-light) px-5 py-3 border-b border-(--base-03)">Modpack authoring is disabled. Existing builds remain readable and downloadable.</p>}
                 <div className={styles.columns}>
-                    {pack && !creating && <nav className={styles.builds} aria-label="Pack builds"><Link href={`/modpacks/${packId}`} className="btn btn-secondary btn-sm w-full justify-between mb-3" aria-current={!buildId ? 'page' : undefined}>All builds <span>{builds.length}</span></Link>{builds.map(b => <Link key={b.id} href={`/modpacks/${packId}/builds/${b.id}`} className={styles.buildLink} aria-current={buildId === b.id ? 'page' : undefined}><strong className="font-mono text-sm text-(--base-09) break-all">{b.versionString}</strong><Badge variant={b.channel === 'release' ? 'success' : 'neutral'}>{packBuildStatus(b, builds,pack.recommendedBuildId)}</Badge><span className="text-[10px] text-(--base-06)">{fmtDate(b.createdAt)}</span></Link>)}{builds.length === 0 && <p className="text-xs text-(--base-06)">No builds yet.</p>}</nav>}
+                    {pack && !creating && <nav className={styles.builds} aria-label="Pack builds"><Link href={`/modpacks/${packId}`} className={styles.allBuilds} aria-current={allBuilds ? 'page' : undefined}><Layers size={15} />All builds</Link>{builds.map(b => <Link key={b.id} href={`/modpacks/${packId}/builds/${b.id}`} className={styles.buildLink} aria-current={buildId === b.id ? 'page' : undefined}><strong className="font-mono text-sm text-(--base-09) break-all">{b.versionString}</strong><Badge variant={b.channel === 'release' ? 'success' : 'neutral'}>{packBuildStatus(b, builds,pack.recommendedBuildId)}</Badge><span className="text-[10px] text-(--base-06)">{fmtDate(b.createdAt)}</span></Link>)}{builds.length === 0 && <p className="text-xs text-(--base-06)">No builds yet.</p>}</nav>}
                     <div className={styles.content} key={`${packId}:${buildId}:${creating}`}>{children}</div>
-                    {pack && <aside className={styles.details} aria-label="Build details"><div ref={setDetailsRoot} className="flex flex-col flex-1 min-h-0">{!buildId && !creating && <><p className="mono-label text-(--base-06) mb-4">Pack details</p><dl className={styles.metadata}><div><dt>Builds</dt><dd>{builds.length}</dd></div><div><dt>Latest version</dt><dd>{currentPackBuild(builds,pack.recommendedBuildId)?.versionString || 'None'}</dd></div><div><dt>Modrinth</dt><dd>{pack.modrinthProjectId ? 'Linked' : 'Not linked'}</dd></div></dl></>}</div>{canAudit && <div className="mt-auto pt-6"><PackActivity packId={packId} compact limit={2} /><button onClick={() => setActivity(true)} className="text-xs text-(--accent-light) inline-flex items-center gap-2 mt-3"><History size={12} /> View all activity</button></div>}</aside>}
+                    {pack && detailsOpen && <button className={styles.detailsBackdrop} onClick={() => setDetailsOpen(false)} aria-label="Close details" />}
+                    {pack && (buildId > 0 || creating || allBuilds) && <aside id="pack-details" className={`${styles.details} ${detailsOpen ? styles.detailsOpen : ''}`} aria-label={buildId || creating ? 'Build details' : 'Pack details'}><button onClick={() => setDetailsOpen(false)} className={`btn btn-ghost btn-sm ${styles.detailsClose}`}><X size={14} />Close details</button><div ref={setDetailsRoot} className="flex flex-col shrink-0">{allBuilds && <><p className="mono-label text-(--base-06) mb-4">Pack details</p><dl className={styles.metadata}><div><dt>Builds</dt><dd>{builds.length}</dd></div><div><dt>Latest version</dt><dd>{currentPackBuild(builds,pack.recommendedBuildId)?.versionString || 'None'}</dd></div><div><dt>Modrinth</dt><dd>{pack.modrinthProjectId ? 'Linked' : 'Not linked'}</dd></div></dl></>}</div></aside>}
                 </div>
             </div>
         </div>
         {collaborators && <PackCollaboratorsModal packs={overview.packs} initialPackId={permissions.isOwner ? packId || undefined : undefined} onClose={() => { setCollaborators(false); refreshOverview(); refresh(); }} />}
+        {watchOpen && pack && <ModrinthWatchDialog packId={pack.id} title={pack.internalName} loader={alertSource?.loader} onClose={() => setWatchOpen(false)} />}
         {activity && <div className="modal-overlay" onClick={() => setActivity(false)}><ModalPanel onClose={() => setActivity(false)} className="modal-panel max-w-2xl" onClick={event => event.stopPropagation()}><div className="modal-header"><h2 className="modal-title">Modpack activity</h2><button onClick={() => setActivity(false)} className="btn btn-secondary btn-sm">Close</button></div><div className="modal-body">{!packId || canAudit ? <PackActivity packId={packId || undefined} showPack={!packId} /> : <p className="text-sm text-(--base-06)">Only the owner and administrators can view this pack&apos;s activity.</p>}</div></ModalPanel></div>}
     </WorkspaceContext.Provider>;
 }

@@ -10,6 +10,7 @@ import { useSidebarCollapse } from '@/lib/SidebarCollapse';
 import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
 import CreateMenu from '@/components/CreateMenu';
+import HelpTourButton from '@/components/help/HelpTourButton';
 import { useRouteId } from '@/lib/routeParams';
 
 interface SidebarProps {
@@ -465,6 +466,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
       {/* Was an unconditional "New Container" for every user, including ones
           with nowhere to deploy. CreateMenu decides what is offered and says why
           when something is not. */}
+      <div className="border-t border-(--base-03) p-2"><HelpTourButton topic="servers" compact={collapsed} /></div>
       <CreateMenu onNewServer={onNewServer} />
     </aside>
   );

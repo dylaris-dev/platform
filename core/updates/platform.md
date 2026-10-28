@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28
+
+### Features
+- **Pack actions where they belong.** Recommendations, alerts, collaborators and New build
+  share the pack header. Wider build navigation clearly highlights the selected view. `panel`
+- **Favorites and guided help.** A personal library and safe example tours explain server
+  creation, BYON, route-only, content, custom tabs and modpacks without live changes. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Deleting frozen or published builds requires the exact version name in the API and panel.
+  Delete rights remain required; external Modrinth versions and installed files remain. `core` `panel`
+
+### Fixes
+- Published builds stay read-only and cannot be published again; failed frozen publications
+  remain retryable. Narrow layouts open build details on demand to preserve editor space. `core` `panel`
+
 ## 2026.10.27.3
 
 ### Features

@@ -177,7 +177,7 @@ export const deletePack = (id: number) => send(`/packs/${id}`, 'DELETE');
 export const listBuilds = (packId: number) => get<PackBuild[]>(`/packs/${packId}/builds`, [], 'builds');
 export const createBuild = (packId: number, input: { versionString: string; minecraft?: string; loader?: string; loaderVersion?: string; changelog?: string; sourceBuildId?: number }) => send(`/packs/${packId}/builds`, 'POST', input);
 export const updateBuild = (packId: number, buildId: number, input: Partial<PackBuild>) => send(`/packs/${packId}/builds/${buildId}`, 'PATCH', input);
-export const deleteBuild = (packId: number, buildId: number) => send(`/packs/${packId}/builds/${buildId}`, 'DELETE');
+export const deleteBuild = (packId: number, buildId: number, confirmVersion?: string) => send(`/packs/${packId}/builds/${buildId}`, 'DELETE', confirmVersion === undefined ? undefined : { confirmVersion });
 
 export const listContent = (packId: number, buildId: number) => get<BuildContentEntry[]>(`/packs/${packId}/builds/${buildId}/content`, [], 'content');
 export const addModrinthContent = (packId: number, buildId: number, input: { projectId: string; versionId: string; side?: string; resolveDeps?: boolean; contentType?: string }) => send(`/packs/${packId}/builds/${buildId}/content/modrinth`, 'POST', input);

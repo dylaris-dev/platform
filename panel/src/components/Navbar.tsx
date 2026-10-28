@@ -2,12 +2,21 @@
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Star } from 'lucide-react';
 import { AppModule } from '../lib/api';
 import { DynamicIcon } from '../lib/icons';
 import { useAppData } from '@/lib/AppDataContext';
 import { useLayout } from '@/lib/useBreakpoint';
 import GuardedLink from '@/components/GuardedLink';
+import HelpTourButton from '@/components/help/HelpTourButton';
+
+export function withPersonalLibrary(modules: AppModule[]): AppModule[] {
+  const entries: AppModule[] = [
+    { id: -101, name: 'Favorites', type: 'internal', icon: 'star', url: '/favorites', isEnabled: true, isSystem: true, position: 98, accessRole: 'all' },
+    { id: -102, name: 'Help', type: 'internal', icon: 'circle-help', url: '/help', isEnabled: true, isSystem: true, position: 99, accessRole: 'all' },
+  ];
+  return [...modules, ...entries.filter(entry => !modules.some(module => moduleHref(module) === entry.url))];
+}
 
 interface NavbarProps {
   children?: React.ReactNode;
@@ -98,7 +107,7 @@ export default function Navbar({ children, brand }: NavbarProps) {
   const pathname = usePathname();
   const { layout } = useLayout();
 
-  const sortedModules = useMemo(() => [...modules]
+  const sortedModules = useMemo(() => withPersonalLibrary(modules)
     // Platform-wide tickets toggle hides the Tickets module entry-point.
     // The module row itself stays in the DB so flipping the toggle back on
     // restores the nav without re-seeding.
@@ -295,6 +304,8 @@ export default function Navbar({ children, brand }: NavbarProps) {
       {/* Right actions. Empty in the compact band - the shell moves them into
           the sidebar rail there, where there is room. */}
       <div className="flex items-center gap-3 shrink-0 pl-4">
+        <GuardedLink href="/favorites" title="Personal favorites and version alerts" aria-label="Favorites & alerts" className={`btn btn-ghost btn-sm ${pathname.startsWith('/favorites') ? 'text-(--accent-light)' : ''}`}><Star size={15} /></GuardedLink>
+        <HelpTourButton compact />
         {children}
       </div>
     </nav>

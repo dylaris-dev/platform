@@ -100,6 +100,10 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
+	if build.ModrinthPublished {
+		handlers.SendJSONError(w, "This build is already published. Create a new build for changes.", http.StatusConflict)
+		return
+	}
 
 	var req publishModrinthRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)

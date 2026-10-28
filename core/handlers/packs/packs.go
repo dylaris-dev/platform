@@ -440,7 +440,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
-	if b.Frozen {
+	if b.Frozen || b.ModrinthPublished {
 		handlers.SendJSONError(w, "Build is published and frozen", http.StatusConflict)
 		return
 	}
@@ -500,7 +500,8 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteBuild DELETE /api/packs/{id}/builds/{buildId} - deletes a build that
-// belongs to the pack in the path.
+// belongs to the pack in the path. Frozen/published builds require a JSON
+// confirmVersion matching the exact version. External Modrinth versions remain.
 func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
@@ -514,9 +515,14 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
-	if b.Frozen {
-		handlers.SendJSONError(w, "Build is published and frozen", http.StatusConflict)
-		return
+	if b.Frozen || b.ModrinthPublished {
+		var req struct {
+			ConfirmVersion string `json:"confirmVersion"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.ConfirmVersion != b.VersionString {
+			handlers.SendJSONError(w, "Confirm the exact build version to delete a frozen or published build", http.StatusConflict)
+			return
+		}
 	}
 	dirs := h.state.PackBuildDirs(p, b)
 	if err := h.state.Store.DeletePackBuild(buildID, packID); err != nil {

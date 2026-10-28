@@ -39,11 +39,17 @@ Installed content is grouped into **Mods**, **Resources**, and **Configs &
 scripts**, with search and project artwork on the installed rows. Missing or
 broken artwork falls back to a content-type icon. **Add content** opens the
 Modrinth browser in the main workspace. **Sharing** contains expiring share links;
-**Version alerts** manages daily availability checks. **All builds** returns to
-the pack overview, and the sidebar includes a full authoring guide.
+The pack header contains **Recommended build**, **Pack version alerts**,
+**Collaborators** and **New build**. The alert dialog opens directly in one click
+without selecting a build; it links to a pack-level page for managing existing
+alerts. **All builds** returns to
+the pack overview; the active overview/build is highlighted and the button
+contains no build count. The sidebar includes a full authoring guide.
 Build environment, counts and export/publish
-actions stay in the right sidebar. Owners and administrators see recent
-activity there and can open the complete audit history separately.
+actions stay in the right sidebar. At narrower widths it opens through
+**Build details** so the wider build list does not squeeze the editor.
+Owners and administrators open pack-wide **Activity** from the header; it no
+longer competes with the build actions in the details sidebar.
 
 Installed and search cards use the Server Content visual style. Expand a card
 for its project description, switch between short/full sanitized Markdown, or
@@ -78,12 +84,21 @@ loader; use a compatible mod loader for mods.
 
 ## Recommendations and forks
 
-**Recommended build** in Build details explicitly selects the pack's player-facing
+**Recommended build** in the pack header explicitly selects the pack's player-facing
 recommendation. **Automatic: newest release** instead selects the newest release
 channel build. New drafts do not change this source automatically. Without a
 recommendation or release, pack alerts wait. Explicitly recommending an editable
 draft is allowed and clearly labelled; its current mod list is then checked.
 Recommendation does not freeze, publish or update installed/running servers.
+
+**Delete build** is available in the overview and build details with delete
+permission. Frozen or published builds require typing the exact version name.
+The API also requires JSON `{"confirmVersion":"exact-version"}` when deleting
+such a build. This removes local build metadata, downloads and share links;
+other builds, installed server files and external Modrinth versions remain.
+Deleting the recommendation clears it and alerts fall back to the newest remaining
+release, or wait if none exists. Published builds cannot be edited or published
+again; a failed, frozen publication can still be retried.
 
 **Fork build into another pack** copies all pinned content, paths, environments,
 configuration bytes and empty folders into an independent draft. Choose a new

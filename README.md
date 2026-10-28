@@ -83,6 +83,9 @@ what any serious panel needs.
   New build previews Minecraft/loader migrations; user-owned favorites and daily
   alerts follow the Recommended build or latest release. Fork a build into a new
   or empty pack with independent uploaded files. See [the authoring guide](MODPACKS.md).
+- **Personal favorites and guided help** - save content across servers and packs,
+  manage daily availability alerts and explore safe examples for creation, BYON,
+  route-only and authoring without making real changes. See [panel help](PANEL-HELP.md).
 - **Modrinth integration** — in-panel mod browser, install mods into a server, plus a modpack **builder + publisher** (publish your own modpacks to Modrinth).
 - **Sub-servers** — several installs on one server slot, switched from the panel. Keep a vanilla world, a modded world and next season's pack side by side without a second slot.
 - **Spark profiler** — start/stop profiling and capture results from the panel, so a lagging world is diagnosed where it runs.

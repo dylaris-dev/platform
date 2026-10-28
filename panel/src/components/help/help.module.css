@@ -1,0 +1,14 @@
+.dialog { width:min(1060px,calc(100vw - 48px)); max-width:1060px; max-height:90vh; display:flex; flex-direction:column; }
+.safety { flex-shrink:0; padding:12px 24px; border-bottom:1px solid var(--accent-border); background:var(--accent-ghost); color:var(--base-08); font-size:12px; }
+.body { display:flex; min-height:0; overflow:auto; }
+.topics { width:230px; flex-shrink:0; padding:16px; border-right:1px solid var(--base-03); display:flex; flex-direction:column; gap:6px; }
+.topics>button { text-align:left; padding:10px; border:1px solid transparent; border-radius:var(--radius-md); font-size:12px; color:var(--base-07); }
+.topics>button:hover { background:var(--base-03); }
+.topics>button[aria-current=step] { color:var(--accent-light); border-color:var(--accent-border); background:var(--accent-ghost); }
+.main { min-width:0; flex:1; padding:24px; display:flex; flex-direction:column; gap:16px; }
+.preview { border:1px solid var(--base-04); background:var(--base-01); border-radius:var(--radius-md); overflow:hidden; }
+.previewTabs { display:flex; flex-wrap:wrap; gap:4px; border-bottom:1px solid var(--base-03); padding:8px; }
+.previewTabs button { padding:6px 9px; font-size:11px; color:var(--base-06); border-radius:var(--radius-md); }
+.previewTabs button[aria-current=step] { color:var(--accent-light); background:var(--accent-ghost); }
+.previewTabs button:hover { background:var(--base-03); }
+@media(max-height:760px) { .main{gap:12px;padding:18px}.preview dl{padding:12px}.topics{padding:12px} }

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { type Pack, type PackBuild, setRecommendedBuild } from '@/lib/api/packs';
 import Select from '@/components/ui/Select';
 import { toast } from '@/components/ui/Toast';
+import HelpTip from '@/components/ui/HelpTip';
 
 export default function PackRecommendation({
     pack,
@@ -23,15 +24,16 @@ export default function PackRecommendation({
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id - a.id)[0];
     const selected = explicit || release;
     return (
-        <section className="space-y-2 pt-4 border-t border-(--base-03)">
-            <label className="input-label" htmlFor="pack-recommended-build">
+        <section className="space-y-1">
+            <div className="flex items-center gap-2"><label className="input-label" htmlFor="pack-recommended-build">
                 Recommended build
-            </label>
+            </label><HelpTip>Pack alerts follow the explicit recommendation, otherwise the newest release. New drafts do not replace it automatically. This does not publish, freeze or update running servers.</HelpTip></div>
             <Select
                 id="pack-recommended-build"
                 ariaLabel="Recommended build"
                 value={String(pack.recommendedBuildId || 0)}
                 disabled={!canEdit || busy}
+                searchable
                 options={[
                     { value: '0', label: 'Automatic: newest release' },
                     ...builds.map((build) => ({
@@ -53,15 +55,10 @@ export default function PackRecommendation({
                     }
                 }}
             />
-            <p className="text-xs text-(--base-06)">
-                {selected
-                    ? `Pack alerts follow ${selected.versionString}.`
-                    : 'Alerts wait until you recommend a build or publish a release.'}{' '}
-                This does not publish or update running servers.
-            </p>
+            {!selected && <p className="text-xs text-(--base-06)">Alerts wait for a recommendation or release.</p>}
             {explicit && !explicit.frozen && (
                 <p className="text-xs text-(--warning-light)">
-                    This recommended build is still editable. Alerts use its current mod list.
+                    Recommended draft is still editable.
                 </p>
             )}
         </section>

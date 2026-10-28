@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { countThatFit, visibleCountFor } from './Navbar';
+import { countThatFit, visibleCountFor, withPersonalLibrary, moduleHref } from './Navbar';
+
+describe('personal navigation', () => {
+    it('offers the personal library and help without requiring an admin module row', () => {
+        expect(withPersonalLibrary([]).map(moduleHref)).toEqual(['/favorites', '/help']);
+        expect(withPersonalLibrary([]).every(module => module.accessRole === 'all')).toBe(true);
+    });
+    it('preserves configured entries without adding duplicate routes', () => {
+        const original = withPersonalLibrary([]);
+        expect(withPersonalLibrary(original)).toEqual(original);
+    });
+});
 
 describe('countThatFit', () => {
     const TRIGGER = 60;

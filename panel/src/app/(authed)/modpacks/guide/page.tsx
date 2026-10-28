@@ -50,7 +50,7 @@ export default function PackGuide() {
                     ],
                     [
                         'Recommendations and forks',
-                        'Choose Recommended build in Build details, or use Automatic: newest release. This does not freeze, publish or update running servers. Fork build copies mods, resources, configs and folders into a new pack or an existing writable pack with no builds. Uploaded files and records become independent; source publication bindings and access grants are not copied.',
+                        'Choose Recommended build in the pack header, or use Automatic: newest release. This does not freeze, publish or update running servers. Fork build copies mods, resources, configs and folders into a new pack or an existing writable pack with no builds. Uploaded files and records become independent; source publication bindings and access grants are not copied.',
                     ],
                     [
                         'Where the bytes live',
@@ -66,7 +66,7 @@ export default function PackGuide() {
                     <Link className="btn btn-primary" href="/modpacks?create=1">
                         Create a pack
                     </Link>
-                    <Link className="btn btn-secondary" href="/modpacks/favorites">
+                    <Link className="btn btn-secondary" href="/favorites">
                         Favorites & alerts
                     </Link>
                 </div>
