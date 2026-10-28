@@ -249,7 +249,7 @@ anything.
 | `install.sh` | the interview above (default) |
 | `install.sh add-node` | joins this machine to the DYLARIS Swarm as a node |
 | `install.sh update` | pulls new images and restarts, keeping secrets and data |
-| `install.sh uninstall` | removes the containers, keeps data; `--purge` deletes data too |
+| `install.sh uninstall` | removes this install's containers and game servers (only those on its network), keeps data; `--purge` deletes data too |
 | `install.sh diagnostics` | writes a report with secrets masked |
 | `--check` / `--dry-run` | only check the machine / show plan and files, change nothing |
 | `--config FILE` | answers from `KEY=VALUE` lines, for unattended installs |

@@ -897,12 +897,15 @@ cmd_uninstall() {
     local t; read -r -p "Type DELETE EVERYTHING to continue: " t </dev/tty
     [[ $t == "DELETE EVERYTHING" ]] || die "Stopped; nothing was deleted."
   fi
+  # Game servers are siblings the node started, not part of the compose project.
+  # Only THIS install's: they sit on its network. A bare name=mc_ filter also
+  # took every other panel's servers on a shared Docker host. Removed before the
+  # project goes down, while the network still exists to filter on.
+  local c; for c in $("${DOCKER[@]}" ps -aq --filter name=mc_ --filter "network=${PROJECT}_dylaris_net"); do run "${DOCKER[@]}" rm -f "$c" >/dev/null; done
   if [[ -f $OUT_DIR/docker-stack.yml ]]; then run "${DOCKER[@]}" stack rm "$PROJECT"
   elif [[ -f $OUT_DIR/docker-compose.yml ]]; then
     if (( PURGE )); then run compose down -v; else run compose down; fi
   fi
-  # Game servers are siblings the node started, not part of the compose project.
-  local c; for c in $("${DOCKER[@]}" ps -aq --filter name=mc_); do run "${DOCKER[@]}" rm -f "$c" >/dev/null; done
   if (( PURGE )); then
     run $SUDO rm -rf "$OUT_DIR"
     ok "Removed, including all data."

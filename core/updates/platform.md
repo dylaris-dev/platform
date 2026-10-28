@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- **The installer's uninstall removed every `mc_` container on the machine,** including
+  game servers of another panel on a shared Docker host. It now removes only its own.
+
+### Fixes
+- Uninstall also removes the install's network again; it stayed behind before. Download
+  the installer again to get the fix.
+
 ## 2026.10.28.3
 
 ### Features
