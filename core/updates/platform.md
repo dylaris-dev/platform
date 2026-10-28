@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.5
+
+### Features
+- Modpack content is a compact list: one row per entry with sides and actions beside
+  the name, about twice as many entries per screen. Add content cards are shorter too. `panel`
+- Empty packs, builds and config folders say what to do next; a read-only build says
+  so once instead of showing disabled buttons, and Sharing hides while links are off. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Install put client-only mods such as Sodium on both sides, so they reached the server
+  download. It now follows Modrinth's sides; dependencies stay on both. `core` `panel`
+- New pack opens the new pack; dialog close buttons sit beside the title; Publish says
+  it freezes the build; alerts and filters use the panel's own checkboxes and selects. `panel`
+
 ## 2026.10.28.4
 
 ### Features

@@ -17,6 +17,7 @@ import { compareVersionsDesc } from '@/views/setup/VersionPicker';
 import { WorkspaceDetails } from '@/components/modpacks/PackWorkspace';
 import styles from './workspace.module.css';
 import ProjectIcon, { useProjectMetadata } from './ProjectIcon';
+import Checkbox from '@/components/ui/Checkbox';
 
 export default function CreateBuildForm({
     packId,
@@ -228,23 +229,10 @@ export default function CreateBuildForm({
                     </p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <p className="text-xs text-(--base-06)">
+                    <p className="text-xs text-(--base-06) md:col-span-2">
                         Choose a Minecraft release and loader. Compatible loader builds are fetched automatically; the
                         recommended stable build is selected when available.
                     </p>
-                    <div>
-                        <label htmlFor="pack-build-version" className="input-label">
-                            Pack version (editable)
-                        </label>
-                        <input
-                            id="pack-build-version"
-                            value={versionString}
-                            onChange={(e) => setVersionString(e.target.value)}
-                            disabled={saving}
-                            placeholder="0.1.0"
-                            className="input-field input-mono w-full"
-                        />
-                    </div>
                     <div>
                         <label htmlFor="pack-build-minecraft" className="input-label">
                             Minecraft
@@ -316,6 +304,19 @@ export default function CreateBuildForm({
                             )}
                         </div>
                     )}
+                    <div>
+                        <label htmlFor="pack-build-version" className="input-label">
+                            Pack version (editable)
+                        </label>
+                        <input
+                            id="pack-build-version"
+                            value={versionString}
+                            onChange={(e) => setVersionString(e.target.value)}
+                            disabled={saving}
+                            placeholder="0.1.0"
+                            className="input-field input-mono w-full"
+                        />
+                    </div>
                     {migrating && (
                         <section className="card p-4 space-y-3 md:col-span-2">
                             <h3 className="font-medium text-sm">
@@ -371,15 +372,11 @@ export default function CreateBuildForm({
                                                         </li>
                                                     ))}
                                                 </ul>
-                                                <label className="flex items-start gap-2 text-xs">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={dropMissing}
-                                                        onChange={(e) => setDropMissing(e.target.checked)}
-                                                    />
-                                                    Create the new draft without these {missing.length} unavailable
-                                                    items. Keep the source unchanged.
-                                                </label>
+                                                <Checkbox
+                                                    checked={dropMissing}
+                                                    onChange={setDropMissing}
+                                                    label={`Create the new draft without these ${missing.length} unavailable items. Keep the source unchanged.`}
+                                                />
                                             </>
                                         )}
                                         <p className="text-xs text-(--warning-light)">

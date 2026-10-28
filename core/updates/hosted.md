@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.5
+
+### Features
+- The modpack content list is compact, about twice as many mods per screen, and empty
+  packs and builds show what to do next.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Installing a client-only mod such as Sodium no longer puts it into the server download.
+  Mods added earlier keep their sides; check them in the list.
+- New pack opens the new pack, and Publish says that it freezes the build.
+
 ## 2026.10.28.3
 
 ### Features

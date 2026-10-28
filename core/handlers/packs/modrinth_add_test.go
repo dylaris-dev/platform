@@ -43,3 +43,28 @@ func TestModrinthAddKeepsExistingDependencies(t *testing.T) {
 		t.Fatalf("repeated add status=%d mods=%d", w.Code, len(fs.mods))
 	}
 }
+
+func TestModrinthAddClientOnlyProjectKeepsDependenciesOnBothSides(t *testing.T) {
+	h, base, _ := newPackCleanup(t)
+	base.builds[0].Minecraft = "1.21.1"
+	base.builds[0].Loader = "fabric"
+	fs := &authoringCaptureStore{packCleanupStore: base}
+	h.state.Store = fs
+	old := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = old })
+	http.DefaultTransport = modrinthAddTransport(func(r *http.Request) (*http.Response, error) {
+		body := `{"id":"root-version","project_id":"root-project","name":"Root","version_number":"1.0","loaders":["fabric"],"game_versions":["1.21.1"],"files":[{"filename":"root.jar","url":"https://cdn.modrinth.com/data/root.jar","hashes":{"sha1":"a","sha512":"b"},"size":10}],"dependencies":[{"project_id":"lib-project","dependency_type":"required"}]}`
+		if strings.Contains(r.URL.Path, "lib-project") {
+			body = `[{"id":"lib-version","project_id":"lib-project","name":"Lib","version_number":"2.0","version_type":"release","loaders":["fabric"],"game_versions":["1.21.1"],"files":[{"filename":"lib.jar","url":"https://cdn.modrinth.com/data/lib.jar","hashes":{"sha1":"c","sha512":"d"},"size":10,"primary":true}]}]`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	w := httptest.NewRecorder()
+	h.AddModrinth(w, packReq("POST", map[string]string{"id": "1", "buildId": "10"}, `{"versionId":"root-version","side":"client","resolveDeps":true}`))
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(fs.sides) != 2 || fs.sides[0] != models.SideClient || fs.sides[1] != models.SideBoth {
+		t.Fatalf("sides = %v, want [client both] (project client-only, its dependency on both)", fs.sides)
+	}
+}

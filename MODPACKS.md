@@ -39,7 +39,10 @@ header returns to the overview.
 Installed content is grouped into **Mods**, **Resources**, and **Configs &
 scripts**, with search and project artwork on the installed rows. Missing or
 broken artwork falls back to a content-type icon. **Add content** opens the
-Modrinth browser in the main workspace. **Sharing** contains expiring share links;
+Modrinth browser in the main workspace. Each installed entry is one row: name,
+version and categories, then its Client/Server sides and actions. An empty
+build offers Add from Modrinth and Upload directly. **Sharing** appears when
+share links are enabled or a build already has links, and contains expiring share links;
 The pack overview carries **Recommended build**, **Pack version alerts**,
 **Collaborators** and **New build**; inside a build the header keeps **All builds**
 and **New build** so the content list keeps its height. The alert dialog opens directly in one click
@@ -74,10 +77,16 @@ unlinked uploads remain visible under All categories. Search and manual version
 selection remain available. **Install** selects the latest compatible stable
 release, or a compatible beta/alpha if no stable release exists, using the build's
 Minecraft version and loader. It never blindly installs the search result's latest
-version. Required dependency warnings still require review. Installed projects
+version. A project Modrinth marks as client-only (server `unsupported`, e.g.
+Sodium) is installed on the client side only, so it stays out of the server
+download; server-only projects likewise. Its required dependencies always go on
+both sides. Projects added before this change keep their sides; adjust them per
+row. Required dependency warnings still require review. Installed projects
 show **Installed** and a permission-checked **Remove** action; removing confirms
 all matching entries in this build. Read-only or frozen builds can browse without
-receiving write rights. Vanilla builds cannot install loader-specific mods.
+receiving write rights; a read-only or frozen build says so once above its
+content. Vanilla builds cannot install loader-specific mods. The Publish dialog
+states that publishing freezes the build, also when Modrinth rejects the upload.
 
 Results load in pages of 20: scrolling near the end loads the next page, and
 **Load more** stays as a button (and the retry after an error); query changes

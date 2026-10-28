@@ -169,7 +169,10 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 			resp["unresolved"] = unresolved
 		}
 		for _, d := range deps {
-			if err := h.addModrinthVersion(owner, b, d.Version, req.Side, models.ContentTypeMod); err == nil {
+			// Both sides, whatever side the project itself went on: a library a
+			// client-only mod pulls in (Fabric API) is usually needed by server
+			// mods too, and a client-only copy would be added a second time then.
+			if err := h.addModrinthVersion(owner, b, d.Version, models.SideBoth, models.ContentTypeMod); err == nil {
 				added++
 			} else {
 				resp["warning"] = "Some required dependencies could not be added. Review the build's content before exporting."

@@ -22,6 +22,7 @@ type authoringCaptureStore struct {
 	savedBuild   *models.PackBuild
 	existing     []models.BuildContentEntry
 	mods         []models.Mod
+	sides        []string
 }
 
 func (s *authoringCaptureStore) UpsertMod(m *models.Mod) (int, error) {
@@ -38,7 +39,10 @@ func (s *authoringCaptureStore) CreateModversion(v *models.Modversion) (int, err
 	s.savedVersion = &cp
 	return 7, nil
 }
-func (s *authoringCaptureStore) AttachModversionToBuild(int, int, string) (int, error) { return 1, nil }
+func (s *authoringCaptureStore) AttachModversionToBuild(_, _ int, side string) (int, error) {
+	s.sides = append(s.sides, side)
+	return 1, nil
+}
 func (s *authoringCaptureStore) UpdatePackBuild(b *models.PackBuild) error {
 	cp := *b
 	s.savedBuild = &cp

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2, Users } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
@@ -25,6 +25,7 @@ import ModalPanel from '@/components/ui/ModalPanel';
 export default function PacksListPage() {
     const { featureFlags, user } = useAppData();
     const searchParams = useSearchParams();
+    const router = useRouter();
     const modpacksDisabled = !featureFlags.modpacks;
     // A pack with nowhere to store its archives can be created and then does
     // nothing: every upload answers 424. That failure used to arrive after the
@@ -75,7 +76,8 @@ export default function PacksListPage() {
         if (res.success && res.pack) {
             setCreating(null);
             showToast('Pack created.', true);
-            refresh();
+            // Straight into the new pack, where its first build is created.
+            router.push(`/modpacks/${res.pack.id}`);
         } else {
             showToast(res.message || 'Create failed', false);
         }
@@ -237,12 +239,12 @@ export default function PacksListPage() {
             {creating && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setCreating(null)}>
                     <ModalPanel onClose={() => setCreating(null)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
+                        <div className="modal-header flex items-center justify-between gap-3">
                             <h3 className="modal-title flex items-center gap-2">
                                 <Package size={16} />
                                 New pack
                             </h3>
-                            <button onClick={() => setCreating(null)} className="text-(--base-06)"><X size={16} /></button>
+                            <button onClick={() => setCreating(null)} aria-label="Close" className="text-(--base-06) hover:text-(--base-09)"><X size={16} /></button>
                         </div>
                         <div className="modal-body space-y-4">
                             {/* Said here, before a pack exists, because it is the
@@ -263,8 +265,10 @@ export default function PacksListPage() {
                                 </div>
                             )}
                             <div>
-                                <label className="input-label">Internal name</label>
+                                <label htmlFor="new-pack-name" className="input-label">Pack name</label>
                                 <input
+                                    id="new-pack-name"
+                                    autoFocus
                                     type="text"
                                     value={creating.internalName}
                                     onChange={e => setCreating({ ...creating, internalName: e.target.value })}
@@ -274,8 +278,9 @@ export default function PacksListPage() {
                                 />
                             </div>
                             <div>
-                                <label className="input-label">Slug (URL-safe, optional)</label>
+                                <label htmlFor="new-pack-slug" className="input-label">Slug (URL-safe, optional)</label>
                                 <input
+                                    id="new-pack-slug"
                                     type="text"
                                     value={creating.slug}
                                     onChange={e => setCreating({ ...creating, slug: e.target.value.toLowerCase() })}
@@ -285,8 +290,9 @@ export default function PacksListPage() {
                                 <p className="text-xs text-(--base-06) mt-1">Lowercase, 2-64 chars: letters, digits, - or _</p>
                             </div>
                             <div>
-                                <label className="input-label">Summary (optional)</label>
+                                <label htmlFor="new-pack-summary" className="input-label">Summary (optional)</label>
                                 <input
+                                    id="new-pack-summary"
                                     type="text"
                                     value={creating.summary}
                                     onChange={e => setCreating({ ...creating, summary: e.target.value })}

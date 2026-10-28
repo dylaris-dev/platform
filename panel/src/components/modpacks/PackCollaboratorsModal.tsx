@@ -77,7 +77,7 @@ export default function PackCollaboratorsModal({ packs, initialPackId, onClose }
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
             <ModalPanel onClose={onClose} className="modal-panel w-full max-w-2xl" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
+                <div className="modal-header flex items-center justify-between gap-3">
                     <h3 className="modal-title flex items-center gap-2"><Users size={16} /> Collaborators</h3>
                     <button onClick={onClose} className="text-(--base-06) hover:text-(--base-09)" aria-label="Close"><X size={16} /></button>
                 </div>

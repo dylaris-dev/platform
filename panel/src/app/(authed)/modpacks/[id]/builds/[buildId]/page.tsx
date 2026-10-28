@@ -33,6 +33,8 @@ import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIc
 import { packContentGroup } from '@/lib/packWorkspace';
 import { filterPackContent, type PackContentSort, type PackEnvironmentFilter as EnvironmentFilterValue } from '@/lib/packContent';
 import { PackEnvironmentSelector, PackEnvironmentFilter } from '@/components/modpacks/PackEnvironmentControls';
+import { packSideFor } from '@/lib/modSide';
+import Select from '@/components/ui/Select';
 import ModProjectDetails from '@/components/mods/ModProjectDetails';
 import PackDownloadDialog from '@/components/modpacks/PackDownloadDialog';
 import ForkBuildDialog from '@/components/modpacks/ForkBuildDialog';
@@ -94,7 +96,7 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
     // Close on Escape
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            className="modal-overlay animate-fade-in"
             onClick={onClose}
         >
             <ModalPanel onClose={onClose}
@@ -114,18 +116,10 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
                 </div>
 
                 <div className="p-6 space-y-4">
-                    {/* Channel selector */}
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Release channel</label>
-                        <select
-                            value={channel}
-                            onChange={e => setChannel(e.target.value as 'beta' | 'release')}
-                            className="input-field w-full"
-                            disabled={busy}
-                        >
-                            <option value="beta">Beta</option>
-                            <option value="release">Release</option>
-                        </select>
+                    <div>
+                        <label htmlFor="publish-channel" className="input-label">Release channel</label>
+                        <Select id="publish-channel" value={channel} onChange={value => setChannel(value as 'beta' | 'release')} disabled={busy} options={[{ value: 'beta', label: 'Beta' }, { value: 'release', label: 'Release' }]} />
+                        <p className="text-xs text-(--base-06) mt-1">Release builds can become the pack&apos;s Recommended build automatically and trigger pack version alerts.</p>
                     </div>
 
                     {/* Non-Modrinth content warnings */}
@@ -149,20 +143,9 @@ function PublishDialog({ build, onClose, onPublished, showToast, packId }: Publi
                         </div>
                     )}
 
-                    {/* Publish targets */}
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Publish targets</label>
-                        <div className="space-y-2">
-                            <label className="flex items-center gap-2 cursor-pointer select-none">
-                                <input
-                                    type="checkbox"
-                                    checked
-                                    readOnly
-                                    className="checkbox"
-                                />
-                                <span className="text-sm">Modrinth</span>
-                            </label>
-                        </div>
+                    <div className="rounded-md border border-(--base-04) p-3 text-xs text-(--base-07) space-y-1">
+                        <p>Uploads build {build.versionString} to Modrinth through the pack owner&apos;s token. A new Modrinth project starts as a draft.</p>
+                        <p>Publishing freezes this build: it becomes read-only, also if Modrinth rejects the upload (you can retry). Create a new build for further changes.</p>
                     </div>
                 </div>
 
@@ -220,7 +203,7 @@ function ReplaceDialog({ entry, build, packId, disabled, isFrozen, onClose, onRe
     // Close on Escape
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            className="modal-overlay animate-fade-in"
             onClick={onClose}
         >
             <ModalPanel onClose={onClose}
@@ -288,7 +271,7 @@ function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, o
     // Close on Escape
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            className="modal-overlay animate-fade-in"
             onClick={onClose}
         >
             <ModalPanel onClose={onClose}
@@ -518,14 +501,13 @@ export default function BuildContentEditorPage() {
                 {canEdit && !modpacksDisabled && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-secondary btn-sm">Create another build</Link>}
             </div>
         </WorkspaceDetails>
-        {isFrozen && <div role="status" className="rounded-md border border-(--base-04) p-3 text-xs text-(--base-07)"><Lock size={13} className="inline mr-2" />This build is read-only. {build.modrinthPublished ? 'Its published contents stay reproducible.' : 'Its publication artifact has already been frozen; you can retry publishing it.'} Create or fork a new build to make changes.</div>}
+        {(isFrozen || (!canEdit && !modpacksDisabled)) && <div role="status" className="rounded-md border border-(--base-04) p-3 text-xs text-(--base-07) shrink-0"><Lock size={13} className="inline mr-2" />{isFrozen ? <>This build is read-only. {build.modrinthPublished ? 'Its published contents stay reproducible.' : 'Its publication artifact has already been frozen; you can retry publishing it.'} Create or fork a new build to make changes.</> : 'You have read access to this pack: browse, download and favorite its content. Changes need edit access from the owner.'}</div>}
         <header className="flex items-center justify-between gap-3 flex-wrap shrink-0"><div><h2 className="text-base font-medium text-(--base-09)">{browsing ? 'Add from Modrinth' : `Build ${build.versionString}`}</h2><p className="text-xs text-(--base-06) mt-1">{groups.mods.length} mods / plugins · {groups.configs.length} configs · MC {build.minecraft} · {build.loader}</p></div><div className={styles.tools}>
-            {browsing && <select aria-label="Project type" value={modrinthType} onChange={event => setModrinthType(event.target.value as typeof modrinthType)} className="input-field text-xs w-auto"><option value="mod" disabled={build.loader === 'vanilla'}>Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select>}
+            {browsing && <Select ariaLabel="Project type" className="w-40" value={modrinthType} onChange={value => setModrinthType(value as typeof modrinthType)} options={[...(build.loader === 'vanilla' ? [] : [{ value: 'mod', label: 'Mods' }]), { value: 'resourcepack', label: 'Resource packs' }, { value: 'shader', label: 'Shaders' }]} />}
             {!browsing && hasAnyUpdate && <button onClick={handleUpdateAll} disabled={disabled || updatingAll} className="btn btn-secondary btn-sm"><ArrowUpCircle size={12} /> {updatingAll ? 'Updating...' : 'Update all'}</button>}
-            <button onClick={() => setUploadOpen(true)} disabled={disabled} title={disabled ? editDisabledReason : 'Upload files or folders'} className="btn btn-secondary btn-sm disabled:opacity-40"><Upload size={12} /> Upload</button>
+            {!disabled && <button onClick={() => setUploadOpen(true)} title="Upload files or folders" className="btn btn-secondary btn-sm"><Upload size={12} /> Upload</button>}
             <button onClick={() => setBrowsing(value => !value)} className="btn btn-primary btn-sm">{browsing ? <ArrowLeft size={12} /> : <Search size={12} />}{browsing ? 'Installed' : disabled ? 'Browse content' : 'Add content'}</button>
         </div></header>
-        {isFrozen && <p className="text-xs text-(--base-06) bg-(--base-02) p-3 rounded-md">This build is frozen. Create a copy to change its content.</p>}
         {browsing ? <section className={styles.searchPanel} aria-label="Add from Modrinth">
             <ModrinthVersionBrowser withFilters loader={build.loader || undefined} mcVersion={build.minecraft || undefined} projectType={modrinthType} installedProjectIds={new Set(content.map(entry => entry.modrinthProjectId).filter(Boolean))} disabled={disabled || addingContent} removeDisabled={deleteDisabled || addingContent} disabledTitle={addingContent ? 'Adding content...' : editDisabledReason}
                 onRemove={async projectId => {
@@ -543,19 +525,19 @@ export default function BuildContentEditorPage() {
                     setAddingContent(true);
                     try {
                         const contentType=modrinthTypeToContentType(hit.project_type);
-                        const result=await addModrinthContent(packId,buildId,{projectId,versionId,contentType,resolveDeps:contentType==='mod'});
+                        // Modrinth's own sides, so a client-only mod (Sodium) stays out of the server download.
+                        const result=await addModrinthContent(packId,buildId,{projectId,versionId,contentType,side:contentType==='mod'?packSideFor(hit):undefined,resolveDeps:contentType==='mod'});
                         if(!result.success)throw new Error(result.message||'Add failed.');
                         await refresh(); const warning=result.warning || (result.unresolved?.length ? `${result.unresolved.length} required dependencies need manual review.` : null); showToast(warning ? `Added ${hit.title}. ${warning}` : `Added ${hit.title}`, !warning);
                     } finally {setAddingContent(false);}
                 }} />
         </section> : <>
-            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Sharing', null]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setCategory(null); setExpandedEntry(null); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
+            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Sharing', null]] as const).filter(([id]) => id !== 'tools' || featureFlags.shareLinks || shareLinks.length > 0).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setCategory(null); setExpandedEntry(null); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
             {activeTab === 'configs' ? <PackConfigFiles packId={packId} buildId={buildId} canEdit={!disabled} canDelete={!deleteDisabled} onChanged={refresh}/> : activeTab === 'tools' ? <div className={styles.rows}>
                 <p className="text-xs text-(--base-06) mb-4">Share links grant access to this build without a panel account. Use the download buttons for private downloads, Publish for Modrinth, and New build for Minecraft or loader changes.</p>
                             {!featureFlags.shareLinks && shareLinks.length === 0 && <div className="card p-4 text-sm text-(--base-06)">Public share links are disabled by the administrator. Use the private client/server download buttons in Build details.</div>}
                 {(featureFlags.shareLinks || shareLinks.length > 0) && (
                 <section className="card p-4 mb-4">
-                    {isFrozen && <div role="status" className="rounded-md border border-(--base-04) p-3 text-xs text-(--base-07)"><Lock size={13} className="inline mr-2" />This build is read-only. {build.modrinthPublished ? 'Its published contents stay reproducible.' : 'Its publication artifact has already been frozen; you can retry publishing it.'} Create or fork a new build to make changes.</div>}
         <header className="flex items-center gap-2 mb-3">
                         <Share2 size={14} className="text-(--accent-light)" />
                         <h2 className="text-sm font-medium text-(--base-09)">Share links</h2>
@@ -565,14 +547,7 @@ export default function BuildContentEditorPage() {
                         <div className="flex flex-wrap items-end gap-3 mb-3">
                             <label className="flex flex-col gap-1">
                                 <span className="mono-label text-(--base-06)">Kind</span>
-                                <select
-                                    value={shareKind}
-                                    onChange={e => setShareKind(e.target.value as ShareLinkKind)}
-                                    className="input-field text-sm"
-                                >
-                                    <option value="client-mrpack">Client (.mrpack)</option>
-                                    <option value="server-pack">Server pack (.zip)</option>
-                                </select>
+                                <Select ariaLabel="Share link kind" className="w-48" value={shareKind} onChange={value => setShareKind(value as ShareLinkKind)} options={[{ value: 'client-mrpack', label: 'Client (.mrpack)' }, { value: 'server-pack', label: 'Server pack (.zip)' }]} />
                             </label>
                             <label className="flex flex-col gap-1">
                                 <span className="mono-label text-(--base-06)">Expires (days, 0 = never)</span>
@@ -653,27 +628,29 @@ export default function BuildContentEditorPage() {
                     <p className="text-xs text-(--base-06)">Categories come from Modrinth metadata. Local, unlinked uploads are visible under All categories.</p>
                 </aside>
                 <div className={styles.contentMain}>
-                <div className="flex items-center gap-2"><input className="input-field flex-1 min-w-0 text-sm" aria-label="Search installed content" placeholder="Search installed content..." value={query} onChange={event => setQuery(event.target.value)} /><label className="flex items-center gap-2 text-xs text-(--base-06) shrink-0"><span className="sr-only">Sort</span><select aria-label="Sort installed content" className="input-field text-xs w-auto" value={sort} onChange={event => setSort(event.target.value as PackContentSort)}><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="environment">Environment</option><option value="updates">Updates first</option></select></label></div>
+                <div className="flex items-center gap-2"><input className="input-field flex-1 min-w-0 text-sm" aria-label="Search installed content" placeholder="Search installed content..." value={query} onChange={event => setQuery(event.target.value)} /><Select ariaLabel="Sort installed content" className="w-44 shrink-0" value={sort} onChange={value => setSort(value as PackContentSort)} options={[{ value: 'name', label: 'Name A–Z' }, { value: 'name-desc', label: 'Name Z–A' }, { value: 'environment', label: 'Environment' }, { value: 'updates', label: 'Updates first' }]} /></div>
                 {projectMetadata.error && <p className="text-xs text-(--base-06)">Some project metadata could not be loaded. <button className="text-(--accent-light)" onClick={projectMetadata.retry}>Retry metadata</button></p>}
                 <div className="flex justify-between text-[10px] uppercase tracking-wider text-(--base-06)"><span>Installed · {visibleContent.length}</span><span>Environment / actions</span></div>
                 <section className={styles.rows} aria-label="Installed content">
-                    {visibleContent.length === 0 && <p className="text-sm text-(--base-06) text-center py-12">{query ? 'No matching content.' : 'No content in this category yet.'}</p>}
-                    {visibleContent.map(entry => <article key={entry.id} className="card p-3 mb-2.5">
-                        <div className="flex items-start gap-3">
-                            <ProjectIcon name={contentName(entry)} contentType={entry.contentType} url={projectMetadata.projects[entry.modrinthProjectId]?.icon_url} className="w-11 h-11" />
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-start gap-2">
-                                    <button onClick={() => setExpandedEntry(value => value === entry.id ? null : entry.id)} aria-expanded={expandedEntry === entry.id} aria-label={`Details for ${contentName(entry)}`} className="min-w-0 flex-1 flex gap-2 items-center text-left text-sm font-medium text-(--base-09) hover:text-(--accent-light)"><span className="truncate" title={contentName(entry)}>{contentName(entry)}</span><ChevronDown size={13} className={`shrink-0 ${expandedEntry === entry.id ? 'rotate-180' : ''}`} /></button>
-                                    {entry.modrinthProjectId && <a href={`https://modrinth.com/project/${encodeURIComponent(entry.modrinthProjectId)}`} target="_blank" rel="noopener noreferrer" title="Open on Modrinth" aria-label={`Open ${contentName(entry)} on Modrinth`} className="btn btn-ghost btn-sm"><ExternalLink size={13} /></a>}
-                                    <ModrinthProjectActions projectId={entry.modrinthProjectId} title={contentName(entry)} loader={build.loader}/><button onClick={() => handleRemove(entry)} disabled={deleteDisabled} title={deleteDisabled ? 'Delete access is required; frozen builds cannot be changed' : 'Remove content'} aria-label={`Remove ${contentName(entry)}`} className="btn btn-ghost btn-sm disabled:opacity-30"><Trash2 size={13} className="text-(--error-light)" /></button>
+                    {visibleContent.length === 0 && (query || category || groups[activeTab].length > 0 ? <p className="text-sm text-(--base-06) text-center py-12">No matching content.</p> : <div className="text-center py-12 space-y-3"><p className="text-sm text-(--base-07)">{activeTab === 'mods' ? 'No mods in this build yet.' : 'No resource or shader packs in this build yet.'}</p>{!disabled && <div className="flex justify-center gap-2"><button onClick={() => { setModrinthType(activeTab === 'mods' && build.loader !== 'vanilla' ? 'mod' : 'resourcepack'); setBrowsing(true); }} className="btn btn-primary btn-sm"><Search size={12} />Add from Modrinth</button><button onClick={() => setUploadOpen(true)} className="btn btn-secondary btn-sm"><Upload size={12} />Upload files</button></div>}</div>)}
+                    {visibleContent.map(entry => <article key={entry.id} className="card px-3 py-2.5 mb-2">
+                        {/* One row per entry: sides and actions beside the name, so a long list stays scannable. */}
+                        <div className="flex items-center gap-3">
+                            <ProjectIcon name={contentName(entry)} contentType={entry.contentType} url={projectMetadata.projects[entry.modrinthProjectId]?.icon_url} className="w-10 h-10" />
+                            <div className="min-w-0 flex-1 flex items-center gap-x-3 gap-y-1.5 flex-wrap">
+                                <div className="min-w-[12rem] flex-1">
+                                    <button onClick={() => setExpandedEntry(value => value === entry.id ? null : entry.id)} aria-expanded={expandedEntry === entry.id} aria-label={`Details for ${contentName(entry)}`} className="min-w-0 max-w-full flex gap-2 items-center text-left text-sm font-medium text-(--base-09) hover:text-(--accent-light)"><span className="truncate" title={contentName(entry)}>{contentName(entry)}</span><ChevronDown size={13} className={`shrink-0 ${expandedEntry === entry.id ? 'rotate-180' : ''}`} /></button>
+                                    <p className="text-[11px] text-(--base-06) truncate mt-0.5" title={entry.targetPath}><span className="font-mono">{entry.contentType === 'config' ? entry.targetPath : `${entry.modrinthVersionNumber || entry.version} · ${entry.linked ? 'Modrinth' : 'Upload'}`}</span>{!!projectMetadata.projects[entry.modrinthProjectId]?.categories?.length && <span> · {projectMetadata.projects[entry.modrinthProjectId]?.categories?.map(categoryLabel).join(' · ')}</span>}</p>
                                 </div>
-                                <p className="text-[11px] text-(--base-06) font-mono truncate mt-1" title={entry.targetPath}>{entry.contentType === 'config' ? entry.targetPath : `${entry.modrinthVersionNumber || entry.version} · ${entry.linked ? 'Modrinth' : 'Upload'}`}</p>
-                                {!!projectMetadata.projects[entry.modrinthProjectId]?.categories?.length && <p className="text-[10px] text-(--base-06) mt-2">{projectMetadata.projects[entry.modrinthProjectId]?.categories?.map(categoryLabel).join(' · ')}</p>}
-                                <div className="flex items-center gap-2 flex-wrap mt-3">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                     <PackEnvironmentSelector value={entry.side} disabled={disabled} name={contentName(entry)} onChange={side => handleSetSide(entry, side)} />
                                     {entry.contentType === 'config' && entry.targetPath && !entry.targetPath.toLowerCase().endsWith('.zip') && !disabled && <button onClick={() => setEditing({ modversionId: entry.id, title: contentName(entry) })} aria-label={`Edit ${contentName(entry)}`} title="Edit config text" className="btn btn-secondary btn-sm"><FileText size={13} /> Edit</button>}
                                     {!entry.linked && entry.contentType !== 'config' && <button onClick={() => setReplaceEntry(entry)} disabled={disabled} aria-label={`Link ${contentName(entry)} to Modrinth`} title="Replace with Modrinth" className="btn btn-secondary btn-sm"><Replace size={13} /> Link</button>}
                                     {hasUpdateAvailable(entry) && <button onClick={() => setUpgradeEntry(entry)} disabled={disabled} title="Update available" aria-label={`Update ${contentName(entry)}`} className="btn btn-secondary btn-sm text-(--accent-light)"><ArrowUpCircle size={13} /> Update</button>}
+                                </div>
+                                <div className="flex items-center">
+                                    {entry.modrinthProjectId && <a href={`https://modrinth.com/project/${encodeURIComponent(entry.modrinthProjectId)}`} target="_blank" rel="noopener noreferrer" title="Open on Modrinth" aria-label={`Open ${contentName(entry)} on Modrinth`} className="btn btn-ghost btn-sm"><ExternalLink size={13} /></a>}
+                                    <ModrinthProjectActions projectId={entry.modrinthProjectId} title={contentName(entry)} loader={build.loader}/><button onClick={() => handleRemove(entry)} disabled={deleteDisabled} title={deleteDisabled ? 'Delete access is required; frozen builds cannot be changed' : 'Remove content'} aria-label={`Remove ${contentName(entry)}`} className="btn btn-ghost btn-sm disabled:opacity-30"><Trash2 size={13} className="text-(--error-light)" /></button>
                                 </div>
                             </div>
                         </div>

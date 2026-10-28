@@ -11,6 +11,7 @@ import { toast } from '@/components/ui/Toast';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import GuardedLink from '@/components/GuardedLink';
 import { usePathname } from 'next/navigation';
+import Checkbox from '@/components/ui/Checkbox';
 
 type Library = {
     favorites: Favorite[];
@@ -215,26 +216,21 @@ export function ModrinthWatchDialog({
                             .filter((v) => v.includes(query))
                             .slice(0, 90)
                             .map((v) => (
-                                <label key={v} className="flex items-center gap-2 text-sm">
-                                    <input
-                                        type="checkbox"
-                                        checked={selected.includes(v)}
-                                        disabled={!selected.includes(v) && selected.length >= 32}
-                                        onChange={() =>
-                                            setSelected((prev) =>
-                                                prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v],
-                                            )
-                                        }
-                                    />
-                                    {v}
-                                </label>
+                                <Checkbox
+                                    key={v}
+                                    label={v}
+                                    checked={selected.includes(v)}
+                                    disabled={!selected.includes(v) && selected.length >= 32}
+                                    onChange={() =>
+                                        setSelected((prev) =>
+                                            prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v],
+                                        )
+                                    }
+                                />
                             ))}
                     </div>
                     {loading && <p role="status">Loading releases...</p>}
-                    <label className="flex items-start gap-2 text-sm">
-                        <input type="checkbox" checked={future} onChange={(e) => setFuture(e.target.checked)} />
-                        Also notify for every new stable Minecraft release published from now on.
-                    </label>
+                    <Checkbox checked={future} onChange={setFuture} label="Also notify for every new stable Minecraft release published from now on." />
                     <p className="text-xs text-(--base-06)">
                         Loader filters apply to mods; resource/shader packs are checked by Minecraft version only.
                         Notifications stay in the panel inbox until you delete them. Local mods, configs and gameplay

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     envLabel, envParam, matchesEnv,
-    matchesServerBucket, serverBucket, serverBucketLabel, serverBucketTitle, serverSideParam,
+    matchesServerBucket, serverBucket, serverBucketLabel, serverBucketTitle, serverSideParam, packSideFor,
 } from './modSide';
 
 const lithium = { client_side: 'optional', server_side: 'optional' };
@@ -152,5 +152,21 @@ describe('matchesServerBucket', () => {
             expect(matchesServerBucket('client_server', spark, opts)).toBe(false);
             expect(matchesServerBucket('client_server', {}, opts)).toBe(false);
         }
+    });
+});
+
+describe('packSideFor', () => {
+    it('keeps a client-only mod out of the server side', () => {
+        expect(packSideFor({ client_side: 'required', server_side: 'unsupported' })).toBe('client');
+        expect(packSideFor({ client_side: 'optional', server_side: 'unsupported' })).toBe('client');
+    });
+    it('keeps a server-only mod off the client', () => {
+        expect(packSideFor({ client_side: 'unsupported', server_side: 'required' })).toBe('server');
+    });
+    it('installs everything else on both sides', () => {
+        expect(packSideFor({ client_side: 'required', server_side: 'optional' })).toBe('both');
+        expect(packSideFor({ client_side: 'required', server_side: 'required' })).toBe('both');
+        expect(packSideFor({ client_side: 'unknown', server_side: 'unsupported' })).toBe('both');
+        expect(packSideFor({})).toBe('both');
     });
 });

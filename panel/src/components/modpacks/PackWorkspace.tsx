@@ -64,6 +64,10 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
         setLoading(false);
     }, [packId]);
     useEffect(() => { refreshOverview(); }, [refreshOverview]);
+    // A pack opened right after it was created (or shared) may predate the list; the live event can lag or be missed.
+    // Once per pack: an admin inspecting another user's pack never finds it in their own list.
+    const listChecked = useRef(0);
+    useEffect(() => { if (pack && listChecked.current !== pack.id && !overview.packs.some(p => p.id === pack.id) && !overview.shared.some(p => p.id === pack.id)) { listChecked.current = pack.id; refreshOverview(); } }, [pack, overview, refreshOverview]);
     useEffect(() => { let live = true; generation.current++; setLoading(true); setPack(null); setBuilds([]); setPermissions({ canEdit: false, canDelete: false, isOwner: false }); const load = async () => {
         if (!packId) { if (live) setLoading(false); return; }
         const [details, versions] = await Promise.all([getPackDetails(packId), listBuilds(packId)]);
@@ -109,16 +113,16 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                             {(buildId > 0 || creating) && <Link href={`/modpacks/${packId}`} className="btn btn-secondary btn-sm"><Layers size={13}/>All builds</Link>}
                             <button onClick={async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }} disabled={refreshing} className="btn btn-ghost btn-sm"><RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />{refreshing ? 'Refreshing...' : 'Refresh'}</button>
                             {canAudit && <button onClick={() => setActivity(true)} className="btn btn-ghost btn-sm"><History size={13} />Activity</button>}
-                            {(buildId > 0 || creating) && permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} aria-current={creating ? 'page' : undefined} className="btn btn-primary btn-sm"><Plus size={13} />New build</Link>}
+                            {buildId > 0 && permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-primary btn-sm"><Plus size={13} />New build</Link>}
                             <HelpTourButton topic="modpacks" />
                             {pack && (buildId > 0 || creating || allBuilds) && <button onClick={() => setDetailsOpen(value => !value)} aria-expanded={detailsOpen} aria-controls="pack-details" className={`btn btn-secondary btn-sm ${styles.detailsToggle}`}><PanelRight size={14} />{buildId || creating ? 'Build details' : 'Pack details'}</button>}
                         </div>
                     </header>
                     {/* Pack-level settings live on the pack overview; inside a build the content needs the height. */}
                     {pack && (allBuilds || alertsSelected) && <div className={styles.packToolbar} aria-label="Pack actions">
-                        <div className={styles.recommendation}><PackRecommendation pack={pack} builds={builds} canEdit={permissions.canEdit && featureFlags.modpacks} onChanged={refresh} /></div>
+                        {builds.length > 0 && <div className={styles.recommendation}><PackRecommendation pack={pack} builds={builds} canEdit={permissions.canEdit && featureFlags.modpacks} onChanged={refresh} /></div>}
                         <div className={`${styles.tools} ml-auto`}>
-                            <button onClick={() => setWatchOpen(true)} aria-haspopup="dialog" aria-expanded={watchOpen} className={`btn btn-sm ${alertsSelected || watchOpen ? 'btn-primary' : 'btn-secondary'}`}><Bell size={14} />Pack version alerts</button>
+                            {builds.length > 0 && <button onClick={() => setWatchOpen(true)} aria-haspopup="dialog" aria-expanded={watchOpen} className={`btn btn-sm ${alertsSelected || watchOpen ? 'btn-primary' : 'btn-secondary'}`}><Bell size={14} />Pack version alerts</button>}
                             {permissions.isOwner && <button onClick={() => setCollaborators(true)} className="btn btn-secondary btn-sm"><Users size={14} />Collaborators</button>}
                             {permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${packId}/builds/new`} aria-current={creating ? 'page' : undefined} className="btn btn-primary btn-sm"><Plus size={14} />New build</Link>}
                         </div>
@@ -135,6 +139,6 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
         </div>
         {collaborators && <PackCollaboratorsModal packs={overview.packs} initialPackId={permissions.isOwner ? packId || undefined : undefined} onClose={() => { setCollaborators(false); refreshOverview(); refresh(); }} />}
         {watchOpen && pack && <ModrinthWatchDialog packId={pack.id} title={pack.internalName} loader={alertSource?.loader} onClose={() => setWatchOpen(false)} />}
-        {activity && <div className="modal-overlay" onClick={() => setActivity(false)}><ModalPanel onClose={() => setActivity(false)} className="modal-panel max-w-2xl" onClick={event => event.stopPropagation()}><div className="modal-header"><h2 className="modal-title">Modpack activity</h2><button onClick={() => setActivity(false)} className="btn btn-secondary btn-sm">Close</button></div><div className="modal-body">{!packId || canAudit ? <PackActivity packId={packId || undefined} showPack={!packId} /> : <p className="text-sm text-(--base-06)">Only the owner and administrators can view this pack&apos;s activity.</p>}</div></ModalPanel></div>}
+        {activity && <div className="modal-overlay" onClick={() => setActivity(false)}><ModalPanel onClose={() => setActivity(false)} className="modal-panel max-w-2xl" onClick={event => event.stopPropagation()}><div className="modal-header flex items-center justify-between gap-3"><h2 className="modal-title">Modpack activity</h2><button onClick={() => setActivity(false)} className="btn btn-secondary btn-sm">Close</button></div><div className="modal-body">{!packId || canAudit ? <PackActivity packId={packId || undefined} showPack={!packId} /> : <p className="text-sm text-(--base-06)">Only the owner and administrators can view this pack&apos;s activity.</p>}</div></ModalPanel></div>}
     </WorkspaceContext.Provider>;
 }

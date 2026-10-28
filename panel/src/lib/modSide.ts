@@ -57,6 +57,17 @@ export function envLabel(p: ModSides): string | null {
     return null;
 }
 
+/**
+ * The pack side a Modrinth project is installed on. Only an explicit
+ * "unsupported" excludes a side: an optional server mod is still wanted in the
+ * server download, while a client-only mod (Sodium, Mod Menu) must stay out of it.
+ */
+export function packSideFor(p: ModSides): EnvParam {
+    if (runs(p.client_side) && p.server_side === 'unsupported') return 'client';
+    if (runs(p.server_side) && p.client_side === 'unsupported') return 'server';
+    return 'both';
+}
+
 // ----- The server Content tab's model -----
 // A server owner does not ask "where does it run" but "does it run HERE, and
 // must my players install it too". Every mod falls in one bucket by its

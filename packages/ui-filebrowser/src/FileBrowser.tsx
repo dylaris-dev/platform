@@ -1007,6 +1007,11 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
           </li>
           );
         })}
+        {!loading && sortedFiles.length === 0 && (
+          <li className="text-sm text-(--base-06) text-center py-10">
+            {globalSearchTerm ? 'No files match your search.' : readOnly ? 'This folder is empty.' : 'This folder is empty. Upload files or create one with the buttons above.'}
+          </li>
+        )}
       </ul>
 
       {popupMode && (

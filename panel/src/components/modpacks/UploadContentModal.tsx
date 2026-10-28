@@ -60,7 +60,7 @@ export default function UploadContentModal({ packId, buildId, onClose, onUploade
     return (
         <div className="modal-overlay animate-fade-in" onClick={() => { if (!uploading) onClose(); }}>
             <ModalPanel onClose={() => { if (!uploading) onClose(); }} className="modal-panel max-w-2xl" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
+                <div className="modal-header flex items-center justify-between gap-3">
                     <h3 className="modal-title flex items-center gap-2"><Upload size={16} /> Upload content</h3>
                     <button onClick={onClose} disabled={uploading} aria-label="Close" className="text-(--base-06)"><X size={16} /></button>
                 </div>
