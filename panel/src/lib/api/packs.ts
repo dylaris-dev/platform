@@ -256,7 +256,7 @@ export interface ModrinthImportProject {
     icon_url: string | null; versions: string[];
     hidden: boolean; packId?: number;
 }
-export interface ModrinthImportVersion { id: string; versionNumber: string; versionType: string; gameVersions: string[]; loaders: string[]; datePublished: string; buildId?: number }
+export interface ModrinthImportVersion { id: string; versionNumber: string; versionType: string; gameVersions: string[]; loaders: string[]; datePublished: string; buildId?: number; new?: boolean }
 export interface ImportVersionResult { success: boolean; message?: string; buildId?: number; linked?: number; uploaded?: number; warnings?: string[]; existing?: boolean }
 
 export async function listModrinthImportProjects(): Promise<{ success: boolean; message?: string; projects?: ModrinthImportProject[] }> {

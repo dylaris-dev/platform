@@ -740,6 +740,8 @@ func main() {
 	// boot-time warp resync watcher + firewall-allowlist publish use the
 	// handlers/service buildAPIRouter just constructed.
 	extras.warpService.StartResyncWatcher(coreLeader.IsLeader)
+	// Imported Modrinth packs pick up newly published versions (leader only).
+	extras.packsHandler.StartModrinthSync(bgCtx, coreLeader)
 
 	// Custom-domain ownership proof. Tenants get a grant to point their own
 	// domain at us; this is what enforces the deadline and removes the route when

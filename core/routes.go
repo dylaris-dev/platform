@@ -50,6 +50,7 @@ type routeExtras struct {
 	settingsHandler *handlers.SettingsHandler
 	warpService     *services.WarpService
 	proxyHandler    *tabs.ProxyHandler
+	packsHandler    *packs.PacksHandler
 }
 
 // requiredCaps maps a route's mux path template to the capability id that
@@ -1959,6 +1960,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		settingsHandler: settingsHandler,
 		warpService:     warpService,
 		proxyHandler:    proxyHandler,
+		packsHandler:    packsHandler,
 	}
 }
 

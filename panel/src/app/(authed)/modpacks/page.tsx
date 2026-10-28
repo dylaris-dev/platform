@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
-import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2, Users, Download } from 'lucide-react';
+import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2, Users } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import { createPack, deletePack, type Pack, listPacksOverview, type SharedPack } from '@/lib/api/packs';
 import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal';
@@ -104,9 +104,6 @@ export default function PacksListPage() {
                     <button onClick={() => setCollabOpen(true)} className="btn btn-secondary btn-sm" title="Let other users work on your packs">
                         <Users size={13} /> Collaborators
                     </button>
-                    <Link href="/modpacks/import" className="btn btn-secondary btn-sm" title="Import your existing Modrinth modpacks">
-                        <Download size={13} /> Import from Modrinth
-                    </Link>
                     <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
                         <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
                     </button>

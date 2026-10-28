@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.9
+
+### Features
+- Imported Modrinth packs stay current: new Modrinth versions are imported when you open the
+  pack and every few hours in the background. Import from Modrinth is now in the sidebar.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Importing a Modrinth pack created the pack but no builds. Fixed; open the pack and use
+  Sync from Modrinth once.
+
 ## 2026.10.28.8
 
 ### Features

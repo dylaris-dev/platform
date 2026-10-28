@@ -199,6 +199,9 @@ type importVersionRow struct {
 	Loaders       []string `json:"loaders"`
 	DatePublished string   `json:"datePublished"`
 	BuildID       int      `json:"buildId,omitempty"`
+	// New: published after the newest version the pack has, so it is synced
+	// automatically (an older missing version is only imported by hand).
+	New bool `json:"new,omitempty"`
 }
 
 // ListModrinthVersions GET /api/packs/{id}/modrinth/versions - the project's
@@ -220,9 +223,13 @@ func (h *PacksHandler) ListModrinthVersions(w http.ResponseWriter, r *http.Reque
 			have[b.ModrinthVersionID] = b.ID
 		}
 	}
+	fresh := map[string]bool{}
+	for _, v := range newModrinthVersions(versions, builds) {
+		fresh[v.ID] = true
+	}
 	rows := make([]importVersionRow, 0, len(versions))
 	for _, v := range versions {
-		rows = append(rows, importVersionRow{ID: v.ID, VersionNumber: v.VersionNumber, VersionType: v.VersionType, GameVersions: v.GameVersions, Loaders: v.Loaders, DatePublished: v.DatePublished.UTC().Format("2006-01-02T15:04:05Z"), BuildID: have[v.ID]})
+		rows = append(rows, importVersionRow{ID: v.ID, VersionNumber: v.VersionNumber, VersionType: v.VersionType, GameVersions: v.GameVersions, Loaders: v.Loaders, DatePublished: v.DatePublished.UTC().Format("2006-01-02T15:04:05Z"), BuildID: have[v.ID], New: fresh[v.ID]})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "versions": rows})
 }
@@ -265,6 +272,7 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 	}
 	result, ierr := h.importVersion(r.Context(), prov, pack, version, names)
 	if ierr != nil {
+		log.Printf("packs: import of modrinth version %s into pack %d failed: %s", versionID, pack.ID, ierr.msg)
 		handlers.SendJSONError(w, ierr.msg, ierr.status)
 		return
 	}

@@ -254,7 +254,7 @@ change its visibility there.
 
 ### Import from Modrinth
 
-**Import from Modrinth** on the Modpacks page lists every modpack project your
+**Import from Modrinth** in the Modpacks sidebar lists every modpack project your
 Modrinth account is a member of (your own connected token decides), drafts
 included. Hide projects you do not want to see; hiding is per user. **Import**
 creates a pack bound to the project; then each Modrinth version becomes a
@@ -275,7 +275,15 @@ content:
 
 A version that cannot be imported is reported and removed again; the others
 continue. With more than 20 missing versions the panel offers the newest 10 or
-all of them. **Sync from Modrinth** on a pack imports versions published since.
+all of them. **Sync from Modrinth** on a pack imports every missing version.
+
+Imported packs stay current on their own: versions published on Modrinth
+after the newest version a pack has are imported when someone with edit
+access opens the pack (at most every 10 minutes per pack, 5 versions per
+visit, shown under the pack name) and by a background pass on the leader Core
+every 6 hours (3 versions per pack and pass). Older missing versions, such as
+those left out when only the newest 10 were imported, are imported only by
+**Sync from Modrinth**.
 **New build** on an imported build creates an editable draft as usual.
 
 ### Modrinth page

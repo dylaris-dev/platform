@@ -945,6 +945,7 @@ type Store interface {
 	GetModrinthPAT(userID string) (*models.ModrinthPAT, error)
 	HiddenModrinthProjects(userID string) ([]string, error)
 	SetModrinthProjectHidden(userID, projectID string, hidden bool) error
+	ListModrinthBoundPacks() ([]models.Pack, error)
 	ClearModrinthPAT(userID string) error
 
 	// --- Packs (the pack builder) ---

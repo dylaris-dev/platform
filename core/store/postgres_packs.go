@@ -23,10 +23,12 @@ func scanPack(row interface{ Scan(...interface{}) error }) (*models.Pack, error)
 
 func (s *PostgresStore) CreatePack(p *models.Pack) (int, error) {
 	var id int
+	// The Modrinth binding is written here too: an imported pack is created
+	// already bound, and an INSERT that dropped it left the pack unbound.
 	err := s.db.QueryRow(`INSERT INTO packs
-		(owner_id, internal_name, internal_slug, summary, modrinth_visibility)
-		VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-		p.OwnerID, p.InternalName, p.InternalSlug, p.Summary, p.ModrinthVisibility,
+		(owner_id, internal_name, internal_slug, summary, modrinth_visibility, modrinth_project_id, modrinth_project_name)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		p.OwnerID, p.InternalName, p.InternalSlug, p.Summary, p.ModrinthVisibility, p.ModrinthProjectID, p.ModrinthProjectName,
 	).Scan(&id)
 	return id, err
 }

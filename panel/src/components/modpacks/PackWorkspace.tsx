@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Plus, Users, History, RefreshCw, Package, Search, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronRight, BookOpen, Star, Bell, Layers, PanelRight, X, Globe } from 'lucide-react';
+import { Plus, Users, History, RefreshCw, Package, Search, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronRight, BookOpen, Star, Bell, Layers, PanelRight, X, Globe, Download } from 'lucide-react';
 import { getPackDetails, listBuilds, listPacksOverview, type Pack, type PackBuild, type PackPermissions, type PacksOverview } from '@/lib/api/packs';
 import { routeIdFrom } from '@/lib/routeParams';
 import { currentPackBuild, newestPackBuild, packBuildStatus } from '@/lib/packWorkspace';
@@ -16,6 +16,7 @@ import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal
 import PackActivity from '@/components/modpacks/PackActivity';
 import PackRecommendation from '@/components/modpacks/PackRecommendation';
 import ModrinthSyncDialog from '@/components/modpacks/ModrinthSyncDialog';
+import { useModrinthAutoSync } from '@/components/modpacks/useModrinthAutoSync';
 import HelpTourButton from '@/components/help/HelpTourButton';
 import { ModrinthWatchDialog } from '@/components/mods/ModrinthLibrary';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
@@ -83,6 +84,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
     }, [overview]);
     useEffect(() => { const dispose = ['packs.changed', 'pack_builds.changed'].map(event => systemEvents.on(event, () => { refreshOverview(); refresh(); })); return () => dispose.forEach(fn => fn()); }, [refresh, refreshOverview]);
     const canAudit = permissions.isOwner || user?.isAdmin;
+    const autoSync = useModrinthAutoSync(pack, permissions.canEdit && featureFlags.modpacks, () => { void refresh(); });
     const alertSource = builds.find(build => build.id === pack?.recommendedBuildId) || newestPackBuild(builds.filter(build => build.channel === 'release'));
     return <WorkspaceContext.Provider value={{ pack, builds, permissions, loading, refresh, detailsRoot }}>
         <div className={styles.workspace}>
@@ -105,13 +107,13 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                         {!collapsed && open && matches.length === 0 && <p className="text-xs text-(--base-06) px-2 py-3">{search ? 'No matching modpacks.' : group.key === 'own' ? 'Create your first modpack.' : 'Packs shared with you appear here.'}</p>}
                     </section>;
                 })}</nav>
-                <div className={`${styles.packFooter} p-2 border-t border-(--base-03) space-y-1`}><Link href="/modpacks/guide" title="Modpack how-to" className="btn btn-ghost btn-sm w-full justify-start"><BookOpen size={14}/>{!collapsed && 'How to build a pack'}</Link><Link href="/favorites" title="Favorites and version alerts" className="btn btn-ghost btn-sm w-full justify-start"><Star size={14}/>{!collapsed && 'Favorites & alerts'}</Link><button onClick={() => setCollaborators(true)} title="Collaborators" className="btn btn-ghost btn-sm w-full justify-start"><Users size={14} />{!collapsed && 'Collaborators'}</button><button onClick={() => setActivity(true)} title="Activity" className="btn btn-ghost btn-sm w-full justify-start"><History size={14} />{!collapsed && 'Activity'}</button></div>
+                <div className={`${styles.packFooter} p-2 border-t border-(--base-03) space-y-1`}><Link href="/modpacks/guide" title="Modpack how-to" className="btn btn-ghost btn-sm w-full justify-start"><BookOpen size={14}/>{!collapsed && 'How to build a pack'}</Link><Link href="/modpacks/import" title="Import from Modrinth" aria-current={pathname === '/modpacks/import' ? 'page' : undefined} className="btn btn-ghost btn-sm w-full justify-start"><Download size={14}/>{!collapsed && 'Import from Modrinth'}</Link><Link href="/favorites" title="Favorites and version alerts" className="btn btn-ghost btn-sm w-full justify-start"><Star size={14}/>{!collapsed && 'Favorites & alerts'}</Link><button onClick={() => setCollaborators(true)} title="Collaborators" className="btn btn-ghost btn-sm w-full justify-start"><Users size={14} />{!collapsed && 'Collaborators'}</button><button onClick={() => setActivity(true)} title="Activity" className="btn btn-ghost btn-sm w-full justify-start"><History size={14} />{!collapsed && 'Activity'}</button></div>
             </aside>
             <div className={styles.body}>
                 {packId > 0 && <>
                     <header className={styles.heading}>
                         <ProjectIcon name={pack?.internalName || 'Modpack'} url={metadata.projects[pack?.modrinthProjectId || '']?.icon_url} className="w-11 h-11" />
-                        <div className="min-w-0 flex-1"><p className="mono-label text-(--base-06)">Modpack workspace</p><h1 className="font-display text-lg font-semibold text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1><p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div>
+                        <div className="min-w-0 flex-1"><p className="mono-label text-(--base-06)">Modpack workspace</p><h1 className="font-display text-lg font-semibold text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1>{autoSync.phase !== 'idle' && <p role="status" className={`text-[11px] ${autoSync.phase === 'failed' ? 'text-(--warning-light)' : 'text-(--accent-light)'}`}>{autoSync.phase === 'running' ? `Importing new Modrinth versions (${autoSync.done + 1} of ${autoSync.total})...` : autoSync.phase === 'done' ? `Imported ${autoSync.imported} new Modrinth version${autoSync.imported === 1 ? '' : 's'}.` : `Modrinth sync stopped at ${autoSync.message}`}</p>}<p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div>
                         <div className={styles.tools}>
                             {(buildId > 0 || creating || modrinthSelected) && <Link href={`/modpacks/${packId}`} className="btn btn-secondary btn-sm"><Layers size={13}/>All builds</Link>}
                             <button onClick={async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }} disabled={refreshing} className="btn btn-ghost btn-sm"><RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />{refreshing ? 'Refreshing...' : 'Refresh'}</button>
