@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.3
+
+### Features
+- Modpack Add content loads the next page of Modrinth results as you scroll; Load more
+  stays as a button. Inside a build, pack settings move to the pack overview. `panel`
+- New build suggests the next version after a suffixed one (0.2.0-beta -> 0.2.1)
+  instead of falling back to 0.1.0. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- On laptop-height windows the Add content list showed about two results; it now gets
+  the height the pack toolbar used. Replace and Upgrade dialogs scroll again. `panel`
+- A mod's only remaining Client/Server side no longer looks switched off. `panel`
+
 ## 2026.10.28.2
 
 ### Features

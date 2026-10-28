@@ -33,7 +33,8 @@ export const PACK_LOADERS = ['vanilla', 'fabric', 'forge', 'neoforge', 'quilt'] 
 export type PackLoader = typeof PACK_LOADERS[number];
 
 export function nextPackBuildLabel(existing: string[]): string {
-    const versions = existing.map(label => /^(\d+)\.(\d+)\.(\d+)$/.exec(label))
+    // A pre-release or build suffix (0.2.0-beta, 1.0.0+fix) still counts, or the suggestion falls below it.
+    const versions = existing.map(label => /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(label.trim()))
         .filter((match): match is RegExpExecArray => match !== null)
         .map(match => match.slice(1).map(Number))
         .filter(parts => parts.every(Number.isSafeInteger));

@@ -49,6 +49,8 @@ describe('pack build metadata', () => {
     it('suggests the next patch without changing a pack to a different release line', () => {
         expect(nextPackBuildLabel([])).toBe('0.1.0');
         expect(nextPackBuildLabel(['1.2.9', '1.2.10', '0.1.99', 'custom'])).toBe('1.2.11');
+        expect(nextPackBuildLabel(['0.2.0-studio-ui'])).toBe('0.2.1');
+        expect(nextPackBuildLabel(['1.0.0+hotfix', '0.9.0'])).toBe('1.0.1');
     });
 
     it('prefers the recommended stable loader while preserving an explicitly selected valid version', () => {

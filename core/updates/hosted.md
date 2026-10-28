@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.3
+
+### Features
+- Modpack Add content loads more Modrinth results as you scroll, and inside a build
+  the content list gets the full height. Pack settings sit on the pack overview.
+- New build suggests the next version after a suffixed one (0.2.0-beta -> 0.2.1).
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- On smaller screens Add content showed only about two results at a time; fixed.
+  Replace and Upgrade dialogs scroll again.
+
 ## 2026.10.28.2
 
 ### Features

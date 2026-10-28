@@ -5,18 +5,12 @@
 .packLink:hover { background:var(--base-03); }
 .packLink[aria-current=page] { background:var(--accent-ghost); border-color:var(--accent-border); }
 .body { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; }
-.heading { display:flex; align-items:center; gap:12px; padding:20px; border-bottom:1px solid var(--base-03); min-height:94px; flex-wrap:wrap; }
+.heading { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--base-03); min-height:76px; flex-wrap:wrap; }
 .columns { display:flex; flex:1; min-height:0; min-width:0; position:relative; }
-.builds { width:248px; flex-shrink:0; overflow:auto; padding:16px 12px; border-right:1px solid var(--base-03); background:var(--base-01); }
-.allBuilds { display:flex; align-items:center; gap:8px; padding:12px; margin-bottom:12px; border:1px solid var(--base-04); border-radius:var(--radius-md); font-size:13px; font-weight:500; }
-.allBuilds:hover { background:var(--base-03); }
-.allBuilds[aria-current=page], .buildLink[aria-current=page] { background:var(--accent-ghost); border-color:var(--accent-border); color:var(--accent-light); }
 .packToolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--base-03); background:var(--base-01); position:relative; z-index:15; }
 .recommendation { flex:1; min-width:240px; max-width:360px; }
 .packFooter { flex-shrink:0; }
 .detailsToggle, .detailsClose, .detailsBackdrop { display:none; }
-.buildLink { display:flex; flex-direction:column; gap:6px; border:1px solid transparent; border-radius:var(--radius-md); padding:11px 9px; margin-bottom:6px; }
-.buildLink:hover { background:var(--base-03); }
 .content { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
 .details { width:304px; flex-shrink:0; padding:19px 16px; display:flex; flex-direction:column; border-left:1px solid var(--base-03); overflow:auto; background:var(--base-01); }
 .metadata { margin:0; }
@@ -36,9 +30,10 @@
 .contentFilters { width:208px; flex-shrink:0; overflow-y:auto; padding:12px; border:1px solid var(--base-03); border-radius:var(--radius-md); background:var(--base-01); display:flex; flex-direction:column; gap:18px; }
 .contentMain { display:flex; flex:1; flex-direction:column; gap:12px; min-height:0; min-width:0; overflow:hidden; }
 .searchPanel { overflow:hidden; }
-@media(min-width:1700px) { .builds{width:280px}.details{width:336px} }
-@media(max-width:1320px) {
-    .builds{width:232px}.editor{padding:16px 14px}.heading{padding:16px}
+@media(min-width:1700px) { .details{width:336px} }
+/* Below 1440px the details column opens on demand, so the content list keeps its width. */
+@media(max-width:1439px) {
+    .editor{padding:16px 14px}.heading{padding:12px 16px}
     .details{display:none;position:absolute;right:0;top:0;bottom:0;z-index:20;width:320px;box-shadow:var(--shadow-lg)}
     .detailsOpen{display:flex}.detailsToggle,.detailsClose{display:inline-flex}
     .detailsClose{align-self:flex-end;margin-bottom:12px}

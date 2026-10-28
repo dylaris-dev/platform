@@ -245,7 +245,7 @@ function ReplaceDialog({ entry, build, packId, disabled, isFrozen, onClose, onRe
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-hidden p-4">
+                <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-4">
                     <ModrinthVersionBrowser
                         loader={build.loader || undefined}
                         mcVersion={build.minecraft || undefined}
@@ -313,7 +313,7 @@ function UpdateModsDialog({ entry, build, packId, disabled, isFrozen, onClose, o
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-hidden p-4">
+                <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-4">
                     <ModrinthVersionBrowser
                         loader={build.loader || undefined}
                         mcVersion={build.minecraft || undefined}
@@ -520,12 +520,13 @@ export default function BuildContentEditorPage() {
         </WorkspaceDetails>
         {isFrozen && <div role="status" className="rounded-md border border-(--base-04) p-3 text-xs text-(--base-07)"><Lock size={13} className="inline mr-2" />This build is read-only. {build.modrinthPublished ? 'Its published contents stay reproducible.' : 'Its publication artifact has already been frozen; you can retry publishing it.'} Create or fork a new build to make changes.</div>}
         <header className="flex items-center justify-between gap-3 flex-wrap shrink-0"><div><h2 className="text-base font-medium text-(--base-09)">{browsing ? 'Add from Modrinth' : `Build ${build.versionString}`}</h2><p className="text-xs text-(--base-06) mt-1">{groups.mods.length} mods / plugins · {groups.configs.length} configs · MC {build.minecraft} · {build.loader}</p></div><div className={styles.tools}>
-            {hasAnyUpdate && <button onClick={handleUpdateAll} disabled={disabled || updatingAll} className="btn btn-secondary btn-sm"><ArrowUpCircle size={12} /> {updatingAll ? 'Updating...' : 'Update all'}</button>}
+            {browsing && <select aria-label="Project type" value={modrinthType} onChange={event => setModrinthType(event.target.value as typeof modrinthType)} className="input-field text-xs w-auto"><option value="mod" disabled={build.loader === 'vanilla'}>Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select>}
+            {!browsing && hasAnyUpdate && <button onClick={handleUpdateAll} disabled={disabled || updatingAll} className="btn btn-secondary btn-sm"><ArrowUpCircle size={12} /> {updatingAll ? 'Updating...' : 'Update all'}</button>}
             <button onClick={() => setUploadOpen(true)} disabled={disabled} title={disabled ? editDisabledReason : 'Upload files or folders'} className="btn btn-secondary btn-sm disabled:opacity-40"><Upload size={12} /> Upload</button>
             <button onClick={() => setBrowsing(value => !value)} className="btn btn-primary btn-sm">{browsing ? <ArrowLeft size={12} /> : <Search size={12} />}{browsing ? 'Installed' : disabled ? 'Browse content' : 'Add content'}</button>
         </div></header>
         {isFrozen && <p className="text-xs text-(--base-06) bg-(--base-02) p-3 rounded-md">This build is frozen. Create a copy to change its content.</p>}
-        {browsing ? <section className={styles.searchPanel} aria-label="Add from Modrinth"><label className="flex items-center gap-3 text-xs text-(--base-06) mb-3">Project type<select value={modrinthType} onChange={event => setModrinthType(event.target.value as typeof modrinthType)} className="input-field text-xs w-auto"><option value="mod" disabled={build.loader === 'vanilla'}>Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select></label>
+        {browsing ? <section className={styles.searchPanel} aria-label="Add from Modrinth">
             <ModrinthVersionBrowser withFilters loader={build.loader || undefined} mcVersion={build.minecraft || undefined} projectType={modrinthType} installedProjectIds={new Set(content.map(entry => entry.modrinthProjectId).filter(Boolean))} disabled={disabled || addingContent} removeDisabled={deleteDisabled || addingContent} disabledTitle={addingContent ? 'Adding content...' : editDisabledReason}
                 onRemove={async projectId => {
                     if(deleteDisabled)throw new Error('Delete access is required.');
@@ -652,10 +653,7 @@ export default function BuildContentEditorPage() {
                     <p className="text-xs text-(--base-06)">Categories come from Modrinth metadata. Local, unlinked uploads are visible under All categories.</p>
                 </aside>
                 <div className={styles.contentMain}>
-                <input className="input-field w-full text-sm" aria-label="Search installed content" placeholder="Search installed content..." value={query} onChange={event => setQuery(event.target.value)} />
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <label className="flex items-center gap-2 text-xs text-(--base-06)">Sort<select aria-label="Sort installed content" className="input-field text-xs w-auto" value={sort} onChange={event => setSort(event.target.value as PackContentSort)}><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="environment">Environment</option><option value="updates">Updates first</option></select></label>
-                </div>
+                <div className="flex items-center gap-2"><input className="input-field flex-1 min-w-0 text-sm" aria-label="Search installed content" placeholder="Search installed content..." value={query} onChange={event => setQuery(event.target.value)} /><label className="flex items-center gap-2 text-xs text-(--base-06) shrink-0"><span className="sr-only">Sort</span><select aria-label="Sort installed content" className="input-field text-xs w-auto" value={sort} onChange={event => setSort(event.target.value as PackContentSort)}><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="environment">Environment</option><option value="updates">Updates first</option></select></label></div>
                 {projectMetadata.error && <p className="text-xs text-(--base-06)">Some project metadata could not be loaded. <button className="text-(--accent-light)" onClick={projectMetadata.retry}>Retry metadata</button></p>}
                 <div className="flex justify-between text-[10px] uppercase tracking-wider text-(--base-06)"><span>Installed · {visibleContent.length}</span><span>Environment / actions</span></div>
                 <section className={styles.rows} aria-label="Installed content">

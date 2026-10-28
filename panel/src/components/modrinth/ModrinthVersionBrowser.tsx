@@ -85,6 +85,18 @@ export default function ModrinthVersionBrowser({ loader, mcVersion, projectType=
         }
         setMoreLoading(false);
     };
+    // Scrolling near the end loads the next page; the button stays for keyboard users and after an error.
+    const resultsRef=useRef<HTMLElement>(null);
+    const sentinelRef=useRef<HTMLDivElement>(null);
+    const loadMoreRef=useRef(loadMore);loadMoreRef.current=loadMore;
+    const autoLoad=!searching&&!searchError&&!moreLoading&&!moreError&&offset<total;
+    useEffect(()=>{
+        const target=sentinelRef.current;
+        if(!autoLoad||!target||typeof IntersectionObserver==='undefined')return;
+        const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){observer.disconnect();void loadMoreRef.current();}},{root:resultsRef.current,rootMargin:'0px 0px 600px 0px'});
+        observer.observe(target);
+        return()=>observer.disconnect();
+    },[autoLoad,offset]);
     useEffect(()=>{
         let live=true;setVersions([]);setVersionsError('');setVisibleVersions(6);
         if(!expanded){setVersionsLoading(false);return()=>{live=false;};}
@@ -118,7 +130,7 @@ export default function ModrinthVersionBrowser({ loader, mcVersion, projectType=
         <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden gap-3">
             <div className="flex items-center gap-2 shrink-0"><div className="relative flex-1 min-w-0"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-06)"/><input aria-label="Search Modrinth content" className="input-field input-icon-left w-full" value={query} onChange={event=>setQuery(event.target.value)} placeholder={`Search ${projectType==='mod'?'mods':projectType==='resourcepack'?'resource packs':'shaders'}...`}/></div><select aria-label="Sort Modrinth results" className="input-field w-auto text-xs" value={sort} onChange={event=>setSort(event.target.value as typeof sort)}><option value="relevance">Relevance</option><option value="downloads">Downloads</option><option value="follows">Followers</option><option value="newest">Newest projects</option><option value="updated">Recently updated</option></select></div>
             {isMod && !withFilters && <EnvironmentFilter value={env} onChange={setEnv} inline/>}
-            <section className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pb-4" aria-label="Modrinth results">
+            <section ref={resultsRef} className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pb-4" aria-label="Modrinth results">
                 {searching?<p role="status" className="text-sm text-(--base-06) py-6 text-center"><RefreshCw size={13} className="inline animate-spin"/> Searching...</p>:searchError?<div role="alert" className="card p-4 text-sm">Search failed. <button className="btn btn-secondary btn-sm" onClick={()=>setAttempt(value=>value+1)}>Retry search</button></div>:!hits.length?<p className="text-sm text-(--base-06) py-6 text-center">No matches for these filters.</p>:hits.map(hit=>{
                     const installed=installedSet.has(hit.project_id);const busy=pending===hit.project_id;
                     return <article key={hit.project_id} className="card p-3" aria-label={hit.title}>
@@ -133,7 +145,7 @@ export default function ModrinthVersionBrowser({ loader, mcVersion, projectType=
                         {expanded===hit.slug && <div className="mt-4 pt-4 border-t border-(--base-03) space-y-3"><ModProjectDetails projectId={hit.project_id}/><h3 className="input-label">Compatible versions</h3>{versionsLoading?<p role="status" className="text-xs">Loading versions...</p>:versionsError?<div role="alert" className="text-xs text-(--error-light)">{versionsError}<button className="btn btn-secondary btn-sm" onClick={()=>setVersionAttempt(value=>value+1)}>Retry versions</button></div>:!versions.length?<p className="text-xs text-(--base-06)"><AlertTriangle size={12} className="inline"/> No compatible versions.</p>:versions.slice(0,visibleVersions).map(version=><button key={version.id} className="btn btn-secondary btn-sm w-full justify-start text-left" disabled={disabled||!!pending||missingCompatibility||(withFilters&&installed)} onClick={()=>act(hit,version)} title={disabled?disabledTitle:undefined}><Plus size={12}/><span className="min-w-0 truncate">{version.version_number} · {version.version_type} · MC {version.game_versions.join(', ')}</span></button>)}{!versionsLoading&&!versionsError&&versions.length>visibleVersions&&<button className="btn btn-secondary btn-sm" onClick={()=>setVisibleVersions(value=>value+12)}>Show more versions ({versions.length-visibleVersions} remaining)</button>}</div>}
                     </article>;
                 })}
-                {!searching&&!searchError&&<footer className="text-center text-xs text-(--base-06) space-y-3 py-3"><p>{hits.length} projects shown · {total.toLocaleString()} matching projects</p>{offset<total&&<button className="btn btn-secondary btn-sm" disabled={moreLoading} onClick={loadMore}>{moreLoading?'Loading...':moreError?'Retry more results':'Load more results'}</button>}{moreError&&<p role="alert">Could not load more projects. Existing results are retained.</p>}</footer>}
+                {!searching&&!searchError&&<footer className="text-center text-xs text-(--base-06) space-y-3 py-3">{autoLoad&&<div ref={sentinelRef} aria-hidden="true"/>}<p>{hits.length} projects shown · {total.toLocaleString()} matching projects</p>{offset<total&&<button className="btn btn-secondary btn-sm" disabled={moreLoading} onClick={loadMore}>{moreLoading?'Loading...':moreError?'Retry more results':'Load more results'}</button>}{moreError&&<p role="alert">Could not load more projects. Existing results are retained.</p>}</footer>}
             </section>
         </div>
     </div>;

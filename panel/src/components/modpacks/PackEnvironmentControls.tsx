@@ -18,7 +18,8 @@ export function PackEnvironmentSelector({ value, onChange, disabled, name }: {
             const selected = value === 'both' || value === environment;
             const next = togglePackEnvironment(value, environment);
             const Icon = environment === 'client' ? Monitor : Server;
-            return <button key={environment} type="button" aria-pressed={selected} disabled={disabled || saving || next === null}
+            // The last selected side stays enabled-looking: dimming it made "on" read as "off".
+            return <button key={environment} type="button" aria-pressed={selected} disabled={disabled || saving} aria-disabled={next === null || undefined}
                 title={next === null ? 'At least one environment must remain selected' : `Include in the ${environment} download`}
                 onClick={async () => {
                     if (next === null || saving || disabled) return;

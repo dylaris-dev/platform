@@ -32,16 +32,17 @@ latest release, or latest build if no release exists. These labels describe
 build history, not a running deployment. Local packs without upstream artwork
 use a package icon. **My modpacks** and **Invited / collaborating** have separate
 sections and a shared search field. The sidebar uses the same width and collapse
-control as Servers, aligned with the navbar branding. Build navigation appears in
-the pack overview. Inside a build it gives way to content filters; **All builds**
-in the header returns to version selection.
+control as Servers, aligned with the navbar branding. The pack overview lists the
+builds. Inside a build, content filters use that space; **All builds** in the
+header returns to the overview.
 
 Installed content is grouped into **Mods**, **Resources**, and **Configs &
 scripts**, with search and project artwork on the installed rows. Missing or
 broken artwork falls back to a content-type icon. **Add content** opens the
 Modrinth browser in the main workspace. **Sharing** contains expiring share links;
-The pack header contains **Recommended build**, **Pack version alerts**,
-**Collaborators** and **New build**. The alert dialog opens directly in one click
+The pack overview carries **Recommended build**, **Pack version alerts**,
+**Collaborators** and **New build**; inside a build the header keeps **All builds**
+and **New build** so the content list keeps its height. The alert dialog opens directly in one click
 without selecting a build; it links to a pack-level page for managing existing
 alerts. **All builds** returns to
 the pack overview; the active overview/build is highlighted and the button
@@ -78,8 +79,9 @@ show **Installed** and a permission-checked **Remove** action; removing confirms
 all matching entries in this build. Read-only or frozen builds can browse without
 receiving write rights. Vanilla builds cannot install loader-specific mods.
 
-Results load in pages of 20 through **Load more**; query changes discard stale
-responses. Both installed and browse lists have their own scroll containers so
+Results load in pages of 20: scrolling near the end loads the next page, and
+**Load more** stays as a button (and the retry after an error); query changes
+discard stale responses. Both installed and browse lists have their own scroll containers so
 the last entry and pagination remain reachable. Filtering never changes exports.
 
 Panel feedback stays copyable. Default success/error lifetimes are 5.2/9.1 seconds,
@@ -117,7 +119,7 @@ loader; use a compatible mod loader for mods.
 
 ## Recommendations and forks
 
-**Recommended build** in the pack header explicitly selects the pack's player-facing
+**Recommended build** in the pack overview explicitly selects the pack's player-facing
 recommendation. **Automatic: newest release** instead selects the newest release
 channel build. New drafts do not change this source automatically. Without a
 recommendation or release, pack alerts wait. Explicitly recommending an editable
@@ -180,8 +182,9 @@ download. Empty folders are metadata and enter exports when they contain files.
 
 Star or watch a Modrinth project from installed content or search, in Modpacks
 or Server Content. Favorites belong to the signed-in user. **Favorites & alerts**
-lists saved projects and active checks; a build's **Version alerts** tab also
-offers pack-level checks following the current Recommended build or newest release.
+lists saved projects and active checks; **Pack version alerts** in the pack
+overview offers pack-level checks following the current Recommended build or
+newest release.
 The linked mod list is resolved again for each check; deleting an old source
 build does not remove the pack alert. The checked build/version is shown in the
 job and notification. A source change during lookup is retried before delivery.
