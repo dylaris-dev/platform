@@ -15,7 +15,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -75,7 +74,8 @@ func (c *ModrinthClient) do(ctx context.Context, method, rawURL string, body io.
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("modrinth %s %s: status %d: %s", method, req.URL.Path, resp.StatusCode, truncateBody(raw))
+		// Typed, so callers can tell a revoked token (401) from Modrinth being down.
+		return &ModrinthHTTPError{Path: method + " " + req.URL.Path, Status: resp.StatusCode, Body: truncateBody(raw)}
 	}
 	if out != nil && len(raw) > 0 {
 		return json.Unmarshal(raw, out)

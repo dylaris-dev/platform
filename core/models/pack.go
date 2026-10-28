@@ -105,6 +105,19 @@ type PackBuild struct {
 	ImportedFrom string `json:"importedFrom,omitempty"`
 }
 
+// ModrinthMembership is the panel's cached view of one user's place in a
+// Modrinth project's team. State: "member", "none" or "token_invalid".
+type ModrinthMembership struct {
+	UserID      string    `json:"userId"`
+	ProjectID   string    `json:"projectId"`
+	Permissions int64     `json:"permissions"`
+	State       string    `json:"state"`
+	CheckedAt   time.Time `json:"checkedAt"`
+	// ConfirmedAt is the last time Modrinth answered "member" (nil: never).
+	// It bounds how long a lapsed token keeps read access.
+	ConfirmedAt *time.Time `json:"confirmedAt"`
+}
+
 // Mod is an owner-scoped content catalog entry (a mod, or a resourcepack, shader
 // or config bundle via ContentType).
 type Mod struct {

@@ -93,9 +93,10 @@ func (h *PacksHandler) ListShareLinks(w http.ResponseWriter, r *http.Request) {
 // revoke itself is additionally scoped by creator, so one owner cannot revoke
 // another's link.
 func (h *PacksHandler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
-	// The pack's owner may revoke any link of the build, including one a
-	// collaborator made; everyone else only their own (created_by-scoped).
-	b, owner, ok := h.loadBuild(r, packEdit)
+	// Whoever may delete the pack may revoke any link of the build, including
+	// one a removed team member made; everyone else only their own
+	// (created_by-scoped).
+	b, _, ok := h.loadBuild(r, packEdit)
 	if !ok {
 		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -103,7 +104,7 @@ func (h *PacksHandler) RevokeShareLink(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	linkID, _ := strconv.Atoi(mux.Vars(r)["linkId"])
 	var err error
-	if userID == owner {
+	if _, manager := h.packAccess(r, b.PackID, packDeletePack); manager {
 		err = h.state.Store.RevokeShareLinkOfBuild(linkID, b.ID)
 	} else {
 		err = h.state.Store.RevokeShareLink(linkID, userID)

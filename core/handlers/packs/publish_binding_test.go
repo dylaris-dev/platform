@@ -9,9 +9,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
-	"dylaris-core/store"
+	"dylaris-core/services"
 )
 
 type publishBindingStore struct {
@@ -23,8 +24,12 @@ func (s *publishBindingStore) ListBuildContent(int) ([]models.BuildContentEntry,
 	return []models.BuildContentEntry{modrinthEntry("mods/fixture.jar")}, nil
 }
 
-func (s *publishBindingStore) PackRightsFor(owner, user string, packID int) (store.PackRights, error) {
-	return store.PackRights{Found: owner == cleanupOwner && user == "editor" && packID == 1, CanEdit: user == "editor"}, nil
+// "editor" is a team member with Modrinth's upload right on the bound project.
+func (s *publishBindingStore) GetModrinthMembership(user, project string) (*models.ModrinthMembership, error) {
+	if user == "editor" && project == "bound-project" {
+		return &models.ModrinthMembership{State: "member", Permissions: services.ModrinthPermUploadVersion, CheckedAt: time.Now()}, nil
+	}
+	return s.packCleanupStore.GetModrinthMembership(user, project)
 }
 func (s *publishBindingStore) UpdatePack(p *models.Pack) error {
 	cp := *p
@@ -62,8 +67,11 @@ func TestPackPatchCannotRebindModrinthProjects(t *testing.T) {
 	}
 }
 
-func TestPublishUsesStoredOrNewProjectAndOwnerPAT(t *testing.T) {
-	for _, tc := range []struct{ name, actor, bound, want string }{{"owner existing", cleanupOwner, "bound-project", "bound-project"}, {"editor existing", "editor", "bound-project", "bound-project"}, {"editor creates first project", "editor", "", "new-server-assigned-project"}} {
+// Publishing targets the pack's bound project (or creates the first one for an
+// unbound pack) and uses the PUBLISHER's own token: Modrinth checks their team
+// right again (owner decision 2026-10-28).
+func TestPublishUsesStoredOrNewProjectAndCallerPAT(t *testing.T) {
+	for _, tc := range []struct{ name, actor, bound, want string }{{"owner existing", cleanupOwner, "bound-project", "bound-project"}, {"teammate existing", "editor", "bound-project", "bound-project"}, {"creator of an unbound pack creates the project", cleanupOwner, "", "new-server-assigned-project"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, base, dir := newPackCleanup(t)
 			base.pack.ModrinthProjectID = tc.bound
@@ -146,7 +154,7 @@ func TestPublishUsesStoredOrNewProjectAndOwnerPAT(t *testing.T) {
 			r = r.WithContext(context.WithValue(r.Context(), "userID", tc.actor))
 			w := httptest.NewRecorder()
 			h.PublishModrinth(w, r)
-			if w.Code != 200 || uploads != 1 || pat.loadedFor != cleanupOwner {
+			if w.Code != 200 || uploads != 1 || pat.loadedFor != tc.actor {
 				t.Fatalf("status=%d uploads=%d credential owner=%q body=%s", w.Code, uploads, pat.loadedFor, w.Body.String())
 			}
 			if envSet != "client_and_server" {

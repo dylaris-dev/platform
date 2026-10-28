@@ -67,9 +67,21 @@ func memberModpacks(ctx context.Context, mc *services.ModrinthClient) ([]service
 		return nil, err
 	}
 	out := []services.ModrinthProjectSummary{}
+	seen := map[string]bool{}
 	for _, p := range all {
 		if p.ProjectType == "modpack" {
 			out = append(out, p)
+			seen[p.ID] = true
+		}
+	}
+	// Organization projects are not in /user/{id}/projects; their members
+	// reach them through the organization's default permissions.
+	if orgProjects, err := mc.UserOrganizationProjects(ctx, modrinthUser); err == nil {
+		for _, p := range orgProjects {
+			if !seen[p.ID] {
+				out = append(out, p)
+				seen[p.ID] = true
+			}
 		}
 	}
 	return out, nil
@@ -95,16 +107,13 @@ func (h *PacksHandler) ListModrinthProjects(w http.ResponseWriter, r *http.Reque
 	for _, id := range hidden {
 		hiddenSet[id] = true
 	}
-	packs, _ := h.state.Store.ListPacksByOwner(userID)
-	bound := map[string]int{}
-	for _, p := range packs {
-		if p.ModrinthProjectID != "" {
-			bound[p.ModrinthProjectID] = p.ID
-		}
-	}
 	rows := make([]importProjectRow, 0, len(projects))
 	for _, p := range projects {
-		rows = append(rows, importProjectRow{ModrinthProjectSummary: p, Hidden: hiddenSet[p.ID], PackID: bound[p.ID]})
+		row := importProjectRow{ModrinthProjectSummary: p, Hidden: hiddenSet[p.ID]}
+		if pack, err := h.state.Store.GetPackByModrinthProject(p.ID); err == nil && pack != nil {
+			row.PackID = pack.ID
+		}
+		rows = append(rows, row)
 	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "projects": rows})
 }
@@ -152,13 +161,14 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 		handlers.SendJSONError(w, "That Modrinth modpack is not one of yours.", http.StatusForbidden)
 		return
 	}
-	packs, _ := h.state.Store.ListPacksByOwner(userID)
-	for i := range packs {
-		if packs[i].ModrinthProjectID == projectID {
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": packs[i], "existing": true})
-			return
-		}
+	// One Modrinth project is one pack: a teammate who imported it first
+	// already made it, and the team decides who reaches it.
+	if existing, err := h.state.Store.GetPackByModrinthProject(projectID); err == nil && existing != nil {
+		h.membershipFor(r.Context(), userID, projectID)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": existing, "existing": true})
+		return
 	}
+	packs, _ := h.state.Store.ListPacksByOwner(userID)
 	slug := project.Slug
 	taken := map[string]bool{}
 	for _, p := range packs {
@@ -186,6 +196,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	p.ID = id
+	h.membershipFor(r.Context(), userID, project.ID)
 	h.audit(r, userID, id, "pack.imported", map[string]any{"modrinthProject": project.ID})
 	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
@@ -207,7 +218,7 @@ type importVersionRow struct {
 // ListModrinthVersions GET /api/packs/{id}/modrinth/versions - the project's
 // versions and which of them this pack already has (for import and sync).
 func (h *PacksHandler) ListModrinthVersions(w http.ResponseWriter, r *http.Request) {
-	pack, mc, ok := h.modrinthPageClient(w, r)
+	pack, mc, ok := h.modrinthPageClient(w, r, packRead)
 	if !ok {
 		return
 	}
@@ -236,7 +247,7 @@ func (h *PacksHandler) ListModrinthVersions(w http.ResponseWriter, r *http.Reque
 
 // ImportModrinthVersion POST /api/packs/{id}/modrinth/versions/{versionId}/import
 func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Request) {
-	pack, mc, ok := h.modrinthPageClient(w, r)
+	pack, mc, ok := h.modrinthPageClient(w, r, packEdit)
 	if !ok {
 		return
 	}

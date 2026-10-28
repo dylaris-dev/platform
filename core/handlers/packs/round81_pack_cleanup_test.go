@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/users"
@@ -18,6 +19,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -72,6 +74,15 @@ func (f *packCleanupStore) UpsertMod(*models.Mod) (int, error) {
 	return 1, nil
 }
 func (f *packCleanupStore) CountModversionsByStorageKey(string) (int, error) { return 0, nil }
+
+// The pack's creator manages its Modrinth project unless a test says otherwise.
+func (f *packCleanupStore) GetModrinthMembership(user, project string) (*models.ModrinthMembership, error) {
+	if f.pack != nil && project == f.pack.ModrinthProjectID && user == f.pack.OwnerID {
+		return &models.ModrinthMembership{UserID: user, ProjectID: project, State: "member", Permissions: services.ModrinthPermAll, CheckedAt: time.Now()}, nil
+	}
+	return nil, nil
+}
+func (f *packCleanupStore) UpsertModrinthMembership(*models.ModrinthMembership) error { return nil }
 
 func newPackCleanup(t *testing.T) (*PacksHandler, *packCleanupStore, string) {
 	t.Helper()

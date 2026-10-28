@@ -3,7 +3,7 @@ package packs
 import (
 	"context"
 	"dylaris-core/models"
-	"dylaris-core/store"
+	"dylaris-core/services"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,9 +18,21 @@ type forkAccessStore struct {
 	targetOwner string
 }
 
-func (s *forkAccessStore) PackRightsFor(owner, user string, pack int) (store.PackRights, error) {
-	return store.PackRights{Found: owner == "alice" && user == "reader" && pack == 1}, nil
+// Pack 1 is bound to Modrinth project "proj": alice manages it, reader is a
+// team member with no rights beyond reading.
+func (s *forkAccessStore) GetModrinthMembership(user, project string) (*models.ModrinthMembership, error) {
+	if project != "proj" {
+		return nil, nil
+	}
+	switch user {
+	case "alice":
+		return member(services.ModrinthPermAll), nil
+	case "reader":
+		return member(0), nil
+	}
+	return nil, nil
 }
+func (s *forkAccessStore) UpsertModrinthMembership(*models.ModrinthMembership) error { return nil }
 func (s *forkAccessStore) ListPacksByOwner(string) ([]models.Pack, error) {
 	return []models.Pack{}, nil
 }
@@ -61,6 +73,7 @@ func TestForkBuildValidatesSourceAndEmptyTargetBeforeWriting(t *testing.T) {
 			h := newPackScopeHandler()
 			base := h.state.Store.(*packScopeFakeStore)
 			base.packs[3] = &models.Pack{ID: 3, OwnerID: "alice"}
+			base.packs[1].ModrinthProjectID = "proj"
 			s := &forkAccessStore{packScopeFakeStore: base}
 			h.state.Store = s
 			request := packContentRequest(t, tc.user, "1", tc.build)

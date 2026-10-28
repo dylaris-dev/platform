@@ -4,12 +4,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
-import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2, Users } from 'lucide-react';
+import { Package, Plus, ExternalLink, RefreshCw, CircleAlert, X, Trash2 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
-import { createPack, deletePack, type Pack, listPacksOverview, type SharedPack } from '@/lib/api/packs';
-import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal';
+import { clearModrinthMemberships, createPack, deletePack, type Pack, listPacksOverview, type SharedPack } from '@/lib/api/packs';
 import PackActivity from '@/components/modpacks/PackActivity';
-import Select from '@/components/ui/Select';
 import UnlinkedContentWarning from '@/components/mods/UnlinkedContentWarning';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
@@ -37,23 +35,23 @@ export default function PacksListPage() {
     const [creatingPack, runCreate] = useBusy();
     const [deletingPack, runDelete] = useBusy();
     const [creating, setCreating] = useState<{
-        internalName: string; slug: string; summary: string; ownerId: string;
+        internalName: string; slug: string; summary: string;
     } | null>(null);
-    // Packs others invited the reader to, and whose account they may create on.
+    // Packs others created that the reader reaches through a Modrinth team.
     const [shared, setShared] = useState<SharedPack[]>([]);
-    const [createOn, setCreateOn] = useState<{ id: string; name: string }[]>([]);
-    const [collabOpen, setCollabOpen] = useState(false);
+    const [modrinth, setModrinth] = useState({ connected: true, tokenInvalid: false });
+    const [clearing, runClear] = useBusy();
     const [deletePrompt, setDeletePrompt] = useState<Pack | null>(null);
 
     const metadata = useProjectMetadata([...packs, ...shared].map(pack => pack.modrinthProjectId));
-    useEffect(() => { if (searchParams.get('create') === '1' && !cannotAuthor) setCreating({ internalName: '', slug: '', summary: '', ownerId: '' }); }, [searchParams, cannotAuthor]);
+    useEffect(() => { if (searchParams.get('create') === '1' && !cannotAuthor) setCreating({ internalName: '', slug: '', summary: '' }); }, [searchParams, cannotAuthor]);
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
         const o = await listPacksOverview();
         setPacks(o.packs);
         setShared(o.shared);
-        setCreateOn(o.createOn);
+        setModrinth(o.modrinth);
         setLoading(false);
     }, []);
 
@@ -71,7 +69,6 @@ export default function PacksListPage() {
             name: creating.internalName.trim(),
             slug: creating.slug.trim() || undefined,
             summary: creating.summary.trim() || undefined,
-            ownerId: creating.ownerId || undefined,
         });
         if (res.success && res.pack) {
             setCreating(null);
@@ -80,6 +77,16 @@ export default function PacksListPage() {
             router.push(`/modpacks/${res.pack.id}`);
         } else {
             showToast(res.message || 'Create failed', false);
+        }
+    };
+
+    const handleClear = async () => {
+        const res = await clearModrinthMemberships();
+        if (res.success) {
+            showToast(res.removed ? `Removed ${res.removed} pack${res.removed === 1 ? '' : 's'} from your list.` : 'Nothing to clear.', true);
+            refresh();
+        } else {
+            showToast(res.message || 'Clear failed', false);
         }
     };
 
@@ -101,17 +108,14 @@ export default function PacksListPage() {
                 <Package size={20} className="text-(--accent-light)" />
                 <h1 className="text-base font-display font-semibold text-(--base-09)">My Modpacks</h1>
                 <div className="ml-auto flex items-center gap-2">
-                    <button onClick={() => setCollabOpen(true)} className="btn btn-secondary btn-sm" title="Let other users work on your packs">
-                        <Users size={13} /> Collaborators
-                    </button>
                     <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
                         <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
                     </button>
                     <button
-                        onClick={() => setCreating({ internalName: '', slug: '', summary: '', ownerId: '' })}
+                        onClick={() => setCreating({ internalName: '', slug: '', summary: '' })}
                         className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={cannotAuthor}
-                        title={modpacksDisabled ? 'Modpack authoring is disabled' : noStorage ? 'Modpack storage is not configured' : undefined}
+                        disabled={cannotAuthor || !modrinth.connected}
+                        title={modpacksDisabled ? 'Modpack authoring is disabled' : noStorage ? 'Modpack storage is not configured' : !modrinth.connected ? 'Connect your Modrinth token first' : undefined}
                     >
                         <Plus size={13} />
                         New Pack
@@ -137,6 +141,31 @@ export default function PacksListPage() {
                 </div>
             )}
 
+            {modrinth.tokenInvalid && (
+                <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
+                    <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
+                    <div className="text-xs text-(--base-09) flex-1">
+                        Modrinth no longer accepts your token, so packs you reach through a Modrinth
+                        team are read only for a day, then locked. Renew the token to work on them
+                        again, or clear the ones you no longer have access to from your list.
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <Link href="/account/modrinth" className="btn btn-primary btn-sm">Renew token</Link>
+                        <button onClick={() => runClear(handleClear)} disabled={clearing} className="btn btn-secondary btn-sm disabled:opacity-40">Clear</button>
+                    </div>
+                </div>
+            )}
+
+            {!modrinth.connected && !modrinth.tokenInvalid && !cannotAuthor && (
+                <div className="card p-3 mb-4 flex items-start gap-2 text-xs text-(--base-07)">
+                    <CircleAlert size={14} className="text-(--accent-light) mt-0.5 shrink-0" />
+                    <div>
+                        Every pack is a Modrinth project, so a new pack needs your Modrinth token.{' '}
+                        <Link href="/account/modrinth" className="text-(--accent-light)">Connect it under Account, Modrinth</Link>.
+                    </div>
+                </div>
+            )}
+
             {modpacksDisabled && (
                 <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
                     <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
@@ -150,12 +179,12 @@ export default function PacksListPage() {
             <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
                 <Package size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
                 <div>
-                    Author packs here, then create builds and publish them to Modrinth (
+                    Every pack is a Modrinth project (
                     <Link href="/account/modrinth" className="text-(--accent-light) inline-flex items-center gap-1">
-                        connect your PAT <ExternalLink size={9} />
+                        connect your token <ExternalLink size={9} />
                     </Link>
-                    ), export them as an .mrpack, or install them on a server. Each build
-                    pins a Minecraft version + loader and carries its own content list.
+                    ). Who may work on it is its Modrinth team, managed on modrinth.com. Build
+                    here, publish to Modrinth, export an .mrpack or install it on a server.
                 </div>
             </div>
 
@@ -204,10 +233,10 @@ export default function PacksListPage() {
                 </div>
             )}
 
-            {/* Packs other users share with the reader. */}
+            {/* Packs the reader reaches through a Modrinth team. */}
             {!loading && shared.length > 0 && (
                 <section className="mt-6">
-                    <h2 className="mono-label text-(--base-06) mb-2">Shared with me</h2>
+                    <h2 className="mono-label text-(--base-06) mb-2">Modrinth team</h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         {shared.map(p => (
                             <Link key={p.id} href={`/modpacks/${p.id}`} className="card p-4 hover:border-(--accent-border) transition-colors group">
@@ -217,11 +246,13 @@ export default function PacksListPage() {
                                     </div>
                                     <div className="min-w-0 flex-1">
                                         <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.internalName}</div>
-                                        <div className="text-[10px] font-mono text-(--base-06) truncate">by {p.ownerName}</div>
+                                        <div className="text-[10px] font-mono text-(--base-06) truncate">/{p.internalSlug}</div>
                                     </div>
                                 </div>
                                 <div className="mt-3 flex items-center gap-2 flex-wrap">
-                                    <Badge variant="neutral">{p.canEdit ? (p.canDelete ? 'edit & delete' : 'edit') : p.canDelete ? 'delete' : 'view'}</Badge>
+                                    {p.tokenInvalid
+                                        ? <Badge variant="warning">renew token</Badge>
+                                        : <Badge variant="neutral">{p.canEdit ? (p.canDelete ? 'edit & delete' : 'edit') : p.canDelete ? 'delete' : 'view'}</Badge>}
                                 </div>
                             </Link>
                         ))}
@@ -232,8 +263,6 @@ export default function PacksListPage() {
             {!loading && packs.length > 0 && (
                 <div className="mt-6"><PackActivity showPack /></div>
             )}
-
-            {collabOpen && <PackCollaboratorsModal packs={packs} onClose={() => { setCollabOpen(false); refresh(); }} />}
 
             {/* Create */}
             {creating && (
@@ -252,18 +281,6 @@ export default function PacksListPage() {
                                 file uploaded by hand can never be version-checked
                                 or carried to a newer Minecraft version. */}
                             <UnlinkedContentWarning context="pack" />
-                            {createOn.length > 0 && (
-                                <div>
-                                    <label className="input-label">Account</label>
-                                    <Select
-                                        value={creating.ownerId}
-                                        onChange={v => setCreating({ ...creating, ownerId: v })}
-                                        options={[{ value: '', label: 'Mine' }, ...createOn.map(o => ({ value: o.id, label: `${o.name} (invited)` }))]}
-                                        ariaLabel="Account"
-                                    />
-                                    <p className="text-xs text-(--base-06) mt-1">A pack on someone else&apos;s account is theirs and publishes through their Modrinth token.</p>
-                                </div>
-                            )}
                             <div>
                                 <label htmlFor="new-pack-name" className="input-label">Pack name</label>
                                 <input
@@ -322,8 +339,8 @@ export default function PacksListPage() {
                         </div>
                         <div className="modal-body">
                             <p className="text-sm text-(--base-07)">
-                                Removes the local copy and all its builds. If this pack was
-                                published to Modrinth, the Modrinth project is NOT deleted — manage
+                                Removes the pack and all its builds here, for everyone on its
+                                Modrinth team. The Modrinth project itself is NOT deleted; manage
                                 that on modrinth.com.
                             </p>
                         </div>

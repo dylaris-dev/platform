@@ -54,7 +54,7 @@ func (c *ModrinthWatchChecker) RunOnce(ctx context.Context) error {
 			return ctx.Err()
 		}
 		if w.BuildID != nil || w.FollowPack {
-			allowed, err := watchPackReadable(c.Store, w)
+			allowed, err := watchPackReadable(ctx, c.Store, w)
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func (c *ModrinthWatchChecker) RunOnce(ctx context.Context) error {
 			}
 		}
 		if w.BuildID != nil || w.FollowPack {
-			allowed, err := watchPackReadable(c.Store, w)
+			allowed, err := watchPackReadable(ctx, c.Store, w)
 			if err != nil {
 				return err
 			}
@@ -223,16 +223,13 @@ func WatchTargets(w models.ModrinthWatch, releases []string) []string {
 	return out
 }
 
-func watchPackReadable(st store.Store, w models.ModrinthWatch) (bool, error) {
+func watchPackReadable(ctx context.Context, st store.Store, w models.ModrinthWatch) (bool, error) {
 	p, err := st.GetPack(w.PackID)
 	if err != nil {
 		return false, err
 	}
 	if p == nil {
 		return false, nil
-	}
-	if p.OwnerID == w.UserID {
-		return true, nil
 	}
 	user, err := st.GetUserByID(w.UserID)
 	if err != nil {
@@ -241,8 +238,7 @@ func watchPackReadable(st store.Store, w models.ModrinthWatch) (bool, error) {
 	if user != nil && user.IsAdmin {
 		return true, nil
 	}
-	rights, err := st.PackRightsFor(p.OwnerID, w.UserID, p.ID)
-	return rights.Found, err
+	return PackReachableBy(ctx, st, p, w.UserID, false)
 }
 
 func sameWatchSource(a, b models.ModrinthWatch) bool {

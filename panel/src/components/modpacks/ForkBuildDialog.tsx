@@ -190,7 +190,7 @@ export default function ForkBuildDialog({
                     </label>
                     <p className="text-xs text-(--base-06)">
                         A new pack starts private, without the source&apos;s Modrinth binding, share links or
-                        collaborators. Existing target settings stay unchanged. Uploaded files are copied to the target
+                        Modrinth team. Existing target settings stay unchanged. Uploaded files are copied to the target
                         owner; large copies can take a while.
                     </p>
                     {busy && (

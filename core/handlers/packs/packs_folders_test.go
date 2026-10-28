@@ -3,7 +3,7 @@ package packs
 import (
 	"context"
 	"dylaris-core/models"
-	"dylaris-core/store"
+	"dylaris-core/services"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,9 +27,18 @@ func (s *folderTestStore) SetPackFolder(context.Context, int, string, bool) erro
 func (s *folderTestStore) ListBuildContent(int) ([]models.BuildContentEntry, error) {
 	return s.content, nil
 }
-func (s *folderTestStore) PackRightsFor(_, user string, _ int) (store.PackRights, error) {
-	return store.PackRights{Found: user == "editor", CanEdit: user == "editor"}, nil
+
+// Pack 1 is bound to "proj": alice manages it, "editor" may upload versions.
+func (s *folderTestStore) GetModrinthMembership(user, project string) (*models.ModrinthMembership, error) {
+	switch user {
+	case "alice":
+		return member(services.ModrinthPermAll), nil
+	case "editor":
+		return member(services.ModrinthPermUploadVersion), nil
+	}
+	return nil, nil
 }
+func (s *folderTestStore) UpsertModrinthMembership(*models.ModrinthMembership) error { return nil }
 func TestPackFolderPermissionsAndPaths(t *testing.T) {
 	for _, tc := range []struct {
 		name, user, method, path, build string
@@ -50,6 +59,7 @@ func TestPackFolderPermissionsAndPaths(t *testing.T) {
 			h := newPackScopeHandler()
 			base := h.state.Store.(*packScopeFakeStore)
 			base.builds[10].Frozen = tc.frozen
+			base.packs[1].ModrinthProjectID = "proj"
 			s := &folderTestStore{packScopeFakeStore: base}
 			if tc.nonempty {
 				e := models.BuildContentEntry{}

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.10
+
+### Features
+- Who may work on a modpack is now its Modrinth team, with the rights you set on modrinth.com.
+  New pack creates a draft Modrinth project right away.
+- If Modrinth stops accepting your token, your packs stay read only for a day; renew it to continue.
+
+### Breaking
+- Modpack collaborators in the panel are gone; invite people to the Modrinth team instead.
+  Renew your Modrinth token with PROJECT_READ and ORGANIZATION_READ, or packs turn read only.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.28.9
 
 ### Features

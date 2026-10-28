@@ -76,10 +76,10 @@ The first four are where DYLARIS differs most from a general game panel; the res
 what any serious panel needs.
 
 - **Modpack-as-a-server** — deploy a `.mrpack` modpack directly as a runnable server.
-- **Modpack authoring and collaboration** - a persistent pack/build workspace,
+- **Modpack authoring with Modrinth teams** - a persistent pack/build workspace,
   guided Minecraft/loader builds and safe draft copies, installed project icons,
   expandable Modrinth details, client/server controls, guided client/server downloads,
-  config/KubeJS file editing and separate collaborator rights under Access.
+  config/KubeJS file editing. Who may work on a pack is its Modrinth team.
   Existing Modrinth modpacks import with every version as a read-only build.
   Each published pack has a Modrinth page in the panel: texts, tags, links, license,
   icon and environment, Modrinth's publishing checklist and Submit for review.

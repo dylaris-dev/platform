@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ShieldCheck, Plus, Pencil, Trash2, Users } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getPermissionsMode, getCatalog, getPresets,
@@ -16,8 +16,6 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import AccessGrantForm from '@/components/access/AccessGrantForm';
 import { modeLabel, describeGrantAccess, fullAccessCaps, canEditInMode, isProxyScope } from '@/lib/access/accessMode';
 import { toast } from '@/components/ui/Toast';
-import PackCollaboratorsModal from '@/components/modpacks/PackCollaboratorsModal';
-import { listPacks, type Pack } from '@/lib/api/packs';
 
 // Owner-facing delegation UI, master-detail layout. Behavior branches on the
 // account's permissions_mode:
@@ -40,8 +38,6 @@ function sameGrant(a: Grant, username: string, serverId: number | null): boolean
 
 export default function AccessPage() {
     const { servers, user, featureFlags } = useAppData();
-    const [collaboratorsOpen, setCollaboratorsOpen] = useState(false);
-    const [ownPacks, setOwnPacks] = useState<Pack[]>([]);
     const ownedServers = servers.filter(s => s.role === 'owner');
 
     const [mode, setMode] = useState<PermissionsMode | null>(null);
@@ -57,13 +53,6 @@ export default function AccessPage() {
     const [panel, setPanel] = useState<Panel>({ kind: 'empty' });
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
-
-    useEffect(() => {
-        if (!collaboratorsOpen) return;
-        let live = true;
-        listPacks().then(packs => { if (live) setOwnPacks(packs.filter(pack => pack.ownerId === user?.id)); });
-        return () => { live = false; };
-    }, [collaboratorsOpen, user?.id]);
 
     const refreshGrants = useCallback(async () => {
         const res = await listGrants();
@@ -145,14 +134,10 @@ export default function AccessPage() {
                 )}
             </div>
 
-            {featureFlags.modpacks && <section className="card p-4 mb-6 max-w-4xl flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex-1">
-                    <h2 className="text-sm font-medium text-(--base-09)">Modpack collaborators</h2>
-                    <p className="text-xs text-(--base-06) mt-1">Invite users to view, edit/publish or delete selected packs, or all your packs. These rights are separate from server access below.</p>
-                </div>
-                <button onClick={() => setCollaboratorsOpen(true)} className="btn btn-secondary btn-sm"><Users size={13} /> Manage modpack access</button>
+            {featureFlags.modpacks && <section className="card p-4 mb-6 max-w-4xl">
+                <h2 className="text-sm font-medium text-(--base-09)">Modpack access</h2>
+                <p className="text-xs text-(--base-06) mt-1">Who may work on a modpack is its Modrinth team: invite people and set their rights on modrinth.com. They see the pack here once they connect their own Modrinth token. These rights are separate from server access below.</p>
             </section>}
-            {collaboratorsOpen && <PackCollaboratorsModal packs={ownPacks} onClose={() => setCollaboratorsOpen(false)} />}
 
             {mode === 'off' && (
                 <div className="card p-8 flex flex-col items-center text-center gap-2 max-w-4xl">

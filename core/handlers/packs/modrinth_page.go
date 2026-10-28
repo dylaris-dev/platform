@@ -4,9 +4,9 @@ package packs
 // project settings offer for a modpack (title, summary, description, tags,
 // links, license, icon, environment), Modrinth's own publishing checklist,
 // and "Submit for review". Same access rule and credential as publishing:
-// anyone who may edit the pack, acting through the OWNER's token on the
-// owner's project. Nothing is stored here except the summary, which mirrors
-// into the local pack so the panel shows what Modrinth shows.
+// the pack's Modrinth team, each member acting through their OWN token.
+// Nothing is stored here except the summary, which mirrors into the local
+// pack so the panel shows what Modrinth shows.
 
 import (
 	"context"
@@ -43,10 +43,10 @@ type modrinthPageResponse struct {
 
 // modrinthPageClient resolves the pack, checks edit access and loads the
 // owner's credential. It writes the error itself and returns ok=false.
-func (h *PacksHandler) modrinthPageClient(w http.ResponseWriter, r *http.Request) (*models.Pack, *services.ModrinthClient, bool) {
+func (h *PacksHandler) modrinthPageClient(w http.ResponseWriter, r *http.Request, need packNeed) (*models.Pack, *services.ModrinthClient, bool) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	pack, err := h.state.Store.GetPack(packID)
-	if err != nil || pack == nil || !h.mayEditPack(r, pack) {
+	pack, ok := h.packAccess(r, packID, need)
+	if !ok || pack == nil {
 		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return nil, nil, false
 	}
@@ -54,16 +54,13 @@ func (h *PacksHandler) modrinthPageClient(w http.ResponseWriter, r *http.Request
 		handlers.SendJSONError(w, "This pack has no Modrinth project yet. Publish a build first; that creates it.", http.StatusConflict)
 		return nil, nil, false
 	}
-	if h.pat == nil {
-		handlers.SendJSONError(w, "Publishing not available", http.StatusServiceUnavailable)
+	// The caller's own token: Modrinth checks their team rights on every call,
+	// the same rights the panel just checked.
+	_, mc, ok := h.callerModrinth(w, r)
+	if !ok {
 		return nil, nil, false
 	}
-	pat, _, err := h.pat.LoadPAT(pack.OwnerID)
-	if err != nil {
-		handlers.SendJSONError(w, "The pack's owner has not connected a Modrinth token.", http.StatusPreconditionRequired)
-		return nil, nil, false
-	}
-	return pack, services.NewModrinthClient(pat), true
+	return pack, mc, true
 }
 
 // writeModrinthPage answers with the project as Modrinth now has it.
@@ -95,7 +92,7 @@ func (h *PacksHandler) writeModrinthPage(w http.ResponseWriter, r *http.Request,
 
 // GetModrinthPage GET /api/packs/{id}/modrinth
 func (h *PacksHandler) GetModrinthPage(w http.ResponseWriter, r *http.Request) {
-	pack, mc, ok := h.modrinthPageClient(w, r)
+	pack, mc, ok := h.modrinthPageClient(w, r, packRead)
 	if !ok {
 		return
 	}
@@ -191,7 +188,7 @@ func modrinthPageFields(e modrinthPageEdit) (map[string]interface{}, string) {
 
 // EditModrinthPage PATCH /api/packs/{id}/modrinth
 func (h *PacksHandler) EditModrinthPage(w http.ResponseWriter, r *http.Request) {
-	pack, mc, ok := h.modrinthPageClient(w, r)
+	pack, mc, ok := h.modrinthPageClient(w, r, packEditPage)
 	if !ok {
 		return
 	}
@@ -237,7 +234,7 @@ func (h *PacksHandler) EditModrinthPage(w http.ResponseWriter, r *http.Request) 
 
 // UploadModrinthIcon POST /api/packs/{id}/modrinth/icon (multipart "icon")
 func (h *PacksHandler) UploadModrinthIcon(w http.ResponseWriter, r *http.Request) {
-	pack, mc, ok := h.modrinthPageClient(w, r)
+	pack, mc, ok := h.modrinthPageClient(w, r, packEditPage)
 	if !ok {
 		return
 	}
@@ -270,7 +267,7 @@ func (h *PacksHandler) UploadModrinthIcon(w http.ResponseWriter, r *http.Request
 
 // SubmitModrinthReview POST /api/packs/{id}/modrinth/submit
 func (h *PacksHandler) SubmitModrinthReview(w http.ResponseWriter, r *http.Request) {
-	pack, mc, ok := h.modrinthPageClient(w, r)
+	pack, mc, ok := h.modrinthPageClient(w, r, packEditPage)
 	if !ok {
 		return
 	}

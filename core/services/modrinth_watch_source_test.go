@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type liveWatchStore struct {
@@ -28,8 +29,14 @@ func (s *liveWatchStore) ListBuildContent(id int) ([]models.BuildContentEntry, e
 	return s.rows[id], nil
 }
 func (s *liveWatchStore) GetUserByID(string) (*models.User, error) { return &models.User{}, nil }
-func (s *liveWatchStore) PackRightsFor(string, string, int) (store.PackRights, error) {
-	return store.PackRights{Found: s.allowed}, nil
+
+// The watcher reaches the pack through its Modrinth team while allowed; the
+// answers are fresh, so the checker never has to ask Modrinth.
+func (s *liveWatchStore) GetModrinthMembership(string, string) (*models.ModrinthMembership, error) {
+	if s.allowed {
+		return &models.ModrinthMembership{State: "member", CheckedAt: time.Now()}, nil
+	}
+	return &models.ModrinthMembership{State: "none", CheckedAt: time.Now()}, nil
 }
 func (s *liveWatchStore) ListModrinthWatches(context.Context, string, bool) ([]models.ModrinthWatch, error) {
 	return []models.ModrinthWatch{{ID: 1, UserID: "viewer", PackID: 1, FollowPack: true, Loader: "forge", Current: "1.20.1", Targets: []string{"1.21.1"}}}, nil
@@ -51,7 +58,7 @@ func TestPackWatchRechecksLiveSourceAndRevocationBeforeDelivery(t *testing.T) {
 			selected := 1
 			entry := models.BuildContentEntry{PrettyName: "Fixture mod", ContentType: models.ContentTypeMod}
 			entry.ModrinthProjectID = "project"
-			s := &liveWatchStore{pack: &models.Pack{ID: 1, OwnerID: "owner", InternalName: "Live pack", RecommendedBuildID: &selected}, builds: []models.PackBuild{{ID: 1, PackID: 1, VersionString: "1.0", Channel: "release"}, {ID: 2, PackID: 1, VersionString: "1.1", Channel: "draft"}}, rows: map[int][]models.BuildContentEntry{1: {entry}, 2: {entry}}, allowed: true}
+			s := &liveWatchStore{pack: &models.Pack{ID: 1, OwnerID: "owner", InternalName: "Live pack", ModrinthProjectID: "packproj", RecommendedBuildID: &selected}, builds: []models.PackBuild{{ID: 1, PackID: 1, VersionString: "1.0", Channel: "release"}, {ID: 2, PackID: 1, VersionString: "1.1", Channel: "draft"}}, rows: map[int][]models.BuildContentEntry{1: {entry}, 2: {entry}}, allowed: true}
 			if mode == "draft only" {
 				s.pack.RecommendedBuildID = nil
 				s.builds = s.builds[1:]

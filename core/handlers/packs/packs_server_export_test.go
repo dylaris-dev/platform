@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
-	"dylaris-core/store"
+	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
 )
@@ -23,12 +23,22 @@ type serverExportStore struct {
 
 func (s *serverExportStore) GetPack(int) (*models.Pack, error)           { return s.pack, nil }
 func (s *serverExportStore) GetPackBuild(int) (*models.PackBuild, error) { return s.build, nil }
-func (s *serverExportStore) PackRightsFor(_, user string, _ int) (store.PackRights, error) {
-	return store.PackRights{Found: user == "reader"}, nil
+
+// The pack is bound to "proj": "u" manages it, "reader" is a plain member.
+func (s *serverExportStore) GetModrinthMembership(user, project string) (*models.ModrinthMembership, error) {
+	switch user {
+	case "u":
+		return member(services.ModrinthPermAll), nil
+	case "reader":
+		return member(0), nil
+	}
+	return nil, nil
 }
+func (s *serverExportStore) UpsertModrinthMembership(*models.ModrinthMembership) error { return nil }
 
 func TestAuthenticatedServerExport(t *testing.T) {
 	h, st, _, pack, build := serverPackFixture(t)
+	pack.ModrinthProjectID = "proj"
 	h.state.Store = &serverExportStore{draftRenderStore: st, pack: pack, build: build}
 	request := func(user, kind string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/api/packs/1/builds/1/export?kind="+kind, nil)

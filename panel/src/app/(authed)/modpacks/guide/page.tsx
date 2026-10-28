@@ -18,7 +18,7 @@ export default function PackGuide() {
                 {[
                     [
                         '1. Create or join a pack',
-                        'Choose Modpacks and New pack. Give it a name and summary. Owners can invite existing users through Collaborators or Access. Read, edit/publish and delete rights are independent.',
+                        'Connect your Modrinth token, then choose Modpacks and New pack. Give it a name and summary; this creates a draft Modrinth project. Who may work on the pack is its Modrinth team: invite people on modrinth.com, and their team rights (upload, delete versions, edit details) apply here.',
                     ],
                     [
                         '2. Start a build',

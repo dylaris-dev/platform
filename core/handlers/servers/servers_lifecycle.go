@@ -682,8 +682,11 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 				handlers.SendJSONError(w, "Pack not found", 404)
 				return
 			}
+			// Any member of the pack's Modrinth team may install it on their
+			// own server (owner decision 2026-10-28); a rejected token must be
+			// renewed first.
 			packUserID, _ := r.Context().Value("userID").(string)
-			if pack.OwnerID != packUserID && !isAdmin {
+			if reachable, _ := services.PackReachableBy(r.Context(), h.state.Store, pack, packUserID, true); !reachable && !isAdmin {
 				handlers.SendJSONError(w, "Forbidden", 403)
 				return
 			}

@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **584 routes** in 53 sections: 256 GET, 173 POST, 52 PUT, 41 PATCH, 63 DELETE.
+- **581 routes** in 53 sections: 255 GET, 172 POST, 52 PUT, 40 PATCH, 63 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **384** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **381** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **35** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -157,7 +157,7 @@ can still show what exists.
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (44)
+- [/api/me](#apime) (41)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
@@ -542,6 +542,7 @@ can still show what exists.
 | GET | `/api/me/modrinth-watches` | session | _no capability_ | - | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |
 | POST | `/api/me/modrinth-watches` | session | _no capability_ | Limit | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |
 | DELETE | `/api/me/modrinth-watches/{id:[0-9]+}` | session | _no capability_ | - | `PacksHandler.DeleteWatch` | removes only a watch belonging to the signed-in caller. |
+| DELETE | `/api/me/modrinth/memberships` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ClearModrinthMemberships` | forgets every pack the caller cannot currently prove access to (token rejected, or no longer in the team): they leave the caller's list. |
 | GET | `/api/me/modrinth/projects` | session | `modpack.read` | RequireModpacksEnabled | `PacksHandler.ListModrinthProjects` | - |
 | PUT | `/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden` | session | `modpack.read` | RequireModpacksEnabled | `PacksHandler.SetModrinthProjectHidden` | - |
 | POST | `/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportModrinthProject` | creates (or finds) the caller's pack for a project they are a member of. |
@@ -550,13 +551,9 @@ can still show what exists.
 | GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
 | GET | `/api/me/nodes/{id:[0-9]+}/join-attempt` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeJoinAttempt` | the connection Core is refusing for this machine, if any, with the fingerprint of the key it presented. |
 | POST | `/api/me/nodes/{id:[0-9]+}/reset-pairing` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.ResetMyNodePairing` | the owner's own Reset pairing, for a machine whose key is wedged or may have leaked. |
-| GET | `/api/me/pack-audit` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.PackAudit` | and GET /api/me/pack-audit - who changed what on the owner's packs. |
-| GET | `/api/me/pack-collaborators` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListCollaborators` | the invites the caller handed out, and the ones they hold. |
-| POST | `/api/me/pack-collaborators` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.InviteCollaborator` | invites a user to the caller's packs: all of them (packIds empty) or the ones named, which must be the caller's own. |
-| PATCH | `/api/me/pack-collaborators/{cid:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.UpdateCollaborator` | changes the rights of one of the caller's invites. |
-| DELETE | `/api/me/pack-collaborators/{cid:[0-9]+}` | session | `modpack.write` | AllowReadOnlyWhenDisabled | `PacksHandler.RemoveCollaborator` | the owner revokes an invite. |
-| GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the modpacks the calling user owns, and under "shared" the ones other users invited them to. |
-| POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a modpack owned by the caller. |
+| GET | `/api/me/pack-audit` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.PackAudit` | and GET /api/me/pack-audit - who changed what on the caller's packs. |
+| GET | `/api/me/packs` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.List` | the packs the caller created ("packs") and, under "shared", the packs they reach as a member of the pack's Modrinth team. |
+| POST | `/api/me/packs` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.Create` | creates a pack together with its Modrinth project (a draft until submitted), with the caller's own token, so the project's team decides who works on it from the start. |
 | GET | `/api/me/security-questions` | session | _no capability_ | - | `SecurityQuestionsHandler.GetMyQuestions` | auth required. |
 | PUT | `/api/me/security-questions` | session | _no capability_ | Limit, LimitBody | `SecurityQuestionsHandler.SetMyQuestions` | auth required. |
 | GET | `/api/me/servers/via-tickets` | session | _no capability_ | RequireTicketsEnabled | `TicketsHandler.ListMyServersViaTickets` | Drives the sidebar tab. |
@@ -630,7 +627,7 @@ can still show what exists.
 | GET | `/api/packs/{id:[0-9]+}` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.Get` | one modpack. |
 | PATCH | `/api/packs/{id:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Update` | edits a modpack the caller owns. |
 | DELETE | `/api/packs/{id:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.Delete` | deletes a modpack the caller owns. |
-| GET | `/api/packs/{id:[0-9]+}/audit` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.PackAudit` | and GET /api/me/pack-audit - who changed what on the owner's packs. |
+| GET | `/api/packs/{id:[0-9]+}/audit` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.PackAudit` | and GET /api/me/pack-audit - who changed what on the caller's packs. |
 | GET | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListBuilds` | the builds of one modpack. |
 | POST | `/api/packs/{id:[0-9]+}/builds` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.CreateBuild` | adds a build. |
 | PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UpdateBuild` | edits a build. |

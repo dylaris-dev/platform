@@ -36,7 +36,7 @@ describe('pack access and upload contracts', () => {
     it('fails closed when effective edit/delete rights are absent', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ pack: { id: 1 } })));
         const result = await getPackDetails(1);
-        expect(result.permissions).toEqual({ canEdit: false, canDelete: false, isOwner: false });
+        expect(result.permissions).toEqual({ canEdit: false, canDelete: false, isOwner: false, canEditPage: false, canDeletePack: false, tokenInvalid: false });
     });
 
     it('sends a raw config target without an archive flag or an explicit multipart Content-Type', async () => {

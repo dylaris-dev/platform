@@ -137,14 +137,12 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The pack publishes to its OWNER's Modrinth account, whoever presses it.
-	pat, username, err := h.pat.LoadPAT(pack.OwnerID)
+	// Each team member publishes with their OWN token; Modrinth checks their
+	// upload right again (owner decision 2026-10-28).
+	caller, _ := r.Context().Value("userID").(string)
+	pat, username, err := h.pat.LoadPAT(caller)
 	if err != nil {
-		if caller, _ := r.Context().Value("userID").(string); caller != pack.OwnerID {
-			handlers.SendJSONError(w, "The pack's owner has not connected a Modrinth token, so it cannot be published yet.", http.StatusPreconditionRequired)
-			return
-		}
-		handlers.SendJSONError(w, "Modrinth PAT not configured: "+err.Error(), http.StatusPreconditionRequired)
+		handlers.SendJSONError(w, "Connect your Modrinth token first (Account, Modrinth).", http.StatusPreconditionRequired)
 		return
 	}
 
@@ -190,6 +188,9 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 			handlers.SendJSONError(w, "Project created ("+projectID+") but local update failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// The pack now follows the new project's team; the caller just
+		// created it, so they own it there.
+		h.grantMembership(caller, projectID, services.ModrinthPermAll)
 	}
 
 	// Channel → Modrinth version_type. Every version is uploaded "listed": an

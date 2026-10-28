@@ -10,10 +10,11 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"dylaris-core/handlers"
 	"dylaris-core/models"
-	"dylaris-core/store"
+	"dylaris-core/services"
 )
 
 type authoringCaptureStore struct {
@@ -156,54 +157,64 @@ func TestUploadPreservesConfigAndScriptPaths(t *testing.T) {
 }
 
 func TestGetPackReturnsEffectivePermissions(t *testing.T) {
-	fs := &packAccessStore{rights: map[string]store.PackRights{"editor": {Found: true, CanEdit: true}, "viewer": {Found: true}}}
+	fs := &packAccessStore{members: map[string]*models.ModrinthMembership{
+		"manager": member(services.ModrinthPermAll), "uploader": member(services.ModrinthPermUploadVersion), "viewer": member(0),
+		"lapsed": lapsed(time.Hour),
+	}}
 	h := NewPacksHandler(&handlers.AppState{Store: fs})
 	for _, tt := range []struct {
-		user         string
-		edit, delete bool
-	}{{"owner", true, true}, {"editor", true, false}, {"viewer", false, false}} {
+		user                                    string
+		edit, delete, page, deletePack, invalid bool
+	}{{"manager", true, true, true, true, false}, {"uploader", true, false, false, false, false}, {"viewer", false, false, false, false, false}, {"lapsed", false, false, false, false, true}} {
 		r := packPatchRequest("/api/packs/1", "")
 		r = r.WithContext(context.WithValue(r.Context(), "userID", tt.user))
 		w := httptest.NewRecorder()
 		h.Get(w, r)
 		var reply struct {
 			Permissions struct {
-				CanEdit   bool `json:"canEdit"`
-				CanDelete bool `json:"canDelete"`
+				CanEdit       bool `json:"canEdit"`
+				CanDelete     bool `json:"canDelete"`
+				CanEditPage   bool `json:"canEditPage"`
+				CanDeletePack bool `json:"canDeletePack"`
+				TokenInvalid  bool `json:"tokenInvalid"`
 			} `json:"permissions"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
 			t.Fatal(err)
 		}
-		if reply.Permissions.CanEdit != tt.edit || reply.Permissions.CanDelete != tt.delete {
-			t.Fatalf("%s permissions=%+v", tt.user, reply.Permissions)
+		p := reply.Permissions
+		if p.CanEdit != tt.edit || p.CanDelete != tt.delete || p.CanEditPage != tt.page || p.CanDeletePack != tt.deletePack || p.TokenInvalid != tt.invalid {
+			t.Fatalf("%s permissions=%+v", tt.user, p)
 		}
 	}
 }
 
 type deleteContentRightsStore struct {
 	*packCleanupStore
-	rights   store.PackRights
-	detached bool
+	membership *models.ModrinthMembership
+	detached   bool
 }
 
-func (s *deleteContentRightsStore) PackRightsFor(string, string, int) (store.PackRights, error) {
-	return s.rights, nil
+func (s *deleteContentRightsStore) GetModrinthMembership(string, string) (*models.ModrinthMembership, error) {
+	return s.membership, nil
 }
 func (s *deleteContentRightsStore) DetachFromBuild(int, int) error { s.detached = true; return nil }
 
-func TestDeletingContentRequiresTheInvitedDeleteRight(t *testing.T) {
+// Removing content needs Modrinth's "delete version" right, as deleting did
+// with the old invite's delete right; uploading alone is not enough.
+func TestDeletingContentRequiresTheDeleteVersionRight(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
-		rights store.PackRights
+		perms  int64
 		status int
-	}{{"edit is not delete", store.PackRights{Found: true, CanEdit: true}, 403}, {"delete grant", store.PackRights{Found: true, CanDelete: true}, 200}, {"read only", store.PackRights{Found: true}, 403}} {
+	}{{"upload is not delete", services.ModrinthPermUploadVersion, 403}, {"delete version", services.ModrinthPermDeleteVersion, 200}, {"read only", 0, 403}} {
 		t.Run(tt.name, func(t *testing.T) {
 			h, base, _ := newPackCleanup(t)
-			fs := &deleteContentRightsStore{packCleanupStore: base, rights: tt.rights}
+			base.pack.ModrinthProjectID = "proj"
+			fs := &deleteContentRightsStore{packCleanupStore: base, membership: member(tt.perms)}
 			h.state.Store = fs
 			r := packReq("DELETE", map[string]string{"id": "1", "buildId": "10", "modversionId": "7"}, "")
-			r = r.WithContext(context.WithValue(r.Context(), "userID", "collaborator"))
+			r = r.WithContext(context.WithValue(r.Context(), "userID", "teammate"))
 			w := httptest.NewRecorder()
 			h.RemoveContent(w, r)
 			if w.Code != tt.status || fs.detached != (tt.status == 200) {

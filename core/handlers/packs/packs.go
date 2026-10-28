@@ -6,11 +6,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"dylaris-core/handlers"
 
 	"dylaris-core/models"
-	"dylaris-core/store"
+	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
 )
@@ -18,6 +20,11 @@ import (
 type PacksHandler struct {
 	state *handlers.AppState
 	pat   PATLoader
+
+	// teamScans remembers when a user's Modrinth projects were last listed,
+	// so the pack list asks Modrinth at most every few minutes per user.
+	teamScanMu sync.Mutex
+	teamScans  map[string]time.Time
 }
 
 func NewPacksHandler(state *handlers.AppState) *PacksHandler {
@@ -36,12 +43,19 @@ const (
 	packRead packNeed = iota
 	packEdit
 	packDelete
+	// packEditPage: the pack's Modrinth project page (texts, tags, icon, submit).
+	packEditPage
+	// packDeletePack: removing the pack itself.
+	packDeletePack
 )
 
-// packAccess loads the pack and reports whether the caller may do need on it:
-// the owner may do everything, an admin may read, and a collaborator what the
-// owner's invite grants (any invite = read). Every pack and build handler asks
-// this one function; there used to be about twenty inline owner checks.
+// packAccess loads the pack and reports whether the caller may do need on it.
+//
+// A pack bound to a Modrinth project follows that project's Modrinth team and
+// nothing else - not even who created it here, so someone the team removed
+// on Modrinth loses the pack here too (modrinth_access.go). An unbound
+// (legacy) pack is its creator's alone. An admin may read any pack. Every pack
+// and build handler asks this one function.
 func (h *PacksHandler) packAccess(r *http.Request, packID int, need packNeed) (*models.Pack, bool) {
 	p, err := h.state.Store.GetPack(packID)
 	if err != nil || p == nil {
@@ -51,23 +65,13 @@ func (h *PacksHandler) packAccess(r *http.Request, packID int, need packNeed) (*
 	if userID == "" {
 		return nil, false
 	}
-	if p.OwnerID == userID {
-		return p, true
-	}
 	if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin && need == packRead {
 		return p, true
 	}
-	rights, err := h.state.Store.PackRightsFor(p.OwnerID, userID, p.ID)
-	if err != nil || !rights.Found {
-		return nil, false
+	if p.ModrinthProjectID == "" {
+		return p, p.OwnerID == userID
 	}
-	switch need {
-	case packEdit:
-		return p, rights.CanEdit
-	case packDelete:
-		return p, rights.CanDelete
-	}
-	return p, true
+	return p, allows(h.membershipFor(r.Context(), userID, p.ModrinthProjectID), need)
 }
 
 // mayEditPack is packAccess's answer for an already loaded pack.
@@ -91,9 +95,6 @@ type packRequest struct {
 	Name    string  `json:"name"`
 	Slug    string  `json:"slug"`
 	Summary *string `json:"summary"`
-	// OwnerID (create only): whose account the pack is created on. Empty =
-	// the caller's; another user's needs their invite with "create".
-	OwnerID string `json:"ownerId"`
 }
 
 // strVal dereferences an optional request string, treating absent as empty.
@@ -106,73 +107,80 @@ func strVal(p *string) string {
 	return *p
 }
 
-// sharedPack is a pack someone else owns that the caller was invited to,
-// with what the invites allow.
+// sharedPack is a pack someone else created that the caller reaches through
+// its Modrinth project's team, with what Modrinth allows them.
 type sharedPack struct {
 	models.Pack
-	OwnerName string `json:"ownerName"`
-	CanEdit   bool   `json:"canEdit"`
-	CanDelete bool   `json:"canDelete"`
+	CanEdit      bool `json:"canEdit"`
+	CanDelete    bool `json:"canDelete"`
+	TokenInvalid bool `json:"tokenInvalid"`
 }
 
-// List GET /api/me/packs - the modpacks the calling user owns, and under
-// "shared" the ones other users invited them to. "createOn" lists the owners
-// whose account the caller may create packs on.
+// List GET /api/me/packs - the packs the caller created ("packs") and, under
+// "shared", the packs they reach as a member of the pack's Modrinth team.
+// "modrinth" says whether the caller's token works, so the panel can ask for
+// a renewal instead of showing packs that silently stopped working.
 func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
 		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	packs, err := h.state.Store.ListPacksByOwner(userID)
+	h.discoverTeamPacks(r.Context(), userID)
+	own, err := h.state.Store.ListPacksByOwner(userID)
 	if err != nil {
 		handlers.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
 		return
 	}
-	held, err := h.state.Store.ListPackCollaborationsForUser(userID)
-	if err != nil {
-		handlers.SendJSONError(w, "Failed to list shared packs", http.StatusInternalServerError)
-		return
+	packs := []models.Pack{}
+	listed := map[int]bool{}
+	tokenInvalid := false
+	for _, p := range own {
+		if p.ModrinthProjectID == "" {
+			packs = append(packs, p)
+			listed[p.ID] = true
+		}
 	}
 	shared := []sharedPack{}
-	seen := map[int]int{} // pack id -> index in shared
-	type owner struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+	memberships, err := h.state.Store.ListModrinthMemberships(userID)
+	if err != nil {
+		handlers.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
+		return
 	}
-	createOn := []owner{}
-	add := func(p models.Pack, c store.PackCollaborator) {
-		if i, ok := seen[p.ID]; ok {
-			shared[i].CanEdit = shared[i].CanEdit || c.CanEdit
-			shared[i].CanDelete = shared[i].CanDelete || c.CanDelete
-			return
-		}
-		seen[p.ID] = len(shared)
-		shared = append(shared, sharedPack{Pack: p, OwnerName: c.OwnerName, CanEdit: c.CanEdit, CanDelete: c.CanDelete})
-	}
-	for _, c := range held {
-		if c.PackID != nil {
-			if p, err := h.state.Store.GetPack(*c.PackID); err == nil && p != nil {
-				add(*p, c)
-			}
+	for _, cached := range memberships {
+		p, err := h.state.Store.GetPackByModrinthProject(cached.ProjectID)
+		if err != nil || p == nil || listed[p.ID] {
 			continue
 		}
-		if c.CanCreate {
-			createOn = append(createOn, owner{ID: c.OwnerID, Name: c.OwnerName})
-		}
-		all, err := h.state.Store.ListPacksByOwner(c.OwnerID)
-		if err != nil {
+		m := h.membershipFor(r.Context(), userID, cached.ProjectID)
+		// A lapsed token stays listed, greyed out with the renew prompt, even
+		// once its read grace is over; opening it then needs the renewal.
+		lapsed := m != nil && m.State == stateTokenInvalid
+		if !allows(m, packRead) && !lapsed {
 			continue
 		}
-		for _, p := range all {
-			add(p, c)
+		listed[p.ID] = true
+		if lapsed {
+			tokenInvalid = true
 		}
+		if p.OwnerID == userID && !lapsed {
+			packs = append(packs, *p)
+			continue
+		}
+		shared = append(shared, sharedPack{Pack: *p, CanEdit: allows(m, packEdit), CanDelete: allows(m, packDelete), TokenInvalid: m.State == stateTokenInvalid})
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "packs": packs, "shared": shared, "createOn": createOn})
+	connected := false
+	if h.pat != nil {
+		_, _, perr := h.pat.LoadPAT(userID)
+		connected = perr == nil
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "packs": packs, "shared": shared,
+		"modrinth": map[string]bool{"connected": connected, "tokenInvalid": tokenInvalid}})
 }
 
-// Create POST /api/me/packs - creates a modpack owned by the caller. A
-// duplicate slug is 409.
+// Create POST /api/me/packs - creates a pack together with its Modrinth
+// project (a draft until submitted), with the caller's own token, so the
+// project's team decides who works on it from the start.
 func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
@@ -197,37 +205,42 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Invalid slug", http.StatusBadRequest)
 		return
 	}
-	// A collaborator may create a pack on the account of an owner who allowed
-	// it; the pack is the owner's from the start.
-	ownerID := userID
-	if req.OwnerID != "" && req.OwnerID != userID {
-		rights, err := h.state.Store.PackRightsFor(req.OwnerID, userID, 0)
-		if err != nil || !rights.CanCreate {
-			handlers.SendJSONError(w, "You may not create packs on that account", http.StatusForbidden)
-			return
-		}
-		ownerID = req.OwnerID
+	_, mc, ok := h.callerModrinth(w, r)
+	if !ok {
+		return
 	}
 	p := &models.Pack{
-		OwnerID:            ownerID,
+		OwnerID:            userID,
 		InternalName:       req.Name,
 		InternalSlug:       slug,
 		Summary:            strings.TrimSpace(strVal(req.Summary)),
 		ModrinthVisibility: "unlisted",
 	}
+	created, err := h.createModrinthProject(r, mc, p)
+	if err != nil {
+		if services.ModrinthTokenRejected(err) {
+			handlers.SendJSONError(w, "Modrinth rejected your token. Renew it under Account, Modrinth.", http.StatusPreconditionRequired)
+			return
+		}
+		handlers.SendJSONError(w, "Modrinth did not create the project (is the slug taken on Modrinth?): "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	p.ModrinthProjectID = created.ID
+	p.ModrinthProjectName = created.Slug
 	id, err := h.state.Store.CreatePack(p)
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {
-			handlers.SendJSONError(w, "A pack with that slug already exists", http.StatusConflict)
+			handlers.SendJSONError(w, "A pack with that slug already exists; the Modrinth draft "+created.ID+" was created and can be imported or deleted on Modrinth.", http.StatusConflict)
 		} else {
 			handlers.SendJSONError(w, "Failed to create pack", http.StatusInternalServerError)
 		}
 		return
 	}
 	p.ID = id
-	h.audit(r, ownerID, id, "pack.created", map[string]any{"slug": slug})
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": ownerID})
+	h.grantMembership(userID, created.ID, services.ModrinthPermAll)
+	h.audit(r, userID, id, "pack.created", map[string]any{"slug": slug, "modrinthProject": created.ID})
+	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
@@ -240,12 +253,22 @@ func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	caller, _ := r.Context().Value("userID").(string)
 	_, canEdit := h.packAccess(r, packID, packEdit)
 	_, canDelete := h.packAccess(r, packID, packDelete)
+	_, canEditPage := h.packAccess(r, packID, packEditPage)
+	_, canDeletePack := h.packAccess(r, packID, packDeletePack)
+	tokenInvalid := false
+	if p.ModrinthProjectID != "" {
+		caller, _ := r.Context().Value("userID").(string)
+		if m, _ := h.state.Store.GetModrinthMembership(caller, p.ModrinthProjectID); m != nil && m.State == stateTokenInvalid {
+			tokenInvalid = true
+		}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true, "pack": p,
-		"permissions": map[string]bool{"isOwner": p.OwnerID == caller, "canEdit": canEdit, "canDelete": canDelete},
+		// isOwner: may manage the pack as a whole (its Modrinth project's
+		// delete right, or the creator of an unbound pack).
+		"permissions": map[string]bool{"isOwner": canDeletePack, "canEdit": canEdit, "canDelete": canDelete, "canEditPage": canEditPage, "canDeletePack": canDeletePack, "tokenInvalid": tokenInvalid},
 	})
 }
 
@@ -279,7 +302,7 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete DELETE /api/packs/{id} - deletes a modpack the caller owns.
 func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	p, ok := h.packAccess(r, packID, packDelete)
+	p, ok := h.packAccess(r, packID, packDeletePack)
 	if !ok {
 		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return

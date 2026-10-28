@@ -18,6 +18,8 @@ import { fmtDateTime } from '@/lib/time';
 
 const REQUIRED_SCOPES = [
     'USER_READ',
+    'PROJECT_READ',
+    'ORGANIZATION_READ',
     'PROJECT_CREATE',
     'PROJECT_WRITE',
     'VERSION_CREATE',
@@ -99,8 +101,9 @@ export default function ModrinthIntegrationPage() {
                     Generate a Personal Access Token in your Modrinth settings, paste it below.
                     Token is stored encrypted (AES-256-GCM) and validated against Modrinth&apos;s API
                     once on save — never returned by any read endpoint.
-                    Collaborators you invite on the Modpacks page publish through this token too,
-                    without ever seeing it.
+                    It also decides which packs you see: a pack is yours to work on when you are in
+                    its Modrinth team, with the rights the team gives you. Without PROJECT_READ and
+                    ORGANIZATION_READ, Modrinth hides your team rights and your packs turn read only.
                 </div>
             </div>
 

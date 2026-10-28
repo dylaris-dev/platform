@@ -2596,6 +2596,16 @@
       "external": false
     },
     {
+      "method": "DELETE",
+      "path": "/api/me/modrinth/memberships",
+      "auth": "session",
+      "authorization": "modpack.read",
+      "description": "forgets every pack the caller cannot currently prove access to (token rejected, or no longer in the team): they leave the caller's list.",
+      "handler": "PacksHandler.ClearModrinthMemberships",
+      "group": "me",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/me/modrinth/projects",
       "auth": "session",
@@ -2678,48 +2688,8 @@
       "path": "/api/me/pack-audit",
       "auth": "session",
       "authorization": "modpack.read",
-      "description": "and GET /api/me/pack-audit - who changed what on the owner's packs.",
+      "description": "and GET /api/me/pack-audit - who changed what on the caller's packs.",
       "handler": "PacksHandler.PackAudit",
-      "group": "me",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/me/pack-collaborators",
-      "auth": "session",
-      "authorization": "modpack.read",
-      "description": "the invites the caller handed out, and the ones they hold.",
-      "handler": "PacksHandler.ListCollaborators",
-      "group": "me",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/me/pack-collaborators",
-      "auth": "session",
-      "authorization": "modpack.write",
-      "description": "invites a user to the caller's packs: all of them (packIds empty) or the ones named, which must be the caller's own.",
-      "handler": "PacksHandler.InviteCollaborator",
-      "group": "me",
-      "external": false
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/me/pack-collaborators/{cid:[0-9]+}",
-      "auth": "session",
-      "authorization": "modpack.write",
-      "description": "the owner revokes an invite.",
-      "handler": "PacksHandler.RemoveCollaborator",
-      "group": "me",
-      "external": false
-    },
-    {
-      "method": "PATCH",
-      "path": "/api/me/pack-collaborators/{cid:[0-9]+}",
-      "auth": "session",
-      "authorization": "modpack.write",
-      "description": "changes the rights of one of the caller's invites.",
-      "handler": "PacksHandler.UpdateCollaborator",
       "group": "me",
       "external": false
     },
@@ -2728,7 +2698,7 @@
       "path": "/api/me/packs",
       "auth": "session",
       "authorization": "modpack.read",
-      "description": "the modpacks the calling user owns, and under \"shared\" the ones other users invited them to.",
+      "description": "the packs the caller created (\"packs\") and, under \"shared\", the packs they reach as a member of the pack's Modrinth team.",
       "handler": "PacksHandler.List",
       "group": "me",
       "external": false
@@ -2738,7 +2708,7 @@
       "path": "/api/me/packs",
       "auth": "session",
       "authorization": "modpack.write",
-      "description": "creates a modpack owned by the caller.",
+      "description": "creates a pack together with its Modrinth project (a draft until submitted), with the caller's own token, so the project's team decides who works on it from the start.",
       "handler": "PacksHandler.Create",
       "group": "me",
       "external": false
@@ -3245,7 +3215,7 @@
       "path": "/api/packs/{id:[0-9]+}/audit",
       "auth": "session",
       "authorization": "modpack.read",
-      "description": "and GET /api/me/pack-audit - who changed what on the owner's packs.",
+      "description": "and GET /api/me/pack-audit - who changed what on the caller's packs.",
       "handler": "PacksHandler.PackAudit",
       "group": "packs",
       "external": false
@@ -5817,10 +5787,10 @@
     }
   ],
   "counts": {
-    "total": 585,
+    "total": 582,
     "byAuth": {
       "none": 31,
-      "session": 536,
+      "session": 533,
       "user API key": 10,
       "warp key": 8
     },
@@ -5843,7 +5813,7 @@
       "infrastructure": 3,
       "library": 6,
       "maintenance": 1,
-      "me": 44,
+      "me": 41,
       "mirror": 2,
       "modrinth": 9,
       "modules": 6,

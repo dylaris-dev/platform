@@ -946,6 +946,11 @@ type Store interface {
 	HiddenModrinthProjects(userID string) ([]string, error)
 	SetModrinthProjectHidden(userID, projectID string, hidden bool) error
 	ListModrinthBoundPacks() ([]models.Pack, error)
+	GetPackByModrinthProject(projectID string) (*models.Pack, error)
+	GetModrinthMembership(userID, projectID string) (*models.ModrinthMembership, error)
+	UpsertModrinthMembership(m *models.ModrinthMembership) error
+	ListModrinthMemberships(userID string) ([]models.ModrinthMembership, error)
+	ClearModrinthMemberships(userID string) (int64, error)
 	ClearModrinthPAT(userID string) error
 
 	// --- Packs (the pack builder) ---

@@ -81,69 +81,37 @@ async function send(path: string, method: string, body?: unknown) {
     } catch (err) { return handleError(err) as any; }
 }
 
-export const listPacks = () => get<Pack[]>('/me/packs', [], 'packs');
-export const createPack = (input: { name: string; slug?: string; summary?: string; ownerId?: string }) => send('/me/packs', 'POST', input);
+export const createPack = (input: { name: string; slug?: string; summary?: string }) => send('/me/packs', 'POST', input);
 
-// --- Collaboration: packs other users share with me, and my invites ---
+// --- Packs reached through a Modrinth team ---
 
-/** A pack someone else owns that the caller was invited to. */
+/** A pack someone else created, reached as a member of its Modrinth team. */
 export interface SharedPack extends Pack {
-    ownerName: string;
     canEdit: boolean;
     canDelete: boolean;
+    /** The caller's Modrinth token was rejected: read only until renewed. */
+    tokenInvalid: boolean;
 }
 
 export interface PacksOverview {
     packs: Pack[];
     shared: SharedPack[];
-    /** Owners whose account the caller may create packs on. */
-    createOn: { id: string; name: string }[];
+    /** Whether the caller connected a Modrinth token, and whether Modrinth rejected it. */
+    modrinth: { connected: boolean; tokenInvalid: boolean };
 }
 
 export async function listPacksOverview(): Promise<PacksOverview> {
-    const empty: PacksOverview = { packs: [], shared: [], createOn: [] };
+    const empty: PacksOverview = { packs: [], shared: [], modrinth: { connected: false, tokenInvalid: false } };
     try {
         const res = await fetch(`${API_URL}/me/packs`, { headers: getAuthHeader() });
         const d = await handleResponse(res) as any;
         if (d?.success === false) return empty;
-        return { packs: d.packs ?? [], shared: d.shared ?? [], createOn: d.createOn ?? [] };
+        return { packs: d.packs ?? [], shared: d.shared ?? [], modrinth: { connected: !!d.modrinth?.connected, tokenInvalid: !!d.modrinth?.tokenInvalid } };
     } catch (err) { handleError(err); return empty; }
 }
 
-export interface PackCollaborator {
-    id: number;
-    ownerId: string;
-    ownerName: string;
-    userId: string;
-    username: string;
-    /** null = every pack of the owner, including future ones. */
-    packId: number | null;
-    packName: string;
-    canCreate: boolean;
-    canEdit: boolean;
-    canDelete: boolean;
-    createdAt: string;
-}
-
-export interface PackCollaboratorInput {
-    username: string;
-    packIds: number[];
-    canCreate: boolean;
-    canEdit: boolean;
-    canDelete: boolean;
-}
-
-export async function listPackCollaborators(): Promise<{ given: PackCollaborator[]; held: PackCollaborator[] }> {
-    try {
-        const res = await fetch(`${API_URL}/me/pack-collaborators`, { headers: getAuthHeader() });
-        const d = await handleResponse(res) as any;
-        return { given: d?.collaborators ?? [], held: d?.collaborations ?? [] };
-    } catch (err) { handleError(err); return { given: [], held: [] }; }
-}
-export const invitePackCollaborator = (input: PackCollaboratorInput) => send('/me/pack-collaborators', 'POST', input);
-export const updatePackCollaborator = (id: number, rights: { canCreate: boolean; canEdit: boolean; canDelete: boolean }) =>
-    send(`/me/pack-collaborators/${id}`, 'PATCH', rights);
-export const removePackCollaborator = (id: number) => send(`/me/pack-collaborators/${id}`, 'DELETE');
+/** Forgets packs the caller can no longer prove access to; they leave the list. */
+export const clearModrinthMemberships = (): Promise<{ success: boolean; message?: string; removed?: number }> => send('/me/modrinth/memberships', 'DELETE');
 
 export interface PackAuditEvent {
     id: number;
@@ -159,17 +127,30 @@ export interface PackAuditEvent {
 export const getPackAudit = (packId?: number) =>
     get<PackAuditEvent[]>(packId ? `/packs/${packId}/audit` : '/me/pack-audit', [], 'events');
 export const getPack = (id: number) => get<Pack | null>(`/packs/${id}`, null, 'pack');
-export interface PackPermissions { canEdit: boolean; canDelete: boolean; isOwner: boolean }
+/** What the caller may do, as the pack's Modrinth team grants it. */
+export interface PackPermissions {
+    canEdit: boolean;
+    canDelete: boolean;
+    isOwner: boolean;
+    canEditPage: boolean;
+    canDeletePack: boolean;
+    /** The caller's Modrinth token was rejected: read only until renewed. */
+    tokenInvalid: boolean;
+}
 export async function getPackDetails(id: number): Promise<{ pack: Pack | null; permissions: PackPermissions }> {
-    const empty = { pack: null, permissions: { canEdit: false, canDelete: false, isOwner: false } };
+    const empty = { pack: null, permissions: { canEdit: false, canDelete: false, isOwner: false, canEditPage: false, canDeletePack: false, tokenInvalid: false } };
     try {
         const res = await fetch(`${API_URL}/packs/${id}`, { headers: getAuthHeader() });
         const data = await handleResponse(res) as any;
         if (data?.success === false || !data?.pack) return empty;
+        const p = data.permissions ?? {};
         return { pack: data.pack, permissions: {
-            canEdit: data.permissions?.canEdit === true,
-            canDelete: data.permissions?.canDelete === true,
-            isOwner: data.permissions?.isOwner === true,
+            canEdit: p.canEdit === true,
+            canDelete: p.canDelete === true,
+            isOwner: p.isOwner === true,
+            canEditPage: p.canEditPage === true,
+            canDeletePack: p.canDeletePack === true,
+            tokenInvalid: p.tokenInvalid === true,
         } };
     } catch (err) { handleError(err); return empty; }
 }

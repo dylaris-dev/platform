@@ -480,13 +480,12 @@ var requiredCaps = map[string]string{
 	// deliberately NOT listed here (see the route registration comments).
 	"/api/me/modrinth-pat":                                                     "modpack.read",
 	"/api/me/modrinth/projects":                                                "modpack.read",
+	"/api/me/modrinth/memberships":                                             "modpack.read",
 	"/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden":                "modpack.read",
 	"/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import":                "modpack.write",
 	"/api/packs/{id:[0-9]+}/modrinth/versions":                                 "modpack.write",
 	"/api/packs/{id:[0-9]+}/modrinth/versions/{versionId:[A-Za-z0-9]+}/import": "modpack.write",
 	"/api/me/packs":                                                                                 "modpack.read",
-	"/api/me/pack-collaborators":                                                                    "modpack.read",
-	"/api/me/pack-collaborators/{cid:[0-9]+}":                                                       "modpack.write",
 	"/api/me/pack-audit":                                                                            "modpack.read",
 	"/api/packs/{id:[0-9]+}/audit":                                                                  "modpack.read",
 	"/api/packs/{id:[0-9]+}":                                                                        "modpack.read",
@@ -643,6 +642,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	modrinthPATHandler := mods.NewModrinthPATHandler(appState, cfg.ClusterSecret)
 	packsHandler := packs.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
+	// Server installs and pack alerts resolve team access the same way.
+	services.SetPackPATLoader(modrinthPATHandler)
 	appState.InstallMrpack = packsHandler.EnsureInstallMrpack
 	usernameHistoryHandler := users.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := users.NewAccountPolicyHandler(appState)
@@ -958,17 +959,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear))))).Methods("DELETE")
 	// --- Pack builder. Reuses the modpacks feature gates. ---
 	// Phase 4 Task 20: OWNER modpack.read/write/delete, chokepoint-open by
-	// design. The real per-realm boundary is packsHandler.packAccess: owner,
-	// admin read, or a collaborator's invite (pack_collaborators). Every write
+	// design. The real per-realm boundary is packsHandler.packAccess: the
+	// pack's Modrinth team (or the creator of an unbound pack), admin read. Every write
 	// route is wrapped in Audited, which records it in the pack's history.
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.List)))).Methods("GET")
-	// Collaboration: invites the caller gives (owner) or holds, and the history
-	// of the caller's packs. Ownership of an invite is checked in the handler.
-	api.HandleFunc("/me/pack-collaborators", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListCollaborators)))).Methods("GET")
-	api.HandleFunc("/me/pack-collaborators", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.InviteCollaborator))))).Methods("POST")
-	api.HandleFunc("/me/pack-collaborators/{cid:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.UpdateCollaborator))))).Methods("PATCH")
-	// Revoking (or leaving) only withdraws access, so it stays open when modpacks are off.
-	api.HandleFunc("/me/pack-collaborators/{cid:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.AllowReadOnlyWhenDisabled(packsHandler.RemoveCollaborator)))).Methods("DELETE")
+	// The history of the caller's packs.
 	api.HandleFunc("/me/pack-audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
 	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create))))).Methods("POST")
@@ -994,6 +989,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.text_edited", packsHandler.SetContentText)))))).Methods("PUT")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.published", packsHandler.PublishModrinth)))))).Methods("POST")
 	// Importing existing Modrinth modpacks: the caller's projects, hiding, import.
+	api.HandleFunc("/me/modrinth/memberships", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ClearModrinthMemberships)))).Methods("DELETE")
 	api.HandleFunc("/me/modrinth/projects", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(packsHandler.ListModrinthProjects)))).Methods("GET")
 	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(packsHandler.SetModrinthProjectHidden)))).Methods("PUT")
 	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportModrinthProject))))).Methods("POST")

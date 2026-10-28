@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.28.10
+
+### Features
+- Modpack access follows the Modrinth team: members see a pack with the rights their team role
+  gives them, each through their own token. New pack creates a draft Modrinth project. `core` `panel`
+- A rejected token keeps packs read only for a day, with Renew token and Clear. `core` `panel`
+
+### Breaking
+- Panel modpack collaborators are removed; manage the team on modrinth.com. Modrinth tokens
+  now also need PROJECT_READ and ORGANIZATION_READ, or packs turn read only. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.28.9
 
 ### Features

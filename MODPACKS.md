@@ -1,36 +1,53 @@
-# Modpack authoring and collaboration
+# Modpack authoring and Modrinth teams
 
 ## Access
 
-Open **Access > Manage modpack access**, **Modpacks > Collaborators**, or the
-**Collaborators** button on a pack you own. The pack-level entry selects that
-pack by default. Account-level access can cover selected packs or every pack,
-including future ones.
+Who may work on a pack is its **Modrinth team**. Every pack is a Modrinth
+project: **New pack** creates a draft project with the creator's own token, and
+an imported pack is bound to the project it came from. Invite people and set
+their rights on modrinth.com (**Team on Modrinth** on the pack overview opens
+that page). The panel has no second permission system.
 
-Every invitation includes read access. Additional rights are independent:
+Each user connects their own Modrinth token under **Account > Modrinth**. Core
+asks Modrinth with that token what the user may do on the project and maps
+Modrinth's team permissions:
 
-- **Edit and publish:** modify content, builds and pack settings, and publish
-  through the owner's stored Modrinth token.
-- **Delete:** remove packs, builds and content.
-- **Create:** create packs on the owner's account; available only for an
-  account-wide invitation.
+- **Read** (open, download, install on their own servers): any accepted member.
+- **Edit and publish** (content, builds, pack settings, new versions): *Upload
+  version*.
+- **Delete builds and content:** *Delete version*.
+- **Modrinth page** (texts, tags, links, icon, submit for review): *Edit
+  details* or *Edit body*.
+- **Delete the pack here:** *Delete project*.
 
-These grants do not grant server access. The platform's authoring switch and
-per-user authoring permission remain ceilings for non-admin writers. An admin
-can inspect another owner's pack, but is not automatically its editor. Only the
-owner manages invitations; recipients can leave a collaboration.
+Members of the organization that owns a project get the organization's default
+project permissions. A team member's own rights apply even to the user who
+created the pack here; there is no creator shortcut. Admins can read any pack
+but do not edit it. Publishing and the Modrinth page act through the caller's
+own token, so Modrinth checks the same rights again; the background version sync
+uses the token of the pack's creator.
 
-Collaborators never receive the owner's Modrinth token. Publishing targets the
-pack's stored project binding, or a newly created project returned by Modrinth;
-a caller cannot select another target project in the request body. These are
-DYLARIS permissions, not invitations to Modrinth's separate team system.
+Answers are cached for 5 minutes per user and project. If Modrinth cannot be
+reached, the last answer holds for up to an hour. If Modrinth rejects the token,
+the token lacks a read scope (Modrinth then reads it as anonymous), or the
+project answers 404, the user keeps **read-only** access to what they had, for
+24 hours after Modrinth last confirmed the membership, and the panel asks them to
+renew the token; after that the pack stays listed but locked. The limit exists
+because a draft answers 404 to a removed member as well. Server installs and
+pack alerts resolve access by the same rules (installs need a live membership). **Clear** removes every pack they can no
+longer prove access to from their list; the packs and their builds stay, they
+belong to the team. To keep local builds after losing access, fork them into a
+pack of your own while access still exists.
+
+A pack created before this rule without a Modrinth project belongs to its
+creator alone.
 
 ## Workspace
 
 The left sidebar lists owned and shared packs with project artwork and their
 latest release, or latest build if no release exists. These labels describe
 build history, not a running deployment. Local packs without upstream artwork
-use a package icon. **My modpacks** and **Invited / collaborating** have separate
+use a package icon. **My modpacks** and **Modrinth team** have separate
 sections and a shared search field. The sidebar uses the same width and collapse
 control as Servers, aligned with the navbar branding. The pack overview lists the
 builds. Inside a build, content filters use that space; **All builds** in the
@@ -44,7 +61,7 @@ version and categories, then its Client/Server sides and actions. An empty
 build offers Add from Modrinth and Upload directly. **Sharing** appears when
 share links are enabled or a build already has links, and contains expiring share links;
 The pack overview carries **Recommended build**, **Pack version alerts**,
-**Collaborators** and **New build**; inside a build the header keeps **All builds**
+**Team on Modrinth** and **New build**; inside a build the header keeps **All builds**
 and **New build** so the content list keeps its height. The alert dialog opens directly in one click
 without selecting a build; it links to a pack-level page for managing existing
 alerts. **All builds** returns to
@@ -149,7 +166,7 @@ configuration bytes and empty folders into an independent draft. Choose a new
 pack owned by your account or an existing writable pack with no builds. Source
 read access and target authoring rights are required, including normal global
 authoring ceilings. Existing target settings remain unchanged. New packs do not
-inherit the source's Modrinth binding, credentials, share links or collaborators.
+inherit the source's Modrinth binding, credentials, share links or Modrinth team.
 
 Uploaded objects and catalog/version records are copied to the target owner.
 Deleting or editing the source therefore does not invalidate the fork. Storage

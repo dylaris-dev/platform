@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Package, Boxes, RefreshCw, AlertTriangle, Check } from 'lucide-react';
-import { listPacks, listBuilds, type Pack, type PackBuild } from '@/lib/api/packs';
+import { listPacksOverview, listBuilds, type Pack, type PackBuild } from '@/lib/api/packs';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 
 // Pack picker for the setup flow. Mirrors ModpackPicker's shape (pick →
@@ -43,8 +43,9 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
             setLoadingPacks(true);
             setPacksError('');
             try {
-                const res = await listPacks();
-                if (!cancelled) setPacks(res || []);
+                // Packs of a Modrinth team install too; a lapsed token cannot prove the membership.
+                const res = await listPacksOverview();
+                if (!cancelled) setPacks([...res.packs, ...res.shared.filter(p => !p.tokenInvalid)]);
             } catch {
                 if (!cancelled) setPacksError('Could not load your packs.');
             }
