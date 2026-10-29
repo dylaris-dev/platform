@@ -708,6 +708,14 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
+	// The route's editions go with it, so a domain registered again later
+	// starts as Java only. Best-effort: a leftover row only matters if the same
+	// name comes back, and the next delete or save removes it.
+	if err := h.state.Store.DeleteRouteEdition(domain); err != nil {
+		log.Printf("route %s: delete editions: %v", domain, err)
+	} else if err := h.bedrockService().PublishEditions(h.ctx(), services.BedrockActive(r.Context(), h.state.FeatureFlags)); err != nil {
+		log.Printf("route %s: publish editions: %v", domain, err)
+	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Route deletion queued"})

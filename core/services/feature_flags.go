@@ -207,6 +207,21 @@ func (f *FeatureFlags) ModConfigsAudience(ctx context.Context) string {
 	return "off"
 }
 
+// BedrockSettingKey holds who may give a route Bedrock (players through the
+// gateway's Geyser): "off" (the default), "admin" or "all". Anything but off
+// also keeps the routes that already have it running; off pauses them without
+// forgetting the owner's choice.
+const BedrockSettingKey = "feature_bedrock"
+
+// BedrockAudience is that setting, with anything unrecognised read as off.
+func (f *FeatureFlags) BedrockAudience(ctx context.Context) string {
+	switch v := f.GetString(ctx, BedrockSettingKey, "off"); v {
+	case "admin", "all":
+		return v
+	}
+	return "off"
+}
+
 // IsBYONEnabled gates the bring-your-own-node multi-tenancy (per-user node
 // enrollment, node ownership scoping, plans/billing). Default = false: the
 // platform ships as today's single-operator panel and the operator opts in.

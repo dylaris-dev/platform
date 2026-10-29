@@ -56,7 +56,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -230,7 +230,7 @@ export default function FeaturesTab() {
     // inline so a new flag has exactly one place to be added and cannot end up
     // in no tab at all - which would make it unsavable while looking fine.
     const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library', 'modConfigs'] as const;
-    const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat'] as const;
+    const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat', 'bedrock'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
 
     // One registration covering all three: the unsaved-changes guard asks "is
@@ -506,6 +506,26 @@ export default function FeaturesTab() {
                         disabled={gatewayOff}
                         onChange={v => editPlatformFlag('voiceChat', v)}
                     />
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="max-w-prose">
+                            <div className="text-sm font-medium text-(--base-09)">Bedrock players</div>
+                            <p className="text-xs text-(--base-06) mt-0.5">
+                                Who may let Bedrock players join a route through the gateway&apos;s Geyser. Needs a
+                                Bedrock entry in the server&apos;s region. Admins lets you test it on your own servers
+                                first; Off pauses every route that has it, without forgetting the choice.
+                            </p>
+                        </div>
+                        <Segmented
+                            ariaLabel="Who may give a route Bedrock"
+                            value={platformFlags.bedrock ?? 'off'}
+                            onChange={v => editPlatformFlag('bedrock', v)}
+                            options={[
+                                { id: 'off', label: 'Off', disabled: gatewayOff && (platformFlags.bedrock ?? 'off') === 'off' },
+                                { id: 'admin', label: 'Admins', disabled: gatewayOff },
+                                { id: 'all', label: 'Everyone', disabled: gatewayOff },
+                            ]}
+                        />
+                    </div>
                     {gatewayOff && (
                         <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
                             <AlertTriangle size={12} className="mt-0.5 shrink-0" />

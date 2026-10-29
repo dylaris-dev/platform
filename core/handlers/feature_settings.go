@@ -85,6 +85,9 @@ type featureSettingsPayload struct {
 	UserAPIKeyAllowedCaps *string `json:"userApiKeyAllowedCaps"`
 	// ModConfigs is who is offered the beta config editor: off, admin or all.
 	ModConfigs *string `json:"modConfigs"`
+	// Bedrock is who may give a route Bedrock (the gateway's Geyser): off,
+	// admin or all. Its own switch, apart from voice chat and extra ports.
+	Bedrock *string `json:"bedrock"`
 }
 
 // boolPtr / strPtr fill the GET response, which always states every flag.
@@ -118,6 +121,8 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	modConfigs := h.state.FeatureFlags.ModConfigsAudience(r.Context())
 	out.ModConfigs = &modConfigs
+	bedrock := h.state.FeatureFlags.BedrockAudience(r.Context())
+	out.Bedrock = &bedrock
 	resp := map[string]interface{}{
 		"success":  true,
 		"features": out,
@@ -156,6 +161,10 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ModConfigs != nil && *req.ModConfigs != "off" && *req.ModConfigs != "admin" && *req.ModConfigs != "all" {
 		sendJSONError(w, "modConfigs must be off, admin or all", http.StatusBadRequest)
+		return
+	}
+	if req.Bedrock != nil && *req.Bedrock != "off" && *req.Bedrock != "admin" && *req.Bedrock != "all" {
+		sendJSONError(w, "bedrock must be off, admin or all", http.StatusBadRequest)
 		return
 	}
 
@@ -262,6 +271,27 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			"feature": "modConfigs",
 			"enabled": *req.ModConfigs != "off",
 		})
+	}
+
+	if req.Bedrock != nil {
+		if err := h.state.Store.SetSetting(services.BedrockSettingKey, *req.Bedrock); err != nil {
+			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.state.FeatureFlags.Invalidate(services.BedrockSettingKey)
+		h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
+			"feature": "bedrock",
+			"enabled": *req.Bedrock != "off",
+		})
+		// Pause or resume the routes that have Bedrock now rather than at the
+		// next reconcile. Non-fatal: the setting is saved, and the reconcile
+		// applies it within a minute.
+		if h.state.Redis != nil {
+			svc := services.NewBedrockService(h.state.Store, h.state.Redis)
+			if err := svc.PublishEditions(r.Context(), *req.Bedrock != "off"); err != nil {
+				log.Printf("features: bedrock: publish route editions: %v", err)
+			}
+		}
 	}
 
 	if req.UserAPIKeyAllowedCaps != nil {

@@ -670,8 +670,11 @@ Bedrock players join gateway-routed servers through Geyser at the gateway; the s
 - The server owner installs Floodgate (plugin or mod) on the server; Dylaris does not install it.
 - Each server gets its own Floodgate key. The node writes it to `plugins/floodgate/key.pem`
   (or `config/floodgate/key.pem`) before every start.
-- The panel switch "Bedrock players" lives in the routes dialog and appears only once a Bedrock
-  entry runs in the region.
+- Each route takes Java, Bedrock or both, chosen in the routes dialog once a Bedrock entry runs in
+  the region. Core publishes the choice as `sys:route:editions`; the edge refuses Java on a
+  Bedrock-only address, the bridge refuses Bedrock on a Java-only one.
+- Settings, Features, "Bedrock players": Off (default), Admins or Everyone decides who may give a
+  route Bedrock. Off pauses every Bedrock route without forgetting it.
 - Players add the route domain without a port. Consoles are not supported (no custom servers).
 - Signaling is plaintext, so each player sees a one-time trust prompt per region.
 

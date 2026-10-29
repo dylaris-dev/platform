@@ -3,15 +3,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CopyText from '@/components/ui/CopyText';
 import {
-    getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability,
-    GatewayRoute, CreateRouteRequest, Server,
+    getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability, getServerBedrock,
+    GatewayRoute, CreateRouteRequest, Server, ServerBedrock,
 } from '@/lib/api';
 import { Globe, Plus, Trash2, X, Check, AlertTriangle } from 'lucide-react';
 import RouteDomainPicker from '@/components/RouteDomainPicker';
 import ModalPanel from '@/components/ui/ModalPanel';
 import ServerProxyMode from '@/components/ServerProxyMode';
 import VoiceChatSwitch from '@/components/VoiceChatSwitch';
-import BedrockSwitch from '@/components/BedrockSwitch';
+import Segmented from '@/components/ui/Segmented';
+import { BedrockSummary, RouteEdition } from '@/components/BedrockRoutes';
+import { canAddBedrock, changeEdition, editionFlags, editionOptions, showBedrock, type Edition } from '@/lib/bedrock';
 import { useAppData } from '@/lib/AppDataContext';
 
 interface RoutesModalProps {
@@ -71,6 +73,29 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
 
     useEffect(() => { loadRoutes(); }, [loadRoutes]);
 
+    // Bedrock per route. A failed read shows no Bedrock controls rather than
+    // controls whose state is a guess.
+    const [bedrock, setBedrock] = useState<ServerBedrock | null>(null);
+    const [newEdition, setNewEdition] = useState<Edition>('java');
+    useEffect(() => {
+        let cancelled = false;
+        getServerBedrock(serverId)
+            .then(res => { if (!cancelled && res?.success !== false && res?.bedrock) setBedrock(res.bedrock); })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, [serverId]);
+    const bedrockShown = !!bedrock && showBedrock(bedrock);
+
+    // Mirrors what Core stored: Java only has no row.
+    const editionSaved = (domain: string, e: Edition) => {
+        setBedrock(prev => {
+            if (!prev) return prev;
+            const routes = prev.routes.filter(r => r.domain !== domain);
+            if (e !== 'java') routes.push({ domain, ...editionFlags(e) });
+            return { ...prev, routes, enabled: routes.some(r => r.bedrock) };
+        });
+    };
+
     const hasRouteInput = !!(newRoute.subdomain || newRoute.customDomain || newRoute.domain);
 
     useEffect(() => {
@@ -106,6 +131,8 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
         setRouteNotice('');
         if (!hasRouteInput) { setRouteError('Domain is required'); return; }
         setRouteCreating(true);
+        // Saved once the Hub has committed the route: Core checks it exists.
+        const edition = newEdition;
         try {
             const res = await createServerRoute(serverId, newRoute);
             if (res.error) {
@@ -122,6 +149,7 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                     : [...prev, { domain: resolvedDomain, target_ip: '', target_port: newRoute.targetPort }]);
             }
             setNewRoute({ targetPort: 25565 });
+            setNewEdition('java');
             setAvailability({ status: 'idle' });
             // Poll for Hub-committed route
             for (let i = 0; i < 8; i++) {
@@ -132,6 +160,11 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                     if (!resolvedDomain || real.some(r => r.domain === resolvedDomain)) {
                         setRoutes(real);
                         onRoutesChangedRef.current?.(real);
+                        if (resolvedDomain && edition !== 'java') {
+                            const err = await changeEdition(serverId, resolvedDomain, edition);
+                            if (err) setRouteNotice(`The route was added as Java only: ${err}`);
+                            else editionSaved(resolvedDomain, edition);
+                        }
                         break;
                     }
                 } catch { /* keep polling */ }
@@ -205,7 +238,7 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
 
                     {/* Shows itself only when Core allows voice here or it is on. */}
                     <VoiceChatSwitch serverId={serverId} />
-                    <BedrockSwitch serverId={serverId} />
+                    {bedrockShown && bedrock && <BedrockSummary bedrock={bedrock} />}
 
                     {routesLoading ? (
                         <p className="text-sm text-(--base-07)">Loading routes…</p>
@@ -224,6 +257,9 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                                                 Port {route.target_port}
                                                 {route.link_name && <> &middot; Link: {route.link_name}</>}
                                             </div>
+                                            {bedrockShown && bedrock && (
+                                                <RouteEdition serverId={serverId} domain={route.domain} bedrock={bedrock} onChanged={editionSaved} />
+                                            )}
                                         </div>
                                     </div>
                                     <button
@@ -266,6 +302,18 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                                 </div>
                             }
                         />
+
+                        {bedrock && canAddBedrock(bedrock) && (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs text-(--base-06)">Players</span>
+                                <Segmented
+                                    ariaLabel="Players on the new route"
+                                    value={newEdition}
+                                    onChange={setNewEdition}
+                                    options={editionOptions('java', true, '')}
+                                />
+                            </div>
+                        )}
 
                         {routeNotice && (
                             <p className="alert alert-warning text-xs">{routeNotice}</p>

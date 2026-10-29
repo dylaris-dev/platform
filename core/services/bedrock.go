@@ -74,6 +74,7 @@ type BedrockService struct {
 	store  store.Store
 	redis  *redis.Client
 	leader leader.Election
+	flags  *FeatureFlags
 }
 
 func NewBedrockService(st store.Store, rdb *redis.Client) *BedrockService {
@@ -81,6 +82,9 @@ func NewBedrockService(st store.Store, rdb *redis.Client) *BedrockService {
 }
 
 func (b *BedrockService) SetLeader(l leader.Election) { b.leader = l }
+
+// SetFlags lets Reconcile fold the platform's Bedrock switch into the editions.
+func (b *BedrockService) SetFlags(f *FeatureFlags) { b.flags = f }
 
 // Enable stores a fresh key and publishes the STORED one: EnableBedrock keeps
 // the first key on a re-enable, so publishing the fresh one would put a key in
@@ -128,6 +132,11 @@ func (b *BedrockService) publish(ctx context.Context, uuid string, key []byte) e
 func (b *BedrockService) Reconcile(ctx context.Context) error {
 	if b.leader != nil && !b.leader.IsLeader() {
 		return nil
+	}
+	// Editions first: a server that gained a Bedrock route gets its key here,
+	// so the sweep below already sees the row.
+	if err := b.PublishEditions(ctx, BedrockActive(ctx, b.flags)); err != nil {
+		return err
 	}
 	var existing []string
 	iter := b.redis.Scan(ctx, 0, "dylaris:server:*:floodgate", 200).Iterator()

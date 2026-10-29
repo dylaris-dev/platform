@@ -18,7 +18,10 @@ type bedrockFakeStore struct {
 	listErr error
 	usage   []voiceUsageCall
 	useErr  error
+	eds     []store.RouteEdition
 }
+
+func (f *bedrockFakeStore) ListRouteEditions(int) ([]store.RouteEdition, error) { return f.eds, nil }
 
 func (f *bedrockFakeStore) AddBedrockUsage(serverID int, _ time.Time, region string, rx, tx int64) error {
 	f.usage = append(f.usage, voiceUsageCall{serverID, region, rx, tx})

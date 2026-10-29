@@ -30,6 +30,16 @@ func applyBedrockSchema(db *sql.DB) error {
 			PRIMARY KEY (server_id, period, region)
 		)`,
 		`ALTER TABLE traffic_usage_region ADD COLUMN IF NOT EXISTS bedrock_bytes BIGINT NOT NULL DEFAULT 0`,
+		// Which editions a route takes. No row = Java only (every route that
+		// predates this); deleted with the route by the panel, with the server
+		// by the cascade.
+		`CREATE TABLE IF NOT EXISTS route_editions (
+			domain     TEXT PRIMARY KEY,
+			server_id  INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+			java       BOOLEAN NOT NULL,
+			bedrock    BOOLEAN NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			return fmt.Errorf("bedrock usage schema: %w", err)

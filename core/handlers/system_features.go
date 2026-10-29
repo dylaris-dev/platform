@@ -22,6 +22,7 @@ func NewSystemFeaturesHandler(state *AppState) *SystemFeaturesHandler {
 func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	modConfigs := h.state.FeatureFlags.ModConfigsAudience(r.Context())
+	bedrock := h.state.FeatureFlags.BedrockAudience(r.Context())
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"features": map[string]bool{
@@ -66,6 +67,9 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// off, admin or all, and the panel only needs to know whether to
 			// offer the tab.
 			"modConfigs": modConfigs == "all" || (modConfigs == "admin" && isAdmin),
+			// Whether THIS caller may give a route Bedrock. Routes that have it
+			// keep running while the setting is admin; GET .../bedrock says so.
+			"bedrock": bedrock == "all" || (bedrock == "admin" && isAdmin),
 		},
 	})
 }

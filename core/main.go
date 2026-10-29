@@ -478,6 +478,7 @@ func main() {
 	// Redis every 60 s and sweeps keys that have no row.
 	bedrockService := services.NewBedrockService(pgStore, redisClient)
 	bedrockService.SetLeader(coreLeader)
+	bedrockService.SetFlags(appState.FeatureFlags)
 	bedrockService.Start(bgCtx)
 
 	// Extra ports (direct routing): the node reads each server's bindings

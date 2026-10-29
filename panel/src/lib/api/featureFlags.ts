@@ -46,6 +46,9 @@ export interface FeatureFlags {
     // The beta mod and plugin config editor, already resolved for this caller
     // (Core holds off / admin / all). Optional: an older Core omits it.
     modConfigs?: boolean;
+    // Whether this caller may give a route Bedrock (Core holds off / admin /
+    // all). Optional: an older Core omits it.
+    bedrock?: boolean;
 }
 
 // Every field is optional on the way OUT: the Features screen is a set of tabs
@@ -89,6 +92,9 @@ export interface FeatureFlagsAdminPayload {
     userApiKeyAllowedCaps?: string;
     // Who is offered the beta config editor.
     modConfigs?: 'off' | 'admin' | 'all';
+    // Who may give a route Bedrock (the gateway's Geyser). Anything but off
+    // keeps the routes that have it running; off pauses them.
+    bedrock?: 'off' | 'admin' | 'all';
 }
 
 export async function getSystemFeatures(): Promise<{ success: boolean; features?: FeatureFlags; message?: string }> {

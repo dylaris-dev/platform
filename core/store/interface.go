@@ -249,6 +249,10 @@ type Store interface {
 	ListBedrockServerRefs() ([]BedrockServerRef, error)
 	AddBedrockUsage(serverID int, period time.Time, region string, rx, tx int64) error
 	ListBedrockUsage(period time.Time) ([]BedrockUsageRow, error)
+	// Per-route Java/Bedrock editions (postgres_route_editions.go).
+	SetRouteEdition(serverID int, domain string, java, bedrock bool) error
+	DeleteRouteEdition(domain string) error
+	ListRouteEditions(serverID int) ([]RouteEdition, error)
 	GetServerProxyMode(id int) (string, error)
 	SetServerProxyMode(id int, mode string) error
 	ListProxyAutoServers() ([]ProxyAutoServer, error)

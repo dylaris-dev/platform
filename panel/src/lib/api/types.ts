@@ -1303,19 +1303,28 @@ export const getServerVoice = (serverId: number): Promise<VoiceResult> =>
 export const setServerVoice = (serverId: number, enabled: boolean): Promise<VoiceResult> =>
     fetchAPI(`/servers/${serverId}/voice/switch`, { method: 'PUT', body: JSON.stringify({ enabled }) });
 
-// Bedrock join address for one server. `available` is whether it may be turned
-// ON here (routed through the gateway and a Bedrock entry runs in the region).
+// Bedrock on one server's routes. `enabled`: some route has it (stored).
+// `active`: the platform switch is not off, so those routes take Bedrock now.
+// `allowed`: this caller may give a route Bedrock. `available`: routed through
+// the gateway and a Bedrock entry runs in the region (`refusal` says why not).
+// `routes` lists only routes that differ from Java only.
+export interface BedrockRouteEdition { domain: string; java: boolean; bedrock: boolean }
 export interface ServerBedrock {
     enabled: boolean;
+    active: boolean;
+    allowed: boolean;
     available: boolean;
+    refusal?: string;
     address: string;
     loader: 'plugins' | 'mods';
+    routes: BedrockRouteEdition[];
 }
 type BedrockResult = { success?: boolean; bedrock?: ServerBedrock; message?: string; error?: string; code?: string };
 export const getServerBedrock = (serverId: number): Promise<BedrockResult> =>
     fetchAPI(`/servers/${serverId}/bedrock`);
-export const setServerBedrock = (serverId: number, enabled: boolean): Promise<BedrockResult> =>
-    fetchAPI(`/servers/${serverId}/bedrock`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+type RouteEditionResult = { success?: boolean; route?: BedrockRouteEdition; message?: string; error?: string; code?: string };
+export const setRouteEdition = (serverId: number, domain: string, e: { java: boolean; bedrock: boolean }): Promise<RouteEditionResult> =>
+    fetchAPI(`/servers/${serverId}/bedrock/routes`, { method: 'PUT', body: JSON.stringify({ domain, ...e }) });
 
 // Admin voice overview (Infrastructure > Voice). Bytes are for the period.
 export interface VoiceRelay { voice_id: string; region: string; ip: string }

@@ -3870,11 +3870,11 @@
     },
     {
       "method": "PUT",
-      "path": "/api/servers/{id:[0-9]+}/bedrock",
+      "path": "/api/servers/{id:[0-9]+}/bedrock/routes",
       "auth": "session",
       "authorization": "network.write",
-      "description": "body {\"enabled\": bool}.",
-      "handler": "GatewayHandler.SetServerBedrock",
+      "description": "body {\"domain\": \"...\", \"java\": bool, \"bedrock\": bool}.",
+      "handler": "GatewayHandler.SetRouteEdition",
       "group": "servers",
       "external": false
     },

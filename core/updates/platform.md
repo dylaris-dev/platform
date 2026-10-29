@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.29.2
+
+### Features
+- **Each route takes Java, Bedrock or both,** chosen in the routes dialog; the per-server Bedrock switch is
+  gone. Update the gateway hub and edge too, they enforce the choice. `core` `panel`
+- **Bedrock has its own switch under Settings, Features:** Off, Admins or Everyone. Off pauses every
+  Bedrock route without forgetting it; taking Bedrock off a route always works. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.29
 
 ### Features

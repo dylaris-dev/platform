@@ -724,7 +724,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/backup-restores` | session | `backups.read` | - | `BackupHandler.ListRestores` | Recent restore history for a server, newest first. |
 | GET | `/api/servers/{id:[0-9]+}/backup-usage` | session | `backups.read` | - | `BackupHandler.BackupUsage` | Returns the on-disk bytes used by node-local backups for the given server, plus archive count. |
 | GET | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.read` | - | `GatewayHandler.GetServerBedrock` | - |
-| PUT | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.write` | - | `GatewayHandler.SetServerBedrock` | body {"enabled": bool}. |
+| PUT | `/api/servers/{id:[0-9]+}/bedrock/routes` | session | `network.write` | - | `GatewayHandler.SetRouteEdition` | body {"domain": "...", "java": bool, "bedrock": bool}. |
 | POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
 | GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |

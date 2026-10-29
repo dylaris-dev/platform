@@ -849,11 +849,12 @@ func TestCap_ServerBedrockSwitchNeedsNetworkWrite(t *testing.T) {
 	}
 	srv := newAuthzTestServer(t, fs)
 	path := "/api/servers/16/bedrock"
-	if deniedAtChokepoint(t, srv, "PUT", path, testIdentity{UserID: "owner-id", Username: "owner"}) ||
-		deniedAtChokepoint(t, srv, "PUT", path, testIdentity{UserID: "writer-id", Username: "writer"}) {
+	put := path + "/routes" // the per-route edition switch
+	if deniedAtChokepoint(t, srv, "PUT", put, testIdentity{UserID: "owner-id", Username: "owner"}) ||
+		deniedAtChokepoint(t, srv, "PUT", put, testIdentity{UserID: "writer-id", Username: "writer"}) {
 		t.Error("owner and network.write member must pass the switch chokepoint")
 	}
-	if !deniedAtChokepoint(t, srv, "PUT", path, testIdentity{UserID: "net-id", Username: "net"}) {
+	if !deniedAtChokepoint(t, srv, "PUT", put, testIdentity{UserID: "net-id", Username: "net"}) {
 		t.Error("network.read-only member must be refused the switch")
 	}
 	if deniedAtChokepoint(t, srv, "GET", path, testIdentity{UserID: "net-id", Username: "net"}) {
