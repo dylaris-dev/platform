@@ -30,6 +30,7 @@ const MUTATING = [
     'setServerProxyMode',
     'setLinkRouteProxyProtocol',
     'setLinkRouteVoice',
+    'setServerBedrock',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -1303,11 +1303,26 @@ export const getServerVoice = (serverId: number): Promise<VoiceResult> =>
 export const setServerVoice = (serverId: number, enabled: boolean): Promise<VoiceResult> =>
     fetchAPI(`/servers/${serverId}/voice/switch`, { method: 'PUT', body: JSON.stringify({ enabled }) });
 
+// Bedrock join address for one server. `available` is whether it may be turned
+// ON here (routed through the gateway and a Bedrock entry runs in the region).
+export interface ServerBedrock {
+    enabled: boolean;
+    available: boolean;
+    address: string;
+    loader: 'plugins' | 'mods';
+}
+type BedrockResult = { success?: boolean; bedrock?: ServerBedrock; message?: string; error?: string; code?: string };
+export const getServerBedrock = (serverId: number): Promise<BedrockResult> =>
+    fetchAPI(`/servers/${serverId}/bedrock`);
+export const setServerBedrock = (serverId: number, enabled: boolean): Promise<BedrockResult> =>
+    fetchAPI(`/servers/${serverId}/bedrock`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+
 // Admin voice overview (Infrastructure > Voice). Bytes are for the period.
 export interface VoiceRelay { voice_id: string; region: string; ip: string }
 export interface VoiceRegionStat { region: string; relays: number; portsUsed: number; portsTotal: number; rxBytes: number; txBytes: number }
 export interface VoiceServerStat { serverId: number; serverName: string; region: string; mod: string; port: number; rxBytes: number; txBytes: number }
-export interface VoiceOverview { period: string; relays: VoiceRelay[]; regions: VoiceRegionStat[]; servers: VoiceServerStat[] }
+export interface BedrockServerStat { serverId: number; serverName: string; region: string; rxBytes: number; txBytes: number }
+export interface VoiceOverview { period: string; relays: VoiceRelay[]; regions: VoiceRegionStat[]; servers: VoiceServerStat[]; bedrock?: BedrockServerStat[] }
 export const getVoiceOverview = (period?: string): Promise<VoiceOverview & { success?: boolean; message?: string }> =>
     fetchAPI(`/voice/overview${period ? `?period=${encodeURIComponent(period)}` : ''}`);
 

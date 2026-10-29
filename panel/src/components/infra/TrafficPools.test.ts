@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boxesFor, isCapped, poolRegion, poolTone, productShares, formatBytes, voiceShare } from './TrafficPools';
+import { boxesFor, isCapped, poolRegion, poolTone, productShares, formatBytes, voiceShare, bedrockShare } from './TrafficPools';
 import type { TrafficPool } from '@/lib/api/billing';
 
 const pool = (p: Partial<TrafficPool>): TrafficPool => ({
@@ -117,6 +117,24 @@ describe('poolTone', () => {
 
     it('reads past the allowance as over, not as 90%', () => {
         expect(poolTone(100)?.label).toBe('over the allowance');
+    });
+});
+
+describe('bedrockShare', () => {
+    it('is absent when Core sent no Bedrock bytes or none moved', () => {
+        expect(bedrockShare(pool({ usedGb: 1 }))).toBeNull();
+        expect(bedrockShare(pool({ usedGb: 1, bedrockBytes: 0 }))).toBeNull();
+    });
+
+    it('is absent on the data-traffic pool', () => {
+        expect(bedrockShare(pool({ kind: 'relay', usedGb: 1, bedrockBytes: 300_000_000 }))).toBeNull();
+    });
+
+    it('is its own subset, independent of voice, floored and capped like voiceShare', () => {
+        const p = pool({ usedGb: 1, voiceBytes: 500_000_000, bedrockBytes: 299_999_999 });
+        expect(bedrockShare(p)).toEqual({ bytes: 299_999_999, pct: 29 });
+        expect(voiceShare(p)).toEqual({ bytes: 500_000_000, pct: 50 });
+        expect(bedrockShare(pool({ usedGb: 1, bedrockBytes: 1_400_000_000 }))?.pct).toBe(100);
     });
 });
 

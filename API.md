@@ -133,10 +133,10 @@ can still show what exists.
 
 ## At a glance
 
-- **581 routes** in 53 sections: 255 GET, 172 POST, 52 PUT, 40 PATCH, 63 DELETE.
+- **583 routes** in 53 sections: 256 GET, 172 POST, 53 PUT, 40 PATCH, 63 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **381** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **35** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **383** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **36** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -168,7 +168,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (91)
+- [/api/servers](#apiservers) (93)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -723,6 +723,8 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/backup-jobs` | session | `backups.create` | - | `BackupHandler.CreateJob` | adds a backup schedule and computes its first run from the cron expression. |
 | GET | `/api/servers/{id:[0-9]+}/backup-restores` | session | `backups.read` | - | `BackupHandler.ListRestores` | Recent restore history for a server, newest first. |
 | GET | `/api/servers/{id:[0-9]+}/backup-usage` | session | `backups.read` | - | `BackupHandler.BackupUsage` | Returns the on-disk bytes used by node-local backups for the given server, plus archive count. |
+| GET | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.read` | - | `GatewayHandler.GetServerBedrock` | - |
+| PUT | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.write` | - | `GatewayHandler.SetServerBedrock` | body {"enabled": bool}. |
 | POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
 | GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |
@@ -992,7 +994,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/voice/overview` | session | `settings.read` | RequireGatewayEnabled | `VoiceStatsHandler.GetOverview` | Live relays, port use per region, and voice bytes per region and server for the period (default: the current month). |
+| GET | `/api/voice/overview` | session | `settings.read` | RequireGatewayEnabled | `VoiceStatsHandler.GetOverview` | Live relays, port use per region, and voice bytes per region and server for the period (default: the current month), plus Bedrock bytes per server. |
 
 ## /api/warp
 

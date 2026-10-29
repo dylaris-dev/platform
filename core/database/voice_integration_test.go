@@ -265,3 +265,49 @@ func TestIntegrationVoicePermissions(t *testing.T) {
 		t.Fatalf("deleted row = %v, %v; want nil, nil", v, err)
 	}
 }
+
+func TestIntegrationBedrockUsageAccumulatesAndCascades(t *testing.T) {
+	db, st := integrationDB(t)
+	f := newFixture(t, st)
+	period := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 2; i++ {
+		if err := st.AddBedrockUsage(f.server.ID, period, "eu-central", 10, 20); err != nil {
+			t.Fatalf("AddBedrockUsage: %v", err)
+		}
+	}
+	rows, err := st.ListBedrockUsage(period)
+	if err != nil {
+		t.Fatalf("ListBedrockUsage: %v", err)
+	}
+	var found bool
+	for _, r := range rows {
+		if r.ServerID == f.server.ID && r.Region == "eu-central" {
+			found = true
+			if r.RxBytes != 20 || r.TxBytes != 40 || r.ServerUUID != f.server.UUID {
+				t.Fatalf("usage row = %+v, want rx 20, tx 40", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("ListBedrockUsage did not return the row just written")
+	}
+
+	// The subset column is separate from voice_bytes and from bytes.
+	if err := st.AddTrafficTick(f.user.ID, period, 500, 0, []store.TrafficTickCell{
+		{Region: "eu-central", Kind: "edge", Product: "byon", Bytes: 500, Voice: 50, Bedrock: 70},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cells, _ := st.GetTrafficUsageRegions(f.user.ID, period)
+	if len(cells) != 1 || cells[0].Bytes != 500 || cells[0].VoiceBytes != 50 || cells[0].BedrockBytes != 70 {
+		t.Fatalf("cells = %+v, want bytes 500, voice 50, bedrock 70", cells)
+	}
+
+	if err := st.DeleteServer(f.server.ID); err != nil {
+		t.Fatalf("DeleteServer: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bedrock_usage WHERE server_id = $1`, f.server.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("bedrock_usage rows after server delete = %d, err %v, want 0", n, err)
+	}
+}

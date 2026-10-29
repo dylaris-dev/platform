@@ -575,6 +575,9 @@ func uninstallTargetDir(m *models.ServerMod, installerType string) string {
 	return defaultTargetDirForLoader(installerType)
 }
 
+// DefaultTargetDirForLoader is defaultTargetDirForLoader for other handler packages.
+func DefaultTargetDirForLoader(loader string) string { return defaultTargetDirForLoader(loader) }
+
 // defaultTargetDirForLoader returns "mods" for fabric/forge/quilt/neoforge,
 // "plugins" for paper/spigot/bukkit/purpur. Unknown loader → "mods" (safer
 // default since dropping a jar in "mods" never breaks a paper server, but

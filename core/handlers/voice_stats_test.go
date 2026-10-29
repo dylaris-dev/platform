@@ -64,3 +64,13 @@ func TestVoiceOverviewListsIdlePortHolders(t *testing.T) {
 		t.Error("relays must encode as [], not null")
 	}
 }
+
+func TestBedrockServerStatsMapsRowsAndIsNeverNil(t *testing.T) {
+	if got := bedrockServerStats(nil); got == nil || len(got) != 0 {
+		t.Fatalf("empty = %#v, want a non-nil empty slice (JSON [])", got)
+	}
+	got := bedrockServerStats([]store.BedrockUsageRow{{ServerID: 3, ServerName: "a", Region: "eu", RxBytes: 5, TxBytes: 9}})
+	if len(got) != 1 || got[0] != (BedrockServerStat{ServerID: 3, ServerName: "a", Region: "eu", RxBytes: 5, TxBytes: 9}) {
+		t.Fatalf("got %+v", got)
+	}
+}

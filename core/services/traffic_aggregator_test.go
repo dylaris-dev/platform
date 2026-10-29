@@ -37,6 +37,7 @@ type trafficFakeStore struct {
 	addRegionErrFor map[string]error
 	addVoiceCalls   []trafficRegionCall
 	addVoiceErrFor  map[string]error
+	addBedrockCalls []trafficRegionCall
 	tickAttempts    int
 	dataUsage       map[string][]store.RegionUsage
 	dataLimit       *models.TrafficLimit
@@ -127,6 +128,9 @@ func (f *trafficFakeStore) AddTrafficTick(userID string, period time.Time, edge,
 		}
 		if c.Voice > 0 {
 			f.addVoiceCalls = append(f.addVoiceCalls, trafficRegionCall{userID, period, c.Region, c.Kind, c.Product, c.Voice})
+		}
+		if c.Bedrock > 0 {
+			f.addBedrockCalls = append(f.addBedrockCalls, trafficRegionCall{userID, period, c.Region, c.Kind, c.Product, c.Bedrock})
 		}
 	}
 	return nil
@@ -1145,5 +1149,119 @@ func TestTrafficAggregator_RouteVoiceBilledToTheRouteOwner(t *testing.T) {
 	}
 	if got := trafficProductOf(subject); got != store.TrafficProductRoute {
 		t.Errorf("product of %q = %q, want %q", subject, got, store.TrafficProductRoute)
+	}
+}
+
+// Java, voice and Bedrock fields share one hash. The bill is the sum of all of
+// them; each subset reads only its own pair.
+func TestBedrockIsInTheBillAndInItsOwnSubset(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{
+		"rx:eu": 1000, "tx:eu": 1000, "vrx:eu": 200, "vtx:eu": 100, "brx:eu": 40, "btx:eu": 60,
+	})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 2400 {
+		t.Fatalf("the bill must be the sum of every field: %+v", fs.addUsageCalls)
+	}
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 2400 {
+		t.Fatalf("region cell must keep both subsets in its bytes: %+v", fs.addRegionCalls)
+	}
+	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].bytes != 300 {
+		t.Fatalf("voice subset = %+v, want 300 (vrx+vtx only)", fs.addVoiceCalls)
+	}
+	if len(fs.addBedrockCalls) != 1 || fs.addBedrockCalls[0].region != "eu" || fs.addBedrockCalls[0].bytes != 100 {
+		t.Fatalf("bedrock subset = %+v, want eu 100 (brx+btx only)", fs.addBedrockCalls)
+	}
+	assertRedisString(t, rdb, "dylaris:traffic:agg:seen:bedrock:srv-1#eu", "100")
+
+	// A second tick with nothing new adds nothing; with 5 new bytes adds 5.
+	fs.addBedrockCalls = nil
+	agg.runOnce(context.Background())
+	if len(fs.addBedrockCalls) != 0 {
+		t.Fatalf("an unchanged counter wrote a bedrock subset: %+v", fs.addBedrockCalls)
+	}
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"brx:eu": 45})
+	agg.runOnce(context.Background())
+	if len(fs.addBedrockCalls) != 1 || fs.addBedrockCalls[0].bytes != 5 {
+		t.Fatalf("bedrock delta = %+v, want 5", fs.addBedrockCalls)
+	}
+}
+
+// Bedrock marker renewed while Bedrock is flat and Java moves: the region-seen
+// pitfall (a marker expiring under a hash another family keeps alive).
+func TestBedrockMarkerRenewedWhileBedrockIsFlat(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "brx:eu": 50})
+	agg.runOnce(ctx)
+	const key = "dylaris:traffic:agg:seen:bedrock:srv-1#eu"
+	if err := rdb.Expire(ctx, key, time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 2000})
+	agg.runOnce(ctx)
+	if ttl := rdb.TTL(ctx, key).Val(); ttl <= time.Hour {
+		t.Fatalf("bedrock marker TTL = %v, want renewed", ttl)
+	}
+}
+
+func TestBedrockRegionBytesSplit(t *testing.T) {
+	fields := map[string]string{"rx:eu": "1000", "vrx:eu": "200", "brx:eu": "40", "btx:eu": "60", "btx:us": "7", "brx": "9", "brx:": "3"}
+	got := bedrockRegionBytes(fields)
+	if len(got) != 3 || got["eu"] != 100 || got["us"] != 7 || got[regionUnknown] != 3 {
+		t.Fatalf("bedrockRegionBytes = %v, want eu 100 / us 7 / unknown 3", got)
+	}
+	if v := voiceRegionBytes(fields); len(v) != 1 || v["eu"] != 200 {
+		t.Fatalf("voiceRegionBytes = %v, want eu 200 only", v)
+	}
+	if r := regionBytes(fields); r["eu"] != 1300 {
+		t.Fatalf("regionBytes = %v: eu must keep every family", r)
+	}
+}
+
+// Skew: both subset markers are lost while the region marker survives, so each
+// subset alone would claim more than the region billed this tick. Together they
+// must not exceed it, and voice keeps its share first.
+func TestSubsetsTogetherNeverExceedTheRegionDelta(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "vrx:eu": 90, "brx:eu": 80})
+	agg.runOnce(ctx) // first tick bills in full and writes every marker
+	if err := rdb.Del(ctx, "dylaris:traffic:agg:seen:voice:srv-1#eu", "dylaris:traffic:agg:seen:bedrock:srv-1#eu").Err(); err != nil {
+		t.Fatal(err)
+	}
+	fs.addRegionCalls, fs.addVoiceCalls, fs.addBedrockCalls = nil, nil, nil
+
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1060}) // +60 billed
+	agg.runOnce(ctx)
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 60 {
+		t.Fatalf("region = %+v, want 60", fs.addRegionCalls)
+	}
+	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].bytes != 60 {
+		t.Fatalf("voice = %+v, want 60 (capped at the region delta)", fs.addVoiceCalls)
+	}
+	if len(fs.addBedrockCalls) != 0 {
+		t.Fatalf("bedrock = %+v, want nothing: voice used the whole delta", fs.addBedrockCalls)
+	}
+}
+
+func TestBedrockGetsWhatVoiceLeft(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-1": "tenant-a"}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "vrx:eu": 30, "brx:eu": 80})
+	agg.runOnce(ctx)
+	rdb.Del(ctx, "dylaris:traffic:agg:seen:voice:srv-1#eu", "dylaris:traffic:agg:seen:bedrock:srv-1#eu")
+	fs.addRegionCalls, fs.addVoiceCalls, fs.addBedrockCalls = nil, nil, nil
+
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1060})
+	agg.runOnce(ctx)
+	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].bytes != 30 || len(fs.addBedrockCalls) != 1 || fs.addBedrockCalls[0].bytes != 30 {
+		t.Fatalf("voice %+v bedrock %+v, want 30 and 30 (60 minus voice)", fs.addVoiceCalls, fs.addBedrockCalls)
 	}
 }

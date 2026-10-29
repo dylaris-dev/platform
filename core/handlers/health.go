@@ -85,6 +85,7 @@ func (h *HealthHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	components = append(components, h.nodesComponent())
 	components = append(components, h.gatewayComponent(r.Context()))
 	components = append(components, h.voiceComponent(r.Context()))
+	components = append(components, h.bedrockComponent(r.Context()))
 	components = append(components, h.storageComponent())
 	components = append(components, h.redisACLComponent(r.Context(), redisUp))
 	components = append(components, h.storefrontComponent(r.Context()))
@@ -576,6 +577,77 @@ func (h *HealthHandler) voiceComponent(ctx context.Context) healthComponent {
 	}
 	comp.Status, comp.Detail, comp.Reason, comp.Items = voiceVerdict(regions)
 	return comp
+}
+
+// bedrockComponent reports whether every region that has a Bedrock-enabled
+// server also has a live Bedrock entry. No enabled server is not a fault.
+func (h *HealthHandler) bedrockComponent(ctx context.Context) healthComponent {
+	comp := healthComponent{Key: "bedrock", Name: "Bedrock"}
+	if !h.state.gatewayEnabled() || h.state.Redis == nil || h.state.Store == nil {
+		comp.Status, comp.Detail = "disabled", "Bedrock needs gateway routing"
+		return comp
+	}
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	servers, err := h.state.Store.ListBedrockServerRefs()
+	if err != nil {
+		comp.Status, comp.Detail, comp.Reason = "degraded", "Bedrock servers unreadable", err.Error()
+		return comp
+	}
+	if len(servers) == 0 {
+		comp.Status, comp.Detail = "disabled", "No server has Bedrock enabled"
+		return comp
+	}
+	entries, err := services.LiveBedrockEntries(cctx, h.state.Redis)
+	if err != nil {
+		comp.Status, comp.Detail, comp.Reason = "degraded", "Bedrock registry unreadable", err.Error()
+		return comp
+	}
+	routes, err := services.ReadRoutesFromRedis(cctx, h.state.Redis)
+	if err != nil {
+		comp.Status, comp.Detail, comp.Reason = "degraded", "Routes unreadable", err.Error()
+		return comp
+	}
+	edges := services.GetEdgesFromRedis(cctx, h.state.Redis)
+	enabled := map[string]int{}
+	for _, s := range servers {
+		// The same region rule the switch uses (bedrockAvailability).
+		if _, region, ok := services.VoiceRouteFor(routes, edges, s.ServerUUID); ok {
+			enabled[region]++
+		}
+	}
+	comp.Status, comp.Detail, comp.Reason, comp.Items = bedrockVerdict(enabled, entries)
+	return comp
+}
+
+// bedrockVerdict rates each region that has Bedrock-enabled servers: degraded
+// when no live Bedrock entry runs there (those servers' Bedrock players cannot
+// join), up otherwise. Java players are unaffected, hence never "down".
+func bedrockVerdict(enabled map[string]int, entries []services.BedrockEntry) (status, detail, reason string, items []healthItem) {
+	live := map[string]int{}
+	for _, e := range entries {
+		live[e.Region]++
+	}
+	regions := make([]string, 0, len(enabled))
+	for r := range enabled {
+		regions = append(regions, r)
+	}
+	sort.Strings(regions)
+	status = "up"
+	var reasons []string
+	for _, r := range regions {
+		it := healthItem{Name: r, Status: "up", Detail: fmt.Sprintf("%d entry(ies), %d server(s) with Bedrock", live[r], enabled[r])}
+		if live[r] == 0 {
+			it.Status = "degraded"
+			status = "degraded"
+			reasons = append(reasons, fmt.Sprintf("%s: %d server(s) have Bedrock on and no Bedrock entry runs there", r, enabled[r]))
+		}
+		items = append(items, it)
+	}
+	if len(regions) == 0 {
+		return "disabled", "No Bedrock server is routed", "", nil
+	}
+	return status, fmt.Sprintf("%d region(s) with Bedrock servers", len(regions)), strings.Join(reasons, "; "), items
 }
 
 // relaylessEdges counts, per region, the online edges with no live voice relay

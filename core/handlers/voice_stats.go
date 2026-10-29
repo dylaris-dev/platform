@@ -26,6 +26,18 @@ type VoiceOverview struct {
 	Relays  []services.VoiceRelay `json:"relays"`
 	Regions []VoiceRegionStat     `json:"regions"`
 	Servers []VoiceServerStat     `json:"servers"`
+	// Bedrock is Bedrock join traffic per server and region for the period.
+	// Separate from the voice rows: it is player traffic of another kind.
+	Bedrock []BedrockServerStat `json:"bedrock"`
+}
+
+// BedrockServerStat is one server's Bedrock traffic in one region.
+type BedrockServerStat struct {
+	ServerID   int    `json:"serverId"`
+	ServerName string `json:"serverName"`
+	Region     string `json:"region"`
+	RxBytes    int64  `json:"rxBytes"`
+	TxBytes    int64  `json:"txBytes"`
 }
 
 // VoiceRegionStat sums one region. PortsUsed counts allocated ports, not
@@ -56,7 +68,7 @@ type VoiceServerStat struct {
 
 // GetOverview GET /api/voice/overview?period=YYYY-MM
 // Live relays, port use per region, and voice bytes per region and server for
-// the period (default: the current month).
+// the period (default: the current month), plus Bedrock bytes per server.
 func (h *VoiceStatsHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
 		sendJSONError(w, "Redis is not configured", http.StatusServiceUnavailable)
@@ -75,6 +87,12 @@ func (h *VoiceStatsHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
+	bedrock, err := h.state.Store.ListBedrockUsage(period)
+	if err != nil {
+		log.Printf("[voice] overview: list bedrock usage: %v", err)
+		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		return
+	}
 	relays, err := services.LiveVoiceRelays(r.Context(), h.state.Redis)
 	if err != nil {
 		log.Printf("[voice] overview: %v", err)
@@ -82,7 +100,9 @@ func (h *VoiceStatsHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(buildVoiceOverview(period.Format("2006-01"), relays, ports, usage))
+	out := buildVoiceOverview(period.Format("2006-01"), relays, ports, usage)
+	out.Bedrock = bedrockServerStats(bedrock)
+	json.NewEncoder(w).Encode(out)
 }
 
 // buildVoiceOverview joins ports and usage on (server, region). A region
@@ -143,5 +163,15 @@ func buildVoiceOverview(period string, relays []services.VoiceRelay, ports []sto
 		out.Regions = append(out.Regions, *rs)
 	}
 	sort.Slice(out.Regions, func(i, j int) bool { return out.Regions[i].Region < out.Regions[j].Region })
+	return out
+}
+
+// bedrockServerStats maps the store rows (already busiest first); never nil so
+// the JSON is [] and not null.
+func bedrockServerStats(rows []store.BedrockUsageRow) []BedrockServerStat {
+	out := make([]BedrockServerStat, 0, len(rows))
+	for _, u := range rows {
+		out = append(out, BedrockServerStat{ServerID: u.ServerID, ServerName: u.ServerName, Region: u.Region, RxBytes: u.RxBytes, TxBytes: u.TxBytes})
+	}
 	return out
 }

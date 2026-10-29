@@ -285,6 +285,7 @@ func main() {
 	// scheduler resolves a storage, so the s3 secret is never stored in the
 	// clear and a legacy plaintext one is re-encrypted on its next save.
 	pgStore.SetBackupStorageEncryptionKey(cfg.ClusterSecret)
+	pgStore.SetBedrockEncryptionKey(cfg.ClusterSecret)
 
 	// Which reverse-proxy networks may set X-Forwarded-For. Installed before any
 	// handler serves, so the rate limiters and the audit log key on a client IP
@@ -472,6 +473,12 @@ func main() {
 		return gateway.RevokeServerVoice(ctx, appState, srv)
 	})
 	voiceService.Start(bgCtx)
+
+	// Bedrock: the leader rewrites each enabled server's Floodgate key into
+	// Redis every 60 s and sweeps keys that have no row.
+	bedrockService := services.NewBedrockService(pgStore, redisClient)
+	bedrockService.SetLeader(coreLeader)
+	bedrockService.Start(bgCtx)
 
 	// Extra ports (direct routing): the node reads each server's bindings
 	// from Redis, which keeps nothing across a restart.

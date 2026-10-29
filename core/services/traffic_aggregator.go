@@ -48,6 +48,8 @@ const (
 	// Its own kind segment, so they never collide with the edge region markers
 	// they sit beside.
 	trafficVoiceSeenKind = "voice"
+	// Same for the Bedrock subset: ...:seen:bedrock:<subject>#<region>.
+	trafficBedrockSeenKind = "bedrock"
 
 	// Marks that a subject has been through region initialisation once.
 	//
@@ -121,6 +123,9 @@ type trafficAcc struct {
 	// only). A SUBSET: the same bytes are already in byRegion and in edge, and
 	// per subject and region it never exceeds what byRegion billed there.
 	voiceByRegion map[breakdownCell]int64
+	// bedrockByRegion is the same kind of subset for Bedrock joins (brx:/btx:).
+	// Voice and Bedrock are disjoint field families, so they never overlap.
+	bedrockByRegion map[breakdownCell]int64
 }
 
 // breakdownCell is one cell of the breakdown: where the bytes moved, which
@@ -192,12 +197,26 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 		cells := make([]store.TrafficTickCell, 0, len(acc.byRegion))
 		for rk, bytes := range acc.byRegion {
 			cells = append(cells, store.TrafficTickCell{Region: rk.region, Kind: rk.kind, Product: rk.product,
-				Bytes: bytes, Voice: acc.voiceByRegion[rk]})
+				Bytes: bytes, Voice: acc.voiceByRegion[rk], Bedrock: acc.bedrockByRegion[rk]})
 		}
+		// A subset cell with no total of its own (a region seeded this tick).
+		orphans := map[breakdownCell]store.TrafficTickCell{}
 		for rk, voice := range acc.voiceByRegion {
 			if _, ok := acc.byRegion[rk]; !ok {
-				cells = append(cells, store.TrafficTickCell{Region: rk.region, Kind: rk.kind, Product: rk.product, Voice: voice})
+				c := orphans[rk]
+				c.Region, c.Kind, c.Product, c.Voice = rk.region, rk.kind, rk.product, voice
+				orphans[rk] = c
 			}
+		}
+		for rk, bedrock := range acc.bedrockByRegion {
+			if _, ok := acc.byRegion[rk]; !ok {
+				c := orphans[rk]
+				c.Region, c.Kind, c.Product, c.Bedrock = rk.region, rk.kind, rk.product, bedrock
+				orphans[rk] = c
+			}
+		}
+		for _, c := range orphans {
+			cells = append(cells, c)
 		}
 		if err := a.store.AddTrafficTick(tenant, period, acc.edge, acc.relay, cells); err != nil {
 			logErrf("traffic-aggregator", "add usage for %s: %v", tenant, err)
@@ -406,8 +425,18 @@ func regionBytes(fields map[string]string) map[string]int64 {
 // region lands in regionUnknown, as it does in regionBytes, so both name the
 // same cell.
 func voiceRegionBytes(fields map[string]string) map[string]int64 {
+	return subsetRegionBytes(dirBytesFor(fields, "vrx", "vtx"))
+}
+
+// bedrockRegionBytes is voiceRegionBytes for Bedrock joins: "brx:<region>" and
+// "btx:<region>".
+func bedrockRegionBytes(fields map[string]string) map[string]int64 {
+	return subsetRegionBytes(dirBytesFor(fields, "brx", "btx"))
+}
+
+func subsetRegionBytes(dirs map[string][2]int64) map[string]int64 {
 	out := map[string]int64{}
-	for region, d := range voiceDirBytes(fields) {
+	for region, d := range dirs {
 		out[region] += d[0] + d[1]
 	}
 	return out
@@ -415,10 +444,17 @@ func voiceRegionBytes(fields map[string]string) map[string]int64 {
 
 // voiceDirBytes is voiceRegionBytes kept apart by direction: region to {rx, tx}.
 func voiceDirBytes(fields map[string]string) map[string][2]int64 {
+	return dirBytesFor(fields, "vrx", "vtx")
+}
+
+// dirBytesFor reads the "<rxName>:<region>" / "<txName>:<region>" fields of a
+// counter hash: region to {rx, tx}. Other fields, including the plain rx:/tx:
+// ones, are not touched.
+func dirBytesFor(fields map[string]string, rxName, txName string) map[string][2]int64 {
 	out := map[string][2]int64{}
 	for name, v := range fields {
 		dir, region, ok := strings.Cut(name, ":")
-		if !ok || (dir != "vrx" && dir != "vtx") {
+		if !ok || (dir != rxName && dir != txName) {
 			continue
 		}
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -429,7 +465,7 @@ func voiceDirBytes(fields map[string]string) map[string][2]int64 {
 			region = regionUnknown
 		}
 		d := out[region]
-		if dir == "vrx" {
+		if dir == rxName {
 			d[0] += n
 		} else {
 			d[1] += n
@@ -516,33 +552,43 @@ func (a *TrafficAggregator) collectRegions(
 	}
 
 	if kind == store.TrafficKindEdge {
-		a.collectVoice(ctx, subject, product, fields, billed, acc, tenantSeen, tenant)
+		voiceDeltas := a.collectSubset(ctx, trafficVoiceSeenKind, voiceRegionBytes(fields), &acc.voiceByRegion, subject, product, billed, tenantSeen, tenant)
+		// Bedrock is capped at what voice left of the region delta, so the two
+		// subsets together never exceed the bytes billed there.
+		room := make(map[string]int64, len(billed))
+		for region, d := range billed {
+			room[region] = max(0, d-voiceDeltas[region])
+		}
+		a.collectSubset(ctx, trafficBedrockSeenKind, bedrockRegionBytes(fields), &acc.bedrockByRegion, subject, product, room, tenantSeen, tenant)
 	}
 }
 
-// collectVoice computes the voice part of one edge counter's region deltas.
+// collectSubset computes one subset (voice, Bedrock) of one edge counter's
+// region deltas into *into, under the markers of seenKind.
 //
-// A missing voice marker bills in full: Core ships before any relay writes
-// vrx:/vtx:, so there is no history to seed. The delta is capped at what the
+// A missing marker bills in full: Core ships before any producer writes the
+// fields, so there is no history to seed. The delta is capped at what the
 // region itself billed this tick, which is what keeps a seeded region (billed 0)
 // or any other skew from making the subset larger than the whole. The marker
 // advances either way, so a capped remainder is dropped, never carried into a
 // later tick.
-func (a *TrafficAggregator) collectVoice(
+func (a *TrafficAggregator) collectSubset(
 	ctx context.Context,
+	seenKind string,
+	regionTotals map[string]int64,
+	into *map[breakdownCell]int64,
 	subject, product string,
-	fields map[string]string,
 	billed map[string]int64,
-	acc *trafficAcc,
 	tenantSeen map[string][]seenUpdate,
 	tenant string,
-) {
-	for region, current := range voiceRegionBytes(fields) {
+) map[string]int64 {
+	added := map[string]int64{}
+	for region, current := range regionTotals {
 		regionDelta, read := billed[region]
 		if !read {
 			continue // the region was not read this tick; neither is its voice
 		}
-		seenKey := trafficSeenPrefix + trafficVoiceSeenKind + ":" + subject + trafficRegionSeenSep + region
+		seenKey := trafficSeenPrefix + seenKind + ":" + subject + trafficRegionSeenSep + region
 		last, err := a.redis.Get(ctx, seenKey).Int64()
 		if err != nil && !errors.Is(err, redis.Nil) {
 			continue
@@ -555,16 +601,18 @@ func (a *TrafficAggregator) collectVoice(
 			delta = regionDelta
 		}
 		if delta > 0 {
-			if acc.voiceByRegion == nil {
-				acc.voiceByRegion = map[breakdownCell]int64{}
+			if *into == nil {
+				*into = map[breakdownCell]int64{}
 			}
-			acc.voiceByRegion[breakdownCell{region: region, kind: store.TrafficKindEdge, product: product}] += delta
+			(*into)[breakdownCell{region: region, kind: store.TrafficKindEdge, product: product}] += delta
+			added[region] = delta
 		}
 		// Rewritten on every read, unchanged or not: the write is what renews
 		// its TTL. A marker left to expire while player bytes keep moving and
-		// voice stays flat would bill the voice counter's lifetime again.
+		// the subset stays flat would bill the counter's lifetime again.
 		tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
 	}
+	return added
 }
 
 // sumByteFields sums every numeric value in a counter hash (rx+tx, up+down),

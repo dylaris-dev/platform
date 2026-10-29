@@ -126,6 +126,8 @@ export interface TrafficPool {
     // BYTES of this pool that were voice chat. A subset of usedGb, never on
     // top of it. Absent from an older Core.
     voiceBytes?: number;
+    // Same for Bedrock joins. A subset of usedGb. Absent from an older Core.
+    bedrockBytes?: number;
 }
 
 // getMyBilling returns the caller's lifecycle state for the banner.

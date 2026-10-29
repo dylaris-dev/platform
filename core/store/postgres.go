@@ -46,6 +46,8 @@ type PostgresStore struct {
 	// greenfield, so the read path tolerates a legacy plaintext secret still
 	// sitting in config and migrates it into secret_enc on the next write.
 	backupStorageSecretKey []byte
+	// bedrockKey seals bedrock_servers.floodgate_key_enc; nil fails writes closed.
+	bedrockKey []byte
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {

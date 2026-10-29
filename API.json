@@ -3860,6 +3860,25 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/servers/{id:[0-9]+}/bedrock",
+      "auth": "session",
+      "authorization": "network.read",
+      "handler": "GatewayHandler.GetServerBedrock",
+      "group": "servers",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/servers/{id:[0-9]+}/bedrock",
+      "auth": "session",
+      "authorization": "network.write",
+      "description": "body {\"enabled\": bool}.",
+      "handler": "GatewayHandler.SetServerBedrock",
+      "group": "servers",
+      "external": false
+    },
+    {
       "method": "POST",
       "path": "/api/servers/{id:[0-9]+}/console/command",
       "auth": "session",
@@ -5550,7 +5569,7 @@
       "path": "/api/voice/overview",
       "auth": "session",
       "authorization": "settings.read",
-      "description": "Live relays, port use per region, and voice bytes per region and server for the period (default: the current month).",
+      "description": "Live relays, port use per region, and voice bytes per region and server for the period (default: the current month), plus Bedrock bytes per server.",
       "handler": "VoiceStatsHandler.GetOverview",
       "group": "voice",
       "external": false
@@ -5787,10 +5806,10 @@
     }
   ],
   "counts": {
-    "total": 582,
+    "total": 584,
     "byAuth": {
       "none": 31,
-      "session": 533,
+      "session": 535,
       "user API key": 10,
       "warp key": 8
     },
@@ -5825,7 +5844,7 @@
       "regions": 1,
       "scheduled-tasks": 1,
       "server-roles": 4,
-      "servers": 91,
+      "servers": 93,
       "settings": 28,
       "setup": 2,
       "share": 1,

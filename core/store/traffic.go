@@ -132,6 +132,8 @@ type RegionUsage struct {
 	// VoiceBytes is the part of Bytes that was voice chat. A subset, never
 	// added on top: Bytes already includes it.
 	VoiceBytes int64 `json:"voiceBytes"`
+	// BedrockBytes is the part of Bytes that was Bedrock joins. A subset too.
+	BedrockBytes int64 `json:"bedrockBytes"`
 }
 
 // Traffic kinds. Open set on purpose - see the traffic_usage_region comment in
@@ -180,7 +182,7 @@ func addTrafficUsageRegion(x trafficExecer, userID string, period time.Time, reg
 // region tagging leaves behind.
 func (s *PostgresStore) GetTrafficUsageRegions(userID string, period time.Time) ([]RegionUsage, error) {
 	rows, err := s.db.Query(`
-		SELECT region, kind, product, bytes, voice_bytes FROM traffic_usage_region
+		SELECT region, kind, product, bytes, voice_bytes, bedrock_bytes FROM traffic_usage_region
 		WHERE user_id = $1 AND period = $2
 		ORDER BY bytes DESC, region, kind, product`, userID, period)
 	if err != nil {
@@ -190,7 +192,7 @@ func (s *PostgresStore) GetTrafficUsageRegions(userID string, period time.Time) 
 	var out []RegionUsage
 	for rows.Next() {
 		var r RegionUsage
-		if err := rows.Scan(&r.Region, &r.Kind, &r.Product, &r.Bytes, &r.VoiceBytes); err != nil {
+		if err := rows.Scan(&r.Region, &r.Kind, &r.Product, &r.Bytes, &r.VoiceBytes, &r.BedrockBytes); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -254,10 +256,10 @@ func (s *PostgresStore) ListTrafficUsage(period time.Time) ([]TrafficUsage, erro
 }
 
 // TrafficTickCell is one region cell of a tick: the bytes it adds and the
-// voice subset of them.
+// voice and Bedrock subsets of them.
 type TrafficTickCell struct {
 	Region, Kind, Product string
-	Bytes, Voice          int64
+	Bytes, Voice, Bedrock int64
 }
 
 // AddTrafficTick writes one tenant's tick - the total, its region cells and
@@ -282,6 +284,11 @@ func (s *PostgresStore) AddTrafficTick(userID string, period time.Time, edgeByte
 		if c.Voice > 0 {
 			if err := addTrafficUsageRegionVoice(tx, userID, period, c.Region, c.Kind, c.Product, c.Voice); err != nil {
 				return fmt.Errorf("voice %s/%s/%s: %w", c.Region, c.Kind, c.Product, err)
+			}
+		}
+		if c.Bedrock > 0 {
+			if err := addTrafficUsageRegionBedrock(tx, userID, period, c.Region, c.Kind, c.Product, c.Bedrock); err != nil {
+				return fmt.Errorf("bedrock %s/%s/%s: %w", c.Region, c.Kind, c.Product, err)
 			}
 		}
 	}

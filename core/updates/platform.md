@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.29
+
+### Features
+- Core, node and panel are ready for Bedrock players through the managed gateway: a per-server Floodgate key
+  is written for you and players will add the route domain without a port. The switch appears in the routes
+  dialog once a Bedrock entry runs in the server's region. `core` `node` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.28.10
 
 ### Features

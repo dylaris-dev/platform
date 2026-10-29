@@ -241,6 +241,14 @@ type Store interface {
 	DeleteVoicePermission(scope string) error
 	ListVoicePermissions() ([]VoicePermission, error)
 	// Real player IP mode per server (proxy_protocol_mode.go).
+	// Per-server Floodgate keys (postgres_bedrock.go).
+	EnableBedrock(serverID int, key []byte) error
+	GetBedrockKey(serverID int) ([]byte, bool, error)
+	DisableBedrock(serverID int) error
+	ListBedrockServers() ([]BedrockServer, error)
+	ListBedrockServerRefs() ([]BedrockServerRef, error)
+	AddBedrockUsage(serverID int, period time.Time, region string, rx, tx int64) error
+	ListBedrockUsage(period time.Time) ([]BedrockUsageRow, error)
 	GetServerProxyMode(id int) (string, error)
 	SetServerProxyMode(id int, mode string) error
 	ListProxyAutoServers() ([]ProxyAutoServer, error)

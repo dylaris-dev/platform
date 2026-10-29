@@ -26,6 +26,7 @@ var resealedPurposes = map[string]bool{
 	backupStorageSecretPurpose: true,
 	storageConnSecretPurpose:   true,
 	modrinthPATPurpose:         true,
+	bedrockFloodgatePurpose:    true,
 	settingsSecretPurpose:      true,
 	totpSecretPurpose:          true,
 }
@@ -44,6 +45,7 @@ var unresealablePurposes = map[string]string{
 var knownPurposeIdents = map[string]string{
 	"nodeSecretPurpose":          nodeSecretPurpose,
 	"modrinthPATPurpose":         modrinthPATPurpose,
+	"bedrockFloodgatePurpose":    bedrockFloodgatePurpose,
 	"mrpackPathPurpose":          mrpackPathPurpose,
 	"libraryMirrorPurpose":       libraryMirrorPurpose,
 	"backupStorageSecretPurpose": backupStorageSecretPurpose,

@@ -831,6 +831,39 @@ func TestCap_ServerVoiceSwitchNeedsNetworkWrite(t *testing.T) {
 	}
 }
 
+// Bedrock follows the voice split: network.read reads, network.write switches.
+func TestCap_ServerBedrockSwitchNeedsNetworkWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("net-id", "net", false)
+	fs.addUser("writer-id", "writer", false)
+	fs.addUser("stranger-id", "stranger", false)
+	fs.servers = map[int]*models.Server{16: {ID: 16, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{
+		70: {ID: 70, Capabilities: []string{"network.read"}},
+		71: {ID: 71, Capabilities: []string{"network.write"}},
+	}
+	fs.serverGrants = map[string]*store.ServerGrant{
+		skey(16, "net-id"):    {UserID: "net-id", ServerRoleID: intPtr(70)},
+		skey(16, "writer-id"): {UserID: "writer-id", ServerRoleID: intPtr(71)},
+	}
+	srv := newAuthzTestServer(t, fs)
+	path := "/api/servers/16/bedrock"
+	if deniedAtChokepoint(t, srv, "PUT", path, testIdentity{UserID: "owner-id", Username: "owner"}) ||
+		deniedAtChokepoint(t, srv, "PUT", path, testIdentity{UserID: "writer-id", Username: "writer"}) {
+		t.Error("owner and network.write member must pass the switch chokepoint")
+	}
+	if !deniedAtChokepoint(t, srv, "PUT", path, testIdentity{UserID: "net-id", Username: "net"}) {
+		t.Error("network.read-only member must be refused the switch")
+	}
+	if deniedAtChokepoint(t, srv, "GET", path, testIdentity{UserID: "net-id", Username: "net"}) {
+		t.Error("network.read member must pass the read chokepoint")
+	}
+	if !deniedAtChokepoint(t, srv, "GET", path, testIdentity{UserID: "stranger-id", Username: "stranger"}) {
+		t.Error("stranger must be refused")
+	}
+}
+
 // The voice overview is operator data across every tenant: settings.read, and
 // a server owner without it is refused.
 func TestCap_VoiceOverviewNeedsSettingsRead(t *testing.T) {

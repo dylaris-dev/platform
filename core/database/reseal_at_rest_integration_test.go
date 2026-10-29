@@ -72,6 +72,12 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 		t.Fatalf("SetSetting: %v", err)
 	}
 
+	before.SetBedrockEncryptionKey(secretBefore)
+	floodgateKey := bytes.Repeat([]byte{0x5A}, 16)
+	if err := before.EnableBedrock(f.server.ID, floodgateKey); err != nil {
+		t.Fatalf("EnableBedrock: %v", err)
+	}
+
 	before.SetTOTPEncryptionKey(secretBefore)
 	if err := before.SetUserTOTP(f.user.ID, "JBSWY3DPEHPK3PXP", "[]", true); err != nil {
 		t.Fatalf("SetUserTOTP: %v", err)
@@ -84,8 +90,8 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	if rep.Unreadable() != 0 {
 		t.Fatalf("report = %+v; every value was sealed under the source secret", rep.Buckets)
 	}
-	if len(rep.Buckets) != 6 {
-		t.Fatalf("got %d buckets, want 6: %+v", len(rep.Buckets), rep.Buckets)
+	if len(rep.Buckets) != 7 {
+		t.Fatalf("got %d buckets, want 7: %+v", len(rep.Buckets), rep.Buckets)
 	}
 	for _, b := range rep.Buckets {
 		if b.Moved < 1 {
@@ -100,6 +106,11 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	after.SetStorageConnEncryptionKey(secretAfter)
 	after.SetSettingsEncryptionKey(secretAfter)
 	after.SetTOTPEncryptionKey(secretAfter)
+	after.SetBedrockEncryptionKey(secretAfter)
+
+	if k, ok, err := after.GetBedrockKey(f.server.ID); err != nil || !ok || !bytes.Equal(k, floodgateKey) {
+		t.Errorf("Floodgate key under the new secret = %x, %v, %v", k, ok, err)
+	}
 
 	got, ok, err := redisacl.LoadNodeSecret(after, secretAfter, f.node.ID)
 	if err != nil || !ok {

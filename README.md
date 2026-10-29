@@ -662,6 +662,19 @@ These are set by the Node when it launches a container; they are listed for comp
 
 > The optional Gateway stack adds public ingress ports (`25565` Minecraft) and the Warp leader (`25599/udp`); it no longer serves HTTP(S) (`80`/`443`) - see the `dylaris-gateway` repo.
 
+### Bedrock players (Mode A, managed gateway)
+
+Bedrock players join gateway-routed servers through Geyser at the gateway; the server needs only Floodgate:
+
+- The edge hosts run a Geyser entry listening on `19132` (TCP signaling and UDP gameplay) (one per edge host, opened in the firewall).
+- The server owner installs Floodgate (plugin or mod) on the server; Dylaris does not install it.
+- Each server gets its own Floodgate key. The node writes it to `plugins/floodgate/key.pem`
+  (or `config/floodgate/key.pem`) before every start.
+- The panel switch "Bedrock players" lives in the routes dialog and appears only once a Bedrock
+  entry runs in the region.
+- Players add the route domain without a port. Consoles are not supported (no custom servers).
+- Signaling is plaintext, so each player sees a one-time trust prompt per region.
+
 ### DNS (minimal single-IP setup)
 
 Everything behind one IP, with a reverse proxy terminating TLS for the web surfaces:

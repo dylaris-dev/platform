@@ -1560,6 +1560,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if desired, derr := rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:desired_state", cmd.Config.UUID)).Result(); derr == nil && desired == "stopped" {
 			startIt = false
 		}
+		provisionFloodgateKey(ctx, rdb, serverPath, cmd.Config.UUID, subName)
 		recreate := dm.RecreateWithCommand
 		if !startIt {
 			recreate = dm.RecreateStopped
@@ -1658,6 +1659,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		cmd.Config.Docker.Command = startCmd
 
+		provisionFloodgateKey(ctx, rdb, serverPath, cmd.Config.UUID, subName)
 		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
 			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 		} else {
@@ -1678,6 +1680,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// and stops the server the user just asked for.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 		dm.PullContainerImage(cmd.Config.UUID)
+		provisionFloodgateKey(ctx, rdb, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.ActiveSubServer)
 		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone, cmd.Config.Docker.RAM); err != nil {
 			log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
 		} else {
@@ -1712,6 +1715,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Clean up stop-requested key to prevent race with new log-shipper instance
 		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
 		time.Sleep(2 * time.Second)
+		provisionFloodgateKey(ctx, rdb, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.ActiveSubServer)
 		// Recreate container (more reliable than ContainerStart on exited container)
 		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone, cmd.Config.Docker.RAM); err != nil {
 			log.Printf("Failed to restart server %s: %v", cmd.Config.UUID, err)
@@ -2040,6 +2044,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 		// Recreate container with start command - started only while the
 		// platform still means to run it (see setup).
+		provisionFloodgateKey(ctx, rdb, serverPath, cmd.Config.UUID, subName)
 		reinstallRecreate := dm.RecreateWithCommand
 		reinstallStatus := "starting"
 		if desired, derr := rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:desired_state", cmd.Config.UUID)).Result(); derr == nil && desired == "stopped" {

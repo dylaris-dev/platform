@@ -11,6 +11,7 @@ import RouteDomainPicker from '@/components/RouteDomainPicker';
 import ModalPanel from '@/components/ui/ModalPanel';
 import ServerProxyMode from '@/components/ServerProxyMode';
 import VoiceChatSwitch from '@/components/VoiceChatSwitch';
+import BedrockSwitch from '@/components/BedrockSwitch';
 import { useAppData } from '@/lib/AppDataContext';
 
 interface RoutesModalProps {
@@ -204,6 +205,7 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
 
                     {/* Shows itself only when Core allows voice here or it is on. */}
                     <VoiceChatSwitch serverId={serverId} />
+                    <BedrockSwitch serverId={serverId} />
 
                     {routesLoading ? (
                         <p className="text-sm text-(--base-07)">Loading routes…</p>

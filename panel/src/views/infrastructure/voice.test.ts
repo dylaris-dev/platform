@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { voiceRegionRows } from './VoicePanel';
+import { bedrockRows, voiceRegionRows } from './VoicePanel';
 import type { VoiceOverview, VoiceRegionStat } from '@/lib/api';
 
 const region = (r: Partial<VoiceRegionStat>): VoiceRegionStat => ({
@@ -27,5 +27,19 @@ describe('voiceRegionRows', () => {
         const o = overview([region({ region: 'b' }), region({ region: 'a' })]);
         voiceRegionRows(o);
         expect(o.regions.map(r => r.region)).toEqual(['b', 'a']);
+    });
+});
+
+describe('bedrockRows', () => {
+    const row = (serverId: number, rxBytes: number, txBytes: number) => ({ serverId, serverName: `s${serverId}`, region: 'eu', rxBytes, txBytes });
+
+    it('is empty when an older Core sent no bedrock list', () => {
+        expect(bedrockRows(overview([]))).toEqual([]);
+    });
+
+    it('lists the busiest server first without reordering the input', () => {
+        const o = { ...overview([]), bedrock: [row(1, 5, 5), row(2, 50, 1), row(3, 0, 20)] };
+        expect(bedrockRows(o).map(r => r.serverId)).toEqual([2, 3, 1]);
+        expect(o.bedrock.map(r => r.serverId)).toEqual([1, 2, 3]);
     });
 });
