@@ -678,6 +678,18 @@ Bedrock players join gateway-routed servers through Geyser at the gateway; the s
 - Players add the route domain without a port. Consoles are not supported (no custom servers).
 - Signaling is plaintext, so each player sees a one-time trust prompt per region.
 
+What a server owner does, once per server:
+
+1. Install Floodgate, not Geyser: the Spigot build in `plugins/` (Paper, Spigot, Purpur), the
+   Fabric build plus Fabric API in `mods/`, or the NeoForge build in `mods/`. Forge has no
+   Floodgate build and cannot take Bedrock players.
+2. In the routes dialog, set a route to "Java + Bedrock" (one address for both) or "Bedrock".
+3. Restart the server once, so the node writes the Floodgate key before the start.
+
+Minecraft 26.3 creates new servers with `white-list=true`. Bedrock players are added with
+Floodgate's `/fwhitelist add <name>` (after one join through Geyser), not `/whitelist add`.
+Customer docs: https://dylaris.com/docs/bedrock.
+
 ### DNS (minimal single-IP setup)
 
 Everything behind one IP, with a reverse proxy terminating TLS for the web surfaces:
