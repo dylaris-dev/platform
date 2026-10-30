@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.30
+
+### Features
+- Bedrock players can join your server: give a route "Java + Bedrock" or "Bedrock" in the routes
+  dialog and install Floodgate on the server. Players use the address with no port.
+- Available in the EU region first. Floodgate exists for Paper, Spigot, Fabric and NeoForge;
+  Forge cannot take Bedrock players.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.28.10
 
 ### Features
