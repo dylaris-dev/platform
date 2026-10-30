@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.30.3
+
+### Features
+- Route-only: Bedrock players can join your server. Set Players on the route to Java + Bedrock,
+  install Floodgate and save the key.pem from the route list in its folder, then restart.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.30.2
 
 ### Features

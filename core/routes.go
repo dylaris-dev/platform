@@ -1604,6 +1604,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/proxy-protocol", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.SetLinkRouteProxyProtocol))).Methods("PATCH")
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/voice", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteVoice)).Methods("PUT")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/bedrock", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteBedrock)).Methods("PUT")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/floodgate-key", authHandler.AuthMiddleware(gatewayHandler.GetLinkRouteFloodgateKey)).Methods("GET")
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
 
 	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)

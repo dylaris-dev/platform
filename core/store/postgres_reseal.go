@@ -136,6 +136,7 @@ func (s *PostgresStore) ResealAtRest(fromSecret, toSecret string) (*ResealReport
 		{storageConnSecretPurpose, "storage_connections", "id", "secret_enc"},
 		{modrinthPATPurpose, "modrinth_pats", "user_id", "ciphertext"},
 		{bedrockFloodgatePurpose, "bedrock_servers", "server_id", "floodgate_key_enc"},
+		{bedrockFloodgatePurpose, "link_route_editions", "domain", "floodgate_key_enc"},
 	}
 	for _, c := range columns {
 		b, err := resealColumn(tx, c.table, c.idCol, c.valCol,

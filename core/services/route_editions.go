@@ -33,8 +33,18 @@ func BedrockActive(ctx context.Context, f *FeatureFlags) bool {
 	return f != nil && f.BedrockAudience(ctx) != "off"
 }
 
-// PublishEditions rewrites RouteEditionsKey from the table in one MULTI, and
-// gives every server with a Bedrock route its Floodgate key. Keys are never
+// LinkRouteBedrockSubject is the name a route-only address's Floodgate key is
+// published under, in place of a server uuid: the bridge reads
+// dylaris:server:<subject>:floodgate (gateway repo, floodgateSubject, compiles
+// its own copy). Under the owner: prefix like LinkRouteVoiceSubject, and per
+// domain because every address has its own key.
+func LinkRouteBedrockSubject(ownerID, domain string) string {
+	return trafficOwnerSubjectPrefix + ownerID + ":bedrock:" + domain
+}
+
+// PublishEditions rewrites RouteEditionsKey from both tables in one MULTI, and
+// gives every server with a Bedrock route, and every route-only address with
+// a row, its Floodgate key. Keys are never
 // taken away here: Floodgate reads the key at startup, so a key that changed
 // on every off-and-on would need a restart each time, and access is decided
 // by this hash, not by the key.
@@ -58,6 +68,22 @@ func (b *BedrockService) PublishEditions(ctx context.Context, active bool) error
 				return err
 			}
 			hasKey[r.ServerID] = true
+		}
+		if v := EditionValue(r.Java, r.Bedrock, active); v != "" {
+			fields = append(fields, r.Domain, v)
+		}
+	}
+	links, err := b.store.ListLinkRouteEditions()
+	if err != nil {
+		return fmt.Errorf("list link route editions: %w", err)
+	}
+	for _, r := range links {
+		// No key: unreadable at rest (logged by the store). The one already
+		// in Redis stays; Reconcile keeps its name.
+		if r.Key != nil {
+			if err := b.publish(ctx, LinkRouteBedrockSubject(r.OwnerID, r.Domain), r.Key); err != nil {
+				return err
+			}
 		}
 		if v := EditionValue(r.Java, r.Bedrock, active); v != "" {
 			fields = append(fields, r.Domain, v)

@@ -157,6 +157,15 @@ func (b *BedrockService) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	// Route-only keys were published by PublishEditions above; they only
+	// have to survive the sweep. Read after the scan, like the servers.
+	links, err := b.store.ListLinkRouteEditions()
+	if err != nil {
+		return fmt.Errorf("list link route editions: %w", err)
+	}
+	for _, r := range links {
+		keep[FloodgateKeyRedisKey(LinkRouteBedrockSubject(r.OwnerID, r.Domain))] = true
+	}
 	for _, k := range existing {
 		if !keep[k] && strings.HasSuffix(k, ":floodgate") {
 			if err := b.redis.Del(ctx, k).Err(); err != nil {

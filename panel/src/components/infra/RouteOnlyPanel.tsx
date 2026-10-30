@@ -20,6 +20,7 @@ import LinkBadge from '@/components/infra/LinkBadge';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
 import LinkRouteVoiceSwitch from '@/components/infra/LinkRouteVoiceSwitch';
+import LinkRouteBedrock from '@/components/infra/LinkRouteBedrock';
 import { useAppData } from '@/lib/AppDataContext';
 
 // Named RouteOnlyPanel, not RoutesPanel: views/infrastructure/RoutesPanel is
@@ -511,6 +512,13 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                     voice={rt.voice}
                                     allowed={!!rt.voice_allowed}
                                     onSaved={v => setRoutes(prev => prev.map(r => r.domain === rt.domain ? { ...r, voice: v } : r))}
+                                />
+                                <LinkRouteBedrock
+                                    domain={rt.domain}
+                                    bedrock={rt.bedrock}
+                                    allowed={!!rt.bedrock_allowed}
+                                    active={!!rt.bedrock_active}
+                                    onSaved={v => setRoutes(prev => prev.map(r => r.domain === rt.domain ? { ...r, bedrock: v } : r))}
                                 />
                             </div>
                             <div className="flex items-center gap-1 shrink-0">

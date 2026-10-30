@@ -12,6 +12,12 @@ export function editionOf(b: Pick<ServerBedrock, 'routes'> | null, domain: strin
     return r.bedrock ? 'bedrock' : 'java';
 }
 
+/** A route-only address's stored flags as an edition; no flags is Java only. */
+export function linkEdition(v: { java: boolean; bedrock: boolean } | undefined): Edition {
+    if (!v || !v.bedrock) return 'java';
+    return v.java ? 'both' : 'bedrock';
+}
+
 export function editionFlags(e: Edition): { java: boolean; bedrock: boolean } {
     return { java: e !== 'bedrock', bedrock: e !== 'java' };
 }

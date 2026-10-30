@@ -688,6 +688,10 @@ What a server owner does, once per server:
 
 Minecraft 26.3 creates new servers with `white-list=true`. Bedrock players are added with
 Floodgate's `/fwhitelist add <name>` (after one join through Geyser), not `/whitelist add`.
+Route-only addresses (no Dylaris node) work the same way: the route list under My Infrastructure
+has the same choice, stored in `link_route_editions` with the address's own Floodgate key. Core
+publishes that key as `dylaris:server:owner:<owner>:bedrock:<domain>:floodgate` for the bridge,
+and the customer downloads it as `key.pem` and copies it into Floodgate's folder themselves.
 Customer docs: https://dylaris.com/docs/bedrock.
 
 ### DNS (minimal single-IP setup)

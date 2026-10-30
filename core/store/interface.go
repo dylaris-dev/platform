@@ -253,6 +253,11 @@ type Store interface {
 	SetRouteEdition(serverID int, domain string, java, bedrock bool) error
 	DeleteRouteEdition(domain string) error
 	ListRouteEditions(serverID int) ([]RouteEdition, error)
+	// The same for route-only addresses, each with its own Floodgate key
+	// (postgres_link_route_editions.go).
+	SetLinkRouteEdition(domain string, java, bedrock bool, key []byte) error
+	GetLinkRouteEdition(domain string) (*LinkRouteEdition, error)
+	ListLinkRouteEditions() ([]LinkRouteEdition, error)
 	GetServerProxyMode(id int) (string, error)
 	SetServerProxyMode(id int, mode string) error
 	ListProxyAutoServers() ([]ProxyAutoServer, error)

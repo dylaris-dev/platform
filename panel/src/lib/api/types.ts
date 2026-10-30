@@ -1,4 +1,4 @@
-import { API_URL as API_BASE } from './core';
+import { API_URL as API_BASE, getAuthHeader } from './core';
 import { handleUnauthorized } from './session';
 import type { GatewayBandwidthOverview, BandwidthHistory } from '../bandwidth';
 
@@ -1439,8 +1439,16 @@ export interface LinkRoute {
     voice?: LinkRouteVoice;
     /** Whether the owner may turn voice on (the switch also shows while it is on). */
     voice_allowed?: boolean;
+    /** Which editions this address takes, and whether it has a Floodgate key to download. */
+    bedrock?: LinkRouteBedrock;
+    /** Whether this caller may give an address Bedrock (the platform switch). */
+    bedrock_allowed?: boolean;
+    /** False while the platform switch is off: Bedrock is paused, not forgotten. */
+    bedrock_active?: boolean;
 }
 export interface LinkRouteVoice { enabled: boolean; port?: number; target_port?: number }
+/** refusal: why Bedrock cannot be ADDED here now (region, custom domain); empty when it can. */
+export interface LinkRouteBedrock { java: boolean; bedrock: boolean; has_key: boolean; refusal?: string }
 export interface CreateLinkRouteRequest extends CreateRouteRequest {
     linkId: string;    // the Link kit's id (warp key node_id)
     targetHost: string; // the LOCAL target the Link dials (LAN / loopback allowed)
@@ -1452,6 +1460,24 @@ export const deleteLinkRoute = (domain: string) =>
     fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 export const setLinkRouteProxyProtocol = (domain: string, enabled: boolean): Promise<{ success?: boolean; proxyProtocol?: boolean; message?: string; error?: string; code?: string }> =>
     fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/proxy-protocol`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+export const setLinkRouteBedrock = (domain: string, e: { java: boolean; bedrock: boolean }): Promise<{ success?: boolean; bedrock?: LinkRouteBedrock; message?: string; error?: string; code?: string }> =>
+    fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/bedrock`, { method: 'PUT', body: JSON.stringify(e) });
+/**
+ * Saves the address's Floodgate key as key.pem. Through fetch, because the API
+ * is behind a bearer token a plain link cannot carry (see downloadMetricsExport).
+ */
+export async function downloadLinkRouteFloodgateKey(domain: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/gateway/link-routes/${encodeURIComponent(domain)}/floodgate-key`, { headers: getAuthHeader() });
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'key.pem';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 export const setLinkRouteVoice = (domain: string, enabled: boolean, targetPort: number): Promise<{ success?: boolean; voice?: LinkRouteVoice; message?: string; error?: string; code?: string }> =>
     fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/voice`, { method: 'PUT', body: JSON.stringify({ enabled, target_port: targetPort }) });
 

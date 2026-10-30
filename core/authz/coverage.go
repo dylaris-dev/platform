@@ -215,6 +215,8 @@ var ExemptRoutes = map[string]bool{
 	"/api/gateway/link-routes/{domain:.+}":                   true, // authed; in-handler owner filter
 	"/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol": true, // authed; in-handler owner filter, same as the delete
 	"/api/gateway/link-routes/{domain:[^/]+}/voice":          true, // authed; in-handler owner filter, same as the delete
+	"/api/gateway/link-routes/{domain:[^/]+}/bedrock":        true, // authed; in-handler owner filter, same as the delete
+	"/api/gateway/link-routes/{domain:[^/]+}/floodgate-key":  true, // authed; in-handler owner filter, same as the delete
 
 	// Warp route-only link kits: tenant self-service, BYON-gated + owner-filtered in-handler.
 	"/api/warp/link-kits":               true, // authed; in-handler owner filter

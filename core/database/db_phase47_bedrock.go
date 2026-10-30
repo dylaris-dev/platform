@@ -40,6 +40,18 @@ func applyBedrockSchema(db *sql.DB) error {
 			bedrock    BOOLEAN NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		// The same for a route-only address, which has no server row. The
+		// row also holds that route's own Floodgate key (sealed like
+		// bedrock_servers), because nothing writes it onto the customer's
+		// server: they download it. Java only is kept as a row so the key
+		// survives Bedrock being switched off and on.
+		`CREATE TABLE IF NOT EXISTS link_route_editions (
+			domain            TEXT PRIMARY KEY REFERENCES core_link_routes(domain) ON DELETE CASCADE,
+			java              BOOLEAN NOT NULL,
+			bedrock           BOOLEAN NOT NULL,
+			floodgate_key_enc TEXT NOT NULL,
+			updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			return fmt.Errorf("bedrock usage schema: %w", err)

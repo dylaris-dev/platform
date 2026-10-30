@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **583 routes** in 53 sections: 256 GET, 172 POST, 53 PUT, 40 PATCH, 63 DELETE.
+- **585 routes** in 53 sections: 257 GET, 172 POST, 54 PUT, 40 PATCH, 63 DELETE.
 - **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **383** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **128** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **383** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **130** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **36** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -151,7 +151,7 @@ can still show what exists.
 - [/api/disk](#apidisk) (4)
 - [/api/external](#apiexternal) (10)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (23)
+- [/api/gateway](#apigateway) (25)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
@@ -466,6 +466,8 @@ can still show what exists.
 | GET | `/api/gateway/link-routes` | session | _no capability_ | - | `GatewayHandler.ListLinkRoutes` | the caller's route-only entries. |
 | POST | `/api/gateway/link-routes` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
 | DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _no capability_ | - | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
+| PUT | `/api/gateway/link-routes/{domain:[^/]+}/bedrock` | session | _no capability_ | - | `GatewayHandler.SetLinkRouteBedrock` | body {"java": bool, "bedrock": bool}. |
+| GET | `/api/gateway/link-routes/{domain:[^/]+}/floodgate-key` | session | _no capability_ | - | `GatewayHandler.GetLinkRouteFloodgateKey` | the address's Floodgate key as key.pem (the 16 raw bytes Floodgate reads). |
 | PATCH | `/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.SetLinkRouteProxyProtocol` | switches real player IP forwarding on one route-only entry. |
 | PUT | `/api/gateway/link-routes/{domain:[^/]+}/voice` | session | _no capability_ | - | `GatewayHandler.SetLinkRouteVoice` | body {"enabled": bool, "target_port": int}. |
 | GET | `/api/gateway/links` | session | `topology.read` | - | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |

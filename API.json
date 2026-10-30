@@ -2127,6 +2127,26 @@
       "external": false
     },
     {
+      "method": "PUT",
+      "path": "/api/gateway/link-routes/{domain:[^/]+}/bedrock",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "body {\"java\": bool, \"bedrock\": bool}.",
+      "handler": "GatewayHandler.SetLinkRouteBedrock",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/link-routes/{domain:[^/]+}/floodgate-key",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the address's Floodgate key as key.pem (the 16 raw bytes Floodgate reads).",
+      "handler": "GatewayHandler.GetLinkRouteFloodgateKey",
+      "group": "gateway",
+      "external": false
+    },
+    {
       "method": "PATCH",
       "path": "/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol",
       "auth": "session",
@@ -5806,10 +5826,10 @@
     }
   ],
   "counts": {
-    "total": 584,
+    "total": 586,
     "byAuth": {
       "none": 31,
-      "session": 535,
+      "session": 537,
       "user API key": 10,
       "warp key": 8
     },
@@ -5825,7 +5845,7 @@
       "disk": 4,
       "external": 10,
       "files": 10,
-      "gateway": 23,
+      "gateway": 25,
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,

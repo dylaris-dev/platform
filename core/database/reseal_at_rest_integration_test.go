@@ -18,12 +18,12 @@ const (
 )
 
 // Against a real Postgres because the whole operation is one transaction over
-// five tables, and because every bucket is read back through the SAME store
+// every sealed table, and because every bucket is read back through the SAME store
 // methods production uses - a hand-built decrypt would prove that this test can
 // decrypt, not that Core can.
 //
 // On a scratch database rather than the shared one: this rewrites every row in
-// five tables, so it must not run over rows another test is holding.
+// every sealed table, so it must not run over rows another test is holding.
 func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	db := freshSchemaDB(t)
 
@@ -77,6 +77,11 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	if err := before.EnableBedrock(f.server.ID, floodgateKey); err != nil {
 		t.Fatalf("EnableBedrock: %v", err)
 	}
+	rt := linkRoute(t, before)
+	linkKey := bytes.Repeat([]byte{0x6C}, 16)
+	if err := before.SetLinkRouteEdition(rt.Domain, true, true, linkKey); err != nil {
+		t.Fatalf("SetLinkRouteEdition: %v", err)
+	}
 
 	before.SetTOTPEncryptionKey(secretBefore)
 	if err := before.SetUserTOTP(f.user.ID, "JBSWY3DPEHPK3PXP", "[]", true); err != nil {
@@ -90,8 +95,8 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	if rep.Unreadable() != 0 {
 		t.Fatalf("report = %+v; every value was sealed under the source secret", rep.Buckets)
 	}
-	if len(rep.Buckets) != 7 {
-		t.Fatalf("got %d buckets, want 7: %+v", len(rep.Buckets), rep.Buckets)
+	if len(rep.Buckets) != 8 {
+		t.Fatalf("got %d buckets, want 8: %+v", len(rep.Buckets), rep.Buckets)
 	}
 	for _, b := range rep.Buckets {
 		if b.Moved < 1 {
@@ -110,6 +115,9 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 
 	if k, ok, err := after.GetBedrockKey(f.server.ID); err != nil || !ok || !bytes.Equal(k, floodgateKey) {
 		t.Errorf("Floodgate key under the new secret = %x, %v, %v", k, ok, err)
+	}
+	if e, err := after.GetLinkRouteEdition(rt.Domain); err != nil || e == nil || !bytes.Equal(e.Key, linkKey) {
+		t.Errorf("route-only Floodgate key under the new secret = %+v, %v", e, err)
 	}
 
 	got, ok, err := redisacl.LoadNodeSecret(after, secretAfter, f.node.ID)

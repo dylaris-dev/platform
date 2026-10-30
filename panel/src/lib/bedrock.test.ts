@@ -4,7 +4,7 @@ vi.mock('./api', () => ({ setRouteEdition: vi.fn() }));
 import { setRouteEdition } from './api';
 import {
     addBlockedReason, canAddBedrock, changeEdition, editionFlags, editionOf, editionOptions,
-    floodgateLink, pausedNotice, showBedrock,
+    floodgateLink, linkEdition, pausedNotice, showBedrock,
 } from './bedrock';
 
 const set = vi.mocked(setRouteEdition);
@@ -83,5 +83,14 @@ describe('changeEdition', () => {
     it('returns the 409 message from Core', async () => {
         set.mockResolvedValue({ success: false, code: 'bedrock_disabled', message: 'Bedrock is turned off on this platform.' });
         expect(await changeEdition(7, 'a.example.com', 'both')).toBe('Bedrock is turned off on this platform.');
+    });
+});
+
+describe('linkEdition', () => {
+    it('reads a route-only address the way Core stores it', () => {
+        expect(linkEdition(undefined)).toBe('java');
+        expect(linkEdition({ java: true, bedrock: false })).toBe('java');
+        expect(linkEdition({ java: true, bedrock: true })).toBe('both');
+        expect(linkEdition({ java: false, bedrock: true })).toBe('bedrock');
     });
 });

@@ -354,6 +354,12 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 		LinkID       string             `json:"link_id,omitempty"`
 		Voice        linkRouteVoiceView `json:"voice"`
 		VoiceAllowed bool               `json:"voice_allowed"`
+		// Bedrock is this address's editions; BedrockAllowed whether this
+		// caller may give an address Bedrock, BedrockActive whether the
+		// platform switch is on (off pauses Bedrock without forgetting it).
+		Bedrock        linkRouteBedrockView `json:"bedrock"`
+		BedrockAllowed bool                 `json:"bedrock_allowed"`
+		BedrockActive  bool                 `json:"bedrock_active"`
 	}
 	voice := map[string]*store.LinkRouteVoice{}
 	if rows, err := h.state.Store.ListLinkRouteVoice(); err == nil {
@@ -364,12 +370,25 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 		log.Printf("voice: list route voice ports: %v", err)
 	}
 	allowed := h.linkRouteVoiceAllowed(userID)
-	out := make([]linkRoute, 0)
+	var mine []services.GatewayRoute
+	var domains []string
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
 		if rt.CoreOwned && rt.OwnerID == userID {
-			out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID],
-				Voice: newLinkRouteVoiceView(voice[rt.Domain]), VoiceAllowed: allowed})
+			mine = append(mine, rt)
+			domains = append(domains, rt.Domain)
 		}
+	}
+	bedrock := map[string]linkRouteBedrockView{}
+	if len(mine) > 0 {
+		bedrock = h.linkRouteBedrockViews(h.ctx(), domains)
+	}
+	bedrockAllowed := h.bedrockAllowed(r)
+	bedrockActive := services.BedrockActive(r.Context(), h.state.FeatureFlags)
+	out := make([]linkRoute, 0, len(mine))
+	for _, rt := range mine {
+		out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID],
+			Voice: newLinkRouteVoiceView(voice[rt.Domain]), VoiceAllowed: allowed,
+			Bedrock: bedrock[rt.Domain], BedrockAllowed: bedrockAllowed, BedrockActive: bedrockActive})
 	}
 	json.NewEncoder(w).Encode(out)
 }
@@ -390,6 +409,14 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 	if err := h.state.Gateway.DeleteCoreOwnedRoute(domain); err != nil {
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
+	}
+	// Its editions row went with the route (cascade); tell the gateway now
+	// rather than at the next reconcile, so a domain registered again at once
+	// starts as Java only. Best-effort: the reconcile repeats it.
+	if h.state.Redis != nil {
+		if err := h.bedrockService().PublishEditions(h.ctx(), services.BedrockActive(r.Context(), h.state.FeatureFlags)); err != nil {
+			log.Printf("link route %s: publish editions: %v", domain, err)
+		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Route deleted"})
 }

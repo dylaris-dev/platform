@@ -31,6 +31,7 @@ const MUTATING = [
     'setLinkRouteProxyProtocol',
     'setLinkRouteVoice',
     'setRouteEdition',
+    'setLinkRouteBedrock',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

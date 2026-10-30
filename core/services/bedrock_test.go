@@ -19,6 +19,11 @@ type bedrockFakeStore struct {
 	usage   []voiceUsageCall
 	useErr  error
 	eds     []store.RouteEdition
+	links   []store.LinkRouteEdition
+}
+
+func (f *bedrockFakeStore) ListLinkRouteEditions() ([]store.LinkRouteEdition, error) {
+	return f.links, nil
 }
 
 func (f *bedrockFakeStore) ListRouteEditions(int) ([]store.RouteEdition, error) { return f.eds, nil }
@@ -203,5 +208,57 @@ func TestBedrockMeterRenewsSeenOnAFlatCounter(t *testing.T) {
 	}
 	if ttl := mr.TTL(bedrockSeenPrefix + "uuid-7"); ttl <= time.Hour {
 		t.Fatalf("seen TTL = %v, want renewed to %v", ttl, trafficSeenTTL)
+	}
+}
+
+// A route-only address has no server row: its key is published under the
+// owner subject the bridge derives, survives the orphan sweep, and its
+// edition lands in the same hash as a server route's.
+func TestBedrockReconcileKeepsRouteOnlyKeys(t *testing.T) {
+	mr, rdb := newVoiceRedis(t)
+	fs := newBedrockFake()
+	key := bytes.Repeat([]byte{0x33}, 16)
+	fs.links = []store.LinkRouteEdition{{Domain: "r.eu.dylaris.com", OwnerID: "owner-1", Java: true, Bedrock: true, Key: key}}
+	name := FloodgateKeyRedisKey("owner:owner-1:bedrock:r.eu.dylaris.com")
+	if name != FloodgateKeyRedisKey(LinkRouteBedrockSubject("owner-1", "r.eu.dylaris.com")) {
+		t.Fatal("subject drifted from the bridge's copy (gateway floodgateSubject)")
+	}
+	mr.Set(FloodgateKeyRedisKey("orphan"), "AAAA")
+	svc := NewBedrockService(fs, rdb)
+	svc.SetFlags(nil) // off: the key is still kept, the edition pauses
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mr.Get(name); got != base64.StdEncoding.EncodeToString(key) {
+		t.Fatalf("route-only key %q, want the stored one", got)
+	}
+	if mr.Exists(FloodgateKeyRedisKey("orphan")) {
+		t.Fatal("orphan key not removed")
+	}
+	if err := svc.PublishEditions(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if got := mr.HGet(RouteEditionsKey, "r.eu.dylaris.com"); got != "both" {
+		t.Fatalf("edition %q, want both", got)
+	}
+}
+
+// A route-only row whose key could not be read (Key nil) must not stop the
+// publish for everyone else: its edition is still written, server routes too,
+// and no empty key is put in Redis.
+func TestPublishEditionsSurvivesAnUnreadableRouteOnlyKey(t *testing.T) {
+	mr, rdb := newVoiceRedis(t)
+	fs := newBedrockFake()
+	fs.keys[7] = bytes.Repeat([]byte{1}, 16)
+	fs.eds = []store.RouteEdition{{Domain: "s.eu.dylaris.com", ServerID: 7, ServerUUID: "uuid-7", Java: true, Bedrock: true}}
+	fs.links = []store.LinkRouteEdition{{Domain: "r.eu.dylaris.com", OwnerID: "owner-1", Java: false, Bedrock: true}}
+	if err := NewBedrockService(fs, rdb).PublishEditions(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if mr.HGet(RouteEditionsKey, "s.eu.dylaris.com") != "both" || mr.HGet(RouteEditionsKey, "r.eu.dylaris.com") != "bedrock" {
+		t.Fatalf("editions: s=%q r=%q", mr.HGet(RouteEditionsKey, "s.eu.dylaris.com"), mr.HGet(RouteEditionsKey, "r.eu.dylaris.com"))
+	}
+	if mr.Exists(FloodgateKeyRedisKey(LinkRouteBedrockSubject("owner-1", "r.eu.dylaris.com"))) {
+		t.Fatal("an unreadable key was published")
 	}
 }
