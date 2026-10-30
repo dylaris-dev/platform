@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.30.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A player who logs out now leaves your server within a second instead of up to 25 seconds.
+  Your link updates itself; nothing to do.
+
 ## 2026.10.30
 
 ### Features
