@@ -750,6 +750,8 @@ func main() {
 	extras.warpService.StartResyncWatcher(coreLeader.IsLeader)
 	// Imported Modrinth packs pick up newly published versions (leader only).
 	extras.packsHandler.StartModrinthSync(bgCtx, coreLeader)
+	// Server packs live in a local temp cache for an hour, never in storage.
+	extras.packsHandler.StartServerPackSweeper(bgCtx)
 
 	// Custom-domain ownership proof. Tenants get a grant to point their own
 	// domain at us; this is what enforces the deadline and removes the route when
@@ -954,6 +956,8 @@ func main() {
 	// slow or wedged storage never holds up the boot; it retries on the next
 	// start until it has succeeded once.
 	go appState.PurgeLibraryStorage(bgCtx)
+	// Same shape, once: the server packs that used to be stored for share links.
+	go appState.PurgeStoredServerPacks(bgCtx)
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.

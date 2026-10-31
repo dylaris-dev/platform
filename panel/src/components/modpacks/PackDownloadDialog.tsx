@@ -27,6 +27,7 @@ export default function PackDownloadDialog({ pack, build, kind, onClose }: { pac
             const response = await fetch(`${mrpackDownloadUrl(pack.id, build.id)}?kind=${kind}`, { headers: getAuthHeader(), signal: controller.signal });
             if (!response.ok) {
                 if (response.status === 503) throw new Error('The server archive is being prepared. Try again in a minute. Large packs can take longer on their first download.');
+                if (response.status === 403 && kind === 'server') throw new Error('Only the pack owner and members with edit access can download the server ZIP. Install the pack through DYLARIS instead.');
                 throw new Error(`Download failed (${response.status}). Check your access and try again.`);
             }
             const blob = await response.blob();

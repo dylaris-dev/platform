@@ -229,6 +229,20 @@ func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v
 	return err
 }
 
+// modrinthFileBySHA1 is the file of v whose sha1 is sha1hex, when it can be a
+// clean files[] reference: on the Modrinth CDN and carrying both hashes.
+// Modrinth answers a hash lookup with the whole version, and the file that
+// matched is not always the primary one.
+func modrinthFileBySHA1(v *services.ModrinthVersion, sha1hex string) *services.ModrinthFile {
+	for i := range v.Files {
+		f := &v.Files[i]
+		if strings.EqualFold(f.Hashes["sha1"], sha1hex) && f.Hashes["sha512"] != "" && strings.HasPrefix(f.URL, "https://cdn.modrinth.com/") {
+			return f
+		}
+	}
+	return nil
+}
+
 // validateStoredModZip runs the store-time zip checks over a seekable upload
 // (an io.ReaderAt) instead of a []byte, so a large pre-built content bundle
 // never has to be read into memory just to be validated. It rejects a
@@ -393,16 +407,25 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		Source:     models.SourceUpload,
 		TargetPath: targetPath,
 	}
-	// Auto-link: does this jar's sha1 match a Modrinth project?
+	// Auto-link: does this jar's sha1 match a Modrinth file? Then it becomes a
+	// plain reference to that file and the uploaded bytes are not kept: Dylaris
+	// does not store copies of files Modrinth distributes (owner decision
+	// 2026-10-31). A match that cannot be a clean reference stays an upload.
 	if innerSha1 != "" && !archive && (contentType == models.ContentTypeMod || contentType == models.ContentTypeResourcepack || contentType == models.ContentTypeShaderpack) {
-		if v := services.ModrinthByHash(innerSha1); v != nil {
-			if validateModrinthContent(b, v, contentType) == nil {
+		if v := services.ModrinthByHash(innerSha1); v != nil && validateModrinthContent(b, v, contentType) == nil {
+			if f := modrinthFileBySHA1(v, innerSha1); f != nil {
 				mv.Source = models.SourceModrinth
 				mv.ModrinthProjectID = v.ProjectID
 				mv.ModrinthVersionID = v.ID
 				mv.ModrinthVersionNumber = v.VersionNum
 				mv.ModrinthGameVersions = strings.Join(v.GameVersions, ",")
-				mv.ModrinthDownloadURL = v.PrimaryFile().URL
+				mv.ModrinthDownloadURL = f.URL
+				mv.SHA1 = f.Hashes["sha1"]
+				mv.SHA512 = f.Hashes["sha512"]
+				mv.Filesize = f.Size
+				mv.Version = v.VersionNum
+				mv.StorageKey = ""
+				mv.MD5 = ""
 			}
 		}
 	}
@@ -411,6 +434,10 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
 		handlers.SendJSONError(w, "Failed to save version", http.StatusInternalServerError)
 		return
+	}
+	if mv.StorageKey == "" {
+		// Linked: the row is a reference now, so the stored upload goes.
+		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
 	}
 	if _, err := h.state.Store.AttachModversionToBuild(b.ID, mvID, side); err != nil {
 		handlers.SendJSONError(w, "Failed to attach", http.StatusInternalServerError)

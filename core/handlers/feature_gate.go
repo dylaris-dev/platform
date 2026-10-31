@@ -15,9 +15,6 @@ const FeatureModpacks = "modpacks"
 // + JSON error responses for the ticket subsystem.
 const FeatureTickets = "tickets"
 
-// FeatureShareLinks is the canonical name for the modpack share-links sub-feature.
-const FeatureShareLinks = "modpack_share_links"
-
 // FeatureModpackAuthoring is the canonical name for the end-user half of the
 // modpack switch: the subsystem is on, but authoring is not open to users.
 const FeatureModpackAuthoring = "modpack_authoring"
@@ -42,19 +39,6 @@ func (s *AppState) RequireModpacksEnabled(next http.HandlerFunc) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsModpacksEnabled(r.Context()) {
 			featureDisabledResponse(w, FeatureModpacks, "Modpack authoring is disabled by the platform admin.")
-			return
-		}
-		next(w, r)
-	}
-}
-
-// RequireShareLinksEnabled blocks share-link CREATION with 503 feature_disabled
-// when the admin has not enabled share links. Layer it between
-// RequireModpacksEnabled and RequireUserCanCreateModpacks.
-func (s *AppState) RequireShareLinksEnabled(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.FeatureFlags.IsShareLinksEnabled(r.Context()) {
-			featureDisabledResponse(w, FeatureShareLinks, "Share links are disabled by the platform admin.")
 			return
 		}
 		next(w, r)

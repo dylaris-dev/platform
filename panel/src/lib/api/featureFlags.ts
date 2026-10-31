@@ -32,9 +32,6 @@ export interface FeatureFlags {
     // STORE_URL + STORE_SHARED_KEY set. Gates the connect-store button and the
     // demo account/server admin UI; false on a self-host/open-core build.
     store: boolean;
-    // Gates the builder's share-link create UI. Existing links still show/copy/
-    // revoke while modpacks is on; this only reflects the create toggle.
-    shareLinks: boolean;
     // Whether modpack archives have anywhere to go. Separate from `modpacks`:
     // the subsystem can be switched on with no storage behind it, and until now
     // that only surfaced as an HTTP 424 at the end of building a pack.

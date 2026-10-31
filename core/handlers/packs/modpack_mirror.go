@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"dylaris-core/handlers"
 
@@ -13,24 +14,27 @@ import (
 // ModpackMirror streams a rendered pack .mrpack to the node installing it.
 //
 // Unauthenticated, because the node fetches it with a plain GET and no
-// credential. The key carries an HMAC of CLUSTER_SECRET (mrpackStorageKey), so
-// it cannot be guessed; the prefix check is what keeps this from being a
-// general read of the storage bucket. SECURITY: only keys under modpacks/ after
-// path.Clean, and no traversal. The Solder prefixes this route used to allow
-// (solder/mods/, loaders/) are gone with Solder - anything left under them in a
-// bucket is no longer reachable from here, which is the point.
+// credential. The URL carries an expiring signature Core made for that one key
+// (handlers.SignedModpackMirrorURL), and only a build's pack.mrpack is ever
+// served: the unguessable path alone used to be the credential, with no expiry,
+// which made every install URL a permanent public download. Every refusal is
+// the same 404, so the route is not an oracle for which keys exist.
 func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
+	notFound := func() { handlers.SendJSONError(w, "Not found", http.StatusNotFound) }
 	if !h.state.FeatureFlags.IsModpacksEnabled(r.Context()) {
 		handlers.SendJSONError(w, "Modpacks are disabled", http.StatusForbidden)
 		return
 	}
 	// path.Clean resolves every ".." segment, so a cleaned key that starts with
-	// modpacks/ cannot contain one and the prefix test alone is the boundary
-	// (TestModpackMirrorServesBuiltPacksOnly). The explicit ".." check is a
-	// second fence for the day the Clean moves; no input reaches it today.
+	// modpacks/ cannot contain one; the explicit check is a second fence.
 	key := path.Clean(mux.Vars(r)["rest"])
-	if strings.Contains(key, "..") || !strings.HasPrefix(key, "modpacks/") {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+	if strings.Contains(key, "..") || !strings.HasPrefix(key, "modpacks/") || !strings.HasSuffix(key, "/pack.mrpack") {
+		notFound()
+		return
+	}
+	q := r.URL.Query()
+	if !handlers.ValidModpackMirrorSig(h.state.ClusterSecret, key, q.Get("exp"), q.Get("sig"), time.Now()) {
+		notFound()
 		return
 	}
 	prov, err := h.state.BuildModpackStorageProvider()
@@ -39,11 +43,9 @@ func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Streamed rather than redirected, so the node only ever talks to the host
-	// its MODPACK_MIRROR_HOSTS allowlist names - a redirect would hand it a
-	// storage-bucket URL instead. And streamed rather than loaded whole: Core
-	// used to hold the entire pack in memory once per concurrent request.
+	// it was told to trust - a redirect would hand it a storage-bucket URL.
 	if err := handlers.ServeModpackObject(w, r, prov, key, handlers.DeliverStream, "application/zip", path.Base(key)); err != nil {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		notFound()
 		return
 	}
 }

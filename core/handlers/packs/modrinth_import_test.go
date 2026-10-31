@@ -77,7 +77,8 @@ func TestImportModrinthVersionBuildsAFrozenImportedBuild(t *testing.T) {
 	pack := zipOf(t, map[string]string{
 		"modrinth.index.json": `{"name":"P","dependencies":{"minecraft":"1.20.1","forge":"47.4.28"},"files":[
 		 {"path":"mods/jei.jar","hashes":{"sha1":"aa"},"env":{"client":"required","server":"required"},"downloads":["https://cdn.modrinth.com/data/jei/versions/abc123/jei.jar"]},
-		 {"path":"mods/skin.jar","hashes":{"sha1":"aa"},"env":{"client":"required","server":"unsupported"},"downloads":["https://cdn.modrinth.com/data/skin/versions/def456/skin.jar"]}]}`,
+		 {"path":"mods/skin.jar","hashes":{"sha1":"aa"},"env":{"client":"required","server":"unsupported"},"downloads":["https://cdn.modrinth.com/data/skin/versions/def456/skin.jar"]},
+		 {"path":"mods/extra.jar","hashes":{"sha1":"cc","sha512":"dd"},"env":{"client":"unsupported","server":"required"},"downloads":["https://cdn.modrinth.com/data/extra/versions/ghi789/extra-secondary.jar"]}]}`,
 		"overrides/config/jei.toml":    "a=1",
 		"client-overrides/options.txt": "fov:90",
 	})
@@ -117,10 +118,13 @@ func TestImportModrinthVersionBuildsAFrozenImportedBuild(t *testing.T) {
 		t.Fatalf("created build = %+v", fs.created)
 	}
 	f := fs.final
-	if f == nil || !f.Frozen || !f.ModrinthPublished || f.ModrinthVersionID != "v1" || f.Channel != models.ChannelRelease || f.MrpackStorageKey == "" || f.PublishedAt == nil {
+	if f == nil || !f.Frozen || !f.ModrinthPublished || f.ModrinthVersionID != "v1" || f.Channel != models.ChannelRelease || f.MrpackStorageKey != "" || f.MrpackSHA256 != "" || f.PublishedAt == nil {
 		t.Fatalf("final build = %+v", f)
 	}
-	if fs.targets["modrinth:abc123"] != "both" || fs.targets["config/jei.toml"] != "both" || fs.targets["options.txt"] != "client" {
+	// extra.jar is on the Modrinth CDN but not its version's primary file: a
+	// reference to that exact file, never downloaded (the transport would fail
+	// the test) and never stored.
+	if fs.targets["modrinth:abc123"] != "both" || fs.targets["modrinth:ghi789"] != "server" || fs.targets["config/jei.toml"] != "both" || fs.targets["options.txt"] != "client" {
 		t.Fatalf("content = %v", fs.targets)
 	}
 	if _, linked := fs.targets["modrinth:def456"]; linked {

@@ -13,15 +13,20 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - A thin footer carries Mojang's "not an official Minecraft service" line; a panel connected to
   the store also links the operator's imprint, privacy policy and terms there. `core` `panel`
+- Modrinth files are no longer copied into modpack storage: replace, matching uploads and imports
+  keep a reference. Builds published on Modrinth install from Modrinth's own file. `core`
 
 ### Breaking
 - Server setup refuses an install until the caller has accepted the Minecraft EULA once (409
   minecraft_eula_required); the panel asks, API clients send "acceptMinecraftEula": true. `core` `panel`
 - The Library is gone: its files are deleted from Core storage on the first start, and setup no
   longer offers it. Templates will replace it. `core` `panel`
+- Public build share links are gone (old links answer 410). The server ZIP is built on request for
+  the owner and editors only; stored server packs are deleted on the first start. `core` `panel`
 
 ### Security
-- Nothing.
+- The pack mirror serves only a build's .mrpack behind a signed URL that expires after 24 hours;
+  unsigned mirror URLs stop working. `core`
 
 ### Fixes
 - Nothing.

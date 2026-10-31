@@ -183,6 +183,7 @@ func DownloadAllowed(ctx context.Context, rawURL string, max int64) ([]byte, err
 type MrpackFile struct {
 	Path      string
 	SHA1      string
+	SHA512    string
 	Side      string
 	Downloads []string
 	Size      int64
@@ -255,7 +256,7 @@ func ParseMrpackFull(data []byte) (*MrpackFull, error) {
 			out.Name = m.Name
 			out.Dependencies = m.Dependencies
 			for _, mf := range m.Files {
-				file := MrpackFile{Path: mf.Path, SHA1: mf.Hashes["sha1"], Side: sideFromEnv(mf.Env), Downloads: mf.Downloads, Size: mf.FileSize}
+				file := MrpackFile{Path: mf.Path, SHA1: mf.Hashes["sha1"], SHA512: mf.Hashes["sha512"], Side: sideFromEnv(mf.Env), Downloads: mf.Downloads, Size: mf.FileSize}
 				if len(mf.Downloads) > 0 {
 					file.ModrinthProjectID, file.ModrinthVersionID, _ = parseModrinthCDNURL(mf.Downloads[0])
 				}

@@ -46,9 +46,6 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// Voice chat, GLOBAL scope only. Whether one server may turn voice on
 			// is the resolved "allowed" of GET /api/servers/{id}/voice.
 			"voiceChat": h.state.FeatureFlags.IsVoiceChatEnabled(r.Context()),
-			// Gates the builder's share-link create UI. Existing links keep
-			// serving while modpacks is on; this only reflects the create toggle.
-			"shareLinks": h.state.FeatureFlags.IsShareLinksEnabled(r.Context()),
 			// Store integration (dylaris.com): true only when both STORE_URL and
 			// STORE_SHARED_KEY are set. Gates the connect-store button and the
 			// demo account/server UI; off => clean open-core build.

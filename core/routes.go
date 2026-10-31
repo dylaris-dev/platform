@@ -513,9 +513,6 @@ var requiredCaps = map[string]string{
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat":                                         "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate":                                        "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods":                                    "modpack.write",
-	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link":                                     "modpack.write",
-	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links":                                    "modpack.read",
-	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}":                    "modpack.delete",
 
 	// Phase 4 Task 21: /me/api-keys OWNER apikeys.read/write/delete, the last
 	// annotation batch. GET+POST share the read cap as the representative
@@ -628,7 +625,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	packsHandler.SetPATLoader(modrinthPATHandler)
 	// Server installs and pack alerts resolve team access the same way.
 	services.SetPackPATLoader(modrinthPATHandler)
-	appState.InstallMrpack = packsHandler.EnsureInstallMrpack
+	appState.InstallMrpackURL = packsHandler.InstallMrpackURL
 	usernameHistoryHandler := users.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := users.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := mods.NewModpackSettingsHandler(appState)
@@ -693,10 +690,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- PUBLIC PACK MIRROR ---
 	// A node installing a panel-built pack downloads the rendered .mrpack from
 	// here. Registered on the ROOT router with NO .Use(...): the node fetches it
-	// with a plain GET and no credential, so it bypasses the setup-lock,
-	// maintenance and auth middleware. The storage key carries an HMAC of
-	// CLUSTER_SECRET, which is what makes it unguessable; the handler serves
-	// modpacks/ keys only. The modpacks feature is gated in-handler.
+	// with a plain GET and no session, so it bypasses the setup-lock,
+	// maintenance and auth middleware. The URL carries an expiring signature
+	// (handlers.SignedModpackMirrorURL) and the handler serves a build's
+	// pack.mrpack only. The modpacks feature is gated in-handler.
 	//
 	// It lived at /solder/mirror/ until Solder was removed, because the same
 	// route served the Technic launcher. Its own rate-limiter instance, not a
@@ -704,13 +701,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	mirrorLimiter := handlers.NewIPRateLimiter()
 	r.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, packsHandler.ModpackMirror)).Methods("GET")
 
-	// --- PUBLIC SHARE-LINK DOWNLOAD ---
-	// Sibling of the pack mirror on the ROOT router: bypasses the /api
-	// subrouter's setup-lock + maintenance middleware AND auth, because the
-	// token is the credential. Per-IP rate
-	// limited; the modpacks feature is gated in-handler with a uniform 404.
+	// --- REMOVED PUBLIC SHARE LINKS ---
+	// Build share links are gone (owner decision 2026-10-31). The route stays
+	// on the ROOT router, public, so a link already out there gets a clear 410
+	// instead of the API's 401.
 	shareLimiter := handlers.NewIPRateLimiter()
-	r.HandleFunc("/api/share/{token}", shareLimiter.Limit(30, packsHandler.ServeShare)).Methods("GET")
+	r.HandleFunc("/api/share/{token}", shareLimiter.Limit(30, packsHandler.ServeRemovedShare)).Methods("GET")
 
 	// Custom-tab reverse proxy: the CONTENT never appears on this router.
 	//
@@ -985,11 +981,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.updated", packsHandler.UpdateMods)))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.BuildCompat)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.migrated", packsHandler.MigrateBuild)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireShareLinksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("share_link.created", packsHandler.CreateShareLink))))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListShareLinks)))).Methods("GET")
-	// Revoking only withdraws access, so it stays open when modpacks or authoring
-	// are switched off: those switches stop new links, not the ones already out.
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.AllowReadOnlyWhenDisabled(packsHandler.Audited("share_link.revoked", packsHandler.RevokeShareLink))))).Methods("DELETE")
 
 	// --- Username history + account policy ---
 	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap

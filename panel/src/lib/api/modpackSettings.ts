@@ -18,7 +18,6 @@ export interface ModpackSettings {
     s3AccessKey: string;
     s3SecretKey?: string;
     updateCheckIntervalHours: number;
-    shareLinksEnabled: boolean;
     // Core's own public origin. A node installing a pack built here downloads it
     // from {corePublicUrl}/mirror/, so an unset one means such a pack cannot be
     // installed on a server.

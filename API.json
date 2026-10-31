@@ -3274,7 +3274,7 @@
       "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth",
       "auth": "session",
       "authorization": "modpack.write",
-      "description": "swaps a stored content artifact for Modrinth's exact file: download the chosen Modrinth version's primary file, verify its bytes against Modrinth's published hashes, re-wrap + store it, delete the old storage object, and rewrite the modversion so it becomes byte-identical to Modrinth (clean files[] reference + auto-update eligible).",
+      "description": "swaps a stored content artifact for a reference to Modrinth's exact file: the modversion is rewritten to the chosen version's primary file (URL and published hashes, a clean files[] reference that is auto-update eligible) and the old storage object is deleted.",
       "handler": "PacksHandler.ReplaceWithModrinth",
       "group": "packs",
       "external": false
@@ -3375,36 +3375,6 @@
       "authorization": "modpack.write",
       "description": "publishes a build to Modrinth under the caller's own personal access token.",
       "handler": "PacksHandler.PublishModrinth",
-      "group": "packs",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link",
-      "auth": "session",
-      "authorization": "modpack.write",
-      "description": "mints a share token for one build, so it can be downloaded without a session.",
-      "handler": "PacksHandler.CreateShareLink",
-      "group": "packs",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links",
-      "auth": "session",
-      "authorization": "modpack.read",
-      "description": "the share links issued for one build.",
-      "handler": "PacksHandler.ListShareLinks",
-      "group": "packs",
-      "external": false
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}",
-      "auth": "session",
-      "authorization": "modpack.delete",
-      "description": "revokes one share link.",
-      "handler": "PacksHandler.RevokeShareLink",
       "group": "packs",
       "external": false
     },
@@ -4929,8 +4899,8 @@
       "path": "/api/share/{token}",
       "auth": "none",
       "authorization": "public",
-      "description": "is PUBLIC, unauthenticated.",
-      "handler": "PacksHandler.ServeShare",
+      "description": "public build share links were removed (owner decision 2026-10-31): they redistributed Modrinth files to anyone holding the URL.",
+      "handler": "PacksHandler.ServeRemovedShare",
       "group": "share",
       "external": false
     },
@@ -5766,10 +5736,10 @@
     }
   ],
   "counts": {
-    "total": 580,
+    "total": 577,
     "byAuth": {
       "none": 30,
-      "session": 532,
+      "session": 529,
       "user API key": 10,
       "warp key": 8
     },
@@ -5797,7 +5767,7 @@
       "modules": 6,
       "nodes": 14,
       "notifications": 5,
-      "packs": 35,
+      "packs": 32,
       "placement": 3,
       "platform-backups": 13,
       "regions": 1,

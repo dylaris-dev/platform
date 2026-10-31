@@ -209,10 +209,11 @@ type AppState struct {
 	// tokens and a node's Redis passwords. Never sent to a tenant.
 	ClusterSecret string
 
-	// InstallMrpack renders (or reuses) a build's .mrpack for a server install
-	// and returns its storage key. Set by the router to the packs handler, which
-	// lives in its own package and so cannot be called from here directly.
-	InstallMrpack func(ctx context.Context, pack *models.Pack, build *models.PackBuild) (string, error)
+	// InstallMrpackURL returns the URL a node downloads a build's .mrpack from
+	// for a server install (Modrinth's file, or Core's signed mirror). Set by
+	// the router to the packs handler, which lives in its own package and so
+	// cannot be called from here directly.
+	InstallMrpackURL func(ctx context.Context, pack *models.Pack, build *models.PackBuild) (string, error)
 
 	// GatewayHubURL is the gateway Hub's internal base URL. Empty when no
 	// gateway is deployed, which the DNS settings surface reports rather than

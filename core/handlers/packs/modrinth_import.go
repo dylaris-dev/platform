@@ -4,9 +4,9 @@ package packs
 // project the caller is a member of on Modrinth (their own token decides
 // that); importing one creates a pack bound to the project, and each Modrinth
 // version becomes a frozen build marked "imported from Modrinth" with its full
-// content: Modrinth files as linked entries, other allowed downloads and every
-// override file as uploads. The version's own .mrpack is kept as the build's
-// artifact, so downloads and server installs use exactly what Modrinth has.
+// content: Modrinth-hosted files as references, other allowed downloads and
+// every override file as uploads. The version's own .mrpack is not stored;
+// server installs download it from Modrinth (InstallMrpackURL).
 
 import (
 	"bytes"
@@ -370,8 +370,17 @@ func (h *PacksHandler) importVersion(ctx context.Context, prov modpack.ModpackSt
 			res.Linked++
 			continue
 		}
-		// Not on Modrinth (or not that version's primary file): import the
-		// bytes like an upload, from an allowed host only.
+		// Hosted on Modrinth but not that version's primary file: a reference
+		// to the exact file the manifest names, never a stored copy.
+		if f.ModrinthProjectID != "" && f.SHA1 != "" && f.SHA512 != "" && validContentTarget(f.Path) {
+			if err := h.addModrinthFileReference(pack.OwnerID, build, f, kind); err != nil {
+				return fail(http.StatusInternalServerError, "Could not add "+path.Base(f.Path)+": "+err.Error())
+			}
+			res.Linked++
+			continue
+		}
+		// Not on Modrinth: import the bytes like an upload, from an allowed
+		// host only.
 		if len(f.Downloads) == 0 {
 			res.Warnings = append(res.Warnings, path.Base(f.Path)+" has no download and was skipped.")
 			continue
@@ -401,25 +410,49 @@ func (h *PacksHandler) importVersion(ctx context.Context, prov modpack.ModpackSt
 		res.Uploaded++
 	}
 
-	// The version's own file is the build's artifact: downloads and installs
-	// serve exactly what Modrinth has, not a re-render.
-	key := h.mrpackStorageKey(pack, build)
-	if err := prov.Put(ctx, key, data); err != nil {
-		return fail(http.StatusInternalServerError, "Could not store the pack file: "+err.Error())
-	}
-	sum := sha256.Sum256(data)
+	// The version's own .mrpack is not stored: installs take it from Modrinth
+	// (InstallMrpackURL), and anything else renders the build from its rows.
 	published := v.DatePublished.UTC()
 	build.Channel = channel
 	build.Frozen = true
 	build.ModrinthPublished = true
 	build.ModrinthVersionID = v.ID
-	build.MrpackStorageKey = key
-	build.MrpackSHA256 = hex.EncodeToString(sum[:])
 	build.PublishedAt = &published
 	if err := h.state.Store.UpdatePackBuild(build); err != nil {
 		return fail(http.StatusInternalServerError, "Could not finish the build: "+err.Error())
 	}
 	return res, nil
+}
+
+// addModrinthFileReference attaches a manifest file hosted on the Modrinth CDN
+// as a reference: its own URL and hashes, nothing downloaded or stored.
+func (h *PacksHandler) addModrinthFileReference(ownerID string, b *models.PackBuild, f services.MrpackFile, kind string) error {
+	if !validContentSide(f.Side) {
+		return fmt.Errorf("invalid content side")
+	}
+	fileName := path.Base(f.Path)
+	slug := handlers.Slugify(f.ModrinthProjectID)
+	modID, err := h.state.Store.UpsertMod(&models.Mod{OwnerID: ownerID, Slug: slug, PrettyName: fileName, ContentType: kind})
+	if err != nil {
+		return err
+	}
+	mvID, err := h.state.Store.CreateModversion(&models.Modversion{
+		ModID:               modID,
+		Version:             fileName,
+		Filesize:            f.Size,
+		SHA1:                f.SHA1,
+		SHA512:              f.SHA512,
+		ModrinthDownloadURL: f.Downloads[0],
+		Source:              models.SourceModrinth,
+		TargetPath:          f.Path,
+		ModrinthProjectID:   f.ModrinthProjectID,
+		ModrinthVersionID:   f.ModrinthVersionID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = h.state.Store.AttachModversionToBuild(b.ID, mvID, f.Side)
+	return err
 }
 
 // storeImportedFile stores one file of an imported pack the way an upload is

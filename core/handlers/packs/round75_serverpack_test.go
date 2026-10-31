@@ -2,15 +2,15 @@ package packs
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,27 +19,12 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/models"
-	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
-	"dylaris-core/store"
 )
 
-// countingProvider counts stored server packs, so a render that happened can be
-// told apart from one that was reused.
-type countingProvider struct {
-	modpack.ModpackStorageProvider
-	puts atomic.Int32
-}
-
-func (c *countingProvider) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
-	if strings.Contains(key, "/server-") {
-		c.puts.Add(1)
-		time.Sleep(20 * time.Millisecond) // widen the window concurrent callers race in
-	}
-	return c.ModpackStorageProvider.PutStream(ctx, key, r, size)
-}
-
-func serverPackFixture(t *testing.T) (*PacksHandler, *draftRenderStore, *countingProvider, *models.Pack, *models.PackBuild) {
+// serverPackFixture is a handler with one upload entry in a local modpack
+// storage, and a fresh, private server-pack cache directory.
+func serverPackFixture(t *testing.T) (*PacksHandler, *draftRenderStore, modpack.ModpackStorageProvider, *models.Pack, *models.PackBuild) {
 	t.Helper()
 	dir := t.TempDir()
 	base := localModpackHandler(t, dir)
@@ -49,128 +34,148 @@ func serverPackFixture(t *testing.T) (*PacksHandler, *draftRenderStore, *countin
 	st.content = []models.BuildContentEntry{uploadEntry("uploads/test.zip")}
 	pack := &models.Pack{ID: 1, OwnerID: "u", InternalName: "P", InternalSlug: "p"}
 	build := &models.PackBuild{ID: 1, PackID: 1, VersionString: "1.0", Channel: models.ChannelDraft}
-	return h, st, &countingProvider{ModpackStorageProvider: modpackProviderAt(t, dir)}, pack, build
+	useServerPackCache(t)
+	return h, st, modpackProviderAt(t, dir), pack, build
 }
 
-// The share route built the whole server zip on every request, straight into
-// the response, with nothing bounding how many ran: one anonymous link holder
-// could keep Core's disk and CPU busy for every tenant. It is now rendered once
-// per distinct input, concurrent requests share that render, and the stored
-// object is what gets served.
-func TestServerPackIsRenderedOncePerInput(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
-	ctx := context.Background()
+func useServerPackCache(t *testing.T) string {
+	t.Helper()
+	old := serverPackCacheDir
+	serverPackCacheDir = t.TempDir()
+	t.Cleanup(func() { serverPackCacheDir = old })
+	return serverPackCacheDir
+}
 
-	var wg sync.WaitGroup
-	keys := make([]string, 8)
-	for i := range keys {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			k, err := h.shareServerPackKey(ctx, prov, pack, build, st.content)
-			if err != nil {
-				t.Errorf("render: %v", err)
-			}
-			keys[i] = k
-		}(i)
+func cachedServerPacks(t *testing.T) []string {
+	t.Helper()
+	entries, _ := os.ReadDir(serverPackCacheDir)
+	var out []string
+	for _, e := range entries {
+		out = append(out, e.Name())
 	}
-	wg.Wait()
-	if n := prov.puts.Load(); n != 1 {
-		t.Fatalf("8 concurrent requests stored %d server packs, want 1", n)
-	}
-	first := keys[0]
-	b, err := prov.Get(ctx, first)
+	return out
+}
+
+func readServerPack(t *testing.T, f *os.File) []string {
+	t.Helper()
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		t.Fatal(err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
-	if err != nil || len(zr.File) != 1 || zr.File[0].Name != "mods/test.jar" {
-		t.Fatalf("stored object is not the server pack: %v", err)
+	zr, err := zip.NewReader(f, info.Size())
+	if err != nil {
+		t.Fatalf("cached file is not a zip: %v", err)
 	}
+	var names []string
+	for _, zf := range zr.File {
+		names = append(names, zf.Name)
+	}
+	return names
+}
 
-	if _, err := h.shareServerPackKey(ctx, prov, pack, build, st.content); err != nil || prov.puts.Load() != 1 {
-		t.Fatalf("an unchanged pack was rendered again (puts=%d, %v)", prov.puts.Load(), err)
+// Concurrent requests for one input share one render, an unchanged pack is
+// served from the cache, and nothing is ever written to modpack storage.
+func TestServerPackIsRenderedOncePerInputAndNeverStored(t *testing.T) {
+	h, st, _, _, _ := serverPackFixture(t)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f, err := h.openServerPack(ctx, st.content)
+			if err != nil {
+				t.Errorf("render: %v", err)
+				return
+			}
+			f.Close()
+		}()
+	}
+	wg.Wait()
+	if got := cachedServerPacks(t); len(got) != 1 || !strings.HasSuffix(got[0], ".zip") {
+		t.Fatalf("8 concurrent requests left %v in the cache, want one zip", got)
+	}
+	f, err := h.openServerPack(ctx, st.content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := readServerPack(t, f); len(names) != 1 || names[0] != "mods/test.jar" {
+		t.Fatalf("server pack holds %v", names)
 	}
 
 	st.content[0].Side = models.SideBoth
-	second, err := h.shareServerPackKey(ctx, prov, pack, build, st.content)
-	if err != nil || second == first || prov.puts.Load() != 2 {
-		t.Fatalf("a changed pack was not rendered under a new key (puts=%d, %v)", prov.puts.Load(), err)
+	f, err = h.openServerPack(ctx, st.content)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, exists, _ := prov.Stat(ctx, first); exists {
-		t.Error("the previous render was left behind after the pack changed")
+	f.Close()
+	if got := cachedServerPacks(t); len(got) != 2 {
+		t.Fatalf("a changed pack was not rendered under a new name: %v", got)
 	}
 	if len(serverPackRenders) != 0 {
-		t.Error("a render slot is still held after the key was returned")
+		t.Error("a render slot is still held after the file was returned")
+	}
+	for _, fn := range []string{"openServerPack", "renderServerPackFile", "exportServerPack"} {
+		if body := funcBody(t, "packs_server_export.go", fn); strings.Contains(body, ".Put(") || strings.Contains(body, ".PutStream(") {
+			t.Errorf("%s writes to modpack storage", fn)
+		}
 	}
 }
 
+// The sweep removes what is older than the TTL, partial renders included, and
+// leaves fresh files alone.
+func TestServerPackCacheSweep(t *testing.T) {
+	dir := useServerPackCache(t)
+	now := time.Now()
+	files := []struct {
+		name string
+		age  time.Duration
+		kept bool
+	}{
+		{"fresh.zip", time.Minute, true},
+		{"almost.zip", serverPackCacheTTL - time.Minute, true},
+		{"old.zip", serverPackCacheTTL + time.Minute, false},
+		{"abc-123.part", 2 * serverPackCacheTTL, false},
+	}
+	for _, f := range files {
+		p := filepath.Join(dir, f.name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, now.Add(-f.age), now.Add(-f.age)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	SweepServerPackCache(now)
+	for _, f := range files {
+		_, err := os.Stat(filepath.Join(dir, f.name))
+		if kept := err == nil; kept != f.kept {
+			t.Errorf("%s: kept=%v, want %v", f.name, kept, f.kept)
+		}
+	}
+	serverPackCacheDir = filepath.Join(dir, "missing")
+	SweepServerPackCache(now) // no cache directory yet: nothing to do, no panic
+}
+
 // With every slot taken the caller gets a retryable answer instead of queueing
-// without limit.
+// without limit, and the detached render gives up too.
 func TestServerPackRenderGivesUpWhenSlotsStayBusy(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
+	h, st, _, _, _ := serverPackFixture(t)
 	release := holdAllServerPackSlots(t)
 	defer release()
 	old := serverPackSlotWait
 	serverPackSlotWait = 50 * time.Millisecond
 	defer func() { serverPackSlotWait = old }()
 
-	_, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content)
-	if !errors.Is(err, errServerPackBusy) {
+	if _, err := h.openServerPack(context.Background(), st.content); !errors.Is(err, errServerPackBusy) {
 		t.Fatalf("err = %v, want errServerPackBusy", err)
 	}
-	// The detached render gave up too, rather than queueing for a slot: with
-	// one waiting render per distinct pack nothing would bound the backlog.
 	release()
 	time.Sleep(200 * time.Millisecond)
-	if prov.puts.Load() != 0 {
-		t.Error("a render that found no slot ran later anyway")
-	}
-}
-
-type shareRouteStore struct {
-	*draftRenderStore
-	pack  *models.Pack
-	build *models.PackBuild
-}
-
-func (s *shareRouteStore) GetSetting(key string) (string, error) {
-	if key == "feature_modpacks_enabled" {
-		return "true", nil
-	}
-	return s.draftRenderStore.GetSetting(key)
-}
-func (s *shareRouteStore) GetShareLinkByToken(string) (*models.ShareLink, error) {
-	return &models.ShareLink{ID: 1, BuildID: s.build.ID, Kind: models.ShareLinkServerPack}, nil
-}
-func (s *shareRouteStore) GetPackBuild(int) (*models.PackBuild, error) { return s.build, nil }
-func (s *shareRouteStore) GetPack(int) (*models.Pack, error)           { return s.pack, nil }
-
-// The route serves the stored object rather than rendering into the response.
-func TestShareRouteServesTheStoredServerPack(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
-	rs := &shareRouteStore{draftRenderStore: st, pack: pack, build: build}
-	h.state.Store = rs
-	h.state.FeatureFlags = services.NewFeatureFlags(rs)
-
-	key, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sentinel := []byte("served-from-storage")
-	if err := prov.Put(context.Background(), key, sentinel); err != nil {
-		t.Fatal(err)
-	}
-
-	r := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/api/share/tok", nil), map[string]string{"token": "tok"})
-	rec := httptest.NewRecorder()
-	h.ServeShare(rec, r)
-
-	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), sentinel) {
-		t.Fatalf("status %d, body %q: want the stored object", rec.Code, rec.Body.String())
-	}
-	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "p-1.0-server.zip") {
-		t.Errorf("Content-Disposition = %q", cd)
+	if got := cachedServerPacks(t); len(got) != 0 {
+		t.Errorf("a render that found no slot ran later anyway: %v", got)
 	}
 }
 
@@ -189,52 +194,24 @@ func holdAllServerPackSlots(t *testing.T) (release func()) {
 	}
 }
 
-// A pack already in storage is served without waiting for a render slot, so a
-// burst of new renders cannot make the stored ones unavailable.
-func TestStoredServerPackNeedsNoRenderSlot(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
-	key, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content)
+// A cached pack is served without waiting for a render slot.
+func TestCachedServerPackNeedsNoRenderSlot(t *testing.T) {
+	h, st, _, _, _ := serverPackFixture(t)
+	f, err := h.openServerPack(context.Background(), st.content)
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.Close()
 	defer holdAllServerPackSlots(t)()
 	old := serverPackSlotWait
 	serverPackSlotWait = 50 * time.Millisecond
 	defer func() { serverPackSlotWait = old }()
 
-	got, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content)
-	if err != nil || got != key {
-		t.Fatalf("stored pack not served while slots are busy: %q, %v", got, err)
+	f, err = h.openServerPack(context.Background(), st.content)
+	if err != nil {
+		t.Fatalf("cached pack not served while slots are busy: %v", err)
 	}
-}
-
-// Another replica may store the same render while this one waits for a slot;
-// the waiter then uses it instead of rendering again.
-func TestServerPackWaiterUsesWhatAnotherReplicaStored(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
-	release := holdAllServerPackSlots(t)
-	defer release()
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content)
-		done <- err
-	}()
-	time.Sleep(50 * time.Millisecond) // the request is now waiting for a slot
-
-	fp, _ := serverPackFingerprint(sortServerPackContent(st.content))
-	key := strings.TrimSuffix(h.mrpackStorageKey(pack, build), "pack.mrpack") + "server-" + fp + ".zip"
-	if err := prov.Put(context.Background(), key, []byte("stored-by-another-replica")); err != nil {
-		t.Fatal(err)
-	}
-	release()
-
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if n := prov.puts.Load(); n != 0 {
-		t.Errorf("rendered again although the object was already stored (puts=%d)", n)
-	}
+	f.Close()
 }
 
 // The hourly update check stamps every mod row it looks at. Hashing the whole
@@ -262,20 +239,22 @@ func TestServerPackFingerprintCoversOnlyWhatTheRenderReads(t *testing.T) {
 	}
 }
 
-// A pack that fails to render is not rendered again on the next hit; a broken
-// entry at the end of gigabytes of downloads would otherwise keep both slots busy.
+// A pack that fails to render is not rendered again on the next hit.
 func TestServerPackFailureIsNotRetriedAtOnce(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
+	h, st, _, _, _ := serverPackFixture(t)
 	st.content = append(st.content, uploadEntry("")) // missing storage key: fails
-	if _, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content); err == nil {
+	if _, err := h.openServerPack(context.Background(), st.content); err == nil {
 		t.Fatal("a broken pack rendered")
+	}
+	if got := cachedServerPacks(t); len(got) != 0 {
+		t.Errorf("a failed render left %v behind", got)
 	}
 	defer holdAllServerPackSlots(t)()
 	old := serverPackSlotWait
 	serverPackSlotWait = 50 * time.Millisecond
 	defer func() { serverPackSlotWait = old }()
 
-	_, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content)
+	_, err := h.openServerPack(context.Background(), st.content)
 	if err == nil || errors.Is(err, errServerPackBusy) {
 		t.Fatalf("err = %v, want the held failure without asking for a slot", err)
 	}
@@ -284,21 +263,19 @@ func TestServerPackFailureIsNotRetriedAtOnce(t *testing.T) {
 // The first request for a large pack answers within the request wait instead of
 // holding the connection for the whole render, and the render finishes anyway.
 func TestServerPackRequestDoesNotWaitForTheWholeRender(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
+	h, st, _, _, _ := serverPackFixture(t)
 	release := holdAllServerPackSlots(t)
 	defer release()
 	old := serverPackRequestWait
 	serverPackRequestWait = 50 * time.Millisecond
 	defer func() { serverPackRequestWait = old }()
 
-	if _, err := h.shareServerPackKey(context.Background(), prov, pack, build, st.content); !errors.Is(err, errServerPackBusy) {
+	if _, err := h.openServerPack(context.Background(), st.content); !errors.Is(err, errServerPackBusy) {
 		t.Fatalf("err = %v, want errServerPackBusy", err)
 	}
 	release()
-	fp, _ := serverPackFingerprint(sortServerPackContent(st.content))
-	key := strings.TrimSuffix(h.mrpackStorageKey(pack, build), "pack.mrpack") + "server-" + fp + ".zip"
 	for i := 0; i < 100; i++ {
-		if _, exists, _ := prov.Stat(context.Background(), key); exists {
+		if got := cachedServerPacks(t); len(got) == 1 && strings.HasSuffix(got[0], ".zip") {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -309,22 +286,36 @@ func TestServerPackRequestDoesNotWaitForTheWholeRender(t *testing.T) {
 // The store orders build content by mod slug only, so rows can come back in a
 // different order between requests; that must not be a new render.
 func TestServerPackKeyIgnoresTheRowOrder(t *testing.T) {
-	h, st, prov, pack, build := serverPackFixture(t)
+	h, st, prov, _, _ := serverPackFixture(t)
 	if err := prov.Put(context.Background(), "uploads/other.zip", zipBytes(t, map[string]string{"zz/other": "another artifact"})); err != nil {
 		t.Fatal(err)
 	}
 	second := uploadEntry("uploads/other.zip")
 	second.TargetPath = "zz/other"
-	ab := []models.BuildContentEntry{st.content[0], second}
-	ba := []models.BuildContentEntry{second, st.content[0]}
-	k1, err1 := h.shareServerPackKey(context.Background(), prov, pack, build, ab)
-	k2, err2 := h.shareServerPackKey(context.Background(), prov, pack, build, ba)
-	if err1 != nil || err2 != nil || k1 != k2 || prov.puts.Load() != 1 {
-		t.Fatalf("row order changed the render: %q %q puts=%d (%v %v)", k1, k2, prov.puts.Load(), err1, err2)
+	for _, content := range [][]models.BuildContentEntry{{st.content[0], second}, {second, st.content[0]}} {
+		f, err := h.openServerPack(context.Background(), content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	if got := cachedServerPacks(t); len(got) != 1 {
+		t.Fatalf("row order changed the render: %v", got)
 	}
 }
 
-// No collaborator invites in this fake.
-func (*shareRouteStore) PackRightsFor(string, string, int) (store.PackRights, error) {
-	return store.PackRights{}, nil
+// Every old public share link answers 410 Gone with a message, whatever the
+// token, and never a pack.
+func TestRemovedShareRouteAnswersGone(t *testing.T) {
+	h := &PacksHandler{state: &handlers.AppState{}}
+	r := mux.NewRouter()
+	r.HandleFunc("/api/share/{token}", h.ServeRemovedShare).Methods("GET")
+	for _, token := range []string{"tok", "a-real-looking-token-0123456789"} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/share/"+token, nil))
+		body, _ := io.ReadAll(rec.Body)
+		if rec.Code != http.StatusGone || !strings.Contains(string(body), "removed") {
+			t.Errorf("%s: %d %s, want 410 with a message", token, rec.Code, body)
+		}
+	}
 }

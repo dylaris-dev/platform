@@ -36,6 +36,7 @@ var resealedPurposes = map[string]bool{
 // tell "considered and excluded" from "nobody noticed".
 var unresealablePurposes = map[string]string{
 	mrpackPathPurpose: "an HMAC over a storage path, not a stored value: rotating moves the OBJECTS",
+	"modpack-mirror":  "a signature on a download URL that expires within a day and is stored nowhere",
 }
 
 // knownPurposeIdents maps the constant NAMES a call site may use to their

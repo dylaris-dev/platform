@@ -264,14 +264,6 @@ func (f *FeatureFlags) UserAPIKeyAllowedCaps(ctx context.Context) []string {
 	return out
 }
 
-// IsShareLinksEnabled gates CREATION of tokenized modpack share/download links.
-// Default = false (opt-in distribution surface; the admin enables it in
-// Settings -> Modpacks). Existing links keep serving while the parent modpacks
-// feature is on; this only gates minting new links.
-func (f *FeatureFlags) IsShareLinksEnabled(ctx context.Context) bool {
-	return f.Get(ctx, "modpack_share_links_enabled", false)
-}
-
 // IsTabProxyEnabled is the WS5 master toggle. Default false: the custom-tab
 // reverse proxy is inert until an admin enables it.
 func (f *FeatureFlags) IsTabProxyEnabled(ctx context.Context) bool {

@@ -15,14 +15,18 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Features
 - Every panel screen now links the imprint, privacy policy and terms at the bottom.
+- Modpacks keep Modrinth files as links to Modrinth instead of copies, and builds published on
+  Modrinth install straight from Modrinth.
 
 ### Breaking
 - Installing a server asks you once to accept the Minecraft EULA. Over the API, send
   "acceptMinecraftEula": true with your first setup call.
 - The Library tab in server setup is gone. Servers installed from it keep running unchanged.
+- Public pack share links are removed and answer 410. Only the pack owner and members with edit
+  access can download a build's server ZIP.
 
 ### Security
-- Nothing.
+- Pack download links handed to your node now expire after 24 hours.
 
 ### Fixes
 - Nothing.

@@ -13,8 +13,7 @@ import (
 	"dylaris-core/storage/modpack"
 )
 
-// Size caps bound the memory a single server-pack render can consume, since it
-// is reachable from the public share endpoint. A deflate zip-bomb inside an
+// Size caps bound the memory a single server-pack render can consume. A deflate zip-bomb inside an
 // owner-uploaded stored zip could otherwise decompress fully into RAM. These
 // mirror the 512 MiB per-entry cap the sibling unzip helpers already apply.
 const (
@@ -28,7 +27,8 @@ const (
 // root. Modrinth-linked content is downloaded (hash-verified) and embedded;
 // uploaded content is read from storage and its inner files copied in. Unlike the
 // .mrpack render, a plain zip has no reference mechanism, so every file is
-// embedded. That is heavier and only produced on a share-link download.
+// embedded. That is heavier, and only produced for an export by someone who may
+// edit the pack (ExportMrpack).
 //
 // It deliberately does NOT include a loader/server jar: the spec scopes a
 // server-pack to "server-side content + configs". The operator installs the
@@ -36,7 +36,7 @@ const (
 // renderServerPack assembles the server pack zip and writes it to dst as it
 // goes, so peak memory is one content entry rather than the whole pack. It used
 // to build the entire archive in a bytes.Buffer and return it - up to the 2 GiB
-// cap held in RAM, per request, on the unauthenticated share route. Streaming
+// cap held in RAM, per request. Streaming
 // bounds that to the largest single entry (itself capped) regardless of pack
 // size or concurrency.
 //

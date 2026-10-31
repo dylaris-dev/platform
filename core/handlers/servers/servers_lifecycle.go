@@ -682,25 +682,19 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 			snapshotBuild = build
 
-			if h.state.InstallMrpack == nil {
+			if h.state.InstallMrpackURL == nil {
 				handlers.SendJSONError(w, "Modpack installs are not available", 503)
 				return
 			}
-			key, err := h.state.InstallMrpack(r.Context(), pack, build)
+			installURL, err := h.state.InstallMrpackURL(r.Context(), pack, build)
 			if err != nil {
-				log.Printf("ensureInstallMrpack failed for pack %d build %d: %v", pack.ID, build.ID, err)
-				handlers.SendJSONError(w, "Failed to prepare pack for install", 500)
-				return
-			}
-			base, err := handlers.ModpackMirrorBase(h.state.Store.GetSetting)
-			if err != nil {
-				log.Printf("modpackMirrorBase failed: %v", err)
+				log.Printf("install mrpack URL failed for pack %d build %d: %v", pack.ID, build.ID, err)
 				handlers.SendJSONError(w, "Failed to prepare pack for install", 500)
 				return
 			}
 
 			req.Installer.Type = "modpack"
-			req.Installer.URL = base + key
+			req.Installer.URL = installURL
 			req.Installer.Loader = build.Loader
 			req.Installer.McVersion = build.Minecraft
 			req.Installer.ModrinthProjectID = ""

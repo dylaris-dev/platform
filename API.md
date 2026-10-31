@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **579 routes** in 51 sections: 255 GET, 168 POST, 54 PUT, 40 PATCH, 63 DELETE.
+- **576 routes** in 51 sections: 254 GET, 167 POST, 54 PUT, 40 PATCH, 62 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **379** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **129** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **376** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **129** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **36** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -161,7 +161,7 @@ can still show what exists.
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
 - [/api/notifications](#apinotifications) (5)
-- [/api/packs](#apipacks) (35)
+- [/api/packs](#apipacks) (32)
 - [/api/placement](#apiplacement) (3)
 - [/api/platform-backups](#apiplatform-backups) (13)
 - [/api/regions](#apiregions) (1)
@@ -627,7 +627,7 @@ can still show what exists.
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.AddModrinth` | adds a Modrinth version to a build and, on request, its dependencies. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UploadContent` | uploads a file into a build. |
 | DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}` | session | `modpack.delete` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.RemoveContent` | detaches one entry from a build. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.ReplaceWithModrinth` | swaps a stored content artifact for Modrinth's exact file: download the chosen Modrinth version's primary file, verify its bytes against Modrinth's published hashes, re-wrap + store it, delete the old storage object, and rewrite the modversion so it becomes byte-identical to Modrinth (clean files[] reference + auto-update eligible). |
+| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.ReplaceWithModrinth` | swaps a stored content artifact for a reference to Modrinth's exact file: the modversion is rewritten to the chosen version's primary file (URL and published hashes, a clean files[] reference that is auto-update eligible) and the old storage object is deleted. |
 | PATCH | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.SetSide` | sets whether an entry ships to the client, the server or both. |
 | GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.GetContentText` | returns the UTF-8 text of a single stored content entry (e.g. a config file) so the panel can edit it in place. |
 | PUT | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.SetContentText` | overwrites a stored text content entry with edited bytes, re-wrapping into the content zip at the same key and re-hashing. |
@@ -638,9 +638,6 @@ can still show what exists.
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork` | session | `modpack.read` | Limit, RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ForkBuild` | copies an authorized build into a new or empty writable pack. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.MigrateBuild` | - |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.PublishModrinth` | publishes a build to Modrinth under the caller's own personal access token. |
-| POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link` | session | `modpack.write` | RequireModpacksEnabled, RequireShareLinksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.CreateShareLink` | mints a share token for one build, so it can be downloaded without a session. |
-| GET | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `PacksHandler.ListShareLinks` | the share links issued for one build. |
-| DELETE | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}` | session | `modpack.delete` | AllowReadOnlyWhenDisabled, Audited | `PacksHandler.RevokeShareLink` | revokes one share link. |
 | POST | `/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.UpdateMods` | upgrades Modrinth-linked mods in a DRAFT build to a newer version. |
 | GET | `/api/packs/{id:[0-9]+}/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.GetModrinthPage` | - |
 | PATCH | `/api/packs/{id:[0-9]+}/modrinth` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks, Audited | `PacksHandler.EditModrinthPage` | - |
@@ -839,7 +836,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/share/{token}` | **none** | _public_ | Limit | `PacksHandler.ServeShare` | is PUBLIC, unauthenticated. |
+| GET | `/api/share/{token}` | **none** | _public_ | Limit | `PacksHandler.ServeRemovedShare` | public build share links were removed (owner decision 2026-10-31): they redistributed Modrinth files to anyone holding the URL. |
 
 ## /api/sse-ticket
 

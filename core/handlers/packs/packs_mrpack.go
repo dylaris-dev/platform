@@ -17,6 +17,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
 
 	"github.com/gorilla/mux"
@@ -143,7 +144,7 @@ func modrinthCDNURL(e models.BuildContentEntry) string {
 // so we prefix "overrides/". Skips content that has no storage_key (pure
 // Modrinth reference).
 //
-// Reachable from the PUBLIC UNAUTHENTICATED ServeShare mrpack endpoint (BC2).
+// It used to be reachable from the public share route (BC2), since removed.
 // total is a running total shared across every stored zip of the render;
 // it is incremented and checked INSIDE this per-file loop, immediately after
 // each file's io.LimitReader read, mirroring renderServerPack's accumulator
@@ -265,7 +266,7 @@ func (h *PacksHandler) writeMrpackZip(ctx context.Context, zw *zip.Writer, pack 
 // mrpackRenders bounds how many .mrpack renders run at once in this Core. One
 // render holds a stored override zip and the pack it builds in memory - up to
 // gigabytes under the size caps - and nothing bounded how many ran together:
-// an author's export or a draft's public share link could be fired in parallel
+// an author's export or an install could be fired in parallel
 // until Core ran out of memory, for every tenant at once.
 //
 // ponytail: a fixed in-process limit; stream the pack to storage instead of
@@ -296,9 +297,9 @@ func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, buil
 // mrpackStorageKey is the storage key for a build's rendered .mrpack.
 //
 // The directory segment is opaque on purpose: the Node fetches this object over
-// /mirror/, which is anonymous by necessity (see ModpackMirror), so the PATH is
-// the credential here, the same model as /api/share/{token}. That only holds
-// while the path cannot be derived from something the platform publishes.
+// /mirror/, which is anonymous by necessity (see ModpackMirror). The mirror now
+// also demands an expiring signature, and the opaque path stays as a second
+// fence: it must not be derivable from something the platform publishes.
 //
 // It used to be modpacks/<ownerID>/<internalSlug>/<version>/, and the owner id
 // was printed in plain sight by the Solder API that existed then. One public
@@ -366,6 +367,54 @@ func (h *PacksHandler) EnsureInstallMrpack(ctx context.Context, pack *models.Pac
 	return h.storeDraftMrpack(ctx, pack, build, content)
 }
 
+// InstallMrpackURL is the URL a node downloads a build's .mrpack from for a
+// server install.
+//
+// A build published on Modrinth is handed out as Modrinth's own file on
+// cdn.modrinth.com, a host every node already allows: the archive then comes
+// from where its author published it, not from a copy here. When Modrinth does
+// not answer for it (a private project is invisible without a token, or
+// Modrinth is down), the install falls back to Core's own render behind a
+// signed, expiring mirror URL on Core's public host - the only form an older
+// node accepts besides the allowlist, which checks the host and nothing else.
+func (h *PacksHandler) InstallMrpackURL(ctx context.Context, pack *models.Pack, build *models.PackBuild) (string, error) {
+	if u := publishedMrpackURL(ctx, pack, build); u != "" {
+		return u, nil
+	}
+	key, err := h.EnsureInstallMrpack(ctx, pack, build)
+	if err != nil {
+		return "", err
+	}
+	base, err := handlers.ModpackMirrorBase(h.state.Store.GetSetting)
+	if err != nil {
+		return "", err
+	}
+	return handlers.SignedModpackMirrorURL(base, h.state.ClusterSecret, key, time.Now()), nil
+}
+
+// fetchPublishedVersion is a var so a test can stand in for Modrinth.
+var fetchPublishedVersion = services.FetchModrinthVersionPaced
+
+// publishedMrpackURL is the cdn.modrinth.com URL of a published build's .mrpack,
+// or "" when there is none to use.
+func publishedMrpackURL(ctx context.Context, pack *models.Pack, build *models.PackBuild) string {
+	if !build.ModrinthPublished || build.ModrinthVersionID == "" {
+		return ""
+	}
+	// Bounded: this sits in the install request, and the fallback is fine.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	v, err := fetchPublishedVersion(ctx, build.ModrinthVersionID)
+	if err != nil || v == nil || pack.ModrinthProjectID != "" && v.ProjectID != pack.ModrinthProjectID {
+		return ""
+	}
+	pv := services.ModrinthProjectVersion{Files: v.Files}
+	if f := pv.PrimaryMrpack(); f != nil && strings.HasPrefix(f.URL, "https://cdn.modrinth.com/") {
+		return f.URL
+	}
+	return ""
+}
+
 // storeDraftMrpack renders an unpublished build's mrpack from content and stores
 // it under the build's deterministic key.
 func (h *PacksHandler) storeDraftMrpack(ctx context.Context, pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) (string, error) {
@@ -387,26 +436,20 @@ func (h *PacksHandler) storeDraftMrpack(ctx context.Context, pack *models.Pack, 
 	return key, nil
 }
 
-// mrpackInputsFingerprint hashes everything renderMrpack reads besides the
-// stored content objects, which never change in place: an upload is keyed by its
-// sha1 and an edit writes a fresh key, so a changed object is a changed row.
-func mrpackInputsFingerprint(pack *models.Pack, build *models.PackBuild, content []models.BuildContentEntry) (string, error) {
-	b, err := json.Marshal(struct {
-		Pack    *models.Pack
-		Build   *models.PackBuild
-		Content []models.BuildContentEntry
-	}{pack, build, content})
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
-}
-
 // ExportMrpack downloads a build: .mrpack by default, or server content ZIP with ?kind=server.
+//
+// The server ZIP embeds every server-side Modrinth jar, so it is a copy of
+// third-party files: only the pack's owner and team members who may edit it
+// get one (packEdit has no admin shortcut and no lapsed-token read). The
+// .mrpack only references Modrinth files and keeps read access.
 func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	p, ok := h.ownsPack(r, packID)
+	kind := r.URL.Query().Get("kind")
+	need := packRead
+	if kind == "server" {
+		need = packEdit
+	}
+	p, ok := h.packAccess(r, packID, need)
 	if !ok {
 		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
@@ -422,7 +465,7 @@ func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Failed to load content", http.StatusInternalServerError)
 		return
 	}
-	switch r.URL.Query().Get("kind") {
+	switch kind {
 	case "server":
 		h.exportServerPack(w, r, p, build, content)
 		return

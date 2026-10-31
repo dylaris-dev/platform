@@ -18,7 +18,6 @@ import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup, SettingsRow } from '@/components/settings/SettingsCard';
 import ModCacheCard from '@/components/settings/ModCacheCard';
-import { SwitchRow } from '@/components/ui/Switch';
 import {
     getModpackSettings, setModpackSettings,
     type ModpackSettings,
@@ -43,7 +42,6 @@ const DEFAULTS: ModpackSettings = {
     s3AccessKey: '',
     s3SecretKey: '',
     updateCheckIntervalHours: 24,
-    shareLinksEnabled: false,
     connectionId: 0,
     corePublicUrl: '',
 };
@@ -117,12 +115,6 @@ export default function ModpacksTab() {
                 saveBlockedReason={settings.provider ? undefined : 'Pick where modpack archives are stored first'}
             >
                 <SettingsGroup title="Behaviour" first>
-                    <SwitchRow
-                        label="Share links"
-                        description="When on, pack authors can mint tokenized download links for a build (client .mrpack or server pack). Off hides the create UI and blocks minting new links; existing links keep serving while modpack authoring is on."
-                        checked={settings.shareLinksEnabled}
-                        onChange={v => patch({ shareLinksEnabled: v })}
-                    />
                     <SettingsRow
                         label="Auto-update check interval"
                         htmlFor="modpack-update-interval"

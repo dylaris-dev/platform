@@ -286,3 +286,52 @@ func deleteUserPackObjects(t *testing.T, fail bool) {
 func (*packCleanupStore) PackRightsFor(string, string, int) (store.PackRights, error) {
 	return store.PackRights{}, nil
 }
+
+// purgeStore adds the account list and a writable settings map.
+type purgeStore struct {
+	*packCleanupStore
+	failUsers bool
+}
+
+func (f *purgeStore) ListUsers() ([]models.User, error) {
+	if f.failUsers {
+		return nil, errors.New("db down")
+	}
+	return []models.User{{ID: cleanupOwner}}, nil
+}
+func (f *purgeStore) SetSetting(k, v string) error { f.settings[k] = v; return nil }
+
+// The one-time purge removes every stored server pack and its marker, keeps
+// the .mrpack, records itself, and retries on the next start after a failure.
+func TestPurgeStoredServerPacksRunsOnce(t *testing.T) {
+	h, fs, root := newPackCleanup(t)
+	a := seedBuild(t, h, root, &fs.builds[0])
+	b := seedBuild(t, h, root, &fs.builds[1])
+	ps := &purgeStore{packCleanupStore: fs, failUsers: true}
+	h.state.Store = ps
+
+	h.state.PurgeStoredServerPacks(context.Background())
+	if fs.settings["modpack_server_packs_purged_at"] != "" || !exists(root, a+"server-abc.zip") {
+		t.Fatal("a failed purge was recorded as done, or deleted anyway")
+	}
+	ps.failUsers = false
+	h.state.PurgeStoredServerPacks(context.Background())
+	for _, d := range []string{a, b} {
+		if exists(root, d+"server-abc.zip") || exists(root, d+"server.last") {
+			t.Errorf("a stored server pack under %s survived", d)
+		}
+		if !exists(root, d+"pack.mrpack") {
+			t.Errorf("the purge deleted the .mrpack under %s", d)
+		}
+	}
+	if fs.settings["modpack_server_packs_purged_at"] == "" {
+		t.Fatal("a successful purge was not recorded")
+	}
+	h.state.Store = fs
+	seedBuild(t, h, root, &fs.builds[0])
+	h.state.Store = ps
+	h.state.PurgeStoredServerPacks(context.Background())
+	if !exists(root, a+"server-abc.zip") {
+		t.Error("the purge ran again after it was recorded")
+	}
+}

@@ -1,92 +1,80 @@
 package packs
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/models"
 )
 
-// The storage key must never carry raw remote text. version_number is whatever
-// the project author typed on Modrinth and it went into the key verbatim. A key
-// that escapes "packs/<owner>/mods/<slug>/" writes into another
-// owner's prefix.
-//
-// The key is built inline in swapModversionToModrinth, so this pins the
-// slugify + md5 shape it now uses rather than reaching through a network call.
-func TestAModrinthVersionNumberCannotEscapeTheStorageKey(t *testing.T) {
-	const owner = "11111111-1111-4111-8111-111111111111"
-	const md5hex = "0123456789abcdef0123456789abcdef"
-
-	// Mirrors the key construction under test.
-	key := func(slug, versionNum string) string {
-		keyVersion := handlers.Slugify(versionNum)
-		if keyVersion == "" {
-			keyVersion = "v"
-		}
-		keyVersion = keyVersion + "-" + md5hex[:8]
-		return "packs/" + owner + "/mods/" + slug + "/" + slug + "-" + keyVersion + ".zip"
-	}
-
-	prefix := "packs/" + owner + "/mods/"
-	for _, versionNum := range []string{
-		"../../../../victim/mods/sodium/sodium-1.0",
-		"1.0/../../..",
-		`..\..\evil`,
-		"/absolute",
-		"..",
-		"",
-	} {
-		got := key("sodium", versionNum)
-		if !strings.HasPrefix(got, prefix) {
-			t.Errorf("version %q produced a key outside the owner prefix: %s", versionNum, got)
-		}
-		if strings.Contains(got, "..") {
-			t.Errorf("version %q left a traversal in the key: %s", versionNum, got)
-		}
-		if strings.Count(strings.TrimPrefix(got, prefix), "/") != 1 {
-			t.Errorf("version %q changed the key depth: %s", versionNum, got)
-		}
-	}
-
-	// An ordinary version still produces a readable, unique key.
-	if got, want := key("sodium", "0.5.3"), prefix+"sodium/sodium-0-5-3-01234567.zip"; got != want {
-		t.Errorf("ordinary key = %q, want %q", got, want)
-	}
+// replaceStore records the rewritten modversion and reports no other row on
+// the old object, so it may be deleted.
+type replaceStore struct {
+	*serverPackFakeStore
+	updated *models.Modversion
 }
 
-// Every place that fetches a Modrinth file URL must go through the CDN
-// allowlist. This one had its own http.Client and no host check, so whatever
-// URL the Modrinth API named in files[].url was fetched by Core from inside the
-// network. The allowlist exists precisely so a third party's response cannot
-// steer a download.
-func TestReplaceGoesThroughTheGuardedModrinthDownloader(t *testing.T) {
-	raw, err := os.ReadFile("packs_replace.go")
-	if err != nil {
-		t.Fatalf("read source: %v", err)
-	}
-	src := string(raw)
+func (s *replaceStore) UpdateModversion(mv *models.Modversion) error {
+	c := *mv
+	s.updated = &c
+	return nil
+}
+func (s *replaceStore) CountModversionsByStorageKey(string) (int, error) {
+	return 0, nil
+}
 
-	if strings.Contains(src, "replaceDownloadClient") || strings.Contains(src, "func downloadURL(") {
-		t.Error("packs_replace.go builds its own HTTP client again; that path has no cdn.modrinth.com check")
+// Replace-with-Modrinth turns a stored upload into a reference to Modrinth's
+// file: nothing is downloaded from the CDN, nothing is stored, and the old
+// stored copy goes. Dylaris must not keep copies of files Modrinth distributes.
+func TestReplaceWithModrinthStoresAReferenceOnly(t *testing.T) {
+	dir := t.TempDir()
+	h := localModpackHandler(t, dir)
+	st := &replaceStore{serverPackFakeStore: h.state.Store.(*serverPackFakeStore)}
+	h.state.Store = st
+	storeZip(t, dir, "packs/u/mods/sodium/old.zip", "mods/sodium.jar", []byte("uploaded copy"))
+
+	old := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = old })
+	http.DefaultTransport = modrinthAddTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "api.modrinth.com" && r.URL.Path == "/v2/version/v2" {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(
+				`{"id":"v2","project_id":"sodium","version_number":"0.6","loaders":["fabric"],"game_versions":["1.20.1"],
+				 "files":[{"filename":"sodium.jar","url":"https://cdn.modrinth.com/data/sodium/versions/v2/sodium.jar","primary":true,"size":42,"hashes":{"sha1":"s1","sha512":"s5"}}]}`))}, nil
+		}
+		t.Errorf("unexpected request %s %s: a reference needs no download", r.Method, r.URL)
+		return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+
+	build := &models.PackBuild{ID: 1, PackID: 1, Minecraft: "1.20.1", Loader: "fabric"}
+	mv := &models.Modversion{ID: 7, StorageKey: "packs/u/mods/sodium/old.zip", MD5: "m", Source: models.SourceUpload, TargetPath: "mods/sodium.jar"}
+	if err := h.swapModversionToModrinth(context.Background(), "u", build, mv, "v2"); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(src, "services.DownloadModrinthJar(ctx, file.URL") {
-		t.Error("swapModversionToModrinth no longer downloads through services.DownloadModrinthJar")
+	got := st.updated
+	if got == nil || got.StorageKey != "" || got.MD5 != "" || got.Source != models.SourceModrinth ||
+		got.ModrinthDownloadURL != "https://cdn.modrinth.com/data/sodium/versions/v2/sodium.jar" ||
+		got.SHA1 != "s1" || got.SHA512 != "s5" || got.Filesize != 42 || got.ModrinthProjectID != "sodium" || got.TargetPath != "mods/sodium.jar" {
+		t.Fatalf("rewritten modversion = %+v", got)
 	}
-	// The downloader verifies only the hashes it is handed, so the caller has to
-	// insist that at least one exists or an unverifiable file is stored as
-	// "byte-identical to Modrinth".
-	if !strings.Contains(src, `file.Hashes["sha1"] == "" && file.Hashes["sha512"] == ""`) {
-		t.Error("the requirement that Modrinth published at least one hash is gone")
+	if !isMrpackFilesEntry(models.BuildContentEntry{Modversion: *got, Linked: true}) {
+		t.Error("the reference would not be a files[] entry and would leave the pack")
 	}
-	// The key test above mirrors the construction rather than calling it, so it
-	// cannot notice the real one drifting back. Pin the real one here: the raw
-	// version_number must not be concatenated into a storage key.
-	if !strings.Contains(src, "keyVersion := handlers.Slugify(v.VersionNum)") {
-		t.Error("the Modrinth version_number is no longer slugified for the storage key")
+	if _, err := os.Stat(filepath.Join(dir, "packs/u/mods/sodium/old.zip")); !os.IsNotExist(err) {
+		t.Errorf("the old stored copy survived: %v", err)
 	}
-	if strings.Contains(src, `+ "-" + v.VersionNum + ".zip"`) {
-		t.Error("the raw Modrinth version_number is back in the storage key")
+	var stored []string
+	_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			stored = append(stored, p)
+		}
+		return nil
+	})
+	if len(stored) != 0 {
+		t.Errorf("replace left objects in storage: %v", stored)
 	}
 }

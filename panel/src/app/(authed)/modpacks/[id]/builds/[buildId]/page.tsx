@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
     ArrowLeft, Trash2, Search,
     Upload, Lock,
-    ExternalLink, ChevronDown, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText, Copy,
+    ExternalLink, ChevronDown, Share2, X, Loader2, Replace, AlertTriangle, ArrowUpCircle, FileText,
 } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -17,17 +17,14 @@ import {
 import { publishModrinth, replaceWithModrinth, updateMods } from '@/lib/api/packsPublish';
 import { ModrinthProjectActions } from '@/components/mods/ModrinthLibrary';
 import PackConfigFiles from '@/components/modpacks/PackConfigFiles';
-import { createShareLink, listShareLinks, revokeShareLink, publicShareUrl, type ShareLink, type ShareLinkKind } from '@/lib/api/packsShare';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonList } from '@/components/Skeleton';
 import ModrinthVersionBrowser from '@/components/modrinth/ModrinthVersionBrowser';
 import ConfigEditorModal from '@/components/modpacks/ConfigEditorModal';
 import UploadContentModal from '@/components/modpacks/UploadContentModal';
-import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
-import { fmtDate } from '@/lib/time';
 import { WorkspaceDetails, usePackWorkspace } from '@/components/modpacks/PackWorkspace';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import { packContentGroup } from '@/lib/packWorkspace';
@@ -357,7 +354,7 @@ export default function BuildContentEditorPage() {
     const [expandedEntry, setExpandedEntry] = useState<number | null>(null);
     const [environment, setEnvironment] = useState<EnvironmentFilterValue>('all');
     const [sort, setSort] = useState<PackContentSort>('name');
-    const [activeTab, setActiveTab] = useState<'mods' | 'resources' | 'configs' | 'tools'>('mods');
+    const [activeTab, setActiveTab] = useState<'mods' | 'resources' | 'configs'>('mods');
     const [browsing, setBrowsing] = useState(false);
     const [query, setQuery] = useState('');
     const [categories, setCategories] = useState<ModrinthCategory[]>([]);
@@ -374,20 +371,13 @@ export default function BuildContentEditorPage() {
     const [updatingAll, setUpdatingAll] = useState(false);
     const [editing, setEditing] = useState<{ modversionId: number; title: string } | null>(null);
 
-    // Share-link state
-    const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
-    const [shareKind, setShareKind] = useState<ShareLinkKind>('client-mrpack');
-    const [shareExpiry, setShareExpiry] = useState(7);
-    const [creatingShare, setCreatingShare] = useState(false);
-
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
     const refresh = useCallback(async () => {
-        const [p, bs, list, sl] = await Promise.all([
+        const [p, bs, list] = await Promise.all([
             getPackDetails(packId),
             listBuilds(packId),
             listContent(packId, buildId),
-            listShareLinks(packId, buildId).catch(() => ({ success: false, links: [] as ShareLink[] })),
         ]);
         setPack(p.pack);
         setCanEdit(p.permissions.canEdit);
@@ -395,7 +385,6 @@ export default function BuildContentEditorPage() {
         setBuild(bs.find(b => b.id === buildId) || null);
         setBuilds(bs);
         setContent(list);
-        setShareLinks(sl.links || []);
         setLoading(false);
     }, [packId, buildId]);
 
@@ -457,34 +446,9 @@ export default function BuildContentEditorPage() {
         refresh();
     };
 
-    const handleCreateShareLink = async () => {
-        setCreatingShare(true);
-        try {
-            const res = await createShareLink(packId, buildId, shareKind, shareExpiry);
-            if (res.success) { showToast('Share link created'); refresh(); }
-            else showToast(res.message || 'Create failed', false);
-        } catch { showToast('Create failed', false); }
-        finally { setCreatingShare(false); }
-    };
-
-    const handleCopyShareLink = async (token: string) => {
-        try {
-            await navigator.clipboard.writeText(publicShareUrl(token));
-            showToast('Copied to clipboard');
-        } catch { showToast('Copy failed', false); }
-    };
-
-    const handleRevokeShareLink = async (linkId: number) => {
-        try {
-            const res = await revokeShareLink(packId, buildId, linkId);
-            if (res.success) { showToast('Link revoked'); refresh(); }
-            else showToast(res.message || 'Revoke failed', false);
-        } catch { showToast('Revoke failed', false); }
-    };
-
     const contentName = (entry: BuildContentEntry) => projectMetadata.projects[entry.modrinthProjectId]?.title || entry.prettyName || entry.modSlug;
     const groups = { mods: content.filter(entry => packContentGroup(entry.contentType) === 'mods'), resources: content.filter(entry => packContentGroup(entry.contentType) === 'resources'), configs: content.filter(entry => packContentGroup(entry.contentType) === 'configs') };
-    const visibleContent = activeTab === 'tools' ? [] : filterPackContent(groups[activeTab], query, environment, sort, contentName).filter(entry => !category || [...(projectMetadata.projects[entry.modrinthProjectId]?.categories || []), ...(projectMetadata.projects[entry.modrinthProjectId]?.additional_categories || [])].includes(category));
+    const visibleContent = filterPackContent(groups[activeTab], query, environment, sort, contentName).filter(entry => !category || [...(projectMetadata.projects[entry.modrinthProjectId]?.categories || []), ...(projectMetadata.projects[entry.modrinthProjectId]?.additional_categories || [])].includes(category));
     if (loading) return <div className={styles.editor}><SkeletonHeader /><SkeletonList rows={8} /></div>;
     if (!build || !pack) return <div className="p-6 text-sm text-(--base-06)">Build not found. <Link href={`/modpacks/${packId}`} className="text-(--accent-light)">Back to pack</Link></div>;
     return <div className={styles.editor}>
@@ -495,7 +459,7 @@ export default function BuildContentEditorPage() {
             <div className="flex flex-col gap-2 mt-5">
                 <button onClick={()=>setForkOpen(true)} disabled={modpacksDisabled} className="btn btn-secondary btn-sm">Fork build into another pack</button>
                 <button onClick={() => setDownloadKind('client')} className="btn btn-secondary btn-sm">Download client .mrpack</button>
-                <button onClick={() => setDownloadKind('server')} className="btn btn-secondary btn-sm">Download server ZIP</button>
+                <button onClick={() => setDownloadKind('server')} disabled={!canEdit} title={canEdit ? undefined : 'The server ZIP contains copies of Modrinth files, so only the owner and members with edit access can download it.'} className="btn btn-secondary btn-sm disabled:opacity-40">Download server ZIP</button>
                 <button onClick={() => setPublishDialogOpen(true)} disabled={modpacksDisabled || !canEdit || build.modrinthPublished} className="btn btn-primary btn-sm disabled:opacity-40"><Share2 size={12} />{build.modrinthPublished ? 'Published to Modrinth' : isFrozen ? 'Retry publication' : 'Publish'}</button>
                 {canDelete && !modpacksDisabled && <DeleteBuildButton packId={packId} build={build} onDeleted={() => router.push(`/modpacks/${packId}`)} />}
                 {canEdit && !modpacksDisabled && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-secondary btn-sm">Create another build</Link>}
@@ -532,96 +496,8 @@ export default function BuildContentEditorPage() {
                     } finally {setAddingContent(false);}
                 }} />
         </section> : <>
-            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length], ['tools', 'Sharing', null]] as const).filter(([id]) => id !== 'tools' || featureFlags.shareLinks || shareLinks.length > 0).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setCategory(null); setExpandedEntry(null); }}>{label}{count !== null && <span className="text-(--base-06)">{count}</span>}</button>)}</nav>
-            {activeTab === 'configs' ? <PackConfigFiles packId={packId} buildId={buildId} canEdit={!disabled} canDelete={!deleteDisabled} onChanged={refresh}/> : activeTab === 'tools' ? <div className={styles.rows}>
-                <p className="text-xs text-(--base-06) mb-4">Share links grant access to this build without a panel account. Use the download buttons for private downloads, Publish for Modrinth, and New build for Minecraft or loader changes.</p>
-                            {!featureFlags.shareLinks && shareLinks.length === 0 && <div className="card p-4 text-sm text-(--base-06)">Public share links are disabled by the administrator. Use the private client/server download buttons in Build details.</div>}
-                {(featureFlags.shareLinks || shareLinks.length > 0) && (
-                <section className="card p-4 mb-4">
-        <header className="flex items-center gap-2 mb-3">
-                        <Share2 size={14} className="text-(--accent-light)" />
-                        <h2 className="text-sm font-medium text-(--base-09)">Share links</h2>
-                    </header>
-
-                    {featureFlags.shareLinks ? (
-                        <div className="flex flex-wrap items-end gap-3 mb-3">
-                            <label className="flex flex-col gap-1">
-                                <span className="mono-label text-(--base-06)">Kind</span>
-                                <Select ariaLabel="Share link kind" className="w-48" value={shareKind} onChange={value => setShareKind(value as ShareLinkKind)} options={[{ value: 'client-mrpack', label: 'Client (.mrpack)' }, { value: 'server-pack', label: 'Server pack (.zip)' }]} />
-                            </label>
-                            <label className="flex flex-col gap-1">
-                                <span className="mono-label text-(--base-06)">Expires (days, 0 = never)</span>
-                                <input
-                                    type="number"
-                                    min={0}
-                                    value={shareExpiry}
-                                    onChange={e => setShareExpiry(Math.max(0, Number(e.target.value) || 0))}
-                                    className="input-field text-sm w-40"
-                                />
-                            </label>
-                            <button
-                                type="button"
-                                onClick={handleCreateShareLink}
-                                disabled={creatingShare || !canEdit || modpacksDisabled}
-                                className="btn btn-primary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                {creatingShare ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />}
-                                Create link
-                            </button>
-                        </div>
-                    ) : (
-                        <p className="text-xs text-(--base-06) mb-3">
-                            Creating new share links is disabled by the platform admin. Existing links stay usable.
-                        </p>
-                    )}
-
-                    {shareLinks.length === 0 ? (
-                        <p className="text-xs text-(--base-06)">No share links yet.</p>
-                    ) : (
-                        <ul className="space-y-2">
-                            {shareLinks.map(link => (
-                                <li key={link.id} className="flex items-center gap-2 text-xs">
-                                    <Badge variant={link.kind === 'server-pack' ? 'accent' : 'success'} className="shrink-0">
-                                        {link.kind === 'server-pack' ? 'Server' : 'Client'}
-                                    </Badge>
-                                    <code className="font-mono text-(--base-07) truncate flex-1">{publicShareUrl(link.token)}</code>
-                                    {link.revoked ? (
-                                        <Badge variant="neutral" className="shrink-0">revoked</Badge>
-                                    ) : (
-                                        <>
-                                            {link.expiresAt && (
-                                                <span className="text-(--base-06) shrink-0">
-                                                    expires {fmtDate(link.expiresAt)}
-                                                </span>
-                                            )}
-                                            <button
-                                                type="button"
-                                                onClick={() => handleCopyShareLink(link.token)}
-                                                title="Copy link"
-                                                className="btn btn-secondary btn-sm inline-flex items-center gap-1"
-                                            >
-                                                <Copy size={11} /> Copy
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleRevokeShareLink(link.id)}
-                                                disabled={!canEdit}
-                                                title="Revoke link"
-                                                className="btn btn-secondary btn-sm text-(--error-light)"
-                                            >
-                                                <X size={11} />
-                                            </button>
-                                        </>
-                                    )}
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </section>
-            )}
-
-
-            </div> : <div className={styles.contentGrid}>
+            <nav className={styles.tabs} role="tablist" aria-label="Build content">{([['mods', 'Mods', groups.mods.length], ['resources', 'Resources', groups.resources.length], ['configs', 'Configs & scripts', groups.configs.length]] as const).map(([id, label, count]) => <button key={id} className={styles.tab} role="tab" aria-selected={activeTab === id} onClick={() => { setActiveTab(id); setQuery(''); setCategory(null); setExpandedEntry(null); }}>{label}<span className="text-(--base-06)">{count}</span></button>)}</nav>
+            {activeTab === 'configs' ? <PackConfigFiles packId={packId} buildId={buildId} canEdit={!disabled} canDelete={!deleteDisabled} onChanged={refresh}/> : <div className={styles.contentGrid}>
                 <aside className={styles.contentFilters} aria-label="Installed filters">
                     <section><h3 className="input-label mb-2">Environment</h3><div className="[&_button]:w-full [&_button]:justify-start"><PackEnvironmentFilter value={environment} onChange={setEnvironment}/></div></section>
                     <ContentCategories categories={categories} projectType={activeTab==='resources'?['resourcepack','shader']:'mod'} value={category} onChange={setCategory} loading={categoriesLoading}/>

@@ -19,11 +19,9 @@ import (
 // when the request is RECEIVED, so it bounds when a download may START, not how
 // long it may take. An in-flight transfer is unaffected by the URL expiring.
 //
-// The short window matters most on the share route. That link used to be
-// streamed through Core, so revoking it cut access at once. A presigned URL is
-// a bearer credential the object store honours with no reference to Core, so
-// whatever TTL is set here is the window in which a revoked - or expired -
-// share link still serves the pack to anyone the URL was forwarded to.
+// A presigned URL is a bearer credential the object store honours with no
+// reference to Core, so whatever TTL is set here is the window in which it
+// still serves the object to anyone the URL was forwarded to.
 const modpackPresignTTL = 5 * time.Minute
 
 // ModpackMirrorRequestsPerMinute is the per-IP budget on the public pack mirror.

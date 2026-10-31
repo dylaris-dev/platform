@@ -22,11 +22,11 @@ type replaceModrinthRequest struct {
 	VersionID string `json:"versionId"` // the Modrinth version to align to
 }
 
-// ReplaceWithModrinth swaps a stored content artifact for Modrinth's exact file:
-// download the chosen Modrinth version's primary file, verify its bytes against
-// Modrinth's published hashes, re-wrap + store it, delete the old storage object,
-// and rewrite the modversion so it becomes byte-identical to Modrinth (clean
-// files[] reference + auto-update eligible).
+// ReplaceWithModrinth swaps a stored content artifact for a reference to
+// Modrinth's exact file: the modversion is rewritten to the chosen version's
+// primary file (URL and published hashes, a clean files[] reference that is
+// auto-update eligible) and the old storage object is deleted. Nothing is
+// downloaded or stored: a render fetches the file from cdn.modrinth.com.
 func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Request) {
 	build, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
@@ -67,9 +67,8 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 }
 
 // swapModversionToModrinth aligns a modversion to a specific Modrinth version:
-// fetch the version, download + integrity-verify its primary file against
-// Modrinth's published hashes, re-wrap + store under a fresh key, rewrite the
-// modversion refs, then delete the old object (safe-cutover ordering). Shared by
+// fetch the version, rewrite the modversion into a reference to its primary
+// file, then delete the old object once nothing points at it. Shared by
 // ReplaceWithModrinth and UpdateMods. Sets modrinth_latest_version_id to the
 // aligned version and stamps modrinth_last_checked so "update available" clears.
 func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID string, build *models.PackBuild, mv *models.Modversion, versionID string) error {
@@ -90,64 +89,17 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	if err := validateModrinthContent(build, v, kind); err != nil {
 		return err
 	}
+	// validateModrinthContent has proven the primary file is on the Modrinth CDN
+	// with both hashes: exactly what a files[] reference needs. Without them an
+	// entry with no stored bytes would silently leave every render.
 	file := v.PrimaryFile()
-	if file.URL == "" {
-		return fmt.Errorf("modrinth version has no downloadable file")
-	}
-	// At least one published hash, checked BEFORE the download: this function's
-	// whole promise is that the stored artifact becomes byte-identical to
-	// Modrinth's, and DownloadModrinthJar verifies only the hashes it is handed
-	// - two empty strings would make it accept whatever arrived and call it
-	// aligned.
-	if file.Hashes["sha1"] == "" && file.Hashes["sha512"] == "" {
-		return fmt.Errorf("modrinth version publishes no sha1/sha512 to verify against")
-	}
-	// services.DownloadModrinthJar rather than a bare client: it refuses any URL
-	// outside cdn.modrinth.com, caps the body, and verifies the hashes. The three
-	// other places that fetch a Modrinth file URL already go through it or its
-	// streaming twin; this one used its own client with no host check at all, so
-	// whatever URL the Modrinth API named in files[].url was fetched by Core from
-	// inside the network. That allowlist exists precisely so a download cannot be
-	// steered by a third party's response.
-	jar, err := services.DownloadModrinthJar(ctx, file.URL, file.Hashes["sha1"], file.Hashes["sha512"])
-	if err != nil {
-		return fmt.Errorf("download from modrinth failed: %w", err)
-	}
-	fileName := file.Filename
-	if fileName == "" {
-		fileName = mv.TargetPath[strings.LastIndex(mv.TargetPath, "/")+1:]
-	}
-	zipBytes, err := modpack.WrapJarAsContentZip(fileName, jar)
-	if err != nil {
-		return fmt.Errorf("wrap failed: %w", err)
-	}
-	md5hex, _, _ := modpack.Hashes(zipBytes)
-	prov, err := h.state.BuildModpackStorageProvider()
-	if err != nil || prov == nil {
-		return fmt.Errorf("no pack storage configured")
-	}
-	slug := handlers.Slugify(strings.TrimSuffix(fileName, ".jar"))
-	// Remote text must never reach a storage key. version_number is whatever the
-	// project author typed on Modrinth, and it went into the key raw. It is
-	// slugified for the key and kept raw only for the display field (mv.Version
-	// below). The md5 suffix is what keeps two
-	// different artifacts from colliding once the slug has flattened them.
-	keyVersion := handlers.Slugify(v.VersionNum)
-	if keyVersion == "" {
-		keyVersion = "v"
-	}
-	keyVersion = keyVersion + "-" + md5hex[:8]
-	newKey := "packs/" + ownerID + "/mods/" + slug + "/" + slug + "-" + keyVersion + ".zip"
-	if err := prov.Put(ctx, newKey, zipBytes); err != nil {
-		return fmt.Errorf("storage put failed: %w", err)
-	}
 	oldKey := mv.StorageKey
 
 	now := time.Now()
 	mv.Version = v.VersionNum
-	mv.Filesize = int64(len(zipBytes))
-	mv.StorageKey = newKey
-	mv.MD5 = md5hex
+	mv.Filesize = file.Size
+	mv.StorageKey = ""
+	mv.MD5 = ""
 	mv.SHA1 = file.Hashes["sha1"]
 	mv.SHA512 = file.Hashes["sha512"]
 	mv.ModrinthDownloadURL = file.URL
@@ -159,13 +111,12 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	mv.ModrinthLatestVersionID = v.ID // aligned: current == latest-known -> clears "update available"
 	mv.ModrinthLastChecked = &now
 	if err := h.state.Store.UpdateModversion(mv); err != nil {
-		if newKey != oldKey {
-			h.deleteIfUnreferenced(context.WithoutCancel(ctx), prov, newKey)
-		}
 		return fmt.Errorf("failed to update content: %w", err)
 	}
-	if oldKey != "" && oldKey != newKey {
-		h.deleteIfUnreferenced(ctx, prov, oldKey)
+	if oldKey != "" {
+		if prov, err := h.state.BuildModpackStorageProvider(); err == nil && prov != nil {
+			h.deleteIfUnreferenced(ctx, prov, oldKey)
+		}
 	}
 	return nil
 }

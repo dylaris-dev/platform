@@ -992,13 +992,6 @@ type Store interface {
 	ForkPackBuild(context.Context, *models.PackFork) (int, int, error)
 	UnreferencedPackForkUploads(context.Context, string, []string) ([]string, error)
 
-	// --- Share links (tokenized build download links) ---
-	CreateShareLink(l *models.ShareLink) (int, error)
-	GetShareLinkByToken(token string) (*models.ShareLink, error)
-	ListShareLinksByBuild(buildID int) ([]models.ShareLink, error)
-	RevokeShareLink(id int, createdBy string) error
-	RevokeShareLinkOfBuild(id, buildID int) error
-
 	UpsertMod(m *models.Mod) (int, error)
 	GetModBySlug(ownerID, slug string) (*models.Mod, error)
 	CreateModversion(mv *models.Modversion) (int, error)

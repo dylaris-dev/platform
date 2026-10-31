@@ -31,7 +31,6 @@ type modpackSettings struct {
 	S3AccessKey              string   `json:"s3AccessKey"`
 	S3SecretKey              string   `json:"s3SecretKey,omitempty"` // write-only
 	UpdateCheckIntervalHours int      `json:"updateCheckIntervalHours"`
-	ShareLinksEnabled        bool     `json:"shareLinksEnabled"`
 	// CorePublicURL is Core's own public origin. A node installing a panel-built
 	// pack downloads it from {CorePublicURL}/mirror/ (modpackMirrorBase), and
 	// isSnapshotFetchHostAllowed derives its SSRF allowlist from the same value -
@@ -117,7 +116,6 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out.UpdateCheckIntervalHours = interval
-	out.ShareLinksEnabled = get("modpack_share_links_enabled") == "true"
 	out.ConnectionID, _ = strconv.Atoi(get(handlers.KeyModpackStorageConnectionID)) // "" or bad -> 0 = none
 	out.CorePublicURL = get("core_public_url")
 	out.DetectedCorePublicURL = requestOrigin(r)
@@ -257,7 +255,6 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_storage_s3_region", req.S3Region},
 		{"modpack_storage_s3_access_key", req.S3AccessKey},
 		{"modpack_update_check_interval_hours", strconv.Itoa(uch)},
-		{"modpack_share_links_enabled", handlers.BoolStr(req.ShareLinksEnabled)},
 		{handlers.KeyModpackStorageConnectionID, handlers.StorageConnIDSetting(req.ConnectionID)},
 		{"core_public_url", req.CorePublicURL},
 	}
@@ -273,12 +270,6 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	// Invalidate the cached feature flag so subsequent reads in this Core
-	// pick up the new value instantly; cross-Core staleness is bounded by
-	// the 60s cache TTL. feature_modpacks_enabled is not invalidated: this handler
-	// no longer writes it, so its cached value is still correct.
-	h.state.FeatureFlags.Invalidate("modpack_share_links_enabled")
 
 	// Only modpack_settings.changed: features.changed belonged to the flag write
 	// that moved to Settings -> Features, and publishing it from here would tell
