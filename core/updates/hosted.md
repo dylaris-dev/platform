@@ -14,7 +14,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.10.31
 
 ### Features
-- Nothing.
+- BYON: CPU pinning places each server on its own physical core while free ones are left, and the
+  manual pin suggests the best free cores. A manual pin now has exactly as many cores as the CPU limit.
 
 ### Breaking
 - Nothing.

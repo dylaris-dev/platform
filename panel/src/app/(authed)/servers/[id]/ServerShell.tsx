@@ -47,7 +47,7 @@ import type { MemoryGuardAction } from '@/lib/api/types';
 import PowerControls from '@/components/server/PowerControls';
 import { advancePending, startPending, POWER_COOLDOWN_MS, type PendingPower, type PowerAction } from '@/lib/powerControls';
 import { fmtDateTime } from '@/lib/time';
-import { pinTooSmall } from '@/lib/cpuset';
+import { pinMismatch } from '@/lib/cpuset';
 import { loaderName } from '@/lib/modFit';
 
 // The server detail chrome: the header, the power controls, the tab strip and
@@ -1421,6 +1421,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                             <span className="input-label mb-0">CPU Pinning</span>
                                             <CpuPinningControl
                                                 nodeId={selectedServer.nodeId}
+                                                serverId={selectedServer.id}
                                                 mode={editCpuMode}
                                                 cpuset={editCpusetCpus}
                                                 cpuLimit={editCpuLimit}
@@ -1593,7 +1594,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                             )}
                             <div className="modal-footer">
                                 <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
-                                <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources || !!pinTooSmall(editCpuLimit, editCpuMode, editCpusetCpus)} title={pinTooSmall(editCpuLimit, editCpuMode, editCpusetCpus) ? 'Pin at least as many cores as the CPU limit' : undefined} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
+                                <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources || !!pinMismatch(editCpuLimit, editCpuMode, editCpusetCpus)} title={pinMismatch(editCpuLimit, editCpuMode, editCpusetCpus) ? 'Pin exactly as many cores as the CPU limit' : undefined} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
                             </div>
                         </div>
                     </ModalPanel>

@@ -350,8 +350,11 @@ export const setUserRouteLimit = (id: string, data: { mode: string; maxRoutes: n
 // --- NODES ---
 export interface CpuCore { id: number; type: 'P' | 'E' | 'standard'; sibling: number; maxClockMHz: number; cacheGroup: number; l3KB: number; }
 export interface NodeCpuTopology { logicalCount: number; physicalCount: number; hybrid: boolean; cores: CpuCore[]; scannedAt: number; }
-// Returns { success, topology: NodeCpuTopology | null, load: { [coreId]: number } }.
-export const getNodeCpu = (nodeId: number) => fetchAPI(`/nodes/${nodeId}/cpu`);
+// Returns { success, topology: NodeCpuTopology | null, load: { [coreId]: number }, suggested? }.
+// With a limit, `suggested` is the cpuset Core's allocator would give that
+// server (its own pin left out of the load), for a manual pin to start from.
+export const getNodeCpu = (nodeId: number, suggest?: { limit: number; serverId?: number }) =>
+    fetchAPI(`/nodes/${nodeId}/cpu${suggest && suggest.limit > 0 ? `?limit=${suggest.limit}${suggest.serverId ? `&server=${suggest.serverId}` : ''}` : ''}`);
 // How a node picks a storage path for NEW servers. "auto" takes the path with
 // the most free space; "manual" walks `order` and takes the first usable path.
 // Paths missing from `order` are tried last, so a disk added later needs no edit.

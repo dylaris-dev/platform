@@ -54,10 +54,20 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 
 	topo, _ := h.state.CPUPinning.GetNodeTopology(r.Context(), node.Token)
 	load, _ := h.state.CPUPinning.NodeCoreLoad(node.ID, 0)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	out := map[string]interface{}{
 		"success":    true,
 		"topology":   topo, // null when the node has not reported a topology yet
 		"load":       load,
 		"nodeCpuset": node.CpusetCpus, // the node's allowed core pool ("" = all cores)
-	})
+	}
+	// ?limit=2&server=32: the cores the allocator would give that server, so a
+	// manual pin in the panel can start from the same spread auto mode uses.
+	// The server's own pin is left out of the load it is placed against.
+	if limit, lerr := strconv.ParseFloat(r.URL.Query().Get("limit"), 64); lerr == nil && limit > 0 && limit <= 1024 {
+		exclude, _ := strconv.Atoi(r.URL.Query().Get("server"))
+		if suggested, serr := h.state.CPUPinning.AutoCpuset(r.Context(), node.Token, node.ID, exclude, limit, node.CpusetCpus); serr == nil {
+			out["suggested"] = suggested
+		}
+	}
+	json.NewEncoder(w).Encode(out)
 }

@@ -3,11 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import { Layers, Wand2, Grid3x3 } from 'lucide-react';
 import { getNodeCpu, type NodeCpuTopology } from '@/lib/api';
-import { parseCpuset, compactCpuset, pinTooSmall } from '@/lib/cpuset';
+import { parseCpuset, compactCpuset, pinMismatch } from '@/lib/cpuset';
 import { groupCoresByCache, formatL3, formatClock } from '@/lib/cpuTopology';
 
 interface CpuPinningControlProps {
     nodeId?: number;            // node to fetch topology for; undefined => grid hidden (e.g. tag-targeted create)
+    serverId?: number;          // the server being edited: its own pin is left out of the suggestion
     mode: 'shared' | 'auto' | 'manual';
     cpuset: string;             // current manual cpuset string
     cpuLimit?: number;          // used only for an informational hint
@@ -17,15 +18,18 @@ interface CpuPinningControlProps {
 
 const MODES: { id: 'shared' | 'auto' | 'manual'; label: string; icon: React.ElementType; hint: string }[] = [
     { id: 'shared', label: 'Shared', icon: Layers, hint: "Uses all of the node's cores within the CPU limit." },
-    { id: 'auto', label: 'Auto', icon: Wand2, hint: 'Placed automatically across least-loaded cores, preferring performance cores.' },
-    { id: 'manual', label: 'Manual', icon: Grid3x3, hint: 'Pick the exact cores this server is pinned to.' },
+    { id: 'auto', label: 'Auto', icon: Wand2, hint: 'Placed automatically: one physical core per server while free ones are left, performance cores first.' },
+    { id: 'manual', label: 'Manual', icon: Grid3x3, hint: 'Pick the exact cores this server runs on, as many as its CPU limit.' },
 ];
 
-export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onChange, disabled }: CpuPinningControlProps) {
+export default function CpuPinningControl({ nodeId, serverId, mode, cpuset, cpuLimit, onChange, disabled }: CpuPinningControlProps) {
     const [topology, setTopology] = useState<NodeCpuTopology | null>(null);
     const [load, setLoad] = useState<Record<string, number>>({});
     // The node's allowed core pool. "" means all cores are allowed (no pool).
     const [nodeCpuset, setNodeCpuset] = useState('');
+    // The cores Core's allocator would pick for this limit: the spread auto
+    // mode uses, offered as the starting point for a manual pin.
+    const [suggested, setSuggested] = useState('');
     const [loaded, setLoaded] = useState(false);
 
     useEffect(() => {
@@ -33,17 +37,18 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
             setTopology(null);
             setLoad({});
             setNodeCpuset('');
+            setSuggested('');
             setLoaded(false);
             return;
         }
         let cancelled = false;
-        setLoaded(false);
-        getNodeCpu(nodeId).then(res => {
+        getNodeCpu(nodeId, cpuLimit && cpuLimit > 0 ? { limit: cpuLimit, serverId } : undefined).then(res => {
             if (cancelled) return;
             if (res?.success) {
                 setTopology(res.topology ?? null);
                 setLoad(res.load ?? {});
                 setNodeCpuset(res.nodeCpuset ?? '');
+                setSuggested(typeof res.suggested === 'string' ? res.suggested : '');
             } else {
                 setTopology(null);
                 setLoad({});
@@ -58,7 +63,7 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
             setLoaded(true);
         });
         return () => { cancelled = true; };
-    }, [nodeId]);
+    }, [nodeId, serverId, cpuLimit]);
 
     const selected = new Set(parseCpuset(cpuset));
     // Allowed core pool for this node. When empty, every core is selectable.
@@ -195,11 +200,24 @@ export default function CpuPinningControl({ nodeId, mode, cpuset, cpuLimit, onCh
                                     <span className="ml-1">CPU limit is {cpuLimit} core{cpuLimit === 1 ? '' : 's'}.</span>
                                 )}
                             </p>
+                            {suggested && suggested !== compactCpuset([...selected]) && (
+                                <div className="flex items-center gap-2 text-[11px] text-(--base-06)">
+                                    <span>Best free cores for this limit: <span className="font-mono text-(--base-08)">{suggested}</span></span>
+                                    <button
+                                        type="button"
+                                        disabled={disabled}
+                                        onClick={() => onChange({ mode: 'manual', cpuset: suggested })}
+                                        className="btn btn-secondary px-2 py-0.5 text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        Use
+                                    </button>
+                                </div>
+                            )}
                             {(() => {
-                                const short = pinTooSmall(cpuLimit, 'manual', compactCpuset([...selected]));
-                                return short && (
+                                const off = pinMismatch(cpuLimit, 'manual', compactCpuset([...selected]));
+                                return off && (
                                     <p role="alert" className="text-[11px] text-(--error-light)">
-                                        The server gets {cpuLimit} CPU core{cpuLimit === 1 ? '' : 's'} but would be pinned to only {short.have}. Pin at least {short.need} cores, or lower the CPU limit to {short.have}.
+                                        The server gets {cpuLimit} CPU core{cpuLimit === 1 ? '' : 's'} but would be pinned to {off.have}. Pin exactly {off.need} core{off.need === 1 ? '' : 's'}, or set the CPU limit to {off.have}.
                                     </p>
                                 );
                             })()}

@@ -153,3 +153,62 @@ func TestTopologySignature_ExcludesDisplayFields(t *testing.T) {
 		}
 	}
 }
+
+// ms01 as it reports itself: 4 physical performance cores with two threads
+// each (0/1, 2/3, 4/5, 6/7) and 8 efficiency cores (8-15).
+func ms01Topology() *CPUTopology {
+	cores := make([]CPUCore, 0, 16)
+	for i := 0; i < 8; i++ {
+		cores = append(cores, CPUCore{ID: i, Type: "P", Sibling: i ^ 1})
+	}
+	for i := 8; i < 16; i++ {
+		cores = append(cores, CPUCore{ID: i, Type: "E", Sibling: -1})
+	}
+	return &CPUTopology{LogicalCount: 16, PhysicalCount: 12, Hybrid: true, Cores: cores}
+}
+
+// Servers placed one after another spread over physical cores: each takes both
+// threads of one core, no two share a core while a free one is left, and the
+// efficiency cores come once the performance cores are taken.
+func TestComputeAutoCpuset_OnePhysicalCorePerServer(t *testing.T) {
+	topo := ms01Topology()
+	load := map[int]int{}
+	place := func(budget int) string {
+		got := computeAutoCpuset(topo, budget, 1, load, nil)
+		for _, id := range parseCpusetList(got) {
+			load[id]++
+		}
+		return got
+	}
+	steps := []struct {
+		budget int
+		want   string
+	}{
+		{2, "0-1"},
+		{2, "2-3"},
+		{2, "4-5"},
+		{1, "6"},
+		// 7 is free, but its sibling 6 is not: a free efficiency core beats
+		// sharing a performance core with a neighbour.
+		{1, "8"},
+		{2, "9-10"},
+	}
+	for i, s := range steps {
+		if got := place(s.budget); got != s.want {
+			t.Fatalf("server %d (budget %d): got %q, want %q", i+1, s.budget, got, s.want)
+		}
+	}
+}
+
+// With every physical core taken, the next server shares the least-loaded one
+// rather than piling onto the first.
+func TestComputeAutoCpuset_SharesLeastLoadedWhenFull(t *testing.T) {
+	topo := &CPUTopology{LogicalCount: 4, PhysicalCount: 2, Cores: []CPUCore{
+		{ID: 0, Type: "P", Sibling: 1}, {ID: 1, Type: "P", Sibling: 0},
+		{ID: 2, Type: "P", Sibling: 3}, {ID: 3, Type: "P", Sibling: 2},
+	}}
+	load := map[int]int{0: 2, 1: 2, 2: 1, 3: 1}
+	if got := computeAutoCpuset(topo, 2, 0, load, nil); got != "2-3" {
+		t.Fatalf("got %q, want 2-3", got)
+	}
+}

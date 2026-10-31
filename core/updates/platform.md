@@ -11,10 +11,12 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.10.31
 
 ### Features
-- Nothing.
+- CPU pinning spreads servers over physical cores: auto gives each server both threads of its own
+  core while free ones are left, and a manual pin offers the best free cores for its limit. `core` `panel`
 
 ### Breaking
-- Nothing.
+- A manual CPU pin must hold exactly as many cores as the CPU limit, no longer "at least". Wider pins
+  keep running; the next resources save asks for a matching pin. `core` `panel`
 
 ### Security
 - Nothing.

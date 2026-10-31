@@ -44,12 +44,12 @@ export function compactCpuset(ids: number[]): string {
     return ranges.join(',');
 }
 
-// pinTooSmall: a manual pin with fewer cores than the CPU limit grants. The
-// limit is CPU time, the pin is where it may run; Core refuses a pin smaller
-// than the limit (rounded up), so the form says so before it is sent.
-export function pinTooSmall(cpuLimit: number | undefined, mode: string, cpuset: string): { have: number; need: number } | null {
+// pinMismatch: a manual pin whose core count is not the CPU limit (rounded
+// up). The limit is CPU time, the pin is where it may run; Core refuses any
+// other size, so the form says so before it is sent.
+export function pinMismatch(cpuLimit: number | undefined, mode: string, cpuset: string): { have: number; need: number } | null {
     if (mode !== 'manual' || !cpuLimit || cpuLimit <= 0) return null;
     const have = parseCpuset(cpuset).length;
     const need = Math.ceil(cpuLimit - 1e-9);
-    return have > 0 && have < need ? { have, need } : null;
+    return have > 0 && have !== need ? { have, need } : null;
 }

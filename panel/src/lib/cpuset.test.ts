@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCpuset, compactCpuset, pinTooSmall } from './cpuset';
+import { parseCpuset, compactCpuset, pinMismatch } from './cpuset';
 
 describe('parseCpuset', () => {
     it('parses a single id', () => {
@@ -62,16 +62,17 @@ describe('compactCpuset', () => {
     });
 });
 
-describe('pinTooSmall', () => {
-    it('refuses a manual pin with fewer cores than the limit grants', () => {
-        expect(pinTooSmall(4, 'manual', '0-2')).toEqual({ have: 3, need: 4 });
-        expect(pinTooSmall(2.5, 'manual', '0-1')).toEqual({ have: 2, need: 3 });
+describe('pinMismatch', () => {
+    it('refuses a manual pin that is not exactly the limit', () => {
+        expect(pinMismatch(4, 'manual', '0-2')).toEqual({ have: 3, need: 4 });
+        expect(pinMismatch(2.5, 'manual', '0-1')).toEqual({ have: 2, need: 3 });
+        expect(pinMismatch(2, 'manual', '0-7')).toEqual({ have: 8, need: 2 });
     });
-    it('accepts a pin at or above the limit, no limit, no pin, or other modes', () => {
-        expect(pinTooSmall(4, 'manual', '0-3')).toBeNull();
-        expect(pinTooSmall(4, 'manual', '0-7')).toBeNull();
-        expect(pinTooSmall(0, 'manual', '0')).toBeNull();
-        expect(pinTooSmall(4, 'manual', '')).toBeNull();
-        expect(pinTooSmall(4, 'auto', '0')).toBeNull();
+    it('accepts a pin of exactly the limit, no limit, no pin, or other modes', () => {
+        expect(pinMismatch(4, 'manual', '0-3')).toBeNull();
+        expect(pinMismatch(2.5, 'manual', '0-2')).toBeNull();
+        expect(pinMismatch(0, 'manual', '0-7')).toBeNull();
+        expect(pinMismatch(4, 'manual', '')).toBeNull();
+        expect(pinMismatch(4, 'auto', '0')).toBeNull();
     });
 });

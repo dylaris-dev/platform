@@ -110,18 +110,20 @@ func (s *CPUPinningService) AutoCpuset(ctx context.Context, nodeToken string, no
 	return computeAutoCpuset(topo, budget, reserve, load, allowed), nil
 }
 
-// PinTooSmall reports a manual pin with fewer cores than the CPU limit grants.
-// The limit is the container's CPU time (NanoCPUs), the pin only where it may
-// run; Docker applies both, so 4 cores of time on 3 pinned cores is 3 cores.
-// need is the cores the limit asks for (rounded up); a limit of 0 (none) or an
-// empty pin never conflicts.
-func PinTooSmall(cpuLimit float64, cpuset string) (have, need int, tooSmall bool) {
+// PinMismatch reports a manual pin whose core count is not the CPU limit
+// (rounded up). The limit is the container's CPU time (NanoCPUs), the pin is
+// where it may run. Fewer cores than the limit silently caps the server below
+// what it was given; more lets it wander over cores it has no time for, which
+// is what made the overview show 8 cores for a 2-core server and stacked every
+// server on the same ones. So a pin is exactly the server's cores. A limit of
+// 0 (none) or an empty pin never conflicts.
+func PinMismatch(cpuLimit float64, cpuset string) (have, need int, mismatch bool) {
 	have = len(parseCpusetList(cpuset))
 	if cpuLimit <= 0 || have == 0 {
 		return have, 0, false
 	}
 	need = int(math.Ceil(cpuLimit - 1e-9))
-	return have, need, have < need
+	return have, need, have != need
 }
 
 // ValidateCpuset checks a manual cpuset against the node topology AND the node's
@@ -190,27 +192,35 @@ func TopologySignature(t *CPUTopology) string {
 	return strings.Join(parts, ",")
 }
 
-// computeAutoCpuset picks `budget` cores, preferring performance cores, then
-// least-loaded, then lowest id, while reserving reserveHostCores for the host.
-// allowed (when non-nil) restricts the candidate cores to the node's pool.
-// Pure + deterministic.
+// computeAutoCpuset picks `budget` cores for one server so that servers spread
+// over the node instead of stacking. Pure + deterministic.
+//
+// The unit is the PHYSICAL core. Two hyperthreads of one core share its
+// execution units, so a neighbour on the sibling thread slows a server as much
+// as one on the same thread would; a server therefore takes both threads of a
+// core before the next one, and different servers get different cores. Free
+// physical cores go first (performance cores before standard before
+// efficiency), and only when none is left does a server share - with the
+// least-loaded core. load counts the servers pinned per logical core;
+// allowed (when non-nil) restricts the candidates to the node's pool.
 func computeAutoCpuset(topo *CPUTopology, budget, reserveHostCores int, load map[int]int, allowed map[int]bool) string {
 	if topo == nil || len(topo.Cores) == 0 || budget <= 0 {
 		return ""
 	}
 
-	// Candidate cores: the node pool when set, otherwise all cores.
-	cores := make([]CPUCore, 0, len(topo.Cores))
+	byID := map[int]CPUCore{}
+	inPool := map[int]CPUCore{}
 	for _, c := range topo.Cores {
+		byID[c.ID] = c
 		if allowed == nil || allowed[c.ID] {
-			cores = append(cores, c)
+			inPool[c.ID] = c
 		}
 	}
-	if len(cores) == 0 {
+	if len(inPool) == 0 {
 		return ""
 	}
 
-	maxAssignable := len(cores) - reserveHostCores
+	maxAssignable := len(inPool) - reserveHostCores
 	if maxAssignable < 1 {
 		maxAssignable = 1
 	}
@@ -218,21 +228,69 @@ func computeAutoCpuset(topo *CPUTopology, budget, reserveHostCores int, load map
 		budget = maxAssignable
 	}
 
-	sort.SliceStable(cores, func(i, j int) bool {
-		ri, rj := coreTypeRank(cores[i].Type), coreTypeRank(cores[j].Type)
-		if ri != rj {
-			return ri < rj
+	// Group the pool into physical cores by sibling. A sibling outside the pool
+	// still counts toward the load: whoever runs there shares the core.
+	type physCore struct {
+		threads []int
+		rank    int
+		load    int
+	}
+	var phys []*physCore
+	seen := map[int]bool{}
+	ids := make([]int, 0, len(inPool))
+	for id := range inPool {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	for _, id := range ids {
+		if seen[id] {
+			continue
 		}
-		li, lj := load[cores[i].ID], load[cores[j].ID]
-		if li != lj {
-			return li < lj
+		c := inPool[id]
+		p := &physCore{threads: []int{id}, rank: coreTypeRank(c.Type), load: load[id]}
+		seen[id] = true
+		// Only a pair that names each other: a zero Sibling must not make
+		// every core core 0's twin.
+		if sib, ok := byID[c.Sibling]; ok && c.Sibling != id && sib.Sibling == id {
+			p.load += load[c.Sibling]
+			if _, ok := inPool[c.Sibling]; ok && !seen[c.Sibling] {
+				p.threads = append(p.threads, c.Sibling)
+				seen[c.Sibling] = true
+			}
 		}
-		return cores[i].ID < cores[j].ID
+		sort.Slice(p.threads, func(i, j int) bool {
+			if load[p.threads[i]] != load[p.threads[j]] {
+				return load[p.threads[i]] < load[p.threads[j]]
+			}
+			return p.threads[i] < p.threads[j]
+		})
+		phys = append(phys, p)
+	}
+	sort.SliceStable(phys, func(i, j int) bool {
+		fi, fj := phys[i].load == 0, phys[j].load == 0
+		if fi != fj {
+			return fi
+		}
+		if phys[i].rank != phys[j].rank {
+			return phys[i].rank < phys[j].rank
+		}
+		if phys[i].load != phys[j].load {
+			return phys[i].load < phys[j].load
+		}
+		return phys[i].threads[0] < phys[j].threads[0]
 	})
 
 	chosen := make([]int, 0, budget)
-	for i := 0; i < budget && i < len(cores); i++ {
-		chosen = append(chosen, cores[i].ID)
+	for _, p := range phys {
+		for _, id := range p.threads {
+			if len(chosen) == budget {
+				break
+			}
+			chosen = append(chosen, id)
+		}
+		if len(chosen) == budget {
+			break
+		}
 	}
 	sort.Ints(chosen)
 	return compactCpuset(chosen)

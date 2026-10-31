@@ -1957,16 +1957,16 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		}
 		pinningChanged = pinMode != srv.CPUPinningMode || newCpuset != srv.Cpuset
 	}
-	// A manual pin must hold at least the cores the limit grants, in both
-	// directions: a smaller pin, or a bigger limit on the existing pin.
+	// A manual pin is exactly the cores the limit grants, in both directions: a
+	// different pin, or a different limit on the existing pin.
 	finalMode, finalCpuset := srv.CPUPinningMode, srv.Cpuset
 	if pinningRequested {
 		finalMode, finalCpuset = pinMode, newCpuset
 	}
 	if finalMode == "manual" {
-		if have, need, bad := services.PinTooSmall(req.CPULimit, finalCpuset); bad {
-			handlers.SendJSONErrorCode(w, fmt.Sprintf("The server gets %g CPU cores but is pinned to only %d. Pin at least %d cores, or lower the CPU limit to %d.", req.CPULimit, have, need, have),
-				"pin_smaller_than_limit", http.StatusBadRequest)
+		if have, need, bad := services.PinMismatch(req.CPULimit, finalCpuset); bad {
+			handlers.SendJSONErrorCode(w, fmt.Sprintf("The server gets %g CPU cores but is pinned to %d. Pin exactly %d cores, or set the CPU limit to %d.", req.CPULimit, have, need, have),
+				"pin_size_mismatch", http.StatusBadRequest)
 			return
 		}
 	}
