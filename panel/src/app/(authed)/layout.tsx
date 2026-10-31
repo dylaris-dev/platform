@@ -24,6 +24,7 @@ import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import ModInstallWidget from '@/components/ModInstallWidget';
 import BeamDownloadButton from '@/components/BeamDownloadButton';
+import LegalFooter from '@/components/LegalFooter';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ModInstallProvider } from '@/lib/modInstallManager';
@@ -296,6 +297,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             <div className="flex flex-1 overflow-hidden relative">
                 {children}
             </div>
+            <LegalFooter className="shrink-0 border-t border-(--base-03) bg-(--base-01)" />
 
             {showProfilePopup && (
                 <ProfilePopup

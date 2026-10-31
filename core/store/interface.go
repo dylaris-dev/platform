@@ -1040,6 +1040,10 @@ type Store interface {
 	GetUserUpdatesSeen(userID string) (version string, err error)
 	GetUserTimePreferences(userID string) (timezone, timeFormat string, err error)
 	SetUserTimePreferences(userID, timezone, timeFormat string) error
+	// MinecraftEulaAccepted reports whether the user has accepted the
+	// Minecraft EULA; AcceptMinecraftEula records it (the first time only).
+	MinecraftEulaAccepted(userID string) (bool, error)
+	AcceptMinecraftEula(userID string) error
 	// GetServerTimezone: own is "" when the server inherits; effective is
 	// own, else the owner's, else "UTC".
 	GetServerTimezone(serverID int) (own, effective string, err error)

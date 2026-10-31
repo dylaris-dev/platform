@@ -468,6 +468,12 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
 		return
 	}
+	// Before the cooldown below is claimed: a refusal here is answered by
+	// ticking a box, and must not cost the 30 seconds of a real install.
+	actorID, _ := r.Context().Value("userID").(string)
+	if !requireMinecraftEula(w, h.state.Store, actorID, req.AcceptMinecraftEula) {
+		return
+	}
 
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
@@ -858,7 +864,6 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL, false)
 	}
 
-	actorID, _ := r.Context().Value("userID").(string)
 	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSetup, actorID, "", map[string]interface{}{
 		"sub_server": subName,
 		"installer":  req.Installer.Type,

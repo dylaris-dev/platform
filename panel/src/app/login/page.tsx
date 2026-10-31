@@ -3,6 +3,7 @@
 import React, { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import LoginForm from "@/components/LoginForm";
+import LegalFooter from '@/components/LegalFooter';
 import { getSetupStatus } from '@/lib/api/setup';
 import { demoLogin } from '@/lib/api/auth';
 import { hasSession } from '@/lib/api/sessionState';
@@ -52,13 +53,14 @@ function LoginPageInner() {
   }, [router, wantsDemo]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
+    <div className="relative min-h-screen flex items-center justify-center p-4 pb-16 bg-(--background)">
       <div className="w-full max-w-md space-y-4">
         {demoError && (
           <div className="alert alert-warning text-sm">{demoError}</div>
         )}
         <LoginForm />
       </div>
+      <LegalFooter className="absolute bottom-0 inset-x-0 py-3" />
     </div>
   );
 }

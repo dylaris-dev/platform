@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Server, setupServer, updateServerRuntime, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
+import { Server, setupServer, getMinecraftEulaStatus, updateServerRuntime, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
 import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
@@ -17,6 +17,7 @@ import SetupEditMode from './setup/SetupEditMode';
 import RoutesModal from '@/components/RoutesModal';
 import { getSubServerInstalls, type SubServerInstall } from '@/lib/api/subServerInstalls';
 import WipeChoiceDialog from '@/views/setup/WipeChoiceDialog';
+import MinecraftEulaDialog from '@/views/setup/MinecraftEulaDialog';
 import { classifyInstallChange, loaderFamilyChanged, type InstallChange, type WipeToken } from '@/lib/installWipe';
 import { API_URL } from '@/lib/api/core';
 import { isSubServerName } from '@/lib/validation';
@@ -225,6 +226,17 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     // chosen tokens once it is answered, so the whole submit path stays one
     // function rather than two that have to agree.
     const [pendingWipe, setPendingWipe] = useState<{ change: InstallChange; loaderChanged: boolean } | null>(null);
+    // The Minecraft EULA, asked once per account before the first install.
+    // null = not known yet (or could not be read): ask, Core decides anyway.
+    const [eulaAccepted, setEulaAccepted] = useState<boolean | null>(null);
+    // Set while the EULA dialog is open; holds the wipe choice handleSubmit
+    // was called with, so accepting resumes the same install.
+    const [pendingEula, setPendingEula] = useState<{ wipePaths?: WipeToken[] } | null>(null);
+    // True from the click on "Accept" until Core has recorded it with an install.
+    const acceptEulaRef = useRef(false);
+    useEffect(() => {
+        getMinecraftEulaStatus().then(r => { if (r.success && typeof r.accepted === 'boolean') setEulaAccepted(r.accepted); }).catch(() => {});
+    }, []);
     // True when edit mode opened before the install records had arrived. The
     // records are fetched on mount and the Edit button is a click away, so a fast
     // operator got the servers-row fallback and a form that had quietly not
@@ -652,6 +664,12 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
             return;
         }
 
+        // Before anything is uploaded or queued: an install writes eula=true.
+        if (eulaAccepted !== true && !acceptEulaRef.current) {
+            setPendingEula({ wipePaths });
+            return;
+        }
+
         setSubmitting(true);
         setError('');
 
@@ -753,12 +771,17 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
                 extraJvmFlags: extraFlags,
                 installer,
                 createsRoute: plannedRoute.createsRoute,
+                ...(acceptEulaRef.current ? { acceptMinecraftEula: true } : {}),
             });
         } catch (e) {
             if (holdsUpload) stager.endInstall(false);
             throw e;
         }
         if (holdsUpload) stager.endInstall(!!res.success);
+        if (res.success && acceptEulaRef.current) {
+            acceptEulaRef.current = false;
+            setEulaAccepted(true);
+        }
 
         if (res.success) {
             if (holdsUpload) { setUploadTarget(null); setUploadStaged(false); }
@@ -1189,6 +1212,17 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
                 through the layout. Reload local existingRoutes when
                 the user mutates anything so the picker's "own route"
                 check stays in sync. */}
+            {pendingEula && (
+                <MinecraftEulaDialog
+                    onCancel={() => setPendingEula(null)}
+                    onAccept={() => {
+                        const resume = pendingEula;
+                        setPendingEula(null);
+                        acceptEulaRef.current = true;
+                        void handleSubmit(resume.wipePaths);
+                    }}
+                />
+            )}
             {pendingWipe && (
                 <WipeChoiceDialog
                     change={pendingWipe.change}

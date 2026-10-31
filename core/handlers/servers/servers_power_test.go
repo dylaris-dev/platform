@@ -868,3 +868,8 @@ func TestByonNodeServerCapReached(t *testing.T) {
 		}
 	})
 }
+
+// Setup tests exercise what comes after the Minecraft EULA gate; the gate has
+// its own test (minecraft_eula_test.go), so this fake has always accepted.
+func (f *serverPowerFakeStore) MinecraftEulaAccepted(string) (bool, error) { return true, nil }
+func (f *serverPowerFakeStore) AcceptMinecraftEula(string) error           { return nil }

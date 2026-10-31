@@ -409,6 +409,10 @@ export const serverPower = (id: number, action: string) => fetchAPI(`/servers/${
 export const getInstallCooldown = (id: number): Promise<{ success: boolean; seconds: number }> =>
     fetchAPI(`/servers/${id}/install-cooldown`);
 export const setupServer = (id: number, data: any) => fetchAPI(`/servers/${id}/setup`, { method: 'POST', body: JSON.stringify(data) });
+// Whether the caller has accepted the Minecraft EULA. Setup asks once, and the
+// acceptance itself rides on the next setupServer call (acceptMinecraftEula).
+export const getMinecraftEulaStatus = (): Promise<{ success: boolean; accepted?: boolean }> =>
+    fetchAPI('/auth/minecraft-eula');
 
 /**
  * Change the Java image and the JVM flags WITHOUT reinstalling.

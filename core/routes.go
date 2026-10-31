@@ -1205,6 +1205,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// a few name saves spend the per-IP login budget.
 	mcNameLimiter := handlers.NewIPRateLimiter()
 	api.HandleFunc("/auth/profile/minecraft", mcNameLimiter.Limit(30, authHandler.AuthMiddleware(authHandler.UpdateMinecraftUsernameHandler))).Methods("PUT")
+	// Whether the caller has accepted the Minecraft EULA, so setup asks once.
+	// Accepting rides on the install request itself (acceptMinecraftEula).
+	api.HandleFunc("/auth/minecraft-eula", authHandler.AuthMiddleware(authHandler.MinecraftEulaStatusHandler)).Methods("GET")
 	api.HandleFunc("/auth/2fa/setup", authHandler.AuthMiddleware(authHandler.SetupTOTPHandler)).Methods("POST")
 	// The three below compare the account password, so they are rate- and
 	// body-limited like every other credential endpoint: an authenticated

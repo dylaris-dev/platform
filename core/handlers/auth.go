@@ -1112,6 +1112,22 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
+// MinecraftEulaStatusHandler GET /api/auth/minecraft-eula - whether the
+// caller has accepted the Minecraft EULA. Setup asks before the first install.
+func (h *AuthHandler) MinecraftEulaStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		return
+	}
+	userID, _ := r.Context().Value("userID").(string)
+	accepted, err := h.state.Store.MinecraftEulaAccepted(userID)
+	if err != nil {
+		sendJSONError(w, "Could not read the Minecraft EULA acceptance", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "accepted": accepted})
+}
+
 // UpdateMinecraftUsernameHandler PUT /api/auth/profile/minecraft - sets or
 // clears (empty string) the caller's own Minecraft username. No current
 // password: the name is unverified and only picks the avatar head, so it

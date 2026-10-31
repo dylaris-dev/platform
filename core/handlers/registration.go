@@ -54,6 +54,12 @@ func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.
 		"emailVerifyRequired": p.EmailVerifyRequired,
 		"passwordMinLength":   p.PasswordMinLength,
 	}
+	// Where the panel links its imprint, privacy policy and terms: the hosted
+	// panel is the one connected to the dylaris.com store, and those pages are
+	// the operator's. A self-hosted panel gets none - our imprint is not theirs.
+	if h.state.StoreEnabled {
+		out["legalBaseUrl"] = strings.TrimRight(h.state.StoreURL, "/")
+	}
 	if p.SecurityQuestionsEnabled && p.SecurityQuestionsRequiredAtSignup {
 		out["securityQuestionsRequired"] = true
 		out["securityQuestionsCount"] = p.SecurityQuestionsCount

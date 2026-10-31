@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.31.3
+
+### Features
+- A thin footer carries Mojang's "not an official Minecraft service" line; a panel connected to
+  the store also links the operator's imprint, privacy policy and terms there. `core` `panel`
+
+### Breaking
+- Server setup refuses an install until the caller has accepted the Minecraft EULA once (409
+  minecraft_eula_required); the panel asks, API clients send "acceptMinecraftEula": true. `core` `panel`
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.31.2
 
 ### Features

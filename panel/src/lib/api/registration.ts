@@ -5,6 +5,8 @@ export interface RegistrationStatus {
     registrationEnabled: boolean;
     emailVerifyRequired: boolean;
     passwordMinLength: number;
+    // Base URL of the operator's legal pages; only on the hosted panel.
+    legalBaseUrl?: string;
 }
 
 // Public — no auth header required. Login page calls this before render to

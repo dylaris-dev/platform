@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.31.3
+
+### Features
+- Every panel screen now links the imprint, privacy policy and terms at the bottom.
+
+### Breaking
+- Installing a server asks you once to accept the Minecraft EULA. Over the API, send
+  "acceptMinecraftEula": true with your first setup call.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.10.31.2
 
 ### Features

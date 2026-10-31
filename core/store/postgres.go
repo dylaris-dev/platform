@@ -609,6 +609,25 @@ func (s *PostgresStore) SetUserTimePreferences(userID, timezone, timeFormat stri
 	return nil
 }
 
+func (s *PostgresStore) MinecraftEulaAccepted(userID string) (bool, error) {
+	var accepted bool
+	err := s.db.QueryRow(`SELECT minecraft_eula_accepted_at IS NOT NULL FROM users WHERE id = $1`, userID).Scan(&accepted)
+	return accepted, err
+}
+
+// AcceptMinecraftEula keeps the FIRST acceptance: it is the date the record
+// has to show, and a later install must not move it.
+func (s *PostgresStore) AcceptMinecraftEula(userID string) error {
+	res, err := s.db.Exec(`UPDATE users SET minecraft_eula_accepted_at = COALESCE(minecraft_eula_accepted_at, NOW()) WHERE id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
 // GetServerTimezone returns the server's own zone ("" = inherits) and the one
 // it actually runs in: its own, else its owner's, else UTC.
 func (s *PostgresStore) GetServerTimezone(serverID int) (own, effective string, err error) {
