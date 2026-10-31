@@ -202,8 +202,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     const filename = `${folderName}.zip`;
     setDownloadProgress({ filename, loaded: 0, total: 0 });
     try {
-      const onProgress = (loaded: number, total: number) =>
-        setDownloadProgress(prev => prev ? { ...prev, loaded, total: total || prev.total } : null);
+      const onProgress = (loaded: number, total: number, filename?: string) =>
+        setDownloadProgress(prev => prev ? { ...prev, filename: filename || prev.filename, loaded, total: total || prev.total } : null);
       if (selectiveAll) {
         await adapter.selectiveDownload(basePath, [], true, serverUuid, onProgress);
       } else {
@@ -253,8 +253,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     const names = Array.from(selected);
     setDownloadProgress({ filename: 'selection.zip', loaded: 0, total: 0 });
     try {
-      const onProgress = (loaded: number, total: number) =>
-        setDownloadProgress(prev => prev ? { ...prev, loaded, total: total || prev.total } : null);
+      const onProgress = (loaded: number, total: number, filename?: string) =>
+        setDownloadProgress(prev => prev ? { ...prev, filename: filename || prev.filename, loaded, total: total || prev.total } : null);
       await adapter.selectiveDownload(currentPath, names, false, serverUuid, onProgress);
       setSelected(new Set());
     } catch (err) {
@@ -988,8 +988,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                   const filePath = `${currentPath ? `${currentPath}/` : ''}${file.name}`;
                   setDownloadProgress({ filename: file.name, loaded: 0, total: file.size });
                   try {
-                    await adapter.downloadFile(filePath, serverUuid, false, (loaded, total) =>
-                      setDownloadProgress(prev => prev ? { ...prev, loaded, total: total || prev.total } : null)
+                    await adapter.downloadFile(filePath, serverUuid, false, (loaded, total, filename) =>
+                      setDownloadProgress(prev => prev ? { ...prev, filename: filename || prev.filename, loaded, total: total || prev.total } : null)
                     );
                   } catch (err) {
                     console.error('Download failed:', err);

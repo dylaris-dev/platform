@@ -96,6 +96,31 @@ export interface WailsAppBindings {
 declare global {
     interface Window {
         go?: { main?: { App?: WailsAppBindings } };
+        // Wails' event bridge. EventsOn returns the matching unsubscribe.
+        runtime?: { EventsOn?(name: string, cb: (data: unknown) => void): () => void };
+    }
+}
+
+// withNativeProgress runs a native download while forwarding the app's
+// "download:progress" events (app.go) to onProgress. The binding resolves
+// only when the file is complete, so without this the file browser showed
+// "0 B" for the whole transfer of a 36 GB world while the bytes were
+// arriving. name is the file the user picked in the save dialog; an app
+// build that does not send it leaves the browser's own guess in place.
+export async function withNativeProgress(
+    onProgress: ((loaded: number, total: number, filename?: string) => void) | undefined,
+    run: () => Promise<void>,
+): Promise<void> {
+    const off = onProgress && typeof window.runtime?.EventsOn === 'function'
+        ? window.runtime.EventsOn('download:progress', (data) => {
+            const d = (data ?? {}) as { loaded?: number; total?: number; name?: string };
+            onProgress(Number(d.loaded) || 0, Number(d.total) || 0, typeof d.name === 'string' && d.name ? d.name : undefined);
+        })
+        : undefined;
+    try {
+        await run();
+    } finally {
+        off?.();
     }
 }
 
@@ -519,13 +544,13 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 return { success: false, message };
             }
         },
-        downloadFile: async (path, serverUuid, isDir) => {
-            // Wails opens its own native save dialog, so we don't need
-            // browser progress tracking here.
-            await app.DownloadFile(path, serverUuid ?? '', !!isDir);
+        downloadFile: async (path, serverUuid, isDir, onProgress) => {
+            // Wails opens its own native save dialog and writes the file
+            // itself; progress comes back as app events.
+            await withNativeProgress(onProgress, () => app.DownloadFile(path, serverUuid ?? '', !!isDir));
         },
-        selectiveDownload: async (basePath, selected, selectAll, serverUuid) => {
-            await app.SelectiveDownload(basePath, selected, selectAll, serverUuid ?? '');
+        selectiveDownload: async (basePath, selected, selectAll, serverUuid, onProgress) => {
+            await withNativeProgress(onProgress, () => app.SelectiveDownload(basePath, selected, selectAll, serverUuid ?? ''));
         },
         // Limits in Wails mode follow the active upload transport:
         //   * native gRPC available → unlimited (Node throttles itself)

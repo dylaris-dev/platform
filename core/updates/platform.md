@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.31.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Beam desktop app: the file browser shows a native download's progress (it read 0 B until done),
+  and Beam 0.9.12 sends the saved file's name. Toasts and the download card clear the launcher. `panel`
+
 ## 2026.10.31
 
 ### Features

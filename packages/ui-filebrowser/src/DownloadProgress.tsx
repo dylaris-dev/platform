@@ -15,7 +15,7 @@ export interface DownloadProgressProps {
 // Fixed bottom-right download progress card. When `total` is unknown (0) it
 // shows the loaded byte count and an indeterminate pulse bar instead.
 const DownloadProgress: React.FC<DownloadProgressProps> = ({ progress }) => (
-  <div className="fixed bottom-4 right-4 z-50 w-68 bg-(--base-01) border border-(--base-04) rounded-lg shadow-xl p-3 animate-fade-in">
+  <div className="fixed bottom-[calc(1rem+var(--beam-launcher-space,0px))] right-4 z-50 w-68 bg-(--base-01) border border-(--base-04) rounded-lg shadow-xl p-3 animate-fade-in">
     <div className="flex items-center gap-2 mb-2">
       <Download size={13} className="text-(--accent) shrink-0" />
       <span className="text-xs text-(--base-08) truncate font-mono flex-1">{progress.filename}</span>

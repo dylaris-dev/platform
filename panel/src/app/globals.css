@@ -736,9 +736,15 @@ input[type="number"] {
 }
 
 /* ── Toasts ── */
+/* Beam's settings button: 34px on a 12px margin, plus a gap. Set only inside
+   the desktop app (see ToastRoot); every bottom-anchored overlay adds it. */
+:root[data-beam] {
+  --beam-launcher-space: 54px;
+}
+
 .toast-container {
   position: fixed;
-  bottom: 20px;
+  bottom: calc(20px + var(--beam-launcher-space, 0px));
   right: 20px;
   display: flex;
   flex-direction: column;

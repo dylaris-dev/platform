@@ -1079,12 +1079,7 @@ func (a *App) DownloadFile(path string, serverUUID string, isDir bool) error {
 	}
 
 	if relay := a.getRelay(); relay != nil {
-		if err := relay.DownloadFile(path, isDir, savePath, func(loaded, total int64) {
-			runtime.EventsEmit(a.ctx, "download:progress", map[string]interface{}{
-				"loaded": loaded,
-				"total":  total,
-			})
-		}); err != nil {
+		if err := relay.DownloadFile(path, isDir, savePath, a.downloadProgress(savePath)); err != nil {
 			return err
 		}
 		a.setLastDownloadPath(savePath)
@@ -1110,6 +1105,36 @@ func (a *App) DownloadFile(path string, serverUUID string, isDir bool) error {
 	return nil
 }
 
+// downloadProgress reports a native download to the page as
+// "download:progress" events, which the panel's file browser shows.
+//
+// name is the file the user picked in the save dialog: the page only knows
+// the name it suggested, so without it the card said world.zip for a file
+// saved as download.zip. One event right away carries the name before the
+// first byte, which for a zipped folder can take a moment. After that at
+// most every 200 ms: a chunk is 256 KB, so a LAN transfer produced over a
+// hundred events a second across the IPC bridge for a counter nobody can
+// read that fast. The final count always goes out.
+func (a *App) downloadProgress(savePath string) func(loaded, total int64) {
+	name := filepath.Base(savePath)
+	emit := func(loaded, total int64) {
+		runtime.EventsEmit(a.ctx, "download:progress", map[string]interface{}{
+			"loaded": loaded,
+			"total":  total,
+			"name":   name,
+		})
+	}
+	emit(0, 0)
+	var last time.Time
+	return func(loaded, total int64) {
+		if time.Since(last) < 200*time.Millisecond && (total == 0 || loaded < total) {
+			return
+		}
+		last = time.Now()
+		emit(loaded, total)
+	}
+}
+
 // SelectiveDownload downloads selected files/folders as a zip.
 // Opens a native save dialog so the user picks where to save it.
 func (a *App) SelectiveDownload(basePath string, selected []string, selectAll bool, serverUUID string) error {
@@ -1127,12 +1152,7 @@ func (a *App) SelectiveDownload(basePath string, selected []string, selectAll bo
 	}
 
 	if relay := a.getRelay(); relay != nil {
-		if err := relay.SelectiveDownload(basePath, selected, selectAll, savePath, func(loaded, total int64) {
-			runtime.EventsEmit(a.ctx, "download:progress", map[string]interface{}{
-				"loaded": loaded,
-				"total":  total,
-			})
-		}); err != nil {
+		if err := relay.SelectiveDownload(basePath, selected, selectAll, savePath, a.downloadProgress(savePath)); err != nil {
 			return err
 		}
 		a.setLastDownloadPath(savePath)

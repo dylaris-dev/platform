@@ -24,8 +24,9 @@ export interface FileBrowserAdapter {
     mergeConflict?: string,
     serverUuid?: string
   ): Promise<{ success: boolean; message?: string }>;
-  downloadFile(path: string, serverUuid?: string, isDir?: boolean, onProgress?: (loaded: number, total: number) => void): Promise<void> | void;
-  selectiveDownload(basePath: string, selected: string[], selectAll: boolean, serverUuid?: string, onProgress?: (loaded: number, total: number) => void): Promise<void> | void;
+  // onProgress may name the file: a native save dialog lets the user pick one.
+  downloadFile(path: string, serverUuid?: string, isDir?: boolean, onProgress?: (loaded: number, total: number, filename?: string) => void): Promise<void> | void;
+  selectiveDownload(basePath: string, selected: string[], selectAll: boolean, serverUuid?: string, onProgress?: (loaded: number, total: number, filename?: string) => void): Promise<void> | void;
   getUserLimits(): Promise<{ success: boolean; uploadLimit: number; downloadLimit: number }>;
 }
 

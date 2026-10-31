@@ -66,6 +66,18 @@ export function ToastRoot() {
         };
     }, []);
 
+    // Inside the Beam desktop app the shell puts its settings button on the
+    // bottom edge of every page (beam/app/launcher.go), right where this
+    // stack and the download card sit. Marking the document lets globals.css
+    // lift everything anchored there above it. Mounted once on every screen,
+    // which is why it lives here. The hostname, not window.go: the runtime
+    // that creates window.go may still be loading.
+    useEffect(() => {
+        if (window.location.hostname === 'wails.localhost' || window.location.protocol === 'wails:') {
+            document.documentElement.dataset.beam = '';
+        }
+    }, []);
+
     return (
         // Always mounted, even when empty: a live region has to exist in the DOM
         // BEFORE the mutation for assistive tech to announce it reliably. It
