@@ -128,8 +128,8 @@ func TestCoreStorageBackendLabel_CarriesNoCredentials(t *testing.T) {
 		{
 			"path",
 			handlers.CoreStorageConfig{Backend: "path", Path: "/mnt/shared"},
-			"library",
-			"path:/mnt/shared/library",
+			"ticket-backups",
+			"path:/mnt/shared/ticket-backups",
 		},
 		{
 			"s3 with prefix",
@@ -140,8 +140,8 @@ func TestCoreStorageBackendLabel_CarriesNoCredentials(t *testing.T) {
 		{
 			"s3 without prefix",
 			handlers.CoreStorageConfig{Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris"},
-			"library",
-			"s3:https://s3.example.com/dylaris/library",
+			"ticket-backups",
+			"s3:https://s3.example.com/dylaris/ticket-backups",
 		},
 	}
 	for _, c := range cases {
@@ -159,7 +159,7 @@ func TestCoreStorageBackendLabel_NeverLeaksTheSecret(t *testing.T) {
 		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "b",
 		S3AccessKey: "AKIAEXAMPLEKEY", S3SecretKey: "SUPERSECRETVALUE",
 	}
-	label := coreStorageBackendLabel(cfg, "library")
+	label := coreStorageBackendLabel(cfg, "ticket-backups")
 	for _, secret := range []string{"AKIAEXAMPLEKEY", "SUPERSECRETVALUE"} {
 		if strings.Contains(label, secret) {
 			t.Fatalf("backend label leaked a credential: %q", label)
@@ -190,7 +190,7 @@ func TestStorageDataSetResolver_ListMarksEveryDataSetMigratable(t *testing.T) {
 	}
 	// Every blob data set is migratable, including the ones that only offer
 	// the manual flow: they still capture manifests and verify.
-	for _, id := range []string{CoreStorageDataSetID, "library", "ticket-attachments", "ticket-backups", "modpacks", ModpacksCoreStorageDataSetID} {
+	for _, id := range []string{CoreStorageDataSetID, "ticket-attachments", "ticket-backups", "modpacks", ModpacksCoreStorageDataSetID} {
 		if _, ok := byID[id]; !ok {
 			t.Fatalf("%s missing from the overview", id)
 		}
@@ -200,15 +200,18 @@ func TestStorageDataSetResolver_ListMarksEveryDataSetMigratable(t *testing.T) {
 	}
 	// Exactly the data sets that OWN a settings-configured backend advertise an
 	// ad-hoc target config, because advertising one is a promise to repoint
-	// that backend after the copy. The four namespaces inside the shared Core
-	// file storage own nothing: switching for any one of them repoints the
-	// other three onto a backend their data was never copied to.
+	// that backend after the copy. The namespaces inside the shared Core file
+	// storage own nothing: switching for any one of them repoints the others
+	// onto a backend their data was never copied to.
 	for _, id := range []string{CoreStorageDataSetID, "modpacks"} {
 		if !adHoc[id] {
 			t.Errorf("%s must advertise SupportsTargetConfig: it is backed by its own settings-configured backend", id)
 		}
 	}
-	for _, id := range []string{"library", "ticket-attachments", "ticket-backups", ModpacksCoreStorageDataSetID} {
+	if _, ok := byID["library"]; ok {
+		t.Error("the removed Library is still offered as a data set")
+	}
+	for _, id := range []string{"ticket-attachments", "ticket-backups", ModpacksCoreStorageDataSetID} {
 		if adHoc[id] {
 			t.Errorf("%s must NOT advertise SupportsTargetConfig: it shares one config with the other Core file storage namespaces, so switching it alone would strand them", id)
 		}
@@ -234,7 +237,7 @@ func TestStorageDataSetResolver_ListMarksEveryDataSetMigratable(t *testing.T) {
 }
 
 // TestStorageDataSetResolver_SharedCoreStorageNamespacesCannotSwitchTheConfig
-// is the refusal behind SupportsTargetConfig: false above. library,
+// is the refusal behind SupportsTargetConfig: false above.
 // ticket-attachments, ticket-backups and modpacks@core-storage all read ONE
 // saved Core file storage config, so letting any of them name a target config
 // would repoint the others too - onto a backend their data had never been
@@ -243,7 +246,7 @@ func TestStorageDataSetResolver_ListMarksEveryDataSetMigratable(t *testing.T) {
 func TestStorageDataSetResolver_SharedCoreStorageNamespacesCannotSwitchTheConfig(t *testing.T) {
 	tgt := services.StorageTargetConfig{Backend: "path", Path: "/mnt/elsewhere", PathConfirmed: true}
 
-	for _, id := range []string{"library", "ticket-attachments", "ticket-backups", ModpacksCoreStorageDataSetID} {
+	for _, id := range []string{"ticket-attachments", "ticket-backups", ModpacksCoreStorageDataSetID} {
 		t.Run(id, func(t *testing.T) {
 			fs := newStorageMigrationFakeStore()
 			configuredPathStorage(t, fs)
@@ -295,7 +298,7 @@ func TestStorageDataSetResolver_CombinedCoreStorageIsConfigSwitchable(t *testing
 		t.Fatal("ResolveTarget returned a nil DataSet")
 	}
 	// The combined set is rooted at the Core storage ROOT, with no sub-prefix:
-	// that is what makes it enumerate library/, ticket-attachments/ and
+	// that is what makes it enumerate ticket-attachments/ and
 	// ticket-backups/ together and reproduce the layout on the target.
 	if label != "path:"+tgtRoot {
 		t.Errorf("label = %q, want the bare target root %q (no sub-prefix)", label, "path:"+tgtRoot)
@@ -526,7 +529,7 @@ func TestStorageMigrationHandler_StartNeverEchoesOrAuditsTheTargetSecret(t *test
 	h := NewStorageMigrationHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"kind": "migrate", "dataSet": "library",
+		"kind": "migrate", "dataSet": "ticket-attachments",
 		"targetConfig": map[string]interface{}{
 			"backend": "s3", "s3Endpoint": "https://new.example.com",
 			"s3Bucket": "dylaris-new", "s3AccessKey": "AKIA", "s3SecretKey": secret,
@@ -597,7 +600,7 @@ func TestStorageMigrationAuditPayload_CarriesNoTargetSecret(t *testing.T) {
 	// The audit payload is built from the request, so it is the other place a
 	// secret could leak. It records the credential-free description only.
 	payload := storageMigrationAuditPayload(services.StorageMigrationRequest{
-		Kind: services.StorageJobMigrate, DataSet: "library", VerifyMode: "full", DeleteSource: true,
+		Kind: services.StorageJobMigrate, DataSet: "ticket-attachments", VerifyMode: "full", DeleteSource: true,
 		TargetConfig: &services.StorageTargetConfig{
 			Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris-new",
 			S3AccessKey: "AKIAEXAMPLEKEY", S3SecretKey: "SENTINEL-AUDIT-SECRET", S3Prefix: "prod",
@@ -791,12 +794,12 @@ func TestStorageMigrationHandler_ListManifests(t *testing.T) {
 	fs := newStorageMigrationFakeStore()
 	fs.manifests = []models.StorageManifest{
 		{ID: 1, DataSet: "modpacks"},
-		{ID: 2, DataSet: "library"},
+		{ID: 2, DataSet: "ticket-attachments"},
 	}
 	h := NewStorageMigrationHandler(&handlers.AppState{Store: fs})
 
 	rw := httptest.NewRecorder()
-	h.ListManifests(rw, httptest.NewRequest(http.MethodGet, "/api/admin/storage/manifests?dataSet=library", nil))
+	h.ListManifests(rw, httptest.NewRequest(http.MethodGet, "/api/admin/storage/manifests?dataSet=ticket-attachments", nil))
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d (%s)", rw.Code, rw.Body.String())
 	}
@@ -805,7 +808,7 @@ func TestStorageMigrationHandler_ListManifests(t *testing.T) {
 	}
 	_ = json.Unmarshal(rw.Body.Bytes(), &got)
 	if len(got.Manifests) != 1 || got.Manifests[0].ID != 2 {
-		t.Fatalf("manifests = %+v, want only the library one", got.Manifests)
+		t.Fatalf("manifests = %+v, want only the ticket-attachments one", got.Manifests)
 	}
 }
 
@@ -925,14 +928,13 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 			targetID: "server-backups:2",
 		},
 		{
-			// CONTAINMENT, refused with its own sentinel. Library keys are
-			// relative to library/, so copying them to the storage ROOT rebases
-			// every one of them into the live namespace beside modpacks/ and
-			// server-backups/. MkdirLibraryHandler lets an operator create a
-			// library folder called "modpacks", and copyOne overwrites on a
-			// checksum mismatch, so the collision destroys a live object.
-			name:     "REFUSE library to core-storage (library is stored inside it)",
-			sourceID: "library",
+			// CONTAINMENT, refused with its own sentinel. Attachment keys are
+			// relative to ticket-attachments/, so copying them to the storage
+			// ROOT rebases every one of them into the live namespace beside
+			// modpacks/ and server-backups/, and copyOne overwrites on a
+			// checksum mismatch, so a collision destroys a live object.
+			name:     "REFUSE ticket-attachments to core-storage (it is stored inside it)",
+			sourceID: "ticket-attachments",
 			targetID: CoreStorageDataSetID,
 			wantErr:  handlers.ErrTargetNestedLocation,
 		},
@@ -946,8 +948,8 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 		},
 		{
 			// Two sibling namespaces under one config are two directories.
-			name:     "PASS library to ticket-attachments",
-			sourceID: "library",
+			name:     "PASS ticket-backups to ticket-attachments",
+			sourceID: "ticket-backups",
 			targetID: "ticket-attachments",
 		},
 		{
@@ -968,7 +970,7 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 		{
 			// An unknown id is not location-determinable either.
 			name:     "PASS unknown id",
-			sourceID: "library",
+			sourceID: "ticket-attachments",
 			targetID: "not-a-data-set",
 		},
 	}
@@ -1089,8 +1091,8 @@ func TestCoreStorageBackendLabel_SanitizesAHostileEndpoint(t *testing.T) {
 		endpoint string
 		sub      string
 	}{
-		{"userinfo in a schemed endpoint", "https://AKIAEXAMPLE:" + secret + "@minio.internal", "library"},
-		{"userinfo in a schemeless endpoint", "AKIAEXAMPLE:" + secret + "@minio.internal", "library"},
+		{"userinfo in a schemed endpoint", "https://AKIAEXAMPLE:" + secret + "@minio.internal", "ticket-backups"},
+		{"userinfo in a schemeless endpoint", "AKIAEXAMPLE:" + secret + "@minio.internal", "ticket-backups"},
 		{"unparseable userinfo fails closed", "https://user:" + secret + " x@minio.internal", ""},
 	}
 	for _, c := range cases {
@@ -1135,15 +1137,15 @@ func TestSubPrefixContains(t *testing.T) {
 		inner string
 		want  bool
 	}{
-		{"the root contains every data set", "", "library", true},
+		{"the root contains every data set", "", "ticket-backups", true},
 		{"the root contains a nested data set", "", "modpacks", true},
-		{"a data set does not contain the root", "library", "", false},
-		{"equality is not containment", "library", "library", false},
+		{"a data set does not contain the root", "ticket-backups", "", false},
+		{"equality is not containment", "ticket-backups", "ticket-backups", false},
 		{"the root is not nested in itself", "", "", false},
-		{"siblings do not contain each other", "library", "modpacks", false},
+		{"siblings do not contain each other", "ticket-backups", "modpacks", false},
 		{"a name prefix is not containment", "modpacks", "modpacks-archive", false},
 		{"a real nested path is containment", "modpacks", "modpacks/vanilla", true},
-		{"surrounding slashes do not change the answer", "/library/", "library", false},
+		{"surrounding slashes do not change the answer", "/ticket-backups/", "ticket-backups", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -6,12 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
 	"dylaris-core/handlers"
 
@@ -25,7 +20,6 @@ import (
 // installFakeStore is the power-handler fake plus what setup and reinstall write.
 type installFakeStore struct {
 	serverPowerFakeStore
-	disabled    []string
 	setupWrites int
 	setupType   string
 	setupMC     string
@@ -56,24 +50,12 @@ func (f *installFakeStore) GetModpackScan(int, string) (string, int, int, error)
 	return "", 0, 0, nil
 }
 func (f *installFakeStore) SetModpackScan(int, string, string, int) error { return nil }
-func (f *installFakeStore) ListDisabledLibraryPaths() ([]string, error)   { return f.disabled, nil }
 
-const testCoreURL = "https://panel.example.com"
-
-// newInstallTest seeds a path-backed library holding mods/paper.jar and
-// secret/hidden.jar, and a server on node token "node-lib".
+// newInstallTest seeds a path-backed Core storage and a server on node token
+// "node-lib".
 func newInstallTest(t *testing.T) (*ServerHandler, *installFakeStore, *redis.Client) {
 	t.Helper()
 	dir := testConnectionProbeDir(t)
-	for _, f := range []string{"mods/paper.jar", "secret/hidden.jar"} {
-		p := filepath.Join(dir, handlers.CoreStoragePrefixLibrary, filepath.FromSlash(f))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("payload:"+f), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 	fs := &installFakeStore{serverPowerFakeStore: serverPowerFakeStore{
 		server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "pending_setup", OwnerID: "u1", OwnerName: "alice",
 			NodeID: 7, ActiveSubServer: "main", InstallerType: "paper", BuildNumber: "1.21.1", MinecraftVersion: "1.21.1"},
@@ -82,8 +64,7 @@ func newInstallTest(t *testing.T) (*ServerHandler, *installFakeStore, *redis.Cli
 			handlers.KeyCoreStorageBackend:     "path",
 			handlers.KeyCoreStoragePath:        dir,
 			handlers.KeyCoreStoragePathConfirm: "true",
-			"core_public_url":                  testCoreURL,
-			"feature_library_enabled":          "true",
+			"core_public_url":                  "https://panel.example.com",
 		},
 	}}
 	rdb := newServerPowerRedis(t)
@@ -130,86 +111,6 @@ func queuedInstaller(t *testing.T, rdb *redis.Client) []map[string]any {
 
 func setupBody(installer map[string]string) map[string]any {
 	return map[string]any{"subServerName": "main", "javaImage": "ghcr.io/dylaris-dev/platform-mc-java21:latest", "installer": installer}
-}
-
-// The node used to be sent the library path and copied whatever that path
-// named on its own disk. It now gets a signed URL on Core, which serves that
-// one file and nothing else.
-func TestLibrarySetupSendsASignedCoreURLNotAPath(t *testing.T) {
-	h, _, rdb := newInstallTest(t)
-	rec := httptest.NewRecorder()
-	h.SetupServer(rec, installRequest("setup", setupBody(map[string]string{"type": "library", "path": "/mods/paper.jar"}), false))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("setup status %d: %s", rec.Code, rec.Body.String())
-	}
-	inst := queuedInstaller(t, rdb)
-	if len(inst) != 1 {
-		t.Fatalf("queued %d installs, want 1", len(inst))
-	}
-	if p, _ := inst[0]["path"].(string); p != "" {
-		t.Fatalf("the node was sent a path %q", p)
-	}
-	u, _ := inst[0]["url"].(string)
-	if !strings.HasPrefix(u, testCoreURL+"/mirror/library/") || !strings.HasSuffix(u, "/mods/paper.jar") {
-		t.Fatalf("url = %q, want a Core library mirror URL ending in the file", u)
-	}
-
-	mirror := mux.NewRouter()
-	mirror.HandleFunc("/mirror/library/{exp}/{sig}/{rest:.*}", handlers.NewLibraryHandler(h.state).LibraryMirror)
-	get := func(target string) *httptest.ResponseRecorder {
-		rec := httptest.NewRecorder()
-		mirror.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
-		return rec
-	}
-	parsed, _ := url.Parse(u)
-	if rec := get(parsed.Path); rec.Code != http.StatusOK || rec.Body.String() != "payload:mods/paper.jar" {
-		t.Fatalf("mirror served %d %q", rec.Code, rec.Body.String())
-	}
-
-	// The signature names one path and one expiry: another file, a forged
-	// signature or an expired URL all get the same 404.
-	other := strings.Replace(parsed.Path, "/mods/paper.jar", "/secret/hidden.jar", 1)
-	parts := strings.SplitN(strings.TrimPrefix(parsed.Path, "/mirror/library/"), "/", 3)
-	forged := "/mirror/library/" + parts[0] + "/" + strings.Repeat("0", len(parts[1])) + "/" + parts[2]
-	expired := "/mirror/" + handlers.LibraryMirrorURL("", h.state.ClusterSecret, "mods/paper.jar", time.Now().Add(-handlers.LibraryMirrorTTL-time.Minute))
-	for name, target := range map[string]string{"other file": other, "forged signature": forged, "expired": expired} {
-		if rec := get(target); rec.Code != http.StatusNotFound {
-			t.Errorf("%s: status %d, want 404", name, rec.Code)
-		}
-	}
-}
-
-func TestLibrarySetupRefusesBeforeQueueing(t *testing.T) {
-	cases := []struct {
-		name string
-		path string
-		want int
-	}{
-		{"traversal", "../../etc/passwd", http.StatusBadRequest},
-		{"a node path", "/proc/self/environ", http.StatusNotFound},
-		{"disabled for a non-admin", "secret/hidden.jar", http.StatusForbidden},
-		// The storage backends clean these to the disabled file while the
-		// denylist compared the uncleaned string.
-		{"disabled, spelled with a dot segment", "./secret/hidden.jar", http.StatusBadRequest},
-		{"disabled, spelled with a double slash", "secret//hidden.jar", http.StatusBadRequest},
-		// Opening a directory succeeds on the local backend; the node would
-		// install an empty server.jar.
-		{"a directory", "mods", http.StatusNotFound},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			h, fs, rdb := newInstallTest(t)
-			fs.disabled = []string{"secret"}
-			rec := httptest.NewRecorder()
-			h.SetupServer(rec, installRequest("setup", setupBody(map[string]string{"type": "library", "path": c.path}), false))
-			if rec.Code != c.want {
-				t.Fatalf("status %d, want %d: %s", rec.Code, c.want, rec.Body.String())
-			}
-			if n := len(queuedInstaller(t, rdb)); n != 0 {
-				t.Fatalf("%d install(s) queued after a refusal", n)
-			}
-		})
-	}
 }
 
 // Reinstall used to hand its raw fields to the node: any installer type with

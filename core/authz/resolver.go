@@ -179,7 +179,7 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 	}
 
 	if serverID == 0 {
-		// Acting on the user's own OWNER realm (their own modpacks/library/etc).
+		// Acting on the user's own OWNER realm (their own modpacks, roles, keys).
 		res.ownerSelf = true
 		return res, nil
 	}

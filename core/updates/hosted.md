@@ -19,6 +19,7 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Breaking
 - Installing a server asks you once to accept the Minecraft EULA. Over the API, send
   "acceptMinecraftEula": true with your first setup call.
+- The Library tab in server setup is gone. Servers installed from it keep running unchanged.
 
 ### Security
 - Nothing.

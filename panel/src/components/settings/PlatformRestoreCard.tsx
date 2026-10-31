@@ -29,14 +29,14 @@ export default function PlatformRestoreCard() {
     const [result, setResult] = useState<PlatformRestoreResult | null>(null);
 
     const [components, setComponents] = useState<PlatformRestoreSelection>({
-        database: false, library: false, modpacks: false,
+        database: false, modpacks: false,
     });
     const [target, setTarget] = useState<RestoreTarget>({ ...EMPTY_TARGET });
     const [overwrite, setOverwrite] = useState(false);
 
     const clearChosenBundle = () => {
         setFile(null); setInfo(null); setResult(null);
-        setComponents({ database: false, library: false, modpacks: false });
+        setComponents({ database: false, modpacks: false });
         setOverwrite(false);
     };
 
@@ -53,7 +53,7 @@ export default function PlatformRestoreCard() {
         if (f) await inspect(f, '');
     };
 
-    const anySelected = components.database || components.library || components.modpacks;
+    const anySelected = components.database || components.modpacks;
     const needsTarget = components.database;
     const targetIncomplete = needsTarget && (!target.host || !target.user || !target.dbName);
     const canRestore = !!file && !!passphrase && anySelected && !targetIncomplete && info?.passphraseOk;
@@ -159,7 +159,6 @@ export default function PlatformRestoreCard() {
                         <div className="space-y-1.5">
                             {([
                                 ['database', 'Platform database'],
-                                ['library', 'Library'],
                                 ['modpacks', 'Modpacks'],
                             ] as [keyof PlatformRestoreSelection, string][]).map(([key, label]) => (
                                 <label key={key} className="flex items-center gap-2.5 cursor-pointer">
@@ -170,8 +169,8 @@ export default function PlatformRestoreCard() {
                             ))}
                         </div>
                         <p className="text-xs text-(--base-06) mt-1">
-                            The Library and Modpacks are written straight into this installation&apos;s
-                            Core storage, replacing files of the same name.
+                            Modpacks are written straight into this installation&apos;s Core storage,
+                            replacing files of the same name.
                         </p>
                     </div>
 
@@ -268,7 +267,6 @@ export function describeBundle(info: BundleInspection): string {
     if (!sel) return 'nothing it could describe';
     const parts: string[] = [];
     if (sel.database) parts.push('the database');
-    if (sel.library) parts.push('the Library');
     if (sel.modpacks) parts.push('Modpacks');
     const servers = (info.components || []).filter(c => c.kind === 'server').length;
     if (servers > 0) parts.push(`${servers} server${servers === 1 ? '' : 's'}`);

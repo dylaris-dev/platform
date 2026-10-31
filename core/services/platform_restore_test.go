@@ -69,7 +69,7 @@ func writeTestBundle(t *testing.T, clusterSecret string, members map[string]stri
 		Schema:        bundle.Schema,
 		Source:        "2026.09.08",
 		ClusterSecret: clusterSecret,
-		Selection:     models.PlatformBackupSelection{Database: true, Library: true},
+		Selection:     models.PlatformBackupSelection{Database: true, Modpacks: true},
 	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
@@ -85,7 +85,9 @@ func writeTestBundle(t *testing.T, clusterSecret string, members map[string]stri
 }
 
 type restoreRig struct {
-	r        *PlatformRestorer
+	r *PlatformRestorer
+	// lib must stay empty: it catches anything written to the removed
+	// library area.
 	lib      *fakeWriter
 	packs    *fakeWriter
 	reseal   *fakeReseal
@@ -126,7 +128,7 @@ func newRig(t *testing.T, clusterSecret string) *restoreRig {
 }
 
 func all() PlatformRestoreSelection {
-	return PlatformRestoreSelection{Database: true, Library: true, Modpacks: true}
+	return PlatformRestoreSelection{Database: true, Modpacks: true}
 }
 
 // ---------- tests ----------
@@ -146,14 +148,48 @@ func TestRestorePutsEveryPartBack(t *testing.T) {
 	if rig.dbLoaded != "PGDMP..." {
 		t.Errorf("the dump reaching the target = %q", rig.dbLoaded)
 	}
-	if rig.lib.written["paper-1.21.4.jar"] != "JAR" {
-		t.Errorf("library = %+v", rig.lib.written)
-	}
 	if rig.packs.written["sky/1.0.mrpack"] != "PACK" {
 		t.Errorf("modpacks = %+v", rig.packs.written)
 	}
 	if res.Source != "2026.09.08" {
 		t.Errorf("source = %q", res.Source)
+	}
+}
+
+// A bundle written before the Library was removed still carries library/
+// members. They are skipped and said so once, never written and never fatal.
+func TestRestoreSkipsTheRemovedLibraryArea(t *testing.T) {
+	raw := writeTestBundle(t, "source-secret", map[string]string{
+		"library/a.jar":   "JAR",
+		"library/b/c.jar": "JAR",
+		"modpacks/p":      "PACK",
+	})
+	rig := newRig(t, "this-instances-secret")
+
+	res, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
+		PlatformRestoreSelection{Modpacks: true}, false)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if len(rig.lib.written) != 0 {
+		t.Errorf("a removed Library file was written: %+v", rig.lib.written)
+	}
+	if rig.packs.written["p"] != "PACK" {
+		t.Errorf("modpacks = %+v", rig.packs.written)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "Skipped 2 Library file(s)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the skip was not reported: %q", res.Warnings)
+	}
+	for _, c := range res.Components {
+		if c.Kind == "library" {
+			t.Errorf("a library component was reported: %+v", c)
+		}
 	}
 }
 
@@ -172,7 +208,7 @@ func TestRestoreRefusesTheWrongPassphraseBeforeWritingAnything(t *testing.T) {
 	if rig.dbCalls != 0 {
 		t.Error("the target database was written to")
 	}
-	if len(rig.lib.written) != 0 {
+	if len(rig.lib.written) != 0 || len(rig.packs.written) != 0 {
 		t.Error("Core storage was written to")
 	}
 	if rig.reseal.calls != 0 {
@@ -218,7 +254,7 @@ func TestRestoreOfStorageAloneLeavesTheDatabaseAlone(t *testing.T) {
 	rig := newRig(t, "this-instances-secret")
 
 	res, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
-		PlatformRestoreSelection{Library: true}, false)
+		PlatformRestoreSelection{Modpacks: true}, false)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -228,11 +264,8 @@ func TestRestoreOfStorageAloneLeavesTheDatabaseAlone(t *testing.T) {
 	if rig.reseal.calls != 0 {
 		t.Error("the reseal ran without a restored database")
 	}
-	if len(rig.packs.written) != 0 {
-		t.Errorf("an unselected component was restored: %+v", rig.packs.written)
-	}
-	if rig.lib.written["a.jar"] != "JAR" {
-		t.Errorf("library = %+v", rig.lib.written)
+	if rig.packs.written["b"] != "PACK" {
+		t.Errorf("modpacks = %+v", rig.packs.written)
 	}
 	if res.Reseal != nil {
 		t.Error("a reseal report appeared for a restore that resealed nothing")
@@ -242,23 +275,23 @@ func TestRestoreOfStorageAloneLeavesTheDatabaseAlone(t *testing.T) {
 // A bundle is a file somebody handed us and may have been assembled by hand.
 func TestRestoreSkipsEntriesThatWouldWriteOutsideTheirArea(t *testing.T) {
 	raw := writeTestBundle(t, "source-secret", map[string]string{
-		"library/../../etc/passwd": "ROOT",
-		"library/ok.jar":           "JAR",
+		"modpacks/../../etc/passwd": "ROOT",
+		"modpacks/ok.mrpack":        "PACK",
 	})
 	rig := newRig(t, "this-instances-secret")
 
 	res, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
-		PlatformRestoreSelection{Library: true}, false)
+		PlatformRestoreSelection{Modpacks: true}, false)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	for key := range rig.lib.written {
+	for key := range rig.packs.written {
 		if strings.Contains(key, "..") || strings.HasPrefix(key, "/") {
 			t.Fatalf("an escaping key was written: %q", key)
 		}
 	}
-	if rig.lib.written["ok.jar"] != "JAR" {
-		t.Errorf("the safe entry was not written: %+v", rig.lib.written)
+	if rig.packs.written["ok.mrpack"] != "PACK" {
+		t.Errorf("the safe entry was not written: %+v", rig.packs.written)
 	}
 	// Skipped silently is not good enough: the operator asked for a restore and
 	// got less than the bundle held.
@@ -576,7 +609,7 @@ func TestRestoreRefusesAMetricsDBTheBundleDoesNotHold(t *testing.T) {
 		return nil
 	}
 	_, err := rig.r.Restore(context.Background(), bytes.NewReader(raw), restorePass,
-		PlatformRestoreSelection{Database: true, MetricsDB: true, Library: true}, false)
+		PlatformRestoreSelection{Database: true, MetricsDB: true, Modpacks: true}, false)
 	if !errors.Is(err, ErrBundleHasNoMetricsDB) {
 		t.Fatalf("err = %v, want ErrBundleHasNoMetricsDB", err)
 	}

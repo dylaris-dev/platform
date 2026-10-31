@@ -96,7 +96,7 @@ export function recommendJavaForProxy(software: string, build: string): string |
  */
 export function recommendJavaForSetup(i: { isProxy: boolean; tab: string; software: string; build: string; mcVersion: string }): string | null {
     if (!i.isProxy) return recommendJavaForVersion(i.mcVersion);
-    if (i.tab !== 'online' && i.tab !== 'library') return null;
+    if (i.tab !== 'online') return null;
     return recommendJavaForProxy(i.software, i.build);
 }
 

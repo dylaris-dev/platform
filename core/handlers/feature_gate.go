@@ -34,9 +34,6 @@ const FeatureBYON = "byon"
 // STORE_SHARED_KEY).
 const FeatureStore = "store"
 
-// FeatureLibrary is the canonical name for the shared file library.
-const FeatureLibrary = "library"
-
 // RequireModpacksEnabled blocks the request with 503 feature_disabled when
 // the platform-wide modpacks toggle is off. Use on every WRITE endpoint that
 // touches modpack data (modpacks CRUD, versions, mods, publish, mrpack PAT
@@ -73,23 +70,6 @@ func (s *AppState) RequireTicketsEnabled(next http.HandlerFunc) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsTicketsEnabled(r.Context()) {
 			featureDisabledResponse(w, FeatureTickets, "The ticket system is disabled by the platform admin.")
-			return
-		}
-		next(w, r)
-	}
-}
-
-// RequireLibraryEnabled blocks the request with 503 feature_disabled when the
-// shared file library is off.
-//
-// Every library route is wrapped, the two read ones included. Hiding the navbar
-// entry was the previous "off", and it left the catalog readable and its
-// download route open to anyone who typed the URL - so the switch had no
-// meaning to the only people it was protecting anything from.
-func (s *AppState) RequireLibraryEnabled(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.FeatureFlags.IsLibraryEnabled(r.Context()) {
-			featureDisabledResponse(w, FeatureLibrary, "The file library is disabled by the platform admin.")
 			return
 		}
 		next(w, r)
@@ -148,7 +128,7 @@ func (s *AppState) RequireStoreEnabled(next http.HandlerFunc) http.HandlerFunc {
 
 // RequireCoreStorageConfigured blocks a WRITE with 503 feature_disabled when no
 // valid Core file storage config exists. Wrap every endpoint that STORES a blob
-// (library upload/mkdir, ticket attachment upload, ticket backup create).
+// (ticket attachment upload, ticket backup create).
 func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.CoreStorageConfigured() {
@@ -176,9 +156,8 @@ func (s *AppState) RequireCoreStorageReachable(next http.HandlerFunc) http.Handl
 			return
 		}
 		// The second Snapshot() value is the raw backend error text (mount
-		// paths, bucket names, S3 endpoints); five of the fourteen gated
-		// routes (routes.go: the three ticket-attachment routes, plus
-		// GET /api/library and GET /api/library/download) are open to any
+		// paths, bucket names, S3 endpoints); some of the gated routes
+		// (routes.go: the three ticket-attachment routes) are open to any
 		// authenticated user with no capability check, so it must never
 		// reach this body. The taxonomy value + remedy below are what a
 		// caller needs; the full detail stays on the fault-list endpoint for

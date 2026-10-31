@@ -35,8 +35,7 @@ var resealedPurposes = map[string]bool{
 // the reason in postgres_reseal.go. Listing them is what makes the test able to
 // tell "considered and excluded" from "nobody noticed".
 var unresealablePurposes = map[string]string{
-	mrpackPathPurpose:    "an HMAC over a storage path, not a stored value: rotating moves the OBJECTS",
-	libraryMirrorPurpose: "a signature on a download URL that expires within a day and is stored nowhere",
+	mrpackPathPurpose: "an HMAC over a storage path, not a stored value: rotating moves the OBJECTS",
 }
 
 // knownPurposeIdents maps the constant NAMES a call site may use to their
@@ -47,7 +46,6 @@ var knownPurposeIdents = map[string]string{
 	"modrinthPATPurpose":         modrinthPATPurpose,
 	"bedrockFloodgatePurpose":    bedrockFloodgatePurpose,
 	"mrpackPathPurpose":          mrpackPathPurpose,
-	"libraryMirrorPurpose":       libraryMirrorPurpose,
 	"backupStorageSecretPurpose": backupStorageSecretPurpose,
 	"storageConnSecretPurpose":   storageConnSecretPurpose,
 	"settingsSecretPurpose":      settingsSecretPurpose,

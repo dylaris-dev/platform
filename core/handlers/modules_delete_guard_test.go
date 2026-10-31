@@ -43,7 +43,7 @@ func moduleDeleteReq(id string) *http.Request {
 // (seeded by Core, re-created on restart) but is deliberately kept
 // is_system=false (see database/db_tables.go seedSystemModules) so it stays
 // toggle-able; its delete protection must therefore come from the same
-// name-based builtInModules guard as Library, not from IsSystem.
+// name-based builtInModules guard, not from IsSystem.
 func TestDeleteModule_ProtectsBuiltInsRejectsCustom(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -54,12 +54,6 @@ func TestDeleteModule_ProtectsBuiltInsRejectsCustom(t *testing.T) {
 		{
 			name:           "Tickets is protected by name even though is_system=false",
 			mod:            &models.Module{ID: 5, Name: "Tickets", IsSystem: false},
-			wantStatus:     http.StatusBadRequest,
-			wantDeleteCall: false,
-		},
-		{
-			name:           "Library is protected by name even though is_system=false (existing guard)",
-			mod:            &models.Module{ID: 4, Name: "Library", IsSystem: false},
 			wantStatus:     http.StatusBadRequest,
 			wantDeleteCall: false,
 		},

@@ -14,7 +14,7 @@ import (
 )
 
 // coreStorageRoutesFakeStore extends authzFakeStore (routes_authz_test.go)
-// with the small amount of ticket + library plumbing needed to drive the READ
+// with the small amount of ticket plumbing needed to drive the READ
 // handlers that RequireCoreStorageConfigured must never touch all the way
 // through their real business logic, instead of stopping at a recovered
 // nil-store panic. Composition, not redeclaration: authzFakeStore itself is
@@ -41,9 +41,6 @@ func (f *coreStorageRoutesFakeStore) ListTicketAttachments(ticketID int) ([]mode
 }
 func (f *coreStorageRoutesFakeStore) GetTicketAttachment(id int) (*models.TicketAttachment, error) {
 	return nil, sql.ErrNoRows
-}
-func (f *coreStorageRoutesFakeStore) ListDisabledLibraryPaths() ([]string, error) {
-	return nil, nil
 }
 
 // newCoreStorageGateTestServer mirrors newAuthzTestServer (routes_authz_test.go)
@@ -72,7 +69,7 @@ func newCoreStorageGateTestServer(t *testing.T, s store.Store) http.Handler {
 
 // assertCoreStorageGated fails t unless rec is exactly the
 // RequireCoreStorageConfigured 503 (feature_disabled / X-Feature-Disabled:
-// core_storage). Used as the positive control on the 4 known WRITE routes.
+// core_storage). Used as the positive control on the known WRITE routes.
 func assertCoreStorageGated(t *testing.T, label string, rec *httptest.ResponseRecorder) {
 	t.Helper()
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("X-Feature-Disabled") != "core_storage" {
@@ -97,8 +94,8 @@ func assertNotCoreStorageGated(t *testing.T, label string, rec *httptest.Respons
 
 // TestCoreStorageGate_ReadsNeverBlockedWritesAlwaysBlocked is the permanent
 // regression guard for Task 5's central design rule: with NO valid Core file
-// storage config, every WRITE that stores a blob (library mkdir/upload,
-// ticket attachment upload, ticket backup create) must be gated 503
+// storage config, every WRITE that stores a blob (ticket attachment
+// upload, ticket backup create) must be gated 503
 // core_storage, while every paired READ (list/browse/download) must NOT be -
 // existing data stays browsable/downloadable even before storage is
 // configured. The implementer verified this once with a throwaway test that
@@ -131,12 +128,10 @@ func TestCoreStorageGate_ReadsNeverBlockedWritesAlwaysBlocked(t *testing.T) {
 		return rec
 	}
 
-	// The 4 routes core/routes.go wraps in RequireCoreStorageConfigured.
+	// The routes core/routes.go wraps in RequireCoreStorageConfigured.
 	writes := []struct{ method, path string }{
 		{"POST", "/api/tickets/1/attachments"},
 		{"POST", "/api/admin/tickets/backup"},
-		{"POST", "/api/library/mkdir"},
-		{"POST", "/api/library/upload"},
 	}
 	for _, w := range writes {
 		assertCoreStorageGated(t, w.method+" "+w.path, do(w.method, w.path))
@@ -148,8 +143,6 @@ func TestCoreStorageGate_ReadsNeverBlockedWritesAlwaysBlocked(t *testing.T) {
 		{"GET", "/api/tickets/1/attachments/1/download"},
 		{"GET", "/api/admin/tickets/backups"},
 		{"GET", "/api/admin/tickets/backups/nonexistent.json/download"},
-		{"GET", "/api/library"},
-		{"GET", "/api/library/download?path=/nonexistent.txt"},
 	}
 	for _, r := range reads {
 		assertNotCoreStorageGated(t, r.method+" "+r.path, do(r.method, r.path))

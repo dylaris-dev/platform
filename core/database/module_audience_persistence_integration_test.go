@@ -14,51 +14,32 @@ import "testing"
 func TestOperatorModuleAudienceSurvivesTheNextBootIntegration(t *testing.T) {
 	db := freshSchemaDB(t)
 
-	// The two rows are set in OPPOSITE directions on purpose, because each boot
-	// statement forced a different value: Tickets to 'all', Library to 'admin'.
-	// A test that moved both the same way would agree with one of them by
-	// accident and prove nothing about that row.
-	//
-	// Tickets stays admin-only, which is also where the seed leaves it - that is
-	// the case the old code broke, by flipping it to 'all' on every start.
-	// Library is opened to everyone, a real change away from its seed, which the
-	// old code put back.
-	if _, err := db.Exec(`UPDATE modules SET access_role = 'admin', position = 3 WHERE name = 'Tickets'`); err != nil {
-		t.Fatalf("set tickets audience: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE modules SET access_role = 'all' WHERE name = 'Library'`); err != nil {
-		t.Fatalf("set library audience: %v", err)
-	}
-
-	// The next Core start.
-	seedSystemModules(db)
-	if err := applyDerivedModuleRows(db); err != nil {
-		t.Fatalf("derive module rows: %v", err)
-	}
-
-	for _, tc := range []struct {
-		module string
-		role   string
-	}{
-		{"Tickets", "admin"},
-		{"Library", "all"},
-	} {
-		var role string
-		if err := db.QueryRow(`SELECT access_role FROM modules WHERE name = $1`, tc.module).Scan(&role); err != nil {
-			t.Fatalf("read %s: %v", tc.module, err)
+	// Both directions on purpose: the old boot statements forced one value per
+	// row, so a test that set only one would agree with that statement by
+	// accident and prove nothing. 'admin' is also where the seed leaves Tickets
+	// - the case the old code broke, by flipping it to 'all' on every start.
+	for _, role := range []string{"all", "admin"} {
+		if _, err := db.Exec(`UPDATE modules SET access_role = $1, position = 3 WHERE name = 'Tickets'`, role); err != nil {
+			t.Fatalf("set tickets audience: %v", err)
 		}
-		if role != tc.role {
-			t.Errorf("%s audience is %q after a restart, want %q - the boot overwrote the operator's choice",
-				tc.module, role, tc.role)
-		}
-	}
 
-	var position int
-	if err := db.QueryRow(`SELECT position FROM modules WHERE name = 'Tickets'`).Scan(&position); err != nil {
-		t.Fatalf("read tickets position: %v", err)
-	}
-	if position != 3 {
-		t.Errorf("Tickets sits at position %d after a restart, want 3 - the boot undid the reordering", position)
+		// The next Core start.
+		seedSystemModules(db)
+		if err := applyDerivedModuleRows(db); err != nil {
+			t.Fatalf("derive module rows: %v", err)
+		}
+
+		var got string
+		var position int
+		if err := db.QueryRow(`SELECT access_role, position FROM modules WHERE name = 'Tickets'`).Scan(&got, &position); err != nil {
+			t.Fatalf("read tickets: %v", err)
+		}
+		if got != role {
+			t.Errorf("Tickets audience is %q after a restart, want %q - the boot overwrote the operator's choice", got, role)
+		}
+		if position != 3 {
+			t.Errorf("Tickets sits at position %d after a restart, want 3 - the boot undid the reordering", position)
+		}
 	}
 }
 

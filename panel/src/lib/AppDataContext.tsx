@@ -44,7 +44,6 @@ interface AppData {
     byonEnabled: boolean;
     /** featureFlags.routeOnly ANDed with gateway routing, the same way. */
     routeOnlyEnabled: boolean;
-    libraryEnabled: boolean;
     // platform-wide feature toggles. Loaded on boot from
     // /api/system/features; refreshed when features.changed SSE fires.
     // `modpacks` defaults to true on transport failure so the UI doesn't go
@@ -94,7 +93,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // the first paint of a working install; the flag arrives a moment later and
     // corrects it. Guessing the other way would flash a blocked button at
     // everyone on every load.
-    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, library: false, autoMove: false, byon: false, store: false, shareLinks: false, modpackStorage: true });
+    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, autoMove: false, byon: false, store: false, shareLinks: false, modpackStorage: true });
     const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
     const [ready, setReady] = useState(false);
     const [apiUnreachable, setApiUnreachable] = useState(false);
@@ -279,11 +278,6 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     const byonEnabled = isByonUsable(featureFlags.byon, routingMode);
     const routeOnlyEnabled = isByonUsable(featureFlags.routeOnly ?? featureFlags.byon, routingMode);
 
-    // The FLAG, not the module row. The row hides a navbar entry; the flag is
-    // what Core actually gates the library routes on, so a screen that offers
-    // library files has to ask the same question Core will answer.
-    const libraryEnabled = featureFlags.library;
-
     // Retry clears the error first, or a second failure would look like a
     // button that does nothing.
     const retryBoot = useCallback(() => {
@@ -298,7 +292,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         apiUnreachable,
         retryBoot,
         refreshUser, refreshModules, refreshServers, refreshSettings,
-        gatewayEnabled, byonEnabled, routeOnlyEnabled, libraryEnabled,
+        gatewayEnabled, byonEnabled, routeOnlyEnabled,
         featureFlags, refreshFeatureFlags,
         coreInfo,
         entitlement, refreshEntitlement,

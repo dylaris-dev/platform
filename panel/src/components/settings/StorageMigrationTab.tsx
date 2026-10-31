@@ -112,7 +112,7 @@ export default function StorageMigrationTab() {
     const targetSet = useMemo(() => dataSets.find(d => d.id === form.targetDataSet), [dataSets, form.targetDataSet]);
     // sameLocationSuspected flags a row-to-row pair whose backendLabel strings
     // are identical. That label is location-COMPLETE for the Core-storage-
-    // derived rows (core-storage/library/ticket-attachments/ticket-backups/
+    // derived rows (core-storage/ticket-attachments/ticket-backups/
     // modpacks-on-core-storage all encode endpoint+bucket+prefix or path, plus
     // sub-prefix) and for modpacks when modpack_storage_provider is
     // "core-storage" - so an equal label there reliably means the same

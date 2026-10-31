@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"strings"
@@ -28,20 +29,19 @@ import (
 // turns a recovery into a second outage when it goes wrong.
 //
 // Components are selected at restore time. A bundle says what it holds; the
-// operator says what should come back. "Only the Library" is a real case and
+// operator says what should come back. "Only the modpacks" is a real case and
 // must not require restoring a database with it.
 
 // PlatformRestoreSelection is what an operator asked to bring back.
 type PlatformRestoreSelection struct {
 	Database  bool `json:"database"`
 	MetricsDB bool `json:"metricsDb"`
-	Library   bool `json:"library"`
 	Modpacks  bool `json:"modpacks"`
 }
 
 // Any reports whether anything at all was selected.
 func (s PlatformRestoreSelection) Any() bool {
-	return s.Database || s.MetricsDB || s.Library || s.Modpacks
+	return s.Database || s.MetricsDB || s.Modpacks
 }
 
 // PlatformRestoreResult is what happened, per part.
@@ -174,7 +174,7 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 		}
 	}
 
-	// Writers are opened lazily and ONCE, so a bundle with ten thousand library
+	// Writers are opened lazily and ONCE, so a bundle with ten thousand modpack
 	// files does not rebuild the provider ten thousand times.
 	writers := map[string]CoreStorageWriter{}
 	areaWriter := func(area string) (CoreStorageWriter, error) {
@@ -209,6 +209,7 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 	}()
 	restoredMetrics := false
 	metricsVersion := ""
+	libraryEntries := 0
 
 	for {
 		hdr, terr := tr.Next()
@@ -225,7 +226,7 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 		}
 
 		// Checked on the RAW name and before anything is dispatched on it. An
-		// entry that cleans to a path outside its area - "library/../../etc/x" -
+		// entry that cleans to a path outside its area - "modpacks/../../etc/x" -
 		// matches no case below and would otherwise be dropped in the same
 		// silence as a member from a newer Dylaris. Ignoring what we do not
 		// recognise is right; ignoring an escape attempt is not, and the two
@@ -279,9 +280,15 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 				Kind: MetricsDBComponent, Status: models.PlatformBackupIncluded, SizeBytes: hdr.Size,
 			})
 
-		case strings.HasPrefix(name, "library/"), strings.HasPrefix(name, "modpacks/"):
+		case strings.HasPrefix(name, "library/"):
+			// A bundle written before the Library was removed. Its files have
+			// nowhere to go any more; counted so the skip is said once, not
+			// silently and not per file.
+			libraryEntries++
+
+		case strings.HasPrefix(name, "modpacks/"):
 			area, key, _ := strings.Cut(name, "/")
-			if (area == "library" && !sel.Library) || (area == "modpacks" && !sel.Modpacks) {
+			if !sel.Modpacks {
 				continue
 			}
 			w, err := areaWriter(area)
@@ -301,13 +308,14 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 		}
 	}
 
-	for _, area := range []string{"library", "modpacks"} {
-		if (area == "library" && !sel.Library) || (area == "modpacks" && !sel.Modpacks) {
-			continue
-		}
+	if sel.Modpacks {
 		res.Components = append(res.Components, models.PlatformBackupComponent{
-			Kind: area, Status: models.PlatformBackupIncluded, SizeBytes: counts[area],
+			Kind: "modpacks", Status: models.PlatformBackupIncluded, SizeBytes: counts["modpacks"],
 		})
+	}
+	if libraryEntries > 0 {
+		log.Printf("platform restore: skipped %d Library file(s) in the bundle; the Library has been removed", libraryEntries)
+		res.Warnings = append(res.Warnings, fmt.Sprintf("Skipped %d Library file(s): the Library has been removed and they were not restored.", libraryEntries))
 	}
 
 	if sel.MetricsDB && !restoredMetrics {

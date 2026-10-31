@@ -41,7 +41,7 @@ func moduleRoleReq(id, role string) *http.Request {
 // TestSetModuleAccessRole_ProtectsAdminOnlyBuiltins asserts the PATCH
 // /modules/{id}/role guard: the always-visible Servers module and the
 // admin-only Admin and Infrastructure modules reject a role change, while a
-// role-configurable module (e.g. Library) reaches the store. Infrastructure
+// role-configurable module (e.g. Tickets) reaches the store. Infrastructure
 // must be rejected so a direct settings.write call cannot flip it to "all" and
 // leave non-admins a dead nav link (the panel already front-locks it).
 func TestSetModuleAccessRole_ProtectsAdminOnlyBuiltins(t *testing.T) {
@@ -74,8 +74,8 @@ func TestSetModuleAccessRole_ProtectsAdminOnlyBuiltins(t *testing.T) {
 			wantSetCall: false,
 		},
 		{
-			name:        "Library accepts a role change",
-			mod:         &models.Module{ID: 4, Name: "Library"},
+			name:        "Tickets accepts a role change",
+			mod:         &models.Module{ID: 4, Name: "Tickets"},
 			role:        "all",
 			wantStatus:  http.StatusOK,
 			wantSetCall: true,

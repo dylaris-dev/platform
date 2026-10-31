@@ -272,7 +272,6 @@ func seedSystemModules(db *sql.DB) {
 		{"Servers", "internal", "server", "/servers", "all", 1, true, true},
 		{"Admin", "internal", "shield-check", "/admin", "admin", 2, true, true},
 		{"Infrastructure", "internal", "cpu", "/infrastructure", "admin", 3, true, true},
-		{"Library", "internal", "folder-open", "/library", "admin", 4, false, false},
 		// Tickets module, default disabled. Admin opts in from
 		// Settings → Modules. Once enabled it appears in the user-facing
 		// sidebar via the standard module loader.
@@ -297,9 +296,9 @@ func seedSystemModules(db *sql.DB) {
 	db.Exec(`INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position, access_role) SELECT 'Admin', 'internal', 'shield-check', '/admin', TRUE, TRUE, 2, 'admin' WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'Admin')`)
 	db.Exec(`UPDATE modules SET position = 2, is_enabled = TRUE, is_system = TRUE, access_role = 'admin' WHERE name = 'Admin'`)
 	db.Exec(`UPDATE modules SET position = 3, is_enabled = TRUE, is_system = TRUE, icon = 'cpu', access_role = 'admin' WHERE name = 'Infrastructure'`)
-	// access_role and position are NOT re-applied for Library and Tickets, and
-	// that omission is the point. Settings -> Modules offers a real All/Admin
-	// choice for these two - their ENABLED state follows a feature flag, their
+	// access_role and position are NOT re-applied for Tickets, and that
+	// omission is the point. Settings -> Modules offers a real All/Admin
+	// choice for it - its ENABLED state follows a feature flag, their
 	// audience stays the operator's answer to a different question - and a boot
 	// that rewrote the column put every such choice back on the next Core
 	// restart, silently and with nothing on screen admitting it. Position is the
@@ -307,7 +306,6 @@ func seedSystemModules(db *sql.DB) {
 	//
 	// The seed above still sets both, so a fresh install starts where it should;
 	// after that the row belongs to the operator.
-	db.Exec(`UPDATE modules SET is_system = FALSE, icon = 'folder-open' WHERE name = 'Library'`)
 	// Gateway was retired as a standalone module — its UI moved into the
 	// Infrastructure module's Routes tab. Drop the row from existing installs.
 	db.Exec(`DELETE FROM modules WHERE name = 'Gateway'`)
@@ -317,7 +315,7 @@ func seedSystemModules(db *sql.DB) {
 	db.Exec(`DELETE FROM modules WHERE name = 'Tickets' AND is_system = TRUE`)
 	// Migrate existing Tickets row if present from prior phase: ensure it keeps
 	// the correct icon and non-system flag. Audience and position are left alone
-	// for the reason spelled out at the Library row above.
+	// for the reason spelled out above.
 	db.Exec(`UPDATE modules SET icon = 'life-buoy', url = '/tickets', is_system = FALSE WHERE name = 'Tickets'`)
 
 	// Route limits follow the platform limit convention: NULL = no limit, 0 =
@@ -342,18 +340,6 @@ func seedSystemModules(db *sql.DB) {
 	// silently inheriting a number an operator typed for a cap that never
 	// applied.
 	db.Exec(`DELETE FROM gateway_route_limits WHERE scope = 'per_server' OR scope LIKE 'port:%'`)
-}
-
-// library_disabled stores paths (relative to the library root) that admins
-// have hidden from non-admin users. A path is enabled IFF no row exists for
-// it AND no row exists for any of its ancestors. Defaulting to "enabled when
-// absent" keeps the table small — only the curated exclusions are persisted.
-func createLibraryDisabledTable(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS library_disabled (
-		path TEXT PRIMARY KEY,
-		disabled_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-	)`)
-	return err
 }
 
 func createServerStatsTable(db *sql.DB, useTimescale bool) error {

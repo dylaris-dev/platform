@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Server, setupServer, getMinecraftEulaStatus, updateServerRuntime, switchSubServer, getFiles, getLibraryFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
+import { Server, setupServer, getMinecraftEulaStatus, updateServerRuntime, switchSubServer, getFiles, deleteSubServer, createServerRoute, getServerSettings, getServerRoutes, GatewayRoute, CreateRouteRequest } from '@/lib/api';
 import { createBeamAdapter } from '@/lib/adapters';
 import { useAppData } from '@/lib/AppDataContext';
 import { AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
@@ -57,10 +57,9 @@ interface SetupViewProps {
     onSetupComplete: () => void;
     /** After a fresh install went through: the console is where it is followed. */
     onInstalled?: () => void;
-    libraryEnabled?: boolean;
 }
 
-export default function SetupView({ server, onSetupComplete, onInstalled, libraryEnabled }: SetupViewProps) {
+export default function SetupView({ server, onSetupComplete, onInstalled }: SetupViewProps) {
     const { refreshServers } = useAppData();
     const [subServers, setSubServers] = useState<string[]>([]);
     const [maxSubServers, setMaxSubServers] = useState<number>(3);
@@ -76,7 +75,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     const [subNameError, setSubNameError] = useState('');
     const [javaImage, setJavaImage] = useState(JAVA_21);
     const [extraFlags, setExtraFlags] = useState('');
-    const [installTab, setInstallTab] = useState<'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic'>('online');
+    const [installTab, setInstallTab] = useState<'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic'>('online');
     // The backup archive to import. Separate from uploadFile: the two tabs mean
     // different installers, and one field for both would carry a .zip into a
     // backup import as easily as the other way round.
@@ -197,10 +196,6 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         }
     }, [formMode]);
 
-    // Library
-    const [libraryFiles, setLibraryFiles] = useState<any[]>([]);
-    const [libraryPath, setLibraryPath] = useState('');
-    const [selectedLibraryFile, setSelectedLibraryFile] = useState('');
 
 
     // File size check
@@ -346,15 +341,6 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     };
 
     useEffect(() => {
-        if (installTab === 'library' && libraryEnabled) loadLibraryFiles('');
-    }, [installTab, libraryEnabled]);
-
-    const loadLibraryFiles = async (path: string) => {
-        const res = await getLibraryFiles(path);
-        if (res.success && res.files) { setLibraryFiles(res.files); setLibraryPath(path); }
-    };
-
-    useEffect(() => {
         if (installTab !== 'online' && !uploadNeedsSoftware) return;
         fetchVersions();
     }, [software, installTab, uploadNeedsSoftware]);
@@ -455,7 +441,10 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
     /** Puts the form on the tab the sub-server was installed from. */
     const applyInstallTab = useCallback((sType: string) => {
         if (sType === 'library') {
-            setInstallTab('library');
+            // Installed from the removed Library. The files are still on the
+            // server; editing starts from the online tab like a fresh choice
+            // instead of offering a source that no longer exists.
+            setInstallTab('online');
         } else if (sType === 'upload' || sType === 'upload-zip') {
             setInstallTab('upload');
         } else if (sType === 'modpack') {
@@ -511,7 +500,6 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         setExtraFlags(isProxy ? PROXY_GC_FLAGS : DEFAULT_GC_FLAGS);
         setInstallTab('online');
         setSoftware(defaultSoftware);
-        setSelectedLibraryFile('');
         clearUpload();
         setError('');
     };
@@ -686,9 +674,6 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
             }
             const mc = installMcVersion(software, selectedMajor, selectedBuild);
             if (mc) installer.mcVersion = mc;
-        } else if (installTab === 'library') {
-            installer.type = 'library';
-            installer.path = selectedLibraryFile;
         } else if (installTab === 'modpack' && modpackSelection) {
             installer.type = 'modpack';
             installer.url = modpackSelection.downloadUrl;
@@ -964,7 +949,6 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         javaVersionUnknown,
         installTab,
         onInstallTabChange: setInstallTab,
-        libraryEnabled,
         software,
         onSoftwareChange: setSoftware,
         softwareList: filteredSoftware.length > 0 ? filteredSoftware : undefined,
@@ -975,11 +959,6 @@ export default function SetupView({ server, onSetupComplete, onInstalled, librar
         selectedBuild,
         onBuildChange: setSelectedBuild,
         loadingVersions,
-        libraryFiles,
-        libraryPath,
-        selectedLibraryFile,
-        onLibraryNavigate: loadLibraryFiles,
-        onLibrarySelect: setSelectedLibraryFile,
         uploadFile,
         onUploadFileChange: handleUploadFileChange,
         uploadStructure,

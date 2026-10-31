@@ -728,17 +728,6 @@ export const getProxyEndpoint = (serverId: number): Promise<{ success: boolean; 
     fetchAPI(`/servers/${serverId}/proxy-endpoint`);
 
 
-// --- LIBRARY ---
-export const getLibraryFiles = (path?: string) => fetchAPI(`/library${path ? `?path=${encodeURIComponent(path)}` : ''}`);
-export const deleteLibraryPath = (path: string) => fetchAPI('/library/delete', { method: 'POST', body: JSON.stringify({ path }) });
-export const createLibraryDir = (path: string) => fetchAPI('/library/mkdir', { method: 'POST', body: JSON.stringify({ path }) });
-export const toggleLibraryPath = (path: string, enabled: boolean) =>
-    fetchAPI('/library/toggle', { method: 'POST', body: JSON.stringify({ path, enabled }) });
-// Library storage backend (path/s3) config now lives at Settings -> Core
-// Storage (@/lib/api/coreStorage) - the old /settings/library CRUD + test
-// endpoints were dead (Library reads its provider from the shared Core file
-// storage config) and have been removed on both sides.
-
 // --- FILE MANAGER SETTINGS ---
 // On the platform limit convention: null is no limit, 0 refuses the transfer,
 // n is the ceiling in bytes. They used to be plain numbers whose enforcement

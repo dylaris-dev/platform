@@ -10,7 +10,7 @@ import "time"
 // TTL and is treated as ephemeral.
 type StorageManifest struct {
 	ID      int    `json:"id"`
-	DataSet string `json:"dataSet"` // "library" | ... | "server-backups:3"
+	DataSet string `json:"dataSet"` // "ticket-attachments" | ... | "server-backups:3"
 	// BackendLabel is a HUMAN description of the backend this was captured
 	// from. It MUST NOT contain credentials: for s3 that means endpoint +
 	// bucket + prefix, never keys.

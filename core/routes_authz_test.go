@@ -1534,45 +1534,6 @@ func TestCap_ModpackOwnerChokepointOpen(t *testing.T) {
 	}
 }
 
-// TestCap_LibraryContentPanel proves Phase 4 Task 20's /library/* CONTENT
-// classification: GET /library (and its /download sibling) stay EXEMPT-authed
-// (any authenticated user may browse/download the platform-shared library, as
-// today - see LibraryPicker.tsx), while the four mutations (mkdir/upload/
-// delete/toggle) now RequireCap("settings.write") in place of the former
-// in-handler `if !isAdmin` block - there is no dedicated library-admin cap, so
-// this reuses the same PANEL settings.write mapping as Task 19's /modules
-// mutations. This is a PANEL (not OWNER library.*) classification because the
-// library is a single platform-shared catalog, not a per-user owned realm.
-func TestCap_LibraryContentPanel(t *testing.T) {
-	fs := &authzFakeStore{}
-	admin := fs.addUser("admin-id", "root", true)
-	panelHolder(fs, "lib-id", "lib", "settings.write")
-	fs.addUser("plain-id", "plain", false)
-	srv := newAuthzTestServer(t, fs)
-	// GET /library is EXEMPT-authed: a plain user must not be 403 at the chokepoint
-	if c := doAs(t, srv, "GET", "/api/library", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
-		t.Error("EXEMPT-authed GET /library must not 403 an authed user")
-	}
-	if c := doAs(t, srv, "GET", "/api/library/download", testIdentity{UserID: "plain-id", Username: "plain"}); c == 403 {
-		t.Error("EXEMPT-authed GET /library/download must not 403 an authed user")
-	}
-	// admin must not be 403 on a library mutation
-	if c := doAs(t, srv, "POST", "/api/library/mkdir", testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
-		t.Error("admin must not be 403 on library mkdir")
-	}
-	// a settings.write holder can too
-	if c := doAs(t, srv, "POST", "/api/library/mkdir", testIdentity{UserID: "lib-id", Username: "lib"}); c == 403 {
-		t.Error("settings.write holder must reach library mkdir")
-	}
-	// a plain user cannot mutate the library
-	if c := doAs(t, srv, "POST", "/api/library/mkdir", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
-		t.Errorf("ordinary user must be 403 on library mkdir (needs settings.write), got %d", c)
-	}
-	if c := doAs(t, srv, "POST", "/api/library/delete", testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
-		t.Errorf("ordinary user must be 403 on library delete (needs settings.write), got %d", c)
-	}
-}
-
 // TestCap_ApiKeysOwner proves Phase 4 Task 21's /me/api-keys classification:
 // OWNER apikeys.read/write/delete is chokepoint-open for any authed user (the
 // path carries no server {id}), with the handler's own per-user scoping (a
@@ -1580,7 +1541,7 @@ func TestCap_LibraryContentPanel(t *testing.T) {
 // delegation subset-check (a minted key can only carry servers+permissions
 // the creating user already holds - Phase 5 routes this through the resolver in
 // api_keys.go Create) as the real boundaries, same pattern as Task 20's
-// modpack.*/library.*.
+// modpack.*.
 func TestCap_ApiKeysOwner(t *testing.T) {
 	fs := &authzFakeStore{}
 	fs.addUser("owner-id", "owner", false)

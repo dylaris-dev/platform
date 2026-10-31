@@ -647,7 +647,7 @@ export default function BackupsTab() {
                                         <p className="text-xs text-(--base-06)">
                                             Key prefix inside the bucket. Defaults to <span className="font-mono">server-backups</span>.
                                             Keep it distinct from what other subsystems write (Core file storage uses
-                                            <span className="font-mono"> library/</span>, <span className="font-mono">modpacks/</span>,
+                                            <span className="font-mono"> modpacks/</span>,
                                             <span className="font-mono"> ticket-attachments/</span>) so one bucket can hold
                                             all of them without their lifecycle rules or quotas overlapping.
                                         </p>

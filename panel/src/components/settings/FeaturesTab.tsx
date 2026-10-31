@@ -56,7 +56,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, library: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off' });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -229,7 +229,7 @@ export default function FeaturesTab() {
     // The three groups the one payload is now cut into. Listed here rather than
     // inline so a new flag has exactly one place to be added and cannot end up
     // in no tab at all - which would make it unsavable while looking fine.
-    const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'library', 'modConfigs'] as const;
+    const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'modConfigs'] as const;
     const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat', 'bedrock'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
 
@@ -413,17 +413,6 @@ export default function FeaturesTab() {
                             </p>
                         )}
                     </div>
-                </SettingsGroup>
-                <SettingsGroup title="File library">
-                    <SwitchRow
-                        label="File library"
-                        description={<>A shared catalog of server jars and archives you upload once, offered as an install source in the server wizard. When off, the library page and all <code className="font-mono">/api/library/*</code> endpoints return 503.</>}
-                        checked={!!platformFlags.library}
-                        onChange={v => editPlatformFlag('library', v)}
-                    />
-                    <p className="text-xs text-(--base-06)">
-                        Who sees it - admins only, or everyone - stays in Settings, Modules.
-                    </p>
                 </SettingsGroup>
                 <SettingsGroup title="Mod and plugin config editor (beta)">
                     <div className="flex flex-wrap items-center justify-between gap-3">

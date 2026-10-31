@@ -71,12 +71,11 @@ type SetupServerRequest struct {
 	// install. Needed once per account; see requireMinecraftEula.
 	AcceptMinecraftEula bool `json:"acceptMinecraftEula,omitempty"`
 	Installer           struct {
-		Type      string `json:"type"`      // "paper","vanilla","fabric","forge","neoforge","library","upload","upload-zip","modpack","pack"
+		Type      string `json:"type"`      // "paper","vanilla","fabric","forge","neoforge","upload","upload-zip","modpack","pack"
 		Version   string `json:"version"`   // build/version identifier (Paper build, Forge build, etc.)
 		McVersion string `json:"mcVersion"` // major MC version (e.g. "1.21.4")
 		Loader    string `json:"loader"`    // Fabric loader / Forge build / NeoForge version (optional)
 		URL       string `json:"url"`       // for import via URL OR .mrpack url for modpack
-		Path      string `json:"path"`      // for library selection
 		Structure string `json:"structure"` // "direct" or "subfolder" (for upload-zip)
 		// Modpack reference; sub-server boots from a Modrinth
 		// modpack and we remember which project+version so the panel can

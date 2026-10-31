@@ -14,10 +14,6 @@ export interface FeatureFlags {
     // Raw platform flag. The panel ANDs this with the live routing mode, since
     // auto-move is only effective while the gateway is on.
     autoMove: boolean;
-    // The shared file library. It is here rather than derived from the module
-    // row because /library is a PAGE: a module row hides a navbar entry and
-    // leaves the page reachable by URL.
-    library: boolean;
     // BYON tenancy. Gates tenant-facing UI like the server transfer control.
     byon: boolean;
     // Route-only (tenant link kits and their addresses). Its own switch; unset
@@ -56,8 +52,6 @@ export interface FeatureFlags {
 // tab cannot revert a flag it does not render. A GET always fills them all.
 export interface FeatureFlagsAdminPayload {
     tickets?: boolean;
-    // The shared file library.
-    library?: boolean;
     // The modpack subsystem. On its own it means admins can author.
     modpacks?: boolean;
     // Opens authoring to non-admin users. Requires `modpacks`; the backend folds

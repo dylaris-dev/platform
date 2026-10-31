@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-func TestSanitizeFilename(t *testing.T) {
-	cases := []struct{ input, want string }{
-		{"server file.jar", "server_file.jar"},
-		{"my/path/file", "my_path_file"},
-		{"valid_file-1.jar", "valid_file-1.jar"},
-		{"hello world!.zip", "hello_world_.zip"},
-		{"", ""},
-	}
-	for _, c := range cases {
-		if got := sanitizeFilename(c.input); got != c.want {
-			t.Errorf("sanitizeFilename(%q) = %q, want %q", c.input, got, c.want)
-		}
-	}
-}
-
 func TestFormatBytesHuman(t *testing.T) {
 	cases := []struct {
 		input int64

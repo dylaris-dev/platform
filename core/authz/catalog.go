@@ -15,8 +15,8 @@ const (
 	// ScopeServer is a per-server capability, checked against the invite/grant
 	// for the {id}/{uuid} in the request path.
 	ScopeServer Scope = "server"
-	// ScopeOwner is an owner's cross-server tools/artifacts (modpacks, library,
-	// the owner's custom server-roles, the owner's API keys).
+	// ScopeOwner is an owner's cross-server tools/artifacts (modpacks, the
+	// owner's custom server-roles, the owner's API keys).
 	ScopeOwner Scope = "owner"
 )
 
@@ -146,9 +146,13 @@ var catalog = []Capability{
 	{ID: "modpack.write", Label: "Edit modpacks", Category: "Modpacks", Scope: ScopeOwner, Verb: VerbWrite},
 	{ID: "modpack.delete", Label: "Delete modpacks", Category: "Modpacks", Scope: ScopeOwner, Verb: VerbDelete},
 
-	{ID: "library.read", Label: "View library", Category: "Library", Scope: ScopeOwner, Verb: VerbRead},
-	{ID: "library.write", Label: "Edit library", Category: "Library", Scope: ScopeOwner, Verb: VerbWrite},
-	{ID: "library.delete", Label: "Delete library items", Category: "Library", Scope: ScopeOwner, Verb: VerbDelete},
+	// The Library is removed and these grant nothing. They stay only because
+	// stored server roles, grant overrides and API keys may name them, and every
+	// one of those is re-validated against this catalog on its next save, which
+	// would then fail with "unknown capability".
+	{ID: "library.read", Label: "View library (removed)", Category: "Library", Scope: ScopeOwner, Verb: VerbRead},
+	{ID: "library.write", Label: "Edit library (removed)", Category: "Library", Scope: ScopeOwner, Verb: VerbWrite},
+	{ID: "library.delete", Label: "Delete library items (removed)", Category: "Library", Scope: ScopeOwner, Verb: VerbDelete},
 
 	{ID: "roles.read", Label: "View server-roles", Category: "Server-roles", Scope: ScopeOwner, Verb: VerbRead},
 	{ID: "roles.write", Label: "Edit server-roles", Category: "Server-roles", Scope: ScopeOwner, Verb: VerbWrite},

@@ -29,7 +29,6 @@ export interface PlatformBackupServers {
 export interface PlatformBackupSelection {
     database: boolean;
     metricsDb: boolean;
-    library: boolean;
     modpacks: boolean;
     servers: PlatformBackupServers;
 }
@@ -49,7 +48,7 @@ export interface PlatformBackupJob {
 
 /** What a run actually did, per part - which is not what it was asked to do. */
 export interface PlatformBackupComponent {
-    kind: 'database' | 'metrics' | 'library' | 'modpacks' | 'server' | string;
+    kind: 'database' | 'metrics' | 'modpacks' | 'server' | string;
     ref?: string;
     status: 'included' | 'skipped' | 'failed';
     sizeBytes?: number;
@@ -86,7 +85,6 @@ export interface BackupTargetServer {
 export const EMPTY_SELECTION: PlatformBackupSelection = {
     database: false,
     metricsDb: false,
-    library: false,
     modpacks: false,
     servers: { mode: 'none' },
 };
@@ -231,7 +229,6 @@ export function platformBackupDownloadUrl(runId: number): string {
 /** What a restore is allowed to put back. Chosen per restore, not per bundle. */
 export interface PlatformRestoreSelection {
     database: boolean;
-    library: boolean;
     modpacks: boolean;
 }
 

@@ -156,10 +156,12 @@ func IsSafeRelPath(p string) bool {
 // consumed - a type accepted here that the node does not know is queued
 // successfully and fails after the container already exists. "backup" is
 // therefore only in this list because the node has shipped its case for it
-// (release 2026.09.07.12); the node always ships first.
+// (release 2026.09.07.12); the node always ships first. "library" is the
+// reverse case: the Library is removed, and the node keeps its case only so an
+// older Core can still drive a newer node.
 var installerTypes = map[string]bool{
 	"paper": true, "vanilla": true, "fabric": true, "forge": true, "neoforge": true,
-	"library": true, "upload": true, "upload-zip": true, "modpack": true, "pack": true,
+	"upload": true, "upload-zip": true, "modpack": true, "pack": true,
 	// Restores an uploaded Dylaris backup archive and reads the description it
 	// carries. See node/installer_backup.go and services.SetupResultService.
 	"backup": true,

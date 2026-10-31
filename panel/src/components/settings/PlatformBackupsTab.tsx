@@ -41,7 +41,6 @@ function formatWhen(iso?: string): string {
 
 const COMPONENTS: { key: keyof Omit<PlatformBackupSelection, 'servers'>; label: string; hint: string }[] = [
     { key: 'database', label: 'Platform database', hint: 'Users, servers, jobs, settings, and the encrypted credentials that make the rest usable.' },
-    { key: 'library', label: 'Library', hint: 'Server jars, loaders and uploads in Core storage.' },
     { key: 'modpacks', label: 'Modpacks', hint: 'Published packs and their builds in Core storage.' },
     { key: 'metricsDb', label: 'Statistics database', hint: 'The TimescaleDB statistics, dumped into the same bundle. If it is configured but cannot be dumped, the run fails. Restoring it needs a superuser on a new database with the same TimescaleDB version.' },
 ];
@@ -88,7 +87,7 @@ function selectionProblem(sel: PlatformBackupSelection): string {
     if (sel.servers.mode === 'list' && !(sel.servers.serverIds || []).length) {
         return 'Pick at least one server.';
     }
-    const nothing = !sel.database && !sel.metricsDb && !sel.library && !sel.modpacks && sel.servers.mode === 'none';
+    const nothing = !sel.database && !sel.metricsDb && !sel.modpacks && sel.servers.mode === 'none';
     if (nothing) return 'Choose at least one thing to back up.';
     return '';
 }
@@ -603,7 +602,6 @@ function summarise(sel: PlatformBackupSelection | undefined, targets: BackupTarg
     if (!sel) return 'nothing';
     const parts: string[] = [];
     if (sel.database) parts.push('database');
-    if (sel.library) parts.push('library');
     if (sel.modpacks) parts.push('modpacks');
     if (sel.metricsDb) parts.push('statistics');
     switch (sel.servers?.mode) {

@@ -12,7 +12,7 @@ import (
 // row from its flags AND re-derived at boot. Custom Tabs derived its row but
 // only at write time. Tickets derived nothing: two switches in two screens, and
 // with the feature on and the row off the entire ticket API worked while no
-// navigation led to it. Library had no flag at all.
+// navigation led to it.
 //
 // Write-time-only derivation is the interesting failure. It looks correct
 // because it is correct at the moment it runs, and then nothing re-reads the
@@ -24,30 +24,12 @@ import (
 //
 // Runs AFTER seedSystemModules, which is what guarantees the rows exist.
 func applyDerivedModuleRows(db *sql.DB) error {
-	// The Library flag is seeded from the row rather than from a constant, so an
-	// install that had the library switched on keeps it on across this upgrade.
-	// A hardcoded default would have silently closed it - or silently opened it -
-	// on the boot that introduced the flag.
-	if _, err := db.Exec(`INSERT INTO settings (key, value)
-		SELECT 'feature_library_enabled',
-		       CASE WHEN COALESCE((SELECT is_enabled FROM modules WHERE name = 'Library'), FALSE)
-		            THEN 'true' ELSE 'false' END
-		ON CONFLICT (key) DO NOTHING`); err != nil {
-		return fmt.Errorf("derived modules: seed feature_library_enabled: %w", err)
-	}
-
-	// Only is_enabled for these two. Who sees them stays the operator's answer
-	// in Settings -> Modules, and Library's audience in particular carries real
-	// meaning there (admin-only, or a browsable tab for users).
-	for _, m := range []struct{ module, key string }{
-		{"Tickets", "feature_tickets_enabled"},
-		{"Library", "feature_library_enabled"},
-	} {
-		if _, err := db.Exec(`UPDATE modules
-			SET is_enabled = COALESCE((SELECT value = 'true' FROM settings WHERE key = $2), FALSE)
-			WHERE name = $1`, m.module, m.key); err != nil {
-			return fmt.Errorf("derived modules: re-derive %s: %w", m.module, err)
-		}
+	// Only is_enabled for Tickets. Who sees it stays the operator's answer in
+	// Settings -> Modules.
+	if _, err := db.Exec(`UPDATE modules
+		SET is_enabled = COALESCE((SELECT value = 'true' FROM settings WHERE key = 'feature_tickets_enabled'), FALSE)
+		WHERE name = 'Tickets'`); err != nil {
+		return fmt.Errorf("derived modules: re-derive Tickets: %w", err)
 	}
 
 	// Custom Tabs derives its audience too, from a setting with no other home.

@@ -109,10 +109,6 @@ var ExemptRoutes = map[string]bool{
 	// storage key carries an HMAC of CLUSTER_SECRET, which is the credential;
 	// the handler serves modpacks/ keys only, and the route is rate limited.
 	"/mirror/{rest:.*}": true,
-	// Its library sibling: a node downloads one library file it was told to
-	// install. The URL carries an HMAC of CLUSTER_SECRET over the path and an
-	// expiry, which is the credential; same limiter.
-	"/mirror/library/{exp}/{sig}/{rest:.*}": true,
 
 	// --- AUTHED-EXEMPT (AuthMiddleware only; in-handler filter / self / helper) ---
 
@@ -203,11 +199,6 @@ var ExemptRoutes = map[string]bool{
 	"/api/modrinth/version-files/update":    true, // authed; external proxy (bulk)
 	"/api/technic/search":                   true, // authed; external proxy
 	"/api/technic/pack/{slug}":              true, // authed; external proxy
-
-	// Library browse/download: platform-shared catalog, no gate beyond auth
-	// (Phase 4 Task 20 INSPECT result; mutations ARE RequireCap-gated).
-	"/api/library":          true, // authed; platform-shared catalog read
-	"/api/library/download": true, // authed; platform-shared catalog read
 
 	// Gateway tenant self-service helpers: in-handler owner filter is the boundary.
 	"/api/gateway/check-domain":                              true, // authed; owner-facing availability hint

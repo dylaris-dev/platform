@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { API_URL } from './core';
 import { backupDownloadUrl } from './types';
-import { getLibraryDownloadUrl } from './files';
 import { downloadTicketAttachmentURL } from './tickets';
 
 // Download links must carry NO credential.
@@ -34,7 +33,6 @@ function stubLegacyTokenInStorage() {
 describe('download URLs carry no credential', () => {
     const urls: Array<[string, () => string]> = [
         ['backup archive', () => backupDownloadUrl(8)],
-        ['library file', () => getLibraryDownloadUrl('mods/thing.jar')],
         ['ticket attachment', () => downloadTicketAttachmentURL(4, 9)],
     ];
 

@@ -15,9 +15,9 @@ import { fmtTime } from '@/lib/time';
 
 // StorageBanner is mounted globally in the authenticated layout. It warns that
 // a storage backend is degraded, which matters BEFORE an upload starts: the
-// three uploads a user is most likely to run (library, modpack build content,
-// ticket attachments) call their API functions directly rather than going
-// through UploadManagerWidget, so a per-upload indicator would miss all three.
+// uploads a user is most likely to run (modpack build content, ticket
+// attachments) call their API functions directly rather than going through
+// UploadManagerWidget, so a per-upload indicator would miss both.
 // Renders nothing while both backends are ok - zero footprint in steady state.
 //
 // It subscribes to the SSE event directly (rather than via the

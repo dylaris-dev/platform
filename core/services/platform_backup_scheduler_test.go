@@ -70,7 +70,7 @@ func TestSchedulerRearmsEvenWhenTheRunFails(t *testing.T) {
 			build: func(t *testing.T) func() (*PlatformBackupRunner, error) {
 				// A real runner over the runner package's own fakes, so the
 				// success path is a success rather than an assumption.
-				rst := storeWith(models.PlatformBackupSelection{Library: true})
+				rst := storeWith(models.PlatformBackupSelection{Modpacks: true})
 				rst.passphrase = "a documented backup passphrase"
 				r := newRunner(t, rst, &fakeDest{})
 				r.OpenCoreStorage = func(string) (CoreStorageArea, error) { return &fakeArea{}, nil }

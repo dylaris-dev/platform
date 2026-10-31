@@ -9,9 +9,9 @@ import "testing"
 // server crash-looped to "offline" after Core had already answered 200.
 func TestValidateInstallerRequest(t *testing.T) {
 	cases := []struct {
-		name                            string
-		typ, version, loader, url, path string
-		ok                              bool
+		name                      string
+		typ, version, loader, url string
+		ok                        bool
 	}{
 		{name: "unknown type", typ: "ftp"},
 		{name: "empty type", typ: ""},
@@ -53,10 +53,9 @@ func TestValidateInstallerRequest(t *testing.T) {
 		{name: "neoforge needs a loader", typ: "neoforge", version: "1.21.4"},
 		{name: "neoforge with a loader", typ: "neoforge", loader: "21.4.10-beta", ok: true},
 
-		{name: "library needs a path", typ: "library"},
-		{name: "library with a path", typ: "library", path: "servers/paper.jar", ok: true},
-		// A bare URL made "library" a way to have the node download anything.
-		{name: "library with only a url", typ: "library", url: "https://example.com/p.jar"},
+		// The Library is gone; a node still understands the type for one more
+		// release, so Core must be the one to refuse it.
+		{name: "library is refused", typ: "library", url: "https://example.com/p.jar"},
 
 		// These carry no field this function can check; their own paths do.
 		{name: "upload", typ: "upload", ok: true},
@@ -66,7 +65,7 @@ func TestValidateInstallerRequest(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			msg := validateInstallerRequest(c.typ, c.version, c.loader, c.url, c.path)
+			msg := validateInstallerRequest(c.typ, c.version, c.loader, c.url)
 			if c.ok && msg != "" {
 				t.Fatalf("validateInstallerRequest(%q,...) = %q, want accepted", c.typ, msg)
 			}

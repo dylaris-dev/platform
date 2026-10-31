@@ -17,6 +17,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Breaking
 - Server setup refuses an install until the caller has accepted the Minecraft EULA once (409
   minecraft_eula_required); the panel asks, API clients send "acceptMinecraftEula": true. `core` `panel`
+- The Library is gone: its files are deleted from Core storage on the first start, and setup no
+  longer offers it. Templates will replace it. `core` `panel`
 
 ### Security
 - Nothing.

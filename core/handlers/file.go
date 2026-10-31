@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -34,15 +33,6 @@ type FileInfo struct {
 type FileHandler struct {
 	RootPath string
 	state    *AppState
-}
-
-// Regex for sanitizing library upload names, which become object-store keys.
-// Server files are checked with validate.IsPlainFileName instead: their names
-// are the tenant's, and rewriting them turned "New World" into "New_World".
-var validFilenameRegex = regexp.MustCompile(`[^a-zA-Z0-9._\-+]`)
-
-func sanitizeFilename(name string) string {
-	return validFilenameRegex.ReplaceAllString(name, "_")
 }
 
 func NewFileHandler(state *AppState) *FileHandler {

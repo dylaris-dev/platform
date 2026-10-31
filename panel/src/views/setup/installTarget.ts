@@ -1,7 +1,7 @@
 import { effectiveMcVersion } from '@/lib/javaVersion';
 import type { UploadDetection } from '@/lib/uploadDetect';
 
-export type InstallTab = 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic';
+export type InstallTab = 'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic';
 
 export interface InstallTargetInput {
     tab: InstallTab;

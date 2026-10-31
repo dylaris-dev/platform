@@ -60,7 +60,7 @@ func sha256Hex(s string) string {
 
 func TestCaptureManifest_PersistsEveryObjectWithItsChecksum(t *testing.T) {
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	ds.put("a.jar", "aaa")
 	ds.put("sub/b.jar", "bbbb")
 	ds.put("sub/c.jar", "c")
@@ -77,8 +77,8 @@ func TestCaptureManifest_PersistsEveryObjectWithItsChecksum(t *testing.T) {
 	if m.ID == 0 {
 		t.Error("manifest was not persisted (ID still 0)")
 	}
-	if m.DataSet != DataSetLibrary {
-		t.Errorf("DataSet = %q, want %q", m.DataSet, DataSetLibrary)
+	if m.DataSet != DataSetAttachments {
+		t.Errorf("DataSet = %q, want %q", m.DataSet, DataSetAttachments)
 	}
 	if m.Algo != ChecksumAlgo {
 		t.Errorf("Algo = %q, want %q", m.Algo, ChecksumAlgo)
@@ -162,7 +162,7 @@ func TestCaptureManifest_SizeComesFromTheActualRead(t *testing.T) {
 	// real content is 10 bytes: this test would fail if production code
 	// ever started trusting ref.Size instead of the bytes actually read.
 	ctx := context.Background()
-	inner := newMemDataSet(DataSetLibrary, "Library")
+	inner := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	inner.put("a.jar", "0123456789")
 	ds := &lyingSizeDataSet{memDataSet: inner, lieSize: 999}
 
@@ -198,7 +198,7 @@ func TestCaptureManifest_SizeComesFromTheActualRead(t *testing.T) {
 
 func TestCaptureManifest_EmptyDataSetIsNotAnError(t *testing.T) {
 	st := newFakeManifestStore()
-	m, entries, err := CaptureManifest(context.Background(), newMemDataSet(DataSetLibrary, "Library"), st, CaptureOptions{BackendLabel: "path:/x"})
+	m, entries, err := CaptureManifest(context.Background(), newMemDataSet(DataSetAttachments, "Ticket attachments"), st, CaptureOptions{BackendLabel: "path:/x"})
 	if err != nil {
 		t.Fatalf("CaptureManifest on empty data set err = %v, want nil", err)
 	}
@@ -214,7 +214,7 @@ func TestCaptureManifest_ReadFailureAbortsAndPersistsNothing(t *testing.T) {
 	// Partial failure is failure. A manifest missing objects would make a
 	// perfectly good target look full of "extra" keys at verification.
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	ds.put("a.jar", "aaa")
 	ds.put("b.jar", "bbb")
 	boom := errors.New("backend 503")
@@ -239,7 +239,7 @@ func TestCaptureManifest_VanishedObjectAbortsAsNotFoundNotTransient(t *testing.T
 	// backend error, so a future caller could choose to retry the whole
 	// capture on this specific condition.
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	ds.put("a.jar", "aaa")
 	ds.put("b.jar", "bbb")
 	// Present at List time (put above), but Open reports it gone - simulating
@@ -272,7 +272,7 @@ func TestCaptureManifest_PersistFailureIsWrappedAndDiscoverable(t *testing.T) {
 	// set it, so the "persist: %w" wrap in CaptureManifest was never
 	// actually exercised - a dead fixture.
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	ds.put("a.jar", "aaa")
 
 	st := newFakeManifestStore()
@@ -290,7 +290,7 @@ func TestCaptureManifest_PersistFailureIsWrappedAndDiscoverable(t *testing.T) {
 
 func TestCaptureManifest_NeverMutatesTheSource(t *testing.T) {
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	ds.put("a.jar", "aaa")
 	ds.put("b.jar", "bbb")
 	before := ds.snapshot()
@@ -315,7 +315,7 @@ func TestCaptureManifest_NeverMutatesTheSource(t *testing.T) {
 
 func TestCaptureManifest_ReportsProgress(t *testing.T) {
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	ds.put("a.jar", "aa")
 	ds.put("b.jar", "bbbb")
 
@@ -359,7 +359,7 @@ func TestCaptureManifest_ReportsProgress(t *testing.T) {
 
 func TestCaptureManifest_HonoursCancellationAtAnObjectBoundary(t *testing.T) {
 	ctx := context.Background()
-	ds := newMemDataSet(DataSetLibrary, "Library")
+	ds := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	ds.put("a.jar", "aa")
 	ds.put("b.jar", "bb")
 	ds.put("c.jar", "cc")
@@ -479,7 +479,7 @@ func TestCaptureManifest_DedupesADuplicateKeyFromListSoObjectCountStaysHonest(t 
 	// here, in the writer, since it cannot assume every DataSet.List
 	// implementation is duplicate-free.
 	ctx := context.Background()
-	inner := newMemDataSet(DataSetLibrary, "Library")
+	inner := newMemDataSet(DataSetAttachments, "Ticket attachments")
 	inner.put("a.jar", "aaa")
 	inner.put("b.jar", "bb")
 	ds := &duplicateKeyDataSet{memDataSet: inner, dupKey: "a.jar"}

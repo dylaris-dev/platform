@@ -13,7 +13,7 @@ import (
 
 // modpackPresignTTL bounds a handed-out download URL.
 //
-// Five minutes, matching the library download on the same codebase. An earlier
+// Five minutes. An earlier
 // value of six hours was justified as "long enough for a slow client to finish
 // a multi-GB pack", which misreads what the TTL does: the signature is checked
 // when the request is RECEIVED, so it bounds when a download may START, not how

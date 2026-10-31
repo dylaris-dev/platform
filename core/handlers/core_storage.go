@@ -42,6 +42,10 @@ const (
 // and CoreStoragePrefixModpacks is duplicated as storage/modpack.CoreStorageSubPrefix
 // (neither package may import this one); TestCoreStorageSubPrefixesMatch locks
 // both pairs together.
+//
+// CoreStoragePrefixLibrary belongs to the removed Library. It stays so the
+// one-time purge (PurgeLibraryStorage) can find what is left there, and so
+// nothing new is ever given that namespace.
 const (
 	CoreStoragePrefixLibrary       = "library"
 	CoreStoragePrefixAttachments   = "ticket-attachments"

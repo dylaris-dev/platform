@@ -25,12 +25,12 @@ func manifestOf(t *testing.T, ds *memDataSet) []models.StorageManifestEntry {
 
 func TestCopyAll_CopiesEverythingIntoAnEmptyTarget(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "Library (source)")
+	src := newMemDataSet(DataSetAttachments, "Library (source)")
 	src.put("a.jar", "aaa")
 	src.put("sub/b.jar", "bbbb")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "Library (target)")
+	target := newMemDataSet(DataSetAttachments, "Library (target)")
 	res, err := CopyAll(ctx, src, target, entries, CopyOptions{})
 	if err != nil {
 		t.Fatalf("CopyAll: %v", err)
@@ -49,12 +49,12 @@ func TestCopyAll_CopiesEverythingIntoAnEmptyTarget(t *testing.T) {
 
 func TestCopyAll_SkipsOnlyOnAChecksumMatch(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("same.jar", "identical")
 	src.put("differs.jar", "AAAAAAAA")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("same.jar", "identical")
 	// Same NAME and same SIZE, different content: the truncated /
 	// half-written-from-a-crashed-run case. Existence alone cannot tell this
@@ -79,12 +79,12 @@ func TestCopyAll_SkipsOnlyOnAChecksumMatch(t *testing.T) {
 func TestCopyAll_SameChecksumDifferentSizeIsRecopied(t *testing.T) {
 	// Belt and braces: the skip requires BOTH size and checksum to match.
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	entries := manifestOf(t, src)
 	entries[0].Size = 999 // manifest claims a different size
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a.jar", "aaa")
 
 	res, err := CopyAll(ctx, src, target, entries, CopyOptions{})
@@ -100,11 +100,11 @@ func TestCopyAll_TargetOpenFailureThatIsNotMissingFailsTheJob(t *testing.T) {
 	// A 503 / throttle / permission error is NOT "missing". Treating it as
 	// missing would overwrite live data on a target that merely hiccupped.
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	// Deliberately DIFFERENT from the source content ("aaa"): if the loop
 	// wrongly treated the throttle as "absent" and overwrote the target,
 	// identical content would make that overwrite invisible to snapshot().
@@ -135,13 +135,13 @@ func TestCopyAll_ChecksumMismatchAfterWriteDeletesTheTargetObjectAndFails(t *tes
 	// would report a checksum_mismatch on data the operator may already have
 	// switched to. So the bad write is removed immediately.
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	entries := manifestOf(t, src)
 	// Corrupt the expectation so the post-write comparison must fail.
 	entries[0].Checksum = "00000000000000000000000000000000000000000000000000000000000000ff"
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	_, err := CopyAll(ctx, src, target, entries, CopyOptions{})
 	if err == nil {
 		t.Fatal("CopyAll err = nil, want a checksum-mismatch failure")
@@ -162,13 +162,13 @@ func TestCopyAll_ChecksumMismatchAfterWriteDeletesTheTargetObjectAndFails(t *tes
 
 func TestCopyAll_SourceIsNeverMutated(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	src.put("b.jar", "bbb")
 	entries := manifestOf(t, src)
 	before := src.snapshot()
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	if _, err := CopyAll(ctx, src, target, entries, CopyOptions{}); err != nil {
 		t.Fatalf("CopyAll: %v", err)
 	}
@@ -185,13 +185,13 @@ func TestCopyAll_SourceIsNeverMutated(t *testing.T) {
 
 func TestCopyAll_SourceUntouchedAfterAFailure(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	src.put("b.jar", "bbb")
 	entries := manifestOf(t, src)
 	before := src.snapshot()
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.writeErr["b.jar"] = errors.New("disk full")
 
 	if _, err := CopyAll(ctx, src, target, entries, CopyOptions{}); err == nil {
@@ -210,13 +210,13 @@ func TestCopyAll_SourceUntouchedAfterAFailure(t *testing.T) {
 
 func TestCopyAll_ResumesAfterAPartialFailure(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	src.put("b.jar", "bbb")
 	src.put("c.jar", "ccc")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.writeErr["b.jar"] = errors.New("disk full")
 	if _, err := CopyAll(ctx, src, target, entries, CopyOptions{}); err == nil {
 		t.Fatal("first run err = nil, want the injected failure")
@@ -248,11 +248,11 @@ func TestCopyAll_ResumesOverATruncatedTargetObject(t *testing.T) {
 	// via checksum mismatch (same as any other corrupt target) and re-copy
 	// it, never skip it because a key with that name merely exists.
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "abcdefghij") // 10 bytes
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.writeErr["a.jar"] = errors.New("connection reset")
 	target.partialWriteN["a.jar"] = 3 // only 3 of 10 bytes land before the failure
 	if _, err := CopyAll(ctx, src, target, entries, CopyOptions{}); err == nil {
@@ -282,13 +282,13 @@ func TestCopyAll_ResumesOverATruncatedTargetObject(t *testing.T) {
 
 func TestCopyAll_CancelsAtAnObjectBoundaryNeverMidObject(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	src.put("b.jar", "bbb")
 	src.put("c.jar", "ccc")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	calls := 0
 	_, err := CopyAll(ctx, src, target, entries, CopyOptions{
 		Cancelled: func() bool {
@@ -313,7 +313,7 @@ func TestCopyAll_CancelsAtAnObjectBoundaryNeverMidObject(t *testing.T) {
 
 func TestCopyAll_ProcessesKeysInAscendingOrder(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("c.jar", "c")
 	src.put("a.jar", "a")
 	src.put("b.jar", "b")
@@ -323,7 +323,7 @@ func TestCopyAll_ProcessesKeysInAscendingOrder(t *testing.T) {
 	entries[0], entries[2] = entries[2], entries[0]
 
 	var order []string
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	if _, err := CopyAll(ctx, src, target, entries, CopyOptions{
 		Progress: func(_, _, _, _, _ int64, key string) { order = append(order, key) },
 	}); err != nil {
@@ -336,12 +336,12 @@ func TestCopyAll_ProcessesKeysInAscendingOrder(t *testing.T) {
 
 func TestCopyAll_ReportsProgressIncludingSkips(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aa")
 	src.put("b.jar", "bb")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a.jar", "aa")
 
 	var lastDone, lastSkipped, lastTotal, lastBytes, lastBytesTotal int64
@@ -364,8 +364,8 @@ func TestCopyAll_ReportsProgressIncludingSkips(t *testing.T) {
 }
 
 func TestCopyAll_EmptyManifestIsANoOp(t *testing.T) {
-	target := newMemDataSet(DataSetLibrary, "target")
-	res, err := CopyAll(context.Background(), newMemDataSet(DataSetLibrary, "source"), target, nil, CopyOptions{})
+	target := newMemDataSet(DataSetAttachments, "target")
+	res, err := CopyAll(context.Background(), newMemDataSet(DataSetAttachments, "source"), target, nil, CopyOptions{})
 	if err != nil {
 		t.Fatalf("CopyAll(empty) err = %v, want nil", err)
 	}

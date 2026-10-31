@@ -22,7 +22,7 @@ import {
 } from './storageMigration';
 
 // Mirrors core/handlers/storageapi/storage_migration.go List(): core-storage is the one
-// entry that can switch the shared Core file storage config; library and
+// entry that can switch the shared Core file storage config; ticket-attachments and
 // modpacks@core-storage are namespaces INSIDE that shared config and so
 // cannot switch it on their own (they would strand the others); modpacks owns
 // its own settings namespace and can switch; server-backups rows target
@@ -31,7 +31,7 @@ const dataSets: StorageDataSet[] = [
   { id: 'core-storage', label: 'Core file storage (all namespaces)', backendLabel: 'path:/mnt/shared', migratable: true, supportsTargetConfig: true, note: '' },
   { id: 'modpacks', label: 'Modpacks', backendLabel: 's3:https://s3.example.com/packs', migratable: true, supportsTargetConfig: true, note: '' },
   { id: 'modpacks@core-storage', label: 'Modpacks on Core file storage', backendLabel: 'path:/mnt/shared/modpacks', migratable: true, supportsTargetConfig: false, note: '' },
-  { id: 'library', label: 'Library', backendLabel: 'path:/mnt/shared/library', migratable: true, supportsTargetConfig: false, note: '' },
+  { id: 'ticket-attachments', label: 'Ticket attachments', backendLabel: 'path:/mnt/shared/ticket-attachments', migratable: true, supportsTargetConfig: false, note: '' },
   { id: 'server-backups:1', label: 'Server backups: Hetzner S3', backendLabel: 'Hetzner S3 (s3)', migratable: true, supportsTargetConfig: false, note: '' },
   { id: 'server-backups:3', label: 'Server backups: Wasabi', backendLabel: 'Wasabi (s3)', migratable: true, supportsTargetConfig: false, note: '' },
   { id: 'server-backups:2', label: 'Server backups: node disk', backendLabel: 'node disk (node-local)', migratable: false, supportsTargetConfig: false, note: 'not migratable here' },

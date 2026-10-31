@@ -479,9 +479,9 @@ var requiredCaps = map[string]string{
 	// userID check), which
 	// is untouched. Read-vs-write-vs-delete representative per shared template,
 	// same convention as every other batch; the fine per-method cap lives at
-	// each RequireCap call. GET /api/modrinth/* (the external proxy) and GET
-	// /api/library + GET /api/library/download stay authed-exempt and are
-	// deliberately NOT listed here (see the route registration comments).
+	// each RequireCap call. GET /api/modrinth/* (the external proxy) stays
+	// authed-exempt and is deliberately NOT listed here (see the route
+	// registration comments).
 	"/api/me/modrinth-pat":                                                     "modpack.read",
 	"/api/me/modrinth/projects":                                                "modpack.read",
 	"/api/me/modrinth/memberships":                                             "modpack.read",
@@ -516,25 +516,6 @@ var requiredCaps = map[string]string{
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-link":                                     "modpack.write",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links":                                    "modpack.read",
 	"/api/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/share-links/{linkId:[0-9]+}":                    "modpack.delete",
-
-	// Phase 4 Task 20: /library/* CONTENT. INSPECTED and found to be a single
-	// platform-shared file catalog (buildProvider has no per-owner scoping;
-	// LibraryView is reachable by any authenticated user via the navbar, used
-	// during server setup to pick pre-uploaded files - see LibraryPicker.tsx),
-	// NOT a per-user OWNER realm - so the library.read/write/delete catalog
-	// caps (ScopeOwner) do not fit and are deliberately NOT used here. Read
-	// (GET /api/library, GET /api/library/download) has no gate beyond auth in
-	// the handler (any authed user may browse/download; admin-disabled paths
-	// are redacted in-handler, not chokepoint-enforced) and stays authed-exempt,
-	// same call as Task 19's GET /api/modules. The four mutations
-	// (mkdir/upload/delete/toggle) were hard `if !isAdmin` gated in-handler with
-	// no dedicated library-admin cap in the catalog, so they RequireCap
-	// ("settings.write") - the same faithful mapping used for /api/modules
-	// mutations in Task 19.
-	"/api/library/delete": "settings.write",
-	"/api/library/mkdir":  "settings.write",
-	"/api/library/upload": "settings.write",
-	"/api/library/toggle": "settings.write",
 
 	// Phase 4 Task 21: /me/api-keys OWNER apikeys.read/write/delete, the last
 	// annotation batch. GET+POST share the read cap as the representative
@@ -576,7 +557,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	moduleHandler := handlers.NewModuleHandler(appState)
 	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
 	fileHandler := handlers.NewFileHandler(appState)
-	libraryHandler := handlers.NewLibraryHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState)
 	authzHandler := handlers.NewAuthzHandler()
 	avatarHandler := handlers.NewAvatarHandler()
@@ -722,10 +702,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// route served the Technic launcher. Its own rate-limiter instance, not a
 	// shared one: a client exhausting one budget must not lock another.
 	mirrorLimiter := handlers.NewIPRateLimiter()
-	// A library file a node installs, on the same limiter. Registered BEFORE
-	// the pack route, whose pattern would otherwise take it. The URL carries a
-	// signature over the path and an expiry; the handler serves that one file.
-	r.HandleFunc("/mirror/library/{exp}/{sig}/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, libraryHandler.LibraryMirror)).Methods("GET")
 	r.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, packsHandler.ModpackMirror)).Methods("GET")
 
 	// --- PUBLIC SHARE-LINK DOWNLOAD ---
@@ -824,7 +800,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// apikeys.read/write/delete, chokepoint-open for any authed user (no
 	// server {id} in the path). The handler's own per-user scoping (keys are
 	// listed/created/revoked for the acting userID only) is the real boundary,
-	// same as Task 20's modpack.*/library.* OWNER routes.
+	// same as Task 20's modpack.* OWNER routes.
 	api.HandleFunc("/me/api-keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.read")(apiKeysHandler.List))).Methods("GET")
 	// Rate limited like the auth routes, and body-capped, because Create now
 	// checks a PASSWORD (see requireReauth). A password check on an unthrottled
@@ -1660,31 +1636,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/files/download/selective", authHandler.AuthMiddleware(fileHandler.SelectiveDownloadHandler)).Methods("GET")
 	api.HandleFunc("/files/upload", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(fileHandler.UploadFileHandler))).Methods("POST")
 
-	// Library endpoints. Phase 4 Task 20 INSPECT result: this is a single
-	// platform-shared file catalog (buildProvider has no per-owner scoping),
-	// not a per-user OWNER realm, so the library.* catalog caps (ScopeOwner) do
-	// not fit - PANEL settings.write is used instead, same call as Task 19's
-	// /api/modules mutations. GET (browse) and GET /download have no gate
-	// beyond auth in the handler today (any authenticated user may browse/
-	// download during server setup - see LibraryPicker.tsx; admin-disabled
-	// paths are redacted in-handler, not chokepoint-enforced) and stay
-	// authed-exempt, deliberately NOT RequireCap-wrapped and NOT listed in
-	// requiredCaps. The four mutations were hard `if !isAdmin` gated in-handler
-	// with no dedicated library-admin cap - that gate is now the chokepoint's
-	// job, so it is removed from library.go in the same commit.
-	api.HandleFunc("/library", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.GetLibraryHandler)))).Methods("GET")
-	api.HandleFunc("/library/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.DeleteLibraryHandler))))).Methods("POST")
-	api.HandleFunc("/library/mkdir", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.MkdirLibraryHandler)))))).Methods("POST")
-	api.HandleFunc("/library/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.UploadLibraryHandler)))))).Methods("POST")
-	api.HandleFunc("/library/download", authHandler.AuthMiddleware(appState.RequireCoreStorageReachable(appState.RequireLibraryEnabled(libraryHandler.DownloadLibraryHandler)))).Methods("GET")
-	api.HandleFunc("/library/toggle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(appState.RequireLibraryEnabled(libraryHandler.ToggleLibraryPathHandler)))).Methods("POST")
-
 	// Settings endpoints (PANEL settings.*; Phase 4 Task 17)
-	// NOTE: /settings/library + /settings/library/test (legacy library storage
-	// CRUD + test-connection) were removed - dead since the Core-stateless-storage
-	// rework; see the removal note above handlers.NewSettingsHandler. Use
-	// /settings/core-storage (coreStorageHandler, registered further below)
-	// instead.
 	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetFileManagerSettings))).Methods("GET")
 	api.HandleFunc("/settings/filemanager", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveFileManagerSettings))).Methods("POST")
 	// /settings/filemanager/limits stays EXEMPT-authed: every authenticated user
@@ -1790,7 +1742,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveBackupConfig))).Methods("POST")
 	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetWarpFirewallSettings))).Methods("GET")
 	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveWarpFirewallSettings))).Methods("POST")
-	// Shared Core file storage config (Library/ticket-attachments/ticket-backups
+	// Shared Core file storage config (ticket-attachments/ticket-backups
 	// backend, path or s3) - CRUD + a write+read+delete connection probe.
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.GetConfig))).Methods("GET")
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(coreStorageHandler.SaveConfig))).Methods("POST")

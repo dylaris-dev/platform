@@ -7,7 +7,6 @@ import { useAppData } from '@/lib/AppDataContext';
 import JavaVersionPicker, { recommendJavaForSetup } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
-import LibraryPicker from './LibraryPicker';
 import UploadSection from './UploadSection';
 import BackupImportSection from './BackupImportSection';
 import ModpackPicker from './ModpackPicker';
@@ -35,15 +34,14 @@ interface SetupNewWizardProps {
     onFlagsChange: (flags: string) => void;
     ramMB: number;
     // Install tab
-    installTab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic';
-    onInstallTabChange: (tab: 'online' | 'library' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic') => void;
+    installTab: 'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic';
+    onInstallTabChange: (tab: 'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic') => void;
     modpackSelection?: import('@/views/setup/ModpackPicker').ModpackSelection | null;
     onModpackSelect?: (s: import('@/views/setup/ModpackPicker').ModpackSelection | null) => void;
     packSelection?: import('@/views/setup/PackPicker').PackSelection | null;
     onPackSelect?: (s: import('@/views/setup/PackPicker').PackSelection | null) => void;
     technicSelection?: import('@/views/setup/technic').TechnicSelection | null;
     onTechnicSelect?: (s: import('@/views/setup/technic').TechnicSelection | null) => void;
-    libraryEnabled?: boolean;
     // Server type
     serverType?: 'game' | 'proxy';
     // Version picker
@@ -60,12 +58,6 @@ interface SetupNewWizardProps {
     selectedBuild: string;
     onBuildChange: (b: string) => void;
     loadingVersions: boolean;
-    // Library
-    libraryFiles: any[];
-    libraryPath: string;
-    selectedLibraryFile: string;
-    onLibraryNavigate: (path: string) => void;
-    onLibrarySelect: (file: string) => void;
     // Upload
     uploadFile: File | null;
     onUploadFileChange: (file: File | null) => void;
@@ -231,12 +223,6 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                             className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'online' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Online
                         </button>
-                        {props.libraryEnabled && (
-                            <button type="button" onClick={() => props.onInstallTabChange('library')}
-                                className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'library' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                                Library
-                            </button>
-                        )}
                         <button type="button" onClick={() => props.onInstallTabChange('upload')}
                             className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'upload' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Upload / SFTP
@@ -275,16 +261,6 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                             loading={props.loadingVersions}
                         />
                     </div>
-                )}
-
-                {props.installTab === 'library' && props.libraryEnabled && (
-                    <LibraryPicker
-                        files={props.libraryFiles}
-                        path={props.libraryPath}
-                        selectedFile={props.selectedLibraryFile}
-                        onNavigate={props.onLibraryNavigate}
-                        onSelect={props.onLibrarySelect}
-                    />
                 )}
 
                 {props.installTab === 'upload' && (

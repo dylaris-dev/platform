@@ -32,10 +32,9 @@ import (
 // Adding an entry here is a decision to declare a capability that does nothing.
 // Wiring it up is almost always the better answer.
 var capsWithoutAChokepoint = map[string]string{
-	"library.read": "routes.go: /library/* is a single platform-shared file catalog, not a per-owner realm, " +
-		"so these ScopeOwner caps do not fit it. Read is authed-exempt; the mutations RequireCap(settings.write). " +
-		"Kept in the catalog rather than removed because they are ScopeOwner and ValidKeyCap accepts them, " +
-		"so an existing API key may carry one and would fail validation on its next save.",
+	"library.read": "the Library is removed and no route exists. Kept in the catalog rather than removed because " +
+		"they are ScopeOwner and ValidKeyCap / validateServerOwnerCaps accept them, so an existing API key, server " +
+		"role or grant override may carry one and would fail validation on its next save.",
 	"library.write":  "see library.read",
 	"library.delete": "see library.read",
 }

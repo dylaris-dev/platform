@@ -34,8 +34,8 @@ interface ModulesTabProps {
 // content moved into Infrastructure's Routes tab. Tickets is included here
 // even though it is_system=false server-side (it stays toggle-able) - only
 // deletion is blocked, both here (hides the button) and in Core (rejects the
-// request), same as Library.
-const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Library', 'Tickets', 'Modpacks', 'Custom Tabs']);
+// request).
+const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Tickets', 'Modpacks', 'Custom Tabs']);
 
 // Modules whose ENABLED state is derived from a feature flag rather than set
 // here. Offering the control would be worse than hiding it: an edit would appear
@@ -50,14 +50,13 @@ const DERIVED_MODULES = new Map([
     ['Modpacks', 'Settings -> Features -> Modpacks'],
     ['Custom Tabs', 'Settings -> Features -> Custom-tab reverse proxy'],
     ['Tickets', 'Settings -> Features -> Ticket system'],
-    ['Library', 'Settings -> Features -> File library'],
 ]);
 
 // Of those, the ones whose AUDIENCE is derived too, from a second flag that has
 // no other home (authoring for Modpacks, the audience picker for Custom Tabs).
-// For Tickets and Library the audience stays an answer to a different question -
-// whether the platform HAS the feature is not who should see it - so those two
-// keep the All/Admin control.
+// For Tickets the audience stays an answer to a different question - whether
+// the platform HAS the feature is not who should see it - so it keeps the
+// All/Admin control.
 const AUDIENCE_DERIVED = new Set(['Modpacks', 'Custom Tabs']);
 
 interface SortableModuleCardProps {
@@ -131,7 +130,7 @@ function SortableModuleCard({ module: m, onToggle, onDelete, onRoleChange }: Sor
                 ) : (
                     <div
                         className="flex bg-(--base-03) p-0.5 rounded-md"
-                        title={m.name === 'Library' ? "All: Library becomes a browsable/downloadable tab for users (upload/delete stay admin-only). Admin: hidden from users." : "Who can see this module"}
+                        title="Who can see this module"
                     >
                         <button
                             type="button"

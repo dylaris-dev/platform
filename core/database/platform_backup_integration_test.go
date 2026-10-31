@@ -22,8 +22,8 @@ func TestIntegrationPlatformBackupJobRoundTrip(t *testing.T) {
 		RetentionCount: 7,
 		Enabled:        true,
 		Selection: models.PlatformBackupSelection{
-			Database: true,
-			Library:  true,
+			Database:  true,
+			MetricsDB: true,
 			Servers: models.PlatformBackupServers{
 				Mode:      models.PlatformBackupServersOwner,
 				OwnerID:   &owner,
@@ -40,7 +40,7 @@ func TestIntegrationPlatformBackupJobRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPlatformBackupJob: %v", err)
 	}
-	if !got.Selection.Database || !got.Selection.Library || got.Selection.Modpacks {
+	if !got.Selection.Database || !got.Selection.MetricsDB || got.Selection.Modpacks {
 		t.Errorf("components = %+v", got.Selection)
 	}
 	if got.Selection.Servers.Mode != models.PlatformBackupServersOwner {
@@ -296,7 +296,7 @@ func TestIntegrationAnUnreadableSelectionSelectsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPlatformBackupJob: %v", err)
 	}
-	if got.Selection.Database || got.Selection.Library || got.Selection.Modpacks || got.Selection.MetricsDB {
+	if got.Selection.Database || got.Selection.Modpacks || got.Selection.MetricsDB {
 		t.Errorf("an unreadable selection reads as %+v", got.Selection)
 	}
 	if got.Selection.Servers.Mode == models.PlatformBackupServersAll {

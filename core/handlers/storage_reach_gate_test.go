@@ -16,7 +16,7 @@ func TestRequireCoreStorageReachable_PassesWhenHealthy(t *testing.T) {
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })
 
 	rec := httptest.NewRecorder()
-	h(rec, httptest.NewRequest("GET", "/api/library", nil))
+	h(rec, httptest.NewRequest("GET", "/api/tickets/1/attachments", nil))
 
 	if !called {
 		t.Fatal("the handler was not reached on a healthy Core")
@@ -34,7 +34,7 @@ func TestRequireCoreStorageReachable_PassesWhenTheVerifierIsAbsent(t *testing.T)
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })
 
-	h(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/library", nil))
+	h(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/tickets/1/attachments", nil))
 
 	if !called {
 		t.Fatal("a nil verifier gated the request")
@@ -53,7 +53,7 @@ func TestRequireCoreStorageReachable_503sWithTheTaxonomyReason(t *testing.T) {
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })
 	rec := httptest.NewRecorder()
-	h(rec, httptest.NewRequest("GET", "/api/library", nil))
+	h(rec, httptest.NewRequest("GET", "/api/tickets/1/attachments", nil))
 
 	if called {
 		t.Fatal("the handler ran on a Core that cannot reach shared storage")

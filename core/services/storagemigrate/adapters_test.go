@@ -51,9 +51,9 @@ func TestServerBackupsDataSetID_RoundTrip(t *testing.T) {
 func TestProviderDataSet_ListIsRecursiveOpenWriteDelete(t *testing.T) {
 	ctx := context.Background()
 	prov := &storage.LocalProvider{BasePath: t.TempDir()}
-	ds := NewProviderDataSet(DataSetLibrary, "Library", prov)
+	ds := NewProviderDataSet(DataSetAttachments, "Ticket attachments", prov)
 
-	if ds.ID() != DataSetLibrary || ds.Label() != "Library" {
+	if ds.ID() != DataSetAttachments || ds.Label() != "Ticket attachments" {
 		t.Fatalf("ID/Label = %q/%q", ds.ID(), ds.Label())
 	}
 	if err := ds.Write(ctx, "a/b/deep.jar", strings.NewReader("xyz"), 3); err != nil {
@@ -95,7 +95,7 @@ func TestProviderDataSet_ListIsRecursiveOpenWriteDelete(t *testing.T) {
 }
 
 func TestProviderDataSet_OpenMissingIsErrNotExist(t *testing.T) {
-	ds := NewProviderDataSet(DataSetLibrary, "Library", &storage.LocalProvider{BasePath: t.TempDir()})
+	ds := NewProviderDataSet(DataSetAttachments, "Ticket attachments", &storage.LocalProvider{BasePath: t.TempDir()})
 	_, err := ds.Open(context.Background(), "nope.jar")
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("Open(missing) err = %v, want errors.Is(err, fs.ErrNotExist)", err)
@@ -471,7 +471,7 @@ func TestModpackDataSet_ExposesChecksumHints(t *testing.T) {
 
 func TestProviderDataSet_IsNotAChecksumHinter(t *testing.T) {
 	// Only modpacks carry third-party hashes. Nothing else should pretend to.
-	ds := NewProviderDataSet(DataSetLibrary, "Library", &storage.LocalProvider{BasePath: t.TempDir()})
+	ds := NewProviderDataSet(DataSetAttachments, "Ticket attachments", &storage.LocalProvider{BasePath: t.TempDir()})
 	if _, ok := ds.(ChecksumHinter); ok {
 		t.Fatal("the provider data set must NOT implement ChecksumHinter")
 	}

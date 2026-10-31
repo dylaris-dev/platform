@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **586 routes** in 53 sections: 258 GET, 172 POST, 54 PUT, 40 PATCH, 63 DELETE.
-- **31** accept no credential at all; read the Gates column before assuming any of them is open.
-- **383** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **131** need a credential but no capability, **31** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **579 routes** in 51 sections: 255 GET, 168 POST, 54 PUT, 40 PATCH, 63 DELETE.
+- **30** accept no credential at all; read the Gates column before assuming any of them is open.
+- **379** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **129** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **36** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -155,7 +155,6 @@ can still show what exists.
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
-- [/api/library](#apilibrary) (6)
 - [/api/maintenance](#apimaintenance) (1)
 - [/api/me](#apime) (41)
 - [/api/modrinth](#apimodrinth) (9)
@@ -191,7 +190,6 @@ can still show what exists.
 - [/api/voice](#apivoice) (1)
 - [/api/warp](#apiwarp) (23)
 - [/healthz](#healthz) (1)
-- [/mirror/library](#mirrorlibrary) (1)
 - [/mirror/{rest:.*}](#mirrorrest) (1)
 
 ## /api/admin
@@ -505,17 +503,6 @@ can still show what exists.
 | GET | `/api/infrastructure/overview` | session | `topology.read` | - | `InfrastructureHandler.GetOverview` | one payload for the infrastructure page: edges, links and nodes with their live heartbeat stats, plus route, tunnel and online counts and the recent service errors. |
 | GET | `/api/infrastructure/players-online` | session | `topology.read` | - | `InfrastructureHandler.GetPlayersOnline` | players on every server right now, as each server's own list ping reports it. |
 | GET | `/api/infrastructure/routing-migration` | session | `topology.read` | - | `InfrastructureHandler.GetRoutingMigrationStatus` | progress of the routing migration job. |
-
-## /api/library
-
-| Method | Path | Auth | Capability | Gates | Handler | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/library` | session | _no capability_ | RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.GetLibraryHandler` | Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle. |
-| POST | `/api/library/delete` | session | `settings.write` | RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.DeleteLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| GET | `/api/library/download` | session | _no capability_ | RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.DownloadLibraryHandler` | streams the library file named by ?path. |
-| POST | `/api/library/mkdir` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.MkdirLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| POST | `/api/library/toggle` | session | `settings.write` | RequireLibraryEnabled | `LibraryHandler.ToggleLibraryPathHandler` | Body: { "path": "...", "enabled": false } Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
-| POST | `/api/library/upload` | session | `settings.write` | RequireCoreStorageConfigured, RequireCoreStorageReachable, RequireLibraryEnabled | `LibraryHandler.UploadLibraryHandler` | Route-gated by RequireCap("settings.write") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job. |
 
 ## /api/maintenance
 
@@ -1032,12 +1019,6 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/healthz` | **none** | _public_ | - | `HealthHandler.Healthz` | Unauthenticated infra readiness probe (Docker/Swarm HEALTHCHECK, load balancers). |
-
-## /mirror/library
-
-| Method | Path | Auth | Capability | Gates | Handler | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| GET | `/mirror/library/{exp}/{sig}/{rest:.*}` | **none** | _public_ | Limit | `LibraryHandler.LibraryMirror` | streams one library file to a node installing it. |
 
 ## /mirror/{rest:.*}
 

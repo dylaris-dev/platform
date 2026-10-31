@@ -73,33 +73,35 @@ func TestSwitchingModpacksOffAlsoClosesAuthoringItDidNotMention(t *testing.T) {
 	}
 }
 
-// Tickets and Library: one switch each, not two.
+// Tickets: one switch, not two.
 //
 // With the ticket feature ON and the module row OFF, every ticket endpoint
 // worked and nothing in the panel led to it - people arrived only through a
 // notification link. The row now follows the flag in both directions.
-//
-// Enabling tickets needs Core file storage, so the ON direction is driven
-// through Library, which shares the same code path and has no precondition.
 func TestAModuleRowFollowsItsFeatureFlagInBothDirections(t *testing.T) {
-	h, st := newFeatureSettingsFixture(t, map[string]string{"feature_tickets_enabled": "true"})
+	// Enabling tickets needs Core file storage.
+	h, st := newFeatureSettingsFixture(t, map[string]string{
+		keyCoreStorageBackend:     "path",
+		keyCoreStoragePath:        "/mnt/shared",
+		keyCoreStoragePathConfirm: "true",
+	})
 	st.modules = []models.Module{
-		{ID: 5, Name: "Tickets", IsEnabled: true, AccessRole: "all"},
-		{ID: 4, Name: "Library", IsEnabled: false, AccessRole: "admin"},
+		{ID: 5, Name: "Tickets", IsEnabled: false, AccessRole: "admin"},
+		{ID: 6, Name: "Custom Tabs", IsEnabled: false, AccessRole: "all"},
 	}
 
-	putFeatures(t, h, `{"library":true}`)
-	if !findModule(t, st, "Library").IsEnabled {
-		t.Error("the Library row stayed off while its feature was switched on")
+	putFeatures(t, h, `{"tickets":true}`)
+	if !findModule(t, st, "Tickets").IsEnabled {
+		t.Error("the Tickets row stayed off while its feature was switched on")
 	}
 	// The audience is NOT derived: it stays whatever the operator chose in
-	// Settings -> Modules, where Library's All/Admin choice has real meaning.
-	if role := findModule(t, st, "Library").AccessRole; role != "admin" {
+	// Settings -> Modules.
+	if role := findModule(t, st, "Tickets").AccessRole; role != "admin" {
 		t.Errorf("the audience was rewritten to %q; only is_enabled is derived", role)
 	}
-	// A request about the library must not touch any other row.
-	if !findModule(t, st, "Tickets").IsEnabled {
-		t.Error("enabling the library switched the Tickets row off")
+	// A request about tickets must not touch any other row.
+	if findModule(t, st, "Custom Tabs").IsEnabled {
+		t.Error("enabling tickets switched the Custom Tabs row on")
 	}
 
 	putFeatures(t, h, `{"tickets":false}`)
@@ -123,7 +125,7 @@ func TestFeaturesGetStatesEveryFlag(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"tickets", "modpacks", "library", "modpackAuthoring", "autoMove", "byon", "userApiKeys", "userApiKeyAllowedCaps", "proxyProtocol"} {
+	for _, field := range []string{"tickets", "modpacks", "modpackAuthoring", "autoMove", "byon", "userApiKeys", "userApiKeyAllowedCaps", "proxyProtocol"} {
 		raw, ok := resp.Features[field]
 		if !ok || string(raw) == "null" {
 			t.Errorf("GET omitted %q; the panel would render it as off and save it as off", field)

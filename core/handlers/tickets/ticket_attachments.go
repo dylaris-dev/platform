@@ -714,8 +714,8 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 		return
 	}
 
-	// Deliberately never tries provider.DownloadURL, unlike the library and
-	// ticket-backups download handlers: a pre-signed S3 redirect would let
+	// Deliberately never tries provider.DownloadURL, unlike the ticket-backups
+	// download handler: a pre-signed S3 redirect would let
 	// the object storage backend serve its own headers, bypassing the
 	// nosniff / exact Content-Length / Content-Disposition enforcement below.
 	// Attachments always stream through Core so those headers are guaranteed,

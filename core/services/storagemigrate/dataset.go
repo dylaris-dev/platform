@@ -1,8 +1,8 @@
 // Package storagemigrate holds the one migration + verification engine used
-// by all five blob data sets (library, ticket-attachments, ticket-backups,
+// by all the blob data sets (ticket-attachments, ticket-backups,
 // modpacks, server-backups). Core has three deliberately different storage
 // interfaces (storage.StorageProvider, storage/backup.Storage,
-// storage/modpack.ModpackStorageProvider); rather than write 3x5 code paths,
+// storage/modpack.ModpackStorageProvider); rather than write 3xN code paths,
 // each data set adapts to the ONE narrow DataSet seam below exactly once.
 package storagemigrate
 
@@ -24,7 +24,7 @@ type ObjectRef struct {
 // implementation is a thin adapter over one of the three existing storage
 // interfaces.
 type DataSet interface {
-	// ID is the stable identifier, e.g. "library" or "server-backups:3".
+	// ID is the stable identifier, e.g. "ticket-attachments" or "server-backups:3".
 	ID() string
 	// Label is the human name shown in the panel.
 	Label() string

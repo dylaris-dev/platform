@@ -338,9 +338,7 @@ func resolveJavaImage(requested, stored string) string {
 // installVanilla take Version straight to the PaperMC / Mojang APIs,
 // installFabric and installForge use it as the mcVersion in their meta lookup
 // (both resolve the LOADER when it is blank, so only Version is required),
-// installNeoForge is passed Loader as its version, and installFromLibrary
-// needs the file's path in the library, which SetupServer resolves into a
-// signed Core download URL.
+// and installNeoForge is passed Loader as its version.
 //
 // The type allowlist is validate.IsInstallerType, which already existed and
 // had no caller at all. Reusing it rather than restating the set here is the
@@ -357,7 +355,7 @@ func resolveJavaImage(requested, stored string) string {
 // "pack" is deliberately accepted with no field requirement: SetupServer
 // resolves and authorizes it below and rewrites Installer in place, so its
 // own error paths already answer properly.
-func validateInstallerRequest(typ, version, loader, url, path string) string {
+func validateInstallerRequest(typ, version, loader, url string) string {
 	if !validate.IsInstallerType(typ) {
 		return "Unsupported installer type"
 	}
@@ -377,13 +375,6 @@ func validateInstallerRequest(typ, version, loader, url, path string) string {
 	case "neoforge":
 		if strings.TrimSpace(loader) == "" {
 			return "installer.loader is required for neoforge"
-		}
-	case "library":
-		// A library file is named by its path in the library. A bare URL used
-		// to be accepted here too, which made "library" a way to have the node
-		// download anything at all into the server.
-		if strings.TrimSpace(path) == "" {
-			return "installer.path is required for library"
 		}
 	}
 	return ""
@@ -431,7 +422,7 @@ func validateUploadSoftware(typ, software, version, loader string) string {
 	if !reinstallableInstallers[software] {
 		return "installer.software must be paper, vanilla, fabric, forge or neoforge"
 	}
-	return validateInstallerRequest(software, version, loader, "", "")
+	return validateInstallerRequest(software, version, loader, "")
 }
 
 // SetupServer POST /api/servers/{id}/setup - queues first-time provisioning of
@@ -522,7 +513,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// has already been answered 200 and queued.
 	if msg := validateInstallerRequest(
 		req.Installer.Type, req.Installer.Version,
-		req.Installer.Loader, req.Installer.URL, req.Installer.Path,
+		req.Installer.Loader, req.Installer.URL,
 	); msg != "" {
 		handlers.SendJSONError(w, msg, 400)
 		return
@@ -583,19 +574,6 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		req.Installer.McVersion = res.MCVersion
 		req.Installer.Version = res.Build
 		req.Installer.URL = res.URL
-	}
-
-	// A library file is resolved into the signed Core URL the node downloads
-	// it from, before anything is written. The node is never sent the path:
-	// it used to copy whatever that path named on its own disk.
-	if req.Installer.Type == "library" {
-		u, code, msg := handlers.ResolveLibraryInstall(r.Context(), h.state, req.Installer.Path, isAdmin)
-		if code != 0 {
-			handlers.SendJSONError(w, msg, code)
-			return
-		}
-		req.Installer.URL = u
-		req.Installer.Path = ""
 	}
 
 	// The recorded Minecraft version is Core's to decide, not the client's: it
@@ -777,7 +755,6 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			"version":   req.Installer.Version,
 			"loader":    req.Installer.Loader,
 			"url":       req.Installer.URL,
-			"path":      req.Installer.Path,
 			"structure": req.Installer.Structure,
 			// Modpack metadata forwarded to the node installer.
 			"modrinthProjectId":   req.Installer.ModrinthProjectID,
@@ -1002,13 +979,13 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		buildNumber = srv.BuildNumber
 	}
 	// Reinstall updates the server software in place. Every other source -
-	// library, modpacks, packs, Technic, uploads - is resolved and authorized
+	// modpacks, packs, Technic, uploads - is resolved and authorized
 	// by setup, and this route used to pass them to the node unchecked.
 	if !reinstallableInstallers[installerType] {
 		handlers.SendJSONError(w, "Reinstall updates the server software (paper, vanilla, fabric, forge or neoforge). Use setup for any other install source.", 400)
 		return
 	}
-	if msg := validateInstallerRequest(installerType, buildNumber, loader, "", ""); msg != "" {
+	if msg := validateInstallerRequest(installerType, buildNumber, loader, ""); msg != "" {
 		handlers.SendJSONError(w, msg, 400)
 		return
 	}

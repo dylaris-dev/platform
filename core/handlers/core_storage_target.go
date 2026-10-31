@@ -16,8 +16,8 @@ import (
 // config before a migration may start, plus the single writer that makes one
 // active.
 //
-// Why an ad-hoc config exists at all: library, ticket-attachments,
-// ticket-backups and modpacks are each backed by ONE settings-configured
+// Why an ad-hoc config exists at all: ticket-attachments, ticket-backups and
+// modpacks are each backed by ONE settings-configured
 // backend. Their saved config describes where they live NOW, so it cannot also
 // be the destination - reading the target from it would make source == target.
 // The operator therefore names the destination inline (another S3, a
@@ -65,7 +65,7 @@ func coreStorageConfigFromTarget(t services.StorageTargetConfig) CoreStorageConf
 // It is NOT literally what newStorageProviderForConfig hands the S3 provider,
 // and the two do diverge for a configured prefix with a stray slash:
 // newStorageProviderForConfig concatenates cfg.S3Prefix raw, so "prod/" makes
-// it write under "prod//library" while this reports "prod/library"
+// it write under "prod//modpacks" while this reports "prod/modpacks"
 // (normalizeCoreStorageCandidate does not trim S3Prefix, so that config is
 // reachable). Teaching the provider to call this would silently relocate every
 // object of any install whose saved prefix ends in a slash, so it deliberately

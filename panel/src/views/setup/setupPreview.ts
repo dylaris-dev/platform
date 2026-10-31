@@ -29,6 +29,7 @@ interface PreviewServer {
 export const formatInstallerType = (type?: string) => {
     if (!type) return '';
     if (type === 'upload' || type === 'upload-zip') return 'Manual Upload';
+    // Recorded before the Library was removed; the install itself still runs.
     if (type === 'library') return 'From Library';
     if (type === 'pack') return 'My modpack';
     return type.charAt(0).toUpperCase() + type.slice(1);

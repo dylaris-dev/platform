@@ -112,7 +112,7 @@ export interface StorageDataSet {
   // it owns a settings-configured backend of its own (core-storage as a
   // whole, or modpacks), so the target is an ad-hoc storage config typed into
   // the wizard. False: this data set is either a namespace INSIDE the shared
-  // Core file storage (library, ticket-attachments, ticket-backups,
+  // Core file storage (ticket-attachments, ticket-backups,
   // modpacks@core-storage - switching on behalf of one would strand the
   // others) or a server-backups row (already multi-storage by design), and
   // its target is another data set id instead.

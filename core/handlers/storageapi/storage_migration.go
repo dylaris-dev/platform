@@ -30,15 +30,14 @@ import (
 const ModpacksCoreStorageDataSetID = "modpacks@core-storage"
 
 // CoreStorageDataSetID names the shared Core file storage AS A WHOLE - every
-// key under its root, which is library/, ticket-attachments/ and
-// ticket-backups/ together (plus server-backups/ and modpacks/ for an install
-// that has pointed those at Core storage too).
+// key under its root, which is ticket-attachments/ and ticket-backups/
+// together (plus server-backups/ and modpacks/ for an install that has pointed
+// those at Core storage too).
 //
 // It exists because those namespaces do not have a config each: they all read
 // ONE saved Core file storage config, and switching it repoints all of them at
 // once. Offering a per-namespace config switch therefore stranded the others -
-// migrating library alone and switching left ticket-attachments and
-// ticket-backups pointing at a backend their data had never been copied to,
+// migrating one namespace alone and switching left the others pointing at a backend their data had never been copied to,
 // and, because their source config then named that new empty backend, the
 // operator could not even name the old location to migrate them afterwards.
 // One data set covering the whole root is the only config switch that is safe
@@ -114,7 +113,7 @@ const adHocTargetNote = "Migrating this data set means naming a new storage conf
 
 // combinedCoreStorageNote describes what the whole-Core-file-storage data set
 // covers and why it is the one that owns the config switch.
-const combinedCoreStorageNote = "Covers the whole Core file storage in one move: Library, ticket attachments and ticket backups (and server backups / modpacks for an install that keeps those on Core storage too). " + adHocTargetNote
+const combinedCoreStorageNote = "Covers the whole Core file storage in one move: ticket attachments and ticket backups (and server backups / modpacks for an install that keeps those on Core storage too). " + adHocTargetNote
 
 // sharedCoreStorageNote is carried by each namespace INSIDE the Core file
 // storage. They share one saved config, so none of them can switch it alone
@@ -135,7 +134,6 @@ func (r *StorageDataSetResolver) List(_ context.Context) ([]services.StorageData
 		// switch the shared config, so it is the answer to "move my Core file
 		// storage somewhere else".
 		{ID: CoreStorageDataSetID, Label: "Core file storage (all namespaces)", BackendLabel: coreStorageBackendLabel(cfg, ""), Migratable: true, SupportsTargetConfig: true, Note: combinedCoreStorageNote},
-		{ID: storagemigrate.DataSetLibrary, Label: "Library", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixLibrary), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
 		{ID: storagemigrate.DataSetAttachments, Label: "Ticket attachments", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixAttachments), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
 		{ID: storagemigrate.DataSetTicketBackups, Label: "Ticket backups", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixBackups), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
 		// Modpacks keep an ad-hoc target: modpack_storage_* is their OWN
@@ -227,13 +225,11 @@ func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storag
 	case CoreStorageDataSetID:
 		// An EMPTY sub-prefix, so the provider is rooted at the Core storage
 		// root and WalkProvider enumerates every namespace under it
-		// ("library/x.jar", "ticket-attachments/...", ...). Writing those same
+		// ("ticket-attachments/...", "ticket-backups/...", ...). Writing those same
 		// keys through a target provider that is also rooted at ITS root
 		// reproduces the layout exactly, which is what makes one config switch
 		// correct for all of them at once.
 		return providerSet("", "Core file storage")
-	case storagemigrate.DataSetLibrary:
-		return providerSet(handlers.CoreStoragePrefixLibrary, "Library")
 	case storagemigrate.DataSetAttachments:
 		return providerSet(handlers.CoreStoragePrefixAttachments, "Ticket attachments")
 	case storagemigrate.DataSetTicketBackups:
@@ -308,7 +304,7 @@ type storageSourceLocation struct {
 //   - CoreStorageDataSetID: the whole Core file storage, one config, one root.
 //   - modpacks: its own modpack_storage_* namespace.
 //
-// The namespaces INSIDE the Core file storage (library, ticket-attachments,
+// The namespaces INSIDE the Core file storage (ticket-attachments,
 // ticket-backups, modpacks@core-storage) are refused. They have no config of
 // their own - they all read the shared one - so switching on behalf of any one
 // of them would repoint the others onto a backend their data was never copied
@@ -332,7 +328,7 @@ func (r *StorageDataSetResolver) sourceCoreStorageConfigFor(id string) (storageS
 			srcSubPrefix: r.modpackSourceSubPrefix(),
 			tgtSubPrefix: handlers.CoreStoragePrefixModpacks,
 		}, nil
-	case storagemigrate.DataSetLibrary, storagemigrate.DataSetAttachments,
+	case storagemigrate.DataSetAttachments,
 		storagemigrate.DataSetTicketBackups, ModpacksCoreStorageDataSetID:
 		return storageSourceLocation{}, fmt.Errorf(
 			"data set %q is one namespace inside the shared Core file storage and cannot switch that config on its own (it would strand the others); migrate %q to move the whole Core file storage automatically, or use the manual flow for this namespace",
@@ -414,7 +410,7 @@ type coreStorageDataSetLocation struct {
 //
 // It is a deliberate SIBLING of sourceCoreStorageConfigFor rather than a reuse
 // of it, because the two answer different questions. That one answers "may this
-// id own a config switch?", so it REFUSES library, ticket-attachments,
+// id own a config switch?", so it REFUSES ticket-attachments,
 // ticket-backups and modpacks@core-storage - which are exactly the ids this one
 // must be able to locate. Conflating them is what left the row-to-row path with
 // no same-location refusal at all.
@@ -428,8 +424,6 @@ func (r *StorageDataSetResolver) dataSetLocation(id string) (coreStorageDataSetL
 	switch id {
 	case CoreStorageDataSetID:
 		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig()}, true
-	case storagemigrate.DataSetLibrary:
-		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixLibrary}, true
 	case storagemigrate.DataSetAttachments:
 		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixAttachments}, true
 	case storagemigrate.DataSetTicketBackups:
@@ -483,12 +477,11 @@ func (r *StorageDataSetResolver) dataSetLocation(id string) (coreStorageDataSetL
 //	own manifest.
 //
 //	CONTAINMENT - one side nests inside the other on the same root, e.g.
-//	library -> core-storage (library/ lives inside the storage root) or
-//	core-storage -> modpacks@core-storage. Data-set keys are relative to their
-//	own sub-prefix, so copying across a nesting boundary rebases them into the
-//	OTHER data set's live namespace, and copyOne overwrites on a checksum
-//	mismatch. MkdirLibraryHandler lets an operator create a library folder
-//	called "modpacks", which is all it takes to overwrite live modpack objects.
+//	ticket-attachments -> core-storage (ticket-attachments/ lives inside the
+//	storage root) or core-storage -> modpacks@core-storage. Data-set keys are
+//	relative to their own sub-prefix, so copying across a nesting boundary
+//	rebases them into the OTHER data set's live namespace, and copyOne
+//	overwrites on a checksum mismatch.
 //	This is not over-refusal: a nested pair is never a meaningful migration,
 //	because the contained side is already stored inside the containing one.
 //

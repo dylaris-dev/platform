@@ -126,7 +126,7 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 		}
 	}
 	// A selection is replaced wholesale rather than merged: the components are
-	// booleans, and a merge could never express "stop including the library".
+	// booleans, and a merge could never express "stop including the modpacks".
 	if err := req.Selection.Validate(); err != nil {
 		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -419,11 +419,10 @@ func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error)
 			return backupstorage.Open(ctx, bs, NewBackupHandler(h.state).backupDeps())
 		},
 		OpenCoreStorage: func(area string) (services.CoreStorageArea, error) {
-			prefix := handlers.CoreStoragePrefixLibrary
-			if area == "modpacks" {
-				prefix = handlers.CoreStoragePrefixModpacks
+			if area != "modpacks" {
+				return nil, fmt.Errorf("unknown Core storage area %q", area)
 			}
-			prov, err := h.state.BuildCoreStorageProvider(prefix)
+			prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixModpacks)
 			if err != nil {
 				return nil, err
 			}

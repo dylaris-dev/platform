@@ -141,9 +141,6 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := createCustomDomainTables(db); err != nil {
 		return err
 	}
-	if err := createLibraryDisabledTable(db); err != nil {
-		return err
-	}
 	if err := createBackupTables(db); err != nil {
 		return err
 	}
@@ -370,6 +367,10 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	}
 
 	if err := applyMinecraftEulaSchema(db); err != nil {
+		return err
+	}
+
+	if err := applyLibraryRemoval(db); err != nil {
 		return err
 	}
 

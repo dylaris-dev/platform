@@ -97,9 +97,9 @@ describe('recommendJavaForSetup', () => {
     it('a game server follows its Minecraft version', () => {
         expect(recommendJavaForSetup({ isProxy: false, tab: 'online', software: 'paper', build: '26.2', mcVersion: '26.2' })).toBe(JAVA_25);
     });
-    it('a proxy follows its release on the online and library tabs', () => {
+    it('a proxy follows its release on the online tab', () => {
         expect(recommendJavaForSetup({ isProxy: true, tab: 'online', software: 'velocity', build: '4.2.0', mcVersion: '4.2.0' })).toBe(JAVA_25);
-        expect(recommendJavaForSetup({ isProxy: true, tab: 'library', software: 'velocity', build: '3.5.1', mcVersion: '3.5.1' })).toBe(JAVA_21);
+        expect(recommendJavaForSetup({ isProxy: true, tab: 'online', software: 'velocity', build: '3.5.1', mcVersion: '3.5.1' })).toBe(JAVA_21);
     });
     it('an upload says nothing about the proxy inside it', () => {
         expect(recommendJavaForSetup({ isProxy: true, tab: 'upload', software: 'velocity', build: '4.2.0', mcVersion: '' })).toBeNull();

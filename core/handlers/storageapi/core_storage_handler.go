@@ -140,7 +140,7 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 // an empty/absent body falls back to testing the currently-saved config, and
 // a blank secret in a submitted candidate reuses the stored one, mirroring
 // SaveConfig. The probe writes, reads back and deletes a uniquely-named
-// object under a "_probe" sub-prefix so it never touches real Library/ticket
+// object under a "_probe" sub-prefix so it never touches real ticket
 // data.
 func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	// The stage rides along with every verdict. A wrong endpoint and a wrong

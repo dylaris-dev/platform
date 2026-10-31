@@ -2378,66 +2378,6 @@
     },
     {
       "method": "GET",
-      "path": "/api/library",
-      "auth": "session",
-      "authorization": "no capability",
-      "description": "Admins see all entries with their `enabled` flag set per-path so the UI can render a toggle.",
-      "handler": "LibraryHandler.GetLibraryHandler",
-      "group": "library",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/library/delete",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
-      "handler": "LibraryHandler.DeleteLibraryHandler",
-      "group": "library",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/library/download",
-      "auth": "session",
-      "authorization": "no capability",
-      "description": "streams the library file named by ?path.",
-      "handler": "LibraryHandler.DownloadLibraryHandler",
-      "group": "library",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/library/mkdir",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
-      "handler": "LibraryHandler.MkdirLibraryHandler",
-      "group": "library",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/library/toggle",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "Body: { \"path\": \"...\", \"enabled\": false } Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
-      "handler": "LibraryHandler.ToggleLibraryPathHandler",
-      "group": "library",
-      "external": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/library/upload",
-      "auth": "session",
-      "authorization": "settings.write",
-      "description": "Route-gated by RequireCap(\"settings.write\") (Phase 4 Task 20); the former in-handler `if !isAdmin` block is now the chokepoint's job.",
-      "handler": "LibraryHandler.UploadLibraryHandler",
-      "group": "library",
-      "external": false
-    },
-    {
-      "method": "GET",
       "path": "/api/maintenance",
       "auth": "none",
       "authorization": "public",
@@ -2848,16 +2788,6 @@
       "description": "the calling user's own past usernames.",
       "handler": "UsernameHistoryHandler.Me",
       "group": "me",
-      "external": false
-    },
-    {
-      "method": "GET",
-      "path": "/mirror/library/{exp}/{sig}/{rest:.*}",
-      "auth": "none",
-      "authorization": "public",
-      "description": "streams one library file to a node installing it.",
-      "handler": "LibraryHandler.LibraryMirror",
-      "group": "mirror",
       "external": false
     },
     {
@@ -5836,10 +5766,10 @@
     }
   ],
   "counts": {
-    "total": 587,
+    "total": 580,
     "byAuth": {
-      "none": 31,
-      "session": 538,
+      "none": 30,
+      "session": 532,
       "user API key": 10,
       "warp key": 8
     },
@@ -5860,10 +5790,9 @@
       "grants": 3,
       "healthz": 1,
       "infrastructure": 3,
-      "library": 6,
       "maintenance": 1,
       "me": 41,
-      "mirror": 2,
+      "mirror": 1,
       "modrinth": 9,
       "modules": 6,
       "nodes": 14,

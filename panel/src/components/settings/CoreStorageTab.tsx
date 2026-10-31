@@ -210,7 +210,7 @@ export default function CoreStorageTab() {
       title="Core file storage"
       icon={HardDrive}
       width="2xl"
-      description="Where Core keeps Library files, ticket attachments and ticket backups. Required before running more than one Core, and before enabling the ticket system."
+      description="Where Core keeps ticket attachments and ticket backups. Required before running more than one Core, and before enabling the ticket system."
     >
     <SettingsCard
       title="Backend"

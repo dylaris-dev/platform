@@ -18,11 +18,10 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-// Stable data-set identifiers. The three StorageProvider-backed ones reuse
-// the Core file storage sub-prefix names so an operator sees one vocabulary
-// across the config screen and the migration screen.
+// Stable data-set identifiers. The StorageProvider-backed ones reuse the Core
+// file storage sub-prefix names so an operator sees one vocabulary across the
+// config screen and the migration screen.
 const (
-	DataSetLibrary       = "library"
 	DataSetAttachments   = "ticket-attachments"
 	DataSetTicketBackups = "ticket-backups"
 	DataSetModpacks      = "modpacks"
@@ -61,7 +60,7 @@ type ChecksumHinter interface {
 	ChecksumHint(key string) (algo, sum string, ok bool)
 }
 
-// ---------- StorageProvider-backed data sets (library, ticket-attachments, ticket-backups) ----------
+// ---------- StorageProvider-backed data sets (ticket-attachments, ticket-backups) ----------
 
 type providerDataSet struct {
 	id    string

@@ -19,7 +19,7 @@ type WalkedFile struct {
 // MaxWalkDepth caps how deep WalkProvider will recurse. This exists to fail
 // loudly rather than spin forever on a pathological backend (an object store
 // whose synthesized directory listing echoes its own prefix would otherwise
-// recurse without end). 64 is far past any real Library/backup tree.
+// recurse without end). 64 is far past any real backup tree.
 const MaxWalkDepth = 64
 
 // ErrWalkTooDeep is returned when a tree exceeds MaxWalkDepth.

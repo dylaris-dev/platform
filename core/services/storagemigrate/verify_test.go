@@ -20,7 +20,7 @@ func manifestHeader(id int, entries []models.StorageManifestEntry) *models.Stora
 	}
 	return &models.StorageManifest{
 		ID:          id,
-		DataSet:     DataSetLibrary,
+		DataSet:     DataSetAttachments,
 		Algo:        ChecksumAlgo,
 		CapturedAt:  time.Date(2026, 7, 19, 9, 0, 0, 0, time.UTC),
 		ObjectCount: int64(len(entries)),
@@ -39,12 +39,12 @@ func statusOf(rep StorageVerifyReport, key string) StorageVerifyStatus {
 
 func TestVerify_AllGoodIsOK(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	src.put("b.jar", "bbbb")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a.jar", "aaa")
 	target.put("b.jar", "bbbb")
 
@@ -77,7 +77,7 @@ func TestVerify_AllGoodIsOK(t *testing.T) {
 
 func TestVerify_ClassifiesEveryStatus(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("ok.jar", "good")
 	src.put("missing.jar", "gone")
 	src.put("sizediff.jar", "12345")
@@ -85,7 +85,7 @@ func TestVerify_ClassifiesEveryStatus(t *testing.T) {
 	src.put("unreadable.jar", "boom")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("ok.jar", "good")
 	// missing.jar deliberately absent
 	target.put("sizediff.jar", "123")         // shorter
@@ -122,11 +122,11 @@ func TestVerify_ClassifiesEveryStatus(t *testing.T) {
 func TestVerify_SameSizeDifferentContentIsOnlyCaughtByTheChecksum(t *testing.T) {
 	// The load-bearing case. A size-only comparison passes this.
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "AAAAAAAA")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a.jar", "AAAAAAAB")
 
 	rep, err := Verify(ctx, target, manifestHeader(1, entries), entries, VerifyModeFull, VerifyOptions{})
@@ -143,10 +143,10 @@ func TestVerify_SameSizeDifferentContentIsOnlyCaughtByTheChecksum(t *testing.T) 
 
 func TestVerify_OKIsFalseWheneverProblemsTotalIsPositive(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	entries := manifestOf(t, src)
-	target := newMemDataSet(DataSetLibrary, "target") // empty -> one "missing"
+	target := newMemDataSet(DataSetAttachments, "target") // empty -> one "missing"
 
 	rep, err := Verify(ctx, target, manifestHeader(1, entries), entries, VerifyModeFull, VerifyOptions{})
 	if err != nil {
@@ -162,13 +162,13 @@ func TestVerify_OKIsFalseWheneverProblemsTotalIsPositive(t *testing.T) {
 
 func TestVerify_ProblemsAreCappedButProblemsTotalIsTruthful(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	n := verifyMaxProblems + 37
 	for i := 0; i < n; i++ {
 		src.put(fmt.Sprintf("f%04d.jar", i), "x")
 	}
 	entries := manifestOf(t, src)
-	target := newMemDataSet(DataSetLibrary, "target") // everything missing
+	target := newMemDataSet(DataSetAttachments, "target") // everything missing
 
 	rep, err := Verify(ctx, target, manifestHeader(1, entries), entries, VerifyModeFull, VerifyOptions{})
 	if err != nil {
@@ -187,13 +187,13 @@ func TestVerify_PresenceIsNeverSampled(t *testing.T) {
 	// missing and extra come from a full key listing, which costs no bytes,
 	// and are always computed in full - in BOTH modes.
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	for i := 0; i < 50; i++ {
 		src.put(fmt.Sprintf("f%03d.jar", i), "x")
 	}
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	for i := 0; i < 50; i++ {
 		target.put(fmt.Sprintf("f%03d.jar", i), "x")
 	}
@@ -322,7 +322,7 @@ func TestSelectSample_ReturnsSortedByKey(t *testing.T) {
 
 func TestVerify_SampleReportsTheCheckedFraction(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	// 3 small (always hashed) + nothing large, so a sample checks everything
 	// here; the assertion is that the arithmetic is right, not that it skips.
 	src.put("a", "a")
@@ -330,7 +330,7 @@ func TestVerify_SampleReportsTheCheckedFraction(t *testing.T) {
 	src.put("c", "ccc")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a", "a")
 	target.put("b", "bb")
 	target.put("c", "ccc")
@@ -356,7 +356,7 @@ func TestVerify_SampleReportsTheCheckedFraction(t *testing.T) {
 }
 
 func TestVerify_FractionsAreZeroSafeOnAnEmptyManifest(t *testing.T) {
-	rep, err := Verify(context.Background(), newMemDataSet(DataSetLibrary, "target"),
+	rep, err := Verify(context.Background(), newMemDataSet(DataSetAttachments, "target"),
 		manifestHeader(1, nil), nil, VerifyModeFull, VerifyOptions{})
 	if err != nil {
 		t.Fatalf("Verify(empty): %v", err)
@@ -370,7 +370,7 @@ func TestVerify_FractionsAreZeroSafeOnAnEmptyManifest(t *testing.T) {
 }
 
 func TestVerify_RejectsAnUnknownMode(t *testing.T) {
-	_, err := Verify(context.Background(), newMemDataSet(DataSetLibrary, "target"),
+	_, err := Verify(context.Background(), newMemDataSet(DataSetAttachments, "target"),
 		manifestHeader(1, nil), nil, "partial", VerifyOptions{})
 	if err == nil {
 		t.Fatal("Verify with an unknown mode err = nil, want an error")
@@ -387,11 +387,11 @@ func TestVerify_RejectsAnUnknownMode(t *testing.T) {
 
 func TestVerify_NeverMutatesTheTarget(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a.jar", "wrong")
 	target.put("extra.jar", "x")
 	before := target.snapshot()
@@ -410,13 +410,13 @@ func TestVerify_NeverMutatesTheTarget(t *testing.T) {
 
 func TestVerify_HonoursCancellation(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "a")
 	src.put("b.jar", "b")
 	src.put("c.jar", "c")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a.jar", "a")
 	target.put("b.jar", "b")
 	target.put("c.jar", "c")
@@ -443,7 +443,7 @@ func TestVerify_HonoursCancellation(t *testing.T) {
 // computed from the bytes actually read - proves the content is correct.
 func TestVerify_ChecksumIsAuthoritativeOverACorruptManifestSizeField(t *testing.T) {
 	ctx := context.Background()
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	body := "the real, byte-for-byte correct content of this object"
 	target.put("a.jar", body)
 
@@ -477,11 +477,11 @@ func TestVerify_ChecksumIsAuthoritativeOverACorruptManifestSizeField(t *testing.
 // below even though every object actually matches.
 func TestVerify_AuthorizesSourceDeleteOnlyForAPassingFullRun(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	entries := manifestOf(t, src)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	target.put("a.jar", "aaa")
 
 	sampleRep, err := Verify(ctx, target, manifestHeader(1, entries), entries, VerifyModeSample, VerifyOptions{
@@ -586,7 +586,7 @@ func TestVerify_SampleReportsUndrawnEntryAsMissing(t *testing.T) {
 		t.Fatalf("setup: SelectSample drew every one of %d entries; want it to exclude at least one (sampleLargeCount(%d) = %d)", n, n, sampleLargeCount(n))
 	}
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	for _, e := range entries {
 		if e.Key == missingKey {
 			continue // deliberately absent: undrawn from the sample AND missing from the target
@@ -621,7 +621,7 @@ func TestVerify_SampleFractionsDropBelowOneWhenObjectsAreSkipped(t *testing.T) {
 	var bodyLen = int64(len("body0000")) // every fixture body is 8 bytes
 	entries, bodies := sampleFixture(t, n)
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	for _, e := range entries {
 		target.put(e.Key, bodies[e.Key])
 	}
@@ -682,7 +682,7 @@ func TestVerify_SampleFractionsDropBelowOneWhenObjectsAreSkipped(t *testing.T) {
 func TestVerify_BytesExaminedIsTheSampledPopulationNotTheWholeManifest(t *testing.T) {
 	const n = 300
 	entries, bodies := sampleFixture(t, n)
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	for _, e := range entries {
 		target.put(e.Key, bodies[e.Key])
 	}
@@ -756,7 +756,7 @@ func TestVerify_SampleReportsProgressOverTheSamplePopulation(t *testing.T) {
 	}
 	missingDrawnKey := drawn[0].Key
 
-	target := newMemDataSet(DataSetLibrary, "target")
+	target := newMemDataSet(DataSetAttachments, "target")
 	for _, e := range entries {
 		if e.Key == missingDrawnKey {
 			continue // drawn, but absent: exercises the Open() not-found Progress call site too

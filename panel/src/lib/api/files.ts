@@ -129,39 +129,6 @@ export function uploadFiles(path: string, files: FileList, onProgress: (p: numbe
     });
 }
 
-export function uploadLibraryFiles(path: string, files: FileList, onProgress: (p: number) => void) {
-    return new Promise<{ success: boolean; message: string }>((resolve) => {
-        const xhr = new XMLHttpRequest();
-        const formData = new FormData();
-        formData.append('path', path);
-        for (let i = 0; i < files.length; i++) formData.append('files', files[i]);
-
-        xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
-        xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                try { resolve(JSON.parse(xhr.responseText)); }
-                catch { resolve({ success: false, message: 'Bad upload response' }); }
-            } else {
-                // Surface the server's reason (e.g. the storage-reach gate's
-                // taxonomy remedy on a 503) instead of a generic message; see
-                // the identical handling in uploadFiles above.
-                try {
-                    const body = JSON.parse(xhr.responseText);
-                    resolve({ success: false, message: body.message || 'Upload failed' });
-                } catch {
-                    resolve({ success: false, message: 'Upload failed' });
-                }
-            }
-        };
-        xhr.onerror = () => resolve({ success: false, message: 'Connection error' });
-
-        xhr.open('POST', `${API_URL}/library/upload`, true);
-        // No Authorization header: XMLHttpRequest sends cookies on same-origin
-        // requests by default, and the session is a cookie now.
-        xhr.send(formData);
-    });
-}
-
 export function getDownloadUrl(path: string, serverUuid?: string): string {
     const base = `${API_URL}/files/download?path=${encodeURIComponent(path)}`;
     return serverUuid ? `${base}&server_uuid=${encodeURIComponent(serverUuid)}` : base;
@@ -254,8 +221,4 @@ export async function selectiveDownload(
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(blobUrl);
-}
-
-export function getLibraryDownloadUrl(path: string): string {
-    return `${API_URL}/library/download?path=${encodeURIComponent(path)}`;
 }

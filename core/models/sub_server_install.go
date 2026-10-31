@@ -19,7 +19,8 @@ type SubServerInstall struct {
 	SubServerName string `json:"subServerName"`
 
 	// InstallerType is the installer as the panel names it: paper, vanilla,
-	// fabric, forge, neoforge, library, upload, upload-zip, modpack, pack.
+	// fabric, forge, neoforge, upload, upload-zip, modpack, pack. Rows written
+	// before the Library was removed may still say library.
 	InstallerType string `json:"installerType"`
 	McVersion     string `json:"mcVersion"`
 	BuildVersion  string `json:"buildVersion"`

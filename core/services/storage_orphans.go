@@ -23,8 +23,8 @@ import (
 // row names any more.
 //
 // It only ever OFFERS objects whose key has a shape Core itself writes, which is
-// the line between "ours and forgotten" and "somebody else's". Library files,
-// modpacks, ticket attachments and anything unrecognised are counted, never
+// the line between "ours and forgotten" and "somebody else's". Modpacks, ticket
+// attachments and anything unrecognised are counted, never
 // listed for deletion: an object store shared with another subsystem is normal
 // here, and not knowing what a file is must never read as permission to delete it.
 

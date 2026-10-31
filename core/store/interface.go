@@ -570,10 +570,6 @@ type Store interface {
 	InsertGatewayBandwidthBatch(rows []models.GatewayBandwidthRow) error
 	GetGatewayBandwidthHistory(since time.Time, component, host string) ([]models.GatewayBandwidthRow, error)
 
-	// --- Library Disabled Paths ---
-	ListDisabledLibraryPaths() ([]string, error)
-	SetLibraryPathDisabled(path string, disabled bool) error
-
 	// --- Traffic limits: what a tenant may use and buy, per (region, kind) ---
 	// Same three-scope shape as the route limits below. nil from Get means the
 	// scope says nothing, not that there is no limit - see
@@ -893,7 +889,7 @@ type Store interface {
 
 	// --- Platform backups ---
 	// The platform's OWN backups, as opposed to a game server's: a selection of
-	// components (database, library, modpacks, servers) sealed under the
+	// components (database, modpacks, servers) sealed under the
 	// operator's backup passphrase. Separate tables from backup_jobs because a
 	// platform job is keyed on nothing, runs in Core rather than on a node, and
 	// is bounded by no tenant's quota.

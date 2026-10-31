@@ -39,7 +39,6 @@ describe('installTargetMcVersion', () => {
         ['modpack uses its selection', { tab: 'modpack', selectionMcVersion: '1.20.1' }, '1.20.1', false],
         ['pack without a selection is empty', { tab: 'pack' }, '', false],
         ['technic uses its selection', { tab: 'technic', selectionMcVersion: '1.12.2' }, '1.12.2', false],
-        ['library ignores the pickers', { tab: 'library' }, '', false],
         ['backup ignores the pickers', { tab: 'backup' }, '', false],
     ];
     for (const [name, over, version, unknown] of rows) {

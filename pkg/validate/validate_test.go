@@ -174,7 +174,7 @@ func TestIsInstallerType(t *testing.T) {
 			t.Errorf("IsInstallerType(%q) = false, want true", ok)
 		}
 	}
-	for _, bad := range []string{"", "rm -rf", "PAPER", "ftp"} {
+	for _, bad := range []string{"", "rm -rf", "PAPER", "ftp", "library"} {
 		if IsInstallerType(bad) {
 			t.Errorf("IsInstallerType(%q) = true, want false", bad)
 		}

@@ -27,17 +27,6 @@ func NewSettingsHandler(state *AppState) *SettingsHandler {
 	return &SettingsHandler{state: state}
 }
 
-// NOTE: the legacy /settings/library CRUD (GetLibrarySettings/SaveLibrarySettings)
-// and its /settings/library/test probe (TestLibraryConnection, further down this
-// file) were removed. Since the Core-stateless-storage rework, Library reads its
-// provider exclusively from the shared Core file storage config
-// (handlers.LibraryHandler.buildProvider -> AppState.buildCoreStorageProvider);
-// the library_type/library_path/library_s3_* settings these handlers read/wrote
-// were dead - SaveLibrarySettings' "success" response changed nothing observable,
-// and TestLibraryConnection's "ok" was unrelated to the real (Core storage)
-// provider. That live UI trap is gone; configure storage at Settings -> Core
-// Storage (CoreStorageHandler, /api/settings/core-storage*) instead.
-
 // --- File Manager Settings ---
 
 // FileManagerSettings holds the four browser transfer ceilings, on the platform

@@ -38,7 +38,6 @@ func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request
 			{Name: "Servers", Type: "internal", Icon: "server", URL: "/servers", IsEnabled: true, IsSystem: true, Position: 1, AccessRole: "all"},
 			{Name: "Admin", Type: "internal", Icon: "shield-check", URL: "/admin", IsEnabled: true, IsSystem: true, Position: 2, AccessRole: "admin"},
 			{Name: "Infrastructure", Type: "internal", Icon: "cpu", URL: "/infrastructure", IsEnabled: true, IsSystem: true, Position: 3, AccessRole: "admin"},
-			{Name: "Library", Type: "internal", Icon: "folder-open", URL: "/library", IsEnabled: false, IsSystem: false, Position: 4, AccessRole: "admin"},
 		}
 
 		for _, m := range defaultModules {
@@ -183,13 +182,12 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 // Note: "Tickets" is deliberately is_system=false (see database/db_tables.go
 // seedSystemModules) so it stays toggle-able (enable/disable) via the
 // !is_system path in ToggleModuleHandler; its delete protection therefore
-// has to come from this name-based guard, same as Library, rather than from
+// has to come from this name-based guard rather than from
 // flipping is_system=true (which would also block disabling it).
 var builtInModules = map[string]bool{
 	"Servers":        true,
 	"Admin":          true,
 	"Infrastructure": true,
-	"Library":        true,
 	"Tickets":        true,
 	// Seeded like Tickets and equally is_system=false so it stays toggle-able.
 	// Deleting it strands whatever tabs already exist and the next restart

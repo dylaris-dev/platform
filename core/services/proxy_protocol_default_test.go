@@ -83,7 +83,6 @@ func TestProxyProtocolDefaultSoftware(t *testing.T) {
 		{"modpack", "1.21.1", false},
 		{"pack", "", false},
 		{"technic", "", false},
-		{"library", "", false},
 		{"import", "", false},
 		{"backup", "", false},
 	}

@@ -54,9 +54,8 @@ describe('selectionProblem', () => {
 
 describe('summarise', () => {
     it('names every selected component', () => {
-        const got = summarise(sel({ database: true, library: true, modpacks: true, metricsDb: true }), fleet);
+        const got = summarise(sel({ database: true, modpacks: true, metricsDb: true }), fleet);
         expect(got).toContain('database');
-        expect(got).toContain('library');
         expect(got).toContain('modpacks');
         expect(got).toContain('statistics');
     });

@@ -20,11 +20,11 @@ type FileInfo struct {
 	Name    string `json:"name"`
 	IsDir   bool   `json:"is_dir"`
 	Size    int64  `json:"size"`
-	Enabled bool   `json:"enabled"` // false when admin has disabled this path
+	Enabled bool   `json:"enabled"` // always true since the Library's per-path toggle is gone; kept for the wire shape
 }
 
-// StorageProvider is the interface for all core-storage backends (library,
-// ticket attachments, ticket backups). Keys are forward-slash-separated and
+// StorageProvider is the interface for all core-storage backends (ticket
+// attachments, ticket backups, modpacks). Keys are forward-slash-separated and
 // provider-relative.
 //
 // How far ctx actually reaches differs per backend, so do not read it as a
@@ -168,7 +168,7 @@ func (p *LocalProvider) validatePath(reqPath string) (string, error) {
 	base := filepath.Clean(p.BasePath)
 	cleanPath := filepath.Join(base, filepath.Clean("/"+reqPath))
 	if cleanPath != base && !strings.HasPrefix(cleanPath, base+string(os.PathSeparator)) {
-		return "", fmt.Errorf("access denied: path outside library root")
+		return "", fmt.Errorf("access denied: path outside storage root")
 	}
 	return cleanPath, nil
 }
@@ -205,7 +205,7 @@ func (p *LocalProvider) ListFiles(ctx context.Context, path string) ([]FileInfo,
 			Name:    e.Name(),
 			IsDir:   e.IsDir(),
 			Size:    info.Size(),
-			Enabled: true, // default; library handler overrides based on disabled set
+			Enabled: true,
 		})
 	}
 	if files == nil {

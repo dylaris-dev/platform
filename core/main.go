@@ -365,8 +365,8 @@ func main() {
 		DBType:   cfg.DBType,
 	})
 
-	// In-panel blob storage migration (library, ticket-attachments,
-	// ticket-backups, modpacks, server-backups rows). The resolver owns the
+	// In-panel blob storage migration (ticket-attachments, ticket-backups,
+	// modpacks, server-backups rows). The resolver owns the
 	// Core file storage config, the modpack settings and the backup_storages
 	// rows, so it is wired from appState after appState.Store etc. are set.
 	appState.StorageMigration = services.NewStorageMigrationService(
@@ -813,7 +813,7 @@ func main() {
 		// the client choice then falls back to whatever is on PATH.
 		log.Printf("could not read the database major version, platform backups will guess the client: %v", merr)
 	}
-	// The same volume the library and ticket attachments already live on, so a
+	// The same volume the ticket attachments already live on, so a
 	// bundle is spooled where there is room for it rather than on the
 	// container's own writable layer.
 	appState.PlatformBackupWorkDir = filepath.Join("dylaris_data", "platform-backups")
@@ -949,6 +949,11 @@ func main() {
 	// invisible in the boot log, so an operator cannot tell a Core that verified
 	// and passed from one where the check never ran.
 	log.Printf("Storage Reachability Verifier started (id=%s)", cfg.CoreID)
+
+	// One-time deletion of the removed Library's files. In the background so a
+	// slow or wedged storage never holds up the boot; it retries on the next
+	// start until it has succeeded once.
+	go appState.PurgeLibraryStorage(bgCtx)
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.

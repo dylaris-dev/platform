@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -232,11 +233,10 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 		ClusterSecret: h.state.ClusterSecret,
 		WorkDir:       h.state.PlatformBackupWorkDir,
 		OpenCoreStorageWriter: func(area string) (services.CoreStorageWriter, error) {
-			prefix := handlers.CoreStoragePrefixLibrary
-			if area == "modpacks" {
-				prefix = handlers.CoreStoragePrefixModpacks
+			if area != "modpacks" {
+				return nil, fmt.Errorf("unknown Core storage area %q", area)
 			}
-			prov, err := h.state.BuildCoreStorageProvider(prefix)
+			prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixModpacks)
 			if err != nil {
 				return nil, err
 			}
@@ -286,7 +286,7 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 	}
 	if !req.Components.Database {
 		// No target is needed, and asking for one would refuse a perfectly good
-		// "restore only the Library".
+		// "restore only the modpacks".
 		return rst, cleanup, nil
 	}
 

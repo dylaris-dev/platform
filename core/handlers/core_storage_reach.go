@@ -118,8 +118,8 @@ func CoreStorageToReachConfig(cfg CoreStorageConfig) storagereach.Config {
 }
 
 // NewReachProvider builds a provider rooted at the backend ROOT rather than a
-// sub-prefix, so probe files land in .dylaris-reachability/ beside library/
-// and ticket-attachments/ instead of inside one of them.
+// sub-prefix, so probe files land in .dylaris-reachability/ beside
+// ticket-attachments/ and ticket-backups/ instead of inside one of them.
 //
 // Exported for the same reason as CoreStorageToReachConfig: main.go wires this
 // in directly as storagereach.ServiceDeps.NewProvider.

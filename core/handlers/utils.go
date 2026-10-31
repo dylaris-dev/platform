@@ -62,7 +62,8 @@ func parseUserID(w http.ResponseWriter, r *http.Request, varName ...string) (str
 // caller-supplied name INSIDE the filename parameter.
 //
 // Four handlers built this header by concatenating a name into a quoted string
-// (ticket attachments, both file-manager download paths, the library) and one
+// (ticket attachments, both file-manager download paths, the since removed
+// Library) and one
 // of them did not even quote it. A name is not a token: a space ends an
 // unquoted one, and a quote closes a quoted one, so `report".pdf` produced
 //
@@ -70,8 +71,8 @@ func parseUserID(w http.ResponseWriter, r *http.Request, varName ...string) (str
 //
 // which lets the uploader append their own parameters. RFC 6266 gives
 // filename* precedence over filename, so a crafted name decides what the
-// DOWNLOADER's browser saves the file as - and on a ticket attachment or a
-// library file the uploader and the downloader are different people.
+// DOWNLOADER's browser saves the file as - and on a ticket attachment the
+// uploader and the downloader are different people.
 //
 // The severity is genuinely low on its own: the uploader already picks the
 // visible name, browsers sanitise download names themselves, and the sniffed

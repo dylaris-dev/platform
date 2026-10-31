@@ -171,7 +171,7 @@ func entries(t *testing.T, raw []byte) (*bundle.Manifest, map[string]string) {
 // Refused BEFORE a run row exists, so a run that could never have produced
 // anything does not appear as one that failed.
 func TestPlatformBackupRefusesWithoutAPassphrase(t *testing.T) {
-	st := storeWith(models.PlatformBackupSelection{Library: true})
+	st := storeWith(models.PlatformBackupSelection{Modpacks: true})
 	st.passphrase = ""
 	dest := &fakeDest{}
 
@@ -198,17 +198,15 @@ func TestPlatformBackupRefusesASelectionThatCoversNothing(t *testing.T) {
 }
 
 func TestPlatformBackupWritesAnOpenableBundle(t *testing.T) {
-	sel := models.PlatformBackupSelection{Library: true, Modpacks: true}
+	sel := models.PlatformBackupSelection{Modpacks: true}
 	st := storeWith(sel)
 	dest := &fakeDest{}
 	r := newRunner(t, st, dest)
 	r.OpenCoreStorage = func(area string) (CoreStorageArea, error) {
-		switch area {
-		case "library":
-			return &fakeArea{files: map[string]string{"paper-1.21.4.jar": "JAR BYTES"}}, nil
-		default:
-			return &fakeArea{files: map[string]string{"packs/sky/1.0.mrpack": "PACK"}}, nil
+		if area != "modpacks" {
+			t.Errorf("opened Core storage area %q, want only modpacks", area)
 		}
+		return &fakeArea{files: map[string]string{"packs/sky/1.0.mrpack": "PACK"}}, nil
 	}
 
 	if _, err := r.Run(context.Background(), 3); err != nil {
@@ -225,11 +223,8 @@ func TestPlatformBackupWritesAnOpenableBundle(t *testing.T) {
 	if m.ClusterSecret != "the-source-cluster-secret" {
 		t.Errorf("the source cluster secret did not travel: %q", m.ClusterSecret)
 	}
-	if !m.Selection.Library || !m.Selection.Modpacks {
+	if !m.Selection.Modpacks {
 		t.Errorf("the manifest does not describe the selection: %+v", m.Selection)
-	}
-	if members["library/paper-1.21.4.jar"] != "JAR BYTES" {
-		t.Errorf("library member = %q", members["library/paper-1.21.4.jar"])
 	}
 	if members["modpacks/packs/sky/1.0.mrpack"] != "PACK" {
 		t.Errorf("modpack member = %q", members["modpacks/packs/sky/1.0.mrpack"])
@@ -241,7 +236,7 @@ func TestPlatformBackupWritesAnOpenableBundle(t *testing.T) {
 // database backup down with it.
 func TestPlatformBackupSkipsADeletedServerAndStillSucceeds(t *testing.T) {
 	sel := models.PlatformBackupSelection{
-		Library: true,
+		Modpacks: true,
 		Servers: models.PlatformBackupServers{
 			Mode: models.PlatformBackupServersList, ServerIDs: []int{1, 404},
 		},
@@ -291,8 +286,8 @@ func TestPlatformBackupSkipsADeletedServerAndStillSucceeds(t *testing.T) {
 // backup that was the point of the run.
 func TestPlatformBackupSurvivesAServerThatCannotBeTriggered(t *testing.T) {
 	sel := models.PlatformBackupSelection{
-		Library: true,
-		Servers: models.PlatformBackupServers{Mode: models.PlatformBackupServersAll},
+		Modpacks: true,
+		Servers:  models.PlatformBackupServers{Mode: models.PlatformBackupServersAll},
 	}
 	st := storeWith(sel)
 	st.servers = []models.BackupTargetServer{{ID: 1, UUID: "srv-1"}, {ID: 2, UUID: "srv-2"}}
@@ -348,7 +343,7 @@ func TestPlatformBackupMetricsDB(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := storeWith(models.PlatformBackupSelection{Library: true, MetricsDB: tc.selected})
+			st := storeWith(models.PlatformBackupSelection{Modpacks: true, MetricsDB: tc.selected})
 			dest := &fakeDest{}
 			r := newRunner(t, st, dest)
 			r.OpenCoreStorage = func(string) (CoreStorageArea, error) { return &fakeArea{}, nil }
@@ -413,17 +408,19 @@ func TestPlatformBackupMetricsDB(t *testing.T) {
 // immediately from one that failed on the last file.
 func TestPlatformBackupRecordsWhatItHadWhenItFails(t *testing.T) {
 	sel := models.PlatformBackupSelection{
-		Library:  true,
-		Modpacks: true,
-		Servers:  models.PlatformBackupServers{Mode: models.PlatformBackupServersList, ServerIDs: []int{404}},
+		MetricsDB: true,
+		Modpacks:  true,
+		Servers:   models.PlatformBackupServers{Mode: models.PlatformBackupServersList, ServerIDs: []int{404}},
 	}
 	st := storeWith(sel)
 	r := newRunner(t, st, &fakeDest{})
-	r.OpenCoreStorage = func(area string) (CoreStorageArea, error) {
-		if area == "modpacks" {
-			return &fakeArea{walkErr: errors.New("bucket unreachable")}, nil
-		}
-		return &fakeArea{files: map[string]string{"a.jar": "A"}}, nil
+	r.MetricsConfigured = func() bool { return true }
+	r.DumpMetrics = func(_ context.Context, w io.Writer) (string, error) {
+		_, err := io.WriteString(w, "PGDMP-metrics")
+		return "2.17.2", err
+	}
+	r.OpenCoreStorage = func(string) (CoreStorageArea, error) {
+		return &fakeArea{walkErr: errors.New("bucket unreachable")}, nil
 	}
 
 	if _, err := r.Run(context.Background(), 3); err == nil {
@@ -439,7 +436,7 @@ func TestPlatformBackupRecordsWhatItHadWhenItFails(t *testing.T) {
 	for _, c := range st.finished[0].components {
 		kinds[c.Kind] = c.Status
 	}
-	if kinds["library"] != models.PlatformBackupIncluded {
+	if kinds[MetricsDBComponent] != models.PlatformBackupIncluded {
 		t.Errorf("the component that DID succeed was not recorded: %+v", st.finished[0].components)
 	}
 	if kinds["modpacks"] != models.PlatformBackupFailed {
@@ -452,7 +449,7 @@ func TestPlatformBackupRecordsWhatItHadWhenItFails(t *testing.T) {
 }
 
 func TestPlatformBackupKeyNamesTheJob(t *testing.T) {
-	st := storeWith(models.PlatformBackupSelection{Library: true})
+	st := storeWith(models.PlatformBackupSelection{Modpacks: true})
 	dest := &fakeDest{}
 	r := newRunner(t, st, dest)
 	r.OpenCoreStorage = func(string) (CoreStorageArea, error) { return &fakeArea{}, nil }
@@ -478,7 +475,7 @@ func TestPlatformBackupKeyNamesTheJob(t *testing.T) {
 // data volume one run at a time, and the copy is unencrypted only in the sense
 // that it is a second copy - it is the same bytes, in a place nothing prunes.
 func TestPlatformBackupLeavesNoSpoolBehind(t *testing.T) {
-	st := storeWith(models.PlatformBackupSelection{Library: true})
+	st := storeWith(models.PlatformBackupSelection{Modpacks: true})
 	r := newRunner(t, st, &fakeDest{})
 	r.OpenCoreStorage = func(string) (CoreStorageArea, error) { return &fakeArea{}, nil }
 

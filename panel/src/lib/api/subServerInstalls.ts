@@ -11,7 +11,7 @@ import { API_URL, getAuthHeader, handleResponse, handleError } from '@/lib/api/c
  */
 export interface SubServerInstall {
     subServerName: string;
-    /** paper | vanilla | fabric | forge | neoforge | library | upload | upload-zip | modpack | pack */
+    /** paper | vanilla | fabric | forge | neoforge | upload | upload-zip | modpack | pack (library on installs from before its removal) */
     installerType: string;
     mcVersion: string;
     buildVersion: string;

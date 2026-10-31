@@ -104,7 +104,7 @@ func TestResolve_DenyByDefault(t *testing.T) {
 func TestResolve_OwnerSelfRealm(t *testing.T) {
 	r := NewResolver(&resolverFakeStore{})
 	res, _ := r.Resolve(Identity{UserID: "u1"}, 0)
-	// Every user owns their own OWNER realm (their own modpacks/library).
+	// Every user owns their own OWNER realm (their own modpacks).
 	if !res.HasCap("modpack.read") {
 		t.Error("user should hold owner-scope caps on their own realm")
 	}

@@ -37,7 +37,7 @@ export const WIPE_HINTS: Record<WipeToken, string> = {
 export type InstallChange = 'none' | 'runtime' | 'version' | 'modpack' | 'installer';
 
 export interface NextInstall {
-    /** The install tab in use: online | library | upload | backup | modpack | pack | technic. */
+    /** The install tab in use: online | upload | backup | modpack | pack | technic. */
     tab: string;
     /**
      * An archive is selected on the backup tab. Unlike every other tab there is
@@ -71,7 +71,6 @@ const tabToInstaller = (tab: string, software?: string): string => {
     // installer, same version", was classified as runtime-only, and saved
     // without installing anything.
     if (tab === 'technic') return 'technic';
-    if (tab === 'library') return 'library';
     if (tab === 'upload') return 'upload';
     if (tab === 'backup') return 'backup';
     return software || '';
@@ -121,12 +120,6 @@ export function classifyInstallChange(prev: SubServerInstall | undefined, next: 
         // a selected archive is always a full install and always gets the wipe
         // dialog. With no archive picked nothing about the install is changing.
         return next.backupFileSelected ? 'installer' : 'runtime';
-    }
-    if (next.tab === 'library') {
-        // "Point at a file"; there is no version to compare, so a save on this
-        // tab is only ever a runtime change unless the file changed, which the
-        // caller signals by switching installer type.
-        return 'runtime';
     }
 
     // A record from before Core stored exact versions holds the line ("1.21");

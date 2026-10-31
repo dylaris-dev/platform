@@ -38,10 +38,6 @@ func NewFeatureSettingsHandler(state *AppState) *FeatureSettingsHandler {
 type featureSettingsPayload struct {
 	Tickets  *bool `json:"tickets"`
 	Modpacks *bool `json:"modpacks"`
-	// Library is the shared file catalog. It had no flag at all until now - the
-	// module row was its only switch, and that hides a navbar entry rather than
-	// closing anything.
-	Library *bool `json:"library"`
 	// ModpackAuthoring opens modpack authoring to non-admin users. Meaningless
 	// on its own: the subsystem must be on (Modpacks) for anyone, admin or not,
 	// to author at all.
@@ -109,7 +105,6 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out := featureSettingsPayload{
 		Tickets:               boolPtr(h.state.FeatureFlags.IsTicketsEnabled(r.Context())),
 		Modpacks:              boolPtr(h.state.FeatureFlags.IsModpacksEnabled(r.Context())),
-		Library:               boolPtr(h.state.FeatureFlags.IsLibraryEnabled(r.Context())),
 		ModpackAuthoring:      boolPtr(h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context())),
 		AutoMove:              boolPtr(h.state.FeatureFlags.IsAutoMoveEnabled(r.Context())),
 		Byon:                  boolPtr(h.state.FeatureFlags.IsBYONEnabled(r.Context())),
@@ -200,7 +195,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// or what is stored for anything it did not mention.
 	ticketsNow := pick(req.Tickets, h.state.FeatureFlags.IsTicketsEnabled(r.Context()))
 	modpacksNow := pick(req.Modpacks, h.state.FeatureFlags.IsModpacksEnabled(r.Context()))
-	libraryNow := pick(req.Library, h.state.FeatureFlags.IsLibraryEnabled(r.Context()))
 	authoringWas := h.state.FeatureFlags.IsModpackAuthoringEnabled(r.Context())
 	authoringNow := pick(req.ModpackAuthoring, authoringWas)
 
@@ -232,7 +226,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}{
 		{"feature_tickets_enabled", ticketsNow, req.Tickets != nil, "feature_tickets_enabled", "tickets"},
 		{"feature_modpacks_enabled", modpacksNow, req.Modpacks != nil, "feature_modpacks_enabled", "modpacks"},
-		{"feature_library_enabled", libraryNow, req.Library != nil, "feature_library_enabled", "library"},
 		{"feature_modpack_authoring_enabled", authoringNow, req.ModpackAuthoring != nil || forceAuthoringWrite, "feature_modpack_authoring_enabled", "modpackAuthoring"},
 		{"feature_auto_move_enabled", pick(req.AutoMove, false), req.AutoMove != nil, "feature_auto_move_enabled", "autoMove"},
 		{"feature_byon_enabled", pick(req.Byon, false), req.Byon != nil, "feature_byon_enabled", "byon"},
@@ -326,20 +319,12 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		log.Printf("features: syncing the Modpacks module row failed: %v", err)
 	}
 
-	// Tickets and Library follow the same rule, for enabled only - who sees them
-	// stays the operator's choice in Settings -> Modules. Before this, Tickets
-	// had two independent switches and a module row left off while the feature
-	// was on produced a working ticket system with no way into it.
-	for _, m := range []struct {
-		name string
-		on   bool
-	}{
-		{ticketsModuleName, ticketsNow},
-		{libraryModuleName, libraryNow},
-	} {
-		if err := syncModuleEnabled(h.state, m.name, m.on); err != nil {
-			log.Printf("features: syncing the %s module row failed: %v", m.name, err)
-		}
+	// Tickets follow the same rule, for enabled only - who sees them stays the
+	// operator's choice in Settings -> Modules. Before this, Tickets had two
+	// independent switches and a module row left off while the feature was on
+	// produced a working ticket system with no way into it.
+	if err := syncModuleEnabled(h.state, ticketsModuleName, ticketsNow); err != nil {
+		log.Printf("features: syncing the %s module row failed: %v", ticketsModuleName, err)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{

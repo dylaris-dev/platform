@@ -106,7 +106,7 @@ func TestAuthorizeSourceDelete_EmptyManifestCanNeverAuthorizeADelete(t *testing.
 
 func TestDeleteSource_RemovesEveryManifestKeyAndNothingElse(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	src.put("b.jar", "bbbb")
 	src.put("written-after-the-manifest.jar", "new")
@@ -133,7 +133,7 @@ func TestDeleteSource_RemovesEveryManifestKeyAndNothingElse(t *testing.T) {
 
 func TestDeleteSource_IsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aaa")
 	manifest := manifestOf(t, newSubsetOf(src, "a.jar"))
 
@@ -151,7 +151,7 @@ func TestDeleteSource_IsIdempotent(t *testing.T) {
 
 func TestDeleteSource_ReportsProgress(t *testing.T) {
 	ctx := context.Background()
-	src := newMemDataSet(DataSetLibrary, "source")
+	src := newMemDataSet(DataSetAttachments, "source")
 	src.put("a.jar", "aa")
 	src.put("b.jar", "bb")
 	manifest := manifestOf(t, newSubsetOf(src, "a.jar", "b.jar"))
@@ -169,7 +169,7 @@ func TestDeleteSource_ReportsProgress(t *testing.T) {
 
 func TestDeleteSource_PropagatesADeleteFailure(t *testing.T) {
 	ctx := context.Background()
-	src := &deleteFailingDataSet{memDataSet: newMemDataSet(DataSetLibrary, "source"), failOn: "b.jar"}
+	src := &deleteFailingDataSet{memDataSet: newMemDataSet(DataSetAttachments, "source"), failOn: "b.jar"}
 	src.put("a.jar", "aa")
 	src.put("b.jar", "bb")
 	manifest := manifestOf(t, newSubsetOf(src.memDataSet, "a.jar", "b.jar"))

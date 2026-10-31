@@ -302,9 +302,6 @@ func (r *PlatformBackupRunner) plannedComponents(sel models.PlatformBackupSelect
 // fixed order so two runs of one selection produce the same bundle layout.
 func coreStorageAreas(sel models.PlatformBackupSelection) []string {
 	var out []string
-	if sel.Library {
-		out = append(out, "library")
-	}
 	if sel.Modpacks {
 		out = append(out, "modpacks")
 	}

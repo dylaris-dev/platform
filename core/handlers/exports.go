@@ -618,10 +618,6 @@ func RefuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeI
 	return refuseIfSubServerLimitReached(w, state, nodeID, serverUUID, target)
 }
 
-func ResolveLibraryInstall(ctx context.Context, state *AppState, rawPath string, isAdmin bool) (string, int, string) {
-	return resolveLibraryInstall(ctx, state, rawPath, isAdmin)
-}
-
 func RevokeUncoversInheritance(state *AppState, srv *models.Server, targetID string) bool {
 	return revokeUncoversInheritance(state, srv, targetID)
 }
@@ -673,12 +669,6 @@ const ModReportingSince = modReportingSince
 func NeoForgeMajor(v string) (string, bool) { return neoForgeMajor(v) }
 
 var SubRegexDNS = subRegexDNS
-
-const LibraryMirrorTTL = libraryMirrorTTL
-
-func LibraryMirrorURL(base, secret, libPath string, now time.Time) string {
-	return libraryMirrorURL(base, secret, libPath, now)
-}
 
 func (h *PlacementHandler) ScoreNode(ctx context.Context, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
 	return h.scoreNode(ctx, n, req, hb)

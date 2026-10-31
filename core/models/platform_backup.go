@@ -61,9 +61,9 @@ type PlatformBackupSelection struct {
 	// MetricsDB is the statistics database, which is a separate deployment and
 	// is frequently not present at all.
 	MetricsDB bool `json:"metricsDb"`
-	// Library is core storage: the server jars, loaders and uploads.
-	Library bool `json:"library"`
-	// Modpacks is core storage: published packs and their builds.
+	// Modpacks is core storage: published packs and their builds. A stored
+	// selection may still say "library": true from before the Library was
+	// removed; decoding drops it, so such a job simply no longer covers it.
 	Modpacks bool                  `json:"modpacks"`
 	Servers  PlatformBackupServers `json:"servers"`
 }
@@ -103,7 +103,7 @@ func (s PlatformBackupSelection) Validate() error {
 		return fmt.Errorf("unknown server selection mode %q", s.Servers.Mode)
 	}
 
-	if !s.Database && !s.MetricsDB && !s.Library && !s.Modpacks &&
+	if !s.Database && !s.MetricsDB && !s.Modpacks &&
 		s.ServerMode() == PlatformBackupServersNone {
 		return ErrEmptyPlatformBackupSelection
 	}
@@ -154,7 +154,7 @@ const (
 // PlatformBackupComponent is one line of what a run actually did, which is not
 // the same thing as what it was asked to do.
 type PlatformBackupComponent struct {
-	Kind      string                        `json:"kind"` // database | metrics | library | modpacks | server
+	Kind      string                        `json:"kind"` // database | metrics | modpacks | server
 	Ref       string                        `json:"ref,omitempty"`
 	Status    PlatformBackupComponentStatus `json:"status"`
 	SizeBytes int64                         `json:"sizeBytes,omitempty"`
