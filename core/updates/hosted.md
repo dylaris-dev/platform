@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.31
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The file browser in the Beam desktop app works again. It stopped at "The panel could not hand
+  your sign-in to Beam" for everyone; the fix is on our side, nothing to update.
+
 ## 2026.10.30.3
 
 ### Features

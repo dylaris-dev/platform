@@ -1267,16 +1267,20 @@ func (h *AuthHandler) reissueOwnSession(w http.ResponseWriter, r *http.Request, 
 // endpoint here would hand that back.
 //
 // So it is restricted to the origin that has the problem. A page in a normal
-// browser cannot claim to be the Beam webview: the browser sets Origin itself,
-// and the request must ALSO have been addressed to wails.localhost. Everyone
-// else keeps a session they can use and cannot copy.
+// browser cannot claim to be the Beam webview: the browser sets Origin itself.
+// Everyone else keeps a session they can use and cannot copy.
+//
+// The Origin alone, not the Host as well: Beam rewrites the Host to the real
+// panel's on the way out (beam/app/proxy.go), so a Host check refused the one
+// caller this exists for, every time. A non-browser caller can forge the Origin,
+// but one holding the cookie already holds the session it would be copying.
 //
 // No new token type and no new lifetime: it re-issues the ordinary session for
 // the authenticated user, so every rule that ends a session early - the password
 // fingerprint, the deleted account, the row-derived authorization - applies to
 // it unchanged.
 func (h *AuthHandler) SessionToken(w http.ResponseWriter, r *http.Request) {
-	if !isWailsOrigin(r) {
+	if !isWailsWebviewOrigin(strings.TrimSpace(r.Header.Get("Origin"))) {
 		// Deliberately not "forbidden for you": the endpoint should read as
 		// absent from anywhere it does not apply, so nothing invites a caller
 		// to go looking for a way in.

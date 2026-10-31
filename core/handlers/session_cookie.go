@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -190,11 +189,16 @@ func requireSameOriginForCookieAuth(r *http.Request, frontendURL string) bool {
 // all. It never stood between that caller and anything.
 //
 // Exact host, not a suffix: notwails.localhost and x.wails.localhost are other
-// people's origins.
+// people's origins. The wails:// scheme is accepted with any host, because
+// macOS and Linux webviews send wails://wails, and no browser page can have
+// that scheme as its origin.
 func isWailsWebviewOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil {
 		return false
+	}
+	if strings.EqualFold(u.Scheme, "wails") {
+		return true
 	}
 	return strings.EqualFold(u.Hostname(), wailsHost)
 }
@@ -244,27 +248,3 @@ func originMatchesHost(origin string, r *http.Request) bool {
 // wailsHost is the hostname the Beam desktop client's webview runs on. Windows
 // serves it as http://wails.localhost, macOS and Linux as wails://wails.localhost.
 const wailsHost = "wails.localhost"
-
-// isWailsOrigin reports whether a request came from inside the Beam desktop
-// client, by BOTH the origin the page claims and the host it addressed.
-//
-// Both, because either alone is forgeable from the wrong side: a browser page
-// can send any Origin it likes only if it is not a browser at all (browsers set
-// it themselves), while Host is whatever DNS the caller resolved - and
-// wails.localhost resolves to loopback for everyone. Requiring the pair means a
-// caller must simultaneously BE the webview and be addressing it.
-func isWailsOrigin(r *http.Request) bool {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	if !strings.EqualFold(host, wailsHost) {
-		return false
-	}
-	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if strings.HasPrefix(strings.ToLower(origin), "wails://") {
-		return true
-	}
-	u, err := url.Parse(origin)
-	return err == nil && strings.EqualFold(u.Hostname(), wailsHost)
-}

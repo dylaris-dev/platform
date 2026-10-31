@@ -223,43 +223,43 @@ func TestCookieAuthAcceptsTheBeamWebview(t *testing.T) {
 	}
 }
 
-// The bearer-copy endpoint is guarded by a PAIR of conditions, and the test is
-// here because either alone would be forgeable from the wrong side.
+// The bearer-copy endpoint answers only the Beam webview, judged by Origin.
 //
-// A browser sets Origin itself, so a page cannot claim to be the Beam webview -
-// but a non-browser caller can send any Origin it likes. Host is whatever the
-// caller resolved, and wails.localhost resolves to loopback for everyone - but a
-// browser page cannot choose which Host its own origin's requests carry.
-// Requiring both means a caller has to simultaneously BE the webview and be
-// addressing it.
-func TestWailsOriginNeedsBothTheOriginAndTheHost(t *testing.T) {
+// It used to demand Host = wails.localhost as well, which no request from the
+// app ever carries: Beam rewrites the Host to the real panel's on the way out.
+// The first case below is that real shape, and it was refused every time
+// ("The panel could not hand your sign-in to Beam"). Getting past the gate here
+// means a 401, because no session is attached; a refusal at the gate is 404.
+func TestSessionTokenAnswersTheBeamWebviewByOrigin(t *testing.T) {
 	tests := []struct {
 		name, host, origin string
-		want               bool
+		wantGate           bool
 	}{
-		{name: "windows webview", host: "wails.localhost", origin: "http://wails.localhost", want: true},
-		{name: "mac and linux scheme", host: "wails.localhost", origin: "wails://wails.localhost", want: true},
-		{name: "webview with a port", host: "wails.localhost:34115", origin: "http://wails.localhost", want: true},
-		// A page in a normal browser: it cannot set Origin, so this shape is
-		// only reachable by a non-browser caller - which the Host then stops.
-		{name: "right origin, real panel host", host: "panel.example.com", origin: "http://wails.localhost", want: false},
-		// A caller who resolved wails.localhost but is a page somewhere else.
-		{name: "right host, foreign origin", host: "wails.localhost", origin: "https://evil.test", want: false},
-		{name: "neither", host: "panel.example.com", origin: "https://panel.example.com", want: false},
-		{name: "no origin at all", host: "wails.localhost", origin: "", want: false},
+		{name: "beam as it really arrives", host: "panel.example.com", origin: "http://wails.localhost", wantGate: true},
+		{name: "mac and linux scheme", host: "panel.example.com", origin: "wails://wails.localhost", wantGate: true},
+		{name: "mac and linux as sent", host: "panel.example.com", origin: "wails://wails", wantGate: true},
+		{name: "the panel in a browser", host: "panel.example.com", origin: "https://panel.example.com", wantGate: false},
+		{name: "a foreign page", host: "panel.example.com", origin: "https://evil.test", wantGate: false},
+		{name: "no origin at all", host: "panel.example.com", origin: "", wantGate: false},
 		// Not a suffix match: an attacker-registered lookalike must not pass.
-		{name: "lookalike host", host: "notwails.localhost", origin: "http://notwails.localhost", want: false},
-		{name: "subdomain of the webview host", host: "x.wails.localhost", origin: "http://x.wails.localhost", want: false},
+		{name: "lookalike", host: "panel.example.com", origin: "http://notwails.localhost", wantGate: false},
+		{name: "subdomain of the webview host", host: "panel.example.com", origin: "http://x.wails.localhost", wantGate: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "http://x/api/auth/session-token", nil)
+			r := httptest.NewRequest(http.MethodPost, "https://panel.example.com/api/auth/session-token", nil)
 			r.Host = tt.host
 			if tt.origin != "" {
 				r.Header.Set("Origin", tt.origin)
 			}
-			if got := isWailsOrigin(r); got != tt.want {
-				t.Errorf("isWailsOrigin = %v, want %v", got, tt.want)
+			w := httptest.NewRecorder()
+			(&AuthHandler{state: &AppState{}}).SessionToken(w, r)
+			want := http.StatusNotFound
+			if tt.wantGate {
+				want = http.StatusUnauthorized
+			}
+			if w.Code != want {
+				t.Errorf("status %d, want %d", w.Code, want)
 			}
 		})
 	}

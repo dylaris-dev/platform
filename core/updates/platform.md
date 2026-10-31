@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.10.31
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Beam desktop app: the file browser could not get the panel sign-in, because Core required the
+  webview's host on a request Beam forwards with the panel's host. Core now checks the origin. `core`
+
 ## 2026.10.30.3
 
 ### Features
