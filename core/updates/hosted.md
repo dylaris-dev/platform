@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Your own S3 bucket on a plain http:// address now passes "Test" and takes templates saved from a server.
+  This is server-side and needs nothing from you.
+
 ## 2026.11.01.4
 
 ### Features

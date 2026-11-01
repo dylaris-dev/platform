@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.5
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Storage on a plain http:// S3 endpoint (a LAN MinIO, for example) failed "Test", saving a server as a template and
+  streamed uploads with "request stream is not seekable". Such uploads are now spooled first. `core`
+
 ## 2026.11.01.4
 
 ### Features

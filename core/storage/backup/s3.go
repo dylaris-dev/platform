@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -28,6 +29,9 @@ type S3Storage struct {
 	client *s3.Client
 	bucket string
 	prefix string
+	// plainHTTP: the endpoint is http://, where SigV4 must hash the payload
+	// (see Put).
+	plainHTTP bool
 }
 
 // S3Config matches the JSONB blob in the backup_storages.config column.
@@ -133,6 +137,8 @@ func newS3(ctx context.Context, raw json.RawMessage, guarded bool) (*S3Storage, 
 		client: client,
 		bucket: cfg.Bucket,
 		prefix: strings.Trim(cfg.Prefix, "/"),
+
+		plainHTTP: strings.HasPrefix(strings.ToLower(cfg.Endpoint), "http://"),
 	}, nil
 }
 
@@ -161,6 +167,27 @@ func (s *S3Storage) unkey(k string) string {
 }
 
 func (s *S3Storage) Put(ctx context.Context, key string, r io.Reader, size int64) error {
+	// Over HTTPS the SDK signs UNSIGNED-PAYLOAD and streams any body. Over plain
+	// HTTP it must hash the payload first, so a body it cannot seek fails with
+	// "failed to compute payload hash: ... request stream is not seekable" - the
+	// usual LAN MinIO is exactly that endpoint. Spool such a body to a temp file;
+	// every caller already bounds what it writes.
+	if _, seekable := r.(io.ReadSeeker); !seekable && s.plainHTTP {
+		f, err := os.CreateTemp("", "dylaris-s3-put-*")
+		if err != nil {
+			return fmt.Errorf("spool for plain-HTTP upload: %w", err)
+		}
+		defer os.Remove(f.Name())
+		defer f.Close()
+		n, err := io.Copy(f, r)
+		if err != nil {
+			return fmt.Errorf("spool for plain-HTTP upload: %w", err)
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("spool for plain-HTTP upload: %w", err)
+		}
+		r, size = f, n
+	}
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.key(key)),
