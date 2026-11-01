@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.2
+
+### Features
+- Account > Storage: each user chooses where new backups and new templates go, Dylaris storage or one of
+  their own S3 targets. Size and count limits do not apply on an own target. `core` `panel`
+- Templates can be downloaded as a zip (also while the subscription is inactive) and folders upload in
+  bundles of up to 200 files / 100 MB. `core` `panel`
+- Settings > Features has a separate size cap per template for admins (default 2048 MB). `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Personal templates on Core storage are deleted when the backup retention after a suspension runs out
+  (never during an admin hold, never on an own target); an hourly janitor removes orphaned template files. `core`
+
 ## 2026.11.01
 
 ### Features

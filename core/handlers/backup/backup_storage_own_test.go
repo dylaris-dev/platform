@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,56 @@ type ownStorageFakeStore struct {
 	created []models.BackupStorage
 	updated []models.BackupStorage
 	deleted []int
+	// The caller's storage prefs (one user per test).
+	prefBackups, prefTemplates     *int
+	backupsWrites, templatesWrites int
+	failPrefWrite                  bool
+}
+
+func (f *ownStorageFakeStore) GetUserStoragePrefs(string) (*int, *int, error) {
+	return f.prefBackups, f.prefTemplates, nil
+}
+
+// The setters mirror the store: one column each, and the backups one moves the
+// owner's is_default flag with it.
+func (f *ownStorageFakeStore) SetUserBackupsStoragePref(owner string, id *int) error {
+	f.backupsWrites++
+	if f.failPrefWrite {
+		return errors.New("pq: connection to 10.0.0.5:5432 refused")
+	}
+	f.prefBackups = id
+	for _, bs := range f.byID {
+		if bs.OwnerID != nil && *bs.OwnerID == owner {
+			bs.IsDefault = id != nil && *id == bs.ID
+		}
+	}
+	return nil
+}
+
+func (f *ownStorageFakeStore) SetUserTemplatesStoragePref(_ string, id *int) error {
+	f.templatesWrites++
+	f.prefTemplates = id
+	return nil
+}
+
+func (f *ownStorageFakeStore) ClearUserBackupsStoragePrefIf(_ string, id int) error {
+	f.backupsWrites++
+	if f.failPrefWrite {
+		return errors.New("pq: connection to 10.0.0.5:5432 refused")
+	}
+	if f.prefBackups != nil && *f.prefBackups == id {
+		f.prefBackups = nil
+	}
+	return nil
+}
+
+func (f *ownStorageFakeStore) GetUserDefaultBackupStorage(owner string) (*models.BackupStorage, error) {
+	for _, bs := range f.byID {
+		if bs.OwnerID != nil && *bs.OwnerID == owner && bs.IsDefault {
+			return bs, nil
+		}
+	}
+	return nil, nil
 }
 
 func (f *ownStorageFakeStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
@@ -322,3 +373,111 @@ func TestATenantTestDoesNotNameTheInternalAddress(t *testing.T) {
 }
 
 func (f *ownStorageFakeStore) BackupStorageInUse(int) (bool, error) { return false, nil }
+
+// Until the account page has its own selectors, its "default" flag is how a
+// tenant picks the backups target, so the preference follows it: set chooses
+// the storage, cleared on the chosen one returns backups to the chain. The
+// templates choice is never touched.
+func TestOwnStorageDefaultFlagDrivesTheBackupsPreference(t *testing.T) {
+	owner := "u1"
+	tpl := 9
+	tests := []struct {
+		name        string
+		pref        *int
+		isDefault   bool
+		wantBackups *int
+	}{
+		{"marking default chooses it", nil, true, intPtr(5)},
+		{"clearing the chosen one unsets it", intPtr(5), false, nil},
+		{"clearing another keeps the choice", intPtr(6), false, intPtr(6)},
+	}
+	for _, tc := range tests {
+		st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{
+			5: {ID: 5, Name: "mine", Provider: "s3", OwnerID: &owner,
+				Config: json.RawMessage(`{"endpoint":"https://s3.example.com","bucket":"b","accessKeyId":"AK","secretAccessKey":"sk"}`)},
+		}, prefBackups: tc.pref, prefTemplates: &tpl}
+		h := &BackupHandler{state: &handlers.AppState{Store: st}}
+		req := mux.SetURLVars(asUser(httptest.NewRequest(http.MethodPatch, "/x",
+			bytes.NewReader(s3Body("mine", map[string]any{"isDefault": tc.isDefault}))), owner), map[string]string{"id": "5"})
+		rec := httptest.NewRecorder()
+		h.UpdateOwnStorage(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: update returned %d: %s", tc.name, rec.Code, rec.Body.String())
+		}
+		if !sameInt(st.prefBackups, tc.wantBackups) || st.prefTemplates == nil || *st.prefTemplates != tpl {
+			t.Errorf("%s: prefs = %v/%v, want %v/%d", tc.name, st.prefBackups, st.prefTemplates, tc.wantBackups, tpl)
+		}
+	}
+
+	st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{}}
+	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	rec := httptest.NewRecorder()
+	h.CreateOwnStorage(rec, asUser(httptest.NewRequest(http.MethodPost, "/x",
+		bytes.NewReader(s3Body("new", map[string]any{"isDefault": true}))), owner))
+	if rec.Code != http.StatusOK || st.prefBackups == nil || *st.prefBackups != 101 {
+		t.Fatalf("create as default: %d, backups pref %v; want 101", rec.Code, st.prefBackups)
+	}
+}
+
+// An edit that does not carry isDefault (the Storage page's form) leaves the
+// stored flag and the backups choice exactly as they were: a stale flag from
+// the form must not move where the tenant's backups go.
+func TestOwnStoragePatchWithoutIsDefaultKeepsFlagAndPref(t *testing.T) {
+	owner := "u1"
+	for _, tc := range []struct {
+		name      string
+		isDefault bool
+		pref      *int
+	}{
+		{"default and chosen stays so", true, intPtr(5)},
+		{"not default stays so", false, intPtr(6)},
+		{"no choice stays none", false, nil},
+	} {
+		st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{
+			5: {ID: 5, Name: "mine", Provider: "s3", OwnerID: &owner, IsDefault: tc.isDefault,
+				Config: json.RawMessage(`{"endpoint":"https://s3.example.com","bucket":"b","accessKeyId":"AK","secretAccessKey":"sk"}`)},
+		}, prefBackups: tc.pref}
+		h := &BackupHandler{state: &handlers.AppState{Store: st}}
+		req := mux.SetURLVars(asUser(httptest.NewRequest(http.MethodPatch, "/x",
+			bytes.NewReader(s3Body("renamed", nil))), owner), map[string]string{"id": "5"})
+		rec := httptest.NewRecorder()
+		h.UpdateOwnStorage(rec, req)
+		if rec.Code != http.StatusOK || len(st.updated) != 1 {
+			t.Fatalf("%s: update returned %d (%s), %d writes", tc.name, rec.Code, rec.Body.String(), len(st.updated))
+		}
+		if st.updated[0].IsDefault != tc.isDefault || st.updated[0].Name != "renamed" {
+			t.Errorf("%s: saved isDefault=%v name=%q, want %v renamed", tc.name, st.updated[0].IsDefault, st.updated[0].Name, tc.isDefault)
+		}
+		if st.backupsWrites != 0 || !sameInt(st.prefBackups, tc.pref) {
+			t.Errorf("%s: backups pref %v after %d writes, want %v untouched", tc.name, st.prefBackups, st.backupsWrites, tc.pref)
+		}
+	}
+}
+
+func intPtr(i int) *int { return &i }
+
+func sameInt(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// A failed preference write after the storage row was saved answers a generic
+// message: the raw database error names internal addresses.
+func TestOwnStoragePrefSyncFailureIsGeneric(t *testing.T) {
+	st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{}, failPrefWrite: true}
+	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	rec := httptest.NewRecorder()
+	h.CreateOwnStorage(rec, asUser(httptest.NewRequest(http.MethodPost, "/x",
+		bytes.NewReader(s3Body("new", map[string]any{"isDefault": true}))), "u1"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "10.0.0.5") || strings.Contains(body, "pq:") {
+		t.Fatalf("answer leaks the database error: %s", body)
+	}
+	if st.templatesWrites != 0 {
+		t.Fatalf("templates pref written %d times, want 0", st.templatesWrites)
+	}
+}

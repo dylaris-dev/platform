@@ -133,10 +133,10 @@ can still show what exists.
 
 ## At a glance
 
-- **594 routes** in 52 sections: 260 GET, 171 POST, 57 PUT, 41 PATCH, 66 DELETE.
+- **597 routes** in 52 sections: 262 GET, 171 POST, 58 PUT, 41 PATCH, 66 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **376** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **147** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **40** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **378** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **148** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **41** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -156,7 +156,7 @@ can still show what exists.
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (41)
+- [/api/me](#apime) (43)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (14)
@@ -179,7 +179,7 @@ can still show what exists.
 - [/api/system](#apisystem) (4)
 - [/api/tabproxy](#apitabproxy) (1)
 - [/api/technic](#apitechnic) (2)
-- [/api/templates](#apitemplates) (18)
+- [/api/templates](#apitemplates) (19)
 - [/api/ticket-canned-responses](#apiticket-canned-responses) (1)
 - [/api/ticket-categories](#apiticket-categories) (1)
 - [/api/tickets](#apitickets) (15)
@@ -521,7 +521,7 @@ can still show what exists.
 | GET | `/api/me/backup-storages` | session | `backupstorage.read` | - | `BackupHandler.ListOwnStorages` | the caller's own storages, with secrets stripped, and which of them is their default. |
 | POST | `/api/me/backup-storages` | session | `backupstorage.write` | - | `BackupHandler.CreateOwnStorage` | connects a bucket of the caller's own. |
 | PATCH | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.write` | - | `BackupHandler.UpdateOwnStorage` | - |
-| DELETE | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.delete` | - | `BackupHandler.DeleteOwnStorage` | Refused while a backup or a schedule still names it (store.ErrStorageInUse): the reference would fall back to the platform default, so the tenant's archives would be billed as ours and a restore would fetch from a bucket that never held them. |
+| DELETE | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.delete` | - | `BackupHandler.DeleteOwnStorage` | Refused while a backup, a schedule, a storage choice or a template still names it (store.ErrStorageInUse): the reference would fall back to the platform default, so the tenant's archives would be billed as ours and a restore would fetch from a bucket that never held them. |
 | POST | `/api/me/backup-storages/{id:[0-9]+}/test` | session | `backupstorage.write` | - | `BackupHandler.TestOwnStorage` | the same round trip the admin path runs, against the caller's own storage only. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
 | GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
@@ -551,6 +551,8 @@ can still show what exists.
 | GET | `/api/me/ssh-keys` | session | _no capability_ | - | `SSHKeysHandler.List` | - |
 | POST | `/api/me/ssh-keys` | session | _no capability_ | Limit, LimitBody | `SSHKeysHandler.Create` | - |
 | DELETE | `/api/me/ssh-keys/{id:[0-9]+}` | session | _no capability_ | - | `SSHKeysHandler.Delete` | - |
+| GET | `/api/me/storage-prefs` | session | `backupstorage.read` | - | `BackupHandler.GetStoragePrefs` | - |
+| PUT | `/api/me/storage-prefs` | session | `backupstorage.write` | - | `BackupHandler.PutStoragePrefs` | body {"backupsStorageId": id\|null, "templatesStorageId": id\|null}; a field left out is not changed. |
 | GET | `/api/me/time-preferences` | session | _no capability_ | - | `TimezoneHandler.GetMine` | {timezone, timeFormat}; timezone "" means not chosen yet (the panel then offers the browser's). |
 | PUT | `/api/me/time-preferences` | session | _no capability_ | - | `TimezoneHandler.SetMine` | body {timezone, timeFormat}. |
 | PUT | `/api/me/updates-seen` | session | _no capability_ | - | `UpdatesHandler.MarkUpdatesSeen` | acknowledge everything published so far, clearing this user's badge. |
@@ -917,9 +919,10 @@ can still show what exists.
 | POST | `/api/templates/upload` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.Upload` | multipart meta (JSON, as for create) and file (a zip). |
 | GET | `/api/templates/{id:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Get` | - |
 | PATCH | `/api/templates/{id:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Update` | name, visibility, software and versions. |
-| DELETE | `/api/templates/{id:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Delete` | the files first, then the row, so a storage failure leaves a row that can be deleted again rather than orphaned files. |
+| DELETE | `/api/templates/{id:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Delete` | the files first, then the row, so a storage failure leaves a row that can be deleted again rather than orphaned files; on the owner's own storage the row goes anyway, with a warning. |
+| GET | `/api/templates/{id:[0-9]+}/download` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.Download` | the template's files as a zip. |
 | GET | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Files` | every file, path relative to the template. |
-| POST | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.AddFiles` | multipart: one or more "file" parts, stored under the folder "dir" ("" = the template root). |
+| POST | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.AddFiles` | multipart: repeated "file" parts stored under the repeated "path" fields in order (legacy: under the folder "dir"). |
 | DELETE | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.DeleteFile` | a file or a folder. |
 | GET | `/api/templates/{id:[0-9]+}/files/text` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.GetText` | a text file up to 1 MiB. |
 | PUT | `/api/templates/{id:[0-9]+}/files/text` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.PutText` | writes {path, content}. |

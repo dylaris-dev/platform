@@ -59,7 +59,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off', templates: 'off', templatesMaxPerUser: '10', templatesMaxSizeMb: '512', templatesContentPolicy: 'no-jars', templatesPlatformForUsers: false, templatesCreateRequiresRole: false, templatesStorageConnectionId: 0 });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off', templates: 'off', templatesMaxPerUser: '10', templatesMaxSizeMb: '512', templatesMaxSizeMbAdmin: '2048', templatesContentPolicy: 'no-jars', templatesPlatformForUsers: false, templatesCreateRequiresRole: false, templatesStorageConnectionId: 0 });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -240,7 +240,7 @@ export default function FeaturesTab() {
     const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'modConfigs'] as const;
     const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat', 'bedrock'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
-    const TEMPLATE_KEYS = ['templates', 'templatesMaxPerUser', 'templatesMaxSizeMb', 'templatesContentPolicy', 'templatesPlatformForUsers', 'templatesCreateRequiresRole', 'templatesStorageConnectionId'] as const;
+    const TEMPLATE_KEYS = ['templates', 'templatesMaxPerUser', 'templatesMaxSizeMb', 'templatesMaxSizeMbAdmin', 'templatesContentPolicy', 'templatesPlatformForUsers', 'templatesCreateRequiresRole', 'templatesStorageConnectionId'] as const;
 
     // One registration covering all three: the unsaved-changes guard asks "is
     // anything unsaved on this screen", and a tab switch inside GuardedTabs is
@@ -484,7 +484,16 @@ export default function FeaturesTab() {
                             onChange={v => editPlatformFlag('templatesMaxSizeMb', limitToSetting(v))}
                         />
                     </div>
-                    <p className="text-xs text-(--base-06)">0 means none; the switch removes the cap.</p>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label className="text-sm text-(--base-09)" htmlFor="tpl-max-size-admin">Size of one template (admins)</label>
+                        <LimitField
+                            id="tpl-max-size-admin"
+                            unit="MB"
+                            value={limitFromSetting(platformFlags.templatesMaxSizeMbAdmin, 2048)}
+                            onChange={v => editPlatformFlag('templatesMaxSizeMbAdmin', limitToSetting(v))}
+                        />
+                    </div>
+                    <p className="text-xs text-(--base-06)">0 means none; the switch removes the cap. Templates on own storage are not capped.</p>
                 </SettingsGroup>
                 <SettingsGroup title="Content and access">
                     <div className="flex flex-col gap-[5px]">

@@ -35,7 +35,12 @@ export interface S3Config {
 export interface OwnStorageInput {
     name: string;
     config: S3Config;
-    isDefault: boolean;
+    /**
+     * Omitted by the Storage page: where backups go is chosen through
+     * putStoragePrefs only. Core leaves the flag and the backups choice alone
+     * on an edit that does not carry it, so a stale form cannot move them.
+     */
+    isDefault?: boolean;
 }
 
 export async function listOwnBackupStorages(): Promise<{ success: boolean; storages?: OwnBackupStorage[]; message?: string }> {
@@ -112,4 +117,63 @@ export function ownStorageIncomplete(input: OwnStorageInput, isEdit: boolean): s
     if (!c.accessKeyId?.trim()) return 'The access key ID is required';
     if (!isEdit && !c.secretAccessKey?.trim()) return 'The secret access key is required';
     return null;
+}
+
+/**
+ * Where NEW backups and templates go: null is Dylaris storage, a number one of
+ * the caller's own targets. Switching never moves what already exists.
+ */
+export interface StoragePrefs {
+    backupsStorageId: number | null;
+    templatesStorageId: number | null;
+}
+
+export type StorageFeature = 'backups' | 'templates';
+
+export async function getStoragePrefs(): Promise<{ success: boolean; message?: string } & Partial<StoragePrefs>> {
+    try {
+        const res = await fetch(`${API_URL}/me/storage-prefs`, { headers: getAuthHeader() });
+        return await handleResponse(res);
+    } catch (e) {
+        return handleError(e);
+    }
+}
+
+export async function putStoragePrefs(patch: Partial<StoragePrefs>): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/me/storage-prefs`, {
+            method: 'PUT',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+        });
+        return await handleResponse(res);
+    } catch (e) {
+        return handleError(e);
+    }
+}
+
+/**
+ * The body for one select: only that feature's field, so saving one choice can
+ * never overwrite the other. The select's empty value is Dylaris storage.
+ */
+export function storagePrefPayload(feature: StorageFeature, value: string): Partial<StoragePrefs> {
+    const id = value === '' ? null : Number(value);
+    return feature === 'backups' ? { backupsStorageId: id } : { templatesStorageId: id };
+}
+
+/** Where a template lives, for its badge. An id not among the caller's own is the owner's (a shared template). */
+export function storageLabel(id: number | null | undefined, own: { id: number; name: string }[]): string {
+    if (id == null) return 'Dylaris storage';
+    return own.find(s => s.id === id)?.name ?? "Owner's own storage";
+}
+
+/** A backup job's storage choices: the platform's, then the caller's own targets. */
+export function jobStorageOptions(
+    platform: { id: number; name: string; provider: string }[],
+    own: { id: number; name: string }[],
+): { id: number; label: string }[] {
+    return [
+        ...platform.map(s => ({ id: s.id, label: `${s.name} (${s.provider})` })),
+        ...own.map(s => ({ id: s.id, label: `Own: ${s.name}` })),
+    ];
 }

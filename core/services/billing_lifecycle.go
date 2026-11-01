@@ -228,6 +228,11 @@ type BillingLifecycleService struct {
 	// elapsed (see enforceSuspensions). Threaded from cfg.SuspendGrace at
 	// construction, like frontendURL.
 	suspendGrace time.Duration
+
+	// templateFiles deletes one template's files on our storage, for retention.
+	// Wired from handlers (SetTemplateRetention), which knows where they live;
+	// nil leaves templates alone.
+	templateFiles func(ctx context.Context, t *models.Template) error
 }
 
 // WarpPeerDisconnector is the narrow slice of WarpService its users need: remove
@@ -246,6 +251,11 @@ func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegr
 }
 
 func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }
+
+// SetTemplateRetention wires the template file delete retention needs.
+func (s *BillingLifecycleService) SetTemplateRetention(drop func(ctx context.Context, t *models.Template) error) {
+	s.templateFiles = drop
+}
 
 // SetWarpPeers wires the tunnel teardown used at the hard cutoff. Called once at
 // startup after the warp service exists. Without it, enforcement still stops
@@ -572,6 +582,43 @@ func (s *BillingLifecycleService) cleanupExpiredR2(ctx context.Context) {
 			continue
 		}
 		s.deleteTenantBackups(ctx, b.UserID)
+		s.deleteTenantTemplates(ctx, b.UserID)
+	}
+}
+
+// deleteTenantTemplates removes the PERSONAL templates a tenant keeps on OUR storage,
+// files first, the same way deleteTenantBackups treats archives: a failed file
+// delete keeps the row, so nothing is orphaned and the next pass retries.
+// A template on the tenant's own storage is theirs and stays, row and files.
+func (s *BillingLifecycleService) deleteTenantTemplates(ctx context.Context, userID string) {
+	if s.templateFiles == nil {
+		return
+	}
+	ids, err := s.store.ListTemplateIDsByOwner(userID)
+	if err != nil {
+		logErrf("billing-lifecycle", "list templates of %s: %v", userID, err)
+		return
+	}
+	for _, id := range ids {
+		t, err := s.store.GetTemplate(id)
+		if err != nil {
+			logErrf("billing-lifecycle", "read template %d of %s: %v", id, userID, err)
+			continue
+		}
+		// Admin and platform templates are platform assets, not the creator's
+		// data; their creator's billing state never removes them.
+		if t == nil || t.BackupStorageID != nil || t.Visibility != "personal" {
+			continue
+		}
+		if err := s.templateFiles(ctx, t); err != nil {
+			logErrf("billing-lifecycle", "template %d: delete files: %v - keeping the row so the next pass retries", id, err)
+			continue
+		}
+		if err := s.store.DeleteTemplate(id); err != nil {
+			logErrf("billing-lifecycle", "template %d: delete row: %v", id, err)
+			continue
+		}
+		log.Printf("billing lifecycle: retention deleted template %d of %s", id, userID)
 	}
 }
 

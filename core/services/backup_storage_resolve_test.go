@@ -11,6 +11,7 @@ type fakeBackupStorageStore struct {
 	byID    map[int]*models.BackupStorage
 	def     *models.BackupStorage
 	userDef map[string]*models.BackupStorage
+	prefs   map[string]int // user -> backups_storage_id
 	byIDErr error
 	defErr  error
 }
@@ -33,7 +34,55 @@ func (f fakeBackupStorageStore) GetUserDefaultBackupStorage(ownerID string) (*mo
 	return f.userDef[ownerID], nil
 }
 
+func (f fakeBackupStorageStore) GetUserStoragePrefs(userID string) (*int, *int, error) {
+	if id, ok := f.prefs[userID]; ok {
+		return &id, nil, nil
+	}
+	return nil, nil, nil
+}
+
 func intPtr(i int) *int { return &i }
+
+// The user's backups preference sits between the job and the tenant default,
+// and is held to the same ownership rule as a storage the job names.
+func TestResolveJobStoragePrefersThePreference(t *testing.T) {
+	alice, bob := "alice", "bob"
+	byID := map[int]*models.BackupStorage{
+		5: {ID: 5, Name: "alice pref", OwnerID: &alice},
+		6: {ID: 6, Name: "alice default", OwnerID: &alice, IsDefault: true},
+		8: {ID: 8, Name: "bob's", OwnerID: &bob},
+	}
+	def := &models.BackupStorage{ID: 1, Name: "platform default"}
+	tests := []struct {
+		name    string
+		prefs   map[string]int
+		owner   string
+		job     *int
+		wantID  int
+		wantErr error
+	}{
+		{"pref beats tenant default", map[string]int{alice: 5}, alice, nil, 5, nil},
+		{"no pref keeps tenant default", nil, alice, nil, 6, nil},
+		{"job storage beats pref", map[string]int{alice: 5}, alice, intPtr(6), 6, nil},
+		{"foreign pref refused", map[string]int{alice: 8}, alice, nil, 0, ErrForeignBackupStorage},
+		{"vanished pref refused", map[string]int{alice: 99}, alice, nil, 0, ErrNoBackupStorage},
+		{"no owner skips prefs", map[string]int{"": 5}, "", nil, 1, nil},
+	}
+	for _, tc := range tests {
+		s := fakeBackupStorageStore{byID: byID, def: def, prefs: tc.prefs,
+			userDef: map[string]*models.BackupStorage{alice: byID[6]}}
+		got, err := ResolveJobStorage(s, tc.job, tc.owner)
+		if tc.wantErr != nil {
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("%s: err = %v, want %v", tc.name, err, tc.wantErr)
+			}
+			continue
+		}
+		if err != nil || got == nil || got.ID != tc.wantID {
+			t.Errorf("%s: got %+v, %v; want storage %d", tc.name, got, err, tc.wantID)
+		}
+	}
+}
 
 // TestResolveJobStorage pins the contract the two halves of the backup feature
 // disagreed on. The run path fell back to the default storage when a job had

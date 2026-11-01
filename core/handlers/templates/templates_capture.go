@@ -124,6 +124,9 @@ type captureRequest struct {
 // running server. The caller needs files.read on that server and the same
 // create rule as any template; nothing is kept when the capture fails.
 func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
+	if caller, _ := h.viewer(r, nil); h.refuseSuspended(w, r, caller.UserID) {
+		return
+	}
 	if !handlers.CapBody(w, r, 64<<10) {
 		return
 	}
@@ -159,30 +162,29 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	zipPath, err := fetchSelection(r.Context(), h.state, srv.NodeID, srv.UUID, req.SubServer, req.Selected, s.MaxSizeBytes)
+	zipPath, err := fetchSelection(r.Context(), h.state, srv.NodeID, srv.UUID, req.SubServer, req.Selected, requestBound(s, t.BackupStorageID != nil))
 	if err != nil {
-		h.discard(t)
+		note := h.discard(t)
 		switch {
 		case errors.Is(err, errTooLarge):
-			tooLarge(w)
+			tooLargeNote(w, note)
 		case errors.Is(err, errNode), errors.Is(err, errNodeIncomplete):
 			log.Printf("templates: capture from server %d: %v", srv.ID, err)
-			handlers.SendJSONError(w, "The server's node could not read those files", http.StatusBadGateway)
+			handlers.SendJSONError(w, withNote("The server's node could not read those files.", note), http.StatusBadGateway)
 		default:
 			log.Printf("templates: capture from server %d: %v", srv.ID, err)
-			handlers.SendJSONError(w, "Could not capture the files", http.StatusInternalServerError)
+			handlers.SendJSONError(w, withNote("Could not capture the files.", note), http.StatusInternalServerError)
 		}
 		return
 	}
 	defer os.Remove(zipPath)
 	skipped, err := extractTemplateZip(r.Context(), h.state, t, zipPath, s)
 	if err != nil {
-		h.discard(t)
-		h.extractFailed(w, t, err)
+		h.extractFailed(w, t, err, h.discard(t))
 		return
 	}
 	v, _ := h.viewer(r, t)
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"template": item(*t, v), "skipped": skipped})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"template": item(*t, v, s.MaxSizeBytes), "skipped": skipped})
 }
 
 // fillFromInstall defaults empty software and versions to what the sub-server

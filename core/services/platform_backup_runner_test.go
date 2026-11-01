@@ -494,3 +494,5 @@ func TestPlatformBackupLeavesNoSpoolBehind(t *testing.T) {
 		t.Fatalf("the work directory still holds %v", names)
 	}
 }
+
+func (*fakeRunnerStore) GetUserStoragePrefs(string) (*int, *int, error) { return nil, nil, nil }

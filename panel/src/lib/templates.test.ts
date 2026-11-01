@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    formatTemplateSize, groupTemplates, limitFromSetting, limitToSetting, softwareVersionLabel, templateInstallPayload, templatesVisible,
+    formatTemplateSize, groupTemplates, templateCap, limitFromSetting, limitToSetting, softwareVersionLabel, templateInstallPayload, templatesVisible,
 } from './templates';
 import type { Template } from './api/templates';
 
@@ -38,12 +38,22 @@ describe('groupTemplates', () => {
     });
 });
 
+describe('templateCap', () => {
+    it('prefers the cap Core sent for the template, including none', () => {
+        expect(templateCap({ maxSizeBytes: 2048 }, 512)).toBe(2048);
+        expect(templateCap({ maxSizeBytes: null }, 512)).toBeNull();
+    });
+    it('falls back to the list cap when an older Core sent none', () => {
+        expect(templateCap({}, 512)).toBe(512);
+    });
+});
+
 describe('formatTemplateSize', () => {
     it('shows the size against the limit', () => {
         expect(formatTemplateSize(12 * 1024 * 1024, 512 * 1024 * 1024)).toBe('12.0 MB of 512 MB');
     });
     it('shows only the size when there is no limit', () => {
-        expect(formatTemplateSize(12 * 1024 * 1024, null)).toBe('12.0 MB');
+        expect(formatTemplateSize(12 * 1024 * 1024, null)).toBe('12.0 MB, no limit');
     });
     it('keeps a limit of zero, which means none', () => {
         expect(formatTemplateSize(0, 0)).toBe('0.0 MB of 0 MB');

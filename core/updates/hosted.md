@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.2
+
+### Features
+- Account > Storage: choose where new backups and new templates go, Dylaris storage or your own S3
+  bucket. Nothing already stored is moved, and size and count limits do not apply on your own bucket.
+- Templates can be downloaded as a zip, also while your subscription is inactive.
+- Folders upload into a template in bundles of up to 200 files / 100 MB, instead of one request per subfolder.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Templates on Dylaris storage are now kept as long as backups after a suspension, then deleted. Files on
+  your own bucket are never touched. This is server-side and needs nothing from you.
+
 ## 2026.11.01
 
 ### Features

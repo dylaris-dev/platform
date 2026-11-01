@@ -39,6 +39,27 @@ type fakeStore struct {
 	shares    map[int]map[string]string // template id -> user id -> level
 	users     map[string]*models.User   // by username
 	servers   map[int]*models.Server
+	prefs     map[string]int // user id -> templates_storage_id
+	storages  map[int]*models.BackupStorage
+	billing   map[string]*store.UserBilling // by user id
+}
+
+func (f *fakeStore) GetUserStoragePrefs(userID string) (*int, *int, error) {
+	if id, ok := f.prefs[userID]; ok {
+		return nil, &id, nil
+	}
+	return nil, nil, nil
+}
+func (f *fakeStore) GetBackupStorage(id int) (*models.BackupStorage, error) {
+	return f.storages[id], nil
+}
+func (f *fakeStore) GetUserByID(id string) (*models.User, error) {
+	for _, u := range f.users {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }
 
 func (f *fakeStore) GetSetting(key string) (string, error) { return f.settings[key], nil }

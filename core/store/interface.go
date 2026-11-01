@@ -266,6 +266,8 @@ type Store interface {
 	ListTemplatesVisibleTo(userID string, includeAdmin, includePlatform bool) ([]models.Template, error)
 	CountTemplatesByOwner(ownerID string) (int, error)
 	CountTemplatesOnStorageConnection(connID int) (int, error)
+	ListTemplateStorageConnectionIDs() ([]int, error)
+	TemplateExists(id int) (bool, error)
 	SetTemplateSize(id int, size int64) error
 	ListTemplateIDsByOwner(ownerID string) ([]int, error)
 	ListTemplateShares(id int) ([]models.TemplateShare, error)
@@ -383,6 +385,14 @@ type Store interface {
 	// nil is not an error: it means "this tenant has not set one, ask the
 	// platform".
 	GetUserDefaultBackupStorage(ownerID string) (*models.BackupStorage, error)
+	// GetUserStoragePrefs is the user's chosen target per feature; nil means
+	// Dylaris storage (or, for backups, no choice recorded).
+	GetUserStoragePrefs(userID string) (backups, templates *int, err error)
+	// One column per setter (see postgres_storage_prefs.go). The backups one
+	// also moves the owner's is_default flag, which a nil pref falls back to.
+	SetUserBackupsStoragePref(userID string, id *int) error
+	SetUserTemplatesStoragePref(userID string, id *int) error
+	ClearUserBackupsStoragePrefIf(userID string, id int) error
 	CreateBackupStorage(s *models.BackupStorage) (int, error)
 	UpdateBackupStorage(s *models.BackupStorage) error
 	DeleteBackupStorage(id int) error
@@ -920,7 +930,8 @@ type Store interface {
 	SetPlatformBackupJobSchedule(id int, next *time.Time) error
 	// SetPlatformBackupJobRanByHand is SetBackupJobRanByHand for a platform job.
 	SetPlatformBackupJobRanByHand(id int, next *time.Time) error
-	// BackupStorageInUse reports whether runs or jobs still name the storage.
+	// BackupStorageInUse reports whether runs, jobs, storage preferences or
+	// templates still name the storage.
 	BackupStorageInUse(id int) (bool, error)
 	// FailStalePlatformBackupRuns closes runs still "running" after olderThan.
 	FailStalePlatformBackupRuns(olderThan time.Duration) (int64, error)

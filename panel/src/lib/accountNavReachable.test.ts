@@ -20,6 +20,8 @@ function accountPages(): string[] {
     return fs
         .readdirSync(ACCOUNT_DIR, { withFileTypes: true })
         .filter(e => e.isDirectory() && fs.existsSync(path.join(ACCOUNT_DIR, e.name, 'page.tsx')))
+        // An old address kept as a redirect has nothing of its own to link to.
+        .filter(e => !/\bredirect\(/.test(fs.readFileSync(path.join(ACCOUNT_DIR, e.name, 'page.tsx'), 'utf8')))
         .map(e => `/account/${e.name}`);
 }
 

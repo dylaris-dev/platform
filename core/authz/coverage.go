@@ -222,6 +222,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/templates/upload":                                       true, // authed; in-handler template rules
 	"/api/templates/capture":                                      true, // authed; files.read on the server and the create rule checked in-handler
 	"/api/templates/{id:[0-9]+}":                                  true, // authed; in-handler template rules
+	"/api/templates/{id:[0-9]+}/download":                         true, // authed; in-handler template rules
 	"/api/templates/{id:[0-9]+}/files":                            true, // authed; in-handler template rules
 	"/api/templates/{id:[0-9]+}/files/text":                       true, // authed; in-handler template rules
 	"/api/templates/{id:[0-9]+}/shares":                           true, // authed; in-handler template rules

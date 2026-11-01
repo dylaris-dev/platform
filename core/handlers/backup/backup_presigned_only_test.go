@@ -330,3 +330,5 @@ func TestDeleteRun_AbortsTheUploadOfARunningRun(t *testing.T) {
 		})
 	}
 }
+
+func (*presignedOnlyStore) GetUserStoragePrefs(string) (*int, *int, error) { return nil, nil, nil }

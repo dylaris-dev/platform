@@ -91,6 +91,7 @@ func TestTemplatesFeatureSettingsPut(t *testing.T) {
 		`{"templates":"all","templatesContentPolicy":"anything"}`,
 		`{"templatesStorageConnectionId":7}`,
 		`{"templatesMaxSizeMb":"1048577"}`, `{"templatesMaxSizeMb":"9223372036854775807"}`,
+		`{"templatesMaxSizeMbAdmin":"-1"}`, `{"templatesMaxSizeMbAdmin":"1048577"}`,
 	} {
 		if code := put(bad); code != 400 {
 			t.Errorf("%s answered %d, want 400", bad, code)
@@ -110,6 +111,13 @@ func TestTemplatesFeatureSettingsPut(t *testing.T) {
 	}
 	if !st.module.IsEnabled || st.module.AccessRole != "admin" {
 		t.Fatalf("module after admin: %+v", st.module)
+	}
+
+	if code := put(`{"templatesMaxSizeMbAdmin":"4096"}`); code != 200 {
+		t.Fatalf("admin size answered %d, want 200", code)
+	}
+	if ts := services.LoadTemplateSettings(context.Background(), state.FeatureFlags); ts.MaxSizeBytesAdmin == nil || *ts.MaxSizeBytesAdmin != 4096<<20 || *ts.MaxSizeBytes != 0 {
+		t.Fatalf("admin size read back as %v (user %v)", ts.MaxSizeBytesAdmin, ts.MaxSizeBytes)
 	}
 
 	if code := put(`{"templatesMaxSizeMb":"1048576"}`); code != 200 {

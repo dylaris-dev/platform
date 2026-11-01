@@ -269,10 +269,10 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                     when the grant is missing. The panel holds no list of
                                     the caller's own capabilities to hide it by. */}
                                 <GuardedLink
-                                    href="/account/backup-storage"
+                                    href="/account/storage"
                                     className="dropdown-item"
                                 >
-                                    <HardDrive size={20} className="mr-3" /> Backup storage
+                                    <HardDrive size={20} className="mr-3" /> Storage
                                 </GuardedLink>
                                 {/* Connect-store entry only on the hosted build. */}
                                 {featureFlags.store && (

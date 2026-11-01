@@ -202,6 +202,7 @@ var requiredCaps = map[string]string{
 	"/api/me/backup-storages":                  "backupstorage.read",
 	"/api/me/backup-storages/{id:[0-9]+}":      "backupstorage.write",
 	"/api/me/backup-storages/{id:[0-9]+}/test": "backupstorage.write",
+	"/api/me/storage-prefs":                    "backupstorage.read",
 	// storage-connections are the named, shared storage-provider configs that
 	// generalize backup-storages -> same PANEL settings.read/write treatment.
 	"/api/storage-connections":                  "settings.read",
@@ -971,12 +972,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/templates", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.List))).Methods("GET")
 	api.HandleFunc("/templates", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Create))).Methods("POST")
 	// Upload and capture each unpack a whole archive; one instance so the two
-	// share one budget. Add-files has its own, far larger one: the panel sends
-	// a folder upload as one request PER SUBFOLDER, back to back, so a modded
-	// config tree with hundreds of folders is one user action. 1200/min lets
-	// that through and still stops a script looping on the endpoint.
+	// share one budget. Add-files has its own. It was raised to 1200/min while
+	// the panel sent one request per subfolder; the panel now bundles up to 200
+	// files / 100 MiB per request, so it is back to 60/min.
 	templateArchiveLimiter := handlers.NewIPRateLimiter()
 	templateAddFilesLimiter := handlers.NewIPRateLimiter()
+	// A download zips the whole template on the fly, from our storage or a
+	// tenant bucket: 30/min is far above a person clicking, far below a loop.
+	templateDownloadLimiter := handlers.NewIPRateLimiter()
 	api.HandleFunc("/templates/upload", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Upload)))).Methods("POST")
 	api.HandleFunc("/templates/capture", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Capture)))).Methods("POST")
 	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.ListOwnerShares))).Methods("GET")
@@ -985,8 +988,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Get))).Methods("GET")
 	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Update))).Methods("PATCH")
 	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Delete))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateDownloadLimiter.Limit(30, templatesHandler.Download)))).Methods("GET")
 	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Files))).Methods("GET")
-	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateAddFilesLimiter.Limit(1200, templatesHandler.AddFiles)))).Methods("POST")
+	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateAddFilesLimiter.Limit(60, templatesHandler.AddFiles)))).Methods("POST")
 	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteFile))).Methods("DELETE")
 	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.GetText))).Methods("GET")
 	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutText))).Methods("PUT")
@@ -1888,6 +1892,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.UpdateOwnStorage))).Methods("PATCH")
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.delete")(backupHandler.DeleteOwnStorage))).Methods("DELETE")
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.TestOwnStorage))).Methods("POST")
+	api.HandleFunc("/me/storage-prefs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.read")(backupHandler.GetStoragePrefs))).Methods("GET")
+	api.HandleFunc("/me/storage-prefs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.PutStoragePrefs))).Methods("PUT")
 
 	// storage-connections: named, shared, at-rest-encrypted storage configs that
 	// generalize backup-storages. Same PANEL settings.read/write gating.

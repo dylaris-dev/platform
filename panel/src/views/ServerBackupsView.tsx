@@ -20,6 +20,7 @@ import ModalPanel from '@/components/ui/ModalPanel';
 import { formatBytes } from '@/lib/format';
 import { currentSkip, relativeTime } from '@/lib/backupJobStatus';
 import { fmtDateTime } from '@/lib/time';
+import { listOwnBackupStorages, jobStorageOptions, type OwnBackupStorage } from '@/lib/api/ownBackupStorage';
 
 // A run that archived nothing yet shows a dash rather than "0 B".
 function runSize(b: number): string {
@@ -43,7 +44,7 @@ const SCHEDULE_OPTIONS = [
 
 interface JobFormProps {
     initial: Partial<BackupJob>;
-    storages: BackupStorage[];
+    storages: { id: number; label: string }[];
     subServers: string[];
     onClose: () => void;
     onSave: (job: Partial<BackupJob>) => Promise<void>;
@@ -158,7 +159,7 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
                         <label className="input-label">Storage</label>
                         <select value={job.storageId ?? ''} onChange={e => updateField('storageId', e.target.value ? Number(e.target.value) : null)} className="input-field">
                             <option value="">Default storage</option>
-                            {storages.map(s => <option key={s.id} value={s.id}>{s.name} ({s.provider})</option>)}
+                            {storages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
                         </select>
                     </div>
 
@@ -197,12 +198,17 @@ function runBadgeClass(status: string): string {
 
 export default function ServerBackupsView() {
     const paramId = useRouteId('servers');
-    const { servers } = useAppData();
+    const { servers, user } = useAppData();
     const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
+    // Own targets are offered only on the caller's own server: Core refuses a
+    // job on someone else's server that names the caller's bucket.
+    const isOwner = !!server && !!user && server.ownerId === user.id;
 
     const [jobs, setJobs] = useState<BackupJob[]>([]);
     const [storages, setStorages] = useState<BackupStorage[]>([]);
+    const [ownStorages, setOwnStorages] = useState<OwnBackupStorage[]>([]);
+    const storageOptions = jobStorageOptions(storages, ownStorages);
     const [runs, setRuns] = useState<Record<number, BackupRun[]>>({});
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -233,13 +239,15 @@ export default function ServerBackupsView() {
     // effect and rebuilt the poll timer.
     const reload = useCallback(async () => {
         if (!serverId) return;
-        const [jobsRes, storagesRes, restoresRes] = await Promise.all([
+        const [jobsRes, storagesRes, restoresRes, ownRes] = await Promise.all([
             listBackupJobs(serverId),
             listBackupStorages(),
             listBackupRestores(serverId),
+            isOwner ? listOwnBackupStorages() : Promise.resolve({ success: true, storages: [] as OwnBackupStorage[] }),
         ]);
         if (jobsRes.success && jobsRes.jobs) setJobs(jobsRes.jobs);
         if (storagesRes.success && storagesRes.storages) setStorages(storagesRes.storages);
+        if (ownRes.success) setOwnStorages(ownRes.storages ?? []);
         if (restoresRes.success && restoresRes.restores) setRestoreHistory(restoresRes.restores);
         setLoading(false);
 
@@ -250,7 +258,7 @@ export default function ServerBackupsView() {
             if (r.success && r.runs) allRuns[j.id] = r.runs;
         }));
         setRuns(allRuns);
-    }, [serverId]);
+    }, [serverId, isOwner]);
 
     useEffect(() => { reload(); }, [reload]);
 
@@ -360,12 +368,12 @@ export default function ServerBackupsView() {
                 </button>
             </div>
 
-            {storages.length === 0 && (
+            {storageOptions.length === 0 && (
                 <div className="alert alert-warning">
                     <CircleAlert size={14} className="shrink-0 mt-0.5" />
                     <div>
                         <p className="font-medium">No storage configured</p>
-                        <p className="text-xs">Admins: head over to Settings → Backups and add at least one storage (Local or S3-compatible) before creating jobs.</p>
+                        <p className="text-xs">Admins: head over to Settings → Backups and add at least one storage (Local or S3-compatible) before creating jobs. You can also connect your own bucket under Account &gt; Storage.</p>
                     </div>
                 </div>
             )}
@@ -610,7 +618,7 @@ export default function ServerBackupsView() {
                         excludePatterns: [],
                         subServer: subServers[0] ?? '',
                     }}
-                    storages={storages}
+                    storages={storageOptions}
                     subServers={subServers}
                     onClose={() => setShowForm(false)}
                     onSave={handleCreate}
@@ -619,7 +627,7 @@ export default function ServerBackupsView() {
             {editingJob && (
                 <JobForm
                     initial={editingJob}
-                    storages={storages}
+                    storages={storageOptions}
                     subServers={subServers}
                     onClose={() => setEditingJob(null)}
                     onSave={handleUpdate}

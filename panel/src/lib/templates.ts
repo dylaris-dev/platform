@@ -25,12 +25,21 @@ export function groupTemplates(list: Template[], myUserId: string): TemplateGrou
 
 const MiB = 1024 * 1024;
 
-/** "12.0 MB of 512 MB", or "12.0 MB" when there is no limit (null). */
+/** "12.0 MB of 512 MB", or "12.0 MB, no limit" when there is none (null). */
 export function formatTemplateSize(bytes: number, maxBytes: number | null): string {
     const size = `${(bytes / MiB).toFixed(1)} MB`;
-    if (maxBytes === null) return size;
+    if (maxBytes === null) return `${size}, no limit`;
     const max = maxBytes / MiB;
     return `${size} of ${Number.isInteger(max) ? max : max.toFixed(1)} MB`;
+}
+
+/**
+ * One template's size cap as Core reports it on the item (admin cap, user cap,
+ * or null on the owner's own storage). An older Core sends none; then the
+ * list-wide cap is the best there is.
+ */
+export function templateCap(t: { maxSizeBytes?: number | null }, fallback: number | null): number | null {
+    return t.maxSizeBytes === undefined ? fallback : t.maxSizeBytes;
 }
 
 /** Mirrors Core's RequireTemplatesAudience: admins always pass, everyone else

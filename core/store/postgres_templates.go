@@ -11,13 +11,13 @@ import (
 // templateSelect reads templates joined to their owner for OwnerName; the owner
 // always exists (owner_id cascades on user delete).
 const templateSelect = `SELECT t.id, t.owner_id, t.name, t.kind, t.visibility, t.software, t.mc_version, t.software_version,
-	t.storage_connection_id, t.size_bytes, t.created_at, t.updated_at, u.username
+	t.storage_connection_id, t.backup_storage_id, t.size_bytes, t.created_at, t.updated_at, u.username
 	FROM templates t JOIN users u ON u.id = t.owner_id`
 
 func scanTemplate(sc interface{ Scan(...any) error }) (models.Template, error) {
 	var t models.Template
 	err := sc.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Kind, &t.Visibility, &t.Software, &t.McVersion,
-		&t.SoftwareVersion, &t.StorageConnectionID, &t.SizeBytes, &t.CreatedAt, &t.UpdatedAt, &t.OwnerName)
+		&t.SoftwareVersion, &t.StorageConnectionID, &t.BackupStorageID, &t.SizeBytes, &t.CreatedAt, &t.UpdatedAt, &t.OwnerName)
 	return t, err
 }
 
@@ -26,9 +26,9 @@ func (s *PostgresStore) CreateTemplate(t *models.Template) error {
 	if t.Visibility == "" {
 		t.Visibility = "personal"
 	}
-	err := s.db.QueryRow(`INSERT INTO templates (owner_id, name, kind, visibility, software, mc_version, software_version, storage_connection_id, size_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at, updated_at`,
-		t.OwnerID, t.Name, t.Kind, t.Visibility, t.Software, t.McVersion, t.SoftwareVersion, t.StorageConnectionID, t.SizeBytes).
+	err := s.db.QueryRow(`INSERT INTO templates (owner_id, name, kind, visibility, software, mc_version, software_version, storage_connection_id, backup_storage_id, size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at, updated_at`,
+		t.OwnerID, t.Name, t.Kind, t.Visibility, t.Software, t.McVersion, t.SoftwareVersion, t.StorageConnectionID, t.BackupStorageID, t.SizeBytes).
 		Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("templates: create: %w", err)
@@ -105,6 +105,35 @@ func (s *PostgresStore) CountTemplatesOnStorageConnection(connID int) (int, erro
 		return 0, fmt.Errorf("templates: count on storage connection %d: %w", connID, err)
 	}
 	return n, nil
+}
+
+// ListTemplateStorageConnectionIDs is every storage connection a template row
+// names (0, Core storage, excluded), for the orphan janitor.
+func (s *PostgresStore) ListTemplateStorageConnectionIDs() ([]int, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT storage_connection_id FROM templates WHERE storage_connection_id > 0 ORDER BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("templates: storage connections: %w", err)
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("templates: scan storage connection: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// TemplateExists asks the templates table alone, so no join can hide a row
+// from the orphan janitor.
+func (s *PostgresStore) TemplateExists(id int) (bool, error) {
+	var ok bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM templates WHERE id = $1)`, id).Scan(&ok); err != nil {
+		return false, fmt.Errorf("templates: exists %d: %w", id, err)
+	}
+	return ok, nil
 }
 
 func (s *PostgresStore) SetTemplateSize(id int, size int64) error {

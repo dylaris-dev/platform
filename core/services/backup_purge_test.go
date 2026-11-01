@@ -185,3 +185,5 @@ func TestPurgeAbortsAnUploadStillOpen(t *testing.T) {
 		t.Fatalf("aborted %v, want only the open upload of a.tar.gz", f.aborted)
 	}
 }
+
+func (*purgeStore) GetUserStoragePrefs(string) (*int, *int, error) { return nil, nil, nil }

@@ -2441,7 +2441,7 @@
       "path": "/api/me/backup-storages/{id:[0-9]+}",
       "auth": "session",
       "authorization": "backupstorage.delete",
-      "description": "Refused while a backup or a schedule still names it (store.ErrStorageInUse): the reference would fall back to the platform default, so the tenant's archives would be billed as ours and a restore would fetch from a bucket that never held them.",
+      "description": "Refused while a backup, a schedule, a storage choice or a template still names it (store.ErrStorageInUse): the reference would fall back to the platform default, so the tenant's archives would be billed as ours and a restore would fetch from a bucket that never held them.",
       "handler": "BackupHandler.DeleteOwnStorage",
       "group": "me",
       "external": false
@@ -2737,6 +2737,25 @@
       "auth": "session",
       "authorization": "no capability",
       "handler": "SSHKeysHandler.Delete",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/storage-prefs",
+      "auth": "session",
+      "authorization": "backupstorage.read",
+      "handler": "BackupHandler.GetStoragePrefs",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/storage-prefs",
+      "auth": "session",
+      "authorization": "backupstorage.write",
+      "description": "body {\"backupsStorageId\": id|null, \"templatesStorageId\": id|null}; a field left out is not changed.",
+      "handler": "BackupHandler.PutStoragePrefs",
       "group": "me",
       "external": false
     },
@@ -5245,6 +5264,15 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/templates/{id:[0-9]+}/download",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Download",
+      "group": "templates",
+      "external": false
+    },
+    {
       "method": "DELETE",
       "path": "/api/templates/{id:[0-9]+}/files",
       "auth": "session",
@@ -5898,10 +5926,10 @@
     }
   ],
   "counts": {
-    "total": 595,
+    "total": 598,
     "byAuth": {
       "none": 30,
-      "session": 547,
+      "session": 550,
       "user API key": 10,
       "warp key": 8
     },
@@ -5923,7 +5951,7 @@
       "healthz": 1,
       "infrastructure": 3,
       "maintenance": 1,
-      "me": 41,
+      "me": 43,
       "mirror": 1,
       "modrinth": 9,
       "modules": 6,
@@ -5947,7 +5975,7 @@
       "system": 4,
       "tabproxy": 1,
       "technic": 2,
-      "templates": 18,
+      "templates": 19,
       "ticket-canned-responses": 1,
       "ticket-categories": 1,
       "tickets": 15,

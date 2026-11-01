@@ -839,7 +839,14 @@ func main() {
 	// tunnel itself. Taking away what the tunnel carries is not the same as
 	// taking away the tunnel, and only this drops the WireGuard peer.
 	appState.Billing.SetWarpPeers(extras.warpService)
+	appState.Billing.SetTemplateRetention(appState.RetentionDropTemplateFiles)
 	appState.Billing.Start(bgCtx)
+	// Template folders on our storage that no row names, and template zips a
+	// crashed request left in the temp dir. The storage sweep is leader-gated,
+	// the temp sweep runs on every replica.
+	templateJanitor := services.NewTemplateJanitorService(pgStore, redisClient, appState.TemplateJanitorStorage)
+	templateJanitor.SetLeader(coreLeader)
+	templateJanitor.Start(bgCtx)
 	// The auto-delete sweep removes accounts, and an account's link kit holds a
 	// tunnel key and its nodes hold Redis users that nothing else will ever clean
 	// up once the row is gone.

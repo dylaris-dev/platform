@@ -31,10 +31,29 @@ func templateRootKey(ownerID string, id int) (string, error) {
 // TemplateStore resolves where a template's files live. The storage connection
 // is read from the template row, not from settings, so a template keeps living
 // where it was created when the operator changes the default later.
+//
+// A template on a tenant storage (BackupStorageID) is served from that bucket
+// or not at all. Missing, foreign or non-s3 is an error and never falls back to
+// Core storage: the bytes are not there, and writing them there would bill us
+// for data the tenant chose to keep themselves.
 func (s *AppState) TemplateStore(t *models.Template) (storage.StorageProvider, string, error) {
 	root, err := templateRootKey(t.OwnerID, t.ID)
 	if err != nil {
 		return nil, "", err
+	}
+	if t.BackupStorageID != nil {
+		bs, err := s.Store.GetBackupStorage(*t.BackupStorageID)
+		if err != nil {
+			return nil, "", fmt.Errorf("template %d: storage %d could not be loaded: %w", t.ID, *t.BackupStorageID, err)
+		}
+		if bs == nil || bs.Provider != "s3" || bs.OwnerID == nil || *bs.OwnerID != t.OwnerID {
+			return nil, "", fmt.Errorf("template %d: storage %d is missing or not the owner's", t.ID, *t.BackupStorageID)
+		}
+		prov, err := storage.NewTenantS3Provider(context.Background(), bs.Config, CoreStoragePrefixTemplates)
+		if err != nil {
+			return nil, "", fmt.Errorf("template %d: storage %q: %w", t.ID, bs.Name, err)
+		}
+		return prov, root, nil
 	}
 	if t.StorageConnectionID == 0 {
 		prov, err := s.buildCoreStorageProvider(CoreStoragePrefixTemplates)
@@ -58,11 +77,12 @@ func (s *AppState) TemplateStore(t *models.Template) (storage.StorageProvider, s
 	return prov, root, nil
 }
 
-// TemplateStorageReady reports whether a template created now, on storage
-// connection connID (0 = Core file storage), could have its files written. It
-// builds the same provider TemplateStore would, so the answer is the real one.
-func (s *AppState) TemplateStorageReady(connID int) error {
-	_, _, err := s.TemplateStore(&models.Template{OwnerID: "probe", ID: 1, StorageConnectionID: connID})
+// TemplateStorageReady reports whether a template created now by ownerID, on
+// the owner's storage backupStorageID or else on storage connection connID
+// (0 = Core file storage), could have its files written. It builds the same
+// provider TemplateStore would, so the answer is the real one.
+func (s *AppState) TemplateStorageReady(ownerID string, connID int, backupStorageID *int) error {
+	_, _, err := s.TemplateStore(&models.Template{OwnerID: ownerID, ID: 1, StorageConnectionID: connID, BackupStorageID: backupStorageID})
 	return err
 }
 
@@ -72,7 +92,7 @@ func (s *AppState) TemplateStorageReady(connID int) error {
 // (settings read failure, unreachable mount, broken connection) is NOT this:
 // files may exist and the row must stay.
 func (s *AppState) TemplateStorageNeverConfigured(t *models.Template) bool {
-	if t.StorageConnectionID != 0 {
+	if t.BackupStorageID != nil || t.StorageConnectionID != 0 {
 		return false
 	}
 	cfg, err := s.effectiveCoreStorageConfig()
@@ -232,8 +252,13 @@ func (s *AppState) TemplatesOfUser(userID string) []models.Template {
 
 // DropTemplateFiles removes the files of templates whose rows are gone.
 // Failures are logged: the account is already deleted and must stay so.
+// Templates on the tenant's own storage are skipped: that bucket is never ours
+// to delete from, and its storage row cascaded with the account anyway.
 func (s *AppState) DropTemplateFiles(ctx context.Context, ts []models.Template) {
 	for i := range ts {
+		if ts[i].BackupStorageID != nil {
+			continue
+		}
 		if err := s.TemplateDelete(ctx, &ts[i], ""); err != nil {
 			log.Printf("templates: drop files of %d: %v", ts[i].ID, err)
 		}

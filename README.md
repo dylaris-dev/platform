@@ -923,6 +923,7 @@ A template is a saved server or proxy (Paper, Fabric, Forge, NeoForge, Vanilla, 
 - Content policy: `no-jars` (default) keeps every `.jar` out of templates, `uploads` allows any file within the size limit. Under `no-jars` jars are skipped on upload and capture, and the panel lists what was left out.
 - Platform templates visible to users (default off), and "creating needs the `templates.create` role right" (default off).
 - Storage: Core storage, or a storage connection.
+- Size per template for admins (default 2048 MB), separate from the user cap (512 MB).
 
 **Three levels.**
 
@@ -933,6 +934,18 @@ A template is a saved server or proxy (Paper, Fabric, Forge, NeoForge, Vanilla, 
 **Creating one.** Upload a zip, capture from a running server (pick files and folders in the file picker, or use "Save as template" in the server's Files view), or start empty. Afterwards edit the file tree and text configs in the panel.
 
 **Installing.** Server setup has a Template tab, for servers and proxies. Proxy templates need a node from this release; an older node is refused with a message. While Real player IP is on and not in auto mode, a template install is refused (409), like an upload.
+
+**Where templates are stored.** Each user picks, under Account > Storage ("Backups go to" / "Templates go to"), Dylaris storage or one of their own S3 targets (`/api/me/storage-prefs`). The choice applies to NEW data only; existing templates and backups stay where they are. On an own target the size and count limits do not apply and Dylaris never deletes from it. A storage target still used by a preference, job or template cannot be deleted (409).
+
+**Download.** `GET /api/templates/{id}/download` returns the template as a zip, with no suspension gate, so it works also while the owner's subscription is suspended (install, capture and writes are refused then).
+
+**Uploading folders.** Add-files accepts bundles of up to 200 files / 100 MiB per request (a single file may be larger, up to the template size cap); one bad file (path traversal, a jar under `no-jars`, over the cap) is skipped and listed while the rest is stored. Add-files is limited to 60 requests per minute.
+
+**Retention.** Personal templates on Dylaris storage follow the backup retention (`billing.r2_retention`, per-user override): they are deleted that long after the suspension, never during an admin hold, never on an own target. Admin and platform templates are never removed by retention.
+
+**Janitor.** Hourly, on the leader only, the janitor deletes template files on Dylaris storage that have no template row. A candidate must be seen in two passes at least one hour apart, and the row is re-checked right before each delete. It never lists or deletes on a user's own bucket.
+
+**Operator note.** Never point a development or test Core's Core storage, or a storage connection, at the same bucket and prefix as production: each janitor would treat the other's templates as orphans and delete them.
 
 Routes live under `/api/templates`; see [API.md](API.md).
 

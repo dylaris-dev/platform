@@ -3,14 +3,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, CircleAlert, LayoutTemplate, Loader2, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CircleAlert, Download, LayoutTemplate, Loader2, Trash2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { useRouteId } from '@/lib/routeParams';
 import {
-    deleteTemplate, getTemplate, listTemplates, updateTemplate,
+    deleteTemplate, getTemplate, listTemplates, templateDownloadUrl, updateTemplate,
     type SkippedFile, type Template, type TemplateVisibility,
 } from '@/lib/api/templates';
-import { formatTemplateSize, softwareVersionLabel } from '@/lib/templates';
+import { formatTemplateSize, softwareVersionLabel, templateCap } from '@/lib/templates';
 import { SkeletonHeader, SkeletonList } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -19,6 +19,7 @@ import { useBusy } from '@/lib/useBusy';
 import TemplateFiles from '@/components/templates/TemplateFiles';
 import { TemplateShares } from '@/components/templates/TemplateShares';
 import SkippedAlert from '@/components/templates/SkippedAlert';
+import { listOwnBackupStorages, storageLabel, type OwnBackupStorage } from '@/lib/api/ownBackupStorage';
 
 type Draft = { name: string; visibility: TemplateVisibility; software: string; mcVersion: string; softwareVersion: string };
 const draftOf = (t: Template): Draft => ({ name: t.name, visibility: t.visibility, software: t.software, mcVersion: t.mcVersion, softwareVersion: t.softwareVersion });
@@ -35,12 +36,14 @@ export default function TemplateDetailPage() {
     const [skipped, setSkipped] = useState<SkippedFile[]>([]);
     const [saving, runSave] = useBusy();
     const [deleting, runDelete] = useBusy();
+    const [own, setOwn] = useState<OwnBackupStorage[]>([]);
 
     useEffect(() => {
         if (!id) return;
         let live = true;
-        Promise.all([getTemplate(id), listTemplates()]).then(([res, list]) => {
+        Promise.all([getTemplate(id), listTemplates(), listOwnBackupStorages()]).then(([res, list, ownRes]) => {
             if (!live) return;
+            if (ownRes.success) setOwn(ownRes.storages ?? []);
             if (!res.success) { setError(res.message || 'Could not load the template.'); return; }
             const tpl = res as Template;
             setT(tpl);
@@ -79,6 +82,9 @@ export default function TemplateDetailPage() {
     const isAdmin = !!user?.isAdmin;
     // Core lets an edit sharer change files but not delete the owner's template.
     const canDelete = t.canEdit && (isAdmin || t.ownerId === user?.id);
+    // While the owner is suspended Core refuses every write, so the editors are
+    // shown read-only instead of failing on save. Delete still works.
+    const canWrite = t.canEdit && !t.writeRefusal;
     const dirty = (Object.keys(draft) as (keyof Draft)[]).some((k) => draft[k] !== t[k]);
 
     const save = async (e: React.FormEvent) => {
@@ -100,7 +106,7 @@ export default function TemplateDetailPage() {
         if (!await confirmDialog({ title: `Delete ${t.name}?`, message: 'This removes the template and all its files. Servers made from it are not affected.' })) return;
         const res = await deleteTemplate(t.id);
         if (!res.success) { toast(res.message || 'Delete failed.', false); return; }
-        toast('Template deleted.');
+        toast(res.warning || 'Template deleted.');
         router.push('/templates');
     };
 
@@ -112,7 +118,7 @@ export default function TemplateDetailPage() {
                 className="input-field w-full"
                 value={draft[k]}
                 maxLength={64}
-                readOnly={!t.canEdit}
+                readOnly={!canWrite}
                 onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
             />
         </div>
@@ -126,9 +132,23 @@ export default function TemplateDetailPage() {
                 <h1 className="text-base font-display font-semibold text-(--base-09) truncate">{t.name}</h1>
                 <Badge variant="neutral">{t.kind}</Badge>
                 <Badge variant="neutral">{t.visibility}</Badge>
+                <Badge variant="neutral">{storageLabel(t.backupStorageId, own)}</Badge>
                 {t.ownerId !== user?.id && t.visibility === 'personal' && <span className="text-xs text-(--base-06)">by {t.ownerName || 'unknown'}</span>}
-                <span className="text-xs text-(--base-06) ml-auto">{formatTemplateSize(t.sizeBytes, maxSize)}</span>
+                <span className="text-xs text-(--base-06) ml-auto">{formatTemplateSize(t.sizeBytes, templateCap(t, maxSize))}</span>
+                <a href={templateDownloadUrl(t.id)} download className="btn btn-secondary btn-sm">
+                    <Download size={12} /> Download
+                </a>
             </header>
+
+            {t.writeRefusal && (
+                <div className="alert alert-warning" role="status">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                        <p className="font-medium">This template is read-only</p>
+                        <p>{t.writeRefusal} You can still download{canDelete ? ' and delete' : ''} it.</p>
+                    </div>
+                </div>
+            )}
 
             {skipped.length > 0 && <SkippedAlert skipped={skipped} onDismiss={() => setSkipped([])} />}
 
@@ -150,7 +170,7 @@ export default function TemplateDetailPage() {
                     )}
                 </div>
                 {saveError && <p className="text-xs text-(--error-light)" role="alert">{saveError}</p>}
-                {t.canEdit && (
+                {canWrite && (
                     <div className="flex items-center gap-2">
                         <button type="submit" disabled={!dirty || saving} className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed">
                             {saving ? <Loader2 size={12} className="animate-spin" aria-label="Saving" /> : 'Save'}
@@ -161,7 +181,7 @@ export default function TemplateDetailPage() {
             </form>
 
             <section className="card p-4 flex flex-col min-h-112" aria-label="Template files">
-                <TemplateFiles templateId={t.id} canEdit={t.canEdit} maxSizeBytes={maxSize} onChanged={onChanged} onSkipped={onSkipped} />
+                <TemplateFiles templateId={t.id} canEdit={canWrite} maxSizeBytes={templateCap(t, maxSize)} onChanged={onChanged} onSkipped={onSkipped} />
             </section>
 
             {t.canShare && <TemplateShares templateId={t.id} />}

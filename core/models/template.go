@@ -3,7 +3,8 @@ package models
 import "time"
 
 // Template is a user-owned starting point for a server or proxy.
-// StorageConnectionID 0 means Core's own storage.
+// StorageConnectionID 0 means Core's own storage. BackupStorageID, when set,
+// names the owner's own s3 target instead and wins over StorageConnectionID.
 type Template struct {
 	ID                  int       `json:"id"`
 	OwnerID             string    `json:"ownerId"`
@@ -15,6 +16,7 @@ type Template struct {
 	McVersion           string    `json:"mcVersion"`
 	SoftwareVersion     string    `json:"softwareVersion"`
 	StorageConnectionID int       `json:"storageConnectionId"`
+	BackupStorageID     *int      `json:"backupStorageId,omitempty"`
 	SizeBytes           int64     `json:"sizeBytes"`
 	CreatedAt           time.Time `json:"createdAt"`
 	UpdatedAt           time.Time `json:"updatedAt"`

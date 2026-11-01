@@ -48,6 +48,7 @@ type platformRunnerStore interface {
 	GetBackupStorage(id int) (*models.BackupStorage, error)
 	GetDefaultBackupStorage() (*models.BackupStorage, error)
 	GetUserDefaultBackupStorage(ownerID string) (*models.BackupStorage, error)
+	GetUserStoragePrefs(userID string) (backups, templates *int, err error)
 	ListBackupTargetServers() ([]models.BackupTargetServer, error)
 	CreatePlatformBackupRun(jobID int, storageID *int) (int, error)
 	FinishPlatformBackupRun(id int, status string, sizeBytes int64,

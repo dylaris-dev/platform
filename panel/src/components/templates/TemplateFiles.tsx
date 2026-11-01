@@ -6,11 +6,11 @@ import {
     addTemplateFiles, deleteTemplateFile, getTemplateText, listTemplateFiles, putTemplateText,
     type SkippedFile,
 } from '@/lib/api/templates';
+import { bundleFiles, retryableFailure } from '@/lib/templateBundle';
 import { toast } from '@/components/ui/Toast';
 
 const clean = (path: string) => path.replace(/^\/+|\/+$/g, '');
 const within = (path: string, base: string) => path === base || path.startsWith(base + '/');
-const dirOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
 // The template's files over FileBrowser. Template storage is a flat set of
 // paths, so a folder exists only while it holds a file, and Core only reads
@@ -131,26 +131,44 @@ export default function TemplateFiles({
             uploadFiles: (path, list, onProgress) =>
                 attempt(async () => {
                     if (!canEdit) throw new Error('Edit access is required.');
-                    // Core stores each part under one folder, so a folder upload
-                    // goes up one request per subfolder.
-                    const byDir = new Map<string, File[]>();
-                    for (const f of Array.from(list)) {
-                        const dir = clean([clean(path), dirOf(f.webkitRelativePath || '')].filter(Boolean).join('/'));
-                        byDir.set(dir, [...(byDir.get(dir) ?? []), f]);
-                    }
+                    // Files go up in bundles (Core caps a request at 200 files / 100 MiB),
+                    // one after the other. A failed bundle is retried once.
+                    const entries = Array.from(list).map((file) => ({
+                        file,
+                        size: file.size,
+                        path: clean([clean(path), clean(file.webkitRelativePath || file.name)].filter(Boolean).join('/')),
+                    }));
                     const skipped: SkippedFile[] = [];
+                    const failed: string[] = [];
+                    let reason = '';
                     let done = 0;
                     try {
-                        for (const [dir, group] of byDir) {
-                            const res = await addTemplateFiles(templateId, dir, group);
-                            if (!res.success) throw new Error(res.message || 'Upload failed.');
-                            skipped.push(...(res.skipped ?? []));
-                            onChanged(res.sizeBytes);
-                            done += group.length;
-                            onProgress((done / list.length) * 100);
+                        for (const batch of bundleFiles(entries)) {
+                            let res;
+                            for (let tryNo = 0; tryNo < 2; tryNo++) {
+                                try {
+                                    res = await addTemplateFiles(templateId, batch);
+                                } catch {
+                                    res = undefined;
+                                }
+                                if (!retryableFailure(res)) break;
+                            }
+                            if (res?.success) {
+                                skipped.push(...(res.skipped ?? []));
+                                onChanged(res.sizeBytes);
+                            } else {
+                                failed.push(...batch.map((b) => b.path));
+                                reason ||= res?.message || '';
+                            }
+                            done += batch.length;
+                            onProgress((done / entries.length) * 100);
                         }
                     } finally {
                         if (skipped.length) onSkipped(skipped);
+                    }
+                    if (failed.length) {
+                        const shown = failed.slice(0, 5).join(', ');
+                        throw new Error(`${failed.length} file(s) could not be uploaded${reason ? ` (${reason})` : ''}: ${shown}${failed.length > 5 ? ', ...' : ''}`);
                     }
                 }),
             downloadFile: async (path, _uuid, isDir) => {

@@ -95,6 +95,7 @@ type featureSettingsPayload struct {
 	Templates                   *string `json:"templates"`
 	TemplatesMaxPerUser         *string `json:"templatesMaxPerUser"`
 	TemplatesMaxSizeMB          *string `json:"templatesMaxSizeMb"`
+	TemplatesMaxSizeMBAdmin     *string `json:"templatesMaxSizeMbAdmin"`
 	TemplatesContentPolicy      *string `json:"templatesContentPolicy"`
 	TemplatesPlatformForUsers   *bool   `json:"templatesPlatformForUsers"`
 	TemplatesCreateRequiresRole *bool   `json:"templatesCreateRequiresRole"`
@@ -119,12 +120,18 @@ func validateTemplateFields(req *featureSettingsPayload) string {
 	if v := req.TemplatesMaxPerUser; v != nil && !validTemplateLimit(*v) {
 		return "templatesMaxPerUser must be unlimited or a number of 0 or more"
 	}
-	if v := req.TemplatesMaxSizeMB; v != nil && !validTemplateLimit(*v) {
-		return "templatesMaxSizeMb must be unlimited or a number of 0 or more"
-	}
-	if v := req.TemplatesMaxSizeMB; v != nil && *v != services.LimitUnlimited {
-		if n, _ := strconv.ParseInt(*v, 10, 64); n > services.TemplatesMaxSizeMBCap {
-			return fmt.Sprintf("templatesMaxSizeMb must be at most %d (1 TiB) or unlimited", services.TemplatesMaxSizeMBCap)
+	for _, f := range []struct {
+		name string
+		v    *string
+	}{{"templatesMaxSizeMb", req.TemplatesMaxSizeMB}, {"templatesMaxSizeMbAdmin", req.TemplatesMaxSizeMBAdmin}} {
+		if f.v == nil {
+			continue
+		}
+		if !validTemplateLimit(*f.v) {
+			return f.name + " must be unlimited or a number of 0 or more"
+		}
+		if n, _ := strconv.ParseInt(*f.v, 10, 64); *f.v != services.LimitUnlimited && n > services.TemplatesMaxSizeMBCap {
+			return fmt.Sprintf("%s must be at most %d (1 TiB) or unlimited", f.name, services.TemplatesMaxSizeMBCap)
 		}
 	}
 	if v := req.TemplatesContentPolicy; v != nil && *v != services.TemplatePolicyNoJars && *v != services.TemplatePolicyUploads {
@@ -174,12 +181,16 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if ts.MaxPerUser != nil {
 		maxPerUser = strconv.Itoa(*ts.MaxPerUser)
 	}
-	maxSizeMB := services.FormatLimitSetting(nil)
-	if ts.MaxSizeBytes != nil {
-		maxSizeMB = strconv.FormatInt(*ts.MaxSizeBytes>>20, 10)
+	sizeMB := func(b *int64) *string {
+		v := services.FormatLimitSetting(nil)
+		if b != nil {
+			v = strconv.FormatInt(*b>>20, 10)
+		}
+		return &v
 	}
 	out.TemplatesMaxPerUser = &maxPerUser
-	out.TemplatesMaxSizeMB = &maxSizeMB
+	out.TemplatesMaxSizeMB = sizeMB(ts.MaxSizeBytes)
+	out.TemplatesMaxSizeMBAdmin = sizeMB(ts.MaxSizeBytesAdmin)
 	out.TemplatesContentPolicy = &ts.ContentPolicy
 	out.TemplatesPlatformForUsers = &ts.PlatformForUsers
 	out.TemplatesCreateRequiresRole = &ts.CreateRequiresRole
@@ -472,6 +483,7 @@ func (h *FeatureSettingsHandler) saveTemplateSettings(ctx context.Context, req *
 		{services.TemplatesSettingKey, "templates", req.Templates},
 		{services.TemplatesMaxPerUserKey, "templatesMaxPerUser", req.TemplatesMaxPerUser},
 		{services.TemplatesMaxSizeMBKey, "templatesMaxSizeMb", req.TemplatesMaxSizeMB},
+		{services.TemplatesMaxSizeMBAdminKey, "templatesMaxSizeMbAdmin", req.TemplatesMaxSizeMBAdmin},
 		{services.TemplatesContentPolicyKey, "templatesContentPolicy", req.TemplatesContentPolicy},
 		{services.TemplatesPlatformForUsersKey, "templatesPlatformForUsers", flag(req.TemplatesPlatformForUsers)},
 		{services.TemplatesCreateRequiresRoleKey, "templatesCreateRequiresRole", flag(req.TemplatesCreateRequiresRole)},

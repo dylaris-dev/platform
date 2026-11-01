@@ -526,3 +526,5 @@ func TestBackupTransfer_RestoreURLIsSignedForTheRunsKey(t *testing.T) {
 		t.Errorf("url %q: want the run's key and a 30 minute TTL", resp.Url)
 	}
 }
+
+func (*transferFakeStore) GetUserStoragePrefs(string) (*int, *int, error) { return nil, nil, nil }

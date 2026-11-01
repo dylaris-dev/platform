@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -123,7 +124,23 @@ func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request)
 		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := h.syncBackupsPref(userID, id, req.IsDefault); err != nil {
+		log.Printf("own storage %d: backups preference for %s: %v", id, userID, err)
+		handlers.SendJSONError(w, "The storage was saved, but choosing it for backups failed. Choose it under Account > Storage.", http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
+}
+
+// syncBackupsPref keeps the backups preference following the "default" flag:
+// marking a storage default chooses it, clearing the flag on the chosen one
+// returns backups to the chain. One statement on the backups column only, so
+// it cannot undo a templates choice (or a backups choice) saved meanwhile.
+func (h *BackupHandler) syncBackupsPref(userID string, id int, isDefault bool) error {
+	if isDefault {
+		return h.state.Store.SetUserBackupsStoragePref(userID, &id)
+	}
+	return h.state.Store.ClearUserBackupsStoragePrefIf(userID, id)
 }
 
 // UpdateOwnStorage PATCH /api/me/backup-storages/{id}
@@ -132,10 +149,21 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	var req models.BackupStorage
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// isDefault is a pointer here, shadowing the embedded field: an edit form
+	// that re-sends a flag it loaded earlier must not move the backups target,
+	// which /api/me/storage-prefs chooses. Absent leaves flag and choice alone.
+	var body struct {
+		models.BackupStorage
+		IsDefault *bool `json:"isDefault"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
+	}
+	req := body.BackupStorage
+	req.IsDefault = existing.IsDefault
+	if body.IsDefault != nil {
+		req.IsDefault = *body.IsDefault
 	}
 	if !ownBackupStorageAllowed(req.Provider) {
 		handlers.SendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
@@ -172,15 +200,24 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
+	if body.IsDefault == nil {
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
+	if err := h.syncBackupsPref(*existing.OwnerID, existing.ID, merged.IsDefault); err != nil {
+		log.Printf("own storage %d: backups preference for %s: %v", existing.ID, *existing.OwnerID, err)
+		handlers.SendJSONError(w, "The storage was saved, but updating your backups choice failed. Check it under Account > Storage.", http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 // DeleteOwnStorage DELETE /api/me/backup-storages/{id}
 //
-// Refused while a backup or a schedule still names it (store.ErrStorageInUse):
-// the reference would fall back to the platform default, so the tenant's
-// archives would be billed as ours and a restore would fetch from a bucket that
-// never held them.
+// Refused while a backup, a schedule, a storage choice or a template still names
+// it (store.ErrStorageInUse): the reference would fall back to the platform
+// default, so the tenant's archives would be billed as ours and a restore would
+// fetch from a bucket that never held them.
 func (h *BackupHandler) DeleteOwnStorage(w http.ResponseWriter, r *http.Request) {
 	bs, ok := h.ownStorageFor(w, r)
 	if !ok {
@@ -188,7 +225,7 @@ func (h *BackupHandler) DeleteOwnStorage(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
-			handlers.SendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage and delete the backups stored in it first.", http.StatusConflict)
+			handlers.SendJSONError(w, "Backups, backup schedules, templates or your storage choices still use this storage. Under Account > Storage, choose another storage for backups and templates; then move the schedules, and delete the backups and templates stored in it.", http.StatusConflict)
 			return
 		}
 		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)

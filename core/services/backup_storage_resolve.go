@@ -23,10 +23,12 @@ type backupStorageLookup interface {
 	GetBackupStorage(id int) (*models.BackupStorage, error)
 	GetDefaultBackupStorage() (*models.BackupStorage, error)
 	GetUserDefaultBackupStorage(ownerID string) (*models.BackupStorage, error)
+	GetUserStoragePrefs(userID string) (backups, templates *int, err error)
 }
 
 // ResolveJobStorage returns the storage a backup job uses, walking
-// job -> the owner's own default -> the platform default.
+// job -> the owner's backups preference -> the owner's own default -> the
+// platform default.
 //
 // This exists because the two halves disagreed. The run path already had the
 // fallback and named it - "Resolve storage (job-level or fallback to default)" -
@@ -44,6 +46,15 @@ type backupStorageLookup interface {
 // it must never be treated as "matches any owner", which would let one tenant's
 // job resolve into another tenant's bucket.
 func ResolveJobStorage(s backupStorageLookup, storageID *int, ownerID string) (*models.BackupStorage, error) {
+	if storageID == nil && ownerID != "" {
+		// A preference is resolved exactly like a storage the job names, so a
+		// vanished or foreign one is refused rather than resolved past.
+		pref, _, err := s.GetUserStoragePrefs(ownerID)
+		if err != nil {
+			return nil, err
+		}
+		storageID = pref
+	}
 	if storageID != nil {
 		bs, err := s.GetBackupStorage(*storageID)
 		if err != nil {

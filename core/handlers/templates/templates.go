@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -89,7 +90,56 @@ func (h *TemplatesHandler) load(w http.ResponseWriter, r *http.Request, need tem
 		handlers.SendJSONError(w, "You may not change this template", http.StatusForbidden)
 		return nil, v, s, false
 	}
-	return t, v, s, true
+	return t, v, withCap(s, t, h.ownerIsAdmin(t, v)), true
+}
+
+// refuseSuspended answers 403 and reports true while ownerID is suspended or
+// cut off (an admin panel session passes). Writes call it; reads, downloads
+// and deletes do not, so a tenant can always see and leave with what they have.
+func (h *TemplatesHandler) refuseSuspended(w http.ResponseWriter, r *http.Request, ownerID string) bool {
+	msg := handlers.OwnerRefusal(h.state, r, ownerID)
+	if msg == "" {
+		return false
+	}
+	handlers.SendJSONError(w, msg, http.StatusForbidden)
+	return true
+}
+
+// withCap is s with MaxSizeBytes set to t's own cap, so every reader of the
+// cap (fits, bodyLimit, capReader, the capture bound) applies the right one.
+func withCap(s services.TemplateSettings, t *models.Template, ownerIsAdmin bool) services.TemplateSettings {
+	s.MaxSizeBytes = s.SizeCap(t.Visibility, ownerIsAdmin, t.BackupStorageID != nil)
+	return s
+}
+
+// ownerIsAdmin asks about t's OWNER: an admin editing a user's template does
+// not lift it to the admin cap. A failed lookup answers false, the smaller cap.
+func (h *TemplatesHandler) ownerIsAdmin(t *models.Template, v services.TemplateViewer) bool {
+	if t.OwnerID == v.UserID {
+		return v.IsAdmin
+	}
+	u, err := h.state.Store.GetUserByID(t.OwnerID)
+	if err != nil {
+		log.Printf("templates: owner of %d: %v", t.ID, err)
+	}
+	return err == nil && u != nil && u.IsAdmin
+}
+
+// ownTarget is the caller's own storage a new template of this visibility
+// goes to, nil for Dylaris storage. Only personal templates follow the
+// preference; admin-level and platform ones belong to the platform. It writes
+// the error response itself.
+func (h *TemplatesHandler) ownTarget(w http.ResponseWriter, userID, visibility string) (*int, bool) {
+	if visibility != "personal" || userID == "" {
+		return nil, true
+	}
+	_, own, err := h.state.Store.GetUserStoragePrefs(userID)
+	if err != nil {
+		log.Printf("templates: storage prefs of %s: %v", userID, err)
+		handlers.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
+		return nil, false
+	}
+	return own, true
 }
 
 type templateItem struct {
@@ -97,10 +147,18 @@ type templateItem struct {
 	CanEdit    bool   `json:"canEdit"`
 	CanShare   bool   `json:"canShare"`
 	ShareLevel string `json:"shareLevel"`
+	// WriteRefusal is what a write to this template would be answered with
+	// while its owner is suspended; reads, downloads and deletes still work.
+	// Only List and Get fill it.
+	WriteRefusal string `json:"writeRefusal,omitempty"`
+	// MaxSizeBytes is this template's own size cap (see withCap): the admin cap
+	// for admin-level, platform and admin-owned ones, none (null) on the
+	// owner's own storage, else the user cap.
+	MaxSizeBytes *int64 `json:"maxSizeBytes"`
 }
 
-func item(t models.Template, v services.TemplateViewer) templateItem {
-	return templateItem{Template: t, CanEdit: services.TemplateCanEdit(t, v), CanShare: services.TemplateCanShare(t, v), ShareLevel: v.ShareLevel}
+func item(t models.Template, v services.TemplateViewer, maxSize *int64) templateItem {
+	return templateItem{Template: t, CanEdit: services.TemplateCanEdit(t, v), CanShare: services.TemplateCanShare(t, v), ShareLevel: v.ShareLevel, MaxSizeBytes: maxSize}
 }
 
 func writeJSON(w http.ResponseWriter, status int, body interface{}) {
@@ -121,6 +179,8 @@ func (h *TemplatesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := []templateItem{}
+	refusals := map[string]string{} // per owner: one billing read each
+	admins := map[string]bool{}     // per owner: one user read each
 	for _, t := range list {
 		tv := v
 		if t.OwnerID != v.UserID {
@@ -131,23 +191,45 @@ func (h *TemplatesHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if services.TemplateCanSee(t, tv, s) {
-			out = append(out, item(t, tv))
+			ownerAdmin, seen := admins[t.OwnerID]
+			if !seen {
+				ownerAdmin = h.ownerIsAdmin(&t, v)
+				admins[t.OwnerID] = ownerAdmin
+			}
+			it := item(t, tv, withCap(s, &t, ownerAdmin).MaxSizeBytes)
+			msg, seen := refusals[t.OwnerID]
+			if !seen {
+				msg = handlers.OwnerRefusal(h.state, r, t.OwnerID)
+				refusals[t.OwnerID] = msg
+			}
+			it.WriteRefusal = msg
+			out = append(out, it)
 		}
 	}
+	_, own, err := h.state.Store.GetUserStoragePrefs(v.UserID)
+	if err != nil {
+		log.Printf("templates: storage prefs of %s: %v", v.UserID, err)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"templates":    out,
-		"maxSizeBytes": s.MaxSizeBytes,
-		"maxPerUser":   s.MaxPerUser,
+		"templates":         out,
+		"maxSizeBytes":      s.MaxSizeBytes,
+		"maxSizeBytesAdmin": s.MaxSizeBytesAdmin,
+		"maxPerUser":        s.MaxPerUser,
+		// New personal templates go to the caller's own storage, where neither
+		// limit applies.
+		"ownStorage": own != nil,
 	})
 }
 
 // Get GET /api/templates/{id}
 func (h *TemplatesHandler) Get(w http.ResponseWriter, r *http.Request) {
-	t, v, _, ok := h.load(w, r, needSee)
+	t, v, s, ok := h.load(w, r, needSee)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, item(*t, v))
+	it := item(*t, v, s.MaxSizeBytes)
+	it.WriteRefusal = handlers.OwnerRefusal(h.state, r, t.OwnerID)
+	writeJSON(w, http.StatusOK, it)
 }
 
 type templateMeta struct {
@@ -211,42 +293,54 @@ func (h *TemplatesHandler) newTemplate(w http.ResponseWriter, r *http.Request, m
 		return nil, s, false
 	}
 	v, _ := h.viewer(r, nil)
-	if !h.mayCreate(w, s, v, m.Visibility) {
+	own, ok := h.ownTarget(w, v.UserID, m.Visibility)
+	if !ok || !h.mayCreate(w, s, v, m.Visibility, own) {
 		return nil, s, false
 	}
 	t := &models.Template{
 		OwnerID: v.UserID, Name: m.Name, Kind: m.Kind, Visibility: m.Visibility,
 		Software: m.Software, McVersion: m.McVersion, SoftwareVersion: m.SoftwareVersion,
-		StorageConnectionID: s.StorageConnectionID,
+		StorageConnectionID: s.StorageConnectionID, BackupStorageID: own,
+	}
+	if own != nil {
+		// The files are in the tenant's bucket, not on that connection: a stamp
+		// would count as a reference in CountTemplatesOnStorageConnection and
+		// send the janitor to a connection that never holds this template.
+		t.StorageConnectionID = 0
 	}
 	if err := h.state.Store.CreateTemplate(t); err != nil {
 		log.Printf("templates: create for %s: %v", v.UserID, err)
 		handlers.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
 		return nil, s, false
 	}
-	return t, s, true
+	return t, withCap(s, t, v.IsAdmin), true
 }
 
-// mayCreate applies the create rule and, for personal templates, the count
-// limit. Admin-level and platform templates belong to the platform, so only
-// personal ones count against the creator.
-func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateSettings, v services.TemplateViewer, visibility string) bool {
+// mayCreate applies the create rule and, for personal templates on Dylaris
+// storage, the count limit. Admin-level and platform templates belong to the
+// platform, so only personal ones count against the creator. own is the
+// caller's own storage the template would go to (nil = ours).
+func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateSettings, v services.TemplateViewer, visibility string, own *int) bool {
 	if v.UserID == "" || !services.TemplateCanCreate(visibility, v, s) {
 		handlers.SendJSONError(w, "You may not create this template", http.StatusForbidden)
 		return false
 	}
 	// Before any row exists: a row whose files can never be written would count
 	// against the limit and be stuck.
-	if err := h.state.TemplateStorageReady(s.StorageConnectionID); err != nil {
+	if err := h.state.TemplateStorageReady(v.UserID, s.StorageConnectionID, own); err != nil {
 		log.Printf("templates: storage not usable: %v", err)
 		msg := "Template storage is not available right now. Try again later or ask an admin to check Settings > Storage."
-		if s.StorageConnectionID == 0 && !h.state.CoreStorageConfigured() {
+		switch {
+		case own != nil:
+			// The detail stays in the log: it can name the endpoint.
+			msg = "Your own template storage is not usable. Check it under Account > Storage, or switch templates back to Dylaris storage there."
+		case s.StorageConnectionID == 0 && !h.state.CoreStorageConfigured():
 			msg = "Templates need Core file storage. An admin can set it up under Settings > Storage."
 		}
 		handlers.SendJSONError(w, msg, http.StatusServiceUnavailable)
 		return false
 	}
-	if visibility != "personal" || s.MaxPerUser == nil {
+	if visibility != "personal" || own != nil || s.MaxPerUser == nil {
 		return true
 	}
 	n, err := h.personalCount(v.UserID)
@@ -263,7 +357,8 @@ func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateS
 	return true
 }
 
-// personalCount counts the user's own personal templates.
+// personalCount counts the user's own personal templates on Dylaris storage;
+// those on their own storage cost us nothing and are not limited.
 // ponytail: check-then-insert, two parallel creates can both pass the cap by one.
 func (h *TemplatesHandler) personalCount(userID string) (int, error) {
 	list, err := h.state.Store.ListTemplatesVisibleTo(userID, false, false)
@@ -272,7 +367,7 @@ func (h *TemplatesHandler) personalCount(userID string) (int, error) {
 	}
 	n := 0
 	for _, t := range list {
-		if t.OwnerID == userID && t.Visibility == "personal" {
+		if t.OwnerID == userID && t.Visibility == "personal" && t.BackupStorageID == nil {
 			n++
 		}
 	}
@@ -281,6 +376,9 @@ func (h *TemplatesHandler) personalCount(userID string) (int, error) {
 
 // Create POST /api/templates - an empty template.
 func (h *TemplatesHandler) Create(w http.ResponseWriter, r *http.Request) {
+	if caller, _ := h.viewer(r, nil); h.refuseSuspended(w, r, caller.UserID) {
+		return
+	}
 	if !handlers.CapBody(w, r, 64<<10) {
 		return
 	}
@@ -289,19 +387,19 @@ func (h *TemplatesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	t, _, ok := h.newTemplate(w, r, m)
+	t, s, ok := h.newTemplate(w, r, m)
 	if !ok {
 		return
 	}
 	v, _ := h.viewer(r, t)
-	writeJSON(w, http.StatusCreated, item(*t, v))
+	writeJSON(w, http.StatusCreated, item(*t, v, s.MaxSizeBytes))
 }
 
 // Update PATCH /api/templates/{id} - name, visibility, software and versions.
 // A new visibility must pass the create rule for that level.
 func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	t, v, s, ok := h.load(w, r, needEdit)
-	if !ok {
+	if !ok || h.refuseSuspended(w, r, t.OwnerID) {
 		return
 	}
 	if !handlers.CapBody(w, r, 64<<10) {
@@ -334,6 +432,11 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 			handlers.SendJSONError(w, "You may not give this template that visibility", http.StatusForbidden)
 			return
 		}
+		// A shared template must not depend on one tenant's bucket and credentials.
+		if *p.Visibility != "personal" && t.BackupStorageID != nil {
+			handlers.SendJSONError(w, "This template is stored in its owner's own storage. Admin and platform templates must live on Dylaris storage.", http.StatusConflict)
+			return
+		}
 		t.Visibility = *p.Visibility
 	}
 	for _, f := range []struct {
@@ -354,20 +457,47 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Could not save the template", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, item(*t, v))
+	// Not s: that is the cap of the visibility loaded, which this edit may have changed.
+	writeJSON(w, http.StatusOK, item(*t, v, withCap(h.settings(r), t, h.ownerIsAdmin(t, v)).MaxSizeBytes))
+}
+
+// ownFilesMayRemain is what a delete answers when the row of a template on its
+// owner's own storage went but its files could not be removed.
+const ownFilesMayRemain = "The template was removed. Files may remain in your own storage."
+
+// deleteFiles removes t's files ahead of its row and reports whether the row
+// may go. On OUR storage a failure keeps the row, so the delete can be retried
+// and the janitor never sees files without one. On the owner's own storage the
+// row goes anyway (filesLeft): an unreachable bucket would otherwise make the
+// template undeletable, and its row would block removing that storage forever.
+// Nothing of ours sweeps a tenant bucket, so what is left there is theirs.
+func (h *TemplatesHandler) deleteFiles(ctx context.Context, t *models.Template) (rowMayGo, filesLeft bool) {
+	err := h.state.TemplateDelete(ctx, t, "")
+	switch {
+	case err == nil:
+		return true, false
+	case t.BackupStorageID != nil:
+		log.Printf("templates: delete files of %d on own storage %d, removing the row anyway: %v", t.ID, *t.BackupStorageID, err)
+		return true, true
+	case h.state.TemplateStorageNeverConfigured(t):
+		// Never-configured storage holds no files; this is what lets rows
+		// created before the storage check be cleaned up.
+		return true, false
+	default:
+		log.Printf("templates: delete files of %d: %v", t.ID, err)
+		return false, false
+	}
 }
 
 // Delete DELETE /api/templates/{id} - the files first, then the row, so a
-// storage failure leaves a row that can be deleted again rather than orphaned files.
+// storage failure leaves a row that can be deleted again rather than orphaned files; on the owner's own storage the row goes anyway, with a warning.
 func (h *TemplatesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	t, _, _, ok := h.load(w, r, needDelete)
 	if !ok {
 		return
 	}
-	// Never-configured storage holds no files, so the row can go; this is what
-	// lets rows created before the storage check be cleaned up.
-	if err := h.state.TemplateDelete(r.Context(), t, ""); err != nil && !h.state.TemplateStorageNeverConfigured(t) {
-		log.Printf("templates: delete files of %d: %v", t.ID, err)
+	rowMayGo, filesLeft := h.deleteFiles(r.Context(), t)
+	if !rowMayGo {
 		handlers.SendJSONError(w, "Could not delete the template files", http.StatusInternalServerError)
 		return
 	}
@@ -376,5 +506,9 @@ func (h *TemplatesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Could not delete the template", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	body := map[string]interface{}{"success": true}
+	if filesLeft {
+		body["warning"] = ownFilesMayRemain
+	}
+	writeJSON(w, http.StatusOK, body)
 }

@@ -18,6 +18,8 @@ export interface Template {
     mcVersion: string;
     softwareVersion: string;
     storageConnectionId: number;
+    /** The owner's own storage the files live in; absent means Dylaris storage. */
+    backupStorageId?: number | null;
     sizeBytes: number;
     createdAt: string;
     updatedAt: string;
@@ -25,6 +27,10 @@ export interface Template {
     canShare: boolean;
     /** The caller's share on someone else's template: "use", "edit" or "". */
     shareLevel: ShareLevel | '';
+    /** Set while the owner is suspended: what a write would be refused with. Reads, download and delete still work. */
+    writeRefusal?: string;
+    /** This template's size cap: null on the owner's own storage (no limit). Older Cores omit it. */
+    maxSizeBytes?: number | null;
 }
 
 export interface TemplateMeta {
@@ -78,6 +84,9 @@ export const listTemplates = () =>
 
 export const getTemplate = (id: number) => call<Template>(`/templates/${id}`);
 
+/** A plain same-origin link: the browser sends the session cookie, Core streams a zip. */
+export const templateDownloadUrl = (id: number) => `${API_URL}/templates/${id}/download`;
+
 export const createTemplate = (meta: TemplateMeta) => call<Template>(`/templates`, json('POST', meta));
 
 // ponytail: plain fetch, no upload progress; switch to XHR like files.ts if large zips feel stuck.
@@ -94,14 +103,18 @@ export const captureTemplate = (req: TemplateMeta & { serverId: number; subServe
 export const updateTemplate = (id: number, patch: Partial<Omit<TemplateMeta, 'kind'>>) =>
     call<Template>(`/templates/${id}`, json('PATCH', patch));
 
-export const deleteTemplate = (id: number) => call(`/templates/${id}`, { method: 'DELETE' });
+/** warning: the row went but files may remain in the owner's own storage. */
+export const deleteTemplate = (id: number) => call<{ warning: string }>(`/templates/${id}`, { method: 'DELETE' });
 
 export const listTemplateFiles = (id: number) => call<{ files: TemplateFile[] }>(`/templates/${id}/files`);
 
-export function addTemplateFiles(id: number, dir: string, files: File[]) {
+/** One bundled request: entries[i].path is where file i is stored (relative, incl. sub-folders). */
+export function addTemplateFiles(id: number, entries: { path: string; file: File }[]) {
     const form = new FormData();
-    form.append('dir', dir);
-    for (const f of files) form.append('file', f);
+    for (const e of entries) {
+        form.append('path', e.path);
+        form.append('file', e.file);
+    }
     return call<{ sizeBytes: number; skipped: SkippedFile[] }>(`/templates/${id}/files`, { method: 'POST', body: form });
 }
 

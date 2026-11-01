@@ -95,6 +95,7 @@ export interface FeatureFlagsAdminPayload {
     templates?: 'off' | 'admin' | 'all';
     templatesMaxPerUser?: string;
     templatesMaxSizeMb?: string;
+    templatesMaxSizeMbAdmin?: string;
     templatesContentPolicy?: 'no-jars' | 'uploads';
     templatesPlatformForUsers?: boolean;
     templatesCreateRequiresRole?: boolean;

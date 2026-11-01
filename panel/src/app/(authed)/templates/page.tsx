@@ -3,16 +3,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CircleAlert, LayoutTemplate, Plus, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CircleAlert, LayoutTemplate, Plus, RefreshCw } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { listTemplates, type SkippedFile, type Template } from '@/lib/api/templates';
-import { formatTemplateSize, groupTemplates } from '@/lib/templates';
+import { formatTemplateSize, groupTemplates, templateCap } from '@/lib/templates';
 import { SkeletonCard } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import NewTemplateDialog from '@/components/templates/NewTemplateDialog';
 import SkippedAlert from '@/components/templates/SkippedAlert';
 import { OwnerShares } from '@/components/templates/TemplateShares';
 import { toast } from '@/components/ui/Toast';
+import { listOwnBackupStorages, storageLabel, type OwnBackupStorage } from '@/lib/api/ownBackupStorage';
 
 export default function TemplatesPage() {
     const { user } = useAppData();
@@ -24,10 +25,14 @@ export default function TemplatesPage() {
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
     const [created, setCreated] = useState<{ template: Template; skipped: SkippedFile[] } | null>(null);
+    const [own, setOwn] = useState<OwnBackupStorage[]>([]);
 
     const refresh = useCallback(async () => {
-        const res = await listTemplates();
+        // Own targets only name the storage badges; without the capability the
+        // list is empty and own-storage templates read as the owner's storage.
+        const [res, ownRes] = await Promise.all([listTemplates(), listOwnBackupStorages()]);
         setLoading(false);
+        setOwn(ownRes.success ? ownRes.storages ?? [] : []);
         if (!res.success) { setError(res.message || 'Could not load templates.'); return; }
         setError(null);
         setList(res.templates ?? []);
@@ -49,6 +54,7 @@ export default function TemplatesPage() {
     };
 
     const groups = list ? groupTemplates(list, user?.id ?? '') : null;
+    const suspended = groups?.mine.find(t => t.writeRefusal)?.writeRefusal;
     const sections: { key: keyof NonNullable<typeof groups>; title: string; empty: string }[] = [
         { key: 'mine', title: 'My templates', empty: 'You have no templates yet. Create one from a zip, from a server, or start empty.' },
         { key: 'shared', title: 'Shared with me', empty: '' },
@@ -81,6 +87,16 @@ export default function TemplatesPage() {
                         Open {created.template.name}
                     </Link>
                 </SkippedAlert>
+            )}
+
+            {suspended && (
+                <div className="alert alert-warning mb-4" role="status">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                        <p className="font-medium">Your templates are read-only</p>
+                        <p>{suspended} You can still open, download and delete them.</p>
+                    </div>
+                </div>
             )}
 
             {error && (
@@ -118,7 +134,7 @@ export default function TemplatesPage() {
                                     </div>
                                 ) : (
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {items.map((t) => <TemplateCard key={t.id} t={t} maxSize={maxSize} showOwner={key === 'shared'} />)}
+                                        {items.map((t) => <TemplateCard key={t.id} t={t} maxSize={maxSize} showOwner={key === 'shared'} storage={storageLabel(t.backupStorageId, own)} />)}
                                     </div>
                                 )}
                             </section>
@@ -133,7 +149,7 @@ export default function TemplatesPage() {
     );
 }
 
-function TemplateCard({ t, maxSize, showOwner }: { t: Template; maxSize: number | null; showOwner: boolean }) {
+function TemplateCard({ t, maxSize, showOwner, storage }: { t: Template; maxSize: number | null; showOwner: boolean; storage: string }) {
     const version = [t.software, t.mcVersion, t.softwareVersion].filter(Boolean).join(' ');
     return (
         <Link href={`/templates/${t.id}`} className="card p-4 hover:border-(--accent-border) focus-visible:border-(--accent-border) transition-colors group">
@@ -142,7 +158,8 @@ function TemplateCard({ t, maxSize, showOwner }: { t: Template; maxSize: number 
             <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <Badge variant="neutral">{t.kind === 'proxy' ? 'proxy' : 'server'}</Badge>
                 {showOwner && t.shareLevel && <Badge variant="accent">{t.shareLevel === 'edit' ? 'can edit' : 'can use'}</Badge>}
-                <span className="text-[11px] text-(--base-06) ml-auto">{formatTemplateSize(t.sizeBytes, maxSize)}</span>
+                <Badge variant="neutral">{storage}</Badge>
+                <span className="text-[11px] text-(--base-06) ml-auto">{formatTemplateSize(t.sizeBytes, templateCap(t, maxSize))}</span>
             </div>
             {showOwner && <div className="text-[11px] text-(--base-06) mt-2 truncate">by {t.ownerName || 'unknown'}</div>}
         </Link>

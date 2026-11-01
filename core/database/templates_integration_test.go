@@ -165,4 +165,17 @@ func TestCountTemplatesOnStorageConnectionIntegration(t *testing.T) {
 			t.Errorf("CountTemplatesOnStorageConnection(%d) = %d, %v; want %d", tc.conn, n, err, tc.want)
 		}
 	}
+	if ids, err := st.ListTemplateStorageConnectionIDs(); err != nil || len(ids) != 2 || ids[0] != 3 || ids[1] != 5 {
+		t.Errorf("ListTemplateStorageConnectionIDs = %v, %v; want [3 5]", ids, err)
+	}
+	ids, err := st.ListTemplateIDsByOwner(owner)
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("ListTemplateIDsByOwner = %v, %v", ids, err)
+	}
+	if ok, err := st.TemplateExists(ids[0]); err != nil || !ok {
+		t.Errorf("TemplateExists(%d) = %v, %v; want true", ids[0], ok, err)
+	}
+	if ok, err := st.TemplateExists(999999); err != nil || ok {
+		t.Errorf("TemplateExists(999999) = %v, %v; want false", ok, err)
+	}
 }
