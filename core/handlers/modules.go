@@ -193,6 +193,9 @@ var builtInModules = map[string]bool{
 	// Deleting it strands whatever tabs already exist and the next restart
 	// re-creates the row anyway.
 	"Custom Tabs": true,
+	// Derived from feature_templates like Custom Tabs; a deleted row would
+	// strand the nav entry until the next boot re-seeds it.
+	"Templates": true,
 }
 
 // DeleteModuleHandler DELETE /modules/{id} - RequireCap("settings.write") at the

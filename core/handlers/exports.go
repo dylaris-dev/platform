@@ -348,6 +348,10 @@ func CollectNodeFile(ch <-chan *pb.NodeMessage, max int) ([]byte, *pb.OpError, e
 
 func NodeErrorStatus(code int32) int { return nodeErrorStatus(code) }
 
+func ConfirmNodeWrite(wait func(time.Duration) (*pb.NodeMessage, error)) (status int, message string, ok bool) {
+	return confirmNodeWrite(wait)
+}
+
 const MaxOpenFileBytes = maxOpenFileBytes
 
 func SetNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Node) {

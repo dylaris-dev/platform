@@ -1,7 +1,7 @@
 import { effectiveMcVersion } from '@/lib/javaVersion';
 import type { UploadDetection } from '@/lib/uploadDetect';
 
-export type InstallTab = 'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic';
+export type InstallTab = 'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic' | 'template';
 
 export interface InstallTargetInput {
     tab: InstallTab;
@@ -9,7 +9,7 @@ export interface InstallTargetInput {
     /** The version pickers. On the upload tab they belong to it only once chosen. */
     selectedMajor: string;
     selectedBuild: string;
-    /** The modpack/pack/technic selection's own Minecraft version. */
+    /** The modpack/pack/technic/template selection's own Minecraft version. */
     selectionMcVersion?: string;
     uploadFilePicked: boolean;
     /** undefined: no file; null: still being read. */
@@ -35,6 +35,7 @@ export function installTargetMcVersion(i: InstallTargetInput): { version: string
         case 'modpack':
         case 'pack':
         case 'technic':
+        case 'template':
             return { version: i.selectionMcVersion || '', unknown: false };
         case 'upload': {
             if (i.uploadInstallsSoftware && i.uploadVersionChosen) {

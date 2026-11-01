@@ -24,7 +24,9 @@ import { isSubServerName } from '@/lib/validation';
 import { ROUTES_CHANGED_EVENT } from '@/lib/systemEvents';
 import { technicInstaller, type TechnicSelection } from '@/views/setup/technic';
 import ModalPanel from '@/components/ui/ModalPanel';
-import { installMcVersion, installTargetMcVersion, prefillSelection } from '@/views/setup/installTarget';
+import { installMcVersion, installTargetMcVersion, prefillSelection, type InstallTab } from '@/views/setup/installTarget';
+import type { TemplateSelection } from '@/views/setup/TemplatePicker';
+import { templateInstallPayload, templatesVisible } from '@/lib/templates';
 import { createUploadStager, uploadStartStep, UPLOAD_ZIP_NAME } from '@/views/setup/uploadStaging';
 import { setupPreviewModel } from '@/views/setup/setupPreview';
 
@@ -60,7 +62,8 @@ interface SetupViewProps {
 }
 
 export default function SetupView({ server, onSetupComplete, onInstalled }: SetupViewProps) {
-    const { refreshServers } = useAppData();
+    const { refreshServers, featureFlags, user } = useAppData();
+    const templatesEnabled = templatesVisible(featureFlags.templates, !!user?.isAdmin);
     const [subServers, setSubServers] = useState<string[]>([]);
     const [maxSubServers, setMaxSubServers] = useState<number>(3);
     const [formMode, setFormMode] = useState<FormMode>('view');
@@ -75,7 +78,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled }: Setu
     const [subNameError, setSubNameError] = useState('');
     const [javaImage, setJavaImage] = useState(JAVA_21);
     const [extraFlags, setExtraFlags] = useState('');
-    const [installTab, setInstallTab] = useState<'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic'>('online');
+    const [installTab, setInstallTab] = useState<InstallTab>('online');
     // The backup archive to import. Separate from uploadFile: the two tabs mean
     // different installers, and one field for both would carry a .zip into a
     // backup import as easily as the other way round.
@@ -88,6 +91,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled }: Setu
     const [packSelection, setPackSelection] = useState<import('@/views/setup/PackPicker').PackSelection | null>(null);
     // Selected Technic pack; Core resolves its download at install time.
     const [technicSelection, setTechnicSelection] = useState<TechnicSelection | null>(null);
+    const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null);
 
     // Software list from API
     const [softwareCatalog, setSoftwareCatalog] = useState<{ name: string; type: string }[]>([]);
@@ -167,6 +171,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled }: Setu
         selectionMcVersion: installTab === 'modpack' ? modpackSelection?.mcVersion
             : installTab === 'pack' ? packSelection?.mcVersion
             : installTab === 'technic' ? technicSelection?.mcVersion
+            : installTab === 'template' ? templateSelection?.mcVersion
             : undefined,
         uploadFilePicked: !!uploadFile,
         uploadDetection,
@@ -619,12 +624,13 @@ export default function SetupView({ server, onSetupComplete, onInstalled }: Setu
                 modrinthVersionId: modpackSelection?.versionId,
                 packBuildId: packSelection?.buildId,
                 technicPicked: !!technicSelection,
+                templatePicked: !!templateSelection,
             });
             if (change !== 'runtime' && change !== 'none') {
                 setPendingWipe({
                     change,
-                    loaderChanged: installTab === 'online'
-                        && loaderFamilyChanged(installFor(sanitized)?.installerType, software),
+                    loaderChanged: (installTab === 'online' || installTab === 'template')
+                        && loaderFamilyChanged(installFor(sanitized)?.installerType, installTab === 'template' ? templateSelection?.software : software),
                 });
                 return;
             }
@@ -690,6 +696,8 @@ export default function SetupView({ server, onSetupComplete, onInstalled }: Setu
             if (packSelection.mcVersion) installer.mcVersion = packSelection.mcVersion;
         } else if (installTab === 'technic' && technicSelection) {
             Object.assign(installer, technicInstaller(technicSelection));
+        } else if (installTab === 'template' && templateSelection) {
+            Object.assign(installer, templateInstallPayload(templateSelection.id));
         } else if (installTab === 'backup' && backupFile) {
             installer.type = 'backup';
             setUploadStatus('Uploading...');
@@ -974,10 +982,14 @@ export default function SetupView({ server, onSetupComplete, onInstalled }: Setu
         onPackSelect: setPackSelection,
         technicSelection,
         onTechnicSelect: setTechnicSelection,
+        templatesEnabled,
+        templateSelection,
+        onTemplateSelect: setTemplateSelection,
         serverId: server.id,
         onFileTooLarge: setFileTooLarge,
         uploadSoftware,
-        submitBlocked: uploadIncomplete || uploadPending,
+        // Without a pick the tab would fall through to an empty-slot install.
+        submitBlocked: uploadIncomplete || uploadPending || (installTab === 'template' && !templateSelection),
         subNameLocked: !!uploadTarget,
         onSubNameUnlock: clearUpload,
     };

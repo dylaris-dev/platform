@@ -23,9 +23,10 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	modConfigs := h.state.FeatureFlags.ModConfigsAudience(r.Context())
 	bedrock := h.state.FeatureFlags.BedrockAudience(r.Context())
+	templates := h.state.FeatureFlags.TemplatesAudience(r.Context())
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"features": map[string]bool{
+		"features": map[string]interface{}{
 			"modpacks": h.state.FeatureFlags.IsModpacksEnabled(r.Context()),
 			// End-user authoring. Exposed separately because "modpacks on" alone
 			// means admins-only, and the panel has to be able to tell a user
@@ -63,6 +64,10 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// Whether THIS caller may give a route Bedrock. Routes that have it
 			// keep running while the setting is admin; GET .../bedrock says so.
 			"bedrock": bedrock == "all" || (bedrock == "admin" && isAdmin),
+			// Templates is the raw audience (off, admin or all), unlike the
+			// booleans above: the panel resolves it with the caller's role, and
+			// an admin still reaches Templates while it is off.
+			"templates": templates,
 		},
 	})
 }

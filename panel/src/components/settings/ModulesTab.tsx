@@ -35,7 +35,7 @@ interface ModulesTabProps {
 // even though it is_system=false server-side (it stays toggle-able) - only
 // deletion is blocked, both here (hides the button) and in Core (rejects the
 // request).
-const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Tickets', 'Modpacks', 'Custom Tabs']);
+const BUILTIN_MODULES = new Set(['Servers', 'Admin', 'Infrastructure', 'Tickets', 'Modpacks', 'Custom Tabs', 'Templates']);
 
 // Modules whose ENABLED state is derived from a feature flag rather than set
 // here. Offering the control would be worse than hiding it: an edit would appear
@@ -50,6 +50,7 @@ const DERIVED_MODULES = new Map([
     ['Modpacks', 'Settings -> Features -> Modpacks'],
     ['Custom Tabs', 'Settings -> Features -> Custom-tab reverse proxy'],
     ['Tickets', 'Settings -> Features -> Ticket system'],
+    ['Templates', 'Settings -> Features -> Templates'],
 ]);
 
 // Of those, the ones whose AUDIENCE is derived too, from a second flag that has
@@ -57,7 +58,7 @@ const DERIVED_MODULES = new Map([
 // For Tickets the audience stays an answer to a different question - whether
 // the platform HAS the feature is not who should see it - so it keeps the
 // All/Admin control.
-const AUDIENCE_DERIVED = new Set(['Modpacks', 'Custom Tabs']);
+const AUDIENCE_DERIVED = new Set(['Modpacks', 'Custom Tabs', 'Templates']);
 
 interface SortableModuleCardProps {
     module: AppModule;

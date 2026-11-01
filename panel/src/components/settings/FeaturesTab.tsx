@@ -6,7 +6,10 @@ import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload 
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { getCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage } from '@/lib/coreStorage';
-import { Network, Globe, AlertTriangle, Server, ChevronDown, ChevronRight, KeyRound, FolderOpen } from 'lucide-react';
+import { Network, Globe, AlertTriangle, Server, ChevronDown, ChevronRight, KeyRound, FolderOpen, LayoutTemplate } from 'lucide-react';
+import { listStorageConnections, type StorageConnection } from '@/lib/api';
+import { LimitField } from '@/components/settings/LimitField';
+import { limitFromSetting, limitToSetting } from '@/lib/templates';
 import GuardedTabs from '@/components/settings/GuardedTabs';
 import type { TabItem } from '@/components/ui/Tabs';
 import { useTabParam } from '@/lib/useTabParam';
@@ -56,7 +59,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off' });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off', templates: 'off', templatesMaxPerUser: '10', templatesMaxSizeMb: '512', templatesContentPolicy: 'no-jars', templatesPlatformForUsers: false, templatesCreateRequiresRole: false, templatesStorageConnectionId: 0 });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -98,6 +101,8 @@ export default function FeaturesTab() {
     // because a key can never carry one (authz.ValidKeyCap rejects them).
     const [keyCatalog, setKeyCatalog] = useState<CatalogScope[]>([]);
     const [keyCapsOpen, setKeyCapsOpen] = useState(false);
+    // Where templates may be stored: Core storage or a storage connection.
+    const [connections, setConnections] = useState<StorageConnection[]>([]);
 
     // Snapshot of last-saved settings for dirty detection.
     const snapshotRef = useRef<FeatureSettings | null>(null);
@@ -153,6 +158,9 @@ export default function FeaturesTab() {
                 tabProxySnapshot.current = res.settings;
             }
         });
+        listStorageConnections().then(res => {
+            if (res.success && res.connections) setConnections(res.connections);
+        });
         getCatalog().then(res => {
             if (res.success && res.catalog) {
                 setKeyCatalog(res.catalog.filter(sc => sc.scope !== 'panel'));
@@ -161,7 +169,7 @@ export default function FeaturesTab() {
     }, []);
 
     // An edit to a platform flag. Local; the card's Save commits it.
-    const editPlatformFlag = (key: keyof FeatureFlagsAdminPayload, value: boolean | string) => {
+    const editPlatformFlag = (key: keyof FeatureFlagsAdminPayload, value: boolean | string | number) => {
         setPlatformFlags(prev => ({ ...prev, [key]: value }));
         setLastBulk(null);
     };
@@ -232,12 +240,13 @@ export default function FeaturesTab() {
     const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'modConfigs'] as const;
     const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat', 'bedrock'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
+    const TEMPLATE_KEYS = ['templates', 'templatesMaxPerUser', 'templatesMaxSizeMb', 'templatesContentPolicy', 'templatesPlatformForUsers', 'templatesCreateRequiresRole', 'templatesStorageConnectionId'] as const;
 
     // One registration covering all three: the unsaved-changes guard asks "is
     // anything unsaved on this screen", and a tab switch inside GuardedTabs is
     // what protects the individual halves.
-    const platformDirty = subsetDirty([...SUBSYSTEM_KEYS, ...INFRA_KEYS, ...API_KEY_KEYS]);
-    const saveAllPlatform = () => savePlatformSubset([...SUBSYSTEM_KEYS, ...INFRA_KEYS, ...API_KEY_KEYS]);
+    const platformDirty = subsetDirty([...SUBSYSTEM_KEYS, ...INFRA_KEYS, ...API_KEY_KEYS, ...TEMPLATE_KEYS]);
+    const saveAllPlatform = () => savePlatformSubset([...SUBSYSTEM_KEYS, ...INFRA_KEYS, ...API_KEY_KEYS, ...TEMPLATE_KEYS]);
     useUnsavedChanges({ dirty: platformDirty, save: saveAllPlatform, discard: discardPlatform, saving: platformSaving });
 
     const tabProxyDirty =
@@ -431,6 +440,102 @@ export default function FeaturesTab() {
                                 { id: 'all', label: 'Everyone' },
                             ]}
                         />
+                    </div>
+                </SettingsGroup>
+                        </SettingsCard>
+                    )}
+
+                    {tab === 'subsystems' && (
+                        <SettingsCard title="Templates" icon={LayoutTemplate} form={platformSubsetForm(TEMPLATE_KEYS)}>
+                <SettingsGroup first>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs text-(--base-06) max-w-prose">
+                            Who is offered templates: saved server folders to start new servers from. Admins lets you
+                            try them first; Off hides the module and closes templates to everyone but admins. No
+                            template is deleted.
+                        </p>
+                        <Segmented
+                            ariaLabel="Who is offered templates"
+                            value={platformFlags.templates ?? 'off'}
+                            onChange={v => editPlatformFlag('templates', v)}
+                            options={[
+                                { id: 'off', label: 'Off' },
+                                { id: 'admin', label: 'Admins' },
+                                { id: 'all', label: 'Everyone' },
+                            ]}
+                        />
+                    </div>
+                </SettingsGroup>
+                <SettingsGroup title="Limits per user">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label className="text-sm text-(--base-09)" htmlFor="tpl-max-per-user">Templates per user</label>
+                        <LimitField
+                            id="tpl-max-per-user"
+                            value={limitFromSetting(platformFlags.templatesMaxPerUser, 10)}
+                            onChange={v => editPlatformFlag('templatesMaxPerUser', limitToSetting(v))}
+                        />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label className="text-sm text-(--base-09)" htmlFor="tpl-max-size">Size of one template</label>
+                        <LimitField
+                            id="tpl-max-size"
+                            unit="MB"
+                            value={limitFromSetting(platformFlags.templatesMaxSizeMb, 512)}
+                            onChange={v => editPlatformFlag('templatesMaxSizeMb', limitToSetting(v))}
+                        />
+                    </div>
+                    <p className="text-xs text-(--base-06)">0 means none; the switch removes the cap.</p>
+                </SettingsGroup>
+                <SettingsGroup title="Content and access">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label" htmlFor="tpl-policy">What a template may hold</label>
+                        <select
+                            id="tpl-policy"
+                            value={platformFlags.templatesContentPolicy ?? 'no-jars'}
+                            onChange={e => editPlatformFlag('templatesContentPolicy', e.target.value)}
+                            className="input-field w-full sm:w-1/2"
+                        >
+                            <option value="no-jars">No jars</option>
+                            <option value="uploads">Uploads</option>
+                        </select>
+                        <p className="text-xs text-(--base-06)">
+                            {(platformFlags.templatesContentPolicy ?? 'no-jars') === 'no-jars'
+                                ? 'No jars: every .jar is left out, so a template carries configs and worlds and the software is installed fresh.'
+                                : 'Uploads: jars stay in, so plugins and mods travel with the template.'}
+                        </p>
+                    </div>
+                    <SwitchRow
+                        label="Platform templates visible to users"
+                        description="Shows templates marked Platform to every user who is offered templates. Off keeps them to admins."
+                        checked={!!platformFlags.templatesPlatformForUsers}
+                        onChange={v => editPlatformFlag('templatesPlatformForUsers', v)}
+                    />
+                    <SwitchRow
+                        label="Creating templates needs the Templates role right"
+                        description={<>Off lets everyone who is offered templates create them. On requires the <code className="font-mono">templates.create</code> right from a role.</>}
+                        checked={!!platformFlags.templatesCreateRequiresRole}
+                        onChange={v => editPlatformFlag('templatesCreateRequiresRole', v)}
+                    />
+                </SettingsGroup>
+                <SettingsGroup title="Storage">
+                    <div className="flex flex-col gap-[5px]">
+                        <label className="input-label" htmlFor="tpl-storage">Where new templates are stored</label>
+                        <select
+                            id="tpl-storage"
+                            value={platformFlags.templatesStorageConnectionId ?? 0}
+                            onChange={e => editPlatformFlag('templatesStorageConnectionId', Number(e.target.value))}
+                            className="input-field w-full sm:w-1/2"
+                        >
+                            <option value={0}>Core storage</option>
+                            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            {/* A stored id missing from the list (deleted, or the list failed) must not read as Core storage. */}
+                            {(platformFlags.templatesStorageConnectionId ?? 0) > 0 && !connections.some(c => c.id === platformFlags.templatesStorageConnectionId) && (
+                                <option value={platformFlags.templatesStorageConnectionId}>Connection #{platformFlags.templatesStorageConnectionId}</option>
+                            )}
+                        </select>
+                        <p className="text-xs text-(--base-06)">
+                            Connections are defined under Settings, Storage connections.
+                        </p>
                     </div>
                 </SettingsGroup>
                         </SettingsCard>

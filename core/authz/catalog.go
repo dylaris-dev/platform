@@ -201,6 +201,9 @@ var catalog = []Capability{
 	{ID: "tickets.write", Label: "Edit tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbWrite},
 	{ID: "tickets.delete", Label: "Delete tickets", Category: "Tickets", Scope: ScopePanel, Verb: VerbDelete},
 
+	{ID: "templates.create", Label: "Create templates", Category: "Templates", Scope: ScopePanel, Verb: VerbCreate},
+	{ID: "templates.admin.read", Label: "View all templates", Category: "Templates", Scope: ScopePanel, Verb: VerbRead},
+
 	{ID: "settings.read", Label: "View platform settings", Category: "Settings", Scope: ScopePanel, Verb: VerbRead},
 	// settings.write carries the same dial-a-host power the comment above
 	// backupstorage.write describes, and that is easy to miss because its label

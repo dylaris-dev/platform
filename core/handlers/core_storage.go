@@ -52,6 +52,7 @@ const (
 	CoreStoragePrefixBackups       = "ticket-backups"
 	CoreStoragePrefixServerBackups = "server-backups"
 	CoreStoragePrefixModpacks      = "modpacks"
+	CoreStoragePrefixTemplates     = "templates"
 )
 
 // storageSlotWaitDeadline bounds how long a host-path provider build waits for

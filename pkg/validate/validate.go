@@ -173,6 +173,9 @@ var installerTypes = map[string]bool{
 	// 2026.10.16.3. Core accepts them only on a proxy server and refuses them
 	// for a node reporting an older release.
 	"velocity": true, "waterfall": true, "bungeecord": true,
+	// A Templates template. Like "pack", Core rewrites it to upload-zip before
+	// anything is queued, so the node never sees this type.
+	"template": true,
 }
 
 // IsInstallerType reports whether t is a known server source/installer type.

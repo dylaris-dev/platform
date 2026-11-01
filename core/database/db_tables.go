@@ -272,6 +272,9 @@ func seedSystemModules(db *sql.DB) {
 		{"Servers", "internal", "server", "/servers", "all", 1, true, true},
 		{"Admin", "internal", "shield-check", "/admin", "admin", 2, true, true},
 		{"Infrastructure", "internal", "cpu", "/infrastructure", "admin", 3, true, true},
+		// Templates, default disabled: its row follows feature_templates
+		// (applyDerivedModuleRows, and the Features save).
+		{"Templates", "internal", "folder-open", "/templates", "admin", 4, false, false},
 		// Tickets module, default disabled. Admin opts in from
 		// Settings → Modules. Once enabled it appears in the user-facing
 		// sidebar via the standard module loader.

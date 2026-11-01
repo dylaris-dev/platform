@@ -518,6 +518,12 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, msg, 400)
 		return
 	}
+	var tmpl *models.Template
+	if req.Installer.Type == "template" {
+		if tmpl = h.resolveTemplateInstall(w, r, &req); tmpl == nil {
+			return
+		}
+	}
 	// Refused here rather than dropped, and refused BEFORE anything is written or
 	// queued: a wipe target the node will not recognise means the operator asked
 	// for a clean install and would otherwise get a dirty one reported as a
@@ -526,8 +532,13 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, err.Error(), 400)
 		return
 	}
-	if msg := validateUploadSoftware(req.Installer.Type, req.Installer.Software, req.Installer.Version, req.Installer.Loader); msg != "" {
-		handlers.SendJSONError(w, msg, 400)
+	uploadMsg := validateUploadSoftware(req.Installer.Type, req.Installer.Software, req.Installer.Version, req.Installer.Loader)
+	if tmpl != nil {
+		// A template may carry a proxy, which a plain upload may not.
+		uploadMsg = validateInstallerRequest(req.Installer.Software, req.Installer.Version, req.Installer.Loader, "")
+	}
+	if uploadMsg != "" {
+		handlers.SendJSONError(w, uploadMsg, 400)
 		return
 	}
 	// An older node ignores the field and only extracts - the exact server that
@@ -539,13 +550,20 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if handlers.ProxyInstallers[req.Installer.Type] {
+	// The software, not the type: a proxy template arrives as upload-zip and
+	// must pass the same gate as an online proxy install. A plain upload's
+	// software is never a proxy (validateUploadSoftware).
+	if installing := recordedInstallerType(req.Installer.Type, req.Installer.Software); handlers.ProxyInstallers[installing] {
 		token := ""
 		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil {
 			token = node.Token
 		}
-		if code, msg := handlers.ProxyInstallRefusal(r.Context(), h.state, srv.ServerType, token, req.Installer.Type); code != 0 {
+		if code, msg := handlers.ProxyInstallRefusal(r.Context(), h.state, srv.ServerType, token, installing); code != 0 {
 			handlers.SendJSONError(w, msg, code)
+			return
+		}
+		if tmpl != nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, token, templateProxySince) {
+			handlers.SendJSONError(w, proxyTemplateRefused, http.StatusConflict)
 			return
 		}
 	}
@@ -702,6 +720,33 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			req.Installer.ModrinthProjectSlug = ""
 		}
 
+		// Last of the checks, so no refusal above leaves files on the node. The
+		// template is read again: a share revoked since the first look refuses.
+		if tmpl != nil {
+			t, ok := h.visibleTemplate(w, r, tmpl.ID)
+			if !ok {
+				return
+			}
+			release, locked, err := lockTemplatePush(r.Context(), h.state.Redis, srv.UUID)
+			if err != nil {
+				log.Printf("template install: push lock for server %s: %v", srv.UUID, err)
+				handlers.SendJSONError(w, "Could not copy the template to the node", http.StatusServiceUnavailable)
+				return
+			}
+			if !locked {
+				handlers.SendJSONError(w, templatePushBusy, http.StatusConflict)
+				return
+			}
+			err = templatePush(r.Context(), h.state, node.ID, srv.UUID, subName, t)
+			release()
+			if err != nil {
+				log.Printf("template install: push template %d to server %s/%s: %v", t.ID, srv.UUID, subName, err)
+				// The detail can name Core's storage paths; it stays in the log.
+				handlers.SendJSONError(w, "Could not copy the template to the node", http.StatusBadGateway)
+				return
+			}
+		}
+
 		// Record HOW this sub-server is being installed, now that the pack
 		// branch above has resolved a pack into its concrete versions.
 		//
@@ -835,11 +880,15 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL, false)
 	}
 
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSetup, actorID, "", map[string]interface{}{
+	audit := map[string]interface{}{
 		"sub_server": subName,
 		"installer":  req.Installer.Type,
 		"version":    req.Installer.McVersion,
-	})
+	}
+	if tmpl != nil {
+		audit["template"] = tmpl.ID
+	}
+	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSetup, actorID, "", audit)
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 

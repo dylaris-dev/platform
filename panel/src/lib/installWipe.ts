@@ -37,7 +37,7 @@ export const WIPE_HINTS: Record<WipeToken, string> = {
 export type InstallChange = 'none' | 'runtime' | 'version' | 'modpack' | 'installer';
 
 export interface NextInstall {
-    /** The install tab in use: online | upload | backup | modpack | pack | technic. */
+    /** The install tab in use: online | upload | backup | modpack | pack | technic | template. */
     tab: string;
     /**
      * An archive is selected on the backup tab. Unlike every other tab there is
@@ -61,6 +61,8 @@ export interface NextInstall {
      * pack change; an untouched picker keeps the install.
      */
     technicPicked?: boolean;
+    /** A template is picked. Its files replace the install whatever software it carries. */
+    templatePicked?: boolean;
 }
 
 const tabToInstaller = (tab: string, software?: string): string => {
@@ -97,6 +99,9 @@ export function classifyInstallChange(prev: SubServerInstall | undefined, next: 
     // installed nothing back - the server could no longer start.
     if (next.tab === 'upload') {
         return next.uploadFileSelected ? 'installer' : 'runtime';
+    }
+    if (next.tab === 'template') {
+        return next.templatePicked ? 'installer' : 'runtime';
     }
 
     const nextType = tabToInstaller(next.tab, next.software);

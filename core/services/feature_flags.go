@@ -207,6 +207,16 @@ func (f *FeatureFlags) BedrockAudience(ctx context.Context) string {
 	return "off"
 }
 
+// TemplatesAudience is who is offered Templates: "off" (the default), "admin"
+// or "all", with anything unrecognised read as off.
+func (f *FeatureFlags) TemplatesAudience(ctx context.Context) string {
+	switch v := f.GetString(ctx, TemplatesSettingKey, "off"); v {
+	case "admin", "all":
+		return v
+	}
+	return "off"
+}
+
 // IsBYONEnabled gates the bring-your-own-node multi-tenancy (per-user node
 // enrollment, node ownership scoping, plans/billing). Default = false: the
 // platform ships as today's single-operator panel and the operator opts in.

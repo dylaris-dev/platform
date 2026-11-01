@@ -258,6 +258,23 @@ type Store interface {
 	SetLinkRouteEdition(domain string, java, bedrock bool, key []byte) error
 	GetLinkRouteEdition(domain string) (*LinkRouteEdition, error)
 	ListLinkRouteEditions() ([]LinkRouteEdition, error)
+	// Templates and their shares (postgres_templates.go).
+	CreateTemplate(t *models.Template) error
+	GetTemplate(id int) (*models.Template, error)
+	UpdateTemplate(t *models.Template) error
+	DeleteTemplate(id int) error
+	ListTemplatesVisibleTo(userID string, includeAdmin, includePlatform bool) ([]models.Template, error)
+	CountTemplatesByOwner(ownerID string) (int, error)
+	CountTemplatesOnStorageConnection(connID int) (int, error)
+	SetTemplateSize(id int, size int64) error
+	ListTemplateIDsByOwner(ownerID string) ([]int, error)
+	ListTemplateShares(id int) ([]models.TemplateShare, error)
+	UpsertTemplateShare(id int, userID, level string) error
+	DeleteTemplateShare(id int, userID string) error
+	UpsertOwnerShare(ownerID, userID, level string) error
+	DeleteOwnerShare(ownerID, userID string) error
+	ListOwnerShares(ownerID string) ([]models.TemplateShare, error)
+	TemplateShareLevel(templateID int, userID string) (string, error)
 	GetServerProxyMode(id int) (string, error)
 	SetServerProxyMode(id int, mode string) error
 	ListProxyAutoServers() ([]ProxyAutoServer, error)

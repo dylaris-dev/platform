@@ -44,6 +44,7 @@ func Generate(coreDir string) (string, error) {
 		filepath.Join(coreDir, "handlers", "backup"),
 		filepath.Join(coreDir, "handlers", "stats"),
 		filepath.Join(coreDir, "handlers", "tickets"),
+		filepath.Join(coreDir, "handlers", "templates"),
 		coreDir,
 	})
 	if err != nil {

@@ -11,6 +11,8 @@ import Toast from './Toast';
 import Breadcrumbs from './Breadcrumbs';
 import DownloadProgress from './DownloadProgress';
 import SelectiveDownloadModal from './SelectiveDownloadModal';
+import { useSelectionTree } from './useSelectionTree';
+import { selectedPaths } from './selection';
 
 // Lazy-load the CodeMirror bundle — only pulled in when an edit modal opens.
 const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
@@ -18,7 +20,7 @@ const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor'));
 type PopupMode = 'create' | 'copy' | 'rename' | null;
 type UploadPopupView = 'select' | 'progress' | 'conflict';
 
-const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter, readOnly = false, connectionMode, notify, rootLabel = 'servers', allowReadOnlyDownloads = false }) => {
+const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid, adapter, readOnly = false, connectionMode, notify, rootLabel = 'servers', allowReadOnlyDownloads = false, toolbarActions }) => {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [currentPath, setCurrentPath] = useState(currentServerPath);
   const [error, setError] = useState('');
@@ -84,11 +86,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   // Selective download popup
   const [selectiveDownloadTarget, setSelectiveDownloadTarget] = useState<FileEntry | null>(null);
-  const [selectiveTree, setSelectiveTree] = useState<Record<string, FileEntry[]>>({});
-  const [selectiveExpanded, setSelectiveExpanded] = useState<Set<string>>(new Set());
-  const [selectiveChecked, setSelectiveChecked] = useState<Set<string>>(new Set());
-  const [selectiveAll, setSelectiveAll] = useState(true);
-  const [selectiveLoading, setSelectiveLoading] = useState(false);
+  const selective = useSelectionTree();
   const [selectiveDownloading, setSelectiveDownloading] = useState(false);
 
   // Inline multi-select for the current folder: checked entry names (files or
@@ -145,52 +143,11 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   };
 
   // --- Selective Download Helpers ---
-  const openSelectiveDownload = async (folder: FileEntry) => {
+  const openSelectiveDownload = (folder: FileEntry) => {
     setSelectiveDownloadTarget(folder);
-    setSelectiveAll(true);
-    setSelectiveChecked(new Set());
-    setSelectiveExpanded(new Set());
-    setSelectiveTree({});
     setSelectiveDownloading(false);
-    // Load first level
     const folderPath = currentPath ? `${currentPath}/${folder.name}` : folder.name;
-    setSelectiveLoading(true);
-    const result = await adapter.getFiles(folderPath, serverUuid);
-    if (result.success) {
-      setSelectiveTree({ '': result.files });
-    }
-    setSelectiveLoading(false);
-  };
-
-  const toggleSelectiveExpand = async (relativePath: string) => {
-    const newExpanded = new Set(selectiveExpanded);
-    if (newExpanded.has(relativePath)) {
-      newExpanded.delete(relativePath);
-    } else {
-      newExpanded.add(relativePath);
-      // Lazy load if not yet loaded
-      if (!selectiveTree[relativePath]) {
-        const folderName = selectiveDownloadTarget?.name || '';
-        const basePath = currentPath ? `${currentPath}/${folderName}` : folderName;
-        const fullPath = relativePath ? `${basePath}/${relativePath}` : basePath;
-        const result = await adapter.getFiles(fullPath, serverUuid);
-        if (result.success) {
-          setSelectiveTree(prev => ({ ...prev, [relativePath]: result.files }));
-        }
-      }
-    }
-    setSelectiveExpanded(newExpanded);
-  };
-
-  const toggleSelectiveCheck = (relativePath: string) => {
-    setSelectiveAll(false);
-    const newChecked = new Set(selectiveChecked);
-    if (newChecked.has(relativePath)) {
-      newChecked.delete(relativePath);
-    } else {
-      newChecked.add(relativePath);
-    }
-    setSelectiveChecked(newChecked);
+    void selective.open(rel => adapter.getFiles(rel ? `${folderPath}/${rel}` : folderPath, serverUuid));
   };
 
   const handleSelectiveDownload = async () => {
@@ -204,10 +161,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     try {
       const onProgress = (loaded: number, total: number, filename?: string) =>
         setDownloadProgress(prev => prev ? { ...prev, filename: filename || prev.filename, loaded, total: total || prev.total } : null);
-      if (selectiveAll) {
+      if (selective.selectAll) {
         await adapter.selectiveDownload(basePath, [], true, serverUuid, onProgress);
       } else {
-        await adapter.selectiveDownload(basePath, Array.from(selectiveChecked), false, serverUuid, onProgress);
+        await adapter.selectiveDownload(basePath, selectedPaths(selective.tree, selective.checked, false), false, serverUuid, onProgress);
       }
     } catch (err) {
       console.error('Selective download failed:', err);
@@ -903,6 +860,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               {selectMode ? 'Done' : 'Select'}
             </button>
           )}
+          {toolbarActions}
         </div>
       </div>
 
@@ -1256,19 +1214,17 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       {selectiveDownloadTarget && (
         <SelectiveDownloadModal
           target={selectiveDownloadTarget}
-          tree={selectiveTree}
-          expanded={selectiveExpanded}
-          checked={selectiveChecked}
-          selectAll={selectiveAll}
-          loading={selectiveLoading}
+          tree={selective.tree}
+          expanded={selective.expanded}
+          checked={selective.checked}
+          selectAll={selective.selectAll}
+          loading={selective.loading}
+          error={selective.error}
           downloading={selectiveDownloading}
           onClose={() => setSelectiveDownloadTarget(null)}
-          onToggleSelectAll={() => {
-            setSelectiveAll(!selectiveAll);
-            if (!selectiveAll) setSelectiveChecked(new Set());
-          }}
-          onToggleExpand={toggleSelectiveExpand}
-          onToggleCheck={toggleSelectiveCheck}
+          onToggleSelectAll={selective.toggleSelectAll}
+          onToggleExpand={selective.toggleExpand}
+          onToggleCheck={selective.toggleCheck}
           onDownload={handleSelectiveDownload}
         />
       )}

@@ -31,7 +31,8 @@ func (f *userDeleteWarpStore) GetSetting(string) (string, error) { return "", ni
 func (f *userDeleteWarpStore) GetUserByID(id string) (*models.User, error) {
 	return &models.User{ID: id, Username: "victim", Password: testReauthHash}, nil
 }
-func (f *userDeleteWarpStore) CountServersByOwner(string) (int, error) { return 0, nil }
+func (f *userDeleteWarpStore) CountServersByOwner(string) (int, error)      { return 0, nil }
+func (f *userDeleteWarpStore) ListTemplateIDsByOwner(string) ([]int, error) { return nil, nil }
 func (f *userDeleteWarpStore) ListAllWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
 	return f.keys, nil
 }

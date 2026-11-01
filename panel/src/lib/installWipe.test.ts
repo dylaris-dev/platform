@@ -110,6 +110,12 @@ describe('classifyInstallChange', () => {
         expect(classifyInstallChange(technic, next({ tab: 'technic', technicPicked: true }))).toBe('modpack');
         expect(classifyInstallChange(technic, next({ tab: 'technic', technicPicked: false }))).toBe('runtime');
     });
+    // A template replaces the files whatever software it carries, so a pick is
+    // never a "same paper, same version" runtime save.
+    it('reads a template pick as a full install, the tab without one as runtime', () => {
+        expect(classifyInstallChange(installed(), next({ tab: 'template', templatePicked: true }))).toBe('installer');
+        expect(classifyInstallChange(installed(), next({ tab: 'template', templatePicked: false }))).toBe('runtime');
+    });
     // A save on the upload tab without a new archive used to be an installer
     // change against an "upload-zip" record: the dialog ticked the server jars
     // and nothing installed them back.

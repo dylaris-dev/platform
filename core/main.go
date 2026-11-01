@@ -846,6 +846,9 @@ func main() {
 	autoDelete.SetLinkACL(appState.Gateway, redisClient, aclProvisioner)
 	autoDelete.SetWarpPeers(extras.warpService)
 	autoDelete.SetPackStorage(appState.PackDirsOfUser, appState.DropPackDirs)
+	autoDelete.SetTemplateStorage(appState.TemplatesOfUser, func(ts []models.Template) {
+		appState.DropTemplateFiles(context.Background(), ts)
+	})
 	autoDelete.Start(bgCtx)
 	aclHandshake := redisacl.NewHandshake(
 		&aclHandshakeStore{store: pgStore, flags: appState.FeatureFlags},

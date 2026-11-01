@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { setupPreviewModel } from './setupPreview';
+import { setupPreviewModel, templateSourceLabel } from './setupPreview';
 import type { SubServerInstall } from '@/lib/api/subServerInstalls';
 
 // The servers row describes the ACTIVE sub-server only.
@@ -60,5 +60,11 @@ describe('sidebar click', () => {
         expect(onPreview?.[1]).not.toMatch(/setSwitchTarget|switchSubServer/);
         // The preview's own switch goes through the confirm dialog.
         expect(src).toContain('onSwitch: () => setSwitchTarget(preview.subServer),');
+    });
+});
+
+describe('templateSourceLabel', () => {
+    it('names the template', () => {
+        expect(templateSourceLabel('Survival base')).toBe('From template Survival base');
     });
 });

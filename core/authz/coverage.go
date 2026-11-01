@@ -216,6 +216,17 @@ var ExemptRoutes = map[string]bool{
 	"/api/warp/link-kits/{linkID}":      true, // authed; in-handler owner filter
 	"/api/warp/link-kits/{linkID}/roll": true, // authed; in-handler owner filter, same as the revoke beside it
 
+	// Templates: behind RequireTemplatesAudience; per-template visibility, edit and share rules in the handler.
+	"/api/templates":                                              true, // authed; in-handler template rules
+	"/api/templates/owner-shares":                                 true, // authed; in-handler template rules
+	"/api/templates/upload":                                       true, // authed; in-handler template rules
+	"/api/templates/capture":                                      true, // authed; files.read on the server and the create rule checked in-handler
+	"/api/templates/{id:[0-9]+}":                                  true, // authed; in-handler template rules
+	"/api/templates/{id:[0-9]+}/files":                            true, // authed; in-handler template rules
+	"/api/templates/{id:[0-9]+}/files/text":                       true, // authed; in-handler template rules
+	"/api/templates/{id:[0-9]+}/shares":                           true, // authed; in-handler template rules
+	"/api/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}": true, // authed; in-handler template rules
+
 	// Beam: caller's own servers/ticket/config.
 	"/api/beam/servers": true, // authed; own beam-eligible servers
 	"/api/beam/ticket":  true, // authed; own beam ticket

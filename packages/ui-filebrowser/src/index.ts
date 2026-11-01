@@ -1,4 +1,7 @@
 export { default as FileBrowser } from './FileBrowser';
+export { SelectiveTree } from './SelectiveDownloadModal';
+export { useSelectionTree } from './useSelectionTree';
+export { isPathChecked, toggleSelection, selectedPaths, overPathLimit, MAX_DOWNLOAD_PATHS, TOO_MANY_PATHS_MESSAGE } from './selection';
 export type { FileEntry, FileBrowserAdapter, FileBrowserProps } from './types';
 export { formatBytes, validFilenameRegex, compareNames, editableExtensions, getCopyName } from './utils';
 export { default as CodeMirrorEditor, detectLanguage } from './CodeMirrorEditor';

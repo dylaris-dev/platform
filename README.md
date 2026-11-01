@@ -36,6 +36,7 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 - [Scalability](#scalability)
 - [Operations](#operations)
 - [HTTP API](#http-api)
+- [Templates](#templates)
 - [Beam desktop client](#beam-desktop-client)
 - [Custom tabs setup](CUSTOM-TABS.md)
 - [Development](#development)
@@ -92,6 +93,7 @@ what any serious panel needs.
   manage daily availability alerts and explore safe examples for creation, BYON,
   route-only and authoring without making real changes. See [panel help](PANEL-HELP.md).
 - **Modrinth integration** — in-panel mod browser, install mods into a server, plus a modpack **builder + publisher** (publish your own modpacks to Modrinth).
+- **Templates** - save a server or proxy as a reusable starting point and install it in setup; personal, shared by username, or platform-wide. See [Templates](#templates).
 - **Sub-servers** — several installs on one server slot, switched from the panel. Keep a vanilla world, a modded world and next season's pack side by side without a second slot.
 - **Spark profiler** — start/stop profiling and capture results from the panel, so a lagging world is diagnosed where it runs.
 - **Server lifecycle** — create, start/stop/kill, restart, delete.
@@ -910,6 +912,29 @@ wildcard DNS record and a certificate; direct tabs need nothing.
 > the panel's HttpOnly session cookie. With no
 > `TAB_PROXY_HOST_SUFFIX` there is nowhere safe to serve it, so proxied tabs stay
 > switched off rather than falling back to the panel's origin.
+
+## Templates
+
+A template is a saved server or proxy (Paper, Fabric, Forge, NeoForge, Vanilla, Velocity, Waterfall, BungeeCord) with its files, such as configs and worlds. Installing it in server setup lays the software fresh and the template's files on top. It replaces the removed Library.
+
+**Turning it on (operators).** Settings > Features > Templates sets the audience: off, admins or everyone. The module then appears in the top navigation. Further settings:
+
+- Templates per user (default 10) and size per template (default 512 MB). Both follow the platform limit convention: empty is the default, `unlimited` is no cap, `0` is none.
+- Content policy: `no-jars` (default) keeps every `.jar` out of templates, `uploads` allows any file within the size limit. Under `no-jars` jars are skipped on upload and capture, and the panel lists what was left out.
+- Platform templates visible to users (default off), and "creating needs the `templates.create` role right" (default off).
+- Storage: Core storage, or a storage connection.
+
+**Three levels.**
+
+- Personal: owned by the creator, private until shared. Share by username with `use` (install only) or `edit`, for one template or for all of the owner's templates.
+- Admin: created by admins, visible to admins and holders of the `templates.admin.read` right.
+- Platform: created by admins, visible to every user while "Platform templates visible to users" is on.
+
+**Creating one.** Upload a zip, capture from a running server (pick files and folders in the file picker, or use "Save as template" in the server's Files view), or start empty. Afterwards edit the file tree and text configs in the panel.
+
+**Installing.** Server setup has a Template tab, for servers and proxies. Proxy templates need a node from this release; an older node is refused with a message. While Real player IP is on and not in auto mode, a template install is refused (409), like an upload.
+
+Routes live under `/api/templates`; see [API.md](API.md).
 
 ## Beam desktop client
 

@@ -25,6 +25,7 @@ const (
 	DataSetAttachments   = "ticket-attachments"
 	DataSetTicketBackups = "ticket-backups"
 	DataSetModpacks      = "modpacks"
+	DataSetTemplates     = "templates"
 
 	// ServerBackupsIDPrefix namespaces per-backup_storages-row data sets,
 	// because backups are multi-storage by design (backup_storages rows plus

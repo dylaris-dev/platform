@@ -21,12 +21,14 @@ import (
 // policy. Gated on the global Core leader so under multi-Core only one
 // instance ever processes warnings/deletions per tick.
 type AutoDeleteService struct {
-	packDirsOf   func(string) []string
-	dropPackDirs func([]string)
-	store        store.Store
-	frontendURL  string
-	interval     time.Duration
-	leader       leader.Election
+	packDirsOf    func(string) []string
+	dropPackDirs  func([]string)
+	templatesOf   func(string) []models.Template
+	dropTemplates func([]models.Template)
+	store         store.Store
+	frontendURL   string
+	interval      time.Duration
+	leader        leader.Election
 
 	// Teardown deps, wired after the ACL provisioner and gateway exist. Until
 	// they are, this sweep removes account ROWS and leaves what those accounts
@@ -54,6 +56,12 @@ func (s *AutoDeleteService) SetLeader(l leader.Election) { s.leader = l }
 // removed after. Lives in handlers, which derives the keys.
 func (s *AutoDeleteService) SetPackStorage(dirsOf func(userID string) []string, drop func([]string)) {
 	s.packDirsOf, s.dropPackDirs = dirsOf, drop
+}
+
+// SetTemplateStorage wires the template file cleanup a hard delete needs, the
+// same way as SetPackStorage: read before the row goes, removed after.
+func (s *AutoDeleteService) SetTemplateStorage(of func(userID string) []models.Template, drop func([]models.Template)) {
+	s.templatesOf, s.dropTemplates = of, drop
 }
 
 // SetLinkACL wires what this sweep needs to remove a tenant's infrastructure
@@ -257,12 +265,19 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 			if s.packDirsOf != nil {
 				packDirs = s.packDirsOf(userID)
 			}
+			var templates []models.Template
+			if s.templatesOf != nil {
+				templates = s.templatesOf(userID)
+			}
 			if err := s.store.DeleteUser(userID); err != nil {
 				log.Printf("auto-delete: hard-delete userID=%s: %v", userID, err)
 				continue
 			}
 			if s.dropPackDirs != nil {
 				s.dropPackDirs(packDirs)
+			}
+			if s.dropTemplates != nil {
+				s.dropTemplates(templates)
 			}
 			// No target: the user row is gone and the foreign key refuses a
 			// reference to it. The metadata carries who it was.

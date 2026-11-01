@@ -37,7 +37,8 @@ func (f *deleteRoutesFakeStore) GetUserByID(id string) (*models.User, error) {
 func (f *deleteRoutesFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
 	return f.routes, f.routesErr
 }
-func (f *deleteRoutesFakeStore) DeleteUser(string) error { f.deleted = true; return f.deleteUser }
+func (f *deleteRoutesFakeStore) DeleteUser(string) error                      { f.deleted = true; return f.deleteUser }
+func (f *deleteRoutesFakeStore) ListTemplateIDsByOwner(string) ([]int, error) { return nil, nil }
 
 // Removing an account is on the record now, so the fake has to take the row.
 func (f *deleteRoutesFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }

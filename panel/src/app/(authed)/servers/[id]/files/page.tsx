@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
-import { Terminal, Globe, FolderOpen, Copy, Loader2 } from 'lucide-react';
+import { Terminal, Globe, FolderOpen, Copy, Loader2, LayoutTemplate } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { API_URL } from '@/lib/api';
 import FileBrowserView from '@/views/FileBrowserView';
@@ -11,15 +11,18 @@ import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import { downloadBeamApp } from '@/lib/beamDownload';
 import { isWails } from '@/lib/adapters';
+import { templatesVisible } from '@/lib/templates';
+import CaptureTemplateDialog from '@/components/templates/CaptureTemplateDialog';
 
 export default function ServerFilesPage() {
     const paramId = useRouteId('servers');
-    const { servers, user, fileAccessMode, beamSettings } = useAppData();
+    const { servers, user, fileAccessMode, beamSettings, featureFlags } = useAppData();
     const server = servers.find(s => s.id === Number(paramId));
 
     // Beam-download UI state: lives at page scope so the toast/spinner stay
     // mounted even if the file browser below re-renders.
     const [downloading, setDownloading] = useState(false);
+    const [capturing, setCapturing] = useState(false);
 
     if (!server) return null;
 
@@ -116,7 +119,17 @@ export default function ServerFilesPage() {
                     )}
                 </div>
             )}
-            <FileBrowserView serverUuid={server.uuid} currentServerPath={server.activeSubServer || ''} readOnly={server.role === 'demo'} />
+            <FileBrowserView
+                serverUuid={server.uuid}
+                currentServerPath={server.activeSubServer || ''}
+                readOnly={server.role === 'demo'}
+                toolbarActions={server.role !== 'demo' && templatesVisible(featureFlags.templates, !!user?.isAdmin) && (
+                    <button type="button" onClick={() => setCapturing(true)} className="btn btn-secondary px-3 h-[37px] text-sm" title="Save files of this server as a template" aria-label="Save as template">
+                        <LayoutTemplate size={16} /> <span className="hidden md:inline">Save as template</span>
+                    </button>
+                )}
+            />
+            {capturing && <CaptureTemplateDialog serverId={server.id} onClose={() => setCapturing(false)} />}
 
         </div>
     );

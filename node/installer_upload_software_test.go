@@ -202,3 +202,50 @@ func TestUploadZip_FileBesideFolderNotMoved(t *testing.T) {
 		t.Fatal("world was moved up")
 	}
 }
+
+// A proxy template installs through upload-zip with the proxy as its software.
+func TestUploadSoftwareAcceptsProxies(t *testing.T) {
+	for _, sw := range []string{"velocity", "waterfall", "bungeecord"} {
+		if !uploadSoftware[sw] {
+			t.Errorf("uploadSoftware[%q] = false, want true", sw)
+		}
+	}
+}
+
+// The template's own config and plugins survive; its stale jar does not, and a
+// Waterfall config.yml the template carries is not overwritten by the default
+// listener.
+func TestUploadZip_ProxySoftwareInstalledOverTemplate(t *testing.T) {
+	for _, sw := range []string{"velocity", "waterfall"} {
+		t.Run(sw, func(t *testing.T) {
+			fakePaper(t)
+			data := t.TempDir()
+			dir := filepath.Join(data, "main")
+			os.MkdirAll(dir, 0o755)
+			writeUploadZip(t, dir, map[string]string{
+				"velocity.toml":     "bind = \"0.0.0.0:25577\"",
+				"config.yml":        "listeners:\n- host: 0.0.0.0:25599\n",
+				"plugins/P.jar":     "p",
+				"old-proxy.jar":     "stale",
+				"forwarding.secret": "s",
+			})
+			if _, err := InstallServer(data, "main", InstallerConfig{Type: "upload-zip", Structure: "direct", Software: sw, Version: "3.4.0", ContainerPort: 25565}); err != nil {
+				t.Fatal(err)
+			}
+			if b, _ := os.ReadFile(filepath.Join(dir, "server.jar")); string(b) != "PAPERJAR" {
+				t.Fatalf("server.jar = %q", b)
+			}
+			if exists(filepath.Join(dir, "old-proxy.jar")) {
+				t.Error("old-proxy.jar survived")
+			}
+			for _, kept := range []string{"velocity.toml", "plugins/P.jar", "forwarding.secret"} {
+				if !exists(filepath.Join(dir, kept)) {
+					t.Errorf("%s lost", kept)
+				}
+			}
+			if b, _ := os.ReadFile(filepath.Join(dir, "config.yml")); !strings.Contains(string(b), "25599") {
+				t.Errorf("config.yml replaced: %q", b)
+			}
+		})
+	}
+}

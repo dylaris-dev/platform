@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"dylaris-core/authz"
@@ -84,6 +89,51 @@ type featureSettingsPayload struct {
 	// Bedrock is who may give a route Bedrock (the gateway's Geyser): off,
 	// admin or all. Its own switch, apart from voice chat and extra ports.
 	Bedrock *string `json:"bedrock"`
+	// Templates is who is offered server templates: off, admin or all. The
+	// limits are strings in the platform limit convention ("unlimited", "0" or
+	// a number); the storage connection id is 0 for Core storage.
+	Templates                   *string `json:"templates"`
+	TemplatesMaxPerUser         *string `json:"templatesMaxPerUser"`
+	TemplatesMaxSizeMB          *string `json:"templatesMaxSizeMb"`
+	TemplatesContentPolicy      *string `json:"templatesContentPolicy"`
+	TemplatesPlatformForUsers   *bool   `json:"templatesPlatformForUsers"`
+	TemplatesCreateRequiresRole *bool   `json:"templatesCreateRequiresRole"`
+	TemplatesStorageConnection  *int    `json:"templatesStorageConnectionId"`
+}
+
+// validTemplateLimit accepts what an operator can type into a limit field.
+func validTemplateLimit(v string) bool {
+	if v == services.LimitUnlimited {
+		return true
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	return err == nil && n >= 0
+}
+
+// validateTemplateFields rejects the whole PUT on the first bad Templates value,
+// like the other audience settings, so nothing is half-written.
+func validateTemplateFields(req *featureSettingsPayload) string {
+	if a := req.Templates; a != nil && *a != "off" && *a != "admin" && *a != "all" {
+		return "templates must be off, admin or all"
+	}
+	if v := req.TemplatesMaxPerUser; v != nil && !validTemplateLimit(*v) {
+		return "templatesMaxPerUser must be unlimited or a number of 0 or more"
+	}
+	if v := req.TemplatesMaxSizeMB; v != nil && !validTemplateLimit(*v) {
+		return "templatesMaxSizeMb must be unlimited or a number of 0 or more"
+	}
+	if v := req.TemplatesMaxSizeMB; v != nil && *v != services.LimitUnlimited {
+		if n, _ := strconv.ParseInt(*v, 10, 64); n > services.TemplatesMaxSizeMBCap {
+			return fmt.Sprintf("templatesMaxSizeMb must be at most %d (1 TiB) or unlimited", services.TemplatesMaxSizeMBCap)
+		}
+	}
+	if v := req.TemplatesContentPolicy; v != nil && *v != services.TemplatePolicyNoJars && *v != services.TemplatePolicyUploads {
+		return "templatesContentPolicy must be no-jars or uploads"
+	}
+	if v := req.TemplatesStorageConnection; v != nil && *v < 0 {
+		return "templatesStorageConnectionId must be 0 (Core storage) or a connection id"
+	}
+	return ""
 }
 
 // boolPtr / strPtr fill the GET response, which always states every flag.
@@ -118,6 +168,22 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.ModConfigs = &modConfigs
 	bedrock := h.state.FeatureFlags.BedrockAudience(r.Context())
 	out.Bedrock = &bedrock
+	ts := services.LoadTemplateSettings(r.Context(), h.state.FeatureFlags)
+	out.Templates = &ts.Audience
+	maxPerUser := services.FormatLimitSetting(nil)
+	if ts.MaxPerUser != nil {
+		maxPerUser = strconv.Itoa(*ts.MaxPerUser)
+	}
+	maxSizeMB := services.FormatLimitSetting(nil)
+	if ts.MaxSizeBytes != nil {
+		maxSizeMB = strconv.FormatInt(*ts.MaxSizeBytes>>20, 10)
+	}
+	out.TemplatesMaxPerUser = &maxPerUser
+	out.TemplatesMaxSizeMB = &maxSizeMB
+	out.TemplatesContentPolicy = &ts.ContentPolicy
+	out.TemplatesPlatformForUsers = &ts.PlatformForUsers
+	out.TemplatesCreateRequiresRole = &ts.CreateRequiresRole
+	out.TemplatesStorageConnection = &ts.StorageConnectionID
 	resp := map[string]interface{}{
 		"success":  true,
 		"features": out,
@@ -161,6 +227,24 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	if req.Bedrock != nil && *req.Bedrock != "off" && *req.Bedrock != "admin" && *req.Bedrock != "all" {
 		sendJSONError(w, "bedrock must be off, admin or all", http.StatusBadRequest)
 		return
+	}
+	if msg := validateTemplateFields(&req); msg != "" {
+		sendJSONError(w, msg, http.StatusBadRequest)
+		return
+	}
+	// A setting naming a connection that does not exist would make every new
+	// template fail; storage connections refuse deletion while named here.
+	if id := req.TemplatesStorageConnection; id != nil && *id > 0 {
+		conn, err := h.state.Store.GetStorageConnection(*id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("feature settings: look up storage connection %d: %v", *id, err)
+			sendJSONError(w, "Could not check the storage connection", http.StatusInternalServerError)
+			return
+		}
+		if conn == nil {
+			sendJSONError(w, "templatesStorageConnectionId must be 0 (Core storage) or an existing storage connection", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Auto-move only works while the gateway is routing (it's what keeps a
@@ -287,6 +371,11 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.saveTemplateSettings(r.Context(), &req); err != nil {
+		sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if req.UserAPIKeyAllowedCaps != nil {
 		if err := h.state.Store.SetSetting("apikeys_user_allowed_caps", sanitizeKeyCapList(*req.UserAPIKeyAllowedCaps)); err != nil {
 			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
@@ -327,6 +416,11 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		log.Printf("features: syncing the %s module row failed: %v", ticketsModuleName, err)
 	}
 
+	// Templates: the navbar row follows the audience, enabled and who sees it.
+	if err := syncTemplatesModule(h.state, h.state.FeatureFlags.TemplatesAudience(r.Context())); err != nil {
+		log.Printf("features: syncing the Templates module row failed: %v", err)
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"features": req,
@@ -351,4 +445,50 @@ func sanitizeKeyCapList(raw string) string {
 		out = append(out, p)
 	}
 	return strings.Join(out, ",")
+}
+
+// saveTemplateSettings writes whichever Templates settings the request named.
+func (h *FeatureSettingsHandler) saveTemplateSettings(ctx context.Context, req *featureSettingsPayload) error {
+	type row struct {
+		key, evt string
+		val      *string
+	}
+	flag := func(b *bool) *string {
+		if b == nil {
+			return nil
+		}
+		v := boolStr(*b)
+		return &v
+	}
+	var storage *string
+	if req.TemplatesStorageConnection != nil {
+		v := ""
+		if *req.TemplatesStorageConnection > 0 {
+			v = strconv.Itoa(*req.TemplatesStorageConnection)
+		}
+		storage = &v
+	}
+	rows := []row{
+		{services.TemplatesSettingKey, "templates", req.Templates},
+		{services.TemplatesMaxPerUserKey, "templatesMaxPerUser", req.TemplatesMaxPerUser},
+		{services.TemplatesMaxSizeMBKey, "templatesMaxSizeMb", req.TemplatesMaxSizeMB},
+		{services.TemplatesContentPolicyKey, "templatesContentPolicy", req.TemplatesContentPolicy},
+		{services.TemplatesPlatformForUsersKey, "templatesPlatformForUsers", flag(req.TemplatesPlatformForUsers)},
+		{services.TemplatesCreateRequiresRoleKey, "templatesCreateRequiresRole", flag(req.TemplatesCreateRequiresRole)},
+		{services.TemplatesStorageConnectionKey, "templatesStorageConnectionId", storage},
+	}
+	for _, r := range rows {
+		if r.val == nil {
+			continue
+		}
+		if err := h.state.Store.SetSetting(r.key, *r.val); err != nil {
+			return err
+		}
+		h.state.FeatureFlags.Invalidate(r.key)
+		h.state.Events.Publish(ctx, "features.changed", map[string]interface{}{
+			"feature": r.evt,
+			"enabled": *r.val != "off",
+		})
+	}
+	return nil
 }

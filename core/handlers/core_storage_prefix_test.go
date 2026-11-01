@@ -31,6 +31,7 @@ func TestCoreStorageSubPrefixesAreDistinct(t *testing.T) {
 		"ticket-backups":     CoreStoragePrefixBackups,
 		"server-backups":     CoreStoragePrefixServerBackups,
 		"modpacks":           CoreStoragePrefixModpacks,
+		"templates":          CoreStoragePrefixTemplates,
 	} {
 		if prev, dup := seen[v]; dup {
 			t.Errorf("sub-prefix %q used by both %s and %s; namespaces must not overlap", v, prev, name)

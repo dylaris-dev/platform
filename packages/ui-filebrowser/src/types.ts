@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { BeamConnectionMode } from './connectionMode';
 
 export interface FileEntry {
@@ -47,4 +48,6 @@ export interface FileBrowserProps {
   // sets this (via GetConnectionMode); the web Panel uses Core REST and passes
   // nothing, so no badge renders there.
   connectionMode?: BeamConnectionMode | null;
+  // Extra buttons at the end of the toolbar, from the host app.
+  toolbarActions?: ReactNode;
 }

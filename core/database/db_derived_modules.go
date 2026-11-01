@@ -41,5 +41,15 @@ func applyDerivedModuleRows(db *sql.DB) error {
 		WHERE name = 'Custom Tabs'`); err != nil {
 		return fmt.Errorf("derived modules: re-derive Custom Tabs: %w", err)
 	}
+
+	// Templates derives enabled and audience from feature_templates; an unset
+	// setting is off. 'off' stays admin-only so a later enable starts narrow.
+	if _, err := db.Exec(`UPDATE modules SET
+			is_enabled = COALESCE((SELECT value IN ('admin', 'all') FROM settings WHERE key = 'feature_templates'), FALSE),
+			access_role = CASE WHEN COALESCE((SELECT value FROM settings WHERE key = 'feature_templates'), 'off') = 'all'
+			                   THEN 'all' ELSE 'admin' END
+		WHERE name = 'Templates'`); err != nil {
+		return fmt.Errorf("derived modules: re-derive Templates: %w", err)
+	}
 	return nil
 }

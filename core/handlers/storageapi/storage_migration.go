@@ -31,8 +31,8 @@ const ModpacksCoreStorageDataSetID = "modpacks@core-storage"
 
 // CoreStorageDataSetID names the shared Core file storage AS A WHOLE - every
 // key under its root, which is ticket-attachments/ and ticket-backups/
-// together (plus server-backups/ and modpacks/ for an install that has pointed
-// those at Core storage too).
+// together (plus templates/, and server-backups/ and modpacks/ for an install
+// that has pointed those at Core storage too).
 //
 // It exists because those namespaces do not have a config each: they all read
 // ONE saved Core file storage config, and switching it repoints all of them at
@@ -136,6 +136,7 @@ func (r *StorageDataSetResolver) List(_ context.Context) ([]services.StorageData
 		{ID: CoreStorageDataSetID, Label: "Core file storage (all namespaces)", BackendLabel: coreStorageBackendLabel(cfg, ""), Migratable: true, SupportsTargetConfig: true, Note: combinedCoreStorageNote},
 		{ID: storagemigrate.DataSetAttachments, Label: "Ticket attachments", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixAttachments), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
 		{ID: storagemigrate.DataSetTicketBackups, Label: "Ticket backups", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixBackups), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
+		{ID: storagemigrate.DataSetTemplates, Label: "Templates", BackendLabel: coreStorageBackendLabel(cfg, handlers.CoreStoragePrefixTemplates), Migratable: true, SupportsTargetConfig: false, Note: sharedCoreStorageNote},
 		// Modpacks keep an ad-hoc target: modpack_storage_* is their OWN
 		// settings namespace, so switching it strands nothing else.
 		{ID: storagemigrate.DataSetModpacks, Label: "Modpacks", BackendLabel: r.modpackBackendLabel(), Migratable: true, SupportsTargetConfig: true, Note: modpackOrphanNote},
@@ -234,6 +235,8 @@ func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storag
 		return providerSet(handlers.CoreStoragePrefixAttachments, "Ticket attachments")
 	case storagemigrate.DataSetTicketBackups:
 		return providerSet(handlers.CoreStoragePrefixBackups, "Ticket backups")
+	case storagemigrate.DataSetTemplates:
+		return providerSet(handlers.CoreStoragePrefixTemplates, "Templates")
 
 	case storagemigrate.DataSetModpacks:
 		prov, err := modpack.NewProviderFromSettings(r.state.Store.GetSetting, r.state.BuildCoreStorageProvider)
@@ -329,7 +332,7 @@ func (r *StorageDataSetResolver) sourceCoreStorageConfigFor(id string) (storageS
 			tgtSubPrefix: handlers.CoreStoragePrefixModpacks,
 		}, nil
 	case storagemigrate.DataSetAttachments,
-		storagemigrate.DataSetTicketBackups, ModpacksCoreStorageDataSetID:
+		storagemigrate.DataSetTicketBackups, storagemigrate.DataSetTemplates, ModpacksCoreStorageDataSetID:
 		return storageSourceLocation{}, fmt.Errorf(
 			"data set %q is one namespace inside the shared Core file storage and cannot switch that config on its own (it would strand the others); migrate %q to move the whole Core file storage automatically, or use the manual flow for this namespace",
 			id, CoreStorageDataSetID)
@@ -428,6 +431,8 @@ func (r *StorageDataSetResolver) dataSetLocation(id string) (coreStorageDataSetL
 		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixAttachments}, true
 	case storagemigrate.DataSetTicketBackups:
 		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixBackups}, true
+	case storagemigrate.DataSetTemplates:
+		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixTemplates}, true
 	case ModpacksCoreStorageDataSetID:
 		return coreStorageDataSetLocation{cfg: r.state.LoadCoreStorageConfig(), subPrefix: handlers.CoreStoragePrefixModpacks}, true
 	case storagemigrate.DataSetModpacks:

@@ -42,6 +42,10 @@ export interface FeatureFlags {
     // Whether this caller may give a route Bedrock (Core holds off / admin /
     // all). Optional: an older Core omits it.
     bedrock?: boolean;
+    // Templates audience, RAW (off / admin / all), unlike the booleans above:
+    // resolve it with templatesVisible(), since an admin reaches Templates
+    // even while it is off. Optional: an older Core omits it.
+    templates?: 'off' | 'admin' | 'all';
 }
 
 // Every field is optional on the way OUT: the Features screen is a set of tabs
@@ -86,6 +90,16 @@ export interface FeatureFlagsAdminPayload {
     // Who may give a route Bedrock (the gateway's Geyser). Anything but off
     // keeps the routes that have it running; off pauses them.
     bedrock?: 'off' | 'admin' | 'all';
+    // Templates: who is offered them, and their limits. The two limits are
+    // strings in the LimitField convention: "unlimited" or a number, 0 = none.
+    templates?: 'off' | 'admin' | 'all';
+    templatesMaxPerUser?: string;
+    templatesMaxSizeMb?: string;
+    templatesContentPolicy?: 'no-jars' | 'uploads';
+    templatesPlatformForUsers?: boolean;
+    templatesCreateRequiresRole?: boolean;
+    // 0 = Core storage, otherwise a storage connection id.
+    templatesStorageConnectionId?: number;
 }
 
 export async function getSystemFeatures(): Promise<{ success: boolean; features?: FeatureFlags; message?: string }> {

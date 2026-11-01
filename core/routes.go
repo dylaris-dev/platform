@@ -17,6 +17,7 @@ import (
 	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
+	"dylaris-core/handlers/templates"
 	"dylaris-core/handlers/tickets"
 	"dylaris-core/handlers/users"
 	"dylaris-core/services"
@@ -626,6 +627,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Server installs and pack alerts resolve team access the same way.
 	services.SetPackPATLoader(modrinthPATHandler)
 	appState.InstallMrpackURL = packsHandler.InstallMrpackURL
+	templatesHandler := templates.NewTemplatesHandler(appState)
 	usernameHistoryHandler := users.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := users.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := mods.NewModpackSettingsHandler(appState)
@@ -964,6 +966,33 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetContentText)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.text_edited", packsHandler.SetContentText)))))).Methods("PUT")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.published", packsHandler.PublishModrinth)))))).Methods("POST")
+	// Templates: the audience gate keeps non-admins out while the feature is off or
+	// admin-only; who may see, edit and share each template is decided in the handler.
+	api.HandleFunc("/templates", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.List))).Methods("GET")
+	api.HandleFunc("/templates", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Create))).Methods("POST")
+	// Upload and capture each unpack a whole archive; one instance so the two
+	// share one budget. Add-files has its own, far larger one: the panel sends
+	// a folder upload as one request PER SUBFOLDER, back to back, so a modded
+	// config tree with hundreds of folders is one user action. 1200/min lets
+	// that through and still stops a script looping on the endpoint.
+	templateArchiveLimiter := handlers.NewIPRateLimiter()
+	templateAddFilesLimiter := handlers.NewIPRateLimiter()
+	api.HandleFunc("/templates/upload", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Upload)))).Methods("POST")
+	api.HandleFunc("/templates/capture", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Capture)))).Methods("POST")
+	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.ListOwnerShares))).Methods("GET")
+	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutOwnerShare))).Methods("PUT")
+	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteOwnerShare))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Get))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Update))).Methods("PATCH")
+	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Delete))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Files))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateAddFilesLimiter.Limit(1200, templatesHandler.AddFiles)))).Methods("POST")
+	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteFile))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.GetText))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutText))).Methods("PUT")
+	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.ListShares))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutShare))).Methods("PUT")
+	api.HandleFunc("/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteShare))).Methods("DELETE")
 	// Importing existing Modrinth modpacks: the caller's projects, hiding, import.
 	api.HandleFunc("/me/modrinth/memberships", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ClearModrinthMemberships)))).Methods("DELETE")
 	api.HandleFunc("/me/modrinth/projects", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(packsHandler.ListModrinthProjects)))).Methods("GET")

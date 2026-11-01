@@ -204,3 +204,28 @@ func TestAutoDeleteRemovesThePackObjectsOfAHardDelete(t *testing.T) {
 		})
 	}
 }
+
+// Template rows cascade with a hard delete too; their files are read before
+// the row goes and removed after, exactly like the pack objects.
+func TestAutoDeleteRemovesTheTemplateFilesOfAHardDelete(t *testing.T) {
+	for _, mode := range []string{"hard_delete", "anonymize"} {
+		t.Run(mode, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			fs := &autoDeleteFakeStore{due: []string{"owner-1"}}
+			svc := NewAutoDeleteService(fs, "https://panel.example.test")
+			svc.SetLinkACL(&autoDeleteFakeGateway{store: fs, failFor: map[string]error{}}, rdb, redisacl.NewProvisioner(rdb))
+			var dropped []models.Template
+			svc.SetTemplateStorage(
+				func(id string) []models.Template { return []models.Template{{ID: 9, OwnerID: id}} },
+				func(ts []models.Template) { dropped = append(dropped, ts...) },
+			)
+			svc.processExecutions(context.Background(), policySnapshot{Mode: mode})
+			if mode == "hard_delete" && (len(dropped) != 1 || dropped[0].ID != 9) {
+				t.Errorf("hard delete dropped %v", dropped)
+			}
+			if mode == "anonymize" && len(dropped) != 0 {
+				t.Errorf("anonymize dropped %v; the rows still point at them", dropped)
+			}
+		})
+	}
+}

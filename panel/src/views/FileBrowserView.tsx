@@ -13,9 +13,10 @@ interface FileBrowserViewProps {
   serverUuid?: string;
   // Read-only demo: buttons stay visible but every mutating action is inert.
   readOnly?: boolean;
+  toolbarActions?: React.ReactNode;
 }
 
-const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, serverUuid, readOnly }) => {
+const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, serverUuid, readOnly, toolbarActions }) => {
   // The adapter is fixed per environment — browser stays on HTTP, Wails
   // stays on gRPC. We don't memoize on isWails() because window.go is
   // available before render in Wails (no race).
@@ -64,6 +65,7 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
           readOnly={readOnly}
           connectionMode={connectionMode}
           notify={toast}
+          toolbarActions={toolbarActions}
         />
       </div>
       {devMode && (

@@ -237,6 +237,21 @@ func (s *AppState) RequireUserCanCreateModpacks(next http.HandlerFunc) http.Hand
 	}
 }
 
+// RequireTemplatesAudience gates the Templates API by the feature_templates
+// audience: "all" lets everyone through, "admin" and "off" only admins. Admins
+// are let through while the feature is off so they can set it up and look at it
+// before anyone else is offered it. Everyone else gets 403.
+func (s *AppState) RequireTemplatesAudience(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		isAdmin, _ := r.Context().Value("isAdmin").(bool)
+		if !isAdmin && s.FeatureFlags.TemplatesAudience(r.Context()) != "all" {
+			sendJSONError(w, "Templates are not available to you on this platform.", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // featureDisabledResponse writes the canonical 503 + X-Feature-Disabled +
 // machine-readable error body.
 func featureDisabledResponse(w http.ResponseWriter, feature, msg string) {

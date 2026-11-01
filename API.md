@@ -133,10 +133,10 @@ can still show what exists.
 
 ## At a glance
 
-- **576 routes** in 51 sections: 254 GET, 167 POST, 54 PUT, 40 PATCH, 62 DELETE.
+- **594 routes** in 52 sections: 260 GET, 171 POST, 57 PUT, 41 PATCH, 66 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **376** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **129** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **36** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **376** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **147** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **40** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -179,6 +179,7 @@ can still show what exists.
 - [/api/system](#apisystem) (4)
 - [/api/tabproxy](#apitabproxy) (1)
 - [/api/technic](#apitechnic) (2)
+- [/api/templates](#apitemplates) (18)
 - [/api/ticket-canned-responses](#apiticket-canned-responses) (1)
 - [/api/ticket-categories](#apiticket-categories) (1)
 - [/api/tickets](#apitickets) (15)
@@ -902,6 +903,29 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/technic/pack/{slug}` | session | _no capability_ | Limit | `TechnicHandler.Pack` | one Technic pack and what an install would use: its server pack, its client zip, or a Solder build. |
 | GET | `/api/technic/search` | session | _no capability_ | Limit | `TechnicHandler.Search` | searches Technic Platform modpacks by name through Core's cache. |
+
+## /api/templates
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| GET | `/api/templates` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.List` | the templates the caller may see, each with what they may do with it, plus the limits the panel shows sizes against. |
+| POST | `/api/templates` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Create` | an empty template. |
+| POST | `/api/templates/capture` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.Capture` | makes a template from files of a running server. |
+| GET | `/api/templates/owner-shares` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.ListOwnerShares` | who the caller shares all their personal templates with. |
+| PUT | `/api/templates/owner-shares` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.PutOwnerShare` | {username, level}; shares all of the caller's personal templates, present and future. |
+| DELETE | `/api/templates/owner-shares` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.DeleteOwnerShare` | - |
+| POST | `/api/templates/upload` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.Upload` | multipart meta (JSON, as for create) and file (a zip). |
+| GET | `/api/templates/{id:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Get` | - |
+| PATCH | `/api/templates/{id:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Update` | name, visibility, software and versions. |
+| DELETE | `/api/templates/{id:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Delete` | the files first, then the row, so a storage failure leaves a row that can be deleted again rather than orphaned files. |
+| GET | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.Files` | every file, path relative to the template. |
+| POST | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.AddFiles` | multipart: one or more "file" parts, stored under the folder "dir" ("" = the template root). |
+| DELETE | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.DeleteFile` | a file or a folder. |
+| GET | `/api/templates/{id:[0-9]+}/files/text` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.GetText` | a text file up to 1 MiB. |
+| PUT | `/api/templates/{id:[0-9]+}/files/text` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.PutText` | writes {path, content}. |
+| GET | `/api/templates/{id:[0-9]+}/shares` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.ListShares` | - |
+| PUT | `/api/templates/{id:[0-9]+}/shares` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.PutShare` | {username, level}; sets or changes one share. |
+| DELETE | `/api/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.DeleteShare` | - |
 
 ## /api/ticket-canned-responses
 

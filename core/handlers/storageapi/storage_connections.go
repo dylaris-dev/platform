@@ -240,6 +240,15 @@ func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *h
 		handlers.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
+	// A template's files live on the connection it was created on, and deleting
+	// a template needs that connection; removing it would strand them for good.
+	if inUse, err := h.templatesUse(id); err != nil {
+		handlers.SendJSONError(w, "Could not check which templates use this connection", 500)
+		return
+	} else if inUse != "" {
+		handlers.SendJSONError(w, inUse, http.StatusConflict)
+		return
+	}
 	if err := h.state.Store.DeleteStorageConnection(id); err != nil {
 		handlers.SendJSONError(w, err.Error(), 500)
 		return
@@ -248,6 +257,25 @@ func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *h
 	// storage configured" answer is what the panel gates the create button on.
 	h.state.InvalidateModpackStorage()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// templatesUse names why templates still need connection id, or "" when none do.
+func (h *StorageConnectionsHandler) templatesUse(id int) (string, error) {
+	n, err := h.state.Store.CountTemplatesOnStorageConnection(id)
+	if err != nil {
+		return "", err
+	}
+	if n > 0 {
+		return fmt.Sprintf("%d template(s) store their files on this connection. Delete those templates first.", n), nil
+	}
+	v, err := h.state.Store.GetSetting(services.TemplatesStorageConnectionKey)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if v == strconv.Itoa(id) {
+		return "New templates are stored on this connection. Choose another template storage in the Templates settings first.", nil
+	}
+	return "", nil
 }
 
 // TestConnection POST /api/storage-connections/{id}/test. Loads the saved

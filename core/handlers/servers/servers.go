@@ -104,6 +104,10 @@ type SetupServerRequest struct {
 		// uploaded files, with Version/McVersion/Loader as for an online
 		// install. Empty means "keep the jar in the upload".
 		Software string `json:"software,omitempty"`
+		// TemplateID: installer.type=="template". SetupServer checks the caller
+		// may see it, pushes its files to the node and rewrites Installer to
+		// upload-zip with the template's software (template_install.go).
+		TemplateID int `json:"templateId,omitempty"`
 	} `json:"installer"`
 }
 

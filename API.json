@@ -5156,6 +5156,168 @@
     },
     {
       "method": "GET",
+      "path": "/api/templates",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.List",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/templates",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Create",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/templates/capture",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Capture",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/templates/owner-shares",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.DeleteOwnerShare",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/templates/owner-shares",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.ListOwnerShares",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/templates/owner-shares",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.PutOwnerShare",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/templates/upload",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Upload",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/templates/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Delete",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/templates/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Get",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/templates/{id:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Update",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/templates/{id:[0-9]+}/files",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.DeleteFile",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/templates/{id:[0-9]+}/files",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.Files",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/templates/{id:[0-9]+}/files",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.AddFiles",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/templates/{id:[0-9]+}/files/text",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.GetText",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/templates/{id:[0-9]+}/files/text",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.PutText",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/templates/{id:[0-9]+}/shares",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.ListShares",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/templates/{id:[0-9]+}/shares",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.PutShare",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.DeleteShare",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/ticket-canned-responses",
       "auth": "session",
       "authorization": "no capability",
@@ -5736,10 +5898,10 @@
     }
   ],
   "counts": {
-    "total": 577,
+    "total": 595,
     "byAuth": {
       "none": 30,
-      "session": 529,
+      "session": 547,
       "user API key": 10,
       "warp key": 8
     },
@@ -5785,6 +5947,7 @@
       "system": 4,
       "tabproxy": 1,
       "technic": 2,
+      "templates": 18,
       "ticket-canned-responses": 1,
       "ticket-categories": 1,
       "tickets": 15,

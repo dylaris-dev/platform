@@ -12,6 +12,8 @@ import BackupImportSection from './BackupImportSection';
 import ModpackPicker from './ModpackPicker';
 import PackPicker from './PackPicker';
 import TechnicPicker from './TechnicPicker';
+import TemplatePicker, { type TemplateSelection } from './TemplatePicker';
+import type { InstallTab } from './installTarget';
 import RouteDomainPicker, { DomainAvailability } from '@/components/RouteDomainPicker';
 
 function sanitizeName(raw: string): string {
@@ -34,14 +36,18 @@ interface SetupNewWizardProps {
     onFlagsChange: (flags: string) => void;
     ramMB: number;
     // Install tab
-    installTab: 'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic';
-    onInstallTabChange: (tab: 'online' | 'upload' | 'backup' | 'modpack' | 'pack' | 'technic') => void;
+    installTab: InstallTab;
+    onInstallTabChange: (tab: InstallTab) => void;
     modpackSelection?: import('@/views/setup/ModpackPicker').ModpackSelection | null;
     onModpackSelect?: (s: import('@/views/setup/ModpackPicker').ModpackSelection | null) => void;
     packSelection?: import('@/views/setup/PackPicker').PackSelection | null;
     onPackSelect?: (s: import('@/views/setup/PackPicker').PackSelection | null) => void;
     technicSelection?: import('@/views/setup/technic').TechnicSelection | null;
     onTechnicSelect?: (s: import('@/views/setup/technic').TechnicSelection | null) => void;
+    /** The Template tab is offered only when the caller may use templates. */
+    templatesEnabled?: boolean;
+    templateSelection?: TemplateSelection | null;
+    onTemplateSelect?: (s: TemplateSelection | null) => void;
     // Server type
     serverType?: 'game' | 'proxy';
     // Version picker
@@ -223,6 +229,12 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                             className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'online' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Online
                         </button>
+                        {props.templatesEnabled && (
+                            <button type="button" onClick={() => props.onInstallTabChange('template')}
+                                className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'template' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
+                                Template
+                            </button>
+                        )}
                         <button type="button" onClick={() => props.onInstallTabChange('upload')}
                             className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'upload' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
                             Upload / SFTP
@@ -301,6 +313,14 @@ export default function SetupNewWizard(props: SetupNewWizardProps) {
                     <PackPicker
                         selection={props.packSelection ?? null}
                         onSelect={(s) => props.onPackSelect?.(s)}
+                    />
+                )}
+
+                {props.installTab === 'template' && props.templatesEnabled && (
+                    <TemplatePicker
+                        selection={props.templateSelection ?? null}
+                        onSelect={(s) => props.onTemplateSelect?.(s)}
+                        serverType={props.serverType}
                     />
                 )}
 

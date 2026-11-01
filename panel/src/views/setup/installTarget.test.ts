@@ -40,6 +40,8 @@ describe('installTargetMcVersion', () => {
         ['pack without a selection is empty', { tab: 'pack' }, '', false],
         ['technic uses its selection', { tab: 'technic', selectionMcVersion: '1.12.2' }, '1.12.2', false],
         ['backup ignores the pickers', { tab: 'backup' }, '', false],
+        ['template uses its selection', { tab: 'template', selectionMcVersion: '1.21.4' }, '1.21.4', false],
+        ['template without a selection is empty', { tab: 'template' }, '', false],
     ];
     for (const [name, over, version, unknown] of rows) {
         it(name, () => {

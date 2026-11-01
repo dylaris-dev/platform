@@ -35,6 +35,9 @@ export const formatInstallerType = (type?: string) => {
     return type.charAt(0).toUpperCase() + type.slice(1);
 };
 
+/** A picked template, as the setup form names it. */
+export const templateSourceLabel = (name: string) => `From template ${name}`;
+
 /**
  * What the read-only Setup form shows for the active sub-server or a previewed one.
  *

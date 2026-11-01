@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01
+
+### Features
+- Templates: save a server or proxy (from a zip, from a running server, or empty), edit its files, share it by
+  username and install it in setup. Turn it on under Settings > Features. `core` `panel`
+- Limits per user and per template, a no-jars content policy (default) and a storage choice
+  (Core storage or a storage connection) are set in the same place. `core` `panel`
+- Proxy templates install only on a node from this release; older nodes are refused with a message. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Files view selective download: unticking one entry under Select All keeps the others, a ticked
+  folder shows its contents ticked, and selections over 200 paths are refused with a message. `panel`
+
 ## 2026.10.31.3
 
 ### Features

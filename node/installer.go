@@ -202,8 +202,10 @@ func installServer(serverDataPath, subServerName string, config InstallerConfig)
 }
 
 // uploadSoftware is what may be installed over an upload: the plain server
-// installers, never another source such as a URL import.
-var uploadSoftware = map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true, "neoforge": true}
+// installers, never another source such as a URL import. The proxies are here
+// for proxy templates, which Core sends as upload-zip with the proxy as software.
+var uploadSoftware = map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true, "neoforge": true,
+	"velocity": true, "waterfall": true, "bungeecord": true}
 
 // installUploadSoftware installs the chosen server software over uploaded
 // files. Worlds, plugins, mods and configs stay; the jars in the top folder and

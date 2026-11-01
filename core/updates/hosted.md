@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01
+
+### Features
+- Templates: save a server or proxy as a reusable starting point, from a zip, from a running server
+  or empty, then edit it, share it by username and install it in server setup.
+- Templates hold no jar files by default; they are skipped and listed when you upload or save one.
+- Proxy templates need your node to be up to date. BYON nodes update themselves (Watchtower), so
+  they work once your node has picked up this release.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Selecting files to download: unticking one entry under Select All keeps the others, a ticked
+  folder shows its contents ticked, and selections over 200 paths are refused with a message.
+
 ## 2026.10.31.3
 
 ### Features

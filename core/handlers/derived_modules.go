@@ -4,6 +4,9 @@ package handlers
 // name on every boot and an operator can reorder but not rename it.
 const ticketsModuleName = "Tickets"
 
+// templatesModuleName is the Templates navbar row.
+const templatesModuleName = "Templates"
+
 // A module row's is_enabled follows the feature flag that owns it.
 //
 // There used to be three different wirings for the same idea. Modpacks and
@@ -40,5 +43,39 @@ func syncModuleEnabled(state *AppState, name string, on bool) error {
 	// means the platform has not finished starting. Creating it here would race
 	// that seed and could duplicate the row, and the boot re-derive will put it
 	// right anyway.
+	return nil
+}
+
+// syncTemplatesModule derives the Templates row from the feature_templates
+// audience, the way Modpacks does: enabled unless off, admin-only while the
+// audience is admin. Position stays the operator's. A missing row is left to
+// the boot seed, as in syncModuleEnabled.
+func syncTemplatesModule(state *AppState, audience string) error {
+	if state == nil || state.Store == nil {
+		return nil
+	}
+	on := audience != "off"
+	role := "all"
+	if audience != "all" {
+		role = "admin"
+	}
+	modules, err := state.Store.ListModules()
+	if err != nil {
+		return err
+	}
+	for _, m := range modules {
+		if m.Name != templatesModuleName {
+			continue
+		}
+		if m.IsEnabled != on {
+			if err := state.Store.UpdateModuleStatus(m.ID, on); err != nil {
+				return err
+			}
+		}
+		if m.AccessRole != role {
+			return state.Store.SetModuleAccessRole(m.ID, role)
+		}
+		return nil
+	}
 	return nil
 }

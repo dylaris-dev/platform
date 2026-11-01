@@ -31,7 +31,17 @@ type connFakeStore struct {
 	// secret, which is the case with nothing to guard.
 	existing    *models.StorageConnection
 	existingErr error
+
+	// templatesOn is the template count per connection; settings is the
+	// settings table, for templates_storage_connection_id.
+	templatesOn map[int]int
+	settings    map[string]string
 }
+
+func (f *connFakeStore) CountTemplatesOnStorageConnection(id int) (int, error) {
+	return f.templatesOn[id], nil
+}
+func (f *connFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
 
 func (f *connFakeStore) GetStorageConnection(id int) (*models.StorageConnection, error) {
 	if f.existingErr != nil {
@@ -194,5 +204,39 @@ func TestTestConnection_InvalidID(t *testing.T) {
 
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("TestConnection status = %d, want 400 for a non-numeric id", rw.Code)
+	}
+}
+
+// A connection templates still use is refused; deleting it would leave those
+// templates with files nothing can reach or delete.
+func TestDeleteConnection_RefusedWhileTemplatesUseIt(t *testing.T) {
+	tests := []struct {
+		name        string
+		templatesOn map[int]int
+		setting     string
+		want        int
+	}{
+		{"unused", nil, "", http.StatusOK},
+		{"another connection is used", map[int]int{4: 2}, "4", http.StatusOK},
+		{"a template is stored on it", map[int]int{3: 1}, "", http.StatusConflict},
+		{"new templates go to it", nil, "3", http.StatusConflict},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &connFakeStore{templatesOn: tc.templatesOn, settings: map[string]string{"templates_storage_connection_id": tc.setting}}
+			h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+			rw := httptest.NewRecorder()
+			req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/storage-connections/3", nil), map[string]string{"id": "3"})
+			h.DeleteConnection(rw, req)
+			if rw.Code != tc.want {
+				t.Fatalf("status = %d, want %d (%s)", rw.Code, tc.want, rw.Body.String())
+			}
+			if wantDeleted := tc.want == http.StatusOK; (fs.deleted == 1) != wantDeleted {
+				t.Errorf("deleted %d times, want deleted = %v", fs.deleted, wantDeleted)
+			}
+			if tc.want == http.StatusConflict && !bytes.Contains(rw.Body.Bytes(), []byte("emplate")) {
+				t.Errorf("409 body %s does not name templates", rw.Body.String())
+			}
+		})
 	}
 }

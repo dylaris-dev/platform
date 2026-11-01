@@ -31,7 +31,8 @@ func (f *deleteUserFakeStore) GetUserByID(id string) (*models.User, error) {
 	return &models.User{ID: id, Username: "customer", Email: "customer@example.test", Password: testReauthHash}, nil
 }
 
-func (f *deleteUserFakeStore) DeleteUser(string) error { return f.deleteErr }
+func (f *deleteUserFakeStore) DeleteUser(string) error                      { return f.deleteErr }
+func (f *deleteUserFakeStore) ListTemplateIDsByOwner(string) ([]int, error) { return nil, nil }
 
 // The account teardown now asks these before it destroys anything, so the fake
 // has to answer them. Zero and empty: this test is about the message DeleteUser
