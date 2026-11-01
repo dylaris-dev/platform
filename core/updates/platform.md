@@ -15,6 +15,8 @@ Newest release first. The format is fixed and checked in CI - see the
   you saved still wins. `core` `panel`
 - Each node can set the address players use for its extra ports, which the voice chat preset writes instead of the
   public IP, and editing a UDP port can turn the voice preset on or off. `core` `panel`
+- Settings > Users shows the storage targets a user connected themselves (bucket, prefix, what uses them, never
+  the keys), and an admin can delete one that nothing uses. `core` `panel`
 
 ### Breaking
 - Core refuses to start with an empty `REDIS_PASSWORD`. Set it to the password of the Redis admin user; a throwaway
@@ -25,7 +27,8 @@ Newest release first. The format is fixed and checked in CI - see the
   (`docker compose logs core | grep 'SETUP CODE'`). Before, whoever reached `/setup` first got it. `core` `panel`
 
 ### Fixes
-- Nothing.
+- The template file browser marks Modrinth references and no longer offers to open, rename or copy them, which
+  failed with an error before. `panel`
 
 ## 2026.11.01.5
 

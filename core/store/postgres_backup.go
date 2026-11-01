@@ -304,6 +304,18 @@ func (s *PostgresStore) BackupStorageInUse(id int) (bool, error) {
 	return inUse, err
 }
 
+// BackupStorageUsage counts what names the storage, per kind.
+func (s *PostgresStore) BackupStorageUsage(id int) (models.BackupStorageUsage, error) {
+	var u models.BackupStorageUsage
+	err := s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM backup_jobs WHERE storage_id = $1),
+		(SELECT COUNT(*) FROM backup_runs WHERE storage_id = $1),
+		(SELECT COUNT(*) FROM templates WHERE backup_storage_id = $1),
+		(SELECT COUNT(*) FROM user_storage_prefs WHERE backups_storage_id = $1 OR templates_storage_id = $1)`, id).
+		Scan(&u.Jobs, &u.Runs, &u.Templates, &u.Prefs)
+	return u, err
+}
+
 // ───────────── Jobs ─────────────
 
 func (s *PostgresStore) scanJob(row interface{ Scan(...interface{}) error }) (*models.BackupJob, error) {

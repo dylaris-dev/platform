@@ -6,6 +6,10 @@ export interface FileEntry {
   is_dir: boolean;
   size: number;
   path?: string;
+  // Set by a host for an entry that is listed but has no bytes to open, such as
+  // a reference downloaded elsewhere. The label is shown as a badge; the entry
+  // cannot be opened, renamed, copied or downloaded, only deleted.
+  tag?: string;
 }
 
 export interface FileBrowserAdapter {

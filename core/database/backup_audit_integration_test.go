@@ -61,6 +61,26 @@ func TestIntegrationBackupStorageInUse(t *testing.T) {
 	}
 }
 
+// The admin view counts what names a storage, per kind.
+func TestIntegrationBackupStorageUsageCounts(t *testing.T) {
+	db := freshSchemaDB(t)
+	st := store.NewPostgresStore(db)
+	sid, err := st.CreateBackupStorage(&models.BackupStorage{Name: "s", Provider: "shared", Config: json.RawMessage(`{"basePath":"/b"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u, err := st.BackupStorageUsage(sid); err != nil || u != (models.BackupStorageUsage{}) {
+		t.Fatalf("fresh storage usage=%+v err=%v", u, err)
+	}
+	f := newFixture(t, st)
+	if _, err := st.CreateBackupJob(&models.BackupJob{ServerID: f.server.ID, Name: "j", Schedule: "every 1d", RetentionCount: 3, StorageID: &sid, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := st.BackupStorageUsage(sid); err != nil || u != (models.BackupStorageUsage{Jobs: 1}) {
+		t.Fatalf("usage with one job=%+v err=%v", u, err)
+	}
+}
+
 // A default storage also holds the archives of jobs that name no storage.
 func TestIntegrationTheDefaultStorageIsInUseByJobsThatNameNone(t *testing.T) {
 	db := freshSchemaDB(t)

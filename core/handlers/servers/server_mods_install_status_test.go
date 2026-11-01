@@ -3,6 +3,8 @@ package servers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,9 +119,16 @@ func TestInstallReplyCarriesTheRecordedStatus(t *testing.T) {
 // A dispatch that fails leaves a row the node never heard about; it must read as
 // failed, not sit at installing (or installed) forever.
 func TestInstallMarksTheRowFailedWhenDispatchFails(t *testing.T) {
-	m := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: m.Addr()})
-	m.Close()
+	// A dialer that always fails rather than a closed miniredis: a parallel
+	// test can be handed that freed port and answer the dispatch.
+	rdb := redis.NewClient(&redis.Options{
+		Addr:       "redis.invalid:6379",
+		MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("dial refused by the test")
+		},
+	})
+	t.Cleanup(func() { rdb.Close() })
 	fs := &installStatusFakeStore{}
 	h := &ServerModsHandler{state: &handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)}}
 

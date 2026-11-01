@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-    formatTemplateSize, groupTemplates, templateCap, limitFromSetting, limitToSetting, softwareVersionLabel, templateInstallPayload, templatesVisible, templateModrinthTarget,
+    formatTemplateSize, groupTemplates, templateCap, limitFromSetting, limitToSetting, softwareVersionLabel, templateInstallPayload, templatesVisible, templateModrinthTarget, templateFolderEntries,
 } from './templates';
-import type { Template } from './api/templates';
+import type { Template, TemplateFile } from './api/templates';
 
 const me = '11111111-1111-1111-1111-111111111111';
 const other = '22222222-2222-2222-2222-222222222222';
@@ -123,5 +123,29 @@ describe('templateModrinthTarget', () => {
     it('has nothing for vanilla or unset software', () => {
         expect(templateModrinthTarget('vanilla')).toBeNull();
         expect(templateModrinthTarget('  ')).toBeNull();
+    });
+});
+
+describe('templateFolderEntries', () => {
+    const files: TemplateFile[] = [
+        { name: 'server.properties', is_dir: false, size: 10 },
+        { name: 'mods/a.jar', is_dir: false, size: 5, modrinth: { id: 1, projectId: 'P', versionId: 'V' } },
+        { name: 'mods/b.jar', is_dir: false, size: 7 },
+        { name: 'mods/cfg/x.toml', is_dir: false, size: 3 },
+    ];
+
+    it('tags a Modrinth reference and nothing else', () => {
+        expect(templateFolderEntries(files, 'mods')).toEqual([
+            { name: 'a.jar', is_dir: false, size: 5, tag: 'Modrinth' },
+            { name: 'b.jar', is_dir: false, size: 7 },
+            { name: 'cfg', is_dir: true, size: 3 },
+        ]);
+    });
+
+    it('does not tag the folder holding a reference', () => {
+        expect(templateFolderEntries(files, '')).toEqual([
+            { name: 'server.properties', is_dir: false, size: 10 },
+            { name: 'mods', is_dir: true, size: 15 },
+        ]);
     });
 });

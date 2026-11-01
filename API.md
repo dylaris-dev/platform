@@ -133,14 +133,14 @@ can still show what exists.
 
 ## At a glance
 
-- **599 routes** in 52 sections: 262 GET, 172 POST, 58 PUT, 41 PATCH, 67 DELETE.
+- **601 routes** in 52 sections: 263 GET, 172 POST, 58 PUT, 41 PATCH, 68 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **378** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **150** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **380** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **150** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **41** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (135)
+- [/api/admin](#apiadmin) (137)
 - [/api/auth](#apiauth) (23)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -321,6 +321,8 @@ can still show what exists.
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/panel-role` | session | `panelroles.write` | - | `UserHandler.SetUserPanelRoleHandler` | Assigns (panelRoleId) or clears (panelRoleId=null) the user's level-1 panel role and their per-user panel cap grant/deny overrides. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/permissions` | session | `users.write` | - | `UserHandler.SetUserPermissionsHandler` | SetUserPermissions PUT /api/admin/users/{id}/permissions Sets per-user capability flags. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/role` | session | `users.write` | - | `UserHandler.SetUserRoleHandler` | SetUserRole PUT /api/admin/users/{id}/role Valid roles: "user", "support", "admin". |
+| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets` | session | `users.read` | - | `BackupHandler.AdminListUserStorages` | a user's own storage targets, with what still uses each one. |
+| DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets/{storageId:[0-9]+}` | session | `users.write` | - | `BackupHandler.AdminDeleteUserStorage` | Refused while anything still names the target, exactly as the user's own delete is, and for the same reason: the reference would fall back to the platform storage. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/username` | session | `users.write` | - | `UsernameHistoryHandler.AdminRename` | Body: {"username": "newname"} — bypasses cooldown + platform toggle. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/username-history` | session | `users.read` | - | `UsernameHistoryHandler.Admin` | Gated at the route with RequireCap("users.read"); admin short-circuits. |
 | GET | `/api/admin/voice-permissions` | session | `settings.read` | - | `GatewayHandler.ListVoicePermissions` | every scope row, plus the global setting they override. |

@@ -1228,6 +1228,26 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets",
+      "auth": "session",
+      "authorization": "users.read",
+      "description": "a user's own storage targets, with what still uses each one.",
+      "handler": "BackupHandler.AdminListUserStorages",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets/{storageId:[0-9]+}",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "Refused while anything still names the target, exactly as the user's own delete is, and for the same reason: the reference would fall back to the platform storage.",
+      "handler": "BackupHandler.AdminDeleteUserStorage",
+      "group": "admin",
+      "external": false
+    },
+    {
       "method": "PATCH",
       "path": "/api/admin/users/{id:[0-9a-f-]{36}}/username",
       "auth": "session",
@@ -5944,15 +5964,15 @@
     }
   ],
   "counts": {
-    "total": 600,
+    "total": 602,
     "byAuth": {
       "none": 30,
-      "session": 552,
+      "session": 554,
       "user API key": 10,
       "warp key": 8
     },
     "byGroup": {
-      "admin": 135,
+      "admin": 137,
       "auth": 23,
       "authz": 3,
       "avatar": 1,

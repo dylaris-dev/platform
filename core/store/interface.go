@@ -945,6 +945,9 @@ type Store interface {
 	// BackupStorageInUse reports whether runs, jobs, storage preferences or
 	// templates still name the storage.
 	BackupStorageInUse(id int) (bool, error)
+	// BackupStorageUsage counts the jobs, runs, templates and storage choices
+	// that name the storage.
+	BackupStorageUsage(id int) (models.BackupStorageUsage, error)
 	// FailStalePlatformBackupRuns closes runs still "running" after olderThan.
 	FailStalePlatformBackupRuns(olderThan time.Duration) (int64, error)
 	CreatePlatformBackupRun(jobID int, storageID *int) (int, error)

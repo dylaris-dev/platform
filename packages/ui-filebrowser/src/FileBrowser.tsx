@@ -422,6 +422,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   // `file` is the clicked entry itself, so its size is known even for a
   // global-search hit that is not in the current folder's list.
   const openFile = (file: FileEntry) => {
+    if (file.tag) {
+      showToast(`${file.tag}: this entry has no file to open here.`, 'error');
+      return;
+    }
     if (!isOpenableFile(file.name)) {
       showToast("This file type cannot be opened.", 'error');
       return;
@@ -447,7 +451,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
         fetchFiles(parentPath);
       } else if (file.is_dir) {
         fetchFiles(file.path);
-      } else if (await fetchFiles(parentPath) && isOpenableFile(file.name)) {
+      } else if (await fetchFiles(parentPath) && (file.tag || isOpenableFile(file.name))) {
         openFile(file);
       }
       return;
@@ -914,6 +918,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               {renderFileRepresentation(file)}
               <div>
                   <span className="text-lg">{file.name}</span>
+                  {file.tag && <span className="ml-2 align-middle text-xs px-1.5 py-0.5 rounded-md border border-(--accent) bg-(--accent-ghost) text-(--accent-light)">{file.tag}</span>}
                   {file.path && file.path !== file.name && <span className="text-xs text-(--base-07) block">{getTruncatedPath(file.path)}</span>}
               </div>
             </span>
@@ -924,6 +929,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                     <ExternalLink size={18} />
                 </button>
               )}
+              {!file.tag && <>
               <button title="Rename" disabled={picking} onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(file.name); setPopupMode('rename'); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                   <FilePen size={18} />
               </button>
@@ -958,6 +964,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                 <Download size={18} />
               </button>
+              </>}
               <button title="Delete" disabled={picking} onClick={(e) => handleDeleteClick(e, file)} className="p-2 flex items-center justify-center text-(--error) rounded-md transition-colors hover:bg-(--error) hover:text-white disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--error)">
                 <Trash2 size={18} />
               </button>

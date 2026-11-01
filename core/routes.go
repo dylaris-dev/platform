@@ -279,9 +279,13 @@ var requiredCaps = map[string]string{
 	"/api/admin/users/{id:[0-9a-f-]{36}}/username":         "users.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/email":            "users.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":       "panelroles.write",
-	"/api/admin/panel-roles":                               "panelroles.read",
-	"/api/admin/panel-roles/assignments":                   "panelroles.read",
-	"/api/admin/panel-roles/{id:[0-9]+}":                   "panelroles.write",
+	// A user's own storage targets: listing is a user read, removing one a
+	// user write, like the neighbouring per-user admin actions.
+	"/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets":                    "users.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets/{storageId:[0-9]+}": "users.write",
+	"/api/admin/panel-roles":             "panelroles.read",
+	"/api/admin/panel-roles/assignments": "panelroles.read",
+	"/api/admin/panel-roles/{id:[0-9]+}": "panelroles.write",
 
 	// Phase 4 Task 13: nodes / admission / disk-orphans / admin servers (PANEL
 	// nodes.*/servers.*). "/api/nodes" (GET list + POST create share one
@@ -1895,6 +1899,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.delete")(backupHandler.DeleteOwnStorage))).Methods("DELETE")
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.TestOwnStorage))).Methods("POST")
 	api.HandleFunc("/me/storage-prefs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.read")(backupHandler.GetStoragePrefs))).Methods("GET")
+	// An admin's view of a user's own storage targets. Never the credentials.
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/storage-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(backupHandler.AdminListUserStorages))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/storage-targets/{storageId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(backupHandler.AdminDeleteUserStorage))).Methods("DELETE")
 	api.HandleFunc("/me/storage-prefs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.PutStoragePrefs))).Methods("PUT")
 
 	// storage-connections: named, shared, at-rest-encrypted storage configs that

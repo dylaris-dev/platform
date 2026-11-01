@@ -38,13 +38,14 @@ import TrafficAllowanceFields, {
 import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement, type EntitlementResponse } from '@/lib/api/entitlement';
 import { entitlementOf, formatDaysLeft } from '@/lib/entitlementState';
 import { entitlementExplanation } from '@/lib/entitlementText';
-import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard } from 'lucide-react';
+import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard, HardDrive, Loader2 } from 'lucide-react';
 import { SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { reauthDialog } from '@/components/ui/ReauthDialog';
 import HelpTip from '@/components/ui/HelpTip';
 import { useAppData } from '@/lib/AppDataContext';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { adminDeleteUserStorageTarget, adminListUserStorageTargets, storageTargetUsage, type AdminStorageTarget } from '@/lib/api/ownBackupStorage';
 import { fmtDate, fmtDateTime } from '@/lib/time';
 
 interface UsersTabProps {
@@ -126,6 +127,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     // Username-history modal
     const [historyUser, setHistoryUser] = useState<{ id: string; username: string } | null>(null);
+    const [storageUser, setStorageUser] = useState<{ id: string; username: string } | null>(null);
 
     // Billing override modal (BYON lifecycle: status + per-user retention overrides)
     const [billingUser, setBillingUser] = useState<{ id: string; username: string } | null>(null);
@@ -498,6 +500,14 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             title="Username history"
                                         >
                                             <HistoryIcon size={13} />
+                                        </button>
+                                        <button
+                                            onClick={() => setStorageUser({ id: u.id, username: u.username })}
+                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
+                                            title="Own storage targets"
+                                            aria-label={`Own storage targets of ${u.username}`}
+                                        >
+                                            <HardDrive size={13} />
                                         </button>
                                         {(featureFlags.byon || featureFlags.routeOnly) && (
                                             <button
@@ -980,6 +990,10 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                 <UsernameHistoryModal user={historyUser} onClose={() => setHistoryUser(null)} />
             )}
 
+            {storageUser && (
+                <StorageTargetsModal user={storageUser} onClose={() => setStorageUser(null)} />
+            )}
+
             {/* Billing override modal */}
             {billingUser && (
                 <BillingOverrideModal user={billingUser} onClose={() => setBillingUser(null)} />
@@ -1035,6 +1049,104 @@ function UsernameHistoryModal({ user, onClose }: { user: { id: string; username:
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                </div>
+                <div className="modal-footer">
+                    <button type="button" onClick={onClose} className="btn btn-secondary">Close</button>
+                </div>
+            </ModalPanel>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────
+// Own storage targets modal
+// ─────────────────────────────────────────────
+// The S3 targets a user connected under Account > Storage. Core sends no
+// credentials, and refuses a delete while anything still uses the target.
+function StorageTargetsModal({ user, onClose }: { user: { id: string; username: string }; onClose: () => void }) {
+    const [rows, setRows] = useState<AdminStorageTarget[] | null>(null);
+    const [loadError, setLoadError] = useState('');
+    const [deleting, setDeleting] = useState<number | null>(null);
+    const load = React.useCallback(async () => {
+        const res = await adminListUserStorageTargets(user.id);
+        if (res.success) {
+            setRows(res.storages ?? []);
+            setLoadError('');
+        } else {
+            setLoadError(res.message || 'Could not load the storage targets.');
+        }
+    }, [user.id]);
+    useEffect(() => { load(); }, [load]);
+    const remove = async (t: AdminStorageTarget) => {
+        if (!(await confirmDialog({
+            title: 'Delete storage target',
+            message: `Delete "${t.name}" from the account of ${user.username}? Only the connection is removed; the files in the bucket stay where they are.`,
+        }))) return;
+        setDeleting(t.id);
+        try {
+            const res = await adminDeleteUserStorageTarget(user.id, t.id);
+            if (!res.success) {
+                notifyToast(res.message || 'Could not delete the storage target.', false);
+                return;
+            }
+            notifyToast(`Deleted ${t.name}.`, true);
+            await load();
+        } finally {
+            setDeleting(null);
+        }
+    };
+    return (
+        <div className="modal-overlay animate-fade-in" onClick={onClose}>
+            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
+                <div className="modal-header flex justify-between items-center">
+                    <h3 className="modal-title">Own storage targets: {user.username}</h3>
+                    <button onClick={onClose} aria-label="Close" className="p-1 rounded hover:bg-(--base-03) text-(--base-06)">
+                        <X size={16} />
+                    </button>
+                </div>
+                <div className="modal-body max-h-[60vh] overflow-y-auto">
+                    {loadError ? (
+                        <p className="text-sm text-(--error)" role="alert">{loadError}</p>
+                    ) : rows === null ? (
+                        <div className="space-y-1">
+                            {Array.from({ length: 2 }).map((_, i) => (
+                                <div key={i} className="p-2 rounded-md border border-(--base-04) space-y-1.5">
+                                    <SkeletonText width="w-1/2" />
+                                    <SkeletonText width="w-2/3" className="h-2" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : rows.length === 0 ? (
+                        <p className="text-sm text-(--base-06)">This user has connected no storage of their own.</p>
+                    ) : (
+                        <div className="space-y-1">
+                            {rows.map(t => {
+                                const usage = storageTargetUsage(t.usage);
+                                const where = `${t.endpointHost || t.provider} / ${t.bucket}${t.prefix ? `/${t.prefix}` : ''}`;
+                                return (
+                                    <div key={t.id} className="p-2 rounded-md border border-(--base-04) text-xs flex items-start gap-2">
+                                        <div className="min-w-0 flex-1 space-y-0.5">
+                                            <div className="text-sm text-(--base-09) truncate">{t.name}</div>
+                                            <div className="font-mono text-(--base-07) truncate" title={where}>{where}</div>
+                                            <div className="text-(--base-06)">
+                                                Added {fmtDate(t.createdAt)} · {usage ? `In use: ${usage}` : 'Not in use'}
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => remove(t)}
+                                            disabled={deleting !== null || !!usage}
+                                            title={usage ? 'Still in use: the user has to move or delete what uses it first' : `Delete ${t.name}`}
+                                            aria-label={`Delete ${t.name}`}
+                                            className="btn btn-danger btn-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            {deleting === t.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                        </button>
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </div>

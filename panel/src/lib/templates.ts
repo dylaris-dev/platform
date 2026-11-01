@@ -1,6 +1,7 @@
 // Pure helpers for the Templates module.
 
-import type { Template } from '@/lib/api/templates';
+import type { Template, TemplateFile } from '@/lib/api/templates';
+import type { FileEntry } from '@dylaris/ui-filebrowser';
 import type { FeatureFlags } from '@/lib/api/featureFlags';
 
 export interface TemplateGroups {
@@ -89,4 +90,23 @@ export function templateModrinthTarget(software: string): { loader: string; proj
     // Pufferfish is not a Modrinth loader and many Paper plugins do not list purpur; both search as paper.
     if (PLUGIN_SOFTWARE.includes(s)) return { loader: s === 'pufferfish' || s === 'purpur' ? 'paper' : s, projectType: 'plugin', dir: 'plugins' };
     return { loader: s, projectType: 'mod', dir: 'mods' };
+}
+
+/** The entries directly inside prefix of a template's flat file list: a folder
+ *  exists while it holds a file. A Modrinth reference has no stored bytes, so it
+ *  is tagged and the browser offers it for deletion only. */
+export function templateFolderEntries(files: TemplateFile[], prefix: string): FileEntry[] {
+    const names = new Map<string, FileEntry>();
+    for (const f of files) {
+        if (prefix && !f.name.startsWith(prefix + '/')) continue;
+        const rest = prefix ? f.name.slice(prefix.length + 1) : f.name;
+        const name = rest.split('/')[0];
+        if (!name) continue;
+        const isDir = rest.includes('/');
+        const prev = names.get(name);
+        const entry: FileEntry = { name, is_dir: isDir, size: (prev?.size ?? 0) + f.size };
+        if (!isDir && f.modrinth) entry.tag = 'Modrinth';
+        names.set(name, entry);
+    }
+    return [...names.values()];
 }

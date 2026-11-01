@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- In a template's files, mods and plugins added from Modrinth are now marked as such and can only be removed.
+  Opening, renaming or copying them failed with an error before.
+
 ## 2026.11.01.5
 
 ### Features

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ownStorageIncomplete, type OwnStorageInput } from '@/lib/api/ownBackupStorage';
+import { ownStorageIncomplete, storageTargetUsage, type OwnStorageInput } from '@/lib/api/ownBackupStorage';
 
 const full = (over: Partial<OwnStorageInput['config']> = {}): OwnStorageInput => ({
     name: 'Backblaze',
@@ -31,5 +31,14 @@ describe('connecting an account storage', () => {
         // credential re-entry.
         expect(ownStorageIncomplete(full({ secretAccessKey: '' }), false)).toMatch(/secret/i);
         expect(ownStorageIncomplete(full({ secretAccessKey: '' }), true)).toBeNull();
+    });
+});
+
+describe('storageTargetUsage', () => {
+    it('is null when nothing uses the target', () => {
+        expect(storageTargetUsage({ jobs: 0, runs: 0, templates: 0, prefs: 0 })).toBeNull();
+    });
+    it('names each use that is there, singular and plural', () => {
+        expect(storageTargetUsage({ jobs: 1, runs: 3, templates: 0, prefs: 2 })).toBe('1 backup schedule, 3 backups, 2 storage choices');
     });
 });

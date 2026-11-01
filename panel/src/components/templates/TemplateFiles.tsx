@@ -8,7 +8,7 @@ import {
     type SkippedFile, type TemplateFile,
 } from '@/lib/api/templates';
 import { bundleFiles, retryableFailure } from '@/lib/templateBundle';
-import { templateModrinthTarget } from '@/lib/templates';
+import { templateFolderEntries, templateModrinthTarget } from '@/lib/templates';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
 import TemplateModrinthDialog from './TemplateModrinthDialog';
@@ -77,6 +77,8 @@ export default function TemplateFiles({
             if (!src || within(dst, src)) throw new Error('Choose a destination outside the source folder.');
             const rows = (await files()).filter((f) => within(f.name, src));
             if (!rows.length) throw new Error('Nothing to copy.');
+            const ref = rows.find((f) => f.modrinth);
+            if (ref) throw new Error(`${ref.name} is a Modrinth reference and cannot be copied or moved. Remove it and add it again from Modrinth instead.`);
             for (const f of rows) {
                 let content: string;
                 try {
@@ -110,18 +112,7 @@ export default function TemplateFiles({
         return {
             getFiles: async (path) => {
                 try {
-                    const prefix = clean(path);
-                    const names = new Map<string, { name: string; is_dir: boolean; size: number }>();
-                    for (const f of await files()) {
-                        if (prefix && !f.name.startsWith(prefix + '/')) continue;
-                        const rest = prefix ? f.name.slice(prefix.length + 1) : f.name;
-                        const name = rest.split('/')[0];
-                        if (!name) continue;
-                        const isDir = rest.includes('/');
-                        const prev = names.get(name);
-                        names.set(name, { name, is_dir: isDir, size: (prev?.size ?? 0) + f.size });
-                    }
-                    return { success: true, files: [...names.values()] };
+                    return { success: true, files: templateFolderEntries(await files(), clean(path)) };
                 } catch (e) {
                     return { success: false, files: [], message: e instanceof Error ? e.message : 'Could not load the files.' };
                 }
@@ -238,7 +229,7 @@ export default function TemplateFiles({
         <div className="flex flex-col min-h-0 flex-1 gap-3">
             <p className="text-xs text-(--base-06)">
                 Paths are relative to the server folder. Text files up to 1 MB open in the editor; copy, move and
-                download work on text files.
+                download work on text files. Entries marked Modrinth are references the node downloads on install.
             </p>
             <div className="flex-1 min-h-0 overflow-auto">
                 <FileBrowser

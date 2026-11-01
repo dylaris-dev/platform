@@ -183,3 +183,49 @@ export function jobStorageOptions(
         ...own.filter(s => ownAllowed || s.id === current).map(s => ({ id: s.id, label: `Own: ${s.name}` })),
     ];
 }
+
+/** A user's own storage target as an admin sees it: never the credentials. */
+export interface AdminStorageTarget {
+    id: number;
+    name: string;
+    provider: string;
+    endpointHost: string;
+    bucket: string;
+    prefix: string;
+    isDefault: boolean;
+    createdAt: string;
+    /** What still names it. A delete is refused while any count is above zero. */
+    usage: { jobs: number; runs: number; templates: number; prefs: number };
+}
+
+export async function adminListUserStorageTargets(userId: string): Promise<{ success: boolean; storages?: AdminStorageTarget[]; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/users/${userId}/storage-targets`, { headers: getAuthHeader() });
+        return await handleResponse(res);
+    } catch (e) {
+        return handleError(e);
+    }
+}
+
+export async function adminDeleteUserStorageTarget(userId: string, id: number): Promise<{ success: boolean; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/admin/users/${userId}/storage-targets/${id}`, {
+            method: 'DELETE',
+            headers: getAuthHeader(),
+        });
+        return await handleResponse(res);
+    } catch (e) {
+        return handleError(e);
+    }
+}
+
+/** The usage counts as one line, or null when nothing names the target. */
+export function storageTargetUsage(u: AdminStorageTarget['usage']): string | null {
+    const parts = [
+        [u.jobs, 'backup schedule'],
+        [u.runs, 'backup'],
+        [u.templates, 'template'],
+        [u.prefs, 'storage choice'],
+    ].filter(([n]) => (n as number) > 0).map(([n, label]) => `${n} ${label}${n === 1 ? '' : 's'}`);
+    return parts.length ? parts.join(', ') : null;
+}

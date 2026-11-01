@@ -32,6 +32,15 @@ type BackupStorage struct {
 	SecretSet bool `json:"secretSet,omitempty"`
 }
 
+// BackupStorageUsage counts what still names a storage, for the admin view of
+// a user's own targets. A delete is refused while any of them is non-zero.
+type BackupStorageUsage struct {
+	Jobs      int `json:"jobs"`
+	Runs      int `json:"runs"`
+	Templates int `json:"templates"`
+	Prefs     int `json:"prefs"`
+}
+
 // BackupJob describes a recurring or manual backup configuration.
 // Schedule is a free-form string; "manual" disables auto-runs.
 // Otherwise expected formats: "every Nh", "every Nd" (parsed by scheduler).
