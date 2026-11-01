@@ -198,7 +198,7 @@ function runBadgeClass(status: string): string {
 
 export default function ServerBackupsView() {
     const paramId = useRouteId('servers');
-    const { servers, user } = useAppData();
+    const { servers, user, featureFlags } = useAppData();
     const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
     // Own targets are offered only on the caller's own server: Core refuses a
@@ -208,7 +208,9 @@ export default function ServerBackupsView() {
     const [jobs, setJobs] = useState<BackupJob[]>([]);
     const [storages, setStorages] = useState<BackupStorage[]>([]);
     const [ownStorages, setOwnStorages] = useState<OwnBackupStorage[]>([]);
-    const storageOptions = jobStorageOptions(storages, ownStorages);
+    // An older Core omits ownStorage; own storage was always open then.
+    const ownAllowed = featureFlags.ownStorage !== false;
+    const storageOptions = jobStorageOptions(storages, ownStorages, ownAllowed);
     const [runs, setRuns] = useState<Record<number, BackupRun[]>>({});
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -627,7 +629,7 @@ export default function ServerBackupsView() {
             {editingJob && (
                 <JobForm
                     initial={editingJob}
-                    storages={storageOptions}
+                    storages={jobStorageOptions(storages, ownStorages, ownAllowed, editingJob.storageId ?? null)}
                     subServers={subServers}
                     onClose={() => setEditingJob(null)}
                     onSave={handleUpdate}

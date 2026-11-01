@@ -59,7 +59,7 @@ export default function FeaturesTab() {
     // its numbers on blur, and everything else waiting for a save bar - on
     // controls that look identical to each other. All three are dirty states
     // now, and each is committed by the card it lives in.
-    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', bedrock: 'off', templates: 'off', templatesMaxPerUser: '10', templatesMaxSizeMb: '512', templatesMaxSizeMbAdmin: '2048', templatesContentPolicy: 'no-jars', templatesPlatformForUsers: false, templatesCreateRequiresRole: false, templatesStorageConnectionId: 0 });
+    const [platformFlags, setPlatformFlags] = useState<FeatureFlagsAdminPayload>({ tickets: false, modpacks: true, modpackAuthoring: false, autoMove: false, byon: false, routeOnly: false, proxyProtocol: false, voiceChat: false, userApiKeys: false, userApiKeyAllowedCaps: '', modConfigs: 'off', ownStorage: 'all', bedrock: 'off', templates: 'off', templatesMaxPerUser: '10', templatesMaxSizeMb: '512', templatesMaxSizeMbAdmin: '2048', templatesContentPolicy: 'no-jars', templatesPlatformForUsers: false, templatesCreateRequiresRole: false, templatesStorageConnectionId: 0 });
     const [platformSaving, setPlatformSaving] = useState(false);
     const platformSnapshot = useRef<FeatureFlagsAdminPayload | null>(null);
 
@@ -237,7 +237,7 @@ export default function FeaturesTab() {
     // The three groups the one payload is now cut into. Listed here rather than
     // inline so a new flag has exactly one place to be added and cannot end up
     // in no tab at all - which would make it unsavable while looking fine.
-    const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'modConfigs'] as const;
+    const SUBSYSTEM_KEYS = ['tickets', 'modpacks', 'modpackAuthoring', 'modConfigs', 'ownStorage'] as const;
     const INFRA_KEYS = ['autoMove', 'byon', 'routeOnly', 'proxyProtocol', 'voiceChat', 'bedrock'] as const;
     const API_KEY_KEYS = ['userApiKeys', 'userApiKeyAllowedCaps'] as const;
     const TEMPLATE_KEYS = ['templates', 'templatesMaxPerUser', 'templatesMaxSizeMb', 'templatesMaxSizeMbAdmin', 'templatesContentPolicy', 'templatesPlatformForUsers', 'templatesCreateRequiresRole', 'templatesStorageConnectionId'] as const;
@@ -434,6 +434,25 @@ export default function FeaturesTab() {
                             ariaLabel="Who is offered the config editor"
                             value={platformFlags.modConfigs ?? 'off'}
                             onChange={v => editPlatformFlag('modConfigs', v)}
+                            options={[
+                                { id: 'off', label: 'Off' },
+                                { id: 'admin', label: 'Admins' },
+                                { id: 'all', label: 'Everyone' },
+                            ]}
+                        />
+                    </div>
+                </SettingsGroup>
+                <SettingsGroup title="Own storage">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs text-(--base-06) max-w-prose">
+                            Who may connect their own S3-compatible bucket under Account, Storage and send backups and
+                            templates there. Off sends new backups and templates to platform storage; what is already
+                            on an own bucket stays restorable, downloadable and deletable.
+                        </p>
+                        <Segmented
+                            ariaLabel="Who may use their own storage"
+                            value={platformFlags.ownStorage ?? 'all'}
+                            onChange={v => editPlatformFlag('ownStorage', v)}
                             options={[
                                 { id: 'off', label: 'Off' },
                                 { id: 'admin', label: 'Admins' },

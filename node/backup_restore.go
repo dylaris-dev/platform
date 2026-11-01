@@ -37,8 +37,9 @@ type BackupRestoreCommand struct {
 	// backup_transfer.go. Required for every provider this node does not handle
 	// itself (requireCoreTransfer).
 	Download string `json:"download"`
-	// GuardedTransfer: see BackupRunCommand.
-	GuardedTransfer bool `json:"guardedTransfer"`
+	// GuardedTransfer, AllowPrivate: see BackupRunCommand.
+	GuardedTransfer bool     `json:"guardedTransfer"`
+	AllowPrivate    []string `json:"allowPrivate"`
 }
 
 // createStageDir makes the directory a restore extracts into, beside targetDir
@@ -179,7 +180,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	var body io.ReadCloser
 	switch {
 	case cmd.Download == modeDownloadPresigned:
-		body, err = openPresignedRestore(dlCtx, transferClient(cmd.GuardedTransfer), restoreURL, coreRestoreURL(cmd.RestoreID))
+		body, err = openPresignedRestore(dlCtx, transferClient(cmd.GuardedTransfer, cmd.AllowPrivate), restoreURL, coreRestoreURL(cmd.RestoreID))
 	default:
 		body, err = downloadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
 	}

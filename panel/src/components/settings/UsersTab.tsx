@@ -43,6 +43,7 @@ import { SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { reauthDialog } from '@/components/ui/ReauthDialog';
 import HelpTip from '@/components/ui/HelpTip';
+import { useAppData } from '@/lib/AppDataContext';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDate, fmtDateTime } from '@/lib/time';
 
@@ -88,6 +89,7 @@ export function sortUsers(users: User[], sort: UserSort): User[] {
 }
 
 export default function UsersTab({ currentUser }: UsersTabProps) {
+    const { featureFlags } = useAppData();
     // Core asks for the operator's own credential before an action that hands
     // somebody durable access - a takeover of an account, or a grant of power
     // that outlives this sign-in. Resolves null when the operator cancels, so
@@ -497,13 +499,15 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         >
                                             <HistoryIcon size={13} />
                                         </button>
-                                        <button
-                                            onClick={() => setBillingUser({ id: u.id, username: u.username })}
-                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                            title="Billing & retention (BYON)"
-                                        >
-                                            <CreditCard size={13} />
-                                        </button>
+                                        {(featureFlags.byon || featureFlags.routeOnly) && (
+                                            <button
+                                                onClick={() => setBillingUser({ id: u.id, username: u.username })}
+                                                className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
+                                                title="Billing & retention (BYON)"
+                                            >
+                                                <CreditCard size={13} />
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => openSettings(u)}
                                             className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"

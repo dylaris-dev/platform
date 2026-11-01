@@ -129,7 +129,7 @@ var multipartProbeClient = &http.Client{
 // connected: the presigned URLs name the host they typed, so every dial goes
 // through netguard, the same as the S3 client for that storage.
 var tenantMultipartProbeClient = &http.Client{
-	Transport:     &http.Transport{Proxy: nil, DialContext: netguard.Dialer.DialContext},
+	Transport:     &http.Transport{Proxy: nil, DialContext: netguard.TenantDialer.DialContext},
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 

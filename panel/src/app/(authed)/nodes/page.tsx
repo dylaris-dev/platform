@@ -596,7 +596,7 @@ function MyNodesInner() {
                                 onClick={handleMintNodeKey}
                                 disabled={minting || !nameValid || nodesAtCap || suspended}
                                 className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed sm:mt-[22px]"
-                                title={nodesAtCap ? 'You have used every node your plan includes' : undefined}
+                                title={nodesAtCap ? (featureFlags.hosted ? 'You have used every node your plan includes' : 'You have reached the node limit set by the administrator') : undefined}
                             >
                                 <Plus size={14} /> {minting ? 'Creating…' : 'Add a machine'}
                             </button>
@@ -612,9 +612,9 @@ function MyNodesInner() {
                                 <span>
                                     {effectiveNodeLimit === 1
                                         ? <>Your machine below is using the one slot you have. Remove it to set this
-                                          machine up somewhere else, or add another location in the store.</>
+                                          machine up somewhere else, or {featureFlags.store ? 'add another location in the store.' : 'ask an administrator to raise the limit.'}</>
                                         : <>All {effectiveNodeLimit} of your slots are in use. Remove a machine below to
-                                          replace it, or add another location in the store.</>}
+                                          replace it, or {featureFlags.store ? 'add another location in the store.' : 'ask an administrator to raise the limit.'}</>}
                                 </span>
                             </p>
                         )}
@@ -624,7 +624,7 @@ function MyNodesInner() {
                             <div className="border-t border-(--base-03) pt-3 space-y-2">
                                 <div className="mono-label">Overlay keys in use</div>
                                 <p className="text-xs text-(--base-06)">
-                                    Each counts towards your plan whether or not the machine has connected
+                                    Each counts towards your {featureFlags.hosted ? 'plan' : 'node limit'} whether or not the machine has connected
                                     yet. Revoke one you never used to free the slot.
                                 </p>
                                 {nodeKeys.map(k => (

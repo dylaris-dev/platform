@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"dylaris-core/models"
+	"dylaris-core/pkg/netguard"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 	"encoding/json"
@@ -172,4 +173,15 @@ func PrepareNodeStorage(ctx context.Context, rdb *redis.Client, storage *models.
 		return strippedJSON, true, ErrNodeUpdateRequired
 	}
 	return strippedJSON, true, nil
+}
+
+// PrivateAllowFor is the operator's STORAGE_PRIVATE_ALLOW for a guarded
+// transfer on node, or nil. A BYON node gets nil: it sits in its customer's
+// network, where the operator's CIDRs would name the customer's LAN (and
+// would tell the node owner the operator's internal ranges).
+func PrivateAllowFor(node *models.Node) []string {
+	if node == nil || node.Kind() == models.NodeKindBYON {
+		return nil
+	}
+	return netguard.PrivateAllow()
 }

@@ -264,10 +264,9 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                 >
                                     <Package size={20} className="mr-3" /> Modrinth
                                 </GuardedLink>
-                                {/* Unconditional, like API Keys beside it: the route is
-                                    capability-gated at Core and the page says so plainly
-                                    when the grant is missing. The panel holds no list of
-                                    the caller's own capabilities to hide it by. */}
+                                {/* Unconditional, like API Keys beside it: with own
+                                    storage off the page still lists existing targets
+                                    for removal and says why nothing new can be added. */}
                                 <GuardedLink
                                     href="/account/storage"
                                     className="dropdown-item"

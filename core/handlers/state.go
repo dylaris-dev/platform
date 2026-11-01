@@ -188,6 +188,10 @@ type AppState struct {
 	// servers feature — so a self-hosted open-core build with no store ENV
 	// exposes none of it.
 	StoreEnabled bool
+	// Hosted mirrors config.Hosted (DYLARIS_HOSTED): this is the SaaS, not a
+	// self-hosted install. Independent of StoreEnabled on purpose; a self-hoster
+	// may run a store without being the hosted service.
+	Hosted bool
 	// StoreURL is the dylaris.com storefront base URL (e.g. https://dylaris.com).
 	// Used to build the connect-store redirect and to read link status.
 	StoreURL string

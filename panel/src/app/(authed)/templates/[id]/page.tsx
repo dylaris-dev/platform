@@ -26,7 +26,7 @@ const draftOf = (t: Template): Draft => ({ name: t.name, visibility: t.visibilit
 
 export default function TemplateDetailPage() {
     const id = Number(useRouteId('templates'));
-    const { user } = useAppData();
+    const { user, featureFlags } = useAppData();
     const router = useRouter();
     const [t, setT] = useState<Template | null>(null);
     const [maxSize, setMaxSize] = useState<number | null>(null);
@@ -132,7 +132,7 @@ export default function TemplateDetailPage() {
                 <h1 className="text-base font-display font-semibold text-(--base-09) truncate">{t.name}</h1>
                 <Badge variant="neutral">{t.kind}</Badge>
                 <Badge variant="neutral">{t.visibility}</Badge>
-                <Badge variant="neutral">{storageLabel(t.backupStorageId, own)}</Badge>
+                <Badge variant="neutral">{storageLabel(t.backupStorageId, own, !!featureFlags.hosted)}</Badge>
                 {t.ownerId !== user?.id && t.visibility === 'personal' && <span className="text-xs text-(--base-06)">by {t.ownerName || 'unknown'}</span>}
                 <span className="text-xs text-(--base-06) ml-auto">{formatTemplateSize(t.sizeBytes, templateCap(t, maxSize))}</span>
                 <a href={templateDownloadUrl(t.id)} download className="btn btn-secondary btn-sm">

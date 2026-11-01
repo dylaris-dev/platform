@@ -217,6 +217,31 @@ func (f *FeatureFlags) TemplatesAudience(ctx context.Context) string {
 	return "off"
 }
 
+// OwnStorageSettingKey holds who may keep backups and templates on their own S3
+// target: "off", "admin" or "all". Unset is "all", which is how the platform
+// behaved before the switch existed.
+const OwnStorageSettingKey = "feature_own_storage"
+
+// OwnStorageAudience is that setting, with anything unrecognised read as all.
+// A nil f (a caller wired without flags) is also all.
+func (f *FeatureFlags) OwnStorageAudience(ctx context.Context) string {
+	if f == nil {
+		return "all"
+	}
+	switch v := f.GetString(ctx, OwnStorageSettingKey, "all"); v {
+	case "off", "admin":
+		return v
+	}
+	return "all"
+}
+
+// OwnStorageAllowed resolves the audience for one user. It decides where NEW
+// data may go only; data already on an own target stays reachable either way.
+func (f *FeatureFlags) OwnStorageAllowed(ctx context.Context, isAdmin bool) bool {
+	a := f.OwnStorageAudience(ctx)
+	return a == "all" || (a == "admin" && isAdmin)
+}
+
 // IsBYONEnabled gates the bring-your-own-node multi-tenancy (per-user node
 // enrollment, node ownership scoping, plans/billing). Default = false: the
 // platform ships as today's single-operator panel and the operator opts in.

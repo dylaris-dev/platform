@@ -127,10 +127,14 @@ func (h *TemplatesHandler) ownerIsAdmin(t *models.Template, v services.TemplateV
 
 // ownTarget is the caller's own storage a new template of this visibility
 // goes to, nil for Dylaris storage. Only personal templates follow the
-// preference; admin-level and platform ones belong to the platform. It writes
-// the error response itself.
-func (h *TemplatesHandler) ownTarget(w http.ResponseWriter, userID, visibility string) (*int, bool) {
-	if visibility != "personal" || userID == "" {
+// preference; admin-level and platform ones belong to the platform. With own
+// storage switched off for the caller the preference is ignored, not cleared,
+// so it comes back when the operator turns the feature on again. Edits to an
+// EXISTING template keep writing to its recorded own target while off (by
+// decision): its files live there, and splitting them would break it. It
+// writes the error response itself.
+func (h *TemplatesHandler) ownTarget(w http.ResponseWriter, r *http.Request, userID string, isAdmin bool, visibility string) (*int, bool) {
+	if visibility != "personal" || userID == "" || !h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
 		return nil, true
 	}
 	_, own, err := h.state.Store.GetUserStoragePrefs(userID)
@@ -206,9 +210,11 @@ func (h *TemplatesHandler) List(w http.ResponseWriter, r *http.Request) {
 			out = append(out, it)
 		}
 	}
-	_, own, err := h.state.Store.GetUserStoragePrefs(v.UserID)
-	if err != nil {
-		log.Printf("templates: storage prefs of %s: %v", v.UserID, err)
+	var own *int
+	if h.state.FeatureFlags.OwnStorageAllowed(r.Context(), v.IsAdmin) {
+		if _, own, err = h.state.Store.GetUserStoragePrefs(v.UserID); err != nil {
+			log.Printf("templates: storage prefs of %s: %v", v.UserID, err)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"templates":         out,
@@ -293,7 +299,7 @@ func (h *TemplatesHandler) newTemplate(w http.ResponseWriter, r *http.Request, m
 		return nil, s, false
 	}
 	v, _ := h.viewer(r, nil)
-	own, ok := h.ownTarget(w, v.UserID, m.Visibility)
+	own, ok := h.ownTarget(w, r, v.UserID, v.IsAdmin, m.Visibility)
 	if !ok || !h.mayCreate(w, s, v, m.Visibility, own) {
 		return nil, s, false
 	}
@@ -333,7 +339,7 @@ func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateS
 		switch {
 		case own != nil:
 			// The detail stays in the log: it can name the endpoint.
-			msg = "Your own template storage is not usable. Check it under Account > Storage, or switch templates back to Dylaris storage there."
+			msg = "Your own template storage is not usable. Check it under Account > Storage, or switch templates back to platform storage there."
 		case s.StorageConnectionID == 0 && !h.state.CoreStorageConfigured():
 			msg = "Templates need Core file storage. An admin can set it up under Settings > Storage."
 		}
@@ -434,7 +440,7 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		// A shared template must not depend on one tenant's bucket and credentials.
 		if *p.Visibility != "personal" && t.BackupStorageID != nil {
-			handlers.SendJSONError(w, "This template is stored in its owner's own storage. Admin and platform templates must live on Dylaris storage.", http.StatusConflict)
+			handlers.SendJSONError(w, "This template is stored in its owner's own storage. Admin and platform templates must live on platform storage.", http.StatusConflict)
 			return
 		}
 		t.Visibility = *p.Visibility

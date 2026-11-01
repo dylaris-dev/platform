@@ -93,7 +93,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // the first paint of a working install; the flag arrives a moment later and
     // corrects it. Guessing the other way would flash a blocked button at
     // everyone on every load.
-    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, autoMove: false, byon: false, store: false, modpackStorage: true, templates: 'off' });
+    const [featureFlags, setFeatureFlags] = useState<FeatureFlags>({ modpacks: true, modpackAuthoring: false, tickets: false, autoMove: false, byon: false, store: false, hosted: false, modpackStorage: true, templates: 'off' });
     const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
     const [ready, setReady] = useState(false);
     const [apiUnreachable, setApiUnreachable] = useState(false);

@@ -90,6 +90,41 @@ func TestLoadConfig_AcceptsRealSecrets(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_StoragePrivateAllow(t *testing.T) {
+	t.Setenv("JWT_SECRET", "a-real-random-jwt-secret-value")
+	t.Setenv("CLUSTER_SECRET", "a-real-random-cluster-secret-value")
+	for _, tc := range []struct {
+		env     string
+		want    string // prefixes joined by ","
+		wantErr string
+	}{
+		{"", "", ""},
+		{" 192.168.1.10/32 , 10.0.5.0/24 ", "192.168.1.10/32,10.0.5.0/24", ""},
+		{"192.168.1.0/24,192.168.1.10", "", `"192.168.1.10"`},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv("STORAGE_PRIVATE_ALLOW", tc.env)
+			cfg, err := LoadConfig()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), "STORAGE_PRIVATE_ALLOW") || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want one naming STORAGE_PRIVATE_ALLOW and %s", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, p := range cfg.StoragePrivateAllow {
+				got = append(got, p.String())
+			}
+			if strings.Join(got, ",") != tc.want {
+				t.Errorf("StoragePrivateAllow = %v, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestGetSecret_FilePrecedence locks in the Docker/Portainer secrets
 // precedence: <KEY>_FILE (trimmed) wins over the plain <KEY> env var, an
 // unreadable/empty file falls through to the plain env var, and with

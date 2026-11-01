@@ -434,7 +434,7 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 6h"`, 400)
 		return
 	}
-	if h.refuseUnusableStorage(w, serverID, req.StorageID) {
+	if h.refuseUnusableStorage(w, r, serverID, req.StorageID, nil) {
 		return
 	}
 	req.NextRunAt = services.ComputeBackupNextRun(req.Schedule, time.Now())
@@ -457,12 +457,18 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 // another tenant's storage was accepted, listed, enabled, and failed every
 // time it ran. That is the same shape as an unparseable schedule being stored:
 // you find out when you need the backup.
-func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, serverID int, storageID *int) bool {
+//
+// previous is the job's stored storage on an update, nil on create. Pointing a
+// job at an own target is refused while own storage is off for the server's
+// OWNER, unless it already pointed there: an old job stays editable, and its
+// new runs go to platform storage anyway (ResolveNewRunStorage).
+func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, r *http.Request, serverID int, storageID, previous *int) bool {
 	if storageID == nil {
 		return false // no choice made: the resolver picks the default at run time
 	}
 	owner := services.BackupJobOwner(h.state.Store, serverID)
-	if _, err := services.ResolveJobStorage(h.state.Store, storageID, owner); err != nil {
+	bs, err := services.ResolveJobStorage(h.state.Store, storageID, owner)
+	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrForeignBackupStorage):
 			handlers.SendJSONError(w, "That backup storage belongs to another account", 400)
@@ -476,6 +482,11 @@ func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, serverID in
 			log.Printf("backup job storage %d for server %d: %v", *storageID, serverID, err)
 			handlers.SendJSONError(w, "That backup storage could not be used", 400)
 		}
+		return true
+	}
+	unchanged := previous != nil && *previous == *storageID
+	if bs.OwnerID != nil && !unchanged && !services.OwnStorageAllowedFor(r.Context(), h.state.FeatureFlags, h.state.Store, owner) {
+		handlers.SendJSONErrorCode(w, "Own storage is turned off on this platform. Choose a platform storage.", "own_storage_disabled", http.StatusForbidden)
 		return true
 	}
 	return false
@@ -582,7 +593,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 			next.Schedule = s
 		}
 	}
-	if h.refuseUnusableStorage(w, next.ServerID, next.StorageID) {
+	if h.refuseUnusableStorage(w, r, next.ServerID, next.StorageID, job.StorageID) {
 		return
 	}
 	// Re-armed only when WHEN it runs changed. Every edit used to restart the
@@ -875,6 +886,11 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// the field.
 	if backupstorage.TenantEndpoint(storage) {
 		payload["guardedTransfer"] = true
+		// The private networks the operator allowed for users' own storage
+		// (STORAGE_PRIVATE_ALLOW); see PrivateAllowFor for who gets them.
+		if allow := services.PrivateAllowFor(node); len(allow) > 0 {
+			payload["allowPrivate"] = allow
+		}
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
@@ -1105,6 +1121,14 @@ func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, capID str
 	return true
 }
 
+// newRunStorage is where a new run of a job on ownerID's server goes. The
+// own-storage switch is resolved for the OWNER, never for whoever pressed run:
+// it is the owner's data and the owner's bucket.
+func (h *BackupHandler) newRunStorage(ctx context.Context, storageID *int, ownerID string) (*models.BackupStorage, error) {
+	return services.ResolveNewRunStorage(h.state.Store, storageID, ownerID,
+		services.OwnStorageAllowedFor(ctx, h.state.FeatureFlags, h.state.Store, ownerID))
+}
+
 // startBackupRun creates a backup_run row, dispatches a node command, and
 // returns the new run-id. The actual heavy lifting happens on the node; this
 // function returns immediately so the HTTP request stays snappy.
@@ -1118,7 +1142,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// owner's own default, else the platform's. This used to hand-roll two of
 	// the three steps and skip the owner entirely, so a tenant who had connected
 	// their own bucket had it honoured on some paths and ignored on this one.
-	storage, err := services.ResolveJobStorage(h.state.Store, job.StorageID, srv.OwnerID)
+	storage, err := h.newRunStorage(ctx, job.StorageID, srv.OwnerID)
 	if err != nil {
 		if errors.Is(err, services.ErrNoBackupStorage) {
 			return 0, fmt.Errorf("no storage configured - set a default in Settings, Backups first")
@@ -1221,6 +1245,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// the field.
 	if backupstorage.TenantEndpoint(storage) {
 		payload["guardedTransfer"] = true
+		// The private networks the operator allowed for users' own storage
+		// (STORAGE_PRIVATE_ALLOW); see PrivateAllowFor for who gets them.
+		if allow := services.PrivateAllowFor(node); len(allow) > 0 {
+			payload["allowPrivate"] = allow
+		}
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 
 	"dylaris-core/models"
@@ -87,6 +88,42 @@ func ResolveJobStorage(s backupStorageLookup, storageID *int, ownerID string) (*
 		return nil, ErrNoBackupStorage
 	}
 	return bs, nil
+}
+
+// ResolveNewRunStorage is where a backup about to be WRITTEN goes. With own
+// storage switched off for the owner, every own target is passed over for the
+// platform default: the job's, the preference and the own default alike.
+// Archives already written are found through ResolveRunStorage, which records
+// the storage per run and is not affected, so restore, download and delete of
+// data on an own target keep working.
+func ResolveNewRunStorage(s backupStorageLookup, storageID *int, ownerID string, ownAllowed bool) (*models.BackupStorage, error) {
+	if ownAllowed {
+		return ResolveJobStorage(s, storageID, ownerID)
+	}
+	if storageID != nil {
+		bs, err := ResolveJobStorage(s, storageID, ownerID)
+		if err != nil || bs.OwnerID == nil {
+			return bs, err
+		}
+	}
+	return ResolveJobStorage(s, nil, "")
+}
+
+// OwnStorageAllowedFor resolves the own-storage audience for a user who is not
+// necessarily the caller, such as the owner of a server a scheduled backup runs
+// for. A failed lookup under "admin" answers false: the backup then goes to the
+// platform storage rather than not at all.
+func OwnStorageAllowedFor(ctx context.Context, f *FeatureFlags, users interface {
+	GetUserByID(id string) (*models.User, error)
+}, userID string) bool {
+	switch f.OwnStorageAudience(ctx) {
+	case "all":
+		return true
+	case "off":
+		return false
+	}
+	u, err := users.GetUserByID(userID)
+	return err == nil && u != nil && u.IsAdmin
 }
 
 // jobOwnerLookup is the one call needed to turn a job into an owner.

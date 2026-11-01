@@ -18,6 +18,15 @@ func (h *BackupHandler) GetStoragePrefs(w http.ResponseWriter, r *http.Request) 
 		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
+	// With own storage off, new data goes to the platform storage whatever is
+	// saved, so that is what is shown. The saved choice is kept for later.
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if !h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "backupsStorageId": nil, "templatesStorageId": nil,
+		})
+		return
+	}
 	backups, templates, err := h.state.Store.GetUserStoragePrefs(userID)
 	if err != nil {
 		log.Printf("storage prefs for %s: %v", userID, err)
@@ -82,6 +91,11 @@ func (h *BackupHandler) PutStoragePrefs(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if id != nil {
+			// Choosing the platform storage (null) stays allowed, so a user can
+			// still move away from an own target after the switch went off.
+			if h.refuseOwnStorageOff(w, r) {
+				return
+			}
 			bs, err := h.state.Store.GetBackupStorage(*id)
 			// Same 404 for missing and foreign as ownStorageFor: a distinct answer
 			// would confirm that an id exists.

@@ -41,6 +41,20 @@ import (
 // tenant address storage that is not theirs by naming it in a config blob.
 func ownBackupStorageAllowed(provider string) bool { return provider == "s3" }
 
+// refuseOwnStorageOff answers 403 own_storage_disabled when the operator has
+// switched own storage off for the caller, and reports whether it did. Only
+// adding a target and choosing one are refused. Listing, deleting, and
+// updating or testing an existing one stay open: data already on an own target
+// stays reachable, and rotating its credentials writes no new data there.
+func (h *BackupHandler) refuseOwnStorageOff(w http.ResponseWriter, r *http.Request) bool {
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
+		return false
+	}
+	handlers.SendJSONErrorCode(w, "Your administrator has turned off own storage. Existing data stays reachable.", "own_storage_disabled", http.StatusForbidden)
+	return true
+}
+
 // ownStorageFor loads a storage and confirms it belongs to the caller.
 //
 // Not found and belongs-to-somebody-else answer the SAME 404. A distinct 403
@@ -90,6 +104,9 @@ func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request)
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
 		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	if h.refuseOwnStorageOff(w, r) {
 		return
 	}
 	var req models.BackupStorage
@@ -143,6 +160,20 @@ func (h *BackupHandler) syncBackupsPref(userID string, id int, isDefault bool) e
 	return h.state.Store.ClearUserBackupsStoragePrefIf(userID, id)
 }
 
+// clearPrefsNaming returns both of the user's choices that name id to the
+// platform storage. The templates read-then-write cannot race a choice of an
+// own target: it is only called while choosing one is refused.
+func (h *BackupHandler) clearPrefsNaming(userID string, id int) error {
+	if err := h.state.Store.ClearUserBackupsStoragePrefIf(userID, id); err != nil {
+		return err
+	}
+	_, tpl, err := h.state.Store.GetUserStoragePrefs(userID)
+	if err != nil || tpl == nil || *tpl != id {
+		return err
+	}
+	return h.state.Store.SetUserTemplatesStoragePref(userID, nil)
+}
+
 // UpdateOwnStorage PATCH /api/me/backup-storages/{id}
 func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request) {
 	existing, ok := h.ownStorageFor(w, r)
@@ -158,6 +189,11 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	// Marking it default chooses it for backups, which is refused while off;
+	// clearing the flag only moves backups away from it and stays allowed.
+	if body.IsDefault != nil && *body.IsDefault && h.refuseOwnStorageOff(w, r) {
 		return
 	}
 	req := body.BackupStorage
@@ -223,6 +259,17 @@ func (h *BackupHandler) DeleteOwnStorage(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	// With own storage off the choices are ignored and the Storage page shows
+	// none, so a choice naming this target would block the delete with nothing
+	// the user can see to undo. Dropping it first is what they would do anyway.
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	if !h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
+		if err := h.clearPrefsNaming(*bs.OwnerID, bs.ID); err != nil {
+			log.Printf("own storage %d: clear prefs: %v", bs.ID, err)
+			handlers.SendJSONError(w, "Could not remove this storage", http.StatusInternalServerError)
+			return
+		}
+	}
 	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
 			handlers.SendJSONError(w, "Backups, backup schedules, templates or your storage choices still use this storage. Under Account > Storage, choose another storage for backups and templates; then move the schedules, and delete the backups and templates stored in it.", http.StatusConflict)
@@ -250,6 +297,9 @@ func (h *BackupHandler) TestOwnStorage(w http.ResponseWriter, r *http.Request) {
 		// The guard's refusal names the address it resolved, and a tenant can
 		// type any internal name as the endpoint: that would map our network.
 		if strings.Contains(msg, "blocked non-public address") {
+			// The operator, not the tenant, can change this, so the hint goes
+			// to the log with the address it would have to allow.
+			log.Printf("own storage %d: test refused a non-public address; an operator can allow a private network with STORAGE_PRIVATE_ALLOW: %s", bs.ID, msg)
 			msg = "This endpoint resolves to a private or internal address. Use your storage provider's public endpoint."
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": msg})

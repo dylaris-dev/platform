@@ -88,7 +88,10 @@ func (h *HealthHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	components = append(components, h.bedrockComponent(r.Context()))
 	components = append(components, h.storageComponent())
 	components = append(components, h.redisACLComponent(r.Context(), redisUp))
-	components = append(components, h.storefrontComponent(r.Context()))
+	// Self-hosted without a store has no storefront to report on.
+	if h.state.StoreEnabled {
+		components = append(components, h.storefrontComponent(r.Context()))
+	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

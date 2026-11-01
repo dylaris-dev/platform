@@ -12,6 +12,8 @@ import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { useAppData } from '@/lib/AppDataContext';
+import { templatesVisible } from '@/lib/templates';
 
 // A tenant's own S3 targets, and which one backups and templates go to. Under
 // /account/ because the storage belongs to the user rather than to the
@@ -21,7 +23,9 @@ import ModalPanel from '@/components/ui/ModalPanel';
 // The sentences that matter to the reader are on the page, not just here: what
 // lands in their bucket has no size limit from us and is outside their bill, we
 // never delete from it, and switching only affects new data. Each is a
-// consequence they would otherwise have to infer from a billing page.
+// consequence they would otherwise have to infer from a billing page. Bill,
+// allowance and "Dylaris storage" wording is for the SaaS (features.hosted)
+// only; a self-hosted platform has no bill and its own name for the storage.
 
 const emptyForm = (): OwnStorageInput => ({
     name: '',
@@ -29,9 +33,16 @@ const emptyForm = (): OwnStorageInput => ({
 });
 
 export default function StoragePage() {
+    const { featureFlags, user } = useAppData();
+    const hosted = !!featureFlags.hosted;
+    // An older Core does not send it, and own storage was always open then.
+    const ownOff = featureFlags.ownStorage === false;
+    const showTemplates = templatesVisible(featureFlags.templates, !!user?.isAdmin);
+    const platformName = hosted ? 'Dylaris storage' : 'platform storage';
     const [storages, setStorages] = useState<OwnBackupStorage[]>([]);
     const [loading, setLoading] = useState(true);
-    const [denied, setDenied] = useState(false);
+    const [listError, setListError] = useState<string | null>(null);
+    const [noCapability, setNoCapability] = useState(false);
     const [editing, setEditing] = useState<OwnBackupStorage | null>(null);
     const [form, setForm] = useState<OwnStorageInput | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<OwnBackupStorage | null>(null);
@@ -44,9 +55,12 @@ export default function StoragePage() {
 
     const load = useCallback(async () => {
         const [res, pr] = await Promise.all([listOwnBackupStorages(), getStoragePrefs()]);
-        // A capability-less account gets 403 here. Saying so beats an empty list,
-        // which reads as "you have none" and invites the user to try adding one.
-        if (!res.success) setDenied(true);
+        // Saying so beats an empty list, which reads as "you have none" and
+        // invites the user to try adding one.
+        setListError(res.success ? null : res.message || 'Could not load your storage.');
+        // Listing stays open while own storage is off, so a 403 here is always
+        // a missing capability, never own_storage_disabled. Retrying cannot help.
+        setNoCapability(!res.success && res.status === 403);
         setStorages(res.storages || []);
         if (pr.success) {
             setPrefs({ backupsStorageId: pr.backupsStorageId ?? null, templatesStorageId: pr.templatesStorageId ?? null });
@@ -123,36 +137,52 @@ export default function StoragePage() {
                         <div className="min-w-0">
                             <h1 className="text-lg font-medium text-(--base-09)">Storage</h1>
                             <p className="text-sm text-(--base-06) mt-1 max-w-xl">
-                                Connect an S3-compatible bucket of your own, then choose whether your backups
-                                and templates go there or to Dylaris storage.
+                                {ownOff ? 'Your own storage targets.' : <>
+                                    Connect an S3-compatible bucket of your own, then choose whether your backups
+                                    {showTemplates ? ' and templates' : ''} go there or to {platformName}.
+                                </>}
                             </p>
                         </div>
                     </div>
-                    {!denied && (
+                    {!listError && !ownOff && (
                         <button onClick={startCreate} className="btn btn-primary flex items-center gap-2 shrink-0">
                             <Plus size={16} /> Connect storage
                         </button>
                     )}
                 </header>
 
-                {!denied && (
-                    <div className="card p-4 flex items-start gap-2.5">
-                        <ShieldCheck size={16} className="text-(--base-06) mt-0.5 shrink-0" />
+                {ownOff && (
+                    <div className="card p-4 flex items-start gap-2.5" role="status">
+                        <AlertTriangle size={16} className="text-(--warning) mt-0.5 shrink-0" />
                         <p className="text-sm text-(--base-07) leading-relaxed">
-                            Your own targets have no size limit from us and are never billed to you here - you
-                            are already paying whoever hosts them. We also never clean them up: if your account
-                            is suspended, what is in your bucket stays exactly where it is.
+                            Your administrator has turned off own storage. Existing data stays reachable.
+                            New backups{showTemplates ? ' and templates' : ''} go to {platformName}.
                         </p>
                     </div>
                 )}
 
-                {denied ? (
+                {!listError && !ownOff && (
+                    <div className="card p-4 flex items-start gap-2.5">
+                        <ShieldCheck size={16} className="text-(--base-06) mt-0.5 shrink-0" />
+                        <p className="text-sm text-(--base-07) leading-relaxed">
+                            {hosted
+                                ? 'Your own targets have no size limit from us and are never billed to you here - you are already paying whoever hosts them. We also never clean them up: if your account is suspended, what is in your bucket stays exactly where it is.'
+                                : 'Your own targets have no size limit from the platform, and it never cleans them up: what is in your bucket stays exactly where it is.'}
+                        </p>
+                    </div>
+                )}
+
+                {noCapability ? (
                     <div className="card p-5 flex items-start gap-2.5">
                         <AlertTriangle size={16} className="text-(--warning) mt-0.5 shrink-0" />
                         <p className="text-sm text-(--base-07)">
-                            Your account is not allowed to connect its own storage. An administrator grants
-                            this per role.
+                            Your role does not include managing storage targets. Ask an administrator.
                         </p>
+                    </div>
+                ) : listError ? (
+                    <div className="alert alert-error text-sm flex items-center gap-2" role="alert">
+                        <span>{listError}</span>
+                        <button onClick={() => { setLoading(true); load(); }} className="btn btn-secondary text-xs ml-auto">Retry</button>
                     </div>
                 ) : loading ? (
                     <SkeletonList rows={2} />
@@ -160,8 +190,8 @@ export default function StoragePage() {
                     <div className="card p-8 text-center">
                         <p className="text-sm text-(--base-07)">No storage connected.</p>
                         <p className="text-xs text-(--base-06) mt-1.5 max-w-md mx-auto">
-                            Your backups and templates go to Dylaris storage, against your included
-                            allowance.
+                            Your backups{showTemplates ? ' and templates' : ''} go to {platformName}
+                            {hosted ? ', against your included allowance' : ''}.
                         </p>
                     </div>
                 ) : (
@@ -210,13 +240,13 @@ export default function StoragePage() {
                     </ul>
                 )}
 
-                {!denied && !loading && (
+                {!listError && !ownOff && !loading && (
                     <section className="card p-4 space-y-4" aria-labelledby="storage-prefs-title">
                         <div>
                             <h2 id="storage-prefs-title" className="text-sm font-medium text-(--base-09)">Where new data goes</h2>
                             <p className="text-xs text-(--base-06) mt-1">
-                                Switching affects new backups and templates only. What already exists stays
-                                where it was written.
+                                Switching affects new backups{showTemplates ? ' and templates' : ''} only. What
+                                already exists stays where it was written.
                             </p>
                         </div>
                         {prefsError ? (
@@ -231,21 +261,25 @@ export default function StoragePage() {
                                     label="Backups go to"
                                     value={prefs.backupsStorageId}
                                     storages={storages}
+                                    platformLabel={platformName}
                                     saving={savingPref === 'backups'}
                                     disabled={savingPref !== null}
                                     onChange={v => choose('backups', v)}
                                     hint="Used by every backup job that does not name a storage itself."
                                 />
-                                <PrefSelect
-                                    id="pref-templates"
-                                    label="Templates go to"
-                                    value={prefs.templatesStorageId}
-                                    storages={storages}
-                                    saving={savingPref === 'templates'}
-                                    disabled={savingPref !== null}
-                                    onChange={v => choose('templates', v)}
-                                    hint="On your own target the template size and count limits do not apply."
-                                />
+                                {showTemplates && (
+                                    <PrefSelect
+                                        id="pref-templates"
+                                        label="Templates go to"
+                                        value={prefs.templatesStorageId}
+                                        storages={storages}
+                                        platformLabel={platformName}
+                                        saving={savingPref === 'templates'}
+                                        disabled={savingPref !== null}
+                                        onChange={v => choose('templates', v)}
+                                        hint="On your own target the template size and count limits do not apply."
+                                    />
+                                )}
                             </div>
                         )}
                     </section>
@@ -384,12 +418,13 @@ function StorageDialog({
 }
 
 function PrefSelect({
-    id, label, value, storages, saving, disabled, onChange, hint,
+    id, label, value, storages, platformLabel, saving, disabled, onChange, hint,
 }: {
     id: string;
     label: string;
     value: number | null;
     storages: OwnBackupStorage[];
+    platformLabel: string;
     saving: boolean;
     disabled: boolean;
     onChange: (value: string) => void;
@@ -407,7 +442,7 @@ function PrefSelect({
                 disabled={disabled}
                 onChange={e => onChange(e.target.value)}
             >
-                <option value="">Dylaris storage</option>
+                <option value="">{platformLabel.charAt(0).toUpperCase() + platformLabel.slice(1)}</option>
                 {storages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             <p className="text-xs text-(--base-06)">{hint}</p>

@@ -55,7 +55,14 @@ type BackupScheduler struct {
 	storeEnabled bool
 	// releaseVersion goes into each run's manifest, as on the manual path.
 	releaseVersion string
+	// flags decides whether a run may go to the owner's own storage. Nil keeps
+	// the behaviour from before the own-storage switch.
+	flags *FeatureFlags
 }
+
+// SetFeatureFlags wires the own-storage switch into scheduled runs, so they
+// pick the same storage the manual path does.
+func (b *BackupScheduler) SetFeatureFlags(f *FeatureFlags) { b.flags = f }
 
 // SetReleaseVersion records the release written into scheduled runs' manifests.
 func (b *BackupScheduler) SetReleaseVersion(v string) { b.releaseVersion = v }
@@ -801,7 +808,8 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// written to ours anyway - the manual path honoured their choice and the
 	// cron path did not, which is the sort of difference nobody notices until
 	// the bill or the restore.
-	storage, err := ResolveJobStorage(b.store, job.StorageID, srv.OwnerID)
+	storage, err := ResolveNewRunStorage(b.store, job.StorageID, srv.OwnerID,
+		OwnStorageAllowedFor(ctx, b.flags, b.store, srv.OwnerID))
 	if err != nil {
 		return fmt.Errorf("resolve storage: %w", err)
 	}
@@ -913,6 +921,11 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// the field.
 	if backupstorage.TenantEndpoint(storage) {
 		payload["guardedTransfer"] = true
+		// The private networks the operator allowed for users' own storage
+		// (STORAGE_PRIVATE_ALLOW); see PrivateAllowFor for who gets them.
+		if allow := PrivateAllowFor(node); len(allow) > 0 {
+			payload["allowPrivate"] = allow
+		}
 	}
 	if len(manifest) > 0 {
 		payload["manifest"] = json.RawMessage(manifest)

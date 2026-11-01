@@ -110,15 +110,21 @@ describe('infrastructure tab routes', () => {
 });
 
 describe('the three kinds of machine', () => {
-    it('all three tabs are always drawn, not only when non-empty', () => {
+    it('the node tabs are always drawn, not only when non-empty', () => {
         // They used to appear only when the operator had one, which made "no
         // external nodes" and "this platform has no such thing" the same
         // screen - and the tab somebody needs FIRST is the one for the kind
         // they have not registered yet.
-        for (const slug of ['nodes', 'external', 'byon']) {
+        for (const slug of ['nodes', 'external']) {
             const re = new RegExp(`slug: '${slug}'[^}]*visible: true`);
             expect(re.test(SHELL), `the ${slug} tab is conditionally visible`).toBe(true);
         }
+    });
+
+    it('the BYON tab follows the BYON feature, or existing BYON nodes', () => {
+        // With BYON off and none registered the tab is a dead end on a self-host.
+        // Existing BYON nodes keep it, so switching the flag off hides nothing.
+        expect(SHELL).toMatch(/slug: 'byon'[^}]*visible: featureFlags\.byon \|\| byon\.length > 0/);
     });
 
     it('the customer tab is called BYON', () => {

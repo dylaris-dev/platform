@@ -89,6 +89,9 @@ type featureSettingsPayload struct {
 	// Bedrock is who may give a route Bedrock (the gateway's Geyser): off,
 	// admin or all. Its own switch, apart from voice chat and extra ports.
 	Bedrock *string `json:"bedrock"`
+	// OwnStorage is who may keep backups and templates on their own S3 target:
+	// off, admin or all.
+	OwnStorage *string `json:"ownStorage"`
 	// Templates is who is offered server templates: off, admin or all. The
 	// limits are strings in the platform limit convention ("unlimited", "0" or
 	// a number); the storage connection id is 0 for Core storage.
@@ -175,6 +178,8 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.ModConfigs = &modConfigs
 	bedrock := h.state.FeatureFlags.BedrockAudience(r.Context())
 	out.Bedrock = &bedrock
+	ownStorage := h.state.FeatureFlags.OwnStorageAudience(r.Context())
+	out.OwnStorage = &ownStorage
 	ts := services.LoadTemplateSettings(r.Context(), h.state.FeatureFlags)
 	out.Templates = &ts.Audience
 	maxPerUser := services.FormatLimitSetting(nil)
@@ -237,6 +242,10 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Bedrock != nil && *req.Bedrock != "off" && *req.Bedrock != "admin" && *req.Bedrock != "all" {
 		sendJSONError(w, "bedrock must be off, admin or all", http.StatusBadRequest)
+		return
+	}
+	if req.OwnStorage != nil && *req.OwnStorage != "off" && *req.OwnStorage != "admin" && *req.OwnStorage != "all" {
+		sendJSONError(w, "ownStorage must be off, admin or all", http.StatusBadRequest)
 		return
 	}
 	if msg := validateTemplateFields(&req); msg != "" {
@@ -358,6 +367,18 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 			"feature": "modConfigs",
 			"enabled": *req.ModConfigs != "off",
+		})
+	}
+
+	if req.OwnStorage != nil {
+		if err := h.state.Store.SetSetting(services.OwnStorageSettingKey, *req.OwnStorage); err != nil {
+			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.state.FeatureFlags.Invalidate(services.OwnStorageSettingKey)
+		h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
+			"feature": "ownStorage",
+			"enabled": *req.OwnStorage != "off",
 		})
 	}
 

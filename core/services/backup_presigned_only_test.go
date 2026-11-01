@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/models"
+	"dylaris-core/pkg/netguard"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-pkg/queue"
 )
@@ -310,6 +312,8 @@ func TestReapAbandonedRuns_KeepsAnUploadCoreCompleted(t *testing.T) {
 // a platform-managed connection is not, the operator chose that endpoint.
 func TestDispatch_ATenantBucketAsksTheNodeToGuardItsTransfers(t *testing.T) {
 	owner := "alice"
+	netguard.SetPrivateAllow([]netip.Prefix{netip.MustParsePrefix("192.168.1.0/24")})
+	t.Cleanup(func() { netguard.SetPrivateAllow(nil) })
 	for _, tc := range []struct {
 		name    string
 		storage *models.BackupStorage
@@ -339,6 +343,34 @@ func TestDispatch_ATenantBucketAsksTheNodeToGuardItsTransfers(t *testing.T) {
 			if got := cmd["guardedTransfer"] == true; got != tc.want {
 				t.Fatalf("guardedTransfer = %v, want %v: %s", cmd["guardedTransfer"], tc.want, cmds[0])
 			}
+			// The operator's allow list rides along with a guarded transfer
+			// only; an unguarded one has nothing to widen.
+			if _, got := cmd["allowPrivate"]; got != tc.want {
+				t.Fatalf("allowPrivate present = %v, want %v: %s", got, tc.want, cmds[0])
+			}
 		})
+	}
+}
+
+// The operator's allow list describes the operator's network: a platform node
+// gets it, a BYON node (in its customer's network) never does.
+func TestPrivateAllowFor(t *testing.T) {
+	netguard.SetPrivateAllow([]netip.Prefix{netip.MustParsePrefix("192.168.1.10/32")})
+	t.Cleanup(func() { netguard.SetPrivateAllow(nil) })
+	customer, empty := "bob", ""
+	for _, tc := range []struct {
+		name string
+		node *models.Node
+		want bool
+	}{
+		{"platform node", &models.Node{ID: 1}, true},
+		{"external platform node", &models.Node{ID: 2, Tags: "external"}, true},
+		{"empty owner reads as platform", &models.Node{ID: 3, OwnerID: &empty}, true},
+		{"BYON node", &models.Node{ID: 4, OwnerID: &customer}, false},
+		{"no node", nil, false},
+	} {
+		if got := PrivateAllowFor(tc.node) != nil; got != tc.want {
+			t.Errorf("%s: list sent = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import {
     nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
     DEPLOY_PORTAINER_NOTE, kitInput, watchtowerNote,
 } from '@/lib/warpDeploy';
+import { useAppData } from '@/lib/AppDataContext';
 import type { KitProps } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
 
@@ -247,6 +248,7 @@ export function NotIncluded({ what, storeUrl, suspended, storeLinked }: {
     // could not be reached). That falls through to the generic message rather
     // than claiming a disconnection we cannot support.
     const notLinked = storeLinked === false;
+    const hosted = useAppData().featureFlags.hosted;
     return (
         <div className="rounded-md border border-(--base-03) bg-(--base-02) p-4 space-y-2.5">
             <div className="flex items-center gap-2 text-sm font-medium text-(--base-08)">
@@ -258,7 +260,9 @@ export function NotIncluded({ what, storeUrl, suspended, storeLinked }: {
                     ? 'Your account is suspended, which pauses this until it is reactivated.'
                     : notLinked
                       ? 'Your panel account is not connected to the Dylaris store yet. A subscription raises no limits here until it is, so connect it first and this unlocks on its own.'
-                      : `Add ${what} to your plan, or ask an admin to enable it for you.`}
+                      : hosted
+                        ? `Add ${what} to your plan, or ask an admin to enable it for you.`
+                        : `${what.charAt(0).toUpperCase()}${what.slice(1)} is not enabled by the administrator.`}
             </p>
             {!suspended && notLinked && (
                 <Link href="/account/store" className="btn btn-primary btn-sm inline-flex w-fit">

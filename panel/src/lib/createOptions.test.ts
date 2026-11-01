@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serverOption, nodeOption, routeOption, hasAnyCreateOption, type CreateOptionsInput } from './createOptions';
+import { serverOption, nodeOption, nodeEntryVisible, routeOption, hasAnyCreateOption, type CreateOptionsInput } from './createOptions';
 
 const base: CreateOptionsInput = {
     isAdmin: false,
@@ -10,6 +10,7 @@ const base: CreateOptionsInput = {
     gatewayEnabled: false,
     routeOnlyEnabled: true,
     entitledRouteOnly: false,
+    hosted: false,
 };
 const w = (o: Partial<CreateOptionsInput>): CreateOptionsInput => ({ ...base, ...o });
 
@@ -85,6 +86,20 @@ describe('nodeOption', () => {
         expect(o.href).toBeTruthy();
         expect(o.hrefLabel).toBeTruthy();
     });
+});
+
+describe('nodeEntryVisible', () => {
+    const cases: Array<[string, Partial<CreateOptionsInput>, boolean]> = [
+        ['admin, any platform', { isAdmin: true }, true],
+        ['self-host, BYON off', { byonEnabled: false }, false],
+        ['self-host, BYON on, not entitled', { byonEnabled: true }, false],
+        ['self-host, BYON on, entitled', { byonEnabled: true, entitledByon: true }, true],
+        ['hosted, BYON off', { hosted: true }, false],
+        ['hosted, BYON on, not entitled (teaser)', { hosted: true, byonEnabled: true }, true],
+    ];
+    for (const [name, o, want] of cases) {
+        it(name, () => expect(nodeEntryVisible(w(o))).toBe(want));
+    }
 });
 
 describe('hasAnyCreateOption', () => {

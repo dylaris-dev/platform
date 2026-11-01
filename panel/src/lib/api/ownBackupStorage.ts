@@ -43,7 +43,7 @@ export interface OwnStorageInput {
     isDefault?: boolean;
 }
 
-export async function listOwnBackupStorages(): Promise<{ success: boolean; storages?: OwnBackupStorage[]; message?: string }> {
+export async function listOwnBackupStorages(): Promise<{ success: boolean; status?: number; storages?: OwnBackupStorage[]; message?: string }> {
     try {
         const res = await fetch(`${API_URL}/me/backup-storages`, { headers: getAuthHeader() });
         return await handleResponse(res);
@@ -161,19 +161,25 @@ export function storagePrefPayload(feature: StorageFeature, value: string): Part
     return feature === 'backups' ? { backupsStorageId: id } : { templatesStorageId: id };
 }
 
-/** Where a template lives, for its badge. An id not among the caller's own is the owner's (a shared template). */
-export function storageLabel(id: number | null | undefined, own: { id: number; name: string }[]): string {
-    if (id == null) return 'Dylaris storage';
+/** Where a template lives, for its badge. An id not among the caller's own is the owner's (a shared template).
+ *  The platform's storage is "Dylaris storage" only on the SaaS (features.hosted). */
+export function storageLabel(id: number | null | undefined, own: { id: number; name: string }[], hosted: boolean): string {
+    if (id == null) return hosted ? 'Dylaris storage' : 'Platform storage';
     return own.find(s => s.id === id)?.name ?? "Owner's own storage";
 }
 
-/** A backup job's storage choices: the platform's, then the caller's own targets. */
+/** A backup job's storage choices: the platform's, then the caller's own targets.
+ *  With own storage off only `current` (the job's stored value) is kept among
+ *  the own targets: Core accepts an unchanged one so an old job stays editable,
+ *  and refuses any other. */
 export function jobStorageOptions(
     platform: { id: number; name: string; provider: string }[],
     own: { id: number; name: string }[],
+    ownAllowed = true,
+    current: number | null = null,
 ): { id: number; label: string }[] {
     return [
         ...platform.map(s => ({ id: s.id, label: `${s.name} (${s.provider})` })),
-        ...own.map(s => ({ id: s.id, label: `Own: ${s.name}` })),
+        ...own.filter(s => ownAllowed || s.id === current).map(s => ({ id: s.id, label: `Own: ${s.name}` })),
     ];
 }

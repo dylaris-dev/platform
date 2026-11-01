@@ -35,6 +35,7 @@ import (
 	"dylaris-core/panelfs"
 	"dylaris-core/paneltls"
 	"dylaris-core/pkg/leader"
+	"dylaris-core/pkg/netguard"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/services/storagereach"
@@ -253,6 +254,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("FATAL: Config Error: %v", err)
 	}
+	// Before anything can dial a tenant's storage.
+	netguard.SetPrivateAllow(cfg.StoragePrivateAllow)
+	if len(cfg.StoragePrivateAllow) > 0 {
+		log.Printf("storage: users' own storage may reach private networks %v (STORAGE_PRIVATE_ALLOW)", netguard.PrivateAllow())
+	}
 
 	db, err := database.InitDB(cfg)
 	if err != nil {
@@ -306,6 +312,7 @@ func main() {
 		Authz:               authz.NewResolver(pgStore),
 		DBType:              cfg.DBType,
 		StoreEnabled:        cfg.StoreEnabled,
+		Hosted:              cfg.Hosted,
 		StoreURL:            cfg.StoreURL,
 		StoreSharedKey:      cfg.StoreSharedKey,
 		TabProxyHostSuffix:  cfg.TabProxyHostSuffix,
@@ -983,6 +990,7 @@ func main() {
 	backupScheduler.SetConnection(appState.ConnectionBackupBuilder())
 	backupScheduler.SetStoreEnabled(cfg.StoreEnabled)
 	backupScheduler.SetReleaseVersion(appState.ReleaseVersion)
+	backupScheduler.SetFeatureFlags(appState.FeatureFlags)
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(bgCtx)
 

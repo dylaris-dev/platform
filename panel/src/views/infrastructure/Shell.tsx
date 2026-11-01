@@ -8,6 +8,7 @@ import { attentionCount } from '@/lib/serviceErrors';
 import { isKind } from '@/lib/nodeKind';
 import { StatCard } from './InfraCards';
 import { useInfra } from './context';
+import { useAppData } from '@/lib/AppDataContext';
 
 /**
  * The header, the summary row and the tab bar.
@@ -29,6 +30,7 @@ const BASE = '/infrastructure';
 
 export default function InfrastructureShell({ children }: { children: React.ReactNode }) {
     const infra = useInfra();
+    const { featureFlags } = useAppData();
     const pathname = usePathname();
 
     const platform = isKind(infra.nodes, 'platform');
@@ -51,7 +53,7 @@ export default function InfrastructureShell({ children }: { children: React.Reac
         // this product - the setting, the plan, the release notes - and one
         // screen calling it something friendlier only costs the reader the
         // connection to all of them.
-        { slug: 'byon', label: 'BYON', count: byon.length, visible: true },
+        { slug: 'byon', label: 'BYON', count: byon.length, visible: featureFlags.byon || byon.length > 0 },
         // No count: the tab lists edges, warp leaders and beam relays, and the
         // only one of the three this screen knows about is the edges. A badge
         // reading 2 next to a list of six is worse than no badge.

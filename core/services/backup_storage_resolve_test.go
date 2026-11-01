@@ -143,3 +143,47 @@ func TestResolveJobStorage(t *testing.T) {
 		}
 	})
 }
+
+// With own storage off for the owner, a NEW backup goes to the platform default
+// whatever points at an own target; a platform storage the job names is kept.
+// An archive already written resolves to the storage its run recorded, own
+// target included, so restore, download and delete keep working.
+func TestResolveNewRunStorageWithOwnStorageOff(t *testing.T) {
+	alice := "alice"
+	byID := map[int]*models.BackupStorage{
+		5: {ID: 5, Name: "alice pref", OwnerID: &alice},
+		6: {ID: 6, Name: "alice default", OwnerID: &alice, IsDefault: true},
+		2: {ID: 2, Name: "platform second"},
+	}
+	def := &models.BackupStorage{ID: 1, Name: "platform default"}
+	s := fakeBackupStorageStore{byID: byID, def: def, prefs: map[string]int{alice: 5},
+		userDef: map[string]*models.BackupStorage{alice: byID[6]}}
+	tests := []struct {
+		name    string
+		job     *int
+		allowed bool
+		wantID  int
+	}{
+		{"on: pref honoured", nil, true, 5},
+		{"on: own job storage honoured", intPtr(6), true, 6},
+		{"off: pref ignored", nil, false, 1},
+		{"off: own job storage ignored", intPtr(6), false, 1},
+		{"off: platform job storage kept", intPtr(2), false, 2},
+	}
+	for _, tc := range tests {
+		got, err := ResolveNewRunStorage(s, tc.job, alice, tc.allowed)
+		if err != nil || got == nil || got.ID != tc.wantID {
+			t.Errorf("%s: got %+v, %v; want id %d", tc.name, got, err, tc.wantID)
+		}
+	}
+	// Without a pref, the own default is the one that must be skipped.
+	noPref := s
+	noPref.prefs = nil
+	if got, err := ResolveNewRunStorage(noPref, nil, alice, false); err != nil || got.ID != 1 {
+		t.Errorf("off: own default not skipped: %+v, %v", got, err)
+	}
+	run := &models.BackupRun{StorageID: intPtr(6)}
+	if got, err := ResolveRunStorage(s, run, nil, alice); err != nil || got.ID != 6 {
+		t.Errorf("recorded own target not resolved for restore: %+v, %v", got, err)
+	}
+}

@@ -54,7 +54,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
     // that, for both: it offers unowned machines to an operator and an owned one
     // only to its owner, so the picker cannot suggest a target the create call
     // would refuse.
-    const { user } = useAppData();
+    const { user, featureFlags } = useAppData();
+    const hosted = featureFlags.hosted;
     const isAdmin = !!user?.isAdmin;
 
     const [step, setStep] = useState(1);
@@ -318,10 +319,18 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                 <Server size={26} className="text-(--accent-light)" />
                             </div>
                             <h3 className="text-lg font-display font-bold text-(--base-09)">No nodes yet</h3>
-                            <p className="text-sm text-(--base-06) max-w-sm">
-                                To host a server you need your own node. Adding a node requires a subscription.
-                            </p>
-                            <p className="text-xs text-(--base-05) italic">Renting a managed server is coming soon.</p>
+                            {hosted ? (
+                                <>
+                                    <p className="text-sm text-(--base-06) max-w-sm">
+                                        To host a server you need your own node. Adding a node requires a subscription.
+                                    </p>
+                                    <p className="text-xs text-(--base-05) italic">Renting a managed server is coming soon.</p>
+                                </>
+                            ) : (
+                                <p className="text-sm text-(--base-06) max-w-sm">
+                                    No node is online. Ask an administrator to add one.
+                                </p>
+                            )}
                         </div>
                     ) : (
                     <form onSubmit={(e) => e.preventDefault()}>

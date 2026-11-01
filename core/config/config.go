@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -13,6 +14,8 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/joho/godotenv"
+
+	"dylaris-core/pkg/netguard"
 )
 
 type Config struct {
@@ -142,6 +145,10 @@ type Config struct {
 	StoreSharedKey string
 	StoreEnabled   bool
 
+	// Hosted marks the SaaS (DYLARIS_HOSTED=true|1). Everything else is a
+	// self-hosted install, which must not show subscription or plan wording.
+	Hosted bool
+
 	// SuspendGrace defers the hard cutoff (stop servers + take route-only link
 	// tunnels down) for this long after a tenant is marked "suspended", so a transient
 	// billing/DB fault cannot instantly kick a paying customer. Env
@@ -195,6 +202,13 @@ type Config struct {
 	// forged header is ignored. The literal value "none" trusts nothing and
 	// makes Core ignore XFF entirely - correct when Core is exposed directly.
 	TrustedProxyCIDRs []*net.IPNet
+
+	// StoragePrivateAllow are the private networks a user's OWN storage target
+	// (backups, templates) may resolve to, from STORAGE_PRIVATE_ALLOW
+	// (comma-separated CIDRs). Empty refuses every non-public address, which is
+	// what the SaaS wants; a self-hoster lists e.g. the MinIO on the LAN.
+	// Loopback and link-local stay refused regardless (netguard.Allowed).
+	StoragePrivateAllow []netip.Prefix
 }
 
 func LoadConfig() (Config, error) {
@@ -292,6 +306,7 @@ func LoadConfig() (Config, error) {
 		StoreURL:       storeURL,
 		StoreSharedKey: storeSharedKey,
 		StoreEnabled:   storeURL != "" && storeSharedKey != "",
+		Hosted:         parseHosted(os.Getenv("DYLARIS_HOSTED")),
 
 		SuspendGrace: suspendGrace,
 
@@ -333,8 +348,20 @@ func LoadConfig() (Config, error) {
 	if err := validateStoreSharedKey(storeSharedKey); err != nil {
 		return cfg, err
 	}
+	allow, err := netguard.ParseAllowList(getEnv("STORAGE_PRIVATE_ALLOW", ""))
+	if err != nil {
+		return cfg, fmt.Errorf("STORAGE_PRIVATE_ALLOW: %w", err)
+	}
+	cfg.StoragePrivateAllow = allow
 
 	return cfg, nil
+}
+
+// parseHosted is deliberately stricter than ParseBoolEnvDefault: only "true"
+// and "1" make a platform the SaaS, so a typo fails towards self-hosted wording.
+func parseHosted(v string) bool {
+	v = strings.TrimSpace(v)
+	return strings.EqualFold(v, "true") || v == "1"
 }
 
 func getEnv(key, fallback string) string {

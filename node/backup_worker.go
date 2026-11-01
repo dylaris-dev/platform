@@ -43,6 +43,10 @@ type BackupRunCommand struct {
 	// GuardedTransfer marks a tenant's own bucket: its URLs may name any host,
 	// so they are fetched through the client that refuses non-public addresses.
 	GuardedTransfer bool `json:"guardedTransfer"`
+	// AllowPrivate lists the private networks (CIDRs) the operator allowed
+	// for users' own storage (STORAGE_PRIVATE_ALLOW on Core). It only widens a
+	// guarded transfer; loopback and link-local stay refused regardless.
+	AllowPrivate []string `json:"allowPrivate"`
 	// Manifest is Core's description of what this archive contains: loader,
 	// versions, installer origin, the installed-mod rows. It is written into the
 	// archive VERBATIM and never parsed here.
@@ -421,7 +425,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		// Checked before Complete, which is the point: an archive that matched
 		// nothing is never completed, so there is no object to clean up and
 		// Core aborts the parts when the run is reported failed.
-		multipartSize, upErr = uploadMultipart(ctx, coreMultipartAPI(cmd.RunID), transferClient(cmd.GuardedTransfer), pr, func() error {
+		multipartSize, upErr = uploadMultipart(ctx, coreMultipartAPI(cmd.RunID), transferClient(cmd.GuardedTransfer, cmd.AllowPrivate), pr, func() error {
 			if !addedAny {
 				return errNothingArchived
 			}

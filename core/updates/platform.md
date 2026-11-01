@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.3
+
+### Features
+- Settings > Features has an "Own storage" switch (off, admins, everyone; default everyone) for users' own S3
+  targets. Turned off, new backups and templates go to platform storage and existing data stays reachable. `core` `panel`
+- `STORAGE_PRIVATE_ALLOW` lets users' own storage targets reach listed private addresses, e.g. a MinIO in your
+  LAN as a /32. Never list the network Redis and Postgres run on; BYON nodes never get the list. `core` `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A self-hosted panel no longer shows texts meant for the DYLARIS service (subscriptions, plans, the BYON
+  teaser), and users without admin rights no longer see its release notes. `DYLARIS_HOSTED` stays unset. `core` `panel`
+
 ## 2026.11.01.2
 
 ### Features

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +43,7 @@ type presignedOnlyStore struct {
 	restoring      bool // a restore is waiting on the run
 	serverStatus   string
 	ranByHand      int
+	nodeOwner      *string // non-nil makes the hosting node a BYON node
 }
 
 // Only the by-hand record is implemented: SetBackupJobScheduled would panic on
@@ -58,7 +61,7 @@ func (f *presignedOnlyStore) GetServerByID(id int) (*models.Server, error) {
 }
 func (f *presignedOnlyStore) BackupJobRestoring(int) (bool, error) { return f.restoring, nil }
 func (f *presignedOnlyStore) GetNodeByID(id int) (*models.Node, error) {
-	return &models.Node{ID: id, Token: "node-hosting"}, nil
+	return &models.Node{ID: id, Token: "node-hosting", OwnerID: f.nodeOwner}, nil
 }
 func (f *presignedOnlyStore) GetBackupJob(id int) (*models.BackupJob, error) {
 	return &models.BackupJob{ID: id, ServerID: 100, Schedule: "manual"}, nil
@@ -142,9 +145,9 @@ func presignedOnlyHandler(t *testing.T, nodeVersion string, run models.BackupRun
 	t.Cleanup(srv.Close)
 	// The bucket is a tenant's, dialled through netguard, and httptest is on
 	// loopback - which netguard exists to refuse. Let this test's dials through.
-	orig := netguard.Dialer.Control
-	netguard.Dialer.Control = nil
-	t.Cleanup(func() { netguard.Dialer.Control = orig })
+	orig := netguard.TenantDialer.Control
+	netguard.TenantDialer.Control = nil
+	t.Cleanup(func() { netguard.TenantDialer.Control = orig })
 
 	owner := "alice"
 	cfg, _ := json.Marshal(map[string]interface{}{
@@ -332,3 +335,60 @@ func TestDeleteRun_AbortsTheUploadOfARunningRun(t *testing.T) {
 }
 
 func (*presignedOnlyStore) GetUserStoragePrefs(string) (*int, *int, error) { return nil, nil, nil }
+
+// The operator's STORAGE_PRIVATE_ALLOW reaches the node with every guarded
+// transfer, so a listed LAN bucket works there too; with nothing listed the
+// field is absent and the node refuses every private address as before.
+func TestGuardedCommandsCarryThePrivateAllowList(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		allow []netip.Prefix
+		byon  bool
+		want  []interface{}
+	}{
+		{"nothing listed", nil, false, nil},
+		{"listed", []netip.Prefix{netip.MustParsePrefix("192.168.1.10/32"), netip.MustParsePrefix("10.0.5.0/24")}, false, []interface{}{"192.168.1.10/32", "10.0.5.0/24"}},
+		// The operator's networks are not the customer's: a BYON node never
+		// gets them.
+		{"listed, BYON node", []netip.Prefix{netip.MustParsePrefix("192.168.1.10/32")}, true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			netguard.SetPrivateAllow(tc.allow)
+			t.Cleanup(func() { netguard.SetPrivateAllow(nil) })
+			for _, op := range []string{"restore", "backup"} {
+				h, fs, rdb, _ := presignedOnlyHandler(t, currentNodeVersion, models.BackupRun{ID: 1, JobID: 10, Status: "success", StorageKey: "backups/k.tar.gz"})
+				if tc.byon {
+					customer := "bob"
+					fs.nodeOwner = &customer
+				}
+				rw := httptest.NewRecorder()
+				if op == "restore" {
+					h.RestoreRun(rw, backupJobRequest(http.MethodPost, "/api/backup-runs/1/restore", "", map[string]string{"runId": "1"}))
+				} else {
+					h.TriggerJob(rw, backupJobRequest(http.MethodPost, "/api/backup-jobs/10/trigger", "", map[string]string{"jobId": "10"}))
+				}
+				if rw.Code != http.StatusOK {
+					t.Fatalf("%s: status = %d (body %s)", op, rw.Code, rw.Body.String())
+				}
+				cmds := queuedCommands(t, rdb)
+				if len(cmds) != 1 {
+					t.Fatalf("%s: commands = %d, want 1", op, len(cmds))
+				}
+				var cmd map[string]interface{}
+				if err := json.Unmarshal([]byte(cmds[0]), &cmd); err != nil {
+					t.Fatal(err)
+				}
+				got, present := cmd["allowPrivate"]
+				if tc.want == nil {
+					if present {
+						t.Errorf("%s: allowPrivate = %v, want the field absent", op, got)
+					}
+					continue
+				}
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Errorf("%s: allowPrivate = %v, want %v", op, got, tc.want)
+				}
+			}
+		})
+	}
+}

@@ -51,6 +51,9 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// STORE_SHARED_KEY are set. Gates the connect-store button and the
 			// demo account/server UI; off => clean open-core build.
 			"store": h.state.StoreEnabled,
+			// The SaaS (DYLARIS_HOSTED). Gates subscription, plan and BYON
+			// teaser wording that means nothing on a self-hosted install.
+			"hosted": h.state.Hosted,
 			// Whether modpack archives have anywhere to go. It is the same call
 			// every write path makes before answering 424, exposed so the panel
 			// can say so before an author builds a pack rather than at the
@@ -68,6 +71,9 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// booleans above: the panel resolves it with the caller's role, and
 			// an admin still reaches Templates while it is off.
 			"templates": templates,
+			// Whether THIS caller may add, test and choose own S3 targets.
+			// Data already on one stays reachable either way.
+			"ownStorage": h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin),
 		},
 	})
 }

@@ -145,11 +145,7 @@ func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 
-	feed := feedHosted
-	if isAdmin {
-		feed = feedPlatform
-	}
-	releases := h.notes(r.Context(), feed)
+	feed, releases := h.audienceNotes(r.Context(), isAdmin)
 
 	resp := updatesResponse{Feed: feed, Releases: releases, Components: []componentBlock{}}
 	if len(releases) > releasesShown {
@@ -408,6 +404,19 @@ func (h *UpdatesHandler) nodes(ctx context.Context, userID string, isAdmin bool)
 	return out
 }
 
+// audienceNotes picks the feed for the caller. The customer notes describe the
+// hosted service (plans, storefront, BYON), so on a self-hosted platform a
+// non-admin has no feed at all: no list and, because Latest is empty, no badge.
+func (h *UpdatesHandler) audienceNotes(ctx context.Context, isAdmin bool) (string, []release.Release) {
+	if isAdmin {
+		return feedPlatform, h.notes(ctx, feedPlatform)
+	}
+	if !h.state.Hosted {
+		return feedHosted, nil
+	}
+	return feedHosted, h.notes(ctx, feedHosted)
+}
+
 // notes returns a feed's releases: the remote file when it is reachable and
 // parses, otherwise the copy embedded in this build.
 //
@@ -484,12 +493,9 @@ func (h *UpdatesHandler) MarkUpdatesSeen(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	feed := feedHosted
-	if isAdmin {
-		feed = feedPlatform
-	}
+	_, releases := h.audienceNotes(r.Context(), isAdmin)
 	version := ""
-	if latest, ok := release.Latest(h.notes(r.Context(), feed)); ok {
+	if latest, ok := release.Latest(releases); ok {
 		version = latest.Version.String()
 	}
 	if err := h.state.Store.SetUserUpdatesSeen(userID, version); err != nil {

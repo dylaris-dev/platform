@@ -21,6 +21,8 @@ export interface CreateOptionsInput {
     routeOnlyEnabled: boolean;
     /** The caller may create protected addresses (resolved entitlement). */
     entitledRouteOnly: boolean;
+    /** features.hosted: the SaaS. Teasers for things a plan unlocks exist only there. */
+    hosted: boolean;
 }
 
 export interface CreateOption {
@@ -88,6 +90,16 @@ export function nodeOption(i: CreateOptionsInput): CreateOption {
             ? { href: '/nodes', hrefLabel: 'How to get it' }
             : { reason: 'Your account does not include bring-your-own-node. Ask an admin to enable it.' }),
     };
+}
+
+/**
+ * Whether the "Add a node" entry is listed at all. A greyed "Add your own
+ * machine" is a sales teaser, which only makes sense on the hosted service; on a
+ * self-host an unentitled user (or BYON off) would see an offer nobody can make.
+ */
+export function nodeEntryVisible(i: CreateOptionsInput): boolean {
+    if (i.isAdmin) return true;
+    return i.byonEnabled && (i.hosted || i.entitledByon);
 }
 
 /**

@@ -173,3 +173,33 @@ func TestOwnStorageTemplateCannotBePromoted(t *testing.T) {
 		}
 	}
 }
+
+// With own storage off a new personal template goes to platform storage and
+// List stops reporting the own target; a template already on the own target
+// still loads, so it stays readable, downloadable and deletable.
+func TestOwnStorageOffSendsNewTemplatesToThePlatform(t *testing.T) {
+	h, st := newTestHandler(t, map[string]string{services.OwnStorageSettingKey: "off"})
+	ownStorage(st)
+	existing := seedTemplate(t, st, ownerID, "personal")
+	id := 5
+	st.templates[existing.ID].BackupStorageID = &id
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, asUser(httptest.NewRequest("POST", "/x", strings.NewReader(`{"name":"n","kind":"server"}`)), ownerID, false))
+	var tpl models.Template
+	_ = json.Unmarshal(rec.Body.Bytes(), &tpl)
+	if rec.Code != http.StatusCreated || tpl.BackupStorageID != nil {
+		t.Fatalf("create: got %d, storage %v; want 201 on platform storage", rec.Code, tpl.BackupStorageID)
+	}
+
+	rec = httptest.NewRecorder()
+	h.List(rec, asUser(httptest.NewRequest("GET", "/x", nil), ownerID, false))
+	if !strings.Contains(rec.Body.String(), `"ownStorage":false`) {
+		t.Errorf("list: %s, want ownStorage false", rec.Body)
+	}
+
+	r := withID(asUser(httptest.NewRequest("GET", "/x", nil), ownerID, false), existing.ID)
+	if got, _, _, ok := h.load(httptest.NewRecorder(), r, needSee); !ok || got.BackupStorageID == nil {
+		t.Fatalf("existing own-storage template no longer loads: ok %v", ok)
+	}
+}

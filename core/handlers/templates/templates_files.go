@@ -329,7 +329,7 @@ func (h *TemplatesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	if h.refuseSuspended(w, r, v.UserID) {
 		return
 	}
-	own, ok := h.ownTarget(w, v.UserID, "personal")
+	own, ok := h.ownTarget(w, r, v.UserID, v.IsAdmin, "personal")
 	if !ok || (!v.IsAdmin && !h.mayCreate(w, s, v, "personal", own)) {
 		return
 	}

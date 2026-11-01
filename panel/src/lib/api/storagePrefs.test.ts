@@ -15,17 +15,27 @@ describe('storagePrefPayload', () => {
 
 describe('storageLabel', () => {
     it.each([
-        [null, 'Dylaris storage'],
-        [undefined, 'Dylaris storage'],
-        [6, 'MinIO'],
+        [null, true, 'Dylaris storage'],
+        [undefined, true, 'Dylaris storage'],
+        [null, false, 'Platform storage'],
+        [undefined, false, 'Platform storage'],
+        [6, false, 'MinIO'],
         // Somebody else's target (a shared template): its name is not ours to show.
-        [99, "Owner's own storage"],
-    ])('%s -> %s', (id, want) => {
-        expect(storageLabel(id as number | null | undefined, own)).toBe(want);
+        [99, true, "Owner's own storage"],
+    ])('%s hosted=%s -> %s', (id, hosted, want) => {
+        expect(storageLabel(id as number | null | undefined, own, hosted)).toBe(want);
     });
 });
 
 describe('jobStorageOptions', () => {
+    it("drops own targets while own storage is off, except the job's current one", () => {
+        const platform = [{ id: 1, name: 'R2', provider: 's3' }];
+        expect(jobStorageOptions(platform, own, false)).toEqual([{ id: 1, label: 'R2 (s3)' }]);
+        expect(jobStorageOptions(platform, own, false, 6)).toEqual([
+            { id: 1, label: 'R2 (s3)' },
+            { id: 6, label: 'Own: MinIO' },
+        ]);
+    });
     it('lists platform storages first, then own targets marked as own', () => {
         expect(jobStorageOptions([{ id: 1, name: 'R2', provider: 's3' }], own)).toEqual([
             { id: 1, label: 'R2 (s3)' },

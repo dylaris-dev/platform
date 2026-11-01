@@ -32,6 +32,9 @@ export interface FeatureFlags {
     // STORE_URL + STORE_SHARED_KEY set. Gates the connect-store button and the
     // demo account/server admin UI; false on a self-host/open-core build.
     store: boolean;
+    // The SaaS (DYLARIS_HOSTED on Core). Subscription, plan and BYON-teaser
+    // wording is shown only when true; a self-host stays neutral.
+    hosted: boolean;
     // Whether modpack archives have anywhere to go. Separate from `modpacks`:
     // the subsystem can be switched on with no storage behind it, and until now
     // that only surfaced as an HTTP 424 at the end of building a pack.
@@ -46,6 +49,9 @@ export interface FeatureFlags {
     // resolve it with templatesVisible(), since an admin reaches Templates
     // even while it is off. Optional: an older Core omits it.
     templates?: 'off' | 'admin' | 'all';
+    // Whether this caller may add, test and choose own S3 targets (Core holds
+    // off / admin / all). Optional: an older Core omits it, which means yes.
+    ownStorage?: boolean;
 }
 
 // Every field is optional on the way OUT: the Features screen is a set of tabs
@@ -90,6 +96,9 @@ export interface FeatureFlagsAdminPayload {
     // Who may give a route Bedrock (the gateway's Geyser). Anything but off
     // keeps the routes that have it running; off pauses them.
     bedrock?: 'off' | 'admin' | 'all';
+    // Who may keep backups and templates on their own S3 target. Off sends new
+    // data to platform storage; data already on an own target stays reachable.
+    ownStorage?: 'off' | 'admin' | 'all';
     // Templates: who is offered them, and their limits. The two limits are
     // strings in the LimitField convention: "unlimited" or a number, 0 = none.
     templates?: 'off' | 'admin' | 'all';

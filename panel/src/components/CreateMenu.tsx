@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Plus, Server, HardDrive, Globe, ArrowRight, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getNodes } from '@/lib/api';
-import { serverOption, nodeOption, routeOption, hasAnyCreateOption, type CreateOption, type CreateOptionsInput } from '@/lib/createOptions';
+import { serverOption, nodeOption, nodeEntryVisible, routeOption, hasAnyCreateOption, type CreateOption, type CreateOptionsInput } from '@/lib/createOptions';
 
 // ---------------------------------------------------------------------------
 // The sidebar's "+" menu.
@@ -123,6 +123,7 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
         gatewayEnabled,
         routeOnlyEnabled,
         entitledRouteOnly: entitlement?.routeOnly ?? false,
+        hosted: featureFlags.hosted,
     };
 
     const srv = serverOption(input);
@@ -175,16 +176,18 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
                     {/* An explicit tab, not the bare page: /nodes opens on
                         whichever tab the reader defaults to, and those two are
                         not the same person's answer. */}
-                    <MenuEntry
-                        icon={<HardDrive size={15} />}
-                        title={isAdmin ? 'Add a node' : 'Add your own machine'}
-                        subtitle={isAdmin
-                            ? 'How to join a machine to the fleet.'
-                            : 'Run servers on your own hardware, connected through the overlay.'}
-                        option={node}
-                        onClick={() => navigate(isAdmin ? '/nodes?tab=external' : '/nodes?tab=machines')}
-                        onNavigate={navigate}
-                    />
+                    {nodeEntryVisible(input) && (
+                        <MenuEntry
+                            icon={<HardDrive size={15} />}
+                            title={isAdmin ? 'Add a node' : 'Add your own machine'}
+                            subtitle={isAdmin
+                                ? 'How to join a machine to the fleet.'
+                                : 'Run servers on your own hardware, connected through the overlay.'}
+                            option={node}
+                            onClick={() => navigate(isAdmin ? '/nodes?tab=external' : '/nodes?tab=machines')}
+                            onNavigate={navigate}
+                        />
+                    )}
                     {/* Only where routing exists at all - otherwise the entry is
                         an offer nothing on this platform can fulfil. */}
                     {gatewayEnabled && (

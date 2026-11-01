@@ -13,6 +13,7 @@ import {
 } from '@/lib/api';
 import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 import HelpTip from '@/components/ui/HelpTip';
+import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
@@ -73,6 +74,8 @@ function StorageModeCard({
     onChange: (next: BackupConfig) => void;
     form: SavableForm;
 }) {
+    const { featureFlags } = useAppData();
+    const hosted = featureFlags.hosted;
     const setMode = (mode: BackupConfig['mode']) => onChange({ ...config, mode });
 
     return (
@@ -116,13 +119,22 @@ function StorageModeCard({
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0 max-w-md">
                         <label className="input-label flex items-center gap-1.5" htmlFor="backup-default-user-quota">
-                            Allowance per user without a subscription
+                            {hosted ? 'Allowance per user without a subscription' : 'Allowance per user'}
                             <HelpTip label="About the allowance">
                                 <p className="mb-2">
-                                    How much backup storage <strong>this platform</strong> holds for
-                                    someone who owns a server but has bought no node or route-only
-                                    location. Customers who bought one are judged by what their
-                                    purchase includes instead, set under Settings, Billing.
+                                    {hosted ? (
+                                        <>
+                                            How much backup storage <strong>this platform</strong> holds for
+                                            someone who owns a server but has bought no node or route-only
+                                            location. Customers who bought one are judged by what their
+                                            purchase includes instead, set under Settings, Billing.
+                                        </>
+                                    ) : (
+                                        <>
+                                            How much backup storage <strong>this platform</strong> holds for
+                                            each user who owns a server.
+                                        </>
+                                    )}
                                 </p>
                                 {LimitHelp}
                                 <p className="mt-2">
@@ -133,8 +145,9 @@ function StorageModeCard({
                             </HelpTip>
                         </label>
                         <p id="backup-default-user-quota-hint" className="text-xs text-(--base-06) mt-1">
-                            Leave it unset for no limit. This lived under Settings, Billing until
-                            2026-09-07, where a self-hosted install could not reach it.
+                            {hosted
+                                ? 'Leave it unset for no limit. This lived under Settings, Billing until 2026-09-07, where a self-hosted install could not reach it.'
+                                : 'Leave it unset for no limit.'}
                         </p>
                     </div>
                     <LimitField

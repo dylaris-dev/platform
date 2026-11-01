@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -102,7 +105,12 @@ var objectTransferClient = &http.Client{Transport: func() http.RoundTripper {
 // network next to Redis and Postgres, and an unguarded PUT or GET there is the
 // tenant's request made from inside. Every dial - redirects included - must be
 // to a public address, checked on the address actually dialled.
-var guardedObjectTransferClient = &http.Client{Transport: func() http.RoundTripper {
+var guardedObjectTransferClient = newGuardedTransferClient(nil)
+
+// newGuardedTransferClient builds a guarded client that additionally lets
+// through the private networks in allow (the operator's STORAGE_PRIVATE_ALLOW,
+// sent by Core as the command's allowPrivate).
+func newGuardedTransferClient(allow []netip.Prefix) *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = 2 * time.Minute
 	// No proxy: a proxy dials for us and the check would only see its address.
@@ -114,21 +122,81 @@ var guardedObjectTransferClient = &http.Client{Transport: func() http.RoundTripp
 			if err != nil {
 				return err
 			}
-			if !dialAllowed(host, port) {
+			if !dialAllowed(host, port) && !privateAllowed(net.ParseIP(host), allow) {
 				return fmt.Errorf("refused: %s is not a public address", host)
 			}
 			return nil
 		},
 	}).DialContext
-	return t
-}()}
+	return &http.Client{Transport: t}
+}
+
+// privateAllowed reports whether ip lies in one of the operator's listed
+// networks. Loopback, link-local (the cloud metadata service lives there),
+// unspecified and multicast never are, whatever is listed: an over-broad entry
+// such as 0.0.0.0/0 must not reopen the node's own sockets or the metadata
+// endpoint. Same rule as Core's netguard.Allowed.
+func privateAllowed(ip net.IP, allow []netip.Prefix) bool {
+	if ip == nil || len(allow) == 0 {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, p := range allow {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseAllowPrivate reads the command's allowPrivate. An entry that does not
+// parse is dropped with a log line, never widened into something broader.
+func parseAllowPrivate(entries []string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, e := range entries {
+		p, err := netip.ParsePrefix(strings.TrimSpace(e))
+		if err != nil {
+			log.Printf("backup: ignoring allowPrivate entry %q from Core: %v", e, err)
+			continue
+		}
+		out = append(out, p.Masked())
+	}
+	return out
+}
+
+// guardedClients caches one client per allow list, so a transfer reuses its
+// connections instead of building a transport per command.
+// ponytail: unbounded, but Core sends one list per configuration, so it holds
+// a handful of entries at most.
+var guardedClients sync.Map // canonical allow list -> *http.Client
 
 // transferClient picks the client for a command's object transfer.
-func transferClient(guarded bool) *http.Client {
-	if guarded {
+func transferClient(guarded bool, allowPrivate []string) *http.Client {
+	if !guarded {
+		return objectTransferClient
+	}
+	allow := parseAllowPrivate(allowPrivate)
+	if len(allow) == 0 {
 		return guardedObjectTransferClient
 	}
-	return objectTransferClient
+	keys := make([]string, len(allow))
+	for i, p := range allow {
+		keys[i] = p.String()
+	}
+	key := strings.Join(keys, ",")
+	if c, ok := guardedClients.Load(key); ok {
+		return c.(*http.Client)
+	}
+	c, _ := guardedClients.LoadOrStore(key, newGuardedTransferClient(allow))
+	return c.(*http.Client)
 }
 
 // errNothingArchived is RunBackup's refusal to complete an archive whose

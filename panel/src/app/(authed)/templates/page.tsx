@@ -16,7 +16,7 @@ import { toast } from '@/components/ui/Toast';
 import { listOwnBackupStorages, storageLabel, type OwnBackupStorage } from '@/lib/api/ownBackupStorage';
 
 export default function TemplatesPage() {
-    const { user } = useAppData();
+    const { user, featureFlags } = useAppData();
     const router = useRouter();
     const [list, setList] = useState<Template[] | null>(null);
     const [maxSize, setMaxSize] = useState<number | null>(null);
@@ -134,7 +134,7 @@ export default function TemplatesPage() {
                                     </div>
                                 ) : (
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {items.map((t) => <TemplateCard key={t.id} t={t} maxSize={maxSize} showOwner={key === 'shared'} storage={storageLabel(t.backupStorageId, own)} />)}
+                                        {items.map((t) => <TemplateCard key={t.id} t={t} maxSize={maxSize} showOwner={key === 'shared'} storage={storageLabel(t.backupStorageId, own, !!featureFlags.hosted)} />)}
                                     </div>
                                 )}
                             </section>

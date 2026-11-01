@@ -54,10 +54,12 @@ func NewS3(ctx context.Context, raw json.RawMessage) (*S3Storage, error) {
 }
 
 // NewTenantS3 is NewS3 for a bucket a TENANT connected. Every connection goes
-// through netguard.Dialer, so the endpoint - which the tenant typed - cannot
-// point Core at Redis, the database, the Hub, the overlay or the metadata
-// service. It used to be dialled with the SDK's default client: any account
-// could aim it anywhere, and "Test connection" handed the answer back.
+// through netguard.TenantDialer, so the endpoint - which the tenant typed -
+// cannot point Core at Redis, the database, the Hub, the overlay or the
+// metadata service. Private networks the operator listed in
+// STORAGE_PRIVATE_ALLOW are let through; loopback and link-local never are.
+// It used to be dialled with the SDK's default client: any account could aim
+// it anywhere, and "Test connection" handed the answer back.
 //
 // The platform's own storages keep the default client: an operator may run
 // MinIO on a private address on purpose.
@@ -101,7 +103,7 @@ func newS3(ctx context.Context, raw json.RawMessage, guarded bool) (*S3Storage, 
 				// No proxy: a proxy dials for us, and the check would only
 				// ever see the proxy's address.
 				t.Proxy = nil
-				t.DialContext = netguard.Dialer.DialContext
+				t.DialContext = netguard.TenantDialer.DialContext
 			})
 		}
 		// Do not attach a CRC32 to every request. Since aws-sdk-go-v2 made
