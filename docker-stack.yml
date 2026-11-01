@@ -127,6 +127,9 @@ services:
       # These default to "" in code, so an empty value is a no-op.
       DYLARIS_CORE_ID: "${DYLARIS_CORE_ID:-}"
       CLAMAV_ADDR: "${CLAMAV_ADDR:-}"
+      # Private networks users' own storage targets may reach, e.g. a LAN MinIO
+      # as a /32. See .env.example before setting it.
+      STORAGE_PRIVATE_ALLOW: "${STORAGE_PRIVATE_ALLOW:-}"
       # Name Core answers to on this network. Only needed if the service is not
       # called "core"; it is what the BYON deploy snippet resolves for
       # CORE_GRPC_ADDR, so a wrong value shows up as an unfillable snippet.
@@ -170,7 +173,7 @@ services:
     networks:
       - dylaris_net
     volumes:
-      # Core writes library, ticket-attachments, ticket-backups here. Without a
+      # Core writes templates, ticket-attachments, ticket-backups here. Without a
       # volume this data is lost on container recreation. NOTE: this is a LOCAL
       # per-host volume, and this stack runs "replicas: 2" below - so the two
       # Cores do NOT share it. That is why the "Core File Storage" setting in

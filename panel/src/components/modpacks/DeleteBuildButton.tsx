@@ -21,7 +21,7 @@ export default function DeleteBuildButton({ packId, build, onDeleted }: {
             <ModalPanel onClose={() => setOpen(false)} dismissible={!busy} className="modal-panel max-w-lg" onClick={event => event.stopPropagation()}>
                 <div className="modal-header"><h2 className="modal-title">Delete build {build.versionString}?</h2></div>
                 <div className="modal-body space-y-4">
-                    <p className="text-sm text-(--base-07)">This permanently removes this local build, its downloads and share links. Other builds, already installed server files and versions published on Modrinth remain.</p>
+                    <p className="text-sm text-(--base-07)">This permanently removes this local build, and its downloads. Other builds, already installed server files and versions published on Modrinth remain.</p>
                     <p className="text-sm text-(--base-07)">If it is Recommended, the pack returns to the newest remaining release. You cannot install or download this deleted build from the panel again.</p>
                     {protectedBuild && <label className="input-label">Type the build version to confirm: {build.versionString}<input className="input-field w-full mt-2" value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" spellCheck={false} disabled={busy} /></label>}
                 </div>

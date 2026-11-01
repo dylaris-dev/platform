@@ -46,7 +46,7 @@ export default function PackGuide() {
                     ],
                     [
                         '8. Publish or share',
-                        'Publish uploads through the owner’s stored Modrinth token. Modrinth controls moderation and visibility. After publication, Install in Modrinth App opens that exact uploaded version. Sharing creates separate revocable links, subject to the administrator’s feature setting.',
+                        'Publish uploads through the owner’s stored Modrinth token. Modrinth controls moderation and visibility. After publication, Install in Modrinth App opens that exact uploaded version. Packs are shared through Modrinth; the panel hands out no download links of its own.',
                     ],
                     [
                         'Recommendations and forks',

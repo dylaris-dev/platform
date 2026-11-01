@@ -490,6 +490,9 @@ REDIS_PASSWORD=${A[redis_password]}
 PANEL_TLS=$( case ${A[tls]} in self-signed) echo self-signed ;; files) echo files ;; *) echo off ;; esac )
 PANEL_TLS_HOSTS=${A[host]}
 NODE_HOSTNAME=$(hostname -s 2>/dev/null || echo node-01)
+# Optional: CIDRs users' own storage (backups, templates) may reach, e.g. a
+# MinIO on your LAN as 192.168.1.10/32. Never the network Redis or Postgres run on.
+STORAGE_PRIVATE_ALLOW=$(env_get STORAGE_PRIVATE_ALLOW)
 EOF
 }
 
@@ -553,6 +556,7 @@ write_compose() {
       REDIS_USER: "${REDIS_USER}"
       PANEL_TLS: "${PANEL_TLS}"
       PANEL_TLS_HOSTS: "${PANEL_TLS_HOSTS}"
+      STORAGE_PRIVATE_ALLOW: "${STORAGE_PRIVATE_ALLOW:-}"
 EOF
     sec JWT_SECRET; sec BEAM_JWT_SECRET; sec CLUSTER_SECRET; sec DB_PASSWORD; sec REDIS_PASSWORD
     if [[ ${A[tls]} == files ]]; then

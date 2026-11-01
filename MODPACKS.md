@@ -58,8 +58,8 @@ scripts**, with search and project artwork on the installed rows. Missing or
 broken artwork falls back to a content-type icon. **Add content** opens the
 Modrinth browser in the main workspace. Each installed entry is one row: name,
 version and categories, then its Client/Server sides and actions. An empty
-build offers Add from Modrinth and Upload directly. **Sharing** appears when
-share links are enabled or a build already has links, and contains expiring share links;
+build offers Add from Modrinth and Upload directly. Public build share links were removed
+(2026.10.31.3); old links answer 410.
 The pack overview carries **Recommended build**, **Pack version alerts**,
 **Team on Modrinth** and **New build**; inside a build the header keeps **All builds**
 and **New build** so the content list keeps its height. The alert dialog opens directly in one click
@@ -155,7 +155,7 @@ Recommendation does not freeze, publish or update installed/running servers.
 **Delete build** is available in the overview and build details with delete
 permission. Frozen or published builds require typing the exact version name.
 The API also requires JSON `{"confirmVersion":"exact-version"}` when deleting
-such a build. This removes local build metadata, downloads and share links;
+such a build. This removes local build metadata and downloads;
 other builds, installed server files and external Modrinth versions remain.
 Deleting the recommendation clears it and alerts fall back to the newest remaining
 release, or wait if none exists. Published builds cannot be edited or published
@@ -166,7 +166,7 @@ configuration bytes and empty folders into an independent draft. Choose a new
 pack owned by your account or an existing writable pack with no builds. Source
 read access and target authoring rights are required, including normal global
 authoring ceilings. Existing target settings remain unchanged. New packs do not
-inherit the source's Modrinth binding, credentials, share links or Modrinth team.
+inherit the source's Modrinth binding, credentials or Modrinth team.
 
 Uploaded objects and catalog/version records are copied to the target owner.
 Deleting or editing the source therefore does not invalidate the fork. Storage
@@ -251,6 +251,8 @@ The build details sidebar has **Download client .mrpack** and **Download server
 ZIP**. Each opens an installation guide before the download. The client archive
 is imported into Modrinth App as a new instance. For DYLARIS server setup choose
 **My modpacks** as the installation method and select the pack/build directly.
+The server ZIP is built on request and only for the owner and members with edit access,
+because it contains copies of Modrinth files.
 Manual ZIP installation requires Java, the matching Minecraft server and loader;
 these are not bundled. The guide includes version-specific Java advice and
 Windows/Linux launch examples for Fabric, Forge and NeoForge. Legacy Forge
@@ -260,7 +262,7 @@ Review the Minecraft EULA yourself before accepting it.
 For a build with an uploaded Modrinth version, **Open in Modrinth App** uses the
 official `modrinth://version/<id>` protocol. The app must be installed, and its
 account must be allowed to access that version; visibility/moderation still apply.
-Private DYLARIS drafts use manual `.mrpack` import instead of a public share link.
+Private DYLARIS drafts use manual `.mrpack` import.
 Modrinth project creation submits required empty arrays and a draft project.
 The publish dialog defaults drafts to Beta and submits that displayed channel.
 Every version is uploaded as a listed version (Beta or Release), so it appears in
