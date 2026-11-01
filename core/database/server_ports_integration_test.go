@@ -81,6 +81,26 @@ func TestIntegrationServerPorts(t *testing.T) {
 	if r, _ := st.GetNodeExtraPortRanges(); r[a.node.ID] != "" {
 		t.Fatal("an empty range must go back to the global one")
 	}
+	if err := st.SetNodeExtraPortsHost(a.node.ID, "voice.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := st.GetNodeExtraPortsHosts(); h[a.node.ID] != "voice.example.com" {
+		t.Fatalf("node host = %q", h[a.node.ID])
+	}
+	st.SetNodeExtraPortsHost(a.node.ID, "")
+	if h, _ := st.GetNodeExtraPortsHosts(); h[a.node.ID] != "" {
+		t.Fatal("an empty host must go back to the public IP")
+	}
+	if err := st.UpdateServerPortPreset(p.ID, "svc", 24454); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetServerPort(p.ID); got == nil || got.Preset != "svc" || got.ContainerPort != 24454 {
+		t.Fatalf("preset set: %+v", got)
+	}
+	st.UpdateServerPortPreset(p.ID, "", 24454)
+	if got, _ := st.GetServerPort(p.ID); got == nil || got.Preset != "" {
+		t.Fatalf("preset cleared: %+v", got)
+	}
 
 	if err := st.DeleteServer(a.server.ID); err != nil {
 		t.Fatal(err)

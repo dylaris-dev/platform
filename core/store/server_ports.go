@@ -179,6 +179,16 @@ func (s *PostgresStore) UpdateServerPortMeta(id int, name, note string) error {
 	return err
 }
 
+// UpdateServerPortPreset sets the port's preset ("" = none) and container port.
+func (s *PostgresStore) UpdateServerPortPreset(id int, preset string, containerPort int) error {
+	var v any
+	if preset != "" {
+		v = preset
+	}
+	_, err := s.db.Exec(`UPDATE server_ports SET preset = $2, container_port = $3 WHERE id = $1`, id, v, containerPort)
+	return err
+}
+
 // MoveServerPort re-takes a port on another node (the server moved);
 // ErrPortTaken when that host port is held there.
 func (s *PostgresStore) MoveServerPort(id, nodeID, hostPort int) error {
@@ -355,6 +365,42 @@ func (s *PostgresStore) SetNodeExtraPortRange(nodeID int, r string) error {
 		v = r
 	}
 	res, err := s.db.Exec(`UPDATE nodes SET extra_port_range = $2 WHERE id = $1`, nodeID, v)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("node %d: %w", nodeID, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// GetNodeExtraPortsHosts maps node id -> the address players use for its
+// extra ports, for the nodes that set one.
+func (s *PostgresStore) GetNodeExtraPortsHosts() (map[int]string, error) {
+	rows, err := s.db.Query(`SELECT id, extra_ports_host FROM nodes WHERE extra_ports_host IS NOT NULL AND extra_ports_host <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]string{}
+	for rows.Next() {
+		var id int
+		var h string
+		if err := rows.Scan(&id, &h); err != nil {
+			return nil, err
+		}
+		out[id] = h
+	}
+	return out, rows.Err()
+}
+
+// SetNodeExtraPortsHost sets that address; "" goes back to the public IP.
+func (s *PostgresStore) SetNodeExtraPortsHost(nodeID int, host string) error {
+	var v any
+	if host != "" {
+		v = host
+	}
+	res, err := s.db.Exec(`UPDATE nodes SET extra_ports_host = $2 WHERE id = $1`, nodeID, v)
 	if err != nil {
 		return err
 	}

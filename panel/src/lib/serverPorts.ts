@@ -48,3 +48,18 @@ export function formatBitRate(bytesPerSec: number): string {
     return `${bits.toFixed(0)} bit/s`;
 }
 
+
+/** The preset a PATCH sends for the edit form's voice chat box: undefined
+ *  leaves it, '' makes the port plain, 'svc' asks Core for the voice port
+ *  (Core picks the mod that is installed). */
+export function presetPatch(current: string | undefined, wantVoice: boolean): string | undefined {
+    if (!!current === wantVoice) return undefined;
+    return wantVoice ? 'svc' : '';
+}
+
+/** Where a node's extra port range comes from, for its badge. */
+export function rangeSource(node: { range: string; ownRange: boolean; defaultRange?: boolean }): 'Own' | 'Default' | 'Global' | null {
+    if (!node.range) return null;
+    if (node.ownRange) return 'Own';
+    return node.defaultRange ? 'Default' : 'Global';
+}

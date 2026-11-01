@@ -73,7 +73,7 @@ if ($current -notmatch 'networkingMode\s*=\s*mirrored') {
         Set-Content -Path $wslconfig -Value $current -Encoding ascii
         & wsl.exe --shutdown
         Ok "Wrote $wslconfig (WSL restarted)"
-        Warn 'Windows Firewall: allow inbound TCP 25443, 25500 and 25600-25699 if other machines should connect.'
+        Warn 'Windows Firewall: allow inbound TCP 25443, 25500 and 25600-25699, and TCP+UDP 25700-25799 (extra ports), if other machines should connect.'
     }
 }
 

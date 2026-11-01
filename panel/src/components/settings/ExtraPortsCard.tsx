@@ -12,7 +12,7 @@ import {
     getPortLimits, setPortLimit, deletePortLimit,
     type PortsSettings, type PortsNodeUsage, type ServerPortRow, type PortPermission, type PortLimit, type ServerTraffic,
 } from '@/lib/api';
-import { formatBitRate, formatMaxPerUser, parseMaxPerUser, portsError } from '@/lib/serverPorts';
+import { formatBitRate, formatMaxPerUser, parseMaxPerUser, portsError, rangeSource } from '@/lib/serverPorts';
 import { formatBytes } from '@/lib/format';
 
 type ScopeKind = 'server' | 'user' | 'role';
@@ -207,12 +207,15 @@ function SettingsSection({ stored, loadError, onSaved }: {
                         value={range}
                         onChange={e => setRange(e.target.value)}
                         className="input-field input-mono text-sm"
-                        placeholder="e.g. 26000-26099"
+                        placeholder={stored?.defaultRange ? `Default ${stored.defaultRange}` : 'e.g. 26000-26099'}
                         disabled={!stored}
                     />
                 </label>
                 <p className="text-xs text-(--base-06)">
-                    Host ports users get, lowest free first. Empty means users cannot get one. Must lie in 1024-65535, outside the game port range, and be open in the node&apos;s firewall for TCP and UDP.
+                    Host ports users get, lowest free first. Must lie in 1024-65535, outside the game port range, and be open in the node&apos;s firewall for TCP and UDP.{' '}
+                    {stored?.defaultRange
+                        ? <>Not set yet, so nodes without their own range use the default <span className="font-mono">{stored.defaultRange}</span>. Saving a range, or saving it empty for none, replaces the default.</>
+                        : 'Empty means users cannot get one.'}
                 </p>
             </SettingsGroup>
             <SettingsGroup title="Default per user">
@@ -228,20 +231,22 @@ function SettingsSection({ stored, loadError, onSaved }: {
 function NodeRangeRow({ node, onSaved }: { node: PortsNodeUsage; onSaved: () => Promise<void> }) {
     const [editing, setEditing] = useState(false);
     const [value, setValue] = useState('');
+    const [host, setHost] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
+    const source = rangeSource(node);
 
     const save = async (range: string) => {
         setBusy(true);
         setError('');
-        const res = await setNodePortRange(node.nodeId, range).catch(() => null);
+        const res = await setNodePortRange(node.nodeId, range, host.trim()).catch(() => null);
         setBusy(false);
         if (!res?.success) {
-            setError(portsError(res, 'The range could not be saved.'));
+            setError(portsError(res, 'The node could not be saved.'));
             return;
         }
         setEditing(false);
-        toast(range ? 'Node range saved' : 'Node uses the global range');
+        toast('Node saved');
         await onSaved();
     };
 
@@ -250,8 +255,11 @@ function NodeRangeRow({ node, onSaved }: { node: PortsNodeUsage; onSaved: () => 
             <div className="flex flex-wrap items-center gap-3">
                 <span className="font-medium text-(--base-09) min-w-32">{node.nodeName}</span>
                 <code className="input-mono text-xs text-(--base-08)">{node.range || 'no range'}</code>
-                {node.range && <span className={`badge ${node.ownRange ? 'badge-accent' : 'badge-neutral'}`}>{node.ownRange ? 'Own' : 'Global'}</span>}
+                {source && <span className={`badge ${source === 'Own' ? 'badge-accent' : 'badge-neutral'}`}>{source}</span>}
                 {node.gameRange && <span className="mono-label">Game {node.gameRange}</span>}
+                <span className="mono-label" title="The address players use for this node's extra ports">
+                    Address {node.host || 'automatic'}
+                </span>
                 <span className="ml-auto flex items-center gap-2">
                     {node.size > 0 && (
                         <>
@@ -269,10 +277,10 @@ function NodeRangeRow({ node, onSaved }: { node: PortsNodeUsage; onSaved: () => 
                         <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => { setValue(node.ownRange ? node.range : ''); setEditing(true); }}
-                            aria-label={`Set the range of ${node.nodeName}`}
+                            onClick={() => { setValue(node.ownRange ? node.range : ''); setHost(node.host); setEditing(true); }}
+                            aria-label={`Edit the range and address of ${node.nodeName}`}
                         >
-                            <Pencil size={13} aria-hidden="true" /> Range
+                            <Pencil size={13} aria-hidden="true" /> Edit
                         </button>
                     )}
                 </span>
@@ -287,19 +295,26 @@ function NodeRangeRow({ node, onSaved }: { node: PortsNodeUsage; onSaved: () => 
                 <form className="flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); void save(value.trim()); }}>
                     <label className="flex flex-col gap-1">
                         <span className="mono-label">Own range</span>
-                        <input value={value} onChange={e => setValue(e.target.value)} className="input-field input-mono text-sm w-44" placeholder="e.g. 27000-27099" autoFocus />
+                        <input value={value} onChange={e => setValue(e.target.value)} className="input-field input-mono text-sm w-44" placeholder={node.ownRange ? 'e.g. 27000-27099' : `Empty: ${node.range || 'none'}`} autoFocus />
                     </label>
-                    <button type="submit" className="btn btn-primary btn-sm" disabled={busy || value.trim() === ''}>
+                    <label className="flex flex-col gap-1">
+                        <span className="mono-label">Address players use for extra ports</span>
+                        <input value={host} onChange={e => setHost(e.target.value)} maxLength={253} className="input-field input-mono text-sm w-64" placeholder="Empty: the node's public IP" />
+                    </label>
+                    <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
                         {busy && <Loader2 size={13} className="animate-spin" aria-hidden="true" />} Save
                     </button>
                     {node.ownRange && (
                         <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => save('')}>
-                            Use global
+                            Drop own range
                         </button>
                     )}
                     <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { setEditing(false); setError(''); }}>
                         Cancel
                     </button>
+                    <p className="basis-full text-xs text-(--base-06)">
+                        An empty range falls back to the global range (or the default). The address is what the voice chat preset writes and what server owners see next to their ports: an IPv4 address or a hostname, for example when players reach the node through NAT or a DNS name. Empty uses the node&apos;s public IP. Takes effect on each server&apos;s next start.
+                    </p>
                 </form>
             )}
             {error && <div className="alert alert-error text-xs" role="alert">{error}</div>}

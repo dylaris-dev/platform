@@ -235,7 +235,7 @@ can still show what exists.
 | PUT | `/api/admin/port-permissions` | session | `settings.write` | - | `PortsAdminHandler.SetPermission` | {scope, allowed} |
 | DELETE | `/api/admin/port-permissions` | session | `settings.write` | - | `PortsAdminHandler.DeletePermission` | - |
 | GET | `/api/admin/ports` | session | `settings.read` | - | `PortsAdminHandler.GetOverview` | every extra port (searchable), usage per node range, and the feature settings. |
-| PUT | `/api/admin/ports/nodes/{id:[0-9]+}/range` | session | `settings.write` | - | `PortsAdminHandler.SetNodeRange` | {range}; "" goes back to the global range. |
+| PUT | `/api/admin/ports/nodes/{id:[0-9]+}/range` | session | `settings.write` | - | `PortsAdminHandler.SetNodeRange` | {range, host?}; range "" goes back to the global range, host "" to the node's public IP, a host left out stays. |
 | PUT | `/api/admin/ports/settings` | session | `settings.write` | - | `PortsAdminHandler.SetSettings` | {enabled?, range?, maxPerUser?}. |
 | GET | `/api/admin/servers` | session | `servers.read` | - | `ServerHandler.GetAdminServers` | returns all DB servers with optional search filter |
 | PATCH | `/api/admin/servers/{id:[0-9]+}/demo` | session | `settings.write` | - | `ServerHandler.SetServerDemo` | PANEL settings.write (RequireCap at the route). |
@@ -748,7 +748,7 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/players/online` | session | `players.read` | - | `PlayersHandler.GetOnline` | RCON `list`, so the roster needs players.read rather than the right to run any command. |
 | GET | `/api/servers/{id:[0-9]+}/ports` | session | `network.read` | - | `ServerHandler.GetServerPorts` | - |
 | POST | `/api/servers/{id:[0-9]+}/ports` | session | `network.write` | - | `ServerHandler.CreateServerPort` | - |
-| PATCH | `/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}` | session | `network.write` | - | `ServerHandler.UpdateServerPort` | name and note. |
+| PATCH | `/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}` | session | `network.write` | - | `ServerHandler.UpdateServerPort` | name, note and, when sent, the preset: "" turns the voice port into a plain one, "svc" or "plasmo" turns a UDP port into the voice port (the installed mod decides which, as on create). |
 | DELETE | `/api/servers/{id:[0-9]+}/ports/{portId:[0-9]+}` | session | `network.write` | - | `ServerHandler.DeleteServerPort` | Never refused for mode or permission: taking a port away must always work. |
 | POST | `/api/servers/{id:[0-9]+}/power` | session | _in-handler_ | - | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
 | PUT | `/api/servers/{id:[0-9]+}/proxy` | session | `network.write` | - | `ServerHandler.LinkServerToProxy` | Link a game server to a proxy server |

@@ -1382,23 +1382,25 @@ export const getServerPorts = (serverId: number): Promise<PortsResult & { ports?
     fetchAPI(`/servers/${serverId}/ports`);
 export const createServerPort = (serverId: number, req: CreateServerPortRequest): Promise<PortsResult & { port?: ServerPort; restartRequired?: boolean }> =>
     fetchAPI(`/servers/${serverId}/ports`, { method: 'POST', body: JSON.stringify(req) });
-export const updateServerPort = (serverId: number, portId: number, name: string, note: string): Promise<PortsResult> =>
-    fetchAPI(`/servers/${serverId}/ports/${portId}`, { method: 'PATCH', body: JSON.stringify({ name, note }) });
+/** preset undefined leaves it; '' makes the port plain; 'svc' makes it the voice port. */
+export const updateServerPort = (serverId: number, portId: number, name: string, note: string, preset?: string): Promise<PortsResult & { restartRequired?: boolean }> =>
+    fetchAPI(`/servers/${serverId}/ports/${portId}`, { method: 'PATCH', body: JSON.stringify({ name, note, preset }) });
 export const deleteServerPort = (serverId: number, portId: number): Promise<PortsResult & { restartRequired?: boolean }> =>
     fetchAPI(`/servers/${serverId}/ports/${portId}`, { method: 'DELETE' });
 
 export interface ServerPortRow extends ServerPort { serverUuid: string; serverName: string; ownerId: string; ownerName: string; nodeName: string }
-export interface PortsNodeUsage { nodeId: number; nodeName: string; range: string; ownRange: boolean; gameRange: string; size: number; used: number; percent: number; conflict: boolean }
-/** maxPerUser is "unlimited" or a number as text. */
-export interface PortsSettings { enabled: boolean; range: string; maxPerUser: string }
+/** defaultRange: range is the self-hosted default. host: the address players use for the node's extra ports, '' = its public IP. */
+export interface PortsNodeUsage { nodeId: number; nodeName: string; range: string; ownRange: boolean; defaultRange: boolean; host: string; gameRange: string; size: number; used: number; percent: number; conflict: boolean }
+/** maxPerUser is "unlimited" or a number as text. defaultRange is read-only: the range nodes use while range was never saved ('' on the SaaS). */
+export interface PortsSettings { enabled: boolean; range: string; maxPerUser: string; defaultRange?: string }
 /** A server's whole network traffic as its node last counted it: game port and extra ports together. rx/tx since the container started. */
 export interface ServerTraffic { rx: number; tx: number; rxBps: number; txBps: number; at: number }
 export const getPortsOverview = (q = ''): Promise<PortsResult & { ports?: ServerPortRow[]; nodes?: PortsNodeUsage[]; settings?: PortsSettings; traffic?: Record<string, ServerTraffic> }> =>
     fetchAPI(`/admin/ports${q ? `?q=${encodeURIComponent(q)}` : ''}`);
 export const setPortsSettings = (patch: Partial<PortsSettings>): Promise<PortsResult & { settings?: PortsSettings }> =>
     fetchAPI('/admin/ports/settings', { method: 'PUT', body: JSON.stringify(patch) });
-export const setNodePortRange = (nodeId: number, range: string): Promise<PortsResult> =>
-    fetchAPI(`/admin/ports/nodes/${nodeId}/range`, { method: 'PUT', body: JSON.stringify({ range }) });
+export const setNodePortRange = (nodeId: number, range: string, host?: string): Promise<PortsResult> =>
+    fetchAPI(`/admin/ports/nodes/${nodeId}/range`, { method: 'PUT', body: JSON.stringify({ range, host }) });
 export interface PortPermission { scope: string; allowed: boolean; updatedAt: string }
 export const getPortPermissions = (): Promise<PortsResult & { permissions?: PortPermission[]; global?: boolean }> =>
     fetchAPI('/admin/port-permissions');

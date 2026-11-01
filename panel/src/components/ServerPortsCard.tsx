@@ -4,13 +4,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Loader2, Pencil, Plug, Plus, Trash2, X } from 'lucide-react';
 import ModalPanel from '@/components/ui/ModalPanel';
 import CopyText from '@/components/ui/CopyText';
+import Checkbox from '@/components/ui/Checkbox';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import {
     getServerPorts, createServerPort, updateServerPort, deleteServerPort, serverPower,
     type ServerPort, type ServerPortsView, type CreateServerPortRequest,
 } from '@/lib/api';
-import { parseHostPort, portAddress, portUsage, portsError } from '@/lib/serverPorts';
+import { parseHostPort, portAddress, portUsage, portsError, presetPatch } from '@/lib/serverPorts';
 
 const NAME_MAX = 40;
 const NOTE_MAX = 200;
@@ -74,6 +75,7 @@ function ServerPortsModal({ serverId, view, canWrite, reload, onClose }: {
     const [editing, setEditing] = useState<number | null>(null);
     const [editName, setEditName] = useState('');
     const [editNote, setEditNote] = useState('');
+    const [editVoice, setEditVoice] = useState(false);
 
     const canAdd = canWrite && (view.allowed || view.isAdmin);
 
@@ -128,12 +130,13 @@ function ServerPortsModal({ serverId, view, canWrite, reload, onClose }: {
         setEditing(p.id);
         setEditName(p.name);
         setEditNote(p.note);
+        setEditVoice(!!p.preset);
         setError('');
     };
 
     const saveEdit = async (p: ServerPort) => {
         setBusy(true);
-        const res = await updateServerPort(serverId, p.id, editName.trim(), editNote.trim()).catch(() => null);
+        const res = await updateServerPort(serverId, p.id, editName.trim(), editNote.trim(), presetPatch(p.preset, editVoice)).catch(() => null);
         setBusy(false);
         if (!res?.success) {
             setError(portsError(res, 'The port could not be saved.'));
@@ -141,7 +144,8 @@ function ServerPortsModal({ serverId, view, canWrite, reload, onClose }: {
         }
         setEditing(null);
         toast('Port saved');
-        await reload();
+        if (res.restartRequired) await changed();
+        else await reload();
     };
 
     return (
@@ -191,6 +195,16 @@ function ServerPortsModal({ serverId, view, canWrite, reload, onClose }: {
                                                 <span className="mono-label">Note</span>
                                                 <input value={editNote} onChange={e => setEditNote(e.target.value)} maxLength={NOTE_MAX} className="input-field text-sm" />
                                             </label>
+                                            {p.protocol === 'udp' && (p.preset || (view.routingMode === 'ip_port' && !view.ports.some(o => o.preset))) && (
+                                                <Checkbox
+                                                    className="basis-full"
+                                                    checked={editVoice}
+                                                    onChange={setEditVoice}
+                                                    disabled={busy}
+                                                    label="Voice chat"
+                                                    hint="Writes this port and the node's address into the voice mod's config, on every start."
+                                                />
+                                            )}
                                             <button type="submit" className="btn btn-primary btn-sm" disabled={busy || editName.trim() === ''}>
                                                 <Check size={13} aria-hidden="true" /> Save
                                             </button>

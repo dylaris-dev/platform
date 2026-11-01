@@ -832,7 +832,7 @@ summary_done() {
   [[ ${A[tls]} == proxy ]] && say "  Proxy:      point https://${A[host]} at http://127.0.0.1:25500 (WebSocket upgrade on)."
   say "  Files:      $OUT_DIR (.env holds the secrets, mode 600)"
   say "  Data:       Docker volumes ${PROJECT}_dylaris_data, ${PROJECT}_core_data$( [[ ${A[db]} == bundled ]] && echo ", ${PROJECT}_timescaledb_data")"
-  say "  Firewall:   open 25500/25443 (panel) and 25600-25699 (Minecraft servers, direct routing); keep 25501 private."
+  say "  Firewall:   open 25500/25443 (panel), 25600-25699 (Minecraft servers, direct routing) and 25700-25799 TCP+UDP (extra ports such as voice chat); keep 25501 private."
   say "  Backups:    set a backup target in the panel (Settings > Backups) before people play."
   if [[ ${A[updates]:-} == auto ]]; then
     say "  Updates:    automatic, every night at 04:00 ($(host_tz)); by hand: bash install.sh update"

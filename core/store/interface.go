@@ -292,6 +292,7 @@ type Store interface {
 	CreateServerPort(p ServerPort) (ServerPort, error)
 	FreeServerPort(nodeID int, protocol string, min, max int, skip []int) (int, error)
 	UpdateServerPortMeta(id int, name, note string) error
+	UpdateServerPortPreset(id int, preset string, containerPort int) error
 	MoveServerPort(id, nodeID, hostPort int) error
 	DeleteServerPort(id int) error
 	CountServerPortsByOwner(ownerID string) (int, error)
@@ -306,6 +307,8 @@ type Store interface {
 	ListPortLimits() ([]PortLimit, error)
 	GetNodeExtraPortRanges() (map[int]string, error)
 	SetNodeExtraPortRange(nodeID int, r string) error
+	GetNodeExtraPortsHosts() (map[int]string, error)
+	SetNodeExtraPortsHost(nodeID int, host string) error
 	// UpdateServerNode reassigns a server to a different node. Used by the
 	// auto-move migration flow (later wave) to flip the FK after transport.
 	UpdateServerNode(serverID int, newNodeID int) error

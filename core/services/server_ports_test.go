@@ -178,3 +178,29 @@ func TestPublishServerPortsWritesTheFrozenShape(t *testing.T) {
 		t.Fatal("no ports must remove the key")
 	}
 }
+
+func TestEffectivePortRange(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		own, global string
+		saved       bool
+		hosted      bool
+		want        string
+		isDefault   bool
+	}{
+		{"self-hosted, nothing saved", "", "", false, false, DefaultExtraPortRange, true},
+		{"hosted, nothing saved", "", "", false, true, "", false},
+		{"self-hosted, global saved", "", "26000-26099", true, false, "26000-26099", false},
+		{"self-hosted, global saved empty", "", "", true, false, "", false},
+		{"hosted, global saved", "", "26000-26099", true, true, "26000-26099", false},
+		{"own range beats everything", "27000-27009", "26000-26099", true, false, "27000-27009", false},
+		{"own range on the SaaS", "27000-27009", "", false, true, "27000-27009", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, def := EffectivePortRange(c.own, c.global, c.saved, c.hosted)
+			if got != c.want || def != c.isDefault {
+				t.Fatalf("got %q default=%v, want %q default=%v", got, def, c.want, c.isDefault)
+			}
+		})
+	}
+}

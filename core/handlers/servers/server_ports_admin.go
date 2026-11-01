@@ -3,7 +3,9 @@ package servers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,10 +27,15 @@ func NewPortsAdminHandler(state *handlers.AppState) *PortsAdminHandler {
 }
 
 type portsNodeUsage struct {
-	NodeID    int     `json:"nodeId"`
-	NodeName  string  `json:"nodeName"`
-	Range     string  `json:"range"`
-	OwnRange  bool    `json:"ownRange"`
+	NodeID   int    `json:"nodeId"`
+	NodeName string `json:"nodeName"`
+	Range    string `json:"range"`
+	OwnRange bool   `json:"ownRange"`
+	// DefaultRange: Range is the self-hosted default, nothing was saved.
+	DefaultRange bool `json:"defaultRange"`
+	// Host is the address players use for the node's extra ports; "" = its
+	// public IP.
+	Host      string  `json:"host"`
 	GameRange string  `json:"gameRange"`
 	Size      int     `json:"size"`
 	Used      int     `json:"used"`
@@ -40,16 +47,27 @@ type portsSettingsView struct {
 	Enabled    bool   `json:"enabled"`
 	Range      string `json:"range"`
 	MaxPerUser string `json:"maxPerUser"`
+	// DefaultRange is the range a node without its own uses because the
+	// global one was never saved; "" when a saved value or the SaaS rules it out.
+	DefaultRange string `json:"defaultRange"`
 }
 
 func (h *PortsAdminHandler) settingsView() portsSettingsView {
 	en, _ := h.state.Store.GetSetting(services.PortsEnabledSettingKey)
-	rng, _ := h.state.Store.GetSetting(services.PortsRangeSettingKey)
+	rng, saved, err := services.GlobalPortRange(h.state.Store)
+	if err != nil {
+		log.Printf("ports admin: %v", err)
+		saved = true // unknown: do not claim the default applies
+	}
 	max, _ := h.state.Store.GetSetting(services.PortsMaxPerUserSettingKey)
 	on, _ := strconv.ParseBool(strings.TrimSpace(en))
 	def := services.DefaultPortsPerUser
-	return portsSettingsView{Enabled: on, Range: strings.TrimSpace(rng),
+	v := portsSettingsView{Enabled: on, Range: rng,
 		MaxPerUser: services.FormatLimitSetting(services.ParseLimitSetting(strings.TrimSpace(max), &def))}
+	if d, isDefault := services.EffectivePortRange("", rng, saved, h.state.Hosted); isDefault {
+		v.DefaultRange = d
+	}
+	return v
 }
 
 // GetOverview GET /api/admin/ports?q= - every extra port (searchable), usage
@@ -82,13 +100,20 @@ func (h *PortsAdminHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 		handlers.SendJSONError(w, "Failed to read the node ranges", http.StatusInternalServerError)
 		return
 	}
+	hosts, err := h.state.Store.GetNodeExtraPortsHosts()
+	if err != nil {
+		handlers.SendJSONError(w, "Failed to read the node addresses", http.StatusInternalServerError)
+		return
+	}
 	settings := h.settingsView()
 	beats := services.LoadHeartbeats(r.Context(), h.state.Redis)
 	usage := make([]portsNodeUsage, 0, len(nodes))
 	for _, n := range nodes {
-		u := portsNodeUsage{NodeID: n.ID, NodeName: n.Name, Range: settings.Range}
+		u := portsNodeUsage{NodeID: n.ID, NodeName: n.Name, Range: settings.Range, Host: hosts[n.ID]}
 		if rng := own[n.ID]; rng != "" {
 			u.Range, u.OwnRange = rng, true
+		} else if settings.DefaultRange != "" {
+			u.Range, u.DefaultRange = settings.DefaultRange, true
 		}
 		if hb := beats[n.Token]; hb != nil {
 			u.GameRange = hb.PortRange
@@ -169,8 +194,9 @@ func (h *PortsAdminHandler) SetSettings(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "settings": h.settingsView()})
 }
 
-// SetNodeRange PUT /api/admin/ports/nodes/{id}/range - {range}; "" goes back
-// to the global range. Refused when it overlaps the node's game port range.
+// SetNodeRange PUT /api/admin/ports/nodes/{id}/range - {range, host?}; range
+// "" goes back to the global range, host "" to the node's public IP, a host
+// left out stays. Refused when the range overlaps the node's game ports.
 func (h *PortsAdminHandler) SetNodeRange(w http.ResponseWriter, r *http.Request) {
 	nodeID := handlers.MustAtoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(nodeID)
@@ -179,11 +205,19 @@ func (h *PortsAdminHandler) SetNodeRange(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Range string `json:"range"`
+		Range string  `json:"range"`
+		Host  *string `json:"host"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
+	}
+	var host string
+	if req.Host != nil {
+		if host, err = normPortsHost(*req.Host); err != nil {
+			handlers.SendJSONErrorCode(w, "The address is invalid: "+err.Error()+".", "ports_host_invalid", http.StatusBadRequest)
+			return
+		}
 	}
 	req.Range = strings.TrimSpace(req.Range)
 	if req.Range != "" {
@@ -201,7 +235,35 @@ func (h *PortsAdminHandler) SetNodeRange(w http.ResponseWriter, r *http.Request)
 		handlers.SendJSONError(w, "Failed to save the range", http.StatusInternalServerError)
 		return
 	}
+	if req.Host != nil {
+		if err := h.state.Store.SetNodeExtraPortsHost(nodeID, host); err != nil {
+			log.Printf("ports admin: node %d host: %v", nodeID, err)
+			handlers.SendJSONError(w, "Failed to save the address", http.StatusInternalServerError)
+			return
+		}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// normPortsHost checks the address players use for a node's extra ports: ""
+// (automatic), an IPv4 address or a DNS name. IPv6 is refused because Simple
+// Voice Chat reads voice_host as host:port, which an unbracketed IPv6 breaks.
+func normPortsHost(s string) (string, error) {
+	v := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s)), ".")
+	if v == "" {
+		return "", nil
+	}
+	if ip := net.ParseIP(v); ip != nil {
+		if ip.To4() == nil {
+			return "", errors.New("use an IPv4 address or a hostname with an AAAA record")
+		}
+		return v, nil
+	}
+	labels := strings.Split(v, ".")
+	if _, err := strconv.Atoi(labels[len(labels)-1]); err == nil || !handlers.IsHostname(v, 2) {
+		return "", errors.New("enter an IPv4 address or a hostname such as play.example.com")
+	}
+	return v, nil
 }
 
 // ListPermissions GET /api/admin/port-permissions

@@ -24,8 +24,9 @@ import (
 // docs/superpowers/specs/2026-10-25-extra-server-ports-design.md.
 
 const (
-	portNameMax = 40
-	portNoteMax = 200
+	noAddressMsg = "The node has no public address yet. Set its public IP under Nodes, or an address for extra ports under Settings, Extra ports."
+	portNameMax  = 40
+	portNoteMax  = 200
 	// voicePresetPort is the port both voice mods listen on in the container.
 	voicePresetPort = 24454
 )
@@ -67,17 +68,35 @@ func nodePublicAddress(node *models.Node) string {
 	return node.Address
 }
 
-// effectivePortRange is the node's own range, else the global one ("" = none).
+// effectivePortRange is the node's own range, else the global one, else the
+// self-hosted default ("" = none).
 func (h *ServerHandler) effectivePortRange(nodeID int) (string, error) {
 	ranges, err := h.state.Store.GetNodeExtraPortRanges()
 	if err != nil {
 		return "", err
 	}
-	if r := ranges[nodeID]; r != "" {
-		return r, nil
+	g, saved, err := services.GlobalPortRange(h.state.Store)
+	if err != nil {
+		return "", err
 	}
-	g, _ := h.state.Store.GetSetting(services.PortsRangeSettingKey)
-	return strings.TrimSpace(g), nil
+	rng, _ := services.EffectivePortRange(ranges[nodeID], g, saved, h.state.Hosted)
+	return rng, nil
+}
+
+// extraPortsAddress is what players dial for the node's extra ports: the
+// address an admin set for them, else the node's public address.
+func (h *ServerHandler) extraPortsAddress(node *models.Node) string {
+	if node == nil {
+		return ""
+	}
+	hosts, err := h.state.Store.GetNodeExtraPortsHosts()
+	if err != nil {
+		log.Printf("ports: node %d: extra ports address: %v", node.ID, err)
+	}
+	if v := hosts[node.ID]; v != "" {
+		return v
+	}
+	return nodePublicAddress(node)
 }
 
 // GetServerPorts GET /api/servers/{id}/ports
@@ -108,7 +127,7 @@ func (h *ServerHandler) GetServerPorts(w http.ResponseWriter, r *http.Request) {
 	v.Used, _ = h.state.Store.CountServerPortsByOwner(srv.OwnerID)
 	v.Range, _ = h.effectivePortRange(srv.NodeID)
 	if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil {
-		v.Address = nodePublicAddress(node)
+		v.Address = h.extraPortsAddress(node)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ports": v})
 }
@@ -236,10 +255,10 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 	// missing mod costs nothing.
 	var voiceMod, voiceRel, voiceContent string
 	rh := handlers.NewRconHandler(h.state)
-	address := nodePublicAddress(node)
+	address := h.extraPortsAddress(node)
 	if req.Preset != "" {
 		if address == "" {
-			handlers.SendJSONErrorCode(w, "The node has no public address yet. Set its public IP under Nodes.", "no_node_address", http.StatusConflict)
+			handlers.SendJSONErrorCode(w, noAddressMsg, "no_node_address", http.StatusConflict)
 			return
 		}
 		if srv.ActiveSubServer == "" {
@@ -360,15 +379,19 @@ func (h *ServerHandler) takePort(p store.ServerPort, hostPort int, gameRange str
 	return p, "port_taken", "The port was taken by someone else at the same moment. Try again."
 }
 
-// UpdateServerPort PATCH /api/servers/{id}/ports/{portId} - name and note.
+// UpdateServerPort PATCH /api/servers/{id}/ports/{portId} - name, note and,
+// when sent, the preset: "" turns the voice port into a plain one, "svc" or
+// "plasmo" turns a UDP port into the voice port (the installed mod decides
+// which, as on create).
 func (h *ServerHandler) UpdateServerPort(w http.ResponseWriter, r *http.Request) {
 	srv, p, ok := h.loadServerPort(w, r)
 	if !ok {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
-		Note string `json:"note"`
+		Name   string  `json:"name"`
+		Note   string  `json:"note"`
+		Preset *string `json:"preset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
@@ -379,12 +402,113 @@ func (h *ServerHandler) UpdateServerPort(w http.ResponseWriter, r *http.Request)
 		handlers.SendJSONErrorCode(w, "The name is required and may have 40 characters; the note 200.", "port_invalid", http.StatusBadRequest)
 		return
 	}
+	restart := false
+	if req.Preset != nil && (*req.Preset != "") != (p.Preset != "") {
+		if !h.changePortPreset(w, r, srv, p, *req.Preset) {
+			return
+		}
+		restart = true
+	}
 	if err := h.state.Store.UpdateServerPortMeta(p.ID, req.Name, req.Note); err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		handlers.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restartRequired": restart})
+}
+
+// changePortPreset turns p into the voice port or back into a plain one, and
+// writes the mod's config to match. It answers its own refusals.
+func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request, srv *models.Server, p *store.ServerPort, preset string) bool {
+	if preset == "" {
+		if err := h.state.Store.UpdateServerPortPreset(p.ID, "", p.ContainerPort); err != nil {
+			log.Printf("ports: server %d: %v", srv.ID, err)
+			handlers.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
+			return false
+		}
+		h.writeBackVoice(srv)
+		return true
+	}
+	if preset != "svc" && preset != "plasmo" {
+		handlers.SendJSONErrorCode(w, "Unknown preset.", "port_invalid", http.StatusBadRequest)
+		return false
+	}
+	if h.routingMode() != "ip_port" {
+		handlers.SendJSONErrorCode(w, "With the gateway on, turn voice chat on under Routes instead.", "voice_preset_mode", http.StatusConflict)
+		return false
+	}
+	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		return false
+	}
+	if p.Protocol != "udp" {
+		handlers.SendJSONErrorCode(w, "Voice chat needs a UDP port. Add a UDP port with the voice chat preset instead.", "port_invalid", http.StatusBadRequest)
+		return false
+	}
+	others, err := h.state.Store.ListServerPorts(srv.ID)
+	if err != nil {
+		log.Printf("ports: server %d: %v", srv.ID, err)
+		handlers.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
+		return false
+	}
+	for _, o := range others {
+		if o.ID == p.ID {
+			continue
+		}
+		if o.Preset != "" {
+			handlers.SendJSONErrorCode(w, "This server already has a voice chat port.", "voice_preset_exists", http.StatusConflict)
+			return false
+		}
+		if o.Protocol == "udp" && o.ContainerPort == voicePresetPort {
+			handlers.SendJSONErrorCode(w, "Another port of this server already publishes UDP "+strconv.Itoa(voicePresetPort)+", the voice chat port.", "port_taken", http.StatusConflict)
+			return false
+		}
+	}
+	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	if err != nil || node == nil {
+		handlers.SendJSONError(w, "The server's node was not found", http.StatusNotFound)
+		return false
+	}
+	address := h.extraPortsAddress(node)
+	if address == "" {
+		handlers.SendJSONErrorCode(w, noAddressMsg, "no_node_address", http.StatusConflict)
+		return false
+	}
+	if srv.ActiveSubServer == "" {
+		handlers.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
+		return false
+	}
+	rh := handlers.NewRconHandler(h.state)
+	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	switch {
+	case errors.Is(err, handlers.ErrVoiceModMissing):
+		handlers.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
+		return false
+	case errors.Is(err, handlers.ErrVoiceModAmbiguous):
+		handlers.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
+		return false
+	case err != nil:
+		log.Printf("ports: server %d: %v", srv.ID, err)
+		handlers.SendJSONError(w, "Could not read the server's files on its node. Try again.", http.StatusBadGateway)
+		return false
+	}
+	merged := handlers.SvcVoiceEnable(content, address, p.HostPort)
+	if mod == "plasmo" {
+		merged = handlers.PlasmoVoiceEnable(content, address, p.HostPort)
+	}
+	if merged != content {
+		if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
+			log.Printf("ports: server %d: write %s: %v", srv.ID, rel, err)
+			handlers.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
+			return false
+		}
+	}
+	if err := h.state.Store.UpdateServerPortPreset(p.ID, mod, voicePresetPort); err != nil {
+		log.Printf("ports: server %d: %v", srv.ID, err)
+		handlers.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
+		return false
+	}
+	h.publishPorts(r.Context(), srv)
+	return true
 }
 
 // DeleteServerPort DELETE /api/servers/{id}/ports/{portId}. Never refused for
@@ -495,7 +619,7 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 	if err != nil {
 		return
 	}
-	address := nodePublicAddress(node)
+	address := h.extraPortsAddress(node)
 	for _, p := range ports {
 		if p.Preset == "" || subName == "" || address == "" {
 			continue

@@ -36,6 +36,38 @@ const (
 // DefaultPortsPerUser is the product default for ports.max_per_user.
 var DefaultPortsPerUser int64 = 2
 
+// DefaultExtraPortRange is the range a self-hosted node uses while neither it
+// nor the global setting names one; the installer's firewall hint opens it.
+// The SaaS has no default: there an operator assigns ranges on purpose.
+const DefaultExtraPortRange = "25700-25799"
+
+// GlobalPortRange reads ports.extra_range; saved is false when it was never
+// written, which is the one state the default fills. A saved "" means "none".
+func GlobalPortRange(st store.Store) (rng string, saved bool, err error) {
+	raw, err := st.GetSetting(PortsRangeSettingKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read %s: %w", PortsRangeSettingKey, err)
+	}
+	return strings.TrimSpace(raw), true, nil
+}
+
+// EffectivePortRange is a node's extra port range: its own, else the saved
+// global one, else (self-hosted only) DefaultExtraPortRange. "" = none.
+func EffectivePortRange(own, global string, globalSaved, hosted bool) (rng string, isDefault bool) {
+	switch {
+	case own != "":
+		return own, false
+	case globalSaved:
+		return global, false
+	case !hosted:
+		return DefaultExtraPortRange, true
+	}
+	return "", false
+}
+
 // The node's own ports (gRPC, metrics, ...); no range or port may touch them.
 const nodeOwnPortMin, nodeOwnPortMax = 25520, 25523
 

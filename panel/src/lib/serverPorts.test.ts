@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBitRate, formatMaxPerUser, parseHostPort, parseMaxPerUser, portAddress, portUsage, portsError } from './serverPorts';
+import { formatBitRate, formatMaxPerUser, parseHostPort, parseMaxPerUser, portAddress, portUsage, portsError, presetPatch, rangeSource } from './serverPorts';
 
 describe('serverPorts helpers', () => {
     it('builds the address', () => {
@@ -46,5 +46,25 @@ describe('formatBitRate', () => {
         expect(formatBitRate(6_250_000)).toBe('50.0 Mbit/s');
         expect(formatBitRate(250_000_000)).toBe('2.0 Gbit/s');
         expect(formatBitRate(-5)).toBe('0 bit/s');
+    });
+});
+
+describe('presetPatch', () => {
+    it('sends a preset only when the box changed it', () => {
+        expect(presetPatch(undefined, false)).toBeUndefined();
+        expect(presetPatch('svc', true)).toBeUndefined();
+        expect(presetPatch('plasmo', true)).toBeUndefined();
+        expect(presetPatch(undefined, true)).toBe('svc');
+        expect(presetPatch('', true)).toBe('svc');
+        expect(presetPatch('plasmo', false)).toBe('');
+    });
+});
+
+describe('rangeSource', () => {
+    it('names where the range comes from', () => {
+        expect(rangeSource({ range: '', ownRange: false })).toBeNull();
+        expect(rangeSource({ range: '27000-27009', ownRange: true, defaultRange: false })).toBe('Own');
+        expect(rangeSource({ range: '25700-25799', ownRange: false, defaultRange: true })).toBe('Default');
+        expect(rangeSource({ range: '26000-26099', ownRange: false, defaultRange: false })).toBe('Global');
     });
 });

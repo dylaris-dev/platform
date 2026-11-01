@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -28,13 +29,20 @@ type portsFakeStore struct {
 	perms    map[string]bool
 	limits   map[string]*int
 	ranges   map[int]string
+	hosts    map[int]string
 	ports    []store.ServerPort
 	nextID   int
 }
 
 func (f *portsFakeStore) GetServerByID(id int) (*models.Server, error) { return f.servers[id], nil }
 func (f *portsFakeStore) GetNodeByID(int) (*models.Node, error)        { return f.node, nil }
-func (f *portsFakeStore) GetSetting(k string) (string, error)          { return f.settings[k], nil }
+func (f *portsFakeStore) GetSetting(k string) (string, error) {
+	v, ok := f.settings[k]
+	if !ok {
+		return "", sql.ErrNoRows
+	}
+	return v, nil
+}
 func (f *portsFakeStore) GetUserBilling(string) (*store.UserBilling, error) {
 	return nil, nil
 }
@@ -54,6 +62,23 @@ func (f *portsFakeStore) GetPortLimit(scope string) (*store.PortLimit, error) {
 	return nil, nil
 }
 func (f *portsFakeStore) GetNodeExtraPortRanges() (map[int]string, error) { return f.ranges, nil }
+func (f *portsFakeStore) GetNodeExtraPortsHosts() (map[int]string, error) { return f.hosts, nil }
+func (f *portsFakeStore) UpdateServerPortMeta(id int, name, note string) error {
+	for i := range f.ports {
+		if f.ports[i].ID == id {
+			f.ports[i].Name, f.ports[i].Note = name, note
+		}
+	}
+	return nil
+}
+func (f *portsFakeStore) UpdateServerPortPreset(id int, preset string, containerPort int) error {
+	for i := range f.ports {
+		if f.ports[i].ID == id {
+			f.ports[i].Preset, f.ports[i].ContainerPort = preset, containerPort
+		}
+	}
+	return nil
+}
 func (f *portsFakeStore) ListServerPorts(serverID int) ([]store.ServerPort, error) {
 	out := []store.ServerPort{}
 	for _, p := range f.ports {
@@ -317,6 +342,7 @@ type portsAuthzStore struct {
 }
 
 func (f portsAuthzStore) GetNodeExtraPortRanges() (map[int]string, error) { return nil, nil }
+func (f portsAuthzStore) GetNodeExtraPortsHosts() (map[int]string, error) { return nil, nil }
 func (f portsAuthzStore) CountServerPortsByOwner(string) (int, error)     { return 0, nil }
 func (f portsAuthzStore) GetPortPermission(string) (*bool, error)         { return nil, nil }
 func (f portsAuthzStore) GetPortLimit(string) (*store.PortLimit, error)   { return nil, nil }
@@ -402,3 +428,188 @@ func (f portsOverviewStore) ListAllServerPorts(string) ([]store.ServerPortRow, e
 	return out, nil
 }
 func (f portsOverviewStore) ListNodes() ([]models.Node, error) { return []models.Node{*f.node}, nil }
+
+// A node without its own range and a global range never saved gets the
+// default range when self-hosted, and none on the SaaS. A saved global range,
+// even an empty one, wins over the default.
+func TestCreateServerPortUsesTheDefaultRangeOnlyWhenSelfHosted(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		hosted   bool
+		global   *string
+		wantPort int
+		wantCode string
+	}{
+		{"self-hosted, nothing saved", false, nil, 25700, ""},
+		{"hosted, nothing saved", true, nil, 0, "ports_no_range"},
+		{"self-hosted, saved empty", false, ptr(""), 0, "ports_no_range"},
+		{"self-hosted, saved range", false, ptr("26000-26002"), 26000, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pc := newPortsCase(t)
+			pc.h.state.Hosted = c.hosted
+			delete(pc.fs.settings, services.PortsRangeSettingKey)
+			if c.global != nil {
+				pc.fs.settings[services.PortsRangeSettingKey] = *c.global
+			}
+			w := pc.create(tcpPort, false)
+			if c.wantCode != "" {
+				if errCode(w) != c.wantCode {
+					t.Fatalf("status %d code %q, want %q", w.Code, errCode(w), c.wantCode)
+				}
+				return
+			}
+			if w.Code != 200 || len(pc.fs.ports) != 1 || pc.fs.ports[0].HostPort != c.wantPort {
+				t.Fatalf("status %d ports %+v, want host port %d", w.Code, pc.fs.ports, c.wantPort)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+func TestNormPortsHost(t *testing.T) {
+	for _, c := range []struct {
+		in, want string
+		ok       bool
+	}{
+		{"", "", true},
+		{"  ", "", true},
+		{"198.51.100.4", "198.51.100.4", true},
+		{" Voice.Example.COM. ", "voice.example.com", true},
+		{"2001:db8::1", "", false},
+		{"localhost", "", false},
+		{"1.2.3", "", false},
+		{"bad_name.example.com", "", false},
+		{"http://example.com", "", false},
+		{"example.com:24454", "", false},
+	} {
+		got, err := normPortsHost(c.in)
+		if (err == nil) != c.ok || got != c.want {
+			t.Errorf("normPortsHost(%q) = %q, %v; want %q ok=%v", c.in, got, err, c.want, c.ok)
+		}
+	}
+}
+
+// The address an admin set for the node's extra ports is what the server's
+// port view shows and what the voice preset writes on every start; without
+// one, the node's public address is.
+func TestExtraPortsAddressOverridesThePublicIP(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		hosts map[int]string
+		want  string
+	}{
+		{"automatic", nil, "203.0.113.7"},
+		{"override", map[int]string{7: "voice.example.com"}, "voice.example.com"},
+		{"another node's override", map[int]string{8: "voice.example.com"}, "203.0.113.7"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pc := newPortsCase(t)
+			pc.fs.hosts = c.hosts
+			pc.fs.ports = []store.ServerPort{{ID: 1, ServerID: 1, NodeID: 7, Protocol: "udp", HostPort: 26000, ContainerPort: voicePresetPort, Name: "Voice chat", Preset: "svc"}}
+			st, _, node := voiceNodeState(t, pc.fs, "config/voicechat/voicechat-server.properties", "svc_before.properties")
+			st.Hosted = false
+			h := NewServerHandler(st)
+
+			w := pc.do("GET", map[string]string{"id": "1"}, "", true, h.GetServerPorts)
+			var out struct {
+				Ports struct {
+					Address string `json:"address"`
+				} `json:"ports"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &out)
+			if w.Code != 200 || out.Ports.Address != c.want {
+				t.Fatalf("view address %q (%d), want %q", out.Ports.Address, w.Code, c.want)
+			}
+
+			h.syncPortsToStart(pc.fs.servers[1], "main")
+			node.mu.Lock()
+			written := node.written.String()
+			node.mu.Unlock()
+			if !strings.Contains(written, "voice_host="+c.want+":26000") {
+				t.Fatalf("start wrote %q, want voice_host=%s:26000", written, c.want)
+			}
+		})
+	}
+}
+
+// PATCH may change the preset: a plain UDP port becomes the voice port (the
+// mod's config is written and the container port follows the mod), the voice
+// port becomes a plain one, and a TCP port is refused.
+func TestUpdateServerPortChangesThePreset(t *testing.T) {
+	t.Run("plain udp to voice", func(t *testing.T) {
+		pc := newPortsCase(t)
+		pc.fs.hosts = map[int]string{7: "voice.example.com"}
+		pc.fs.ports = []store.ServerPort{{ID: 1, ServerID: 1, NodeID: 7, Protocol: "udp", HostPort: 26000, ContainerPort: 9000, Name: "Voice"}}
+		st, _, node := voiceNodeState(t, pc.fs, "config/voicechat/voicechat-server.properties", "svc_before.properties")
+		h := NewServerHandler(st)
+		w := pc.do("PATCH", map[string]string{"id": "1", "portId": "1"}, `{"name":"Voice","note":"","preset":"svc"}`, false, h.UpdateServerPort)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"restartRequired":true`) {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		if p := pc.fs.ports[0]; p.Preset != "svc" || p.ContainerPort != voicePresetPort {
+			t.Fatalf("port %+v, want preset svc on container port %d", p, voicePresetPort)
+		}
+		node.mu.Lock()
+		written := node.written.String()
+		node.mu.Unlock()
+		if !strings.Contains(written, "voice_host=voice.example.com:26000") {
+			t.Fatalf("wrote %q", written)
+		}
+	})
+	t.Run("voice to plain", func(t *testing.T) {
+		pc := newPortsCase(t)
+		pc.fs.ports = []store.ServerPort{{ID: 1, ServerID: 1, NodeID: 7, Protocol: "udp", HostPort: 26000, ContainerPort: voicePresetPort, Name: "Voice", Preset: "svc"}}
+		st, _, _ := voiceNodeState(t, pc.fs, "config/voicechat/voicechat-server.properties", "svc_after.properties")
+		h := NewServerHandler(st)
+		w := pc.do("PATCH", map[string]string{"id": "1", "portId": "1"}, `{"name":"Voice","note":"","preset":""}`, false, h.UpdateServerPort)
+		if w.Code != 200 || pc.fs.ports[0].Preset != "" {
+			t.Fatalf("status %d port %+v: %s", w.Code, pc.fs.ports[0], w.Body.String())
+		}
+	})
+	t.Run("tcp refused", func(t *testing.T) {
+		pc := newPortsCase(t)
+		pc.fs.ports = []store.ServerPort{{ID: 1, ServerID: 1, NodeID: 7, Protocol: "tcp", HostPort: 26000, ContainerPort: 8100, Name: "Map"}}
+		w := pc.do("PATCH", map[string]string{"id": "1", "portId": "1"}, `{"name":"Map","note":"","preset":"svc"}`, false, pc.h.UpdateServerPort)
+		if w.Code != 400 || errCode(w) != "port_invalid" || pc.fs.ports[0].Preset != "" {
+			t.Fatalf("status %d code %q port %+v", w.Code, errCode(w), pc.fs.ports[0])
+		}
+	})
+	t.Run("name only leaves the preset", func(t *testing.T) {
+		pc := newPortsCase(t)
+		pc.fs.ports = []store.ServerPort{{ID: 1, ServerID: 1, NodeID: 7, Protocol: "udp", HostPort: 26000, ContainerPort: voicePresetPort, Name: "Voice", Preset: "svc"}}
+		w := pc.do("PATCH", map[string]string{"id": "1", "portId": "1"}, `{"name":"Talk","note":""}`, false, pc.h.UpdateServerPort)
+		if w.Code != 200 || pc.fs.ports[0].Preset != "svc" || pc.fs.ports[0].Name != "Talk" {
+			t.Fatalf("status %d port %+v", w.Code, pc.fs.ports[0])
+		}
+	})
+}
+
+// The overview shows a node without its own range on the default, says so,
+// and carries the node's address for extra ports; on the SaaS it shows none.
+func TestPortsOverviewShowsTheDefaultRange(t *testing.T) {
+	for _, hosted := range []bool{false, true} {
+		pc := newPortsCase(t)
+		delete(pc.fs.settings, services.PortsRangeSettingKey)
+		pc.fs.hosts = map[int]string{7: "voice.example.com"}
+		h := NewPortsAdminHandler(&handlers.AppState{Store: portsOverviewStore{pc.fs}, Redis: pc.rdb, Hosted: hosted})
+		w := httptest.NewRecorder()
+		h.GetOverview(w, httptest.NewRequest("GET", "/x", nil))
+		var out struct {
+			Nodes    []portsNodeUsage  `json:"nodes"`
+			Settings portsSettingsView `json:"settings"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != 200 || len(out.Nodes) != 1 {
+			t.Fatalf("hosted=%v: status %d: %s", hosted, w.Code, w.Body.String())
+		}
+		n := out.Nodes[0]
+		want := services.DefaultExtraPortRange
+		if hosted {
+			want = ""
+		}
+		if n.Range != want || n.DefaultRange != !hosted || out.Settings.DefaultRange != want || n.Host != "voice.example.com" {
+			t.Fatalf("hosted=%v: node %+v settings %+v", hosted, n, out.Settings)
+		}
+	}
+}

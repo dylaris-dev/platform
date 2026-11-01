@@ -11,7 +11,10 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.11.01.6
 
 ### Features
-- Nothing.
+- Extra ports work out of the box: a node without a range uses `25700-25799` (open it for TCP and UDP). A range
+  you saved still wins. `core` `panel`
+- Each node can set the address players use for its extra ports, which the voice chat preset writes instead of the
+  public IP, and editing a UDP port can turn the voice preset on or off. `core` `panel`
 
 ### Breaking
 - Core refuses to start with an empty `REDIS_PASSWORD`. Set it to the password of the Redis admin user; a throwaway
