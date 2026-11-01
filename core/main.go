@@ -293,6 +293,14 @@ func main() {
 	pgStore.SetBackupStorageEncryptionKey(cfg.ClusterSecret)
 	pgStore.SetBedrockEncryptionKey(cfg.ClusterSecret)
 
+	// Before the HTTP server starts, so the code is in the log by the time
+	// /setup answers. Not fatal: on an installed platform this is only the
+	// cleanup of a used code, and a database blip must not stop the boot. A
+	// fresh install without a code is refused at /setup, which says to restart.
+	if err := handlers.EnsureSetupCode(pgStore); err != nil {
+		log.Printf("WARNING: %v", err)
+	}
+
 	// Which reverse-proxy networks may set X-Forwarded-For. Installed before any
 	// handler serves, so the rate limiters and the audit log key on a client IP
 	// that a direct client cannot forge. Process-global, read-only after this.

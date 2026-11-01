@@ -78,6 +78,7 @@ func TestLoadConfig_RejectsPlaceholderSecrets(t *testing.T) {
 func TestLoadConfig_AcceptsRealSecrets(t *testing.T) {
 	t.Setenv("JWT_SECRET", "a-real-random-jwt-secret-value")
 	t.Setenv("CLUSTER_SECRET", "a-real-random-cluster-secret-value")
+	t.Setenv("REDIS_PASSWORD", "a-redis-password")
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -93,6 +94,7 @@ func TestLoadConfig_AcceptsRealSecrets(t *testing.T) {
 func TestLoadConfig_StoragePrivateAllow(t *testing.T) {
 	t.Setenv("JWT_SECRET", "a-real-random-jwt-secret-value")
 	t.Setenv("CLUSTER_SECRET", "a-real-random-cluster-secret-value")
+	t.Setenv("REDIS_PASSWORD", "a-redis-password")
 	for _, tc := range []struct {
 		env     string
 		want    string // prefixes joined by ","
@@ -288,6 +290,7 @@ func TestValidateStoreSharedKey(t *testing.T) {
 func TestLoadConfig_BeamTicketKey(t *testing.T) {
 	t.Setenv("JWT_SECRET", "a-real-random-jwt-secret-value")
 	t.Setenv("CLUSTER_SECRET", "a-real-random-cluster-secret-value")
+	t.Setenv("REDIS_PASSWORD", "a-redis-password")
 
 	t.Setenv("BEAM_JWT_SECRET", "")
 	cfg, err := LoadConfig()
@@ -305,5 +308,43 @@ func TestLoadConfig_BeamTicketKey(t *testing.T) {
 	}
 	if cfg.BeamJWTSecret != "a-separate-beam-ticket-key" || cfg.JWTSecret == cfg.BeamJWTSecret {
 		t.Fatalf("BEAM_JWT_SECRET not used on its own: %q", cfg.BeamJWTSecret)
+	}
+}
+
+// Core used to start against a Redis whose default user had no password, which
+// is what the shipped compose file set up. Empty is refused unless the operator
+// says in so many words that this is a throwaway setup.
+func TestValidateRedisPassword(t *testing.T) {
+	for _, tc := range []struct {
+		pass      string
+		allowNone bool
+		wantErr   bool
+	}{
+		{"", false, true},
+		{"", true, false},
+		{"secret", false, false},
+		{"secret", true, false},
+	} {
+		err := validateRedisPassword(tc.pass, tc.allowNone)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("validateRedisPassword(%q, %v) = %v, want error %v", tc.pass, tc.allowNone, err, tc.wantErr)
+		}
+		if err != nil && !strings.Contains(err.Error(), "REDIS_ALLOW_NO_PASSWORD") {
+			t.Errorf("the refusal does not name the escape hatch: %v", err)
+		}
+	}
+}
+
+func TestLoadConfig_RefusesEmptyRedisPassword(t *testing.T) {
+	t.Setenv("JWT_SECRET", "a-real-random-jwt-secret-value")
+	t.Setenv("CLUSTER_SECRET", "a-real-random-cluster-secret-value")
+	t.Setenv("REDIS_PASSWORD", "")
+	t.Setenv("REDIS_ALLOW_NO_PASSWORD", "")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "REDIS_PASSWORD") {
+		t.Fatalf("err = %v, want a refusal naming REDIS_PASSWORD", err)
+	}
+	t.Setenv("REDIS_ALLOW_NO_PASSWORD", "true")
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("REDIS_ALLOW_NO_PASSWORD=true still refused: %v", err)
 	}
 }

@@ -179,7 +179,22 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
 
 - **Core fails fast at boot on bad secrets.** It refuses to start if `JWT_SECRET`
   or `CLUSTER_SECRET` is empty or left at its placeholder (`change-this-secret` /
-  `dylaris-cluster-secret`). Set strong random values.
+  `dylaris-cluster-secret`), and if `REDIS_PASSWORD` is empty (a passwordless
+  Redis `default` user can read every queue and rewrite routing). Set strong
+  random values. `REDIS_ALLOW_NO_PASSWORD=true` lifts the Redis check, for a
+  throwaway dev or test setup only.
+- **The first administrator needs the setup code.** On its first start (no users
+  yet) Core logs one line, `SETUP CODE: XXXX-XXXX-XXXX (needed once to create
+  the first administrator)`, and `/setup` asks for it, so whoever reaches the
+  port first can no longer claim the platform. Find it with
+  `docker compose logs core | grep 'SETUP CODE'`. It survives restarts until it
+  is used and is deleted once the first admin exists. Lost it (for example the
+  container was recreated and the log is gone)? Delete the stored hash and
+  restart Core, which logs a new one (bundled database; for your own, run the
+  same DELETE there):
+  `echo "DELETE FROM settings WHERE key = 'setup.code_hash';" | docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`,
+  then `docker compose restart core`.
+  With several Core replicas only one of them generates and logs the code.
 - **Core cannot run without Postgres and Redis.** Redis is mandatory (coordination
   bus); Postgres is the source of truth. Core fails at startup if it cannot reach
   them.
@@ -297,16 +312,21 @@ CLUSTER_SECRET=$(openssl rand -hex 32)
 DB_USER=dylaris
 DB_PASSWORD=$(openssl rand -hex 24)
 DB_NAME=dylaris
+REDIS_PASSWORD=$(openssl rand -hex 32)
 EOF
 
 # 2. Seed the Valkey ACL file (mandatory: the --aclfile Valkey refuses to start
-#    against a missing file and is NOT auto-seeded). Dev is passwordless:
-mkdir -p valkey-acl && printf 'user default on nopass ~* &* +@all\n' > valkey-acl/users.acl
+#    against a missing file and is NOT auto-seeded) with the same password.
+#    Core refuses to start with an empty REDIS_PASSWORD.
+mkdir -p valkey-acl && printf 'user default on >%s ~* &* +@all\n' "$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2)" > valkey-acl/users.acl
 
 # 3. Start the stack
 docker compose up -d
 
-# 4. Open the panel and run the first-run setup wizard
+# 4. Read the one-time setup code Core printed on its first start
+docker compose logs core | grep 'SETUP CODE'
+
+# 5. Open the panel and run the first-run setup wizard with that code
 #    http://localhost:25500   →   /setup  (creates the first admin)
 ```
 
@@ -494,7 +514,8 @@ secrets:
 | `TAB_PROXY_HOST_SUFFIX` | *(empty)* | No | DNS suffix each proxied custom tab is served under, one hostname per tab (`<label>.tabs.example.com`). Needs a wildcard DNS record and a certificate covering BOTH the suffix and its wildcard; wildcards are DNS-01 only. Empty = proxied tabs unavailable (direct tabs unaffected). Full setup: [CUSTOM-TABS.md](CUSTOM-TABS.md). |
 | `REDIS_ADDR` | `localhost:6379` (compose: `redis:6379`) | No | Redis/Valkey address. |
 | `REDIS_USER` | *(empty)* | No | Redis/Valkey username (ACL). |
-| `REDIS_PASSWORD` | *(empty)* | Recommended | Redis/Valkey password for Core's admin login. Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. The bundled Valkey runs the stock image (non-root) with `--aclfile` and is NOT auto-seeded, so this must match the `default` admin password you create in the aclfile before the first boot (see the redis service comment in the compose files). |
+| `REDIS_PASSWORD` | *(empty)* | **Yes** | Redis/Valkey password for Core's admin login; Core refuses to start while it is empty (see `REDIS_ALLOW_NO_PASSWORD`). Core is the Redis ACL authority: it connects as the aclfile `default` user and provisions per-node scoped users. The bundled Valkey runs the stock image (non-root) with `--aclfile` and is NOT auto-seeded, so this must match the `default` admin password you create in the aclfile before the first boot (see the redis service comment in the compose files). |
+| `REDIS_ALLOW_NO_PASSWORD` | `false` | No | `true` lets Core start with an empty `REDIS_PASSWORD`, against a Redis whose admin user has no password. Only for a throwaway dev or test setup: that user can read every queue and rewrite routing. |
 | `REDIS_DB` | `0` | No | Redis/Valkey logical DB index. |
 | `EXTERNAL_TICKET_DB_URL` | *(empty)* | No | Optional external ticket DB URL; surfaces as a target in the migration/backup/restore UI. Live queries always hit the main DB. |
 | `BILLING_SUSPEND_GRACE` | `48h` | No | Grace before a `suspended` (BYON) tenant is cut off, so a transient billing/DB fault cannot instantly kick a paying customer. At the cutoff their servers stop, their route-only links' tunnels are taken down, **and their warp peers are removed, so the overlay tunnel itself goes down** — until then everything keeps running. Go duration; `0` enforces on the next hourly tick. |

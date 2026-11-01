@@ -61,8 +61,10 @@ services:
       # managed Postgres reached over an untrusted network.
       DB_SSLMODE: "${DB_SSLMODE:-disable}"
       REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
-      # Core admin Redis login. Empty against the bundled passwordless dev Valkey;
-      # for a password-protected or external Redis set both. REDIS_PASSWORD supports
+      # Core admin Redis login. REDIS_PASSWORD is REQUIRED: Core refuses to
+      # start with it empty (REDIS_ALLOW_NO_PASSWORD=true is for throwaway
+      # dev/test only). For an external Redis with a named admin set REDIS_USER
+      # too. REDIS_PASSWORD supports
       # the _FILE secret convention (REDIS_PASSWORD_FILE=...). Scoped per-node users
       # are always Core-provisioned, never hand-set.
       REDIS_USER: "${REDIS_USER:-}"

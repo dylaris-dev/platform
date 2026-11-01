@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Core refuses to start with an empty `REDIS_PASSWORD`. Set it to the password of the Redis admin user; a throwaway
+  dev setup can set `REDIS_ALLOW_NO_PASSWORD=true` instead. `core`
+
+### Security
+- Creating the first administrator on a fresh install needs the one-time setup code Core prints to its log
+  (`docker compose logs core | grep 'SETUP CODE'`). Before, whoever reached `/setup` first got it. `core` `panel`
+
+### Fixes
+- Nothing.
+
 ## 2026.11.01.5
 
 ### Features

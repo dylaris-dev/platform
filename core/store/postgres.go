@@ -2159,6 +2159,33 @@ func (s *PostgresStore) SetSetting(key, value string) error {
 	return err
 }
 
+// InsertSettingIfAbsent writes a setting only when the key has no row yet and
+// reports whether this call wrote it. With several replicas racing, exactly
+// one sees true.
+func (s *PostgresStore) InsertSettingIfAbsent(key, value string) (bool, error) {
+	stored, err := s.encodeSettingValue(key, value)
+	if err != nil {
+		return false, err
+	}
+	res, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, key, stored)
+	if err != nil {
+		return false, fmt.Errorf("insert setting %s: %w", key, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("insert setting %s: %w", key, err)
+	}
+	return n == 1, nil
+}
+
+// DeleteSetting removes a setting row. A missing row is not an error.
+func (s *PostgresStore) DeleteSetting(key string) error {
+	if _, err := s.db.Exec(`DELETE FROM settings WHERE key = $1`, key); err != nil {
+		return fmt.Errorf("delete setting %s: %w", key, err)
+	}
+	return nil
+}
+
 // UpdateSetting rewrites one setting from its current value under a row lock,
 // so two replicas editing the same list cannot lose each other's change the way
 // a GetSetting/SetSetting pair does. A missing row reads as "".

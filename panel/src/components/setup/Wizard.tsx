@@ -23,6 +23,7 @@ export default function SetupWizard() {
     // is open and nothing can come through it.
     const [open, setOpen] = useState(false);
     const [needsSecretWarning, setNeedsSecretWarning] = useState(false);
+    const [setupCodeRequired, setSetupCodeRequired] = useState(false);
     const [frontendUrl, setFrontendUrl] = useState<string>('');
 
     const [step, setStep] = useState<Step>(1);
@@ -30,6 +31,7 @@ export default function SetupWizard() {
     const [password, setPassword] = useState('');
     const [passwordRepeat, setPasswordRepeat] = useState('');
     const [adminSecret, setAdminSecret] = useState('');
+    const [setupCode, setSetupCode] = useState('');
 
     // TOTP - secret is generated client-side at mount so the QR code can
     // render without a backend round-trip. Backend re-verifies the code
@@ -53,6 +55,7 @@ export default function SetupWizard() {
             setAdminSecretConfigured(s.adminSecretConfigured);
             setOpen(s.open);
             setNeedsSecretWarning(s.needsSecretWarning);
+            setSetupCodeRequired(!!s.setupCodeRequired);
             setFrontendUrl(s.frontendUrl || '');
         });
     }, [router]);
@@ -67,7 +70,8 @@ export default function SetupWizard() {
         /^[a-zA-Z0-9_-]{3,32}$/.test(username.trim()) &&
         password.length >= 8 &&
         password === passwordRepeat &&
-        (!secretRequired || adminSecret.trim().length > 0);
+        (!secretRequired || adminSecret.trim().length > 0) &&
+        (!setupCodeRequired || setupCode.trim().length > 0);
 
     const otpAuthURL = useMemo(() => {
         if (!username) return '';
@@ -82,6 +86,7 @@ export default function SetupWizard() {
             username: username.trim(),
             password,
             adminSecret: secretRequired ? adminSecret.trim() : undefined,
+            setupCode: setupCodeRequired ? setupCode.trim() : undefined,
             totp: withTotp ? { secret: totpSecret, code: totpCode.trim() } : undefined,
         });
         setSubmitting(false);
@@ -250,6 +255,26 @@ export default function SetupWizard() {
                             </div>
                         )}
                     </div>
+
+                    {setupCodeRequired && (
+                        <div>
+                            <label htmlFor="setup-code" className="mono-label block">Setup code</label>
+                            <input
+                                id="setup-code"
+                                type="text"
+                                value={setupCode}
+                                onChange={e => setSetupCode(e.target.value)}
+                                placeholder="XXXX-XXXX-XXXX"
+                                autoComplete="off"
+                                autoCapitalize="characters"
+                                spellCheck={false}
+                                className="input-mono w-full font-mono text-xs"
+                            />
+                            <div className="text-[10px] text-(--base-06) mt-1">
+                                Shown in the Core log on first start (<code className="font-mono">docker compose logs core | grep &apos;SETUP CODE&apos;</code>).
+                            </div>
+                        </div>
+                    )}
 
                     {secretRequired && (
                         <div>

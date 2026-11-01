@@ -506,6 +506,10 @@ type Store interface {
 	SetSetting(key, value string) error
 	// UpdateSetting rewrites a setting from its current value under a row lock.
 	UpdateSetting(key string, fn func(old string) (string, error)) error
+	// InsertSettingIfAbsent writes only when the key has no row; true means this
+	// call wrote it.
+	InsertSettingIfAbsent(key, value string) (bool, error)
+	DeleteSetting(key string) error
 
 	// --- Health ---
 	// Ping verifies the underlying database connection is alive. Backed by

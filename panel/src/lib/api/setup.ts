@@ -23,6 +23,8 @@ export interface SetupStatus {
     /** Ask for the red "no admin token configured" banner: the door is open and
      *  without ADMIN_SECRET nothing can come through it. */
     needsSecretWarning: boolean;
+    /** A fresh install: the form must carry the one-time code Core logged. */
+    setupCodeRequired?: boolean;
     frontendUrl?: string;
     message?: string;
 }
@@ -36,6 +38,7 @@ export interface SetupAdminRequest {
     username: string;
     password: string;
     adminSecret?: string;
+    setupCode?: string;
     totp?: SetupTOTPInfo;
 }
 

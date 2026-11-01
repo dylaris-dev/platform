@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,9 @@ type setupStatusResp struct {
 	// NeedsSecretWarning asks the panel for the red "no admin token configured"
 	// banner. See setupGate.NeedsSecretWarning.
 	NeedsSecretWarning bool `json:"needsSecretWarning"`
+	// SetupCodeRequired asks the panel for the setup code field: a fresh
+	// install takes the one-time code Core printed to its log.
+	SetupCodeRequired bool `json:"setupCodeRequired"`
 }
 
 // Status GET /api/setup/status - open route. Always reachable (the setup-lock
@@ -87,6 +91,7 @@ func (h *SetupHandler) Status(w http.ResponseWriter, r *http.Request) {
 		out.Mode = "complete"
 	case userCount == 0:
 		out.Mode = "fresh_install"
+		out.SetupCodeRequired = true
 	default:
 		out.Mode = "lost_admin"
 	}
@@ -103,6 +108,7 @@ type setupAdminReq struct {
 	Username    string         `json:"username"`
 	Password    string         `json:"password"`
 	AdminSecret string         `json:"adminSecret,omitempty"`
+	SetupCode   string         `json:"setupCode,omitempty"`
 	TOTP        *setupTOTPInfo `json:"totp,omitempty"`
 }
 
@@ -159,6 +165,25 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A fresh install used to hand the first admin to whoever reached the
+	// port first. Now the caller must also hold the code Core logged at boot,
+	// which only someone with access to the host can read.
+	freshInstall := userCount == 0
+	if freshInstall {
+		stored, err := h.state.Store.GetSetting(SetupCodeSettingKey)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			sendSetupError(w, http.StatusForbidden, "setup_code_unavailable", "No setup code has been generated. Restart Core and read the code from its log (docker compose logs core | grep 'SETUP CODE').")
+			return
+		case err != nil:
+			sendSetupError(w, http.StatusInternalServerError, "setup_code_failed", "Could not read the setup code.")
+			return
+		case !setupCodeMatches(stored, req.SetupCode):
+			sendSetupError(w, http.StatusForbidden, "invalid_setup_code", "The setup code is missing or incorrect. It is in the Core log: docker compose logs core | grep 'SETUP CODE'.")
+			return
+		}
+	}
+
 	req.Username = strings.TrimSpace(req.Username)
 	if !validate.IsUsername(req.Username) {
 		sendSetupError(w, http.StatusBadRequest, "invalid_username", "Username must be 3-32 chars (alphanumeric, _ or -).")
@@ -206,6 +231,14 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 			sendSetupError(w, http.StatusInternalServerError, "create_failed", err.Error())
 		}
 		return
+	}
+
+	// Single use. A failure leaves a code nobody can use (an admin exists now,
+	// so the fresh-install check never runs again) and the next boot deletes it.
+	if freshInstall {
+		if derr := h.state.Store.DeleteSetting(SetupCodeSettingKey); derr != nil {
+			log.Printf("setup: used setup code not deleted: %v", derr)
+		}
 	}
 
 	// The wizard turns 2FA on, so the admin gets the backup codes enrolment

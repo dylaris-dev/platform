@@ -6,6 +6,7 @@
 #
 #   cp .env.example .env   # then edit JWT_SECRET, CLUSTER_SECRET, DB_PASSWORD
 #   docker compose up -d
+#   docker compose logs core | grep 'SETUP CODE'   # one-time code for /setup
 #   open http://localhost:25500  →  /setup
 #
 # For a multi-host fleet, use docker-stack.yml (Docker Swarm) instead.
@@ -46,12 +47,16 @@ services:
       DB_PASSWORD: "${DB_PASSWORD}"
       DB_NAME: "${DB_NAME}"
       REDIS_ADDR: "redis:6379"
-      # Core admin Redis login. Empty against the bundled passwordless dev Valkey;
-      # for a password-protected or external Redis set both. REDIS_PASSWORD supports
-      # the _FILE secret convention (REDIS_PASSWORD_FILE=...). Scoped per-node users
-      # are always Core-provisioned, never hand-set.
+      # Core admin Redis login. REDIS_PASSWORD is REQUIRED: Core refuses to
+      # start with it empty. It must equal the password seeded into the aclfile
+      # (see the redis service). REDIS_USER only for an external Redis with a
+      # named admin. REDIS_PASSWORD supports the _FILE secret convention
+      # (REDIS_PASSWORD_FILE=...). Scoped per-node users are always
+      # Core-provisioned, never hand-set.
       REDIS_USER: "${REDIS_USER:-}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      # true lets Core start against a passwordless Redis. Throwaway dev/test only.
+      REDIS_ALLOW_NO_PASSWORD: "${REDIS_ALLOW_NO_PASSWORD:-false}"
       # Custom-tab reverse proxy. OFF by default: with no suffix there is no
       # host to serve a container on, so proxied tabs and share links are
       # unavailable and direct tabs are unaffected.
@@ -280,10 +285,13 @@ services:
     # so Valkey drops to its non-root `valkey` user (the stock entrypoint chowns
     # /data and execs the server via setpriv). --aclfile refuses to start against
     # a missing file, so create the admin `default` user ONCE before the first
-    # boot. Dev is passwordless:
-    #   mkdir -p valkey-acl && printf 'user default on nopass ~* &* +@all\n' > valkey-acl/users.acl
-    # PRODUCTION: seed it with a real password equal to Core's REDIS_PASSWORD
-    # (see .env.example / README). Core then connects as the `default` admin and
+    # boot, with a password equal to Core's REDIS_PASSWORD (no space - ACL
+    # fields are space-delimited):
+    #   mkdir -p valkey-acl && printf 'user default on >%s ~* &* +@all\n' "$REDIS_PASSWORD" > valkey-acl/users.acl
+    # Core refuses to start with an empty REDIS_PASSWORD (a passwordless
+    # `default` user can read every queue and rewrite routing); only a throwaway
+    # dev setup may seed `nopass` and set REDIS_ALLOW_NO_PASSWORD=true.
+    # Core then connects as the `default` admin and
     # provisions the per-node scoped users. The aclfile lives in /data (the
     # WORKDIR) so the stock chown reaches it and ACL SAVE (temp-file + rename)
     # works as non-root. valkey-acl/ is git-ignored (runtime state, not source).

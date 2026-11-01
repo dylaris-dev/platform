@@ -342,6 +342,7 @@ interview() {
     ask redis_addr "Address (host:port)" ""
     ask redis_user "Admin user (needs ACL rights: DYLARIS creates a user per node)" "default"
     ask_secret redis_password "Password for ${A[redis_user]}"
+    [[ -n ${A[redis_password]} ]] || die "DYLARIS needs a password on that Redis user; Core refuses to start without one."
     ask_yn redis_tls "Does it need TLS?" n
     check_redis
   else
@@ -745,6 +746,23 @@ wait_core() {
 '; return 1
 }
 
+# Core prints a one-time setup code on its first start, and /setup (and the
+# API call below) asks for it. Read from the log, the only place it exists.
+SETUP_CODE=""
+read_setup_code() {
+  local i c=""
+  for i in 1 2 3 4 5; do
+    if [[ -f $OUT_DIR/docker-stack.yml ]]; then
+      c=$("${DOCKER[@]}" service logs --raw "${PROJECT}_core" 2>/dev/null | grep -o 'SETUP CODE: [A-Z0-9-]*' | tail -1) || true
+    else
+      c=$(compose logs --no-log-prefix core 2>/dev/null | grep -o 'SETUP CODE: [A-Z0-9-]*' | tail -1) || true
+    fi
+    [[ -n $c ]] && { printf '%s' "${c#SETUP CODE: }"; return 0; }
+    sleep 2
+  done
+  return 1
+}
+
 create_admin() {
   [[ ${A[admin]:-} == now ]] || return 0
   (( DRY_RUN )) && { say "${D}dry-run${N}  POST /api/setup/admin as ${A[admin_user]}"; return; }
@@ -752,7 +770,8 @@ create_admin() {
   if ! grep -q 'fresh_install' <<<"$st"; then
     info "An administrator already exists; skipped."; return
   fi
-  local body; body=$(printf '{"username":"%s","password":"%s"}' "$(json_escape "${A[admin_user]}")" "$(json_escape "${A[admin_password]}")")
+  SETUP_CODE=$(read_setup_code) || true
+  local body; body=$(printf '{"username":"%s","password":"%s","setupCode":"%s"}' "$(json_escape "${A[admin_user]}")" "$(json_escape "${A[admin_password]}")" "$SETUP_CODE")
   local code out; out=$(mktemp)
   code=$(curl -sS -o "$out" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @- \
     http://127.0.0.1:25500/api/setup/admin <<<"$body" 2>/dev/null) || true
@@ -760,6 +779,8 @@ create_admin() {
     ok "Administrator ${A[admin_user]} created"
   else
     warn "Could not create the administrator (HTTP $code): $(head -c 300 "$out"). Open ${A[frontend]}/setup instead."
+    # The summary then shows the /setup step and the code it asks for.
+    A[admin]=browser
   fi
   rm -f "$out"
 }
@@ -797,7 +818,17 @@ summary_done() {
   step "Done"
   say "  Panel:      ${B}${A[frontend]}${N}"
   [[ ${A[tls]} == self-signed ]] && say "              The browser warns about the self-signed certificate once; that is expected."
-  [[ ${A[admin]:-} == browser ]] && say "  First step: open ${A[frontend]}/setup and create the administrator."
+  if [[ ${A[admin]:-} == browser ]]; then
+    say "  First step: open ${A[frontend]}/setup and create the administrator."
+    if [[ -z $SETUP_CODE ]] && (( ! DRY_RUN )) && curl -fsS -o /dev/null http://127.0.0.1:25500/healthz 2>/dev/null; then
+      SETUP_CODE=$(read_setup_code) || true
+    fi
+    if [[ -n $SETUP_CODE ]]; then
+      say "  Setup code: ${B}$SETUP_CODE${N} (/setup asks for it once)"
+    else
+      say "  Setup code: printed by Core on its first start; find it with: docker compose -f $OUT_DIR/docker-compose.yml logs core | grep 'SETUP CODE'"
+    fi
+  fi
   [[ ${A[tls]} == proxy ]] && say "  Proxy:      point https://${A[host]} at http://127.0.0.1:25500 (WebSocket upgrade on)."
   say "  Files:      $OUT_DIR (.env holds the secrets, mode 600)"
   say "  Data:       Docker volumes ${PROJECT}_dylaris_data, ${PROJECT}_core_data$( [[ ${A[db]} == bundled ]] && echo ", ${PROJECT}_timescaledb_data")"

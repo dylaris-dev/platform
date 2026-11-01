@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -29,6 +30,23 @@ type setupFakeStore struct {
 	created    []string
 	codesFor   string
 	codesJSON  string
+	settings   map[string]string
+}
+
+// testSetupCode is the code newSetupTestHandlerWithSetup stores the hash of.
+const testSetupCode = "ABCD-EFGH-JKMN"
+
+func (f *setupFakeStore) GetSetting(key string) (string, error) {
+	v, ok := f.settings[key]
+	if !ok {
+		return "", sql.ErrNoRows
+	}
+	return v, nil
+}
+
+func (f *setupFakeStore) DeleteSetting(key string) error {
+	delete(f.settings, key)
+	return nil
 }
 
 func (f *setupFakeStore) SetUserTOTPBackupCodes(id, backupCodesJSON string) error {
@@ -44,6 +62,8 @@ func (f *setupFakeStore) CreateFirstAdmin(username, passwordHash, totpSecret str
 		return nil, f.createErr
 	}
 	f.created = append(f.created, username)
+	f.userCount++
+	f.adminCount++
 	return &models.User{ID: "id-" + username, Username: username, IsAdmin: true, Role: "admin"}, nil
 }
 
@@ -63,12 +83,20 @@ func newSetupTestHandler(fs *setupFakeStore, adminSecret string) *SetupHandler {
 // The default is FALSE, matching production: on an instance that already has an
 // admin, /setup is shut unless the operator opened it.
 func newSetupTestHandlerWithSetup(fs *setupFakeStore, adminSecret string, setupEnabled bool) *SetupHandler {
+	if fs.settings == nil {
+		fs.settings = map[string]string{SetupCodeSettingKey: hashSetupCode(testSetupCode)}
+	}
 	state := &AppState{Store: fs, AdminSecret: adminSecret, SetupEnabled: setupEnabled, FrontendURL: "https://panel.example.com"}
 	auth := NewAuthHandler(state, "test-jwt-secret")
 	return NewSetupHandler(state, auth)
 }
 
+// postCreateAdmin sends the right setup code unless the body names one, so the
+// cases about other rules do not each have to carry it.
 func postCreateAdmin(h *SetupHandler, body map[string]interface{}) *httptest.ResponseRecorder {
+	if _, ok := body["setupCode"]; !ok {
+		body["setupCode"] = testSetupCode
+	}
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest("POST", "/api/setup/admin", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
@@ -422,5 +450,75 @@ func TestSetupStatusDoesNotGuessOnADatabaseError(t *testing.T) {
 	h.Status(rec, httptest.NewRequest(http.MethodGet, "/api/setup/status", nil))
 	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "fresh_install") {
 		t.Fatalf("status %d body %s: want 503 and no mode", rec.Code, rec.Body.String())
+	}
+}
+
+// A fresh install hands the first admin only to a caller holding the code Core
+// logged, and the code works once.
+func TestCreateAdmin_SetupCode(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		code       string
+		noCode     bool // no hash stored
+		wantStatus int
+		wantErr    string
+	}{
+		{name: "missing", code: "", wantStatus: http.StatusForbidden, wantErr: "invalid_setup_code"},
+		{name: "wrong", code: "ABCD-EFGH-JKMP", wantStatus: http.StatusForbidden, wantErr: "invalid_setup_code"},
+		{name: "none generated", code: testSetupCode, noCode: true, wantStatus: http.StatusForbidden, wantErr: "setup_code_unavailable"},
+		{name: "right", code: testSetupCode, wantStatus: http.StatusOK},
+		{name: "right, typed loosely", code: " abcdefgh-jkmn ", wantStatus: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &setupFakeStore{}
+			if tc.noCode {
+				fs.settings = map[string]string{}
+			}
+			h := newSetupTestHandler(fs, "")
+			rec := postCreateAdmin(h, map[string]interface{}{"username": "alice", "password": "password123", "setupCode": tc.code})
+			if rec.Code != tc.wantStatus || (tc.wantErr != "" && !strings.Contains(rec.Body.String(), tc.wantErr)) {
+				t.Fatalf("status %d body %s, want %d %s", rec.Code, rec.Body.String(), tc.wantStatus, tc.wantErr)
+			}
+			if tc.wantErr != "" {
+				if len(fs.created) != 0 || cookieByName(rec, sessionCookieName) != nil {
+					t.Fatal("a refused setup created an admin or a session")
+				}
+				return
+			}
+			if _, ok := fs.settings[SetupCodeSettingKey]; ok {
+				t.Fatal("the used setup code was not deleted")
+			}
+			again := postCreateAdmin(h, map[string]interface{}{"username": "mallory", "password": "password123", "setupCode": tc.code})
+			if again.Code == http.StatusOK || len(fs.created) != 1 {
+				t.Fatalf("the code worked twice: %d %s", again.Code, again.Body.String())
+			}
+		})
+	}
+}
+
+func TestSetupStatus_SetupCodeRequiredOnlyOnFreshInstall(t *testing.T) {
+	for _, tc := range []struct {
+		users, admins int
+		want          bool
+	}{
+		{0, 0, true},
+		{3, 0, false},
+		{3, 1, false},
+	} {
+		h := newSetupTestHandler(&setupFakeStore{userCount: tc.users, adminCount: tc.admins}, "")
+		rec := httptest.NewRecorder()
+		h.Status(rec, httptest.NewRequest(http.MethodGet, "/api/setup/status", nil))
+		var out struct {
+			SetupCodeRequired bool `json:"setupCodeRequired"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.SetupCodeRequired != tc.want {
+			t.Errorf("users=%d admins=%d: setupCodeRequired=%v, want %v", tc.users, tc.admins, out.SetupCodeRequired, tc.want)
+		}
+		if strings.Contains(rec.Body.String(), hashSetupCode(testSetupCode)) {
+			t.Error("the stored hash leaked into the status body")
+		}
 	}
 }

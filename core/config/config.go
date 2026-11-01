@@ -339,6 +339,10 @@ func LoadConfig() (Config, error) {
 		return cfg, fmt.Errorf("CLUSTER_SECRET is unset or still the default placeholder — set a strong random value")
 	}
 
+	if err := validateRedisPassword(cfg.RedisPass, ParseBoolEnvDefault("REDIS_ALLOW_NO_PASSWORD", false)); err != nil {
+		return cfg, err
+	}
+
 	// ADMIN_SECRET is OPTIONAL (empty = disabled), unlike JWT/Cluster. When set
 	// it must be strong enough to gate admin creation; a bad value fails the boot
 	// (main.go log.Fatals on any LoadConfig error).
@@ -446,6 +450,18 @@ func getSecret(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// validateRedisPassword refuses an empty REDIS_PASSWORD. The compose file used
+// to start Redis with a passwordless default user, and that user can read every
+// queue and rewrite routing; Core starting happily against it is how an install
+// stayed that way. allowNone is REDIS_ALLOW_NO_PASSWORD, for throwaway dev and
+// test setups only.
+func validateRedisPassword(pass string, allowNone bool) error {
+	if pass != "" || allowNone {
+		return nil
+	}
+	return fmt.Errorf("REDIS_PASSWORD is unset - set the password of the Redis user Core logs in as (REDIS_USER, or the default user when that is empty). For a throwaway dev or test setup only, REDIS_ALLOW_NO_PASSWORD=true skips this check")
 }
 
 // validateAdminSecret checks the optional break-glass ADMIN_SECRET. Empty is
