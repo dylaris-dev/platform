@@ -27,6 +27,14 @@ const templateProxySince = "2026.11.01"
 
 const proxyTemplateRefused = "This node runs an older release that cannot install a proxy template. Update the node, then try again."
 
+// templateModrinthSince is the release whose node downloads a template's
+// Modrinth references (modrinthFiles, node/installer_template_modrinth.go). An
+// older node ignores the field and installs the template without those jars,
+// reported as a success. Must match that release's version.
+const templateModrinthSince = "2026.11.01.4"
+
+const templateModrinthRefused = "This template contains Modrinth mods/plugins; update the node to install it."
+
 // templatePushLockTTL only bounds a lock a crashed Core leaves behind; a large
 // template pushed to a slow node can take minutes, far past the 30 s cooldown.
 const templatePushLockTTL = 15 * time.Minute
@@ -91,6 +99,32 @@ func (h *ServerHandler) resolveTemplateInstall(w http.ResponseWriter, r *http.Re
 	}
 	in.Type, in.Software, in.Version, in.McVersion, in.Loader, in.Structure = typ, software, version, mcVersion, loader, "direct"
 	return t
+}
+
+// templateModrinth loads the template's Modrinth references and refuses the
+// install when the node cannot download them. Only a KNOWN older version is
+// refused, like every other release gate here: a node with no heartbeat or no
+// version passes, and if it is in fact old it installs without the jars.
+// Answers the request and returns ok=false when it is refused.
+func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request, nodeID int, t *models.Template) ([]models.TemplateModrinthRef, []services.TemplateModrinthFile, bool) {
+	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
+	if err != nil {
+		log.Printf("template install: modrinth references of %d: %v", t.ID, err)
+		handlers.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
+		return nil, nil, false
+	}
+	files, err := services.TemplateModrinthFiles(refs)
+	if err != nil {
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		return nil, nil, false
+	}
+	if len(files) > 0 {
+		if node, err := h.state.Store.GetNodeByID(nodeID); err == nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, node.Token, templateModrinthSince) {
+			handlers.SendJSONError(w, templateModrinthRefused, http.StatusConflict)
+			return nil, nil, false
+		}
+	}
+	return refs, files, true
 }
 
 // visibleTemplate loads a template the caller may install. One they may not

@@ -65,6 +65,11 @@ type InstallerConfig struct {
 	// Software ("upload", "upload-zip" only) is installed over the uploaded
 	// files - see installUploadSoftware. Empty keeps the upload's own jar.
 	Software string `json:"software,omitempty"`
+	// ModrinthFiles ("upload-zip" from a template only) are jars the template
+	// references on Modrinth instead of carrying; downloaded after the software
+	// install. An older node ignores the field, which is why Core refuses such
+	// a template on one.
+	ModrinthFiles []TemplateModrinthFile `json:"modrinthFiles,omitempty"`
 	// ContainerPort is the port the server's container publishes, filled in by
 	// the node (never sent by Core). A BungeeCord or Waterfall proxy is told to
 	// listen on it, because their own default is 25577.
@@ -184,9 +189,14 @@ func installServer(serverDataPath, subServerName string, config InstallerConfig)
 			// carries its jar under versions/ (Paper) or a launcher script used
 			// to install "successfully" and then fail every start. A modpack
 			// server pack gets the loader it declares installed.
-			return nil, makeUploadLaunchable(destDir, config)
+			err = makeUploadLaunchable(destDir, config)
+		} else {
+			err = installUploadSoftware(serverDataPath, subServerName, config)
 		}
-		return nil, installUploadSoftware(serverDataPath, subServerName, config)
+		if err != nil {
+			return nil, err
+		}
+		return nil, installTemplateModrinth(destDir, config.ModrinthFiles)
 	case "backup":
 		// A Dylaris backup archive, uploaded into the sub-server directory the
 		// same way an upload-zip install finds its zip there. The only installer

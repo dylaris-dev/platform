@@ -922,7 +922,7 @@ A template is a saved server or proxy (Paper, Fabric, Forge, NeoForge, Vanilla, 
 **Turning it on (operators).** Settings > Features > Templates sets the audience: off, admins or everyone. The module then appears in the top navigation. Further settings:
 
 - Templates per user (default 10) and size per template (default 512 MB). Both follow the platform limit convention: empty is the default, `unlimited` is no cap, `0` is none.
-- Content policy: `no-jars` (default) keeps every `.jar` out of templates, `uploads` allows any file within the size limit. Under `no-jars` jars are skipped on upload and capture, and the panel lists what was left out.
+- Content policy: `no-jars` (default) keeps every `.jar` out of templates, `uploads` allows any file within the size limit. Under `no-jars` a jar in `mods/` or `plugins/` that Modrinth has byte for byte (sha1 and sha512) is kept as a reference instead of a copy; other jars are skipped on upload and capture, and the panel lists what was left out and why. "Add from Modrinth" adds a reference directly. Installing downloads references on the node from `cdn.modrinth.com` (sha512 verified) and needs a node from 2026.11.01.4.
 - Platform templates visible to users (default off), and "creating needs the `templates.create` role right" (default off).
 - Storage: Core storage, or a storage connection.
 - Size per template for admins (default 2048 MB), separate from the user cap (512 MB).

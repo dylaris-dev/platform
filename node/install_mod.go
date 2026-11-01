@@ -310,7 +310,20 @@ func validActiveSubServer(s string) bool {
 	return s == "" || validate.IsSubServerName(s)
 }
 
+// maxModDownload caps a mod download so a runaway / malicious URL can't fill
+// the disk.
+const maxModDownload = 256 << 20
+
 func downloadAndVerify(url, dest, expectedSHA512 string) error {
+	return downloadAndVerifyMax(url, dest, expectedSHA512, maxModDownload)
+}
+
+// downloadAndVerifyMax is downloadAndVerify with a tighter cap (maxSize at
+// most maxModDownload), for a caller that knows the file's size.
+func downloadAndVerifyMax(url, dest, expectedSHA512 string, maxSize int64) error {
+	if maxSize <= 0 || maxSize > maxModDownload {
+		maxSize = maxModDownload
+	}
 	client := &http.Client{
 		Timeout:   5 * time.Minute,
 		Transport: uaTransport{base: http.DefaultTransport},
@@ -359,21 +372,18 @@ func downloadAndVerify(url, dest, expectedSHA512 string) error {
 	defer f.Close()
 
 	h := sha512.New()
-	// Cap downloads at 256 MB so a runaway / malicious URL can't fill the disk.
-	//
 	// The extra byte is the overflow probe, and it has to be ACTED on: without
 	// the length check below, an oversized response was cut off at the cap and
 	// reported as a successful download, so with no sha512 in the payload a
 	// truncated jar got renamed into place and the server crash-looped on a
 	// corrupt archive with nothing pointing at the size. Same shape as the bug in
 	// downloadFileBounded (installer_modpack.go).
-	const maxSize = 256 << 20
 	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, maxSize+1))
 	if err != nil {
 		return fmt.Errorf("copy: %w", err)
 	}
 	if n > maxSize {
-		return fmt.Errorf("download exceeds the %d byte limit", int64(maxSize))
+		return fmt.Errorf("download exceeds the %d byte limit", maxSize)
 	}
 	if expectedSHA512 != "" {
 		got := hex.EncodeToString(h.Sum(nil))

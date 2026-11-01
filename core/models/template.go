@@ -31,3 +31,18 @@ type TemplateShare struct {
 	Level      string    `json:"level"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
+
+// TemplateModrinthRef is a jar a template keeps as a Modrinth reference rather
+// than a stored copy. Path is relative to the template (e.g. plugins/x.jar).
+type TemplateModrinthRef struct {
+	ID         int    `json:"id"`
+	TemplateID int    `json:"templateId"`
+	Path       string `json:"path"`
+	ProjectID  string `json:"projectId"`
+	VersionID  string `json:"versionId"`
+	FileName   string `json:"fileName"` // Modrinth's name, display only: never a filesystem path (Path is)
+	URL        string `json:"url"`
+	Sha1       string `json:"sha1"`
+	Sha512     string `json:"sha512"`
+	SizeBytes  int64  `json:"sizeBytes"`
+}

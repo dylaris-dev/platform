@@ -76,3 +76,17 @@ export function softwareVersionLabel(software: string): string {
 /** Paths one capture may name: Core's maxCaptureSelected in
  *  core/handlers/templates/templates_capture.go. Change both together. */
 export const MAX_CAPTURE_PATHS = 500;
+
+// Core's defaultTargetDirForLoader (core/handlers/servers/server_mods.go): these load plugins/, the rest mods/.
+const PLUGIN_SOFTWARE = ['paper', 'spigot', 'bukkit', 'purpur', 'pufferfish', 'velocity', 'waterfall', 'bungeecord'];
+
+/** The Modrinth search filter for a template's software, or null when it loads
+ *  no mods or plugins (vanilla, or not set). Software is free text, so it is
+ *  normalised the way Core reads it. */
+export function templateModrinthTarget(software: string): { loader: string; projectType: 'mod' | 'plugin'; dir: 'mods' | 'plugins' } | null {
+    const s = software.trim().toLowerCase();
+    if (!s || s === 'vanilla') return null;
+    // Pufferfish is not a Modrinth loader and many Paper plugins do not list purpur; both search as paper.
+    if (PLUGIN_SOFTWARE.includes(s)) return { loader: s === 'pufferfish' || s === 'purpur' ? 'paper' : s, projectType: 'plugin', dir: 'plugins' };
+    return { loader: s, projectType: 'mod', dir: 'mods' };
+}

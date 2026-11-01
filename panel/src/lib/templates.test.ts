@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    formatTemplateSize, groupTemplates, templateCap, limitFromSetting, limitToSetting, softwareVersionLabel, templateInstallPayload, templatesVisible,
+    formatTemplateSize, groupTemplates, templateCap, limitFromSetting, limitToSetting, softwareVersionLabel, templateInstallPayload, templatesVisible, templateModrinthTarget,
 } from './templates';
 import type { Template } from './api/templates';
 
@@ -107,5 +107,21 @@ describe('softwareVersionLabel', () => {
         ['', 'Software build'],
     ])('%s -> %s', (software, want) => {
         expect(softwareVersionLabel(software)).toBe(want);
+    });
+});
+
+describe('templateModrinthTarget', () => {
+    it('maps software to the Modrinth filter and the folder Core uses', () => {
+        expect(templateModrinthTarget('paper')).toEqual({ loader: 'paper', projectType: 'plugin', dir: 'plugins' });
+        expect(templateModrinthTarget(' Velocity ')).toEqual({ loader: 'velocity', projectType: 'plugin', dir: 'plugins' });
+        expect(templateModrinthTarget('pufferfish')).toEqual({ loader: 'paper', projectType: 'plugin', dir: 'plugins' });
+        expect(templateModrinthTarget('purpur')).toEqual({ loader: 'paper', projectType: 'plugin', dir: 'plugins' });
+        expect(templateModrinthTarget('Fabric')).toEqual({ loader: 'fabric', projectType: 'mod', dir: 'mods' });
+        expect(templateModrinthTarget('neoforge')).toEqual({ loader: 'neoforge', projectType: 'mod', dir: 'mods' });
+    });
+
+    it('has nothing for vanilla or unset software', () => {
+        expect(templateModrinthTarget('vanilla')).toBeNull();
+        expect(templateModrinthTarget('  ')).toBeNull();
     });
 });

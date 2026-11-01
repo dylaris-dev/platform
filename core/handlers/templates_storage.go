@@ -145,11 +145,17 @@ func (s *AppState) TemplateSize(ctx context.Context, t *models.Template) (int64,
 }
 
 func (s *AppState) TemplateZip(ctx context.Context, t *models.Template, w io.Writer) error {
+	return s.TemplateZipWith(ctx, t, w, nil)
+}
+
+// TemplateZipWith is TemplateZip plus extra entries written at the zip root.
+// An extra entry replaces a stored file of the same name.
+func (s *AppState) TemplateZipWith(ctx context.Context, t *models.Template, w io.Writer, extra map[string][]byte) error {
 	prov, root, err := s.TemplateStore(t)
 	if err != nil {
 		return err
 	}
-	return templateZip(ctx, prov, root, w)
+	return templateZip(ctx, prov, root, w, extra)
 }
 
 // The helpers below take the provider so they are testable without a Core
@@ -206,13 +212,25 @@ func templateSize(ctx context.Context, prov storage.StorageProvider, root string
 	return total, nil
 }
 
-func templateZip(ctx context.Context, prov storage.StorageProvider, root string, w io.Writer) error {
+func templateZip(ctx context.Context, prov storage.StorageProvider, root string, w io.Writer, extra map[string][]byte) error {
 	files, err := templateList(ctx, prov, root)
 	if err != nil {
 		return err
 	}
 	zw := zip.NewWriter(w)
+	for name, data := range extra {
+		ew, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate})
+		if err != nil {
+			return fmt.Errorf("template: zip entry %q: %w", name, err)
+		}
+		if _, err := ew.Write(data); err != nil {
+			return fmt.Errorf("template: zip copy %q: %w", name, err)
+		}
+	}
 	for _, f := range files {
+		if _, ok := extra[f.Name]; ok {
+			continue
+		}
 		ew, err := zw.CreateHeader(&zip.FileHeader{Name: f.Name, Method: zip.Deflate})
 		if err != nil {
 			return fmt.Errorf("template: zip entry %q: %w", f.Name, err)

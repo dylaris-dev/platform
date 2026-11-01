@@ -2,8 +2,10 @@ package servers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/handlers"
@@ -15,8 +17,18 @@ import (
 // share level on it.
 type templateFakeStore struct {
 	installFakeStore
-	tmpl  *models.Template
-	share string
+	tmpl    *models.Template
+	share   string
+	refs    []models.TemplateModrinthRef
+	modRows []models.ServerMod
+}
+
+func (f *templateFakeStore) ListTemplateModrinth(int) ([]models.TemplateModrinthRef, error) {
+	return f.refs, nil
+}
+func (f *templateFakeStore) UpsertServerMod(m *models.ServerMod) (int, error) {
+	f.modRows = append(f.modRows, *m)
+	return len(f.modRows), nil
 }
 
 func (f *templateFakeStore) GetTemplate(id int) (*models.Template, error) {
@@ -243,5 +255,138 @@ func TestTemplatePushLockRefusesASecondPush(t *testing.T) {
 		if h.state.Redis.Exists(ctx, lockKey).Val() != 0 {
 			t.Errorf("admin=%v: lock left behind after the push", admin)
 		}
+	}
+}
+
+func templateRef(path, project string) models.TemplateModrinthRef {
+	return models.TemplateModrinthRef{Path: path, ProjectID: project, VersionID: project + "-v", FileName: "display " + project,
+		URL: "https://cdn.modrinth.com/data/" + project + "/x.jar", Sha512: strings.Repeat("a", 128), SizeBytes: 42}
+}
+
+// A template's Modrinth references travel as modrinthFiles, and each jar laid
+// directly in mods/ or plugins/ becomes a server_mods row.
+func TestTemplateInstallSendsModrinthFiles(t *testing.T) {
+	h, fs, _ := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", SoftwareVersion: "1.21.4"}, "all")
+	fs.refs = []models.TemplateModrinthRef{templateRef("plugins/LuckPerms.jar", "lp"), templateRef("plugins/Geyser/ext/x.jar", "gx")}
+	h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"`+templateModrinthSince+`"}`, 0)
+	rec := httptest.NewRecorder()
+	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	inst := queuedInstaller(t, h.state.Redis)
+	if len(inst) != 1 {
+		t.Fatalf("queued %v", inst)
+	}
+	files, _ := inst[0]["modrinthFiles"].([]any)
+	if len(files) != 2 {
+		t.Fatalf("modrinthFiles = %v", inst[0]["modrinthFiles"])
+	}
+	f0 := files[0].(map[string]any)
+	if f0["path"] != "plugins/LuckPerms.jar" || f0["url"] != "https://cdn.modrinth.com/data/lp/x.jar" ||
+		f0["sha512"] != strings.Repeat("a", 128) || f0["size"] != float64(42) {
+		t.Fatalf("file = %v", f0)
+	}
+	if len(fs.modRows) != 1 {
+		t.Fatalf("rows = %+v", fs.modRows)
+	}
+	r := fs.modRows[0]
+	if r.ServerID != 1 || r.SubServerName != "main" || r.ModrinthProjectID != "lp" || r.ModrinthVersionID != "lp-v" ||
+		r.FileName != "LuckPerms.jar" || r.TargetDir != "plugins" || r.SHA512 != strings.Repeat("a", 128) ||
+		r.Status != models.ServerModInstalled || r.InstalledBy == nil || *r.InstalledBy != "u1" {
+		t.Fatalf("row = %+v", r)
+	}
+}
+
+// Only a node KNOWN to be older is refused, and only for a template with
+// references.
+func TestTemplateWithModrinthRefusedOnAnOlderNode(t *testing.T) {
+	cases := []struct {
+		name    string
+		refs    bool
+		version string // "" = no heartbeat
+		want    int
+	}{
+		{"refs on an older node", true, "2026.11.01.3", http.StatusConflict},
+		{"refs on an unknown node", true, "", http.StatusOK},
+		{"no refs on an older node", false, "2026.11.01.3", http.StatusOK},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, fs, pushes := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", SoftwareVersion: "1.21.4"}, "all")
+			if c.refs {
+				fs.refs = []models.TemplateModrinthRef{templateRef("plugins/LuckPerms.jar", "lp")}
+			}
+			if c.version != "" {
+				h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"`+c.version+`"}`, 0)
+			}
+			rec := httptest.NewRecorder()
+			h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
+			if rec.Code != c.want {
+				t.Fatalf("status %d, want %d: %s", rec.Code, c.want, rec.Body.String())
+			}
+			if c.want == http.StatusConflict {
+				if msg := decodeErrBody(t, rec); msg != templateModrinthRefused {
+					t.Fatalf("message %q", msg)
+				}
+				if len(*pushes) != 0 || fs.setupWrites != 0 || len(fs.modRows) != 0 {
+					t.Fatalf("pushed %d, wrote %d, rows %d after a refusal", len(*pushes), fs.setupWrites, len(fs.modRows))
+				}
+				return
+			}
+			if _, has := queuedInstaller(t, h.state.Redis)[0]["modrinthFiles"]; has != c.refs {
+				t.Fatalf("modrinthFiles present = %v", has)
+			}
+		})
+	}
+}
+
+// A reference the node would refuse is refused before anything is pushed.
+func TestTemplateWithAnUninstallableReferenceIsRefused(t *testing.T) {
+	for _, ref := range []models.TemplateModrinthRef{
+		templateRef("config/x.jar", "cx"),
+		func() models.TemplateModrinthRef {
+			r := templateRef("mods/a.jar", "a")
+			r.URL = "https://evil.example/a.jar"
+			return r
+		}(),
+		func() models.TemplateModrinthRef { r := templateRef("mods/a.jar", "a"); r.Sha512 = ""; return r }(),
+	} {
+		h, fs, pushes := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "fabric", SoftwareVersion: "1.21.4"}, "all")
+		fs.refs = []models.TemplateModrinthRef{ref}
+		rec := httptest.NewRecorder()
+		h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(decodeErrBody(t, rec), ref.Path) {
+			t.Errorf("%+v: status %d: %s", ref, rec.Code, rec.Body.String())
+		}
+		if len(*pushes) != 0 {
+			t.Errorf("pushed %d", len(*pushes))
+		}
+	}
+}
+
+// More references than one template may hold is refused before anything is
+// pushed (only reachable for rows stored before the cap applied everywhere).
+func TestTemplateOverTheReferenceCapIsRefused(t *testing.T) {
+	h, fs, pushes := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", SoftwareVersion: "1.21.4"}, "all")
+	for i := 0; i <= services.MaxTemplateModrinthRefs; i++ {
+		fs.refs = append(fs.refs, templateRef(fmt.Sprintf("plugins/p%d.jar", i), fmt.Sprint("p", i)))
+	}
+	rec := httptest.NewRecorder()
+	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(decodeErrBody(t, rec), "more than the 500") {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(*pushes) != 0 || fs.setupWrites != 0 || len(fs.modRows) != 0 {
+		t.Fatalf("pushed %d, wrote %d, rows %d", len(*pushes), fs.setupWrites, len(fs.modRows))
+	}
+
+	// Exactly at the cap installs.
+	fs.refs = fs.refs[:services.MaxTemplateModrinthRefs]
+	h.state.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
+	rec = httptest.NewRecorder()
+	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("at the cap: status %d: %s", rec.Code, rec.Body.String())
 	}
 }

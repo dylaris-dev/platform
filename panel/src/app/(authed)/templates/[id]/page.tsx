@@ -181,7 +181,7 @@ export default function TemplateDetailPage() {
             </form>
 
             <section className="card p-4 flex flex-col min-h-112" aria-label="Template files">
-                <TemplateFiles templateId={t.id} canEdit={canWrite} maxSizeBytes={templateCap(t, maxSize)} onChanged={onChanged} onSkipped={onSkipped} />
+                <TemplateFiles templateId={t.id} software={t.software} mcVersion={t.mcVersion} canEdit={canWrite} maxSizeBytes={templateCap(t, maxSize)} onChanged={onChanged} onSkipped={onSkipped} />
             </section>
 
             {t.canShare && <TemplateShares templateId={t.id} />}

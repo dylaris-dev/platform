@@ -42,6 +42,7 @@ type fakeStore struct {
 	prefs     map[string]int // user id -> templates_storage_id
 	storages  map[int]*models.BackupStorage
 	billing   map[string]*store.UserBilling // by user id
+	refs      []models.TemplateModrinthRef
 }
 
 func (f *fakeStore) GetUserStoragePrefs(userID string) (*int, *int, error) {
@@ -173,6 +174,7 @@ func newTestHandler(t *testing.T, settings map[string]string) (*TemplatesHandler
 		},
 	}
 	state := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Authz: authz.NewResolver(st)}
+	stubModrinth(t, nil, nil) // no test reaches the real Modrinth
 	return NewTemplatesHandler(state), st
 }
 

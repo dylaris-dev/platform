@@ -60,7 +60,7 @@ func TestTemplateStorageRoundTrip(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := templateZip(ctx, prov, root, &buf); err != nil {
+	if err := templateZip(ctx, prov, root, &buf, nil); err != nil {
 		t.Fatalf("zip: %v", err)
 	}
 	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))

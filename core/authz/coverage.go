@@ -225,6 +225,8 @@ var ExemptRoutes = map[string]bool{
 	"/api/templates/{id:[0-9]+}/download":                         true, // authed; in-handler template rules
 	"/api/templates/{id:[0-9]+}/files":                            true, // authed; in-handler template rules
 	"/api/templates/{id:[0-9]+}/files/text":                       true, // authed; in-handler template rules
+	"/api/templates/{id:[0-9]+}/modrinth":                         true, // authed; in-handler template rules
+	"/api/templates/{id:[0-9]+}/modrinth/{refId:[0-9]+}":          true, // authed; in-handler template rules
 	"/api/templates/{id:[0-9]+}/shares":                           true, // authed; in-handler template rules
 	"/api/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}": true, // authed; in-handler template rules
 

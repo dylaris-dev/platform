@@ -204,3 +204,55 @@ func TestTemplateItemsCarryTheWriteRefusal(t *testing.T) {
 		t.Fatalf("suspended owner: get %q, list %q", g, l)
 	}
 }
+
+// The download lists the Modrinth references in dylaris-modrinth.json at the
+// zip root, and never contains their jars.
+func TestDownloadCarriesTheModrinthManifest(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	tpl := seedTemplate(t, st, ownerID, "personal")
+	if err := h.state.TemplateWrite(context.Background(), tpl, "config/a.yml", strings.NewReader("x: 1"), 4); err != nil {
+		t.Fatal(err)
+	}
+	// A stored file of the same name is replaced by the generated one.
+	if err := h.state.TemplateWrite(context.Background(), tpl, modrinthManifestName, strings.NewReader("stale"), 5); err != nil {
+		t.Fatal(err)
+	}
+	ref := &models.TemplateModrinthRef{TemplateID: tpl.ID, Path: "plugins/LuckPerms.jar", ProjectID: "lp", VersionID: "v1",
+		FileName: "LuckPerms.jar", URL: "https://cdn.modrinth.com/data/lp/LuckPerms.jar", Sha1: "s1", Sha512: "s512", SizeBytes: 9}
+	if err := st.UpsertTemplateModrinth(ref); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.Download(rec, withID(asUser(httptest.NewRequest("GET", "/x", nil), ownerID, false), tpl.ID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d", rec.Code)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	var manifest []byte
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+		if f.Name == modrinthManifestName {
+			rc, _ := f.Open()
+			manifest, _ = io.ReadAll(rc)
+			rc.Close()
+		}
+	}
+	if len(names) != 2 {
+		t.Fatalf("entries %v", names)
+	}
+	var got struct {
+		Version int                    `json:"version"`
+		Files   []modrinthManifestFile `json:"files"`
+	}
+	if err := json.Unmarshal(manifest, &got); err != nil {
+		t.Fatalf("manifest %q: %v", manifest, err)
+	}
+	want := modrinthManifestFile{"plugins/LuckPerms.jar", "lp", "v1", "https://cdn.modrinth.com/data/lp/LuckPerms.jar", "s512", "LuckPerms.jar"}
+	if got.Version != 1 || len(got.Files) != 1 || got.Files[0] != want {
+		t.Fatalf("manifest = %+v", got)
+	}
+}

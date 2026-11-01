@@ -2,6 +2,7 @@ package templates
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -15,7 +16,46 @@ import (
 
 // templateZipTo is replaceable in tests (a storage that fails mid-stream).
 var templateZipTo = func(ctx context.Context, s *handlers.AppState, t *models.Template, w io.Writer) error {
-	return s.TemplateZip(ctx, t, w)
+	extra, err := modrinthManifest(s, t.ID)
+	if err != nil {
+		return err
+	}
+	return s.TemplateZipWith(ctx, t, w, extra)
+}
+
+// modrinthManifestName lists a template's Modrinth references at the root of
+// its download. The jars themselves are never in it: they are Modrinth's to
+// host, and the manifest says where each one comes from and where it goes.
+const modrinthManifestName = "dylaris-modrinth.json"
+
+type modrinthManifestFile struct {
+	Path      string `json:"path"`
+	ProjectID string `json:"projectId"`
+	VersionID string `json:"versionId"`
+	URL       string `json:"url"`
+	Sha512    string `json:"sha512"`
+	FileName  string `json:"fileName"`
+}
+
+// modrinthManifest is nil for a template without references, so its download
+// is exactly its stored files.
+func modrinthManifest(s *handlers.AppState, templateID int) (map[string][]byte, error) {
+	refs, err := s.Store.ListTemplateModrinth(templateID)
+	if err != nil {
+		return nil, fmt.Errorf("modrinth references: %w", err)
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	files := make([]modrinthManifestFile, 0, len(refs))
+	for _, r := range refs {
+		files = append(files, modrinthManifestFile{r.Path, r.ProjectID, r.VersionID, r.URL, r.Sha512, r.FileName})
+	}
+	data, err := json.MarshalIndent(map[string]any{"version": 1, "files": files}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]byte{modrinthManifestName: data}, nil
 }
 
 var unsafeFilenameChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)

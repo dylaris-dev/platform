@@ -83,12 +83,13 @@ func TestTemplateZipAllowed(t *testing.T) {
 		{"jar", []string{"cfg.yml", "a.JaR"}, false},
 		{"nested zip", []string{"inner.zip"}, false},
 		{"nested zip upper", []string{"d/INNER.ZIP"}, false},
+		{"classes", []string{"META-INF/MANIFEST.MF", "com/x/Main.class"}, false},
 		{"clean", []string{"cfg.yml", "d/x.txt"}, true},
 	}
 	for _, c := range cases {
 		b := makeZip(t, c.names...)
 		ok, reason := TemplateZipAllowed(bytes.NewReader(b), int64(len(b)), TemplatePolicyNoJars)
-		if ok != c.ok || (!ok && reason != "archives inside a template may not contain jar files") {
+		if ok != c.ok || (!ok && reason != templateZipReason) {
 			t.Errorf("%s: no-jars = %v, %q", c.name, ok, reason)
 		}
 		if ok, _ := TemplateZipAllowed(bytes.NewReader(b), int64(len(b)), TemplatePolicyUploads); !ok {

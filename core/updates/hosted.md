@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.4
+
+### Features
+- Templates keep your Modrinth mods and plugins: saving a server as a template links them instead of
+  leaving them out, and installing the template downloads them from Modrinth.
+- In a template, "Add from Modrinth" picks a mod or plugin version that fits its software.
+- BYON: templates with Modrinth mods or plugins need the current node; it updates itself. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.01.2
 
 ### Features

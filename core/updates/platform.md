@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.01.4
+
+### Features
+- Under the no-jars policy, jars in mods/ and plugins/ that Modrinth has byte for byte are kept in a template
+  as links, never as copies; the node downloads them from Modrinth at install. `core` `node`
+- Templates have "Add from Modrinth" to pick a mod or plugin version for the template's software. `core` `panel`
+- A template with Modrinth links needs a node from this release; older nodes are refused with a message. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Under no-jars, jars renamed to another extension are recognised by their content and refused. `core`
+
+### Fixes
+- Nothing.
+
 ## 2026.11.01.3
 
 ### Features

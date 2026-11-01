@@ -2,6 +2,7 @@ package templates
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"compress/flate"
 	"context"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -43,8 +45,14 @@ const (
 	// real server folder (a large modded world is a few thousand files).
 	maxZipEntries = 20000
 	// maxSkippedListed caps the skipped list in a response; the rest is a count.
-	maxSkippedListed = 200
+	maxSkippedListed    = 200
+	jarBudgetReason     = "too many jar bytes in one request to look up at Modrinth; add the rest in a separate upload"
+	archiveBudgetReason = "too many refused archive bytes in one request to inspect the rest"
+	refCapReason        = "a template can hold at most 500 Modrinth references"
 )
+
+// resolveJars is a var so tests can stand in for Modrinth.
+var resolveJars = services.ResolveTemplateJars
 
 var (
 	errTooLarge       = errors.New("template: size limit exceeded")
@@ -100,12 +108,18 @@ func isSymlink(f *zip.File) bool {
 
 // contentAllowed applies the content policy to one file. A nested archive is
 // stored as is, never unpacked, but its entry names still have to be safe
-// paths: whoever unpacks it later trusts them.
+// paths: whoever unpacks it later trusts them. Under no-jars a file that
+// starts like a zip is an archive whatever its name, so a renamed jar is
+// inspected (and refused for its classes) like any .zip.
 func contentAllowed(rel string, ra io.ReaderAt, size int64, policy string) (bool, string) {
 	if ok, reason := services.TemplateFileAllowed(rel, policy); !ok {
 		return false, reason
 	}
-	if !strings.HasSuffix(strings.ToLower(rel), ".zip") {
+	if !isArchive(rel, policy, func() []byte {
+		head := make([]byte, 4)
+		n, _ := ra.ReadAt(head, 0)
+		return head[:n]
+	}) {
 		return true, ""
 	}
 	if ok, reason := services.TemplateZipAllowed(ra, size, policy); !ok {
@@ -124,8 +138,18 @@ func contentAllowed(rel string, ra io.ReaderAt, size int64, policy string) (bool
 	return true, ""
 }
 
+// isArchive reports whether a file is inspected as an archive: by name, and
+// under no-jars also by its first bytes (head is only read in that case).
+func isArchive(rel, policy string, head func() []byte) bool {
+	if strings.HasSuffix(strings.ToLower(rel), ".zip") {
+		return true
+	}
+	return policy == services.TemplatePolicyNoJars && services.TemplateZipMagic(head())
+}
+
 // extractTemplateZip unpacks zipPath into t's storage entry by entry. Unsafe
 // names, symlinks and files the content policy refuses are skipped and listed;
+// under no-jars a jar on Modrinth is kept as a reference (see keepJars);
 // passing the size limit aborts with errTooLarge. On own storage, where the
 // template has no size limit, the decompressed bytes of one extraction are
 // still held to the transit ceiling (requestBound): they stream through Core,
@@ -142,6 +166,16 @@ func extractTemplateZip(ctx context.Context, state *handlers.AppState, t *models
 	}
 	var skipped skipList
 	var used int64
+	// Jar bytes are hashed, not stored, but they count against their own
+	// budget of the same size: a zip of thousands of tiny deflated jars must
+	// not buy unbounded hashing. Once it is spent the remaining jars are
+	// skipped unread.
+	var hashed int64
+	hashSpent := false
+	var refused int64 // see writeZipEntry
+	var jars []services.TemplateJar
+	var written []string
+	shown := map[string]string{}
 	limit := requestBound(s, t.BackupStorageID != nil)
 	for _, f := range zr.File {
 		if err := ctx.Err(); err != nil {
@@ -159,17 +193,43 @@ func extractTemplateZip(ctx context.Context, state *handlers.AppState, t *models
 			skipped.add(f.Name, "unsafe path")
 			continue
 		}
+		if services.TemplateJarReferable(rel, s.ContentPolicy) {
+			if hashSpent || services.Exceeds(limit, hashed+int64(f.UncompressedSize64)) {
+				skipped.add(f.Name, jarBudgetReason)
+				continue
+			}
+			j, err := hashZipEntry(f, rel, &capReader{max: limit, used: &hashed})
+			if errors.Is(err, errTooLarge) {
+				hashSpent = true // the header understated the size
+				skipped.add(f.Name, jarBudgetReason)
+				continue
+			}
+			if err != nil {
+				return skipped.list(), err
+			}
+			jars = append(jars, j)
+			shown[rel] = f.Name
+			continue
+		}
 		if ok, reason := services.TemplateFileAllowed(rel, s.ContentPolicy); !ok {
 			skipped.add(f.Name, reason)
 			continue
 		}
-		reason, err := writeZipEntry(ctx, state, t, rel, f, &capReader{max: limit, used: &used}, s.ContentPolicy)
+		reason, err := writeZipEntry(ctx, state, t, rel, f, &capReader{max: limit, used: &used}, &refused, s.ContentPolicy)
 		if err != nil {
 			return skipped.list(), err
 		}
 		if reason != "" {
 			skipped.add(f.Name, reason)
+			continue
 		}
+		written = append(written, rel)
+	}
+	if err := dropRefsAt(state, t, written); err != nil {
+		return skipped.list(), err
+	}
+	if err := keepJars(ctx, state, t, jars, shown, &skipped); err != nil {
+		return skipped.list(), err
 	}
 	if err := refreshSize(ctx, state, t); err != nil {
 		return skipped.list(), err
@@ -177,29 +237,155 @@ func extractTemplateZip(ctx context.Context, state *handlers.AppState, t *models
 	return skipped.list(), nil
 }
 
+// hashZipEntry hashes a jar entry through cr, which bounds it; errTooLarge
+// when the entry runs past the budget.
+func hashZipEntry(f *zip.File, rel string, cr *capReader) (services.TemplateJar, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return services.TemplateJar{}, fmt.Errorf("%w: %s: %v", errBadZip, f.Name, err)
+	}
+	defer rc.Close()
+	cr.r = rc
+	j, err := services.HashTemplateJar(rel, cr)
+	if err != nil {
+		return services.TemplateJar{}, entryErr(cr, f.Name, err)
+	}
+	return j, nil
+}
+
+// keepJars resolves the jars of one request at Modrinth in a single lookup and
+// stores each hit as a reference of t; the rest go to skipped under the name
+// the caller showed (shown, by path; the path itself when absent). The last
+// write at a path wins, so a stored file at a reference path is removed.
+func keepJars(ctx context.Context, state *handlers.AppState, t *models.Template, jars []services.TemplateJar, shown map[string]string, skipped *skipList) error {
+	if len(jars) == 0 {
+		return nil
+	}
+	refs, reasons := resolveJars(jars)
+	skip := func(p, reason string) {
+		name := shown[p]
+		if name == "" {
+			name = p
+		}
+		skipped.add(name, reason)
+	}
+	for _, j := range jars {
+		if reason, ok := reasons[j.Path]; ok {
+			skip(j.Path, reason)
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	// The cap counts rows: a reference at a path that already holds one
+	// replaces it, anything else adds one. A project already referenced at
+	// another path still adds a row here (only add-from-Modrinth replaces by
+	// project), so it counts as new.
+	existing, err := state.Store.ListTemplateModrinth(t.ID)
+	if err != nil {
+		return err
+	}
+	have := make(map[string]bool, len(existing))
+	for _, r := range existing {
+		have[r.Path] = true
+	}
+	count := len(existing)
+	kept := refs[:0]
+	for _, r := range refs {
+		if !have[r.Path] {
+			if count >= maxTemplateRefs {
+				skip(r.Path, refCapReason)
+				continue
+			}
+			have[r.Path] = true
+			count++
+		}
+		kept = append(kept, r)
+	}
+	refs = kept
+	if len(refs) == 0 {
+		return nil
+	}
+	files, err := state.TemplateList(ctx, t)
+	if err != nil {
+		return err
+	}
+	stored := make(map[string]bool, len(files))
+	for _, f := range files {
+		stored[f.Name] = true
+	}
+	for i := range refs {
+		refs[i].TemplateID = t.ID
+		if stored[refs[i].Path] {
+			if err := state.TemplateDelete(ctx, t, refs[i].Path); err != nil {
+				return err
+			}
+		}
+		if err := state.Store.UpsertTemplateModrinth(&refs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropRefsAt removes the references at paths just stored as files: the last
+// write at a path wins. One list, then a delete only where a path matches.
+func dropRefsAt(state *handlers.AppState, t *models.Template, written []string) error {
+	if len(written) == 0 {
+		return nil
+	}
+	refs, err := state.Store.ListTemplateModrinth(t.ID)
+	if err != nil || len(refs) == 0 {
+		return err
+	}
+	at := make(map[string]bool, len(written))
+	for _, p := range written {
+		at[p] = true
+	}
+	for _, r := range refs {
+		if at[r.Path] {
+			if _, err := state.Store.DeleteTemplateModrinth(t.ID, r.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // writeZipEntry stores one entry through cr. A nested archive is staged first
 // so it can be inspected before it is stored; a refusal comes back as reason.
-func writeZipEntry(ctx context.Context, state *handlers.AppState, t *models.Template, rel string, f *zip.File, cr *capReader, policy string) (string, error) {
+// A refused archive stores nothing, so its bytes leave the request total but
+// move to refused, its own budget of the same size: thousands of refused
+// archives of deflated zeros must not buy unbounded staging. Past it, archives
+// are skipped unread.
+func writeZipEntry(ctx context.Context, state *handlers.AppState, t *models.Template, rel string, f *zip.File, cr *capReader, refused *int64, policy string) (string, error) {
 	rc, err := f.Open()
 	if err != nil {
 		return "", fmt.Errorf("%w: %s: %v", errBadZip, f.Name, err)
 	}
 	defer rc.Close()
 	cr.r = rc
-	var src io.Reader = cr
-	if strings.HasSuffix(strings.ToLower(rel), ".zip") {
+	br := bufio.NewReader(cr)
+	var src io.Reader = br
+	if isArchive(rel, policy, func() []byte { head, _ := br.Peek(4); return head }) {
+		// Only once something was refused: an archive alone past the limit is
+		// staged and fails the whole request as too large, as before.
+		if *refused > 0 && services.Exceeds(cr.max, *refused+int64(f.UncompressedSize64)) {
+			return archiveBudgetReason, nil
+		}
 		tmp, err := os.CreateTemp("", "template-nested-*.zip")
 		if err != nil {
 			return "", fmt.Errorf("template: stage nested archive: %w", err)
 		}
 		defer os.Remove(tmp.Name())
 		defer tmp.Close()
-		n, err := io.Copy(tmp, cr)
+		n, err := io.Copy(tmp, br)
 		if err != nil {
 			return "", entryErr(cr, f.Name, err)
 		}
 		if ok, reason := contentAllowed(rel, tmp, n, policy); !ok {
 			*cr.used -= n
+			*refused += n
 			return reason, nil
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
@@ -440,7 +626,36 @@ func (h *TemplatesHandler) Files(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Could not list the template files", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"files": files})
+	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
+	if err != nil {
+		log.Printf("templates: list modrinth of %d: %v", t.ID, err)
+		handlers.SendJSONError(w, "Could not list the template files", http.StatusInternalServerError)
+		return
+	}
+	out := make([]fileEntry, 0, len(files)+len(refs))
+	for _, f := range files {
+		out = append(out, fileEntry{FileInfo: f})
+	}
+	for _, ref := range refs {
+		out = append(out, fileEntry{
+			FileInfo: storage.FileInfo{Name: ref.Path, Size: ref.SizeBytes, Enabled: true},
+			Modrinth: &modrinthEntry{ID: ref.ID, ProjectID: ref.ProjectID, VersionID: ref.VersionID},
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"files": out})
+}
+
+// fileEntry is a stored file, or with Modrinth set a reference the node
+// downloads on install; a reference holds no bytes in the template.
+type fileEntry struct {
+	storage.FileInfo
+	Modrinth *modrinthEntry `json:"modrinth,omitempty"`
+}
+
+type modrinthEntry struct {
+	ID        int    `json:"id"`
+	ProjectID string `json:"projectId"`
+	VersionID string `json:"versionId"`
 }
 
 func relParam(w http.ResponseWriter, raw string) (string, bool) {
@@ -464,6 +679,12 @@ func (h *TemplatesHandler) GetText(w http.ResponseWriter, r *http.Request) {
 	rc, err := h.state.TemplateRead(r.Context(), t, rel)
 	if err != nil {
 		if storage.IsNotExist(err) {
+			// A reference has no bytes here; say so rather than "not found".
+			refs, lerr := h.state.Store.ListTemplateModrinth(t.ID)
+			if lerr == nil && slices.ContainsFunc(refs, func(m models.TemplateModrinthRef) bool { return m.Path == rel }) {
+				handlers.SendJSONError(w, "This file is a Modrinth reference and is downloaded when the template is installed.", http.StatusBadRequest)
+				return
+			}
 			handlers.SendJSONError(w, "File not found", http.StatusNotFound)
 			return
 		}
@@ -525,6 +746,11 @@ func (h *TemplatesHandler) PutText(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.TemplateWrite(r.Context(), t, rel, bytes.NewReader(data), int64(len(data))); err != nil {
 		log.Printf("templates: write %d/%s: %v", t.ID, rel, err)
+		handlers.SendJSONError(w, "Could not save the file", http.StatusInternalServerError)
+		return
+	}
+	if err := dropRefsAt(h.state, t, []string{rel}); err != nil {
+		log.Printf("templates: drop modrinth at %d/%s: %v", t.ID, rel, err)
 		handlers.SendJSONError(w, "Could not save the file", http.StatusInternalServerError)
 		return
 	}
@@ -721,6 +947,7 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 	add := map[string]int64{}
 	seen := map[string]bool{}
 	var skipped skipList
+	var jars []services.TemplateJar
 	for i, sf := range files {
 		shown := sf.name
 		full := path.Base(strings.ReplaceAll(sf.name, `\`, "/"))
@@ -748,6 +975,16 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 			handlers.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
 			return
 		}
+		if services.TemplateJarReferable(rel, s.ContentPolicy) {
+			j, err := services.HashTemplateJar(rel, f)
+			f.Close()
+			if err != nil {
+				handlers.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
+				return
+			}
+			jars = append(jars, j)
+			continue
+		}
 		allowed, reason := contentAllowed(rel, f, sf.size, s.ContentPolicy)
 		f.Close()
 		if !allowed {
@@ -760,6 +997,7 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 	if !h.fits(w, r, t, s, add) {
 		return
 	}
+	written := make([]string, 0, len(take))
 	for _, a := range take {
 		f, err := os.Open(a.f.tmp)
 		if err != nil {
@@ -775,6 +1013,17 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 			handlers.SendJSONError(w, "Could not store "+a.rel, http.StatusInternalServerError)
 			return
 		}
+		written = append(written, a.rel)
+	}
+	err := dropRefsAt(h.state, t, written)
+	if err == nil {
+		err = keepJars(r.Context(), h.state, t, jars, nil, &skipped)
+	}
+	if err != nil {
+		log.Printf("templates: modrinth references of %d: %v", t.ID, err)
+		_ = refreshSize(r.Context(), h.state, t)
+		handlers.SendJSONError(w, "Could not store the Modrinth references", http.StatusInternalServerError)
+		return
 	}
 	h.written(w, r, t, skipped.list())
 }
@@ -791,6 +1040,11 @@ func (h *TemplatesHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.TemplateDelete(r.Context(), t, rel); err != nil {
 		log.Printf("templates: delete %d/%s: %v", t.ID, rel, err)
+		handlers.SendJSONError(w, "Could not delete the file", http.StatusInternalServerError)
+		return
+	}
+	if err := h.state.Store.DeleteTemplateModrinthPath(t.ID, rel); err != nil {
+		log.Printf("templates: delete modrinth %d/%s: %v", t.ID, rel, err)
 		handlers.SendJSONError(w, "Could not delete the file", http.StatusInternalServerError)
 		return
 	}

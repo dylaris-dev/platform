@@ -46,6 +46,8 @@ export interface TemplateFile {
     name: string;
     is_dir: boolean;
     size: number;
+    /** Set when the entry is a Modrinth reference the node downloads on install, not a stored file. */
+    modrinth?: { id: number; projectId: string; versionId: string };
 }
 
 export interface TemplateShare {
@@ -142,3 +144,20 @@ export const putOwnerShare = (username: string, level: ShareLevel) =>
 
 export const deleteOwnerShare = (userId: string) =>
     call(`/templates/owner-shares?userId=${encodeURIComponent(userId)}`, { method: 'DELETE' });
+
+export interface TemplateModrinthRef {
+    id: number;
+    templateId: number;
+    path: string;
+    projectId: string;
+    versionId: string;
+    fileName: string;
+    sizeBytes: number;
+}
+
+/** Keeps a Modrinth version's primary file as a reference; warning: Modrinth does not list it for this software or Minecraft version. */
+export const addTemplateModrinth = (id: number, versionId: string) =>
+    call<{ reference: TemplateModrinthRef; warning?: string; sizeBytes: number }>(`/templates/${id}/modrinth`, json('POST', { versionId }));
+
+export const deleteTemplateModrinth = (id: number, refId: number) =>
+    call<{ sizeBytes: number }>(`/templates/${id}/modrinth/${refId}`, { method: 'DELETE' });

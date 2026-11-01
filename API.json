@@ -5318,6 +5318,24 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/templates/{id:[0-9]+}/modrinth",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.AddModrinth",
+      "group": "templates",
+      "external": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/templates/{id:[0-9]+}/modrinth/{refId:[0-9]+}",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "TemplatesHandler.DeleteModrinth",
+      "group": "templates",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/templates/{id:[0-9]+}/shares",
       "auth": "session",
@@ -5926,10 +5944,10 @@
     }
   ],
   "counts": {
-    "total": 598,
+    "total": 600,
     "byAuth": {
       "none": 30,
-      "session": 550,
+      "session": 552,
       "user API key": 10,
       "warp key": 8
     },
@@ -5975,7 +5993,7 @@
       "system": 4,
       "tabproxy": 1,
       "technic": 2,
-      "templates": 19,
+      "templates": 21,
       "ticket-canned-responses": 1,
       "ticket-categories": 1,
       "tickets": 15,

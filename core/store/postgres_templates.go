@@ -240,3 +240,59 @@ func (s *PostgresStore) TemplateShareLevel(templateID int, userID string) (strin
 	}
 	return level.String, nil
 }
+
+// ListTemplateModrinth returns a template's Modrinth references by path.
+func (s *PostgresStore) ListTemplateModrinth(templateID int) ([]models.TemplateModrinthRef, error) {
+	rows, err := s.db.Query(`SELECT id, template_id, path, project_id, version_id, file_name, url, sha1, sha512, size_bytes
+		FROM template_modrinth WHERE template_id = $1 ORDER BY path`, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("templates: list modrinth of %d: %w", templateID, err)
+	}
+	defer rows.Close()
+	out := []models.TemplateModrinthRef{}
+	for rows.Next() {
+		var r models.TemplateModrinthRef
+		if err := rows.Scan(&r.ID, &r.TemplateID, &r.Path, &r.ProjectID, &r.VersionID, &r.FileName, &r.URL, &r.Sha1, &r.Sha512, &r.SizeBytes); err != nil {
+			return nil, fmt.Errorf("templates: scan modrinth of %d: %w", templateID, err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpsertTemplateModrinth writes r, replacing the reference at the same path,
+// and fills in r.ID.
+func (s *PostgresStore) UpsertTemplateModrinth(r *models.TemplateModrinthRef) error {
+	err := s.db.QueryRow(`INSERT INTO template_modrinth (template_id, path, project_id, version_id, file_name, url, sha1, sha512, size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (template_id, path) DO UPDATE SET project_id = EXCLUDED.project_id, version_id = EXCLUDED.version_id,
+			file_name = EXCLUDED.file_name, url = EXCLUDED.url, sha1 = EXCLUDED.sha1, sha512 = EXCLUDED.sha512, size_bytes = EXCLUDED.size_bytes
+		RETURNING id`,
+		r.TemplateID, r.Path, r.ProjectID, r.VersionID, r.FileName, r.URL, r.Sha1, r.Sha512, r.SizeBytes).Scan(&r.ID)
+	if err != nil {
+		return fmt.Errorf("templates: upsert modrinth %d/%s: %w", r.TemplateID, r.Path, err)
+	}
+	return nil
+}
+
+// DeleteTemplateModrinth removes one reference of templateID by id; false when
+// the template has no such reference.
+func (s *PostgresStore) DeleteTemplateModrinth(templateID, id int) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM template_modrinth WHERE template_id = $1 AND id = $2`, templateID, id)
+	if err != nil {
+		return false, fmt.Errorf("templates: delete modrinth %d/%d: %w", templateID, id, err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DeleteTemplateModrinthPath removes the reference at rel, and every reference
+// under rel when it is a folder.
+func (s *PostgresStore) DeleteTemplateModrinthPath(templateID int, rel string) error {
+	// starts_with, not LIKE: a path may contain % or _.
+	if _, err := s.db.Exec(`DELETE FROM template_modrinth WHERE template_id = $1 AND (path = $2 OR starts_with(path, $2 || '/'))`,
+		templateID, rel); err != nil {
+		return fmt.Errorf("templates: delete modrinth %d/%s: %w", templateID, rel, err)
+	}
+	return nil
+}

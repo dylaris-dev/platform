@@ -550,6 +550,15 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var tmplRefs []models.TemplateModrinthRef
+	var tmplFiles []services.TemplateModrinthFile
+	if tmpl != nil {
+		var ok bool
+		if tmplRefs, tmplFiles, ok = h.templateModrinth(w, r, srv.NodeID, tmpl); !ok {
+			return
+		}
+	}
+
 	// The software, not the type: a proxy template arrives as upload-zip and
 	// must pass the same gate as an online proxy install. A plain upload's
 	// software is never a proxy (validateUploadSoftware).
@@ -804,6 +813,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			"wipePaths": req.Installer.WipePaths,
 			"software":  req.Installer.Software,
 		}
+		if len(tmplFiles) > 0 {
+			installerPayload["modrinthFiles"] = tmplFiles
+		}
 		if technic != nil {
 			installerPayload["variant"] = technic.Variant
 			if len(technic.Mods) > 0 {
@@ -868,7 +880,20 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// Set install cooldown
 		h.state.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
 
-		if forgetWipedMods(h.state.Store, serverID, subName, srv.InstallerType, req.Installer.WipePaths) {
+		modsChanged := forgetWipedMods(h.state.Store, serverID, subName, srv.InstallerType, req.Installer.WipePaths)
+		// After the wipe above, which would drop them again. Written as
+		// installed at dispatch, like the version update's rows: setup reports
+		// no per-file result, so an "installing" row would never be cleared. A
+		// failed install notifies the owner, and the reinstall that follows
+		// rewrites these rows.
+		for _, row := range services.TemplateModrinthModRows(serverID, subName, actorID, tmplRefs) {
+			if _, err := h.state.Store.UpsertServerMod(&row); err != nil {
+				log.Printf("template install: mod row %s for server %d/%s: %v", row.ModrinthProjectID, serverID, subName, err)
+				continue
+			}
+			modsChanged = true
+		}
+		if modsChanged {
 			h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 		}
 

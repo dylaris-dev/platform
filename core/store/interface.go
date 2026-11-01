@@ -277,6 +277,11 @@ type Store interface {
 	DeleteOwnerShare(ownerID, userID string) error
 	ListOwnerShares(ownerID string) ([]models.TemplateShare, error)
 	TemplateShareLevel(templateID int, userID string) (string, error)
+	// Modrinth references a template keeps instead of stored jars.
+	ListTemplateModrinth(templateID int) ([]models.TemplateModrinthRef, error)
+	UpsertTemplateModrinth(r *models.TemplateModrinthRef) error
+	DeleteTemplateModrinth(templateID, id int) (bool, error)
+	DeleteTemplateModrinthPath(templateID int, rel string) error
 	GetServerProxyMode(id int) (string, error)
 	SetServerProxyMode(id int, mode string) error
 	ListProxyAutoServers() ([]ProxyAutoServer, error)

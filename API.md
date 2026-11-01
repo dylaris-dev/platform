@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **597 routes** in 52 sections: 262 GET, 171 POST, 58 PUT, 41 PATCH, 66 DELETE.
+- **599 routes** in 52 sections: 262 GET, 172 POST, 58 PUT, 41 PATCH, 67 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **378** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **148** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **378** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **150** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **41** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -179,7 +179,7 @@ can still show what exists.
 - [/api/system](#apisystem) (4)
 - [/api/tabproxy](#apitabproxy) (1)
 - [/api/technic](#apitechnic) (2)
-- [/api/templates](#apitemplates) (19)
+- [/api/templates](#apitemplates) (21)
 - [/api/ticket-canned-responses](#apiticket-canned-responses) (1)
 - [/api/ticket-categories](#apiticket-categories) (1)
 - [/api/tickets](#apitickets) (15)
@@ -926,6 +926,8 @@ can still show what exists.
 | DELETE | `/api/templates/{id:[0-9]+}/files` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.DeleteFile` | a file or a folder. |
 | GET | `/api/templates/{id:[0-9]+}/files/text` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.GetText` | a text file up to 1 MiB. |
 | PUT | `/api/templates/{id:[0-9]+}/files/text` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.PutText` | writes {path, content}. |
+| POST | `/api/templates/{id:[0-9]+}/modrinth` | session | _no capability_ | RequireTemplatesAudience, Limit | `TemplatesHandler.AddModrinth` | body {versionId}: keeps that Modrinth version's primary file as a reference in plugins/ or mods/. |
+| DELETE | `/api/templates/{id:[0-9]+}/modrinth/{refId:[0-9]+}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.DeleteModrinth` | removes one Modrinth reference of this template. |
 | GET | `/api/templates/{id:[0-9]+}/shares` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.ListShares` | - |
 | PUT | `/api/templates/{id:[0-9]+}/shares` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.PutShare` | {username, level}; sets or changes one share. |
 | DELETE | `/api/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}` | session | _no capability_ | RequireTemplatesAudience | `TemplatesHandler.DeleteShare` | - |

@@ -994,6 +994,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteFile))).Methods("DELETE")
 	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.GetText))).Methods("GET")
 	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutText))).Methods("PUT")
+	api.HandleFunc("/templates/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateAddFilesLimiter.Limit(60, templatesHandler.AddModrinth)))).Methods("POST")
+	api.HandleFunc("/templates/{id:[0-9]+}/modrinth/{refId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteModrinth))).Methods("DELETE")
 	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.ListShares))).Methods("GET")
 	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutShare))).Methods("PUT")
 	api.HandleFunc("/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteShare))).Methods("DELETE")
