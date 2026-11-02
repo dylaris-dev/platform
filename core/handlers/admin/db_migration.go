@@ -1,4 +1,4 @@
-package handlers
+package admin
 
 import (
 	"context"
@@ -19,11 +19,11 @@ import (
 // every admin sees the same live status. The live Core keeps using the OLD
 // database; the operator restarts with the new DB_* env vars after success.
 type DBMigrationHandler struct {
-	state *AppState
+	d Deps
 }
 
-func NewDBMigrationHandler(state *AppState) *DBMigrationHandler {
-	return &DBMigrationHandler{state: state}
+func NewDBMigrationHandler(d Deps) *DBMigrationHandler {
+	return &DBMigrationHandler{d: d}
 }
 
 // dbTargetRequest is the connection form submitted by the panel. dbType is the
@@ -53,11 +53,11 @@ func (req dbTargetRequest) toParams() services.DBConnParams {
 // GetMigration GET /api/admin/db/migration - shared job status. PANEL
 // settings.read (RequireCap at the route).
 func (h *DBMigrationHandler) GetMigration(w http.ResponseWriter, r *http.Request) {
-	if h.state.DBMigration == nil {
+	if h.d.DBMigration == nil {
 		httpx.SendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
 	}
-	job, ok, err := h.state.DBMigration.GetJob(r.Context())
+	job, ok, err := h.d.DBMigration.GetJob(r.Context())
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -72,7 +72,7 @@ func (h *DBMigrationHandler) GetMigration(w http.ResponseWriter, r *http.Request
 // StartMigration POST /api/admin/db/migration - start a migration to the
 // target. PANEL settings.write (RequireCap at the route).
 func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Request) {
-	if h.state.DBMigration == nil {
+	if h.d.DBMigration == nil {
 		httpx.SendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
 	}
@@ -85,7 +85,7 @@ func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Reque
 	actorID, _ := r.Context().Value("userID").(string)
 	actorName := h.resolveUsername(actorID)
 
-	job, err := h.state.DBMigration.Start(r.Context(), req.toParams(), actorID, actorName)
+	job, err := h.d.DBMigration.Start(r.Context(), req.toParams(), actorID, actorName)
 	if err != nil {
 		switch {
 		case err == services.ErrMigrationRunning:
@@ -96,13 +96,13 @@ func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventDBMigrationStarted, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventDBMigrationStarted, actorID, "", map[string]interface{}{
 		"action": "db_migration_start",
 		"target": job.Target,
 		"jobId":  job.ID,
 	})
-	if h.state.Events != nil {
-		h.state.Events.Publish(r.Context(), "dbmigration.changed", nil)
+	if h.d.Events != nil {
+		h.d.Events.Publish(r.Context(), "dbmigration.changed", nil)
 	}
 
 	w.WriteHeader(http.StatusAccepted)
@@ -160,7 +160,7 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 // sides: checks every table exists on both and that row counts match, returning a
 // per-table report plus a human-readable log.
 func (h *DBMigrationHandler) VerifyMigration(w http.ResponseWriter, r *http.Request) {
-	if h.state.DBMigration == nil {
+	if h.d.DBMigration == nil {
 		httpx.SendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
 	}
@@ -174,7 +174,7 @@ func (h *DBMigrationHandler) VerifyMigration(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	report, err := h.state.DBMigration.VerifyTarget(ctx, req.toParams())
+	report, err := h.d.DBMigration.VerifyTarget(ctx, req.toParams())
 	if err != nil {
 		httpx.SendJSONError(w, "Verify failed: "+err.Error(), http.StatusBadGateway)
 		return
@@ -195,21 +195,21 @@ func (h *DBMigrationHandler) HypertableStatus(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	tsInstalled, _ := h.state.Store.TimescaleEnabled(ctx)
+	tsInstalled, _ := h.d.Store.TimescaleEnabled(ctx)
 	isHyper := false
 	if tsInstalled {
-		isHyper, _ = h.state.Store.IsServerStatsHypertable(ctx)
+		isHyper, _ = h.d.Store.IsServerStatsHypertable(ctx)
 	}
-	rows, _ := h.state.Store.EstimateServerStatsRows(ctx)
+	rows, _ := h.d.Store.EstimateServerStatsRows(ctx)
 
 	// Running plain when DB_TYPE is postgres, or when timescale was requested but
 	// the extension is missing (server_stats is a plain table either way).
-	plain := h.state.DBType == "postgres" || !tsInstalled
+	plain := h.d.DBType == "postgres" || !tsInstalled
 	recommend := plain && rows >= timescaleRecommendRows
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":                 true,
-		"dbType":                  h.state.DBType,
+		"dbType":                  h.d.DBType,
 		"timescaleInstalled":      tsInstalled,
 		"isHypertable":            isHyper,
 		"eligibleForConversion":   tsInstalled && !isHyper,
@@ -228,7 +228,7 @@ func (h *DBMigrationHandler) ConvertHypertable(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
 
-	tsInstalled, err := h.state.Store.TimescaleEnabled(ctx)
+	tsInstalled, err := h.d.Store.TimescaleEnabled(ctx)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to check TimescaleDB: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -237,18 +237,18 @@ func (h *DBMigrationHandler) ConvertHypertable(w http.ResponseWriter, r *http.Re
 		httpx.SendJSONError(w, "The TimescaleDB extension is not installed in this database. Switch to a TimescaleDB image first.", http.StatusBadRequest)
 		return
 	}
-	if isHyper, _ := h.state.Store.IsServerStatsHypertable(ctx); isHyper {
+	if isHyper, _ := h.d.Store.IsServerStatsHypertable(ctx); isHyper {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "alreadyHypertable": true})
 		return
 	}
 
-	if err := h.state.Store.ConvertServerStatsToHypertable(ctx); err != nil {
+	if err := h.d.Store.ConvertServerStatsToHypertable(ctx); err != nil {
 		httpx.SendJSONError(w, "Conversion failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventDBHypertableConverted, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventDBHypertableConverted, actorID, "", map[string]interface{}{
 		"action": "server_stats_hypertable_convert",
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "converted": true})
@@ -259,7 +259,7 @@ func (h *DBMigrationHandler) resolveUsername(id string) string {
 	if id == "" {
 		return ""
 	}
-	if u, err := h.state.Store.GetUserByID(id); err == nil && u != nil {
+	if u, err := h.d.Store.GetUserByID(id); err == nil && u != nil {
 		return u.Username
 	}
 	return ""

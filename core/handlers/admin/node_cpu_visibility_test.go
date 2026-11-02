@@ -1,4 +1,4 @@
-package handlers
+package admin
 
 import (
 	"database/sql"
@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -27,11 +28,10 @@ func TestNodeCPUDoesNotLetResourceRightsReachACustomersMachine(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			st := &AppState{
+			h := NewCPUPinningHandler(Deps{
 				Store:        &orphanAssignFakeStore{node: c.node, user: admin},
-				FeatureFlags: tenancyFeatureFlags(true),
-			}
-			h := &CPUPinningHandler{state: st}
+				FeatureFlags: services.NewFeatureFlags(byonFlagStore{}),
+			})
 			rw := httptest.NewRecorder()
 			h.GetNodeCPU(rw, handlertest.VisAdminRequest("GET", "/x", map[string]string{"id": "7"}))
 			if rw.Code != c.want {
@@ -76,3 +76,9 @@ func (f *orphanAssignFakeStore) GetUserByID(string) (*models.User, error) {
 	}
 	return f.user, nil
 }
+
+// byonFlagStore answers every feature flag read with "true", which turns the
+// BYON tenancy rules on (the root tenancyFeatureFlags(true) this replaced).
+type byonFlagStore struct{}
+
+func (byonFlagStore) GetSetting(string) (string, error) { return "true", nil }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/admin"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/beam"
@@ -753,6 +754,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		StoreEnabled: appState.StoreEnabled,
 		SuspendGrace: appState.SuspendGrace,
 	}
+	adminDeps := admin.Deps{
+		Store:        appState.Store,
+		Authz:        appState.Authz,
+		FeatureFlags: appState.FeatureFlags,
+		Events:       appState.Events,
+		DBMigration:  appState.DBMigration,
+		CPUPinning:   appState.CPUPinning,
+		DBType:       appState.DBType,
+	}
 	settingsDeps := settings.Deps{
 		Store:            appState.Store,
 		Redis:            appState.Redis,
@@ -771,7 +781,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	systemHandler := health.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
 	fileHandler := files.NewFileHandler(filesDeps)
 	settingsHandler := settings.NewSettingsHandler(settingsDeps)
-	authzHandler := handlers.NewAuthzHandler()
+	authzHandler := admin.NewAuthzHandler()
 	avatarHandler := handlers.NewAvatarHandler()
 	permissionsModeHandler := settings.NewPermissionsModeHandler(settingsDeps)
 	coreStorageHandler := storageapi.NewCoreStorageHandler(storageapiDeps)
@@ -917,9 +927,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	entitlementHandler := billing.NewEntitlementHandler(billingDeps)
 	plansHandler := settings.NewPlansHandler(settingsDeps)
 	healthHandler := health.NewHealthHandler(healthDeps)
-	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
+	dbMigrationHandler := admin.NewDBMigrationHandler(adminDeps)
 	storageMigrationHandler := storageapi.NewStorageMigrationHandler(storageapiDeps)
-	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
+	cpuPinningHandler := admin.NewCPUPinningHandler(adminDeps)
 	nodeEnrollHandler := nodes.NewNodeEnrollHandler(nodesDeps)
 	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(nodesDeps)
 	gatewayDNSHandler := gateway.NewGatewayDNSHandler(gatewayDeps)

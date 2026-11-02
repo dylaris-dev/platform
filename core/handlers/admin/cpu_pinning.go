@@ -1,4 +1,4 @@
-package handlers
+package admin
 
 import (
 	"dylaris-core/handlers/access"
@@ -13,11 +13,11 @@ import (
 
 // CPUPinningHandler serves node CPU topology for the pinning UI.
 type CPUPinningHandler struct {
-	state *AppState
+	d Deps
 }
 
-func NewCPUPinningHandler(state *AppState) *CPUPinningHandler {
-	return &CPUPinningHandler{state: state}
+func NewCPUPinningHandler(d Deps) *CPUPinningHandler {
+	return &CPUPinningHandler{d: d}
 }
 
 // GetNodeCPU GET /api/nodes/{id}/cpu - the host CPU topology a node reported plus
@@ -29,7 +29,7 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid node ID", http.StatusBadRequest)
 		return
 	}
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	if err != nil {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
@@ -40,19 +40,19 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 	// holds it too, so without the ownedByOther fence the admin would walk back
 	// in through this second arm exactly where canManageNode now refuses.
 	userID, _ := r.Context().Value("userID").(string)
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
-	staffMay := perms.CanChangeResources && !access.OwnedByOther(h.state.FeatureFlags, r, node)
-	if !access.CanManageNode(h.state.FeatureFlags, r, node) && !staffMay {
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
+	staffMay := perms.CanChangeResources && !access.OwnedByOther(h.d.FeatureFlags, r, node)
+	if !access.CanManageNode(h.d.FeatureFlags, r, node) && !staffMay {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	if h.state.CPUPinning == nil {
+	if h.d.CPUPinning == nil {
 		httpx.SendJSONError(w, "CPU pinning unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	topo, _ := h.state.CPUPinning.GetNodeTopology(r.Context(), node.Token)
-	load, _ := h.state.CPUPinning.NodeCoreLoad(node.ID, 0)
+	topo, _ := h.d.CPUPinning.GetNodeTopology(r.Context(), node.Token)
+	load, _ := h.d.CPUPinning.NodeCoreLoad(node.ID, 0)
 	out := map[string]interface{}{
 		"success":    true,
 		"topology":   topo, // null when the node has not reported a topology yet
@@ -64,7 +64,7 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 	// The server's own pin is left out of the load it is placed against.
 	if limit, lerr := strconv.ParseFloat(r.URL.Query().Get("limit"), 64); lerr == nil && limit > 0 && limit <= 1024 {
 		exclude, _ := strconv.Atoi(r.URL.Query().Get("server"))
-		if suggested, serr := h.state.CPUPinning.AutoCpuset(r.Context(), node.Token, node.ID, exclude, limit, node.CpusetCpus); serr == nil {
+		if suggested, serr := h.d.CPUPinning.AutoCpuset(r.Context(), node.Token, node.ID, exclude, limit, node.CpusetCpus); serr == nil {
 			out["suggested"] = suggested
 		}
 	}
