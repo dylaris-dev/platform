@@ -19,8 +19,12 @@ stores is decided here, on the panel's origin, where the session cookie is.
 
 ## Credentials (the Auth column)
 
-**`session`** - `Authorization: Bearer <JWT>`, HS256, issued by
-`POST /api/auth/login`. Two URL-borne fallbacks exist because `EventSource`
+**`session`** - an HS256 JWT issued by `POST /api/auth/login`. The panel
+carries it in a host-only HttpOnly cookie (`__Host-dylaris_session` over HTTPS,
+`dylaris_session` on plain HTTP); a cookie-authenticated request must also pass
+a same-origin check against `FRONTEND_URL`, or it is `403`. An explicit
+`Authorization: Bearer <JWT>` header is accepted too and wins over the cookie.
+Two URL-borne fallbacks exist because `EventSource`
 cannot set headers, and both are confined to `GET`: `?token=<jwt>` and
 `?ticket=<t>` (a short-lived opaque ticket from `POST /api/sse-ticket`, whose
 TTL slides on every accepted request so a reconnecting stream keeps working).
@@ -38,9 +42,11 @@ hide an outage. The demo account is read-only, so any non-`GET` returns `403`,
 and an unverifiable demo status returns `503` rather than assuming "not demo".
 
 **`user API key`** - `Authorization: Bearer dyl_<secret>`, minted per user with
-its own permission scope and server allowlist. Throttled to 120 requests per
-minute per source IP *before* the database lookup, so keys that do not exist
-cannot be used to hammer it. Today exactly one route accepts it.
+its own permission scope, server allowlist and per-key rate (default 60, at
+most 600 requests per minute). Failed attempts are throttled to 120 per minute
+per source IP *before* the database lookup, so keys that do not exist cannot be
+used to hammer it. A key counts like an invited member: its requests appear in
+the audit log under the key's name. The `/api/external/*` routes accept it.
 
 **`warp key`** - `Authorization: Bearer <key>`, a separate credential class held
 by a customer's warp client, not by a user.

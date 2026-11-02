@@ -261,7 +261,7 @@ readable one gives nothing away.
 
 ### Limits
 
-An admin sets two, both **per user**, under Settings -> Features -> Custom tabs:
+An admin sets three, all **per user**, under Settings -> Features -> Custom tabs:
 
 | | Default |
 |---|---|

@@ -465,6 +465,10 @@ Still not forwarded, and why:
   reason (an admin recovery, data owned by another uid). Add them to that
   service's `environment:` block when you need them.
 - `UPDATES_URL_PLATFORM` / `UPDATES_URL_HOSTED` - see the disable-by-empty note above.
+- `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_LIFETIME`,
+  `DB_CONN_MAX_IDLE_TIME` - the Postgres pool per Core replica. They take their
+  code defaults; add them to Core's `environment:` block when you scale Core
+  replicas against a database with a low `max_connections`.
 - `BEAM_MANIFEST_URL` - a **Core** variable (see the Core table below), not a Node
   one. It is simply not forwarded in either `environment:` block, so Core falls back
   to its compiled-in manifest URL.
@@ -487,7 +491,7 @@ Every secret can be supplied from a **file** instead of a plain env value by set
 
 Supported:
 
-- **Core:** `JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `ADMIN_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`, `STORE_SHARED_KEY_FILE`
+- **Core:** `JWT_SECRET_FILE`, `BEAM_JWT_SECRET_FILE`, `CLUSTER_SECRET_FILE`, `ADMIN_SECRET_FILE`, `DB_PASSWORD_FILE`, `REDIS_PASSWORD_FILE`, `STORE_SHARED_KEY_FILE`
 - **Node:** `CLUSTER_SECRET_FILE`, `BEAM_JWT_SECRET_FILE`
 - **Log shipper:** `REDIS_PASS_FILE`. You will not normally set it: the Node injects a scoped per-node Redis credential when it launches the container. It exists for running the shipper standalone.
 
@@ -1148,7 +1152,7 @@ release notes - all must pass before an image is built. Details in
 
 **Code conventions**
 
-- **Go:** keep the **Handlers / Services / Store** separation strict. Always handle errors (`if err != nil`, wrap with `fmt.Errorf("...: %w", err)`); no runtime panics. After changing any module, run `go work sync`. Platform and Gateway are separate workspaces — never import across the repo boundary; cross-repo communication goes through shared Redis keys/queues, Core's warp HTTP API, the Hub's internal HTTP API and frozen wire contracts (such as the Beam stream header), never Go imports.
+- **Go:** keep the **Handlers / Services / Store** separation strict. Core's handlers live in one package per area under `core/handlers/<area>/`, each taking a `Deps` struct; the import layers are enforced by `core/layering_test.go` (see [TESTING.md](TESTING.md)). Always handle errors (`if err != nil`, wrap with `fmt.Errorf("...: %w", err)`); no runtime panics. After changing any module, run `go work sync`. Platform and Gateway are separate workspaces — never import across the repo boundary; cross-repo communication goes through shared Redis keys/queues, Core's warp HTTP API, the Hub's internal HTTP API and frozen wire contracts (such as the Beam stream header), never Go imports.
 - **Panel (Next.js, App Router):** use the App Router (`/app`) — no Pages Router. Server Components are the default; add `'use client'` only when you need state/effects/browser APIs. TypeScript strict, with interfaces for props and API responses.
 - **Tailwind v4:** there is **no** `tailwind.config.{js,ts}`. Theme lives in the `@theme` directive in `panel/src/app/globals.css` (the single source of truth for design tokens — colors, spacing, radius, fonts). Don't scatter hardcoded values.
 - **Secrets** are env-only; never hardcode them.

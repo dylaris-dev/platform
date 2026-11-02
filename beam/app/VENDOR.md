@@ -5,7 +5,8 @@
 `go.mod` pins Wails to the local tree via
 `replace github.com/wailsapp/wails/v2 => ./third_party/wails/v2`.
 
-This is upstream Wails v2.10.1 with three security patches. The first, and the
+This is upstream Wails v2.10.1 with four security patches (BC3 below, two in
+the Windows frontend, one in the Linux frontend). The first, and the
 reason the tree is vendored at all, is the "BC3" fix: the native
 dispatcher's `processBrowserMessage`
 (`third_party/wails/v2/internal/frontend/dispatcher/browser.go`) enforces a
@@ -94,7 +95,8 @@ Windows, WebKitGTK on Linux) inherits it unchanged:
   `processBrowserMessage` in `dispatcher.go`): the `BrowserOpenURL` / `BO:` bridge
   accepts only `http`, `https`, `mailto` and drops `file://`, UNC, `javascript:`.
 - WS2 shell-token gate in `app.go` (`checkShellToken`) on the side-effecting bound
-  methods (`SavePanelURL`, `ApplyUpdate`, `OpenUpdateDownload`), plus the
+  methods (`SavePanelURL`, `SaveAPIURL`, `SavePanels`, `SwitchPanel`,
+  `ClearLocalData`, `ApplyUpdate`, `OpenUpdateDownload`), plus the
   `http`/`https` re-check on the manifest DownloadURL in `updater.go`
   (`isBrowserOpenableURL`).
 - The `Sec-Fetch-Dest` navigation gate in `proxy.go` (`serveBeamIndex`) that keeps
