@@ -9,6 +9,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
@@ -59,7 +60,7 @@ func newCoreStorageGateTestServer(t *testing.T, s store.Store) http.Handler {
 		Authz:        authz.NewResolver(s),
 		CoreStorage:  &corestorage.Manager{Store: s},
 	}
-	authHandler := handlers.NewAuthHandler(appState, testJWTSecret)
+	authHandler := auth.NewAuthHandler(authDepsOf(appState), testJWTSecret)
 	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -170,7 +171,7 @@ func TestTheRouteGatesReadTheSharedCoreStorage(t *testing.T) {
 		Authz:        authz.NewResolver(fs),
 		CoreStorage:  &corestorage.Manager{Store: fs, Reach: svc},
 	}
-	authHandler := handlers.NewAuthHandler(appState, testJWTSecret)
+	authHandler := auth.NewAuthHandler(authDepsOf(appState), testJWTSecret)
 	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})
 	do := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest("GET", "/api/admin/tickets/backups", nil)

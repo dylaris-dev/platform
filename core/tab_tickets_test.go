@@ -4,7 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/reqctx"
 )
 
@@ -12,7 +12,7 @@ import (
 // Parse must keep AuthHandler's purpose check (a session token is not a
 // ticket) and carry the three claims the proxy decides on.
 func TestTabTicketsBridgeKeepsThePurposeCheck(t *testing.T) {
-	ah := handlers.NewAuthHandler(nil, "tab-tickets-bridge-secret")
+	ah := auth.NewAuthHandler(auth.Deps{}, "tab-tickets-bridge-secret")
 	tk := tabTickets(ah)
 
 	ticket, err := tk.IssueTabProxyTicket("", "owner", false, 7, 9, true)
@@ -36,7 +36,7 @@ func TestTabTicketsBridgeKeepsThePurposeCheck(t *testing.T) {
 	if id := tk.SessionID(r); id != "" {
 		t.Fatalf("no session, SessionID = %q", id)
 	}
-	c := &handlers.Claims{}
+	c := &auth.Claims{}
 	c.ID = "sess-1"
 	r = r.WithContext(reqctx.WithSessionClaims(r.Context(), c))
 	if id := tk.SessionID(r); id != "sess-1" {

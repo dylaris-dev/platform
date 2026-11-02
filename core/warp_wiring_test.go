@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -31,7 +32,7 @@ func TestBuildAPIRouterWiresTheOverlayTeardown(t *testing.T) {
 	appState := &handlers.AppState{Store: &store.PostgresStore{}}
 	appState.FeatureFlags = services.NewFeatureFlags(appState.Store)
 	appState.Authz = authz.NewResolver(appState.Store)
-	authHandler := handlers.NewAuthHandler(appState, testJWTSecret)
+	authHandler := auth.NewAuthHandler(authDepsOf(appState), testJWTSecret)
 
 	buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})
 
@@ -81,7 +82,7 @@ func TestBuildAPIRouterHandsMainThePlatformBackupHandler(t *testing.T) {
 	appState := &handlers.AppState{Store: &store.PostgresStore{}}
 	appState.FeatureFlags = services.NewFeatureFlags(appState.Store)
 	appState.Authz = authz.NewResolver(appState.Store)
-	_, extras := buildAPIRouter(appState, handlers.NewAuthHandler(appState, testJWTSecret), routeCfg{JWTSecret: testJWTSecret})
+	_, extras := buildAPIRouter(appState, auth.NewAuthHandler(authDepsOf(appState), testJWTSecret), routeCfg{JWTSecret: testJWTSecret})
 	if extras.platformBackupHandler == nil {
 		t.Fatal("routeExtras.platformBackupHandler is nil: the platform backup schedule would run into a nil handler")
 	}

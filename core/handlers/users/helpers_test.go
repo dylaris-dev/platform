@@ -16,7 +16,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
@@ -242,7 +241,7 @@ func (f *emailFakeStore) MarkEmailVerified(string) error { return nil }
 
 func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
-	h := auth.NewUserEmailHandler(auth.Deps{Store: st, ReauthCodes: handlers.ReauthCodeVerifier(&handlers.AppState{Store: st})})
+	h := auth.NewUserEmailHandler(auth.Deps{Store: st})
 	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(withReauthJSON(body))))
 	r = mux.SetURLVars(r, map[string]string{"id": emailTestUserID})
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")
@@ -329,15 +328,15 @@ func withReauthJSON(body string) string {
 
 // testDeps is routes.go's usersDeps for tests (package main is not
 // importable): a core storage Manager over the same objects, and the three
-// root functions - reauth codes, password policy, password-change notice -
-// over a state holding the same store and redis.
+// functions - reauth codes, password policy, password-change notice - over the
+// same store and redis.
 func testDeps(d Deps) Deps {
 	if d.CoreStorage == nil {
 		d.CoreStorage = &corestorage.Manager{Store: d.Store, Redis: d.Redis, Events: d.Events}
 	}
-	s := &handlers.AppState{Store: d.Store, Redis: d.Redis, Authz: d.Authz, Events: d.Events}
-	d.ReauthCodes = handlers.ReauthCodeVerifier(s)
-	d.PasswordMinLength = func() int { return services.LoadAuthPolicy(s.Store).PasswordMinLength }
-	d.NotifyPasswordChanged = func(email, username string) { auth.NotifyPasswordChanged(s.Store, s.FrontendURL, email, username) }
+	st := d.Store
+	d.ReauthCodes = auth.ReauthCodeVerifier(auth.Deps{Store: d.Store, Redis: d.Redis})
+	d.PasswordMinLength = func() int { return services.LoadAuthPolicy(st).PasswordMinLength }
+	d.NotifyPasswordChanged = func(email, username string) { auth.NotifyPasswordChanged(st, "", email, username) }
 	return d
 }

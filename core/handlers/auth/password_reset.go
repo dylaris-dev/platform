@@ -66,7 +66,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	}
 
 	policy := services.LoadAuthPolicy(h.d.Store)
-	token, err := RandomToken(32)
+	token, err := randomToken(32)
 	if err != nil {
 		// Token gen really shouldn't fail — log it for ops, return silent success.
 		log.Printf("forgot-password: token generation failed: %v", err)
@@ -126,7 +126,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 }
 
 // passwordResetCooldown is the minimum gap between two reset emails to ONE
-// address. Deliberately the same 60 seconds as ResendVerificationCooldown: both
+// address. Deliberately the same 60 seconds as resendVerificationCooldown: both
 // endpoints send mail on an anonymous request, both replace the token they just
 // sent, and a caller inside the per-IP route limit is inside this one too.
 const passwordResetCooldown = 60 * time.Second

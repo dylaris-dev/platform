@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/handlers/users"
 	"dylaris-core/services/corestorage"
@@ -266,7 +266,7 @@ func deleteUserPackObjects(t *testing.T, fail bool) {
 	st := users.Deps{
 		Store:       us,
 		CoreStorage: &corestorage.Manager{Store: us, ClusterSecret: h.d.ClusterSecret},
-		ReauthCodes: handlers.ReauthCodeVerifier(&handlers.AppState{Store: us}),
+		ReauthCodes: auth.ReauthCodeVerifier(auth.Deps{Store: us}),
 	}
 	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+cleanupOwner, bytes.NewBufferString(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	ctx := context.WithValue(r.Context(), "userID", "admin-id")

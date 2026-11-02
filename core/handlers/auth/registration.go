@@ -189,7 +189,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if policy.EmailVerifyRequired {
-		token, err := RandomToken(32)
+		token, err := randomToken(32)
 		if err != nil {
 			httpx.SendJSONError(w, "Failed to generate verification token", http.StatusInternalServerError)
 			return
@@ -277,7 +277,7 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 		}
 		if ok {
 			audit.LogIdentity(h.d.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
-			NotifyAddressChanged(h.d.Store, h.d.FrontendURL, oldEmail, newEmail, user.Username)
+			notifyAddressChanged(h.d.Store, h.d.FrontendURL, oldEmail, newEmail, user.Username)
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": user.Username})
 			return
 		}
@@ -337,7 +337,7 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 	//
 	// email_verification_sent_at has been written on every token issue and
 	// loaded onto the user since the column was added. Nothing had ever read it.
-	if !VerificationResendAllowed(user.EmailVerificationSentAt, time.Now(), ResendVerificationCooldown) {
+	if !verificationResendAllowed(user.EmailVerificationSentAt, time.Now(), resendVerificationCooldown) {
 		// Same silent success as the other no-op branches: answering
 		// differently here would turn this endpoint into an oracle for which
 		// addresses are registered and still unverified.
@@ -345,7 +345,7 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 		return
 	}
 
-	token, err := RandomToken(32)
+	token, err := randomToken(32)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
 		return
@@ -365,27 +365,27 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// ResendVerificationCooldown is the minimum gap between two verification
+// resendVerificationCooldown is the minimum gap between two verification
 // emails to ONE address. It matches the per-IP limiter's window, so a caller
 // who is inside the route limit is still inside this one.
-const ResendVerificationCooldown = 60 * time.Second
+const resendVerificationCooldown = 60 * time.Second
 
-// VerificationResendAllowed reports whether another verification email may go
+// verificationResendAllowed reports whether another verification email may go
 // out, given when the last one did. A nil lastSentAt means none was ever sent.
 //
 // A lastSentAt in the future (clock skew, or a row written by a host running
 // ahead) yields a negative difference and so refuses - erring towards not
 // sending, which is the safe direction for a mail the user can request again.
-func VerificationResendAllowed(lastSentAt *time.Time, now time.Time, cooldown time.Duration) bool {
+func verificationResendAllowed(lastSentAt *time.Time, now time.Time, cooldown time.Duration) bool {
 	if lastSentAt == nil {
 		return true
 	}
 	return now.Sub(*lastSentAt) >= cooldown
 }
 
-// RandomToken returns a hex-encoded cryptographically random token.
+// randomToken returns a hex-encoded cryptographically random token.
 // 32 bytes → 64-hex-char string, fits VARCHAR(64) on email_verification_token.
-func RandomToken(nBytes int) (string, error) {
+func randomToken(nBytes int) (string, error) {
 	b := make([]byte, nBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -396,11 +396,11 @@ func RandomToken(nBytes int) (string, error) {
 // sendVerificationEmail builds and sends the verification email.
 // Pure helper so the test endpoint and the production flow can be kept in
 // sync (both go through mailer.Send).
-// SendEmailChangeConfirmation mails the link that makes a pending address the
+// sendEmailChangeConfirmation mails the link that makes a pending address the
 // account's. Not the registration mail: that one welcomes a new account, and a
 // stranger receiving it would read a sign-up instead of somebody asking to put
 // their address on an existing one.
-func SendEmailChangeConfirmation(st store.Store, frontendURL string, to, username, token string) error {
+func sendEmailChangeConfirmation(st store.Store, frontendURL string, to, username, token string) error {
 	link := strings.TrimRight(frontendURL, "/") + "/verify-email?token=" + token
 	return sendAccountMail(st, mailer.KeyConfirmEmailChange, to, frontendURL, map[string]string{
 		"username":     username,

@@ -59,7 +59,7 @@ const (
 // matters, because a connection error's text is produced by the OS and is
 // LOCALIZED - on a German Windows host a refused dial reads "Es konnte keine
 // Verbindung hergestellt werden", so the substring matching used for Postgres
-// in handlers/auth.go would silently classify it as unknown there. Only the
+// in handlers/auth/auth.go would silently classify it as unknown there. Only the
 // server's own reply is matched as text.
 //
 // Anything the server returns that is not one of the three known auth/ACL

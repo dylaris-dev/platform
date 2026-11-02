@@ -235,9 +235,6 @@ type AppState struct {
 	CoreID string
 }
 
-// AdminSecretConfigured reports whether the break-glass ADMIN_SECRET is set.
-func (s *AppState) AdminSecretConfigured() bool { return s.AdminSecret != "" }
-
 // IsDemoServerID reports whether the numeric server id maps to an admin-flagged
 // demo showcase server. Exported so main can hand the authz resolver a demo-read
 // predicate without the resolver importing handlers. Always false when the

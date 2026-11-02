@@ -22,8 +22,8 @@ func TestVerificationResendAllowed(t *testing.T) {
 	}{
 		{"never sent before", nil, true},
 		{"sent a moment ago", ago(time.Second), false},
-		{"sent just inside the window", ago(ResendVerificationCooldown - time.Millisecond), false},
-		{"sent exactly at the window", ago(ResendVerificationCooldown), true},
+		{"sent just inside the window", ago(resendVerificationCooldown - time.Millisecond), false},
+		{"sent exactly at the window", ago(resendVerificationCooldown), true},
 		{"sent long ago", ago(time.Hour), true},
 		// A row stamped by a host running ahead: refusing is the safe
 		// direction, since the user can simply ask again.
@@ -31,8 +31,8 @@ func TestVerificationResendAllowed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := VerificationResendAllowed(tt.lastSentAt, now, ResendVerificationCooldown); got != tt.want {
-				t.Errorf("VerificationResendAllowed = %v, want %v", got, tt.want)
+			if got := verificationResendAllowed(tt.lastSentAt, now, resendVerificationCooldown); got != tt.want {
+				t.Errorf("verificationResendAllowed = %v, want %v", got, tt.want)
 			}
 		})
 	}

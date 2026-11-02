@@ -13,6 +13,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -114,7 +115,7 @@ type testIdentity struct {
 
 func mintToken(t *testing.T, id testIdentity) string {
 	t.Helper()
-	claims := &handlers.Claims{
+	claims := &auth.Claims{
 		Username: id.Username,
 		IsAdmin:  id.IsAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -137,7 +138,7 @@ func newAuthzTestServer(t *testing.T, fs *authzFakeStore) http.Handler {
 		Authz:        authz.NewResolver(fs),
 	}
 	appState.Authz.SetDemoRead(appState.IsDemoServerID)
-	authHandler := handlers.NewAuthHandler(appState, testJWTSecret)
+	authHandler := auth.NewAuthHandler(authDepsOf(appState), testJWTSecret)
 	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {

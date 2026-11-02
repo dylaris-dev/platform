@@ -55,9 +55,9 @@ type routeCfg struct {
 }
 
 // tabTickets hands the tab-proxy package the ticket half of the auth handler
-// as functions, so tabs does not import the root handlers package. Parse keeps
+// as functions, so tabs does not import handlers/auth (layer 2 to layer 2). Parse keeps
 // AuthHandler's purpose check: a session token is refused as a ticket.
-func tabTickets(ah *handlers.AuthHandler) tabs.Tickets {
+func tabTickets(ah *auth.AuthHandler) tabs.Tickets {
 	return tabs.Tickets{
 		IssueTabProxyTicket: ah.IssueTabProxyTicket,
 		ParseTabProxyTicket: func(token string) (tabs.TabTicket, error) {
@@ -68,7 +68,7 @@ func tabTickets(ah *handlers.AuthHandler) tabs.Tickets {
 			return tabs.TabTicket{ServerID: c.ServerID, TabID: c.TabID, ReadOnly: c.ReadOnly}, nil
 		},
 		SessionID: func(r *http.Request) string {
-			if c, _ := reqctx.SessionClaims(r).(*handlers.Claims); c != nil {
+			if c, _ := reqctx.SessionClaims(r).(*auth.Claims); c != nil {
 				return c.ID
 			}
 			return ""
@@ -593,11 +593,31 @@ func longTermRead(m *metrics.Manager) func() *sql.DB {
 	}
 }
 
+// authDepsOf is the one auth.Deps literal. buildAPIRouter builds the account
+// handlers from it and main builds the AuthHandler from it, right before
+// buildAPIRouter: the AuthHandler used to hold the whole state and read
+// AdminSecret and SetupEnabled per request, which main assigns late
+// (TestNoAppStateFieldIsSetAfterItIsCopied counts this call as the copy).
+func authDepsOf(appState *handlers.AppState) auth.Deps {
+	return auth.Deps{
+		Store:        appState.Store,
+		Redis:        appState.Redis,
+		Authz:        appState.Authz,
+		FeatureFlags: appState.FeatureFlags,
+		Events:       appState.Events,
+		FrontendURL:  appState.FrontendURL,
+		StoreEnabled: appState.StoreEnabled,
+		StoreURL:     appState.StoreURL,
+		AdminSecret:  appState.AdminSecret,
+		SetupEnabled: appState.SetupEnabled,
+	}
+}
+
 // buildAPIRouter constructs every request handler + the warp service and
 // registers every route exactly as main() used to inline them, so a test can
 // walk the REAL router. Pure extraction: no route, method, or middleware
 // changed relative to the prior inline registration in main().
-func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandler, cfg routeCfg) (*mux.Router, *routeExtras) {
+func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, cfg routeCfg) (*mux.Router, *routeExtras) {
 	// The route middleware reads these four through one value, built from the
 	// state the handlers share; CoreStorage is the same pointer every handler
 	// holds through appState (one Manager per process, spec R7).
@@ -755,16 +775,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		StoreEnabled: appState.StoreEnabled,
 		SuspendGrace: appState.SuspendGrace,
 	}
-	authDeps := auth.Deps{
-		Store:        appState.Store,
-		Redis:        appState.Redis,
-		Authz:        appState.Authz,
-		FeatureFlags: appState.FeatureFlags,
-		FrontendURL:  appState.FrontendURL,
-		StoreEnabled: appState.StoreEnabled,
-		StoreURL:     appState.StoreURL,
-		ReauthCodes:  handlers.ReauthCodeVerifier(appState),
-	}
+	authDeps := authDepsOf(appState)
 	adminDeps := admin.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -830,7 +841,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		CoreStorage: appState.CoreStorage,
 		Gateway:     appState.Gateway,
 		WarpPeers:   appState.WarpPeers,
-		ReauthCodes: handlers.ReauthCodeVerifier(appState),
+		ReauthCodes: auth.ReauthCodeVerifier(authDeps),
 		PasswordMinLength: func() int {
 			return services.LoadAuthPolicy(appState.Store).PasswordMinLength
 		},
@@ -947,7 +958,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(gatewayDeps)
 	voiceStatsHandler := health.NewVoiceStatsHandler(healthDeps)
 	ticketDeletionsHandler := tickets.NewTicketDeletionsHandler(ticketsDeps)
-	setupHandler := handlers.NewSetupHandler(appState, authHandler)
+	setupHandler := auth.NewSetupHandler(authDeps, authHandler)
 
 	// Set up router and API endpoints
 	r := mux.NewRouter()
@@ -1217,7 +1228,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/tabs/{tabId:[0-9]+}/proxy-ticket", authHandler.AuthMiddleware(appState.Authz.RequireCap("tabs.read")(proxyHandler.MintTicket))).Methods("POST")
 	// The ticket cookie is NOT minted here.
 	//
-	// It is minted on the tab's own content host (handlers.HostMint, behind the
+	// It is minted on the tab's own content host (tabs ProxyHandler.HostMint, behind the
 	// same AuthMiddleware), because a cookie can only be set for the host that
 	// answers the request and the content host is not this one. The panel
 	// reaches it cross-origin with its session as a Bearer HEADER, which works

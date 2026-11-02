@@ -101,7 +101,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// front of the validation would let a malformed body buy CPU time - the
 	// same order the API key mint gives its own reasons for. A save that
 	// changes nothing returned above without asking at all.
-	if !reauth.RequireAdminReauth(w, r, h.d.Store, h.d.ReauthCodes, req.AdminReauthRequest) {
+	if !reauth.RequireAdminReauth(w, r, h.d.Store, ReauthCodeVerifier(h.d), req.AdminReauthRequest) {
 		return
 	}
 
@@ -118,12 +118,12 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// already names WHO was changed and by WHOM, which is what an investigation
 	// needs.
 	audit.LogIdentity(h.d.Store, r, audit.AuditEventUserEmailChanged, actorID, id, nil)
-	NotifyAddressChanged(h.d.Store, h.d.FrontendURL, oldEmail, email, target.Username)
+	notifyAddressChanged(h.d.Store, h.d.FrontendURL, oldEmail, email, target.Username)
 
 	// Send the verification the account now needs. Only when the policy
 	// requires one: without it the account is usable immediately and an
 	// unexpected "confirm your account" mail would be noise.
-	verifySent := SendChangedEmailVerification(h.d.Store, h.d.FrontendURL, id, email, target.Username, "admin-email-change")
+	verifySent := sendChangedEmailVerification(h.d.Store, h.d.FrontendURL, id, email, target.Username, "admin-email-change")
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":         true,
@@ -144,13 +144,13 @@ func SetAccountMailSender(fn func(services.MailStore, string, string, string, ma
 	return func() { sendAccountMail = prev }
 }
 
-// NotifyAddressChanged tells the PREVIOUS address that the account's address
+// notifyAddressChanged tells the PREVIOUS address that the account's address
 // changed. It used to hear nothing: whoever changed it - an attacker holding
 // the session and the password, or a compromised operator account - also
 // redirected every future password reset, and the owner found out when they
 // could no longer get in. Sent in the background, like every account mail, so
 // the answer does not wait on SMTP; a failure is logged, the change stands.
-func NotifyAddressChanged(st store.Store, frontendURL string, oldEmail, newEmail, username string) {
+func notifyAddressChanged(st store.Store, frontendURL string, oldEmail, newEmail, username string) {
 	if strings.TrimSpace(oldEmail) == "" {
 		return
 	}
@@ -183,18 +183,18 @@ func NotifyPasswordChanged(st store.Store, frontendURL string, email, username s
 	}()
 }
 
-// SendChangedEmailVerification sends the verification an account needs after its
+// sendChangedEmailVerification sends the verification an account needs after its
 // address changed, and reports whether one went out.
 //
 // Shared by the two doors that change an address - the admin screen and the
 // account's own profile - because they have to agree. Only when the policy
 // requires verification: without it the account is usable immediately and an
 // unexpected "confirm your account" mail would be noise.
-func SendChangedEmailVerification(st store.Store, frontendURL string, userID, email, username, source string) bool {
+func sendChangedEmailVerification(st store.Store, frontendURL string, userID, email, username, source string) bool {
 	if email == "" || !services.LoadAuthPolicy(st).EmailVerifyRequired {
 		return false
 	}
-	token, err := RandomToken(32)
+	token, err := randomToken(32)
 	if err != nil {
 		return false
 	}

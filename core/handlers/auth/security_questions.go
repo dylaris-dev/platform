@@ -149,7 +149,7 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 	// Last rather than first for the same reason as APIKeysHandler.Create: a
 	// bcrypt comparison ahead of the request validation would let a malformed
 	// body buy CPU time, and nothing above this line writes anything.
-	if rerr := reauth.RequireReauth(h.d.Store, h.d.ReauthCodes, userID, req.Password, req.Code); rerr != nil {
+	if rerr := reauth.RequireReauth(h.d.Store, ReauthCodeVerifier(h.d), userID, req.Password, req.Code); rerr != nil {
 		reauth.WriteReauthError(w, rerr)
 		return
 	}

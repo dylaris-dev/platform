@@ -6,20 +6,21 @@ import (
 	"dylaris-core/apidoc"
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
 )
 
 // stubRouter builds the real router with a nil-ish AppState. Handler constructors
-// only store the pointer, so this is safe; the router is walked, never served.
+// only store what they are given, so this is safe; the router is walked, never served.
 func stubRouter(t *testing.T) *mux.Router {
 	t.Helper()
 	appState := &handlers.AppState{
 		FeatureFlags: services.NewFeatureFlags(nil),
 		Authz:        authz.NewResolver(nil),
 	}
-	authHandler := handlers.NewAuthHandler(appState, "test-secret")
+	authHandler := auth.NewAuthHandler(authDepsOf(appState), "test-secret")
 	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: "test-secret"})
 	return root
 }

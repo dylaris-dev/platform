@@ -8,8 +8,6 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/services"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // The operator gate: whether NON-ADMINS may hold API keys at all, and which
@@ -171,15 +169,4 @@ func TestAPIKeyMiddleware_OperatorGateAppliesAtUse(t *testing.T) {
 			t.Fatalf("status = %d, want the inner handler reached for an admin-owned key: %s", rec.Code, rec.Body.String())
 		}
 	})
-}
-
-// hashFor is the root reauth_test.go helper of the same name; that file joins
-// this package with the TOTP check (R7), and one of the two goes then.
-func hashFor(t *testing.T, plain string) string {
-	t.Helper()
-	h, err := bcrypt.GenerateFromPassword([]byte(plain), 4)
-	if err != nil {
-		t.Fatalf("hash: %v", err)
-	}
-	return string(h)
 }

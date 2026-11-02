@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/reqctx"
 
 	"dylaris-core/models"
@@ -160,7 +160,7 @@ func (f *hostGateStore) GetServerByID(id int) (*models.Server, error) {
 	return nil, sql.ErrNoRows
 }
 
-func newHostGateHandler(t *testing.T, enabled, allowPublic bool) (*ProxyHandler, *handlers.AuthHandler) {
+func newHostGateHandler(t *testing.T, enabled, allowPublic bool) (*ProxyHandler, *auth.AuthHandler) {
 	t.Helper()
 	fs := &hostGateStore{settings: map[string]string{}}
 	if enabled {
@@ -172,25 +172,20 @@ func newHostGateHandler(t *testing.T, enabled, allowPublic bool) (*ProxyHandler,
 		// cost this test a red run.
 		fs.settings["tab_proxy_allow_public_links"] = "true"
 	}
-	state := &handlers.AppState{
+	flags := services.NewFeatureFlags(fs)
+	ah := auth.NewAuthHandler(auth.Deps{Store: fs, FeatureFlags: flags, FrontendURL: "https://panel.example.com"}, "test-tab-proxy-secret")
+	d := Deps{
 		Store:              fs,
-		FeatureFlags:       services.NewFeatureFlags(fs),
+		FeatureFlags:       flags,
 		FrontendURL:        "https://panel.example.com",
 		TabProxyHostSuffix: "share.example.com",
-	}
-	ah := handlers.NewAuthHandler(state, "test-tab-proxy-secret")
-	d := Deps{
-		Store:              state.Store,
-		FeatureFlags:       state.FeatureFlags,
-		FrontendURL:        state.FrontendURL,
-		TabProxyHostSuffix: state.TabProxyHostSuffix,
 	}
 	return NewProxyHandler(d, testTickets(ah)), ah
 }
 
 // testTickets is routes.go's tabTickets for this package's tests (package main
 // is not importable): the same three AuthHandler calls.
-func testTickets(ah *handlers.AuthHandler) Tickets {
+func testTickets(ah *auth.AuthHandler) Tickets {
 	return Tickets{
 		IssueTabProxyTicket: ah.IssueTabProxyTicket,
 		ParseTabProxyTicket: func(token string) (TabTicket, error) {
@@ -201,7 +196,7 @@ func testTickets(ah *handlers.AuthHandler) Tickets {
 			return TabTicket{ServerID: c.ServerID, TabID: c.TabID, ReadOnly: c.ReadOnly}, nil
 		},
 		SessionID: func(r *http.Request) string {
-			if c, _ := reqctx.SessionClaims(r).(*handlers.Claims); c != nil {
+			if c, _ := reqctx.SessionClaims(r).(*auth.Claims); c != nil {
 				return c.ID
 			}
 			return ""

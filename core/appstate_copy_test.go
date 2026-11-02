@@ -18,10 +18,11 @@ import (
 // handler with the zero value - for SuspendGrace a grace of zero, for a "nil =
 // off" pointer a feature silently off.
 //
-// The rule: in main(), no appState field is assigned after buildAPIRouter is
-// called; in both functions, no field is assigned after its first read. main
-// hands fields to services before the router too (the storage migration
-// resolver copies CoreStorage), and a read before the assignment is a nil.
+// The rule: in main(), no appState field is assigned after buildAPIRouter or
+// authDepsOf (main's AuthHandler) is called; in both functions, no field is
+// assigned after its first read. main hands fields to services before the
+// router too (the storage migration resolver copies CoreStorage), and a read
+// before the assignment is a nil.
 func TestNoAppStateFieldIsSetAfterItIsCopied(t *testing.T) {
 	fset := token.NewFileSet()
 	for _, c := range []struct{ file, fn string }{{"main.go", "main"}, {"routes.go", "buildAPIRouter"}} {
@@ -56,7 +57,9 @@ func TestNoAppStateFieldIsSetAfterItIsCopied(t *testing.T) {
 					}
 				}
 			case *ast.CallExpr:
-				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "buildAPIRouter" && routerBuilt == token.NoPos {
+				// authDepsOf copies the state for main's AuthHandler, right
+				// before buildAPIRouter does for everything else.
+				if id, ok := x.Fun.(*ast.Ident); ok && (id.Name == "buildAPIRouter" || id.Name == "authDepsOf") && routerBuilt == token.NoPos {
 					routerBuilt = x.Pos()
 				}
 			case *ast.SelectorExpr:
@@ -71,10 +74,10 @@ func TestNoAppStateFieldIsSetAfterItIsCopied(t *testing.T) {
 		for _, w := range writes {
 			if c.fn == "main" {
 				if routerBuilt == token.NoPos {
-					t.Fatalf("main.go: buildAPIRouter call not found")
+					t.Fatalf("main.go: buildAPIRouter / authDepsOf call not found")
 				}
 				if w.pos > routerBuilt {
-					t.Errorf("%s: appState.%s is assigned after buildAPIRouter copied the state into Deps", fset.Position(w.pos), w.field)
+					t.Errorf("%s: appState.%s is assigned after the state was copied into Deps (buildAPIRouter / authDepsOf)", fset.Position(w.pos), w.field)
 				}
 			}
 			if p, seen := firstRead[w.field]; seen && w.pos > p {

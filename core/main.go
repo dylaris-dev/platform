@@ -28,6 +28,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/settings"
@@ -54,7 +55,7 @@ import (
 )
 
 // detectBeamPlatform maps a browser User-Agent header to one of the platform
-// slugs in handlers.validBeamPlatforms, which is what /api/beam/download
+// slugs in beam.validBeamPlatforms, which is what /api/beam/download
 // resolves against the signed release manifest. (It used to name the
 // beam-relay's /download/{slug}; the relay stopped serving binaries in
 // eeff445.) Conservative: anything unrecognised falls back to linux-amd64.
@@ -302,7 +303,7 @@ func main() {
 	// /setup answers. Not fatal: on an installed platform this is only the
 	// cleanup of a used code, and a database blip must not stop the boot. A
 	// fresh install without a code is refused at /setup, which says to restart.
-	if err := handlers.EnsureSetupCode(pgStore); err != nil {
+	if err := auth.EnsureSetupCode(pgStore); err != nil {
 		log.Printf("WARNING: %v", err)
 	}
 
@@ -719,9 +720,6 @@ func main() {
 	// silently falls back to its compiled defaults (see NodeModePublisher).
 	services.NewNodeModePublisher(pgStore, redisClient).Start(bgCtx)
 
-	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(appState, cfg.JWTSecret)
-
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// Seed a default region from any pre-multi-hub settings so an existing
 	// single-hub deployment keeps working unchanged. Region id "leader-01" keeps
@@ -805,6 +803,10 @@ func main() {
 	// peer is the warp leader, identical for every customer).
 	admissionGate := services.NewAdmissionGate(pgStore)
 	appState.Admission = admissionGate
+
+	// Built here, after the last appState assignment above: it copies the
+	// fields it reads (AdminSecret and SetupEnabled are assigned late).
+	authHandler := auth.NewAuthHandler(authDepsOf(appState), cfg.JWTSecret)
 
 	root, extras := buildAPIRouter(appState, authHandler, routeCfg{
 		Panel:              panel,
@@ -1127,7 +1129,7 @@ func main() {
 	srv := &http.Server{
 		Addr: ":" + port,
 		Handler: tabs.TabProxyHostMux(
-			extras.proxyHandler, handlers.SecurityHeaders(corsObj(root))),
+			extras.proxyHandler, auth.SecurityHeaders(corsObj(root))),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

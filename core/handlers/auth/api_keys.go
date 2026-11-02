@@ -185,7 +185,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Last rather than first on purpose: nothing above this line writes anything,
 	// and a bcrypt comparison in front of the request validation would let a
 	// malformed body buy CPU time. Nothing is persisted before it either way.
-	if rerr := reauth.RequireReauth(h.d.Store, h.d.ReauthCodes, userID, req.Password, req.Code); rerr != nil {
+	if rerr := reauth.RequireReauth(h.d.Store, ReauthCodeVerifier(h.d), userID, req.Password, req.Code); rerr != nil {
 		reauth.WriteReauthError(w, rerr)
 		return
 	}
